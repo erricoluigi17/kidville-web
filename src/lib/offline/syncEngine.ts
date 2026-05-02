@@ -1,0 +1,179 @@
+import { db, LocalAttendanceLog, LocalDiaryEntry } from './db';
+import { createBrowserClient } from '@supabase/ssr';
+
+function getSupabaseClient() {
+    return createBrowserClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    );
+}
+
+export async function syncPendingLogs() {
+    if (typeof window !== 'undefined' && !navigator.onLine) {
+        console.log('Sync abortito: Dispositivo Offline');
+        return;
+    }
+
+    try {
+        const supabase = getSupabaseClient();
+        
+        const pendingLogs = await db.presenze
+            .where('sync_status')
+            .anyOf('pending', 'error')
+            .toArray();
+
+        if (pendingLogs.length === 0) return;
+
+        console.log(`Trovati ${pendingLogs.length} record da sincronizzare...`);
+
+        const payload = pendingLogs.map(log => ({
+            id: log.id,
+            alunno_id: log.alunno_id,
+            data: log.data,
+            orario_entrata: log.orario_entrata,
+            orario_uscita: log.orario_uscita,
+            stato: log.stato,
+            panic_alert: log.panic_alert,
+            sync_status: 'synced',
+            aggiornato_il: log.aggiornato_il
+        }));
+
+        const { error } = await supabase
+            .from('presenze')
+            .upsert(payload, { onConflict: 'id' });
+
+        if (error) throw new Error(`Errore upsert: ${error.message}`);
+
+        const updatedIds = pendingLogs.map(log => log.id);
+        await db.presenze.bulkUpdate(
+            updatedIds.map(id => ({ key: id, changes: { sync_status: 'synced' } }))
+        );
+
+        console.log('Sincronizzazione completata con successo!');
+    } catch (error) {
+        console.error('Errore nel motore di sincronizzazione:', error);
+    }
+}
+
+export async function saveLocalAttendanceLog(logData: Omit<LocalAttendanceLog, 'sync_status'>) {
+    try {
+        const fullLog: LocalAttendanceLog = { ...logData, sync_status: 'pending' };
+        await db.presenze.put(fullLog);
+        
+        if (typeof window !== 'undefined' && navigator.onLine) {
+            syncPendingLogs();
+        }
+    } catch (error) {
+        console.error('Errore nel salvataggio locale:', error);
+        throw error;
+    }
+}
+
+// ============================================================
+// Diario 0-6 — Fase 2.1
+// ============================================================
+
+export async function saveLocalDiaryEntry(entryData: Omit<LocalDiaryEntry, 'sync_status'>) {
+    try {
+        const fullEntry: LocalDiaryEntry = { ...entryData, sync_status: 'pending' };
+        await db.diario.put(fullEntry);
+
+        if (typeof window !== 'undefined' && navigator.onLine) {
+            syncPendingDiaryEntries();
+        }
+    } catch (error) {
+        console.error('Errore nel salvataggio locale del diario:', error);
+        throw error;
+    }
+}
+
+export async function syncPendingDiaryEntries() {
+    if (typeof window !== 'undefined' && !navigator.onLine) {
+        console.log('Sync diario abortito: Dispositivo Offline');
+        return;
+    }
+
+    try {
+        const supabase = getSupabaseClient();
+
+        const pending = await db.diario
+            .where('sync_status')
+            .anyOf('pending', 'error')
+            .toArray();
+
+        if (pending.length === 0) return;
+
+        console.log(`Diario: ${pending.length} record da sincronizzare...`);
+
+        const payload = pending.map(entry => ({
+            id: entry.id,
+            alunno_id: entry.alunno_id,
+            classe_id: entry.classe_id,
+            tipo_evento: entry.tipo_evento,
+            timestamp_evento: entry.timestamp_evento,
+            note: entry.note,
+            dettagli: entry.dettagli,
+            creato_il: entry.creato_il,
+        }));
+
+        const { error } = await supabase
+            .from('daily_routines')
+            .upsert(payload, { onConflict: 'id' });
+
+        if (error) throw new Error(`Errore upsert diario: ${error.message}`);
+
+        const ids = pending.map(e => e.id);
+        await db.diario.bulkUpdate(
+            ids.map(id => ({ key: id, changes: { sync_status: 'synced' } }))
+        );
+
+        console.log('Sincronizzazione diario completata!');
+    } catch (error) {
+        console.error('Errore sync diario:', error);
+    }
+}
+
+// ============================================================
+// Armadietto — Fase 2.2
+// ============================================================
+
+export async function syncLockerInventory(classeSezione: string) {
+    if (typeof window !== 'undefined' && !navigator.onLine) {
+        console.log('Sync armadietto abortito: Dispositivo Offline');
+        return;
+    }
+
+    try {
+        const res = await fetch(`/api/locker/inventory?classe_sezione=${classeSezione}`);
+        const data = await res.json();
+
+        if (!Array.isArray(data)) return;
+
+        // Salva in cache locale
+        for (const alunno of data) {
+            if (!alunno.inventario) continue;
+            for (const item of alunno.inventario) {
+                const catalog = item.locker_catalog;
+                if (!catalog) continue;
+
+                await db.armadietto.put({
+                    id: item.id,
+                    alunno_id: item.alunno_id,
+                    catalogo_id: item.catalogo_id,
+                    nome_materiale: catalog.nome,
+                    icona: catalog.icona,
+                    quantita: item.quantita,
+                    soglia_gialla: catalog.soglia_gialla,
+                    soglia_rossa: catalog.soglia_rossa,
+                    sync_status: 'synced',
+                    aggiornato_il: item.aggiornato_il,
+                });
+            }
+        }
+
+        console.log('Cache armadietto aggiornata!');
+    } catch (error) {
+        console.error('Errore sync armadietto:', error);
+    }
+}
+

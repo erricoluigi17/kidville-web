@@ -1,8 +1,12 @@
 'use client';
 
+import { useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { AlertTriangle, ChevronDown, Clock, Minus, Plus } from 'lucide-react';
 import { LocalDiaryEntry, DiaryEventType } from '@/lib/offline/db';
-import { EVENT_CONFIG } from './eventConfig';
-import { AlertTriangle } from 'lucide-react';
+import { EVENT_CONFIG, MEAL_QUANTITIES, BATHROOM_TYPES } from './eventConfig';
+
+// ─── Tipi ─────────────────────────────────────────────────────────────────────
 
 interface Student {
     id: string;
@@ -11,96 +15,435 @@ interface Student {
     allergie?: string[];
 }
 
+type ActiveSection = DiaryEventType | null;
+
+export interface DiaryRowCallbacks {
+    onMealSelect: (studentId: string, corsoId: string, quantita: string | null) => void;
+    onBathroomChange: (studentId: string, field: 'pipi' | 'cacca', delta: number) => void;
+    onActivitySelect: (studentId: string, partecipazione: string | null) => void;
+    onTimeChange: (studentId: string, field: 'orario' | 'orario_inizio' | 'orario_fine', value: string) => void;
+}
+
 interface StudentDiaryRowProps {
     student: Student;
     lastEntry?: LocalDiaryEntry;
     isSelected: boolean;
-    isPranzoActive?: boolean; // evidenziazione allergie durante il pranzo
+    isPranzoActive?: boolean;
+    studentState?: Record<string, unknown>;
+    savedIds?: Set<string>;
+    callbacks: DiaryRowCallbacks;
     onSelect: (id: string) => void;
+    /** Se true, la riga è in modalità "dettaglio standalone" con sezioni espandibili */
+    expandable?: boolean;
+    activeEventType?: DiaryEventType;
 }
+
+// ─── Costanti livelli attività ────────────────────────────────────────────────
+
+const PARTICIPATION_LEVELS = [
+    { value: 'non_fatta',  label: 'Non fatta',    bg: 'bg-red-100',    text: 'text-red-700',    border: 'border-red-200' },
+    { value: 'difficolta', label: 'Con difficoltà', bg: 'bg-orange-100', text: 'text-orange-700', border: 'border-orange-200' },
+    { value: 'aiuto',      label: 'Con aiuto',     bg: 'bg-yellow-100', text: 'text-yellow-700', border: 'border-yellow-200' },
+    { value: 'autonomia',  label: 'In autonomia',  bg: 'bg-emerald-100',text: 'text-emerald-700',border: 'border-emerald-200' },
+] as const;
+
+const MOCK_MEAL_COURSES = [
+    { id: 'primo',   nome: 'Pasta al Pomodoro', portata: 'Primo',    icon: '🍝' },
+    { id: 'secondo', nome: 'Pollo Arrosto',      portata: 'Secondo',  icon: '🍗' },
+    { id: 'contorno',nome: 'Insalata Mista',     portata: 'Contorno', icon: '🥗' },
+    { id: 'frutta',  nome: 'Macedonia',           portata: 'Frutta',   icon: '🍎' },
+];
+
+// ─── Varianti animazione ──────────────────────────────────────────────────────
+
+const accordionVariants = {
+    hidden: { height: 0, opacity: 0 },
+    visible: {
+        height: 'auto',
+        opacity: 1,
+        transition: {
+            height: { duration: 0.3, ease: 'easeInOut' as const },
+            opacity: { duration: 0.2, delay: 0.05 },
+            staggerChildren: 0.05,
+        },
+    },
+    exit: {
+        height: 0,
+        opacity: 0,
+        transition: {
+            height: { duration: 0.25, ease: 'easeInOut' as const },
+            opacity: { duration: 0.15 },
+        },
+    },
+};
+
+const itemVariants = {
+    hidden: { opacity: 0, y: -6 },
+    visible: { opacity: 1, y: 0, transition: { duration: 0.18 } },
+    exit:    { opacity: 0, y: -4, transition: { duration: 0.12 } },
+};
+
+// ─── Sub-sezioni inline ───────────────────────────────────────────────────────
+
+function EntrataSectionContent({
+    student,
+    studentState,
+    onTimeChange,
+}: {
+    student: Student;
+    studentState?: Record<string, unknown>;
+    onTimeChange: DiaryRowCallbacks['onTimeChange'];
+}) {
+    const orario = (studentState?.orario as string) ?? '';
+    return (
+        <motion.div variants={itemVariants} className="flex items-center gap-3 py-3 px-4">
+            <Clock size={14} className="text-amber-500 flex-shrink-0" />
+            <span className="font-maven text-sm text-kidville-green flex-1">Orario entrata</span>
+            <input
+                type="time"
+                value={orario}
+                onChange={e => onTimeChange(student.id, 'orario', e.target.value)}
+                className="border-2 border-gray-200 rounded-xl px-3 py-1.5 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
+            />
+        </motion.div>
+    );
+}
+
+function PranzoSectionContent({
+    student,
+    studentState,
+    onMealSelect,
+    isMerenda,
+}: {
+    student: Student;
+    studentState?: Record<string, unknown>;
+    onMealSelect: DiaryRowCallbacks['onMealSelect'];
+    isMerenda?: boolean;
+}) {
+    const corsi = (studentState?.corsi as Record<string, string | null>) ?? {};
+    const courses = isMerenda
+        ? [{ id: 'merenda', nome: 'Merenda', portata: '', icon: '🍎' }]
+        : MOCK_MEAL_COURSES;
+
+    return (
+        <>
+            {student.allergie && student.allergie.length > 0 && (
+                <motion.div variants={itemVariants} className="mx-4 mb-1 mt-2 p-2 rounded-xl bg-kidville-error/8 border border-kidville-error/20">
+                    <p className="font-maven text-xs text-kidville-error font-semibold">
+                        ⚠️ Allergie: {student.allergie.join(', ')}
+                    </p>
+                </motion.div>
+            )}
+            {courses.map(corso => {
+                const selQ = corsi[corso.id] ?? null;
+                return (
+                    <motion.div key={corso.id} variants={itemVariants} className="py-2 px-4">
+                        <p className="font-maven text-xs text-gray-400 mb-1.5">
+                            {corso.icon} {corso.nome || corso.portata}
+                        </p>
+                        <div className="flex gap-1.5">
+                            {MEAL_QUANTITIES.map(q => (
+                                <button
+                                    key={q.value}
+                                    onClick={() => onMealSelect(student.id, corso.id, selQ === q.value ? null : q.value)}
+                                    className={`flex-1 py-2 rounded-xl text-xs font-bold border-2 transition-all active:scale-95 ${
+                                        selQ === q.value
+                                            ? 'bg-kidville-green text-kidville-yellow border-kidville-green shadow-sm'
+                                            : 'bg-gray-50 text-gray-400 border-gray-100 hover:border-gray-300'
+                                    }`}
+                                >
+                                    {q.icon}
+                                </button>
+                            ))}
+                        </div>
+                    </motion.div>
+                );
+            })}
+        </>
+    );
+}
+
+function NannaSectionContent({
+    student,
+    studentState,
+    onTimeChange,
+}: {
+    student: Student;
+    studentState?: Record<string, unknown>;
+    onTimeChange: DiaryRowCallbacks['onTimeChange'];
+}) {
+    return (
+        <motion.div variants={itemVariants} className="grid grid-cols-2 gap-3 px-4 py-3">
+            <div>
+                <p className="font-maven text-xs text-gray-500 mb-1">😴 Si addormenta</p>
+                <input
+                    type="time"
+                    value={(studentState?.orario_inizio as string) ?? ''}
+                    onChange={e => onTimeChange(student.id, 'orario_inizio', e.target.value)}
+                    className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
+                />
+            </div>
+            <div>
+                <p className="font-maven text-xs text-gray-500 mb-1">☀️ Si sveglia</p>
+                <input
+                    type="time"
+                    value={(studentState?.orario_fine as string) ?? ''}
+                    onChange={e => onTimeChange(student.id, 'orario_fine', e.target.value)}
+                    className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
+                />
+            </div>
+        </motion.div>
+    );
+}
+
+function BagnoSectionContent({
+    student,
+    studentState,
+    onBathroomChange,
+}: {
+    student: Student;
+    studentState?: Record<string, unknown>;
+    onBathroomChange: DiaryRowCallbacks['onBathroomChange'];
+}) {
+    const pipi = (studentState?.pipi as number) ?? 0;
+    const cacca = (studentState?.cacca as number) ?? 0;
+
+    const Counter = ({ field, emoji, bg, color }: { field: 'pipi' | 'cacca'; emoji: string; bg: string; color: string }) => {
+        const val = field === 'pipi' ? pipi : cacca;
+        return (
+            <div className={`flex items-center gap-2 ${bg} rounded-xl px-3 py-2 flex-1`}>
+                <span className="text-lg">{emoji}</span>
+                <button
+                    onClick={() => onBathroomChange(student.id, field, -1)}
+                    className={`w-7 h-7 rounded-full bg-white border ${color} flex items-center justify-center hover:opacity-80 transition-opacity`}
+                >
+                    <Minus size={10} />
+                </button>
+                <span className={`font-barlow font-black text-xl ${color.replace('border-', 'text-')} w-6 text-center`}>{val}</span>
+                <button
+                    onClick={() => onBathroomChange(student.id, field, 1)}
+                    className={`w-7 h-7 rounded-full ${color.replace('border-', 'bg-').replace('/30', '')} text-white flex items-center justify-center hover:opacity-80 transition-opacity`}
+                >
+                    <Plus size={10} />
+                </button>
+            </div>
+        );
+    };
+
+    return (
+        <motion.div variants={itemVariants} className="flex gap-3 px-4 py-3">
+            <Counter field="pipi" emoji="💧" bg="bg-sky-50" color="border-sky-400 text-sky-700 bg-sky-500" />
+            <Counter field="cacca" emoji="💩" bg="bg-amber-50" color="border-amber-400 text-amber-700 bg-amber-500" />
+        </motion.div>
+    );
+}
+
+function AttivitaSectionContent({
+    student,
+    studentState,
+    onActivitySelect,
+}: {
+    student: Student;
+    studentState?: Record<string, unknown>;
+    onActivitySelect: DiaryRowCallbacks['onActivitySelect'];
+}) {
+    const sel = (studentState?.partecipazione as string) ?? null;
+    return (
+        <motion.div variants={itemVariants} className="grid grid-cols-2 gap-1.5 px-4 py-3">
+            {PARTICIPATION_LEVELS.map(lv => (
+                <button
+                    key={lv.value}
+                    onClick={() => onActivitySelect(student.id, sel === lv.value ? null : lv.value)}
+                    className={`py-2.5 rounded-xl border-2 text-xs font-maven font-semibold transition-all active:scale-95 ${
+                        sel === lv.value ? `${lv.bg} ${lv.text} ${lv.border}` : 'bg-gray-50 text-gray-400 border-gray-100 hover:border-gray-200'
+                    }`}
+                >
+                    {lv.label}
+                </button>
+            ))}
+        </motion.div>
+    );
+}
+
+// ─── Sezioni per tipo evento ──────────────────────────────────────────────────
+
+function InlineSectionContent({
+    activeEvent,
+    student,
+    studentState,
+    callbacks,
+}: {
+    activeEvent: DiaryEventType;
+    student: Student;
+    studentState?: Record<string, unknown>;
+    callbacks: DiaryRowCallbacks;
+}) {
+    switch (activeEvent) {
+        case 'entrata':
+            return <EntrataSectionContent student={student} studentState={studentState} onTimeChange={callbacks.onTimeChange} />;
+        case 'pranzo':
+            return <PranzoSectionContent student={student} studentState={studentState} onMealSelect={callbacks.onMealSelect} />;
+        case 'merenda':
+            return <PranzoSectionContent student={student} studentState={studentState} onMealSelect={callbacks.onMealSelect} isMerenda />;
+        case 'nanna_inizio':
+        case 'nanna_fine':
+            return <NannaSectionContent student={student} studentState={studentState} onTimeChange={callbacks.onTimeChange} />;
+        case 'bagno':
+            return <BagnoSectionContent student={student} studentState={studentState} onBathroomChange={callbacks.onBathroomChange} />;
+        case 'attivita':
+            return <AttivitaSectionContent student={student} studentState={studentState} onActivitySelect={callbacks.onActivitySelect} />;
+        default:
+            return null;
+    }
+}
+
+// ─── Componente Principale ───────────────────────────────────────────────────
 
 export function StudentDiaryRow({
     student,
     lastEntry,
     isSelected,
     isPranzoActive = false,
+    studentState,
+    savedIds,
+    callbacks,
     onSelect,
+    expandable = false,
+    activeEventType,
 }: StudentDiaryRowProps) {
+    const [activeSection, setActiveSection] = useState<ActiveSection>(null);
+
     const hasAllergie = (student.allergie?.length ?? 0) > 0;
     const showAllergyWarning = isPranzoActive && hasAllergie;
     const lastEventConfig = lastEntry ? EVENT_CONFIG[lastEntry.tipo_evento as DiaryEventType] : null;
+    const isSaved = savedIds?.has(student.id) ?? false;
+
+    // Se expandable, usa stato locale per la sezione aperta
+    // La sezione aperta è quella del tipo evento corrente passato dall'esterno
+    const currentSection: DiaryEventType | null = expandable
+        ? (activeSection ?? null)
+        : null;
+
+    const handleSectionToggle = (type: DiaryEventType) => {
+        if (!expandable) return;
+        setActiveSection(prev => prev === type ? null : type);
+    };
+
+    // Sezioni disponibili quando la riga è in modalità expandable
+    const availableSections: DiaryEventType[] = activeEventType ? [activeEventType] : [];
 
     return (
         <div
-            onClick={() => onSelect(student.id)}
             className={`
-                flex items-center gap-3 p-3 rounded-xl cursor-pointer
-                border-2 transition-all duration-150 select-none
+                rounded-2xl border-2 overflow-hidden transition-all duration-200 select-none
                 ${isSelected
-                    ? 'border-kidville-green bg-kidville-green/5'
+                    ? 'border-kidville-green bg-kidville-green/5 shadow-md'
                     : showAllergyWarning
                         ? 'border-kidville-error bg-kidville-error/5'
-                        : 'border-gray-100 bg-white hover:border-gray-200'
+                        : 'border-gray-100 bg-white hover:border-gray-200 hover:shadow-sm'
                 }
             `}
-            role="checkbox"
-            aria-checked={isSelected}
-            aria-label={`${student.firstName} ${student.lastName}`}
         >
-            {/* Checkbox visuale */}
-            <div className={`
-                w-6 h-6 flex-shrink-0 rounded-md border-2 flex items-center justify-center transition-colors
-                ${isSelected
-                    ? 'bg-kidville-green border-kidville-green'
-                    : 'border-gray-300 bg-white'
-                }
-            `}>
-                {isSelected && (
-                    <svg className="w-4 h-4 text-kidville-yellow" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                    </svg>
-                )}
-            </div>
-
-            {/* Avatar iniziali */}
-            <div className={`
-                w-10 h-10 flex-shrink-0 rounded-full flex items-center justify-center font-barlow font-bold text-sm
-                ${showAllergyWarning
-                    ? 'bg-kidville-error text-white'
-                    : 'bg-kidville-cream text-kidville-green'
-                }
-            `}>
-                {student.firstName[0]}{student.lastName[0]}
-            </div>
-
-            {/* Nome e info */}
-            <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                    <span className={`font-maven font-medium text-sm truncate ${showAllergyWarning ? 'text-kidville-error' : 'text-kidville-green'}`}>
-                        {student.firstName} {student.lastName}
-                    </span>
-                    {showAllergyWarning && (
-                        <AlertTriangle size={14} className="flex-shrink-0 text-kidville-error" />
+            {/* ── Riga principale (cliccabile) ── */}
+            <div
+                onClick={() => onSelect(student.id)}
+                className="flex items-center gap-3 p-3 cursor-pointer"
+                role="checkbox"
+                aria-checked={isSelected}
+                aria-label={`${student.firstName} ${student.lastName}`}
+            >
+                {/* Checkbox visuale */}
+                <div className={`
+                    w-6 h-6 flex-shrink-0 rounded-md border-2 flex items-center justify-center transition-colors
+                    ${isSelected ? 'bg-kidville-green border-kidville-green' : 'border-gray-300 bg-white'}
+                `}>
+                    {isSelected && (
+                        <svg className="w-4 h-4 text-kidville-yellow" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                        </svg>
                     )}
                 </div>
-                {showAllergyWarning && (
-                    <p className="font-maven text-xs text-kidville-error truncate">
-                        ⚠️ {student.allergie!.join(', ')}
-                    </p>
+
+                {/* Avatar */}
+                <div className={`
+                    w-10 h-10 flex-shrink-0 rounded-full flex items-center justify-center font-barlow font-bold text-sm
+                    ${showAllergyWarning ? 'bg-kidville-error text-white' : 'bg-kidville-cream text-kidville-green'}
+                `}>
+                    {student.firstName[0]}{student.lastName[0]}
+                </div>
+
+                {/* Info studente */}
+                <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                        <span className={`font-maven font-medium text-sm truncate ${showAllergyWarning ? 'text-kidville-error' : 'text-kidville-green'}`}>
+                            {student.firstName} {student.lastName}
+                        </span>
+                        {showAllergyWarning && <AlertTriangle size={14} className="flex-shrink-0 text-kidville-error" />}
+                        {isSaved && <span className="text-emerald-500 text-xs">✅</span>}
+                    </div>
+                    {showAllergyWarning && (
+                        <p className="font-maven text-xs text-kidville-error truncate">⚠️ {student.allergie!.join(', ')}</p>
+                    )}
+                    {!showAllergyWarning && lastEventConfig && (
+                        <p className="font-maven text-xs text-gray-400 truncate">
+                            Ultimo: {lastEventConfig.emoji} {lastEventConfig.label}
+                        </p>
+                    )}
+                </div>
+
+                {/* Badge ultimo evento */}
+                {lastEventConfig && (
+                    <div className={`flex-shrink-0 px-2 py-1 rounded-full text-xs font-maven font-medium border ${lastEventConfig.accentColor} ${lastEventConfig.color}`}>
+                        {lastEventConfig.emoji}
+                    </div>
                 )}
-                {!showAllergyWarning && lastEventConfig && (
-                    <p className="font-maven text-xs text-gray-400 truncate">
-                        Ultimo: {lastEventConfig.emoji} {lastEventConfig.label}
-                    </p>
+
+                {/* Pulsante espandi sezione (solo in modalità expandable) */}
+                {expandable && availableSections.length > 0 && (
+                    <button
+                        onClick={e => {
+                            e.stopPropagation();
+                            handleSectionToggle(availableSections[0]);
+                        }}
+                        className={`
+                            w-8 h-8 rounded-xl flex items-center justify-center transition-all flex-shrink-0
+                            ${currentSection ? 'bg-kidville-green/10 text-kidville-green' : 'bg-gray-50 text-gray-400 hover:bg-gray-100'}
+                        `}
+                        aria-label={currentSection ? 'Chiudi dettagli' : 'Apri dettagli'}
+                    >
+                        <motion.div animate={{ rotate: currentSection ? 180 : 0 }} transition={{ duration: 0.22 }}>
+                            <ChevronDown size={15} />
+                        </motion.div>
+                    </button>
                 )}
             </div>
 
-            {/* Badge ultimo evento */}
-            {lastEventConfig && (
-                <div className={`flex-shrink-0 px-2 py-1 rounded-full text-xs font-maven font-medium border ${lastEventConfig.accentColor} ${lastEventConfig.color}`}>
-                    {lastEventConfig.emoji}
-                </div>
-            )}
+            {/* ── Accordion inline dettagli ── */}
+            <AnimatePresence initial={false}>
+                {expandable && currentSection && (
+                    <motion.div
+                        key={`section-${student.id}-${currentSection}`}
+                        variants={accordionVariants}
+                        initial="hidden"
+                        animate="visible"
+                        exit="exit"
+                        className="overflow-hidden border-t border-gray-100"
+                        onClick={e => e.stopPropagation()}
+                    >
+                        <motion.div
+                            variants={{ visible: { transition: { staggerChildren: 0.05 } } }}
+                            className="pb-2"
+                        >
+                            <InlineSectionContent
+                                activeEvent={currentSection}
+                                student={student}
+                                studentState={studentState}
+                                callbacks={callbacks}
+                            />
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
         </div>
     );
 }

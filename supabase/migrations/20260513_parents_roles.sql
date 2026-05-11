@@ -1,0 +1,3 @@
+ALTER TABLE parents 
+    ADD COLUMN IF NOT EXISTS role VARCHAR(50) DEFAULT 'parent',
+    ADD COLUMN IF NOT EXISTS section_name VARCHAR(100);

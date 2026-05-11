@@ -54,11 +54,32 @@ export interface LocalLockerItem {
     aggiornato_il: string;
 }
 
+export interface LocalParent {
+    id: string;
+    nome: string;
+    cognome: string;
+    email: string | null;
+    sync_status: 'synced' | 'pending' | 'error';
+    aggiornato_il: string;
+}
+
+export interface LocalStudentDocument {
+    id: string;
+    alunno_id: string;
+    tipo_documento: string;
+    file_url: string;
+    data_scadenza: string | null;
+    sync_status: 'synced' | 'pending' | 'error';
+}
+
 const db = new Dexie('KidvilleOfflineDB') as Dexie & {
     presenze: EntityTable<LocalAttendanceLog, 'id'>;
     delegati: EntityTable<LocalDelegate, 'id'>;
     diario: EntityTable<LocalDiaryEntry, 'id'>;
     armadietto: EntityTable<LocalLockerItem, 'id'>;
+    genitori: EntityTable<LocalParent, 'id'>;
+    documenti_alunni: EntityTable<LocalStudentDocument, 'id'>;
+    adulti: EntityTable<any, 'id'>; // Anagrafica adulti estesa (Fase 6)
 };
 
 // v2: schema presenze + delegati (Fase 1)
@@ -80,6 +101,27 @@ db.version(4).stores({
     delegati: 'id, alunno_id',
     diario: 'id, alunno_id, classe_id, tipo_evento, timestamp_evento, sync_status',
     armadietto: 'id, alunno_id, catalogo_id, sync_status'
+});
+
+// v5: aggiunta anagrafica estesa
+db.version(5).stores({
+    presenze: 'id, alunno_id, data, sync_status',
+    delegati: 'id, alunno_id',
+    diario: 'id, alunno_id, classe_id, tipo_evento, timestamp_evento, sync_status',
+    armadietto: 'id, alunno_id, catalogo_id, sync_status',
+    genitori: 'id, sync_status',
+    documenti_alunni: 'id, alunno_id, tipo_documento, sync_status'
+});
+
+// v6: aggiunta adulti per refactoring Anagrafica
+db.version(6).stores({
+    presenze: 'id, alunno_id, data, sync_status',
+    delegati: 'id, alunno_id',
+    diario: 'id, alunno_id, classe_id, tipo_evento, timestamp_evento, sync_status',
+    armadietto: 'id, alunno_id, catalogo_id, sync_status',
+    genitori: 'id, sync_status',
+    documenti_alunni: 'id, alunno_id, tipo_documento, sync_status',
+    adulti: 'id, role'
 });
 
 export { db };

@@ -1,19 +1,41 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { X, Trash2, Save, AlertTriangle } from 'lucide-react';
+import { X, Trash2, Save, AlertTriangle, Users, Baby } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { LinkedAdultProfile, AdultProfileData, AdultType } from './LinkedAdultProfile';
 
 interface Student {
     id: string;
-    nome: string;
-    cognome: string;
-    data_nascita: string;
-    classe_sezione: string | null;
-    stato: string;
-    note_mediche: string | null;
-    codice_fiscale: string | null;
+    nome?: string;
+    cognome?: string;
+    first_name?: string;
+    last_name?: string;
+    data_nascita?: string;
+    classe_sezione?: string | null;
+    stato?: string;
+    note_mediche?: string | null;
+    codice_fiscale?: string | null;
+    fiscal_code?: string | null;
     bes?: boolean;
     note_bes?: string | null;
+    emails?: string[];
+    phone_numbers?: string[];
+    student_parents?: {
+        relation_type: string;
+        is_primary: boolean;
+        parents: AdultProfileData;
+    }[];
+    delegates?: AdultProfileData[];
+}
+
+interface Sibling {
+    id: string;
+    nome: string;
+    cognome: string;
+    data_nascita?: string;
+    classe_sezione?: string | null;
+    stato?: string;
 }
 
 interface Props {
@@ -27,6 +49,26 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete }: Props
     const [form, setForm] = useState<Partial<Student>>({});
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
+    const [activeAdultTab, setActiveAdultTab] = useState<string | null>(null);
+    const [sections, setSections] = useState<{id: string, name: string, school_type: string}[]>([]);
+    const [siblings, setSiblings] = useState<Sibling[]>([]);
+    const [siblingsLoading, setSiblingsLoading] = useState(false);
+
+    useEffect(() => {
+        fetch('/api/admin/sections').then(r => r.json()).then(d => { if (Array.isArray(d)) setSections(d); }).catch(() => {});
+    }, []);
+
+    useEffect(() => {
+        if (!student?.id) return;
+        setSiblingsLoading(true);
+        fetch(`/api/admin/students/${student.id}`)
+            .then(r => r.json())
+            .then(d => {
+                if (Array.isArray(d.siblings)) setSiblings(d.siblings);
+            })
+            .catch(() => {})
+            .finally(() => setSiblingsLoading(false));
+    }, [student?.id]);
 
     useEffect(() => {
         if (student) {
@@ -58,6 +100,36 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete }: Props
     const updateForm = (field: string, value: unknown) => {
         setForm(prev => ({ ...prev, [field]: value }));
     };
+
+    // Estrai madre, padre e delegati per i tab
+    const getAdultTabs = () => {
+        const tabs: { id: string; type: AdultType; label: string; data: AdultProfileData }[] = [];
+        
+        if (student?.student_parents) {
+            student.student_parents.forEach(sp => {
+                if (sp.parents) {
+                    if (sp.relation_type === 'mother' || sp.parents.gender === 'F') {
+                        tabs.push({ id: 'mother', type: 'mother', label: 'Madre', data: sp.parents });
+                    } else if (sp.relation_type === 'father' || sp.parents.gender === 'M') {
+                        tabs.push({ id: 'father', type: 'father', label: 'Padre', data: sp.parents });
+                    } else {
+                        tabs.push({ id: `parent_${sp.parents.id}`, type: 'delegate', label: 'Genitore', data: sp.parents });
+                    }
+                }
+            });
+        }
+
+        if (student?.delegates) {
+            student.delegates.forEach((del, idx) => {
+                tabs.push({ id: `delegate_${del.id}`, type: 'delegate', label: `Delegato ${idx + 1}`, data: del });
+            });
+        }
+
+        return tabs;
+    };
+
+    const adultTabs = getAdultTabs();
+    const activeTabData = adultTabs.find(t => t.id === activeAdultTab);
 
     return (
         <>
@@ -142,13 +214,16 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete }: Props
                         <div className="grid grid-cols-2 gap-3">
                             <div>
                                 <label className="font-maven text-xs text-gray-500 mb-1 block">Classe / Sezione</label>
-                                <input
-                                    type="text"
+                                <select
                                     value={(form.classe_sezione as string) ?? ''}
                                     onChange={e => updateForm('classe_sezione', e.target.value)}
-                                    placeholder="es. Girasoli"
-                                    className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
-                                />
+                                    className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:border-kidville-green"
+                                >
+                                    <option value="">— Nessuna —</option>
+                                    {sections.map(s => (
+                                        <option key={s.id} value={s.name}>{s.name} ({s.school_type})</option>
+                                    ))}
+                                </select>
                             </div>
                             <div>
                                 <label className="font-maven text-xs text-gray-500 mb-1 block">Stato</label>
@@ -212,6 +287,106 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete }: Props
                                 rows={2}
                                 className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green resize-none"
                             />
+                        )}
+                    </section>
+
+                    {/* Famiglia e Delegati */}
+                    <section className="pt-4 border-t border-gray-100">
+                        <h3 className="font-barlow font-bold text-kidville-green uppercase text-xs tracking-wide mb-3 flex items-center gap-2">
+                            <Users size={12} />
+                            Famiglia e Delegati
+                        </h3>
+                        
+                        {adultTabs.length > 0 ? (
+                            <>
+                                {/* Segmented Control */}
+                                <div className="flex overflow-x-auto snap-x gap-2 pb-2 hide-scrollbar">
+                                    {adultTabs.map(tab => {
+                                        const isActive = activeAdultTab === tab.id;
+                                        return (
+                                            <button
+                                                key={tab.id}
+                                                onClick={() => setActiveAdultTab(isActive ? null : tab.id)}
+                                                className={`snap-start whitespace-nowrap px-4 py-2 rounded-full font-barlow font-bold text-xs uppercase tracking-wide transition-all duration-300 ${
+                                                    isActive 
+                                                        ? 'bg-kidville-green/20 text-kidville-green border border-kidville-green/50 ring-1 ring-kidville-green/30' 
+                                                        : 'bg-gray-50 text-gray-400 border border-gray-200 hover:bg-gray-100'
+                                                }`}
+                                            >
+                                                {tab.label}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+
+                                {/* Animated Adult Profile Container */}
+                                <AnimatePresence mode="wait">
+                                    {activeAdultTab && activeTabData && (
+                                        <motion.div
+                                            key={activeAdultTab}
+                                            initial={{ height: 0, opacity: 0 }}
+                                            animate={{ height: 'auto', opacity: 1 }}
+                                            exit={{ height: 0, opacity: 0 }}
+                                            transition={{ duration: 0.3, ease: 'easeInOut' }}
+                                            className="overflow-hidden bg-black rounded-2xl mt-2"
+                                        >
+                                            <LinkedAdultProfile data={activeTabData.data} type={activeTabData.type} />
+                                        </motion.div>
+                                    )}
+                                </AnimatePresence>
+                            </>
+                        ) : (
+                            <div className="text-center py-6 bg-gray-50 rounded-xl border-2 border-dashed border-gray-200">
+                                <Users size={24} className="mx-auto text-gray-300 mb-2" />
+                                <p className="font-maven text-sm text-gray-400">Nessun genitore collegato</p>
+                                <p className="font-maven text-xs text-gray-300 mt-1">Puoi aggiungere i genitori dalla pagina di creazione famiglia</p>
+                            </div>
+                        )}
+                    </section>
+
+                    {/* ===== FRATELLI ===== */}
+                    <section>
+                        <h3 className="font-barlow font-bold text-kidville-green uppercase text-xs tracking-wide mb-3 flex items-center gap-2">
+                            <Baby size={12} className="text-kidville-green" />
+                            Fratelli / Sorelle
+                        </h3>
+
+                        {siblingsLoading ? (
+                            <div className="flex items-center gap-2 py-4 text-gray-400 font-maven text-sm">
+                                <div className="w-4 h-4 border-2 border-gray-200 border-t-kidville-green rounded-full animate-spin" />
+                                Ricerca fratelli in corso...
+                            </div>
+                        ) : siblings.length > 0 ? (
+                            <div className="space-y-2">
+                                {siblings.map(sibling => (
+                                    <div key={sibling.id} className="flex items-center gap-3 p-3 bg-kidville-green/5 border border-kidville-green/15 rounded-xl">
+                                        <div className="w-9 h-9 rounded-full bg-kidville-green/10 flex items-center justify-center flex-shrink-0">
+                                            <Baby size={16} className="text-kidville-green" />
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                            <p className="font-barlow font-bold text-sm text-gray-800 leading-tight truncate">
+                                                {sibling.cognome} {sibling.nome}
+                                            </p>
+                                            <p className="font-maven text-xs text-gray-500 mt-0.5">
+                                                {sibling.classe_sezione || 'Nessuna sezione'}
+                                                {sibling.data_nascita && ` • ${new Date(sibling.data_nascita).getFullYear()}`}
+                                            </p>
+                                        </div>
+                                        <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-md flex-shrink-0 ${
+                                            sibling.stato === 'iscritto' 
+                                                ? 'bg-kidville-green/10 text-kidville-green' 
+                                                : 'bg-gray-100 text-gray-500'
+                                        }`}>
+                                            {sibling.stato || 'iscritto'}
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="text-center py-5 bg-gray-50 rounded-xl border-2 border-dashed border-gray-200">
+                                <Baby size={20} className="mx-auto text-gray-300 mb-1.5" />
+                                <p className="font-maven text-sm text-gray-400">Nessun fratello/sorella registrato</p>
+                            </div>
                         )}
                     </section>
                 </div>

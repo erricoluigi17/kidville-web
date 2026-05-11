@@ -177,3 +177,55 @@ export async function syncLockerInventory(classeSezione: string) {
     }
 }
 
+// ============================================================
+// Anagrafica Offline Fetching
+// ============================================================
+
+export async function getLocalStudentDetails(studentId: string) {
+    try {
+        const delegates = await db.delegati.where('alunno_id').equals(studentId).toArray();
+        
+        // Nuova architettura: cerchiamo in "adulti" (in app offline non abbiamo la join pivot in db.ts completa, 
+        // ma possiamo espanderla. Per ora usiamo un fallback per non rompere app vecchie)
+        const adults = await db.adulti.toArray();
+        const parents = await db.genitori.toArray(); 
+        
+        return {
+            delegates: delegates.map(d => ({
+                id: d.id,
+                first_name: d.nome,
+                last_name: '',
+                gender: '',
+            })),
+            student_parents: [],
+            adults: adults // nuova proprietà
+        };
+    } catch (error) {
+        console.error('Errore fetch locale anagrafica:', error);
+        return { delegates: [], student_parents: [], adults: [] };
+    }
+}
+
+// ============================================================
+// Sync Adulti (Fase 6)
+// ============================================================
+
+export async function syncAdults() {
+    if (typeof window !== 'undefined' && !navigator.onLine) return;
+
+    try {
+        const supabase = getSupabaseClient();
+        // Grazie alle RLS, l'educatore riceverà solo gli adulti pertinenti alle proprie sezioni
+        const { data, error } = await supabase.from('adults').select('*');
+        if (error) throw error;
+
+        if (data && data.length > 0) {
+            await db.adulti.clear(); // Sostituzione completa cache locale
+            await db.adulti.bulkAdd(data);
+            console.log(`Cache adulti aggiornata: ${data.length} record offline.`);
+        }
+    } catch (error) {
+        console.error('Errore sync adulti:', error);
+    }
+}
+

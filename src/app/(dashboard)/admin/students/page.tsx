@@ -1,27 +1,34 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Search, Filter, UserPlus, Users, LayoutGrid, List, FileDown, MoreHorizontal, CheckCircle2 } from 'lucide-react';
+import { Search, Filter, UserPlus, Users, LayoutGrid, List, FileDown, MoreHorizontal, CheckCircle2, GraduationCap, Briefcase } from 'lucide-react';
 import { StudentTable } from '@/components/features/admin/StudentTable';
 import { StudentDetailPanel } from '@/components/features/admin/StudentDetailPanel';
+import { ParentDetailPanel } from '@/components/features/admin/ParentDetailPanel';
 import { BulkAssignBar } from '@/components/features/admin/BulkAssignBar';
+import { SectionsView } from '@/components/features/admin/SectionsView';
 
 const SCUOLA_ID = '11111111-1111-1111-1111-111111111111';
 
 interface Student {
   id: string;
-  nome: string;
-  cognome: string;
-  data_nascita: string;
-  classe_sezione: string | null;
-  stato: string;
-  note_mediche: string | null;
-  codice_fiscale: string | null;
+  nome?: string;
+  cognome?: string;
+  first_name?: string;
+  last_name?: string;
+  data_nascita?: string;
+  classe_sezione?: string | null;
+  stato?: string;
+  note_mediche?: string | null;
+  codice_fiscale?: string | null;
+  fiscal_code?: string | null;
   bes?: boolean;
   note_bes?: string | null;
+  emails?: string[];
+  phone_numbers?: string[];
 }
 
-const AVAILABLE_CLASSES = ['Girasoli', 'Margherite', 'Tulipani', 'Coccinelle', 'Leoni', 'Delfini'];
+
 
 export default function AdminStudentsPage() {
   const [students, setStudents] = useState<Student[]>([]);
@@ -30,6 +37,7 @@ export default function AdminStudentsPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterClass, setFilterClass] = useState('all');
   const [filterStatus, setFilterStatus] = useState('all');
+  const [viewType, setViewType] = useState<'child' | 'adult' | 'sections' | 'staff'>('child');
   
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
@@ -37,10 +45,23 @@ export default function AdminStudentsPage() {
   const [isAssigning, setIsAssigning] = useState(false);
   const [showToast, setShowToast] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
+  const [availableSections, setAvailableSections] = useState<{id: string, name: string, school_type: string}[]>([]);
+
+  // Carica sezioni disponibili
+  useEffect(() => {
+    fetch('/api/admin/sections').then(r => r.json()).then(d => { if (Array.isArray(d)) setAvailableSections(d); }).catch(() => {});
+  }, []);
 
   useEffect(() => {
-    fetchStudents();
-  }, []);
+    if (viewType === 'child') {
+      fetchStudents();
+    } else if (viewType === 'adult') {
+      fetchParents();
+    } else if (viewType === 'staff') {
+      fetchStaff();
+    }
+    // sections tab handles its own loading
+  }, [viewType]);
 
   useEffect(() => {
     let result = [...students];
@@ -48,22 +69,27 @@ export default function AdminStudentsPage() {
     if (searchTerm) {
       const search = searchTerm.toLowerCase();
       result = result.filter(s => 
-        s.nome.toLowerCase().includes(search) || 
-        s.cognome.toLowerCase().includes(search) ||
-        (s.codice_fiscale && s.codice_fiscale.toLowerCase().includes(search))
+        (s.nome && s.nome.toLowerCase().includes(search)) || 
+        (s.cognome && s.cognome.toLowerCase().includes(search)) ||
+        (s.first_name && s.first_name.toLowerCase().includes(search)) ||
+        (s.last_name && s.last_name.toLowerCase().includes(search)) ||
+        (s.codice_fiscale && s.codice_fiscale.toLowerCase().includes(search)) ||
+        (s.fiscal_code && s.fiscal_code.toLowerCase().includes(search))
       );
     }
     
-    if (filterClass !== 'all') {
-      result = result.filter(s => s.classe_sezione === filterClass);
-    }
-    
-    if (filterStatus !== 'all') {
-      result = result.filter(s => s.stato === filterStatus);
+    if (viewType === 'child') {
+      if (filterClass !== 'all') {
+        result = result.filter(s => s.classe_sezione === filterClass);
+      }
+      
+      if (filterStatus !== 'all') {
+        result = result.filter(s => s.stato === filterStatus);
+      }
     }
     
     setFilteredStudents(result);
-  }, [searchTerm, filterClass, filterStatus, students]);
+  }, [searchTerm, filterClass, filterStatus, students, viewType]);
 
   const fetchStudents = async () => {
     setIsLoading(true);
@@ -75,6 +101,37 @@ export default function AdminStudentsPage() {
       }
     } catch (err) {
       console.error('Errore caricamento alunni:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const fetchParents = async () => {
+    setIsLoading(true);
+    try {
+      const res = await fetch(`/api/admin/parents`);
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        setStudents(data);
+      }
+    } catch (err) {
+      console.error('Errore caricamento genitori:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const fetchStaff = async () => {
+    setIsLoading(true);
+    try {
+      const res = await fetch(`/api/admin/parents`);
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        // Filtra solo educatori e coordinatori (memorizzati in citizenship come workaround)
+        setStudents(data.filter((d: any) => ['educator', 'coordinator', 'admin'].includes(d.citizenship)));
+      }
+    } catch (err) {
+      console.error('Errore caricamento staff:', err);
     } finally {
       setIsLoading(false);
     }
@@ -110,6 +167,25 @@ export default function AdminStudentsPage() {
     } catch (err) {
       console.error('Errore:', err);
       showToastMsg('❌ Errore nel salvataggio');
+    }
+  };
+
+  const handleSaveParent = async (data: Partial<any> & { id: string }) => {
+    try {
+      const res = await fetch('/api/admin/parents', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) throw new Error('Errore salvataggio genitore');
+      
+      showToastMsg('✅ Anagrafica genitore aggiornata con successo');
+      if (viewType === 'adult') fetchParents();
+      else if (viewType === 'staff') fetchStaff();
+      setSelectedStudent(null);
+    } catch (err) {
+      console.error('Errore:', err);
+      showToastMsg('❌ Errore nel salvataggio genitore');
     }
   };
 
@@ -175,13 +251,13 @@ export default function AdminStudentsPage() {
   return (
     <div className="flex-1 flex flex-col p-6 max-w-6xl mx-auto w-full">
       {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
         <div>
           <h1 className="font-barlow font-black text-3xl text-kidville-green uppercase tracking-wide flex items-center gap-2">
-            <Users size={28} /> Anagrafica Alunni
+            <Users size={28} /> Anagrafica Generale
           </h1>
           <p className="font-maven text-gray-500 mt-1">
-            Gestione studenti, classi e dati medico-didattici
+            Gestione studenti, genitori e personale
           </p>
         </div>
         
@@ -189,13 +265,45 @@ export default function AdminStudentsPage() {
           <button className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-xl font-maven text-sm font-semibold text-gray-600 hover:border-kidville-green hover:text-kidville-green transition-colors">
             <FileDown size={16} /> Esporta
           </button>
-          <button className="flex items-center gap-2 px-4 py-2 bg-kidville-green text-kidville-yellow rounded-pill font-barlow font-black uppercase tracking-wide text-sm hover:opacity-90 transition-all shadow-md">
-            <UserPlus size={18} /> Nuovo Alunno
+          <button 
+            onClick={() => window.location.href = '/admin/students/new'}
+            className="flex items-center gap-2 px-4 py-2 bg-kidville-green text-kidville-yellow rounded-pill font-barlow font-black uppercase tracking-wide text-sm hover:opacity-90 transition-all shadow-md"
+          >
+            <UserPlus size={18} /> Nuovo {viewType === 'child' ? 'Alunno' : 'Genitore'}
           </button>
         </div>
       </div>
 
-      {/* Toolbar / Filtri */}
+      {/* Tipo Vista (Tabs) */}
+      <div className="flex gap-4 mb-6 border-b border-gray-200">
+        <button
+          className={`pb-3 px-2 font-barlow font-bold uppercase tracking-wide transition-colors flex items-center gap-1.5 ${viewType === 'child' ? 'text-kidville-green border-b-2 border-kidville-green' : 'text-gray-400 hover:text-gray-600'}`}
+          onClick={() => setViewType('child')}
+        >
+          <Users size={16} /> Alunni
+        </button>
+        <button
+          className={`pb-3 px-2 font-barlow font-bold uppercase tracking-wide transition-colors flex items-center gap-1.5 ${viewType === 'adult' ? 'text-kidville-green border-b-2 border-kidville-green' : 'text-gray-400 hover:text-gray-600'}`}
+          onClick={() => setViewType('adult')}
+        >
+          <Users size={16} /> Genitori
+        </button>
+        <button
+          className={`pb-3 px-2 font-barlow font-bold uppercase tracking-wide transition-colors flex items-center gap-1.5 ${viewType === 'sections' ? 'text-kidville-green border-b-2 border-kidville-green' : 'text-gray-400 hover:text-gray-600'}`}
+          onClick={() => setViewType('sections')}
+        >
+          <GraduationCap size={16} /> Sezioni
+        </button>
+        <button
+          className={`pb-3 px-2 font-barlow font-bold uppercase tracking-wide transition-colors flex items-center gap-1.5 ${viewType === 'staff' ? 'text-kidville-green border-b-2 border-kidville-green' : 'text-gray-400 hover:text-gray-600'}`}
+          onClick={() => setViewType('staff')}
+        >
+          <Briefcase size={16} /> Staff
+        </button>
+      </div>
+
+      {/* Toolbar / Filtri — nascosta per la tab Sezioni */}
+      {viewType !== 'sections' && (
       <div className="bg-white rounded-2xl p-4 shadow-sm mb-6 flex flex-col md:flex-row gap-4 items-center">
         {/* Search */}
         <div className="relative flex-1 w-full">
@@ -210,81 +318,107 @@ export default function AdminStudentsPage() {
         </div>
         
         {/* Filtro Classe */}
-        <div className="flex items-center gap-2 w-full md:w-auto">
-          <Filter size={16} className="text-gray-400" />
-          <select
-            value={filterClass}
-            onChange={e => setFilterClass(e.target.value)}
-            className="flex-1 md:w-40 border-2 border-gray-100 rounded-xl px-3 py-2 font-maven text-sm text-gray-600 focus:outline-none focus:border-kidville-green bg-white"
-          >
-            <option value="all">Tutte le classi</option>
-            {AVAILABLE_CLASSES.map(c => (
-              <option key={c} value={c}>{c}</option>
-            ))}
-            <option value="">Non assegnata</option>
-          </select>
-        </div>
+        {viewType === 'child' && (
+          <>
+            <div className="flex items-center gap-2 w-full md:w-auto">
+              <Filter size={16} className="text-gray-400" />
+              <select
+                value={filterClass}
+                onChange={e => setFilterClass(e.target.value)}
+                className="flex-1 md:w-40 border-2 border-gray-100 rounded-xl px-3 py-2 font-maven text-sm text-gray-600 focus:outline-none focus:border-kidville-green bg-white"
+              >
+                <option value="all">Tutte le classi</option>
+                {availableSections.map(s => (
+                  <option key={s.id} value={s.name}>{s.name}</option>
+                ))}
+                <option value="">Non assegnata</option>
+              </select>
+            </div>
 
-        {/* Filtro Stato */}
-        <select
-          value={filterStatus}
-          onChange={e => setFilterStatus(e.target.value)}
-          className="w-full md:w-40 border-2 border-gray-100 rounded-xl px-3 py-2 font-maven text-sm text-gray-600 focus:outline-none focus:border-kidville-green bg-white"
-        >
-          <option value="all">Tutti gli stati</option>
-          <option value="iscritto">Iscritto</option>
-          <option value="ritirato">Ritirato</option>
-          <option value="sospeso">Sospeso</option>
-        </select>
+            {/* Filtro Stato */}
+            <select
+              value={filterStatus}
+              onChange={e => setFilterStatus(e.target.value)}
+              className="w-full md:w-40 border-2 border-gray-100 rounded-xl px-3 py-2 font-maven text-sm text-gray-600 focus:outline-none focus:border-kidville-green bg-white"
+            >
+              <option value="all">Tutti gli stati</option>
+              <option value="iscritto">Iscritto</option>
+              <option value="ritirato">Ritirato</option>
+              <option value="sospeso">Sospeso</option>
+            </select>
+          </>
+        )}
       </div>
+      )}
 
-      {/* Statistiche rapide */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        <div className="bg-white p-4 rounded-2xl shadow-sm border-l-4 border-kidville-green">
-          <p className="font-maven text-xs text-gray-400 uppercase font-bold tracking-wider">Totale Alunni</p>
-          <p className="font-barlow font-black text-2xl text-kidville-green">{students.length}</p>
-        </div>
-        <div className="bg-white p-4 rounded-2xl shadow-sm border-l-4 border-emerald-500">
-          <p className="font-maven text-xs text-gray-400 uppercase font-bold tracking-wider">Iscritti</p>
-          <p className="font-barlow font-black text-2xl text-emerald-600">{students.filter(s => s.stato === 'iscritto').length}</p>
-        </div>
-        <div className="bg-white p-4 rounded-2xl shadow-sm border-l-4 border-amber-500">
-          <p className="font-maven text-xs text-gray-400 uppercase font-bold tracking-wider">Con BES</p>
-          <p className="font-barlow font-black text-2xl text-amber-600">{students.filter(s => s.bes).length}</p>
-        </div>
-        <div className="bg-white p-4 rounded-2xl shadow-sm border-l-4 border-red-500">
-          <p className="font-maven text-xs text-gray-400 uppercase font-bold tracking-wider">Con Allergie</p>
-          <p className="font-barlow font-black text-2xl text-red-600">{students.filter(s => s.note_mediche).length}</p>
-        </div>
-      </div>
+      {/* Content area — switch by viewType */}
+      {viewType === 'sections' ? (
+        <SectionsView onStudentClick={setSelectedStudent} />
+      ) : (
+        <>
+          {/* Statistiche rapide — solo per alunni */}
+          {viewType === 'child' && (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+              <div className="bg-white p-4 rounded-2xl shadow-sm border-l-4 border-kidville-green">
+                <p className="font-maven text-xs text-gray-400 uppercase font-bold tracking-wider">Totale Alunni</p>
+                <p className="font-barlow font-black text-2xl text-kidville-green">{students.length}</p>
+              </div>
+              <div className="bg-white p-4 rounded-2xl shadow-sm border-l-4 border-emerald-500">
+                <p className="font-maven text-xs text-gray-400 uppercase font-bold tracking-wider">Iscritti</p>
+                <p className="font-barlow font-black text-2xl text-emerald-600">{students.filter(s => s.stato === 'iscritto').length}</p>
+              </div>
+              <div className="bg-white p-4 rounded-2xl shadow-sm border-l-4 border-amber-500">
+                <p className="font-maven text-xs text-gray-400 uppercase font-bold tracking-wider">Con BES</p>
+                <p className="font-barlow font-black text-2xl text-amber-600">{students.filter(s => s.bes).length}</p>
+              </div>
+              <div className="bg-white p-4 rounded-2xl shadow-sm border-l-4 border-red-500">
+                <p className="font-maven text-xs text-gray-400 uppercase font-bold tracking-wider">Con Allergie</p>
+                <p className="font-barlow font-black text-2xl text-red-600">{students.filter(s => s.note_mediche).length}</p>
+              </div>
+            </div>
+          )}
 
-      {/* Tabella */}
-      <StudentTable
-        students={filteredStudents}
-        selectedIds={selectedIds}
-        onToggleSelect={handleToggleSelect}
-        onToggleSelectAll={handleToggleSelectAll}
-        onStudentClick={setSelectedStudent}
-      />
+          {/* Tabella */}
+          <StudentTable
+            students={filteredStudents}
+            selectedIds={selectedIds}
+            onToggleSelect={handleToggleSelect}
+            onToggleSelectAll={handleToggleSelectAll}
+            onStudentClick={setSelectedStudent}
+            currentTypeFilter={viewType === 'staff' ? 'adult' : viewType}
+          />
 
-      {/* Floating Bulk Bar */}
-      <BulkAssignBar
-        selectedCount={selectedIds.size}
-        availableClasses={AVAILABLE_CLASSES}
-        targetClass={targetClass}
-        onTargetClassChange={setTargetClass}
-        onAssign={handleBulkAssign}
-        onClear={() => setSelectedIds(new Set())}
-        isAssigning={isAssigning}
-      />
+          {/* Floating Bulk Bar */}
+          <BulkAssignBar
+            selectedCount={selectedIds.size}
+            availableClasses={availableSections.map(s => s.name)}
+            targetClass={targetClass}
+            onTargetClassChange={setTargetClass}
+            onAssign={handleBulkAssign}
+            onClear={() => setSelectedIds(new Set())}
+            isAssigning={isAssigning}
+          />
 
-      {/* Detail Panel */}
-      <StudentDetailPanel
-        student={selectedStudent}
-        onClose={() => setSelectedStudent(null)}
-        onSave={handleSaveStudent}
-        onDelete={handleDeleteStudent}
-      />
+        </>
+      )}
+
+      {/* Detail Panel - Renderizzato indipendentemente dalla tab attiva se selezionato */}
+      {selectedStudent && (
+          selectedStudent.nome || selectedStudent.cognome ? (
+              <StudentDetailPanel
+                student={selectedStudent}
+                onClose={() => setSelectedStudent(null)}
+                onSave={handleSaveStudent}
+                onDelete={handleDeleteStudent}
+              />
+          ) : (
+              <ParentDetailPanel
+                parentBasicInfo={selectedStudent as any}
+                onClose={() => setSelectedStudent(null)}
+                onSave={handleSaveParent}
+              />
+          )
+      )}
 
       {/* Toast */}
       {showToast && (

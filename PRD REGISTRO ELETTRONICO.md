@@ -1,5 +1,4 @@
 
-<<<<<<< HEAD
 > [!IMPORTANT]
 > ## 📊 Stato Implementazione e Architettura Database
 >
@@ -38,8 +37,6 @@
 > | **Modulistica** | ⬜ Da implementare | — | — |
 > | **Foto/Video** | ⬜ Da implementare | — | — |
 
-=======
->>>>>>> c8052de64cdd885c63ef18f35665661070fd1f8c
 # PRD - Kidville App: Modulo Anagrafica e Account Famiglia
 
 ## 1. Obiettivo del Modulo
@@ -96,24 +93,12 @@ genitore, è previsto un flusso di *Hard Delete* che rimuove fisicamente i dati 
 bypassando il normale "Soft Delete" applicato in fase di ritiro/sospensione.
 
 ## 5. Specifiche Architetturali e di Sincronizzazione
-<<<<<<< HEAD
 ***Moduli Coinvolti:** `src/app/(dashboard)/teacher/` (Pagine docente), `src/app/(dashboard)/parent/` (Pagine genitore), `src/app/api/` (API Routes server-side), `src/lib/supabase/` (Client DB).
 ***Database:** PostgreSQL. In fase demo il software si collega a **Supabase** (PostgreSQL gestito con API REST e Row Level Security). In produzione si collegherà a un **PostgreSQL self-hosted** sul server dell'istituto. Il cambio avviene modificando le variabili d'ambiente `NEXT_PUBLIC_SUPABASE_URL` e `NEXT_PUBLIC_SUPABASE_ANON_KEY` nel file `.env.local`.
 ***Flusso Dati:** Ogni operazione dell'insegnante (compilazione entrata, pranzo, nanna, bagno, attività) genera una chiamata API al server che esegue un **UPSERT** sulla tabella `eventi_diario`: se per quel bambino+tipo_evento+data esiste già un record, viene aggiornato (UPDATE); altrimenti viene creato (INSERT). La lettura degli alunni avviene tramite SELECT sulla tabella `alunni` filtrata per `classe_sezione`.
 ***Cloud Authentication:** Relazione rigorosa e vincolata. I genitori non dispongono di codici di auto-invito; è unicamente la Segreteria a creare il legame parent_id <-> student_id ed effettuare l'onboarding. L'autenticazione è gestita tramite **Supabase Auth** (`auth.users` + `auth.identities`) con email/password.
 ***Offline-First per Docenti:** Le anagrafiche degli studenti vengono salvate in un database locale IndexedDB (tramite **Dexie.js**) per permettere l'appello e il registro offline. Un **Sync Engine** personalizzato (`src/lib/offline/syncEngine.ts`) si occupa di allineare i dati locali con il database centrale PostgreSQL non appena il dispositivo torna online. Le fotografie e i media pesanti sono esclusi dal caching per minimizzare l'impatto sulla memoria del dispositivo.
 ***Multi-Tenant:** La proprietà `scuola_id` (Sede di appartenenza, FK verso tabella `schools`) è obbligatoria su ogni tabella radice (`utenti`, `alunni`), garantendo isolamento logico dei dati tra plessi diversi all'interno dello stesso ambiente Kidville.
-=======
-***Moduli Coinvolti:** lib/features/students/ (Models & Services), lib/features/admin/ (Screens),
-integrazione trasversale con lib/features/payments/.
-***Cloud Authentication:** Relazione rigorosa e vincolata. I genitori non dispongono di codici di
-auto-invito; è unicamente la Segreteria a creare il legame parent_id <-> student_id ed effettuare
-l'onboarding (gestito tramite backend e JWT o provider compatibile con PostgreSQL).
-***Offline-First per Docenti:** Le anagrafiche degli studenti (testo e dati critici) vengono salvate integralmente in un database locale sul dispositivo (es. SQLite o Isar) per permettere l'appello e il registro offline. Un motore di sincronizzazione personalizzato (Sync Engine) si occuperà di allineare i dati locali con il database centrale PostgreSQL non appena il dispositivo tornerà online. Le fotografie e i media pesanti sono esclusi dal caching per minimizzare l'impatto sulla memoria del dispositivo.
-***Multi-Tenant:** La proprietà branch_id (Sede di appartenenza) è obbligatoria su ogni
-documento radice, garantendo isolamento logico dei dati tra plessi diversi all'interno dello stesso
-ambiente Kidville.
->>>>>>> c8052de64cdd885c63ef18f35665661070fd1f8c
 
 ---
 
@@ -138,7 +123,6 @@ Il sistema gestisce i seguenti eventi, ciascuno con campi specifici:
 • Bagno / Igiene: Monitoraggio specifico di: Pipì, Cacca, Uso del Vasino (per potty training).
 
 ## 3. Esperienza Utente: Insegnante (Data-Entry)
-<<<<<<< HEAD
 ### 3.1 Operatività e Velocità — Flusso Event-First + Bottom Sheet
 Il data-entry segue un flusso sequenziale in **due step** per ridurre gli errori cognitivi:
 - **Step 1 — Selezione Tipo di Evento:** La schermata principale mostra esclusivamente una griglia di pulsanti grandi e touch-friendly, uno per ciascun tipo di routine (Entrata, Attività, Merenda, Pranzo, Nanna, Sveglia, Bagno). La lista degli alunni non è visibile in questa fase.
@@ -155,12 +139,6 @@ Il data-entry segue un flusso sequenziale in **due step** per ridurre gli errori
 - **Sveglia (Fine Nanna):** Campo orario di fine riposo per ogni bambino.
 - **Bagno/Igiene:** Due contatori cumulativi per bambino — **Pipì** (💧) e **Cacca** (💩) — con pulsanti + e − per incrementare/decrementare il conteggio. Il valore viene salvato come numero intero (es. "Pipì: 2, Cacca: 1").
 
-=======
-### 3.1 Operatività e Velocità
-• Filtro Presenze: Le sezioni di inserimento mostrano esclusivamente i bambini segnati come "Presenti" nel modulo Presenze. Gli assenti vengono rimossi automaticamente dalla lista per evitare errori di input.
-• Inserimento Massivo (Bulk): Possibilità di selezionare più bambini contemporaneamente dalla lista dei presenti per applicare la stessa azione (es. "Nanna per tutti" o "Tutti hanno mangiato tutto").
-• Note Libere: Ogni evento può essere integrato con note scritte a mano per una personalizzazione totale della comunicazione.
->>>>>>> c8052de64cdd885c63ef18f35665661070fd1f8c
 
 ### 3.2 Sicurezza e Validazione
 • Dashboard Allergie: Fin dal mattino, la dashboard dell'insegnante evidenzia le allergie/intolleranze del giorno.
@@ -189,7 +167,6 @@ Il data-entry segue un flusso sequenziale in **due step** per ridurre gli errori
 • Timestamp Offline: In caso di assenza di rete, il sistema registra l'orario effettivo in cui l'evento è accaduto (timestamp manuale o di inserimento locale) e lo sincronizza appena la connessione viene ripristinata.
 • Disaccoppiamento Mensa: L'inserimento del consumo del pasto nel diario è logicamente separato dallo scalo del ticket mensa nel modulo pagamenti.
 
-<<<<<<< HEAD
 > [!NOTE]
 > ### Stato Implementazione Diario 0-6
 > **Implementato e operativo:**
@@ -214,8 +191,6 @@ Il data-entry segue un flusso sequenziale in **due step** per ridurre gli errori
 > - ⚠️ Le note libere per evento non sono ancora esposte nell'interfaccia (il campo `nota_libera` esiste nel DB)
 > - ⚠️ La timeline genitore (§4) non è ancora implementata
 
-=======
->>>>>>> c8052de64cdd885c63ef18f35665661070fd1f8c
 ---
 
 # PRD - Kidville App: Modulo Armadietto (Gestione Materiale Scolastico)

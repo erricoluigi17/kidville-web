@@ -131,6 +131,32 @@ export interface Database {
           pubblicato?: boolean
         }
       }
+      armadietto: {
+        Row: {
+          id: string
+          alunno_id: string
+          materiale: string
+          quantita: number
+          date: string
+          portato: boolean
+          created_at: string | null
+        }
+        Insert: {
+          id?: string
+          alunno_id: string
+          materiale: string
+          quantita?: number
+          date?: string
+          portato?: boolean
+          created_at?: string | null
+        }
+        Update: {
+          materiale?: string
+          quantita?: number
+          date?: string
+          portato?: boolean
+        }
+      }
     }
   }
 }

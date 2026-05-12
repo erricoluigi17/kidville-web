@@ -1,15 +1,32 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { ShoppingBag, CheckCircle2, Clock, ChevronDown, Package, Bell } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import {
+    ShoppingBag, CheckCircle2, Clock, ChevronDown, Package, Bell,
+    Table2, ChevronLeft, ChevronRight, RefreshCw, Zap,
+} from 'lucide-react';
+import {
+    MonthlyLockerTable,
+    type StudentInfo,
+} from '@/components/features/teacher/locker/MonthlyLockerTable';
 
 // In produzione, questi verranno dal contesto auth
-const ALUNNO_ID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'; // Sofia Esposito (dev)
+const ALUNNO_ID   = '28dbe4fc-a231-4b57-ab03-c7f205644205'; // Francesca Russo (ID corretto)
+const CHILD_NAME  = 'Francesca';
 
 interface InventoryItem {
-    id: string;
+    id?: string;
+    alunno_id?: string;
+    materiale: string;
     quantita: number;
-    locker_catalog: {
+    quantita_residua?: number;
+    livello_allerta?: number;
+    livello_emergenza?: number;
+    nome_oggetto?: string;
+    date?: string;
+    portato?: boolean;
+    // Legacy join structure (potrebbe non essere presente nello schema flat)
+    locker_catalog?: {
         id: string;
         nome: string;
         icona: string;
@@ -61,38 +78,121 @@ function getSemaforoUI(qty: number, gialla: number, rossa: number) {
     };
 }
 
+// ── Helper mesi ───────────────────────────────────────────────────────────────
+
+function currentYearMonth(): string {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+function prevMonth(ym: string): string {
+    const [y, m] = ym.split('-').map(Number);
+    const d = new Date(y, m - 2, 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+function nextMonth(ym: string): string {
+    const [y, m] = ym.split('-').map(Number);
+    const d = new Date(y, m, 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 export default function ParentLockerPage() {
-    const [inventory, setInventory] = useState<InventoryItem[]>([]);
-    const [requests, setRequests] = useState<LockerRequest[]>([]);
-    const [isLoading, setIsLoading] = useState(true);
-    const [showHistory, setShowHistory] = useState(false);
-    const [savingId, setSavingId] = useState<string | null>(null);
-    const [showToast, setShowToast] = useState(false);
-    const [toastMessage, setToastMessage] = useState('');
+    const [activeTab, setActiveTab] = useState<'overview' | 'monthly'>('overview');
+    const [month, setMonth]         = useState(currentYearMonth());
 
-    useEffect(() => {
-        fetchData();
-    }, []);
+    const [stockData, setStockData]   = useState<{ materiale: string; stock: number }[]>([]);
+    const [requests, setRequests]     = useState<LockerRequest[]>([]);
+    const [monthlyData, setMonthlyData] = useState<StudentInfo[]>([]);
 
-    const fetchData = async () => {
-        setIsLoading(true);
+    const [isLoading, setIsLoading]               = useState(true);
+    const [isMonthlyLoading, setIsMonthlyLoading] = useState(false);
+    const [showHistory, setShowHistory]           = useState(false);
+    const [savingId, setSavingId]                 = useState<string | null>(null);
+    const [showToast, setShowToast]               = useState(false);
+    const [toastMessage, setToastMessage]         = useState('');
+    const [lastUpdated, setLastUpdated]           = useState<Date | null>(null);
+    const [realtimePulse, setRealtimePulse]       = useState(false);
+    const prevStockRef = useRef<string>('');
+
+    // ── Fetch overview (usa mode=stock per numeri precisi) ──────────────────────────────
+    const fetchData = useCallback(async (silent = false) => {
+        if (!silent) setIsLoading(true);
         try {
-            const [invRes, reqRes] = await Promise.all([
-                fetch(`/api/locker/inventory?alunno_id=${ALUNNO_ID}`),
+            // mode=stock: ritorna [{materiale, stock}] con stock aggregato reale
+            const [stockRes, reqRes] = await Promise.all([
+                fetch(`/api/locker/inventory?alunno_id=${ALUNNO_ID}&mode=stock`),
                 fetch(`/api/locker/requests?alunno_id=${ALUNNO_ID}`),
             ]);
-
-            const invData = await invRes.json();
+            
+            const stockJson = await stockRes.json();
             const reqData = await reqRes.json();
 
-            if (Array.isArray(invData)) setInventory(invData);
+            if (Array.isArray(stockJson)) {
+                const signature = JSON.stringify(stockJson);
+                // Lampeggia solo se i dati sono EFFETTIVAMENTE cambiati
+                if (signature !== prevStockRef.current) {
+                    prevStockRef.current = signature;
+                    setLastUpdated(new Date());
+                    setRealtimePulse(true);
+                    setTimeout(() => setRealtimePulse(false), 2000);
+                }
+                setStockData(stockJson);
+            }
             if (Array.isArray(reqData)) setRequests(reqData);
         } catch (err) {
             console.error('Errore caricamento:', err);
         } finally {
-            setIsLoading(false);
+            if (!silent) setIsLoading(false);
+        }
+    }, []);
+
+    // ── Fetch tabella mensile (solo per il figlio corrente) ───────────────────
+    const fetchMonthly = async (ym: string) => {
+        setIsMonthlyLoading(true);
+        try {
+            // mode=carico → solo giorni in cui il genitore ha consegnato
+            const res = await fetch(
+                `/api/locker/inventory?alunno_id=${ALUNNO_ID}&mode=carico&month=${ym}`
+            );
+            const data = await res.json();
+            if (Array.isArray(data)) {
+                setMonthlyData([
+                    {
+                        id: ALUNNO_ID,
+                        nome: CHILD_NAME,
+                        cognome: '',
+                        inventario: data.map((item: any) => ({
+                            id:        item.nome_oggetto + item.date,
+                            alunno_id: ALUNNO_ID,
+                            materiale: item.materiale ?? item.nome_oggetto ?? '',
+                            quantita:  item.quantita ?? 0,
+                            date:      item.date ?? '',
+                            portato:   true, // mode=carico, quindi sempre true
+                        })),
+                    },
+                ]);
+            }
+        } catch (err) {
+            console.error('Errore caricamento mensile:', err);
+        } finally {
+            setIsMonthlyLoading(false);
         }
     };
+
+    useEffect(() => { fetchData(); }, [fetchData]);
+    useEffect(() => {
+        if (activeTab === 'monthly') fetchMonthly(month);
+    }, [activeTab, month]);
+
+    // ── Polling: aggiornamento ogni 20 secondi (affidabile, funziona sempre) ─────────
+    useEffect(() => {
+        const interval = setInterval(() => {
+            fetchData(true); // silent=true: non mostra spinner
+            if (activeTab === 'monthly') fetchMonthly(month);
+        }, 20_000); // ogni 20 secondi
+        return () => clearInterval(interval);
+    }, [fetchData, activeTab, month]);
 
     const handleAcknowledge = async (requestId: string) => {
         setSavingId(requestId);
@@ -119,9 +219,9 @@ export default function ParentLockerPage() {
         setTimeout(() => setShowToast(false), 2500);
     };
 
-    const pendingRequests = requests.filter(r => r.stato === 'pending');
+    const pendingRequests     = requests.filter(r => r.stato === 'pending');
     const acknowledgedRequests = requests.filter(r => r.stato === 'acknowledged');
-    const completedRequests = requests.filter(r => r.stato === 'fulfilled');
+    const completedRequests   = requests.filter(r => r.stato === 'fulfilled');
 
     if (isLoading) {
         return (
@@ -133,169 +233,258 @@ export default function ParentLockerPage() {
     }
 
     return (
-        <div className="max-w-lg mx-auto p-4 sm:p-6">
-            {/* Header */}
-            <div className="mb-6">
+        <div className="max-w-2xl mx-auto p-4 sm:p-6">
+            {/* ── Header ── */}
+            <div className="flex items-center justify-between mb-2">
                 <h1 className="font-barlow font-black text-3xl text-kidville-green uppercase tracking-wide flex items-center gap-2">
                     <ShoppingBag size={28} /> Armadietto
                 </h1>
-                <p className="font-maven text-gray-500 mt-1">
-                    Materiale scolastico di Sofia
-                </p>
+                <div className="flex items-center gap-2">
+                    {/* Badge LIVE */}
+                    <span className={`flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-bold transition-all
+                        ${realtimePulse ? 'bg-emerald-500 text-white scale-110' : 'bg-emerald-100 text-emerald-600'}`}>
+                        <Zap size={10} className={realtimePulse ? 'animate-bounce' : ''} /> LIVE
+                    </span>
+                    <button
+                        onClick={() => { fetchData(); if (activeTab === 'monthly') fetchMonthly(month); }}
+                        className="p-2 rounded-xl text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+                        title="Aggiorna">
+                        <RefreshCw size={16} />
+                    </button>
+                </div>
             </div>
-
-            {/* Richieste Pendenti (alert) */}
-            {pendingRequests.length > 0 && (
-                <div className="mb-6">
-                    <div className="flex items-center gap-2 mb-3">
-                        <Bell size={16} className="text-red-500" />
-                        <h2 className="font-barlow font-bold text-kidville-green uppercase text-sm tracking-wide">
-                            Da portare a scuola
-                        </h2>
-                        <span className="bg-red-500 text-white text-xs font-bold w-5 h-5 rounded-full flex items-center justify-center">
-                            {pendingRequests.length}
-                        </span>
-                    </div>
-
-                    <div className="space-y-2">
-                        {pendingRequests.map(req => (
-                            <div
-                                key={req.id}
-                                className={`rounded-2xl border-2 p-4 ${
-                                    req.livello_alert === 'rosso'
-                                        ? 'bg-red-50 border-red-200'
-                                        : 'bg-amber-50 border-amber-200'
-                                }`}
-                            >
-                                <div className="flex items-center gap-3">
-                                    <div className="w-12 h-12 rounded-2xl bg-white flex items-center justify-center text-2xl shadow-sm">
-                                        {req.locker_catalog.icona}
-                                    </div>
-                                    <div className="flex-1">
-                                        <p className="font-maven font-bold text-kidville-green">
-                                            {req.locker_catalog.nome}
-                                        </p>
-                                        <p className={`font-maven text-sm ${
-                                            req.livello_alert === 'rosso' ? 'text-red-600' : 'text-amber-600'
-                                        }`}>
-                                            {req.livello_alert === 'rosso' ? '🔴 Esaurito!' : '🟡 In esaurimento'} — Rimasti: {req.quantita_residua} {req.locker_catalog.unita}
-                                        </p>
-                                        <p className="font-maven text-xs text-gray-400 mt-0.5 flex items-center gap-1">
-                                            <Clock size={10} />
-                                            {new Date(req.creato_il).toLocaleDateString('it-IT', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
-                                        </p>
-                                    </div>
-                                </div>
-                                <button
-                                    onClick={() => handleAcknowledge(req.id)}
-                                    disabled={savingId === req.id}
-                                    className="w-full mt-3 h-11 rounded-pill bg-kidville-green text-kidville-yellow font-barlow font-black uppercase tracking-wide hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50 flex items-center justify-center gap-2"
-                                >
-                                    {savingId === req.id ? (
-                                        <div className="w-4 h-4 border-2 border-kidville-yellow/40 border-t-kidville-yellow rounded-full animate-spin" />
-                                    ) : (
-                                        <>
-                                            <CheckCircle2 size={16} />
-                                            Preso in carico
-                                        </>
-                                    )}
-                                </button>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            )}
-
-            {/* Richieste Prese in Carico */}
-            {acknowledgedRequests.length > 0 && (
-                <div className="mb-6">
-                    <h2 className="font-barlow font-bold text-kidville-green uppercase text-sm tracking-wide mb-3 flex items-center gap-2">
-                        <CheckCircle2 size={14} className="text-emerald-500" />
-                        Preso in carico
-                    </h2>
-                    <div className="space-y-2">
-                        {acknowledgedRequests.map(req => (
-                            <div key={req.id} className="rounded-2xl border-2 border-emerald-200 bg-emerald-50 p-3 flex items-center gap-3">
-                                <span className="text-xl">{req.locker_catalog.icona}</span>
-                                <div className="flex-1">
-                                    <p className="font-maven font-bold text-sm text-kidville-green">{req.locker_catalog.nome}</p>
-                                    <p className="font-maven text-xs text-emerald-600">
-                                        ✅ Portare a scuola — Preso il {new Date(req.preso_in_carico_il!).toLocaleDateString('it-IT', { day: 'numeric', month: 'short' })}
-                                    </p>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            )}
-
-            {/* Panoramica inventario */}
-            <div className="mb-6">
-                <h2 className="font-barlow font-bold text-kidville-green uppercase text-sm tracking-wide mb-3 flex items-center gap-2">
-                    <Package size={14} />
-                    Situazione Materiale
-                </h2>
-
-                {inventory.length > 0 ? (
-                    <div className="grid grid-cols-2 gap-3">
-                        {inventory.map(item => {
-                            const cat = item.locker_catalog;
-                            const sem = getSemaforoUI(item.quantita, cat.soglia_gialla, cat.soglia_rossa);
-                            const maxBar = Math.max(cat.soglia_gialla * 4, item.quantita + 2);
-                            const pct = Math.min(100, (item.quantita / maxBar) * 100);
-
-                            return (
-                                <div key={item.id} className={`rounded-2xl border-2 ${sem.border} ${sem.bg} p-4 text-center`}>
-                                    <div className="text-3xl mb-2">{cat.icona}</div>
-                                    <p className="font-maven font-bold text-sm text-kidville-green mb-1">{cat.nome}</p>
-                                    <p className={`font-barlow font-black text-3xl ${sem.text}`}>
-                                        {item.quantita}
-                                    </p>
-                                    <p className="font-maven text-xs text-gray-400 mb-2">{cat.unita}</p>
-                                    {/* Mini barra */}
-                                    <div className="h-2 bg-white/60 rounded-full overflow-hidden">
-                                        <div className={`h-full ${sem.barColor} rounded-full transition-all duration-500`} style={{ width: `${pct}%` }} />
-                                    </div>
-                                    <p className={`font-maven text-xs mt-1 ${sem.text}`}>{sem.icon} {sem.label}</p>
-                                </div>
-                            );
-                        })}
-                    </div>
-                ) : (
-                    <div className="text-center py-8 bg-white rounded-2xl">
-                        <Package size={40} className="mx-auto text-gray-300 mb-2" />
-                        <p className="font-maven text-gray-400 text-sm">Nessun materiale tracciato</p>
-                    </div>
+            <div className="flex items-center justify-between mb-5">
+                <p className="font-maven text-gray-500">Materiale scolastico di {CHILD_NAME}</p>
+                {lastUpdated && (
+                    <p className="text-[10px] text-emerald-500 font-maven">
+                        Aggiornato alle {lastUpdated.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                    </p>
                 )}
             </div>
 
-            {/* Storico completate */}
-            {completedRequests.length > 0 && (
-                <div>
-                    <button
-                        onClick={() => setShowHistory(!showHistory)}
-                        className="flex items-center gap-2 mb-2"
-                    >
-                        <h2 className="font-barlow font-bold text-gray-400 uppercase text-sm tracking-wide">
-                            Storico richieste ({completedRequests.length})
-                        </h2>
-                        <ChevronDown size={14} className={`text-gray-400 transition-transform ${showHistory ? 'rotate-180' : ''}`} />
-                    </button>
+            {/* ── Tab switcher ── */}
+            <div className="flex bg-zinc-100 rounded-xl p-1 gap-1 mb-6 self-start w-fit">
+                <button
+                    id="tab-overview-btn"
+                    onClick={() => setActiveTab('overview')}
+                    className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold transition-all duration-200
+                                ${activeTab === 'overview'
+                                    ? 'bg-white shadow text-kidville-green'
+                                    : 'text-zinc-500 hover:text-zinc-700'}`}
+                >
+                    <Package size={14} /> Panoramica
+                </button>
+                <button
+                    id="tab-monthly-btn"
+                    onClick={() => setActiveTab('monthly')}
+                    className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold transition-all duration-200
+                                ${activeTab === 'monthly'
+                                    ? 'bg-white shadow text-kidville-green'
+                                    : 'text-zinc-500 hover:text-zinc-700'}`}
+                >
+                    <Table2 size={14} /> Andamento Mensile
+                </button>
+            </div>
 
-                    {showHistory && (
-                        <div className="space-y-1.5">
-                            {completedRequests.map(req => (
-                                <div key={req.id} className="rounded-xl bg-gray-50 px-3 py-2 flex items-center gap-3 opacity-60">
-                                    <span className="text-lg">{req.locker_catalog.icona}</span>
-                                    <div className="flex-1">
-                                        <p className="font-maven text-sm text-gray-500">{req.locker_catalog.nome}</p>
+            {/* ══════════════════════════════════════════════════════════ */}
+            {/* TAB: PANORAMICA                                           */}
+            {/* ══════════════════════════════════════════════════════════ */}
+            {activeTab === 'overview' && (
+                <>
+                    {/* Richieste Pendenti */}
+                    {pendingRequests.length > 0 && (
+                        <div className="mb-6">
+                            <div className="flex items-center gap-2 mb-3">
+                                <Bell size={16} className="text-red-500" />
+                                <h2 className="font-barlow font-bold text-kidville-green uppercase text-sm tracking-wide">
+                                    Da portare a scuola
+                                </h2>
+                                <span className="bg-red-500 text-white text-xs font-bold w-5 h-5 rounded-full flex items-center justify-center">
+                                    {pendingRequests.length}
+                                </span>
+                            </div>
+                            <div className="space-y-2">
+                                {pendingRequests.map(req => (
+                                    <div
+                                        key={req.id}
+                                        className={`rounded-2xl border-2 p-4 ${
+                                            req.livello_alert === 'rosso'
+                                                ? 'bg-red-50 border-red-200'
+                                                : 'bg-amber-50 border-amber-200'
+                                        }`}
+                                    >
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-12 h-12 rounded-2xl bg-white flex items-center justify-center text-2xl shadow-sm">
+                                                {req.locker_catalog.icona}
+                                            </div>
+                                            <div className="flex-1">
+                                                <p className="font-maven font-bold text-kidville-green">
+                                                    {req.locker_catalog.nome}
+                                                </p>
+                                                <p className={`font-maven text-sm ${
+                                                    req.livello_alert === 'rosso' ? 'text-red-600' : 'text-amber-600'
+                                                }`}>
+                                                    {req.livello_alert === 'rosso' ? '🔴 Esaurito!' : '🟡 In esaurimento'} — Rimasti: {req.quantita_residua} {req.locker_catalog.unita}
+                                                </p>
+                                                <p className="font-maven text-xs text-gray-400 mt-0.5 flex items-center gap-1">
+                                                    <Clock size={10} />
+                                                    {new Date(req.creato_il).toLocaleDateString('it-IT', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                                                </p>
+                                            </div>
+                                        </div>
+                                        <button
+                                            id={`acknowledge-${req.id}-btn`}
+                                            onClick={() => handleAcknowledge(req.id)}
+                                            disabled={savingId === req.id}
+                                            className="w-full mt-3 h-11 rounded-pill bg-kidville-green text-kidville-yellow font-barlow font-black uppercase tracking-wide hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                                        >
+                                            {savingId === req.id ? (
+                                                <div className="w-4 h-4 border-2 border-kidville-yellow/40 border-t-kidville-yellow rounded-full animate-spin" />
+                                            ) : (
+                                                <>
+                                                    <CheckCircle2 size={16} />
+                                                    Preso in carico
+                                                </>
+                                            )}
+                                        </button>
                                     </div>
-                                    <span className="font-maven text-xs text-gray-400">
-                                        {new Date(req.creato_il).toLocaleDateString('it-IT', { day: 'numeric', month: 'short' })}
-                                    </span>
-                                </div>
-                            ))}
+                                ))}
+                            </div>
                         </div>
+                    )}
+
+                    {/* Richieste Prese in Carico */}
+                    {acknowledgedRequests.length > 0 && (
+                        <div className="mb-6">
+                            <h2 className="font-barlow font-bold text-kidville-green uppercase text-sm tracking-wide mb-3 flex items-center gap-2">
+                                <CheckCircle2 size={14} className="text-emerald-500" />
+                                Preso in carico
+                            </h2>
+                            <div className="space-y-2">
+                                {acknowledgedRequests.map(req => (
+                                    <div key={req.id} className="rounded-2xl border-2 border-emerald-200 bg-emerald-50 p-3 flex items-center gap-3">
+                                        <span className="text-xl">{req.locker_catalog.icona}</span>
+                                        <div className="flex-1">
+                                            <p className="font-maven font-bold text-sm text-kidville-green">{req.locker_catalog.nome}</p>
+                                            <p className="font-maven text-xs text-emerald-600">
+                                                ✅ Portare a scuola — Preso il {new Date(req.preso_in_carico_il!).toLocaleDateString('it-IT', { day: 'numeric', month: 'short' })}
+                                            </p>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Situazione Materiale — usa stockData da mode=stock (numeri precisi) */}
+                    <div className="mb-6">
+                        <h2 className="font-barlow font-bold text-kidville-green uppercase text-sm tracking-wide mb-3 flex items-center gap-2">
+                            <Package size={14} /> Situazione Materiale
+                        </h2>
+                        {stockData.length > 0 ? (
+                            <div className="grid grid-cols-2 gap-3">
+                                {stockData.map(item => {
+                                    const n = item.materiale.toLowerCase();
+                                    const icona = n.includes('pannolin') ? '🧷'
+                                        : n.includes('salviet') ? '🧻'
+                                        : n.includes('crema')   ? '🧴'
+                                        : n.includes('cambio')  ? '👕' : '📦';
+                                    const gialla = 5, rossa = 2;
+                                    const qty = item.stock;
+                                    const sem = getSemaforoUI(qty, gialla, rossa);
+                                    const maxBar = Math.max(gialla * 4, qty + 2);
+                                    const pct = Math.min(100, (qty / maxBar) * 100);
+                                    return (
+                                        <div key={item.materiale} className={`rounded-2xl border-2 ${sem.border} ${sem.bg} p-4 text-center`}>
+                                            <div className="text-3xl mb-2">{icona}</div>
+                                            <p className="font-maven font-bold text-sm text-kidville-green mb-1">{item.materiale}</p>
+                                            <p className={`font-barlow font-black text-3xl ${sem.text}`}>{qty}</p>
+                                            <p className="font-maven text-xs text-gray-400 mb-2">pz</p>
+                                            <div className="h-2 bg-white/60 rounded-full overflow-hidden">
+                                                <div className={`h-full ${sem.barColor} rounded-full transition-all duration-700`}
+                                                    style={{ width: `${pct}%` }} />
+                                            </div>
+                                            <p className={`font-maven text-xs mt-1 ${sem.text}`}>{sem.icon} {sem.label}</p>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        ) : (
+                            <div className="text-center py-8 bg-white rounded-2xl">
+                                <Package size={40} className="mx-auto text-gray-300 mb-2" />
+                                <p className="font-maven text-gray-400 text-sm">Nessun materiale in stock</p>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Storico */}
+                    {completedRequests.length > 0 && (
+                        <div>
+                            <button
+                                id="toggle-history-btn"
+                                onClick={() => setShowHistory(!showHistory)}
+                                className="flex items-center gap-2 mb-2"
+                            >
+                                <h2 className="font-barlow font-bold text-gray-400 uppercase text-sm tracking-wide">
+                                    Storico richieste ({completedRequests.length})
+                                </h2>
+                                <ChevronDown size={14} className={`text-gray-400 transition-transform ${showHistory ? 'rotate-180' : ''}`} />
+                            </button>
+                            {showHistory && (
+                                <div className="space-y-1.5">
+                                    {completedRequests.map(req => (
+                                        <div key={req.id} className="rounded-xl bg-gray-50 px-3 py-2 flex items-center gap-3 opacity-60">
+                                            <span className="text-lg">{req.locker_catalog.icona}</span>
+                                            <div className="flex-1">
+                                                <p className="font-maven text-sm text-gray-500">{req.locker_catalog.nome}</p>
+                                            </div>
+                                            <span className="font-maven text-xs text-gray-400">
+                                                {new Date(req.creato_il).toLocaleDateString('it-IT', { day: 'numeric', month: 'short' })}
+                                            </span>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </>
+            )}
+
+            {/* ══════════════════════════════════════════════════════════ */}
+            {/* TAB: ANDAMENTO MENSILE                                    */}
+            {/* ══════════════════════════════════════════════════════════ */}
+            {activeTab === 'monthly' && (
+                <div className="bg-zinc-950 rounded-3xl p-5">
+                    {/* Navigazione mese */}
+                    <div className="flex items-center justify-between mb-5">
+                        <button
+                            id="parent-prev-month-btn"
+                            onClick={() => setMonth(m => prevMonth(m))}
+                            className="p-2 rounded-xl text-zinc-400 hover:text-white hover:bg-white/10 transition-all"
+                        >
+                            <ChevronLeft size={18} />
+                        </button>
+                        <span className="text-sm font-semibold text-zinc-300">Andamento mensile di {CHILD_NAME}</span>
+                        <button
+                            id="parent-next-month-btn"
+                            onClick={() => setMonth(m => nextMonth(m))}
+                            className="p-2 rounded-xl text-zinc-400 hover:text-white hover:bg-white/10 transition-all"
+                        >
+                            <ChevronRight size={18} />
+                        </button>
+                    </div>
+
+                    {isMonthlyLoading ? (
+                        <div className="flex items-center justify-center py-16 gap-3">
+                            <div className="w-6 h-6 border-2 border-violet-500/30 border-t-violet-500 rounded-full animate-spin" />
+                            <span className="text-zinc-500 text-sm">Caricamento...</span>
+                        </div>
+                    ) : (
+                        <MonthlyLockerTable
+                            students={monthlyData}
+                            month={month}
+                            hideStudentColumn={true}
+                        />
                     )}
                 </div>
             )}

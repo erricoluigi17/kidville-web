@@ -150,24 +150,19 @@ export async function syncLockerInventory(classeSezione: string) {
 
         if (!Array.isArray(data)) return;
 
-        // Salva in cache locale
+        // Salva in cache locale con schema v8
         for (const alunno of data) {
             if (!alunno.inventario) continue;
             for (const item of alunno.inventario) {
-                const catalog = item.locker_catalog;
-                if (!catalog) continue;
-
                 await db.armadietto.put({
-                    id: item.id,
-                    alunno_id: item.alunno_id,
-                    catalogo_id: item.catalogo_id,
-                    nome_materiale: catalog.nome,
-                    icona: catalog.icona,
-                    quantita: item.quantita,
-                    soglia_gialla: catalog.soglia_gialla,
-                    soglia_rossa: catalog.soglia_rossa,
+                    id: item.id ?? `${alunno.id}-${item.materiale}-${item.date ?? ''}`,
+                    alunno_id: item.alunno_id ?? alunno.id,
+                    materiale: item.materiale ?? 'Generico',
+                    quantita: item.quantita ?? 0,
+                    date: item.date ?? new Date().toISOString().slice(0, 10),
+                    portato: item.portato ?? true,
                     sync_status: 'synced',
-                    aggiornato_il: item.aggiornato_il,
+                    aggiornato_il: item.aggiornato_il ?? new Date().toISOString(),
                 });
             }
         }

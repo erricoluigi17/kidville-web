@@ -47,12 +47,10 @@ export interface LocalDelegate {
 export interface LocalLockerItem {
     id: string; // inventory row UUID
     alunno_id: string;
-    catalogo_id: string;
-    nome_materiale: string;
-    icona: string;
+    materiale: string;   // nome materiale (es. 'Pannolini', 'Crema')
     quantita: number;
-    soglia_gialla: number;
-    soglia_rossa: number;
+    date: string;        // YYYY-MM-DD — giorno di riferimento
+    portato: boolean;    // true = portato, false = non portato
     sync_status: 'synced' | 'pending' | 'error';
     aggiornato_il: string;
 }
@@ -133,6 +131,17 @@ db.version(7).stores({
     delegati: 'id, alunno_id',
     diario: 'id, alunno_id, classe_id, tipo_evento, timestamp_evento, sync_status',
     armadietto: 'id, alunno_id, catalogo_id, sync_status',
+    genitori: 'id, sync_status',
+    documenti_alunni: 'id, alunno_id, tipo_documento, sync_status',
+    adulti: 'id, role'
+});
+
+// v8: armadietto refactor — aggiunta colonne materiale e date per tracking mensile
+db.version(8).stores({
+    presenze: 'id, alunno_id, data, sync_status',
+    delegati: 'id, alunno_id',
+    diario: 'id, alunno_id, classe_id, tipo_evento, timestamp_evento, sync_status',
+    armadietto: 'id, alunno_id, materiale, date, sync_status',
     genitori: 'id, sync_status',
     documenti_alunni: 'id, alunno_id, tipo_documento, sync_status',
     adulti: 'id, role'

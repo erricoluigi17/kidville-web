@@ -1,7 +1,6 @@
 import Dexie, { type EntityTable } from 'dexie';
 
 export type DiaryEventType =
-    | 'entrata'
     | 'attivita'
     | 'merenda'
     | 'pranzo'
@@ -9,14 +8,18 @@ export type DiaryEventType =
     | 'nanna_fine'
     | 'bagno';
 
+/** Include 'entrata' per compatibilità con dati storici */
+export type DiaryEventTypeLegacy = DiaryEventType | 'entrata';
+
 export interface LocalDiaryEntry {
     id: string; // UUID client-side
     alunno_id: string;
     classe_id: string;
-    tipo_evento: DiaryEventType;
+    tipo_evento: DiaryEventTypeLegacy;
     timestamp_evento: string; // ISO String
     note: string | null;
     dettagli: Record<string, unknown> | null; // es. { quantita: 'meta' }
+    activity_description: string | null; // Testo libero attività
     sync_status: 'synced' | 'pending' | 'error';
     creato_il: string;
 }
@@ -115,6 +118,17 @@ db.version(5).stores({
 
 // v6: aggiunta adulti per refactoring Anagrafica
 db.version(6).stores({
+    presenze: 'id, alunno_id, data, sync_status',
+    delegati: 'id, alunno_id',
+    diario: 'id, alunno_id, classe_id, tipo_evento, timestamp_evento, sync_status',
+    armadietto: 'id, alunno_id, catalogo_id, sync_status',
+    genitori: 'id, sync_status',
+    documenti_alunni: 'id, alunno_id, tipo_documento, sync_status',
+    adulti: 'id, role'
+});
+
+// v7: aggiunta campo activity_description al diario (non indicizzato, solo schema interface)
+db.version(7).stores({
     presenze: 'id, alunno_id, data, sync_status',
     delegati: 'id, alunno_id',
     diario: 'id, alunno_id, classe_id, tipo_evento, timestamp_evento, sync_status',

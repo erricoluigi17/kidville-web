@@ -113,6 +113,7 @@ export async function syncPendingDiaryEntries() {
             timestamp_evento: entry.timestamp_evento,
             note: entry.note,
             dettagli: entry.dettagli,
+            activity_description: entry.activity_description,
             creato_il: entry.creato_il,
         }));
 

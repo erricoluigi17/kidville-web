@@ -3,8 +3,8 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { AlertTriangle, ChevronDown, Clock, Minus, Plus } from 'lucide-react';
-import { LocalDiaryEntry, DiaryEventType } from '@/lib/offline/db';
-import { EVENT_CONFIG, MEAL_QUANTITIES, BATHROOM_TYPES } from './eventConfig';
+import { LocalDiaryEntry, DiaryEventType, DiaryEventTypeLegacy } from '@/lib/offline/db';
+import { EVENT_CONFIG, getEventConfig, MEAL_QUANTITIES, BATHROOM_TYPES } from './eventConfig';
 
 // ─── Tipi ─────────────────────────────────────────────────────────────────────
 
@@ -83,31 +83,7 @@ const itemVariants = {
     exit:    { opacity: 0, y: -4, transition: { duration: 0.12 } },
 };
 
-// ─── Sub-sezioni inline ───────────────────────────────────────────────────────
 
-function EntrataSectionContent({
-    student,
-    studentState,
-    onTimeChange,
-}: {
-    student: Student;
-    studentState?: Record<string, unknown>;
-    onTimeChange: DiaryRowCallbacks['onTimeChange'];
-}) {
-    const orario = (studentState?.orario as string) ?? '';
-    return (
-        <motion.div variants={itemVariants} className="flex items-center gap-3 py-3 px-4">
-            <Clock size={14} className="text-amber-500 flex-shrink-0" />
-            <span className="font-maven text-sm text-kidville-green flex-1">Orario entrata</span>
-            <input
-                type="time"
-                value={orario}
-                onChange={e => onTimeChange(student.id, 'orario', e.target.value)}
-                className="border-2 border-gray-200 rounded-xl px-3 py-1.5 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
-            />
-        </motion.div>
-    );
-}
 
 function PranzoSectionContent({
     student,
@@ -279,8 +255,6 @@ function InlineSectionContent({
     callbacks: DiaryRowCallbacks;
 }) {
     switch (activeEvent) {
-        case 'entrata':
-            return <EntrataSectionContent student={student} studentState={studentState} onTimeChange={callbacks.onTimeChange} />;
         case 'pranzo':
             return <PranzoSectionContent student={student} studentState={studentState} onMealSelect={callbacks.onMealSelect} />;
         case 'merenda':
@@ -315,7 +289,7 @@ export function StudentDiaryRow({
 
     const hasAllergie = (student.allergie?.length ?? 0) > 0;
     const showAllergyWarning = isPranzoActive && hasAllergie;
-    const lastEventConfig = lastEntry ? EVENT_CONFIG[lastEntry.tipo_evento as DiaryEventType] : null;
+    const lastEventConfig = lastEntry ? getEventConfig(lastEntry.tipo_evento) : null;
     const isSaved = savedIds?.has(student.id) ?? false;
 
     // Se expandable, usa stato locale per la sezione aperta

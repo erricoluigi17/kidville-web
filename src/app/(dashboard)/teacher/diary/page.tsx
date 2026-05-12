@@ -1,55 +1,38 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { X, Plus, Minus, Clock, Users, WifiOff, ChevronDown, ChevronRight } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { X, Plus, Minus, Clock, Users, WifiOff, Moon, Sun } from 'lucide-react';
 import { DiaryEventType } from '@/lib/offline/db';
 import { EventTypeButton } from '@/components/features/teacher/diary/EventTypeButton';
 import { EVENT_CONFIG } from '@/components/features/teacher/diary/eventConfig';
+import { MealDetailInline } from '@/components/features/teacher/diary/MealDetailInline';
+import { ActivityDetailInline, ActivityItem } from '@/components/features/teacher/diary/ActivityDetailInline';
 
 interface Student { id: string; firstName: string; lastName: string; allergie: string[]; }
 
 const SEZIONE = 'Girasoli';
 const MAESTRA_ID = '22222222-2222-2222-2222-222222222222'; // dev default
 
-// Nomi reali dal modulo Mensa (in futuro da Supabase)
-const MOCK_MEAL_COURSES = [
-    { id: 'primo', nome: 'Pasta al Pomodoro', portata: 'Primo piatto', icon: '🍝' },
-    { id: 'secondo', nome: 'Pollo Arrosto', portata: 'Secondo piatto', icon: '🍗' },
-    { id: 'contorno', nome: 'Insalata Mista', portata: 'Contorno', icon: '🥗' },
-    { id: 'frutta', nome: 'Macedonia di Frutta', portata: 'Frutta', icon: '🍎' },
-];
-
-const MEAL_QUANTITIES = [
-    { value: 'niente', short: '✗' },
-    { value: 'poco', short: '¼' },
-    { value: 'meta', short: '½' },
-    { value: 'quasi', short: '¾' },
-    { value: 'tutto', short: '★' },
-];
-
-const PARTICIPATION_LEVELS = [
-    { value: 'non_fatta', label: 'Non fatta', bg: 'bg-red-100', text: 'text-red-700', border: 'border-red-200' },
-    { value: 'difficolta', label: 'Con difficoltà', bg: 'bg-orange-100', text: 'text-orange-700', border: 'border-orange-200' },
-    { value: 'aiuto', label: 'Con aiuto', bg: 'bg-yellow-100', text: 'text-yellow-700', border: 'border-yellow-200' },
-    { value: 'autonomia', label: 'In autonomia', bg: 'bg-emerald-100', text: 'text-emerald-700', border: 'border-emerald-200' },
-];
-
-// Nanna e Sveglia unificate in un unico pulsante "Nanna"
-const ALL_EVENT_TYPES: DiaryEventType[] = ['entrata', 'attivita', 'merenda', 'pranzo', 'nanna_inizio', 'bagno'];
+// Entrata rimossa — gestita dal modulo Presenze
+const ALL_EVENT_TYPES: DiaryEventType[] = ['attivita', 'merenda', 'pranzo', 'nanna_inizio', 'bagno'];
 
 function now() {
     const d = new Date();
     return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
+function todayISO() {
+    return new Date().toISOString().split('T')[0];
+}
+
 function buildInitialState(type: DiaryEventType, students: Student[]) {
     const state: Record<string, Record<string, unknown>> = {};
     students.forEach(s => {
-        if (type === 'entrata') state[s.id] = { orario: now() };
-        else if (type === 'attivita') state[s.id] = { partecipazione: null };
+        if (type === 'attivita') state[s.id] = { partecipazione: null };
         else if (type === 'pranzo') {
             const corsi: Record<string, string | null> = {};
-            MOCK_MEAL_COURSES.forEach(c => { corsi[c.id] = null; });
+            ['primo', 'secondo', 'contorno', 'frutta'].forEach(c => { corsi[c] = null; });
             state[s.id] = { corsi };
         } else if (type === 'merenda') {
             state[s.id] = { corsi: { merenda: null } };
@@ -64,26 +47,49 @@ function buildInitialState(type: DiaryEventType, students: Student[]) {
     return state;
 }
 
-function StudentAvatar({ student, meal = false }: { student: Student; meal?: boolean }) {
-    const hasAllergie = meal && student.allergie.length > 0;
-    return (
-        <div className={`w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center font-barlow font-bold text-xs ${hasAllergie ? 'bg-kidville-error text-white' : 'bg-kidville-cream text-kidville-green'}`}>
-            {student.firstName[0]}{student.lastName[0]}
-        </div>
-    );
-}
+// ─── Animazioni accordion ─────────────────────────────────────────────────────
+
+const sectionVariants = {
+    hidden: { opacity: 0, y: 12 },
+    visible: {
+        opacity: 1,
+        y: 0,
+        transition: {
+            duration: 0.3,
+            ease: [0.25, 0.46, 0.45, 0.94] as const,
+        },
+    },
+    exit: {
+        opacity: 0,
+        y: -8,
+        transition: {
+            duration: 0.2,
+            ease: [0.25, 0.46, 0.45, 0.94] as const,
+        },
+    },
+};
+
+const itemVariants = {
+    hidden: { opacity: 0, y: 8 },
+    visible: (i: number) => ({
+        opacity: 1,
+        y: 0,
+        transition: { delay: i * 0.04, duration: 0.25, ease: 'easeOut' as const },
+    }),
+};
+
+// ─── Componente Principale ────────────────────────────────────────────────────
 
 export default function TeacherDiaryPage() {
     const [students, setStudents] = useState<Student[]>([]);
-    const [selectedEvent, setSelectedEvent] = useState<DiaryEventType>('entrata');
-    const [isSheetOpen, setIsSheetOpen] = useState(false);
+    const [selectedEvent, setSelectedEvent] = useState<DiaryEventType | null>(null);
     const [studentStates, setStudentStates] = useState<Record<string, Record<string, unknown>>>({});
     const [isOffline, setIsOffline] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
-    const [expandedCourse, setExpandedCourse] = useState<string | null>('primo');
     const [savedStudentIds, setSavedStudentIds] = useState<Set<string>>(new Set());
     const [showSavedToast, setShowSavedToast] = useState(false);
+    const [activities, setActivities] = useState<ActivityItem[]>([]);
 
     // Carica studenti da Supabase all'avvio
     useEffect(() => {
@@ -109,10 +115,6 @@ export default function TeacherDiaryPage() {
                     allergie: a.note_mediche ? a.note_mediche.split(',').map((s: string) => s.trim()) : [],
                 }));
                 setStudents(mapped);
-                setStudentStates(buildInitialState('entrata', mapped));
-                // Ripristina dati salvati per entrata
-                restoreFromSupabase('entrata', mapped);
-                setTimeout(() => setIsSheetOpen(true), 120);
             }
         } catch (err) {
             console.error('Errore caricamento alunni:', err);
@@ -126,7 +128,7 @@ export default function TeacherDiaryPage() {
         const list = studentList ?? students;
         if (list.length === 0) { setSavedStudentIds(new Set()); return; }
         try {
-            const today = new Date().toISOString().split('T')[0];
+            const today = todayISO();
             const res = await fetch(`/api/diary/entries?sezione=${SEZIONE}&date=${today}`);
             const entries = await res.json();
             if (!Array.isArray(entries)) { setSavedStudentIds(new Set()); return; }
@@ -135,8 +137,8 @@ export default function TeacherDiaryPage() {
             if (filtered.length === 0) { setSavedStudentIds(new Set()); return; }
 
             // Per ogni studente, prendi l'ultimo salvataggio
-            const latestPerStudent: Record<string, { dettagli: Record<string, unknown> }> = {};
-            filtered.forEach((e: { alunno_id: string; orario_inizio: string; dettagli: Record<string, unknown> }) => {
+            const latestPerStudent: Record<string, { dettagli: Record<string, unknown>; activity_description?: string }> = {};
+            filtered.forEach((e: { alunno_id: string; orario_inizio: string; dettagli: Record<string, unknown>; activity_description?: string }) => {
                 if (!latestPerStudent[e.alunno_id] || e.orario_inizio > (latestPerStudent[e.alunno_id] as unknown as { orario_inizio: string }).orario_inizio) {
                     latestPerStudent[e.alunno_id] = e;
                 }
@@ -150,6 +152,33 @@ export default function TeacherDiaryPage() {
                     savedIds.add(studentId);
                 }
             });
+
+            // Ricostruisce activities[] con partecipazione per-studente dal primo entry trovato
+            if (eventType === 'attivita') {
+                const firstEntry = Object.values(latestPerStudent)[0] as { dettagli: Record<string, unknown> } | undefined;
+                const rawActs = firstEntry?.dettagli?.activities as Array<{
+                    tipo: string; descrizione: string; partecipazione?: string;
+                    studentPartecipazione?: Record<string, string | null>;
+                }> | undefined;
+
+                if (rawActs && rawActs.length > 0) {
+                    // Ricostruisce studentPartecipazione da tutti gli entry
+                    const reconstructed: ActivityItem[] = rawActs.map((a, aIdx) => {
+                        const sp: Record<string, string | null> = {};
+                        Object.entries(latestPerStudent).forEach(([sid, entry]) => {
+                            const eDet = (entry as { dettagli: Record<string, unknown> }).dettagli;
+                            const acts = eDet?.activities as Array<{ tipo: string; partecipazione?: string }> | undefined;
+                            sp[sid] = acts?.[aIdx]?.partecipazione ?? null;
+                        });
+                        return {
+                            tipo: a.tipo,
+                            descrizione: a.descrizione ?? '',
+                            studentPartecipazione: sp,
+                        };
+                    });
+                    setActivities(reconstructed);
+                }
+            }
             setStudentStates(newState);
             setSavedStudentIds(savedIds);
         } catch (err) {
@@ -158,13 +187,22 @@ export default function TeacherDiaryPage() {
         }
     };
 
-    const handleEventSelect = (type: DiaryEventType) => {
+    const handleEventSelect = async (type: DiaryEventType) => {
+        if (selectedEvent === type) {
+            setSelectedEvent(null);
+            return;
+        }
+        // Prima imposta il tipo e lo stato pulito
         setSelectedEvent(type);
-        setStudentStates(buildInitialState(type, students));
         setSavedStudentIds(new Set());
-        if (type === 'pranzo') setExpandedCourse('primo');
-        setIsSheetOpen(true);
-        restoreFromSupabase(type);
+        // Inizializza con una attività vuota, con partecipazione null per ogni studente
+        const initPart: Record<string, string | null> = {};
+        students.forEach(s => { initPart[s.id] = null; });
+        setActivities([{ tipo: 'pittura', descrizione: '', studentPartecipazione: initPart }]);
+        // Poi carica da Supabase (await per evitare race condition)
+        const initialState = buildInitialState(type, students);
+        setStudentStates(initialState);
+        await restoreFromSupabase(type);
     };
 
     const updateStudent = (id: string, updates: Record<string, unknown>) => {
@@ -185,14 +223,23 @@ export default function TeacherDiaryPage() {
     const handleSave = async () => {
         setIsSaving(true);
         try {
+            if (!selectedEvent) return;
             const nowIso = new Date().toISOString();
-            const payload = students.map(student => ({
-                alunno_id: student.id,
-                maestra_id: MAESTRA_ID,
-                tipo_evento: selectedEvent,
-                orario_inizio: nowIso,
-                dettagli: studentStates[student.id] ?? null,
-            }));
+            const payload = students.map(student => {
+                // Per ogni studente costruiamo il suo dettagli con la sua partecipazione per ogni attività
+                const studentActivities = activities.map(a => ({
+                    tipo: a.tipo,
+                    descrizione: a.descrizione,
+                    partecipazione: a.studentPartecipazione[student.id] ?? null,
+                }));
+                return {
+                    alunno_id: student.id,
+                    maestra_id: MAESTRA_ID,
+                    tipo_evento: selectedEvent,
+                    orario_inizio: nowIso,
+                    dettagli: { activities: studentActivities },
+                };
+            });
 
             const res = await fetch('/api/diary/entries', {
                 method: 'POST',
@@ -200,12 +247,22 @@ export default function TeacherDiaryPage() {
                 body: JSON.stringify(payload),
             });
 
-            if (!res.ok) {
+            // 200 = tutto ok, 207 = parzialmente salvato (es. colonna mancante ma righe inserite)
+            if (!res.ok && res.status !== 207) {
                 const err = await res.json();
                 throw new Error(err.error || 'Errore salvataggio');
             }
 
-            setSavedStudentIds(new Set(students.map(s => s.id)));
+            const result = await res.json();
+            // Conta quanti sono stati effettivamente salvati
+            const savedItems = Array.isArray(result) ? result : (result.saved ?? []);
+            const savedIds = new Set<string>(
+                savedItems
+                    .map((r: { alunno_id?: string }) => r.alunno_id)
+                    .filter(Boolean)
+            );
+            // Se nessuno ha un alunno_id nel result, segna tutti come salvati (upsert silent)
+            setSavedStudentIds(savedIds.size > 0 ? savedIds : new Set(students.map(s => s.id)));
             setShowSavedToast(true);
             setTimeout(() => setShowSavedToast(false), 2500);
         } catch (err) {
@@ -216,11 +273,7 @@ export default function TeacherDiaryPage() {
         }
     };
 
-    const cfg = EVENT_CONFIG[selectedEvent];
-    const isMeal = selectedEvent === 'pranzo' || selectedEvent === 'merenda';
-    const mealCourses = selectedEvent === 'merenda'
-        ? [{ id: 'merenda', nome: 'Merenda', portata: 'Merenda', icon: '🍎' }]
-        : MOCK_MEAL_COURSES;
+    const cfg = selectedEvent ? EVENT_CONFIG[selectedEvent] : null;
 
     if (isLoading) {
         return (
@@ -232,269 +285,264 @@ export default function TeacherDiaryPage() {
     }
 
     return (
-        <div className="max-w-2xl mx-auto p-4 sm:p-6">
+        <div className="w-full max-w-2xl mx-auto p-4 sm:p-6 pb-32">
 
             {/* Header */}
             <div className="flex items-start justify-between mb-6">
                 <div>
                     <h1 className="font-barlow font-black text-3xl text-kidville-green uppercase tracking-wide">Diario del Giorno</h1>
                     <p className="font-maven text-gray-500 mt-1 flex items-center gap-2">
-                        <Users size={15} />
+                        <Users size={15} strokeWidth={1.5} />
                         Sezione Girasoli • {new Date().toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' })}
                     </p>
                 </div>
                 {isOffline && (
                     <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 text-amber-600 px-3 py-1.5 rounded-full text-xs font-maven">
-                        <WifiOff size={12} /> Offline
+                        <WifiOff size={12} strokeWidth={1.5} /> Offline
                     </div>
                 )}
             </div>
 
-            {/* Griglia eventi */}
-            <div className="bg-white rounded-2xl p-4 shadow-sm">
+            {/* ── Griglia eventi ── */}
+            <div className="w-full bg-white/80 backdrop-blur-xl rounded-3xl p-4 shadow-sm border border-white/40">
                 <p className="font-barlow font-bold text-kidville-green uppercase text-xs tracking-wide mb-3">Cosa vuoi registrare?</p>
-                <div className="grid grid-cols-6 gap-2">
+                <div className="grid grid-cols-5 gap-2">
                     {ALL_EVENT_TYPES.map(type => (
-                        <div key={type} className={`rounded-xl transition-all ${selectedEvent === type && isSheetOpen ? 'ring-2 ring-kidville-green ring-offset-1' : ''}`}>
+                        <div
+                            key={type}
+                            className={`rounded-xl transition-all duration-200 ${
+                                selectedEvent === type
+                                    ? 'ring-2 ring-kidville-green ring-offset-2 scale-105 shadow-md'
+                                    : ''
+                            }`}
+                        >
                             <EventTypeButton type={type} disabled={false} onClick={handleEventSelect} />
                         </div>
                     ))}
                 </div>
             </div>
 
-            {/* ── BOTTOM SHEET ── */}
-            {isSheetOpen && (
-                <>
-                    <div className="fixed inset-0 z-40 bg-black/40 backdrop-blur-[1px]" onClick={() => setIsSheetOpen(false)} />
-
-                    <div className={`fixed bottom-0 left-0 right-0 z-50 flex flex-col bg-kidville-cream rounded-t-3xl shadow-2xl max-h-[88vh] transition-transform duration-300 ${isSheetOpen ? 'translate-y-0' : 'translate-y-full'}`}>
-
-                        {/* Handle + Header */}
-                        <div className="flex-shrink-0 pt-3">
-                            <div className="w-10 h-1 bg-gray-300 rounded-full mx-auto mb-3" />
-                            <div className="flex items-center justify-between px-5 pb-3 border-b border-gray-200">
+            {/* ── Sezione dettaglio inline (Accordion) ── */}
+            <AnimatePresence mode="wait">
+                {selectedEvent && cfg && (
+                    <motion.div
+                        key={`section-${selectedEvent}`}
+                        variants={sectionVariants}
+                        initial="hidden"
+                        animate="visible"
+                        exit="exit"
+                        className="w-full mt-4"
+                    >
+                        {/* Header sezione con glassmorphism */}
+                        <div className="w-full bg-white/70 backdrop-blur-2xl rounded-3xl border border-white/30 shadow-xl overflow-hidden">
+                            {/* Title bar */}
+                            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100/60">
                                 <div className="flex items-center gap-3">
-                                    <span className="text-2xl">{cfg.emoji}</span>
-                                    <h2 className="font-barlow font-black text-xl text-kidville-green uppercase tracking-wide">{cfg.label}</h2>
+                                    <div className={`w-10 h-10 rounded-2xl flex items-center justify-center text-xl ${cfg.color} border ${cfg.accentColor.split(' ').find(c => c.startsWith('border-')) ?? ''}`}>
+                                        {cfg.emoji}
+                                    </div>
+                                    <div>
+                                        <h2 className="font-barlow font-black text-lg text-kidville-green uppercase tracking-wide">{cfg.label}</h2>
+                                        <p className="font-maven text-[11px] text-gray-400">{students.length} bambini • {todayISO()}</p>
+                                    </div>
                                 </div>
-                                <button onClick={() => setIsSheetOpen(false)} className="w-8 h-8 rounded-full bg-white flex items-center justify-center text-gray-400 hover:text-gray-600 shadow-sm">
-                                    <X size={16} />
+                                <button
+                                    onClick={() => setSelectedEvent(null)}
+                                    className="w-8 h-8 rounded-xl bg-gray-100/80 hover:bg-gray-200/80 flex items-center justify-center text-gray-400 hover:text-gray-600 transition-colors"
+                                >
+                                    <X size={14} strokeWidth={1.5} />
                                 </button>
                             </div>
-                            {/* Allergie alert */}
-                            {isMeal && students.some(s => s.allergie.length > 0) && (
-                                <div className="mx-4 mt-2.5 p-2.5 rounded-xl bg-kidville-error/10 border border-kidville-error/20">
-                                    <p className="font-barlow font-bold text-kidville-error uppercase text-xs tracking-wide">⚠️ Allergie — {students.filter(s => s.allergie.length > 0).map(s => `${s.firstName}: ${s.allergie.join(', ')}`).join(' • ')}</p>
-                                </div>
-                            )}
-                        </div>
 
-                        {/* Scrollable list */}
-                        <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2">
+                            {/* Contenuto sezione */}
+                            <div className="p-4 space-y-2">
+                                {/* ── ATTIVITÀ ── */}
+                                {selectedEvent === 'attivita' && (
+                                    <ActivityDetailInline
+                                        students={students}
+                                        activities={activities}
+                                        onActivitiesChange={setActivities}
+                                        savedStudentIds={savedStudentIds}
+                                    />
+                                )}
 
-                            {/* ENTRATA */}
-                            {selectedEvent === 'entrata' && students.map(student => (
-                                <div key={student.id} className="bg-white rounded-xl px-4 py-3 flex items-center gap-3 shadow-sm">
-                                    <StudentAvatar student={student} />
-                                    <span className="flex-1 font-maven font-medium text-sm text-kidville-green">
-                                        {student.firstName} {student.lastName}
-                                        {savedStudentIds.has(student.id) && <span className="ml-1.5 text-emerald-500">✅</span>}
-                                    </span>
-                                    <div className="flex items-center gap-2">
-                                        <Clock size={13} className="text-gray-400" />
-                                        <input
-                                            type="time"
-                                            value={(studentStates[student.id]?.orario as string) ?? now()}
-                                            onChange={e => updateStudent(student.id, { orario: e.target.value })}
-                                            className="border-2 border-gray-200 rounded-xl px-2 py-1 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
-                                        />
-                                    </div>
-                                </div>
-                            ))}
+                                {/* ── PRANZO / MERENDA ── */}
+                                {(selectedEvent === 'pranzo' || selectedEvent === 'merenda') && (
+                                    <MealDetailInline
+                                        students={students}
+                                        studentStates={studentStates}
+                                        onMealSelect={updateMealCourse}
+                                        date={todayISO()}
+                                        classId={SEZIONE}
+                                        savedStudentIds={savedStudentIds}
+                                        isMerenda={selectedEvent === 'merenda'}
+                                    />
+                                )}
 
-                            {/* ATTIVITÀ */}
-                            {selectedEvent === 'attivita' && students.map(student => {
-                                const sel = studentStates[student.id]?.partecipazione as string | null;
-                                return (
-                                    <div key={student.id} className="bg-white rounded-xl px-4 py-3 shadow-sm">
-                                        <div className="flex items-center gap-3 mb-2">
-                                            <StudentAvatar student={student} />
-                                            <span className="font-maven font-medium text-sm text-kidville-green">
-                                                {student.firstName} {student.lastName}
-                                                {savedStudentIds.has(student.id) && <span className="ml-1.5 text-emerald-500">✅</span>}
-                                            </span>
-                                        </div>
-                                        <div className="grid grid-cols-2 gap-1.5">
-                                            {PARTICIPATION_LEVELS.map(lv => (
-                                                <button
-                                                    key={lv.value}
-                                                    onClick={() => updateStudent(student.id, { partecipazione: sel === lv.value ? null : lv.value })}
-                                                    className={`py-2 rounded-xl border-2 text-xs font-maven font-semibold transition-all ${sel === lv.value ? `${lv.bg} ${lv.text} ${lv.border}` : 'bg-gray-50 text-gray-400 border-gray-100'}`}
-                                                >
-                                                    {lv.label}
-                                                </button>
-                                            ))}
-                                        </div>
-                                    </div>
-                                );
-                            })}
-
-                            {/* PRANZO / MERENDA — accordion per portata */}
-                            {isMeal && mealCourses.map(corso => {
-                                const isOpen = expandedCourse === corso.id;
-                                return (
-                                    <div key={corso.id} className="bg-white rounded-2xl overflow-hidden shadow-sm">
-                                        <button
-                                            onClick={() => setExpandedCourse(isOpen ? null : corso.id)}
-                                            className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 transition-colors"
+                                {/* ── NANNA ── */}
+                                {selectedEvent === 'nanna_inizio' && students.map((student, idx) => {
+                                    const state = studentStates[student.id] ?? {};
+                                    const isSaved = savedStudentIds.has(student.id);
+                                    return (
+                                        <motion.div
+                                            key={student.id}
+                                            custom={idx}
+                                            variants={itemVariants}
+                                            initial="hidden"
+                                            animate="visible"
+                                            className="bg-white/80 backdrop-blur-xl rounded-2xl border border-white/40 shadow-sm px-4 py-3"
                                         >
-                                            <span className="text-xl">{corso.icon}</span>
-                                            <div className="flex-1 text-left">
-                                                <p className="font-maven font-bold text-sm text-kidville-green">{corso.nome}</p>
-                                                <p className="font-maven text-xs text-gray-400">{corso.portata}</p>
+                                            <div className="flex items-center gap-3 mb-3">
+                                                <div className="w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center font-barlow font-bold text-xs bg-kidville-cream text-kidville-green">
+                                                    {student.firstName[0]}{student.lastName[0]}
+                                                </div>
+                                                <span className="font-maven font-medium text-sm text-kidville-green flex-1">
+                                                    {student.firstName} {student.lastName}
+                                                    {isSaved && <span className="ml-1.5 text-emerald-500">✅</span>}
+                                                </span>
                                             </div>
-                                            {/* Conteggio compilati */}
-                                            {(() => {
-                                                const filled = students.filter(s => {
-                                                    const c = studentStates[s.id]?.corsi as Record<string, string | null>;
-                                                    return c?.[corso.id] != null;
-                                                }).length;
-                                                return filled > 0 ? (
-                                                    <span className="text-xs font-maven font-bold text-kidville-green bg-kidville-cream px-2 py-0.5 rounded-full mr-1">{filled}/{students.length}</span>
-                                                ) : null;
-                                            })()}
-                                            {isOpen ? <ChevronDown size={16} className="text-gray-400" /> : <ChevronRight size={16} className="text-gray-400" />}
-                                        </button>
+                                            <div className="grid grid-cols-2 gap-3">
+                                                <div>
+                                                    <div className="flex items-center gap-1.5 mb-1.5">
+                                                        <Moon size={12} className="text-blue-400" strokeWidth={1.5} />
+                                                        <p className="font-maven text-xs text-gray-500">Si addormenta</p>
+                                                    </div>
+                                                    <input
+                                                        type="time"
+                                                        value={(state.orario_inizio as string) ?? ''}
+                                                        onChange={e => updateStudent(student.id, { orario_inizio: e.target.value })}
+                                                        className="w-full border-2 border-gray-200/60 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white/60 focus:outline-none focus:ring-2 focus:ring-blue-300/40 focus:border-blue-300/60 transition-all"
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <div className="flex items-center gap-1.5 mb-1.5">
+                                                        <Sun size={12} className="text-yellow-500" strokeWidth={1.5} />
+                                                        <p className="font-maven text-xs text-gray-500">Si sveglia</p>
+                                                    </div>
+                                                    <input
+                                                        type="time"
+                                                        value={(state.orario_fine as string) ?? ''}
+                                                        onChange={e => updateStudent(student.id, { orario_fine: e.target.value })}
+                                                        className="w-full border-2 border-gray-200/60 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white/60 focus:outline-none focus:ring-2 focus:ring-yellow-300/40 focus:border-yellow-300/60 transition-all"
+                                                    />
+                                                </div>
+                                            </div>
+                                        </motion.div>
+                                    );
+                                })}
 
-                                        {isOpen && (
-                                            <div className="border-t border-gray-100 divide-y divide-gray-50">
-                                                {students.map(student => {
-                                                    const corsi = studentStates[student.id]?.corsi as Record<string, string | null>;
-                                                    const selQ = corsi?.[corso.id];
-                                                    const hasAllergie = student.allergie.length > 0;
-                                                    return (
-                                                        <div key={student.id} className={`flex items-center gap-2 px-4 py-2.5 ${hasAllergie ? 'bg-kidville-error/5' : ''}`}>
-                                                            <span className={`font-maven text-sm font-medium flex-shrink-0 w-24 truncate ${hasAllergie ? 'text-kidville-error' : 'text-kidville-green'}`}>
-                                                                {student.firstName} {hasAllergie ? '⚠️' : ''}
-                                                            </span>
-                                                            <div className="flex gap-1 flex-1">
-                                                                {MEAL_QUANTITIES.map(q => (
-                                                                    <button
-                                                                        key={q.value}
-                                                                        onClick={() => updateMealCourse(student.id, corso.id, selQ === q.value ? null : q.value)}
-                                                                        className={`flex-1 py-2 rounded-lg text-xs font-bold border-2 transition-all ${selQ === q.value ? 'bg-kidville-green text-kidville-yellow border-kidville-green' : 'bg-gray-50 text-gray-400 border-gray-100 hover:border-gray-300'}`}
-                                                                    >
-                                                                        {q.short}
-                                                                    </button>
-                                                                ))}
-                                                            </div>
-                                                        </div>
-                                                    );
-                                                })}
+                                {/* ── BAGNO ── */}
+                                {selectedEvent === 'bagno' && students.map((student, idx) => {
+                                    const state = studentStates[student.id] ?? {};
+                                    const pipi = (state.pipi as number) ?? 0;
+                                    const cacca = (state.cacca as number) ?? 0;
+                                    const isSaved = savedStudentIds.has(student.id);
+                                    return (
+                                        <motion.div
+                                            key={student.id}
+                                            custom={idx}
+                                            variants={itemVariants}
+                                            initial="hidden"
+                                            animate="visible"
+                                            className="bg-white/80 backdrop-blur-xl rounded-2xl border border-white/40 shadow-sm px-4 py-3"
+                                        >
+                                            {/* Avatar + Nome */}
+                                            <div className="flex items-center gap-3 mb-3">
+                                                <div className="w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center font-barlow font-bold text-xs bg-kidville-cream text-kidville-green">
+                                                    {student.firstName[0]}{student.lastName[0]}
+                                                </div>
+                                                <span className="font-maven font-medium text-sm text-kidville-green flex-1">
+                                                    {student.firstName} {student.lastName}
+                                                    {isSaved && <span className="ml-1.5 text-emerald-500">✅</span>}
+                                                </span>
                                             </div>
-                                        )}
-                                    </div>
-                                );
-                            })}
+                                            {/* Contatori in griglia */}
+                                            <div className="grid grid-cols-2 gap-3">
+                                                {/* Pipì */}
+                                                <div className="flex items-center gap-2 bg-sky-50/80 backdrop-blur-sm rounded-xl px-3 py-2 border border-sky-100/40">
+                                                    <span className="text-lg leading-none">💧</span>
+                                                    <button
+                                                        onClick={() => counter(student.id, 'pipi', -1)}
+                                                        className="w-7 h-7 rounded-full bg-white border border-sky-200 text-sky-600 flex items-center justify-center hover:bg-sky-50 transition-colors"
+                                                    >
+                                                        <Minus size={10} strokeWidth={1.5} />
+                                                    </button>
+                                                    <span className="font-barlow font-black text-xl text-sky-700 w-6 text-center">{pipi}</span>
+                                                    <button
+                                                        onClick={() => counter(student.id, 'pipi', 1)}
+                                                        className="w-7 h-7 rounded-full bg-sky-500 text-white flex items-center justify-center hover:bg-sky-600 transition-colors"
+                                                    >
+                                                        <Plus size={10} strokeWidth={1.5} />
+                                                    </button>
+                                                </div>
+                                                {/* Cacca */}
+                                                <div className="flex items-center gap-2 bg-amber-50/80 backdrop-blur-sm rounded-xl px-3 py-2 border border-amber-100/40">
+                                                    <span className="text-lg leading-none">💩</span>
+                                                    <button
+                                                        onClick={() => counter(student.id, 'cacca', -1)}
+                                                        className="w-7 h-7 rounded-full bg-white border border-amber-200 text-amber-600 flex items-center justify-center hover:bg-amber-50 transition-colors"
+                                                    >
+                                                        <Minus size={10} strokeWidth={1.5} />
+                                                    </button>
+                                                    <span className="font-barlow font-black text-xl text-amber-700 w-6 text-center">{cacca}</span>
+                                                    <button
+                                                        onClick={() => counter(student.id, 'cacca', 1)}
+                                                        className="w-7 h-7 rounded-full bg-amber-500 text-white flex items-center justify-center hover:bg-amber-600 transition-colors"
+                                                    >
+                                                        <Plus size={10} strokeWidth={1.5} />
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </motion.div>
+                                    );
+                                })}
+                            </div>
 
-                            {/* NANNA — due orari per bambino */}
-                            {selectedEvent === 'nanna_inizio' && students.map(student => {
-                                const state = studentStates[student.id] ?? {};
-                                return (
-                                    <div key={student.id} className="bg-white rounded-xl px-4 py-3 shadow-sm">
-                                        <div className="flex items-center gap-3 mb-3">
-                                            <StudentAvatar student={student} />
-                                            <span className="font-maven font-medium text-sm text-kidville-green">
-                                                {student.firstName} {student.lastName}
-                                                {savedStudentIds.has(student.id) && <span className="ml-1.5 text-emerald-500">✅</span>}
-                                            </span>
-                                        </div>
-                                        <div className="grid grid-cols-2 gap-3">
-                                            <div>
-                                                <p className="font-maven text-xs text-gray-500 mb-1">😴 Si addormenta</p>
-                                                <input
-                                                    type="time"
-                                                    value={(state.orario_inizio as string) ?? ''}
-                                                    onChange={e => updateStudent(student.id, { orario_inizio: e.target.value })}
-                                                    className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
-                                                />
-                                            </div>
-                                            <div>
-                                                <p className="font-maven text-xs text-gray-500 mb-1">☀️ Si sveglia</p>
-                                                <input
-                                                    type="time"
-                                                    value={(state.orario_fine as string) ?? ''}
-                                                    onChange={e => updateStudent(student.id, { orario_fine: e.target.value })}
-                                                    className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
-                                                />
-                                            </div>
-                                        </div>
-                                    </div>
-                                );
-                            })}
-
-                            {/* BAGNO — contatori compatti inline */}
-                            {selectedEvent === 'bagno' && students.map(student => {
-                                const state = studentStates[student.id] ?? {};
-                                const pipi = (state.pipi as number) ?? 0;
-                                const cacca = (state.cacca as number) ?? 0;
-                                return (
-                                    <div key={student.id} className="bg-white rounded-xl px-4 py-3 shadow-sm flex items-center gap-3">
-                                        <StudentAvatar student={student} />
-                                        <span className="font-maven font-medium text-sm text-kidville-green flex-1 truncate">
-                                            {student.firstName} {student.lastName}
-                                            {savedStudentIds.has(student.id) && <span className="ml-1 text-emerald-500">✅</span>}
-                                        </span>
-                                        {/* Pipì */}
-                                        <div className="flex items-center gap-1.5 bg-sky-50 rounded-xl px-2 py-1.5">
-                                            <span className="text-base leading-none">💧</span>
-                                            <button onClick={() => counter(student.id, 'pipi', -1)} className="w-6 h-6 rounded-full bg-white border border-sky-200 text-sky-600 flex items-center justify-center hover:bg-sky-100 transition-colors">
-                                                <Minus size={10} />
-                                            </button>
-                                            <span className="font-barlow font-black text-lg text-sky-700 w-5 text-center">{pipi}</span>
-                                            <button onClick={() => counter(student.id, 'pipi', 1)} className="w-6 h-6 rounded-full bg-sky-500 text-white flex items-center justify-center hover:bg-sky-600 transition-colors">
-                                                <Plus size={10} />
-                                            </button>
-                                        </div>
-                                        {/* Cacca */}
-                                        <div className="flex items-center gap-1.5 bg-amber-50 rounded-xl px-2 py-1.5">
-                                            <span className="text-base leading-none">💩</span>
-                                            <button onClick={() => counter(student.id, 'cacca', -1)} className="w-6 h-6 rounded-full bg-white border border-amber-200 text-amber-600 flex items-center justify-center hover:bg-amber-100 transition-colors">
-                                                <Minus size={10} />
-                                            </button>
-                                            <span className="font-barlow font-black text-lg text-amber-700 w-5 text-center">{cacca}</span>
-                                            <button onClick={() => counter(student.id, 'cacca', 1)} className="w-6 h-6 rounded-full bg-amber-500 text-white flex items-center justify-center hover:bg-amber-600 transition-colors">
-                                                <Plus size={10} />
-                                            </button>
-                                        </div>
-                                    </div>
-                                );
-                            })}
+                            {/* ── Footer salva ── */}
+                            <div className="px-4 py-3 border-t border-gray-100/60">
+                                <button
+                                    onClick={handleSave}
+                                    disabled={isSaving}
+                                    className="w-full py-3.5 rounded-2xl bg-kidville-green text-kidville-yellow font-barlow font-black text-lg uppercase tracking-wide hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-kidville-green/20"
+                                >
+                                    {isSaving
+                                        ? <><div className="w-5 h-5 border-2 border-kidville-yellow/40 border-t-kidville-yellow rounded-full animate-spin" /> Salvataggio...</>
+                                        : <><span>{cfg.emoji}</span> Salva {cfg.label} per tutti</>
+                                    }
+                                </button>
+                            </div>
                         </div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
 
-                        {/* Footer salva */}
-                        <div className="flex-shrink-0 px-4 py-3 border-t border-gray-200 bg-white">
-                            <button
-                                onClick={handleSave}
-                                disabled={isSaving}
-                                className="w-full h-13 rounded-pill bg-kidville-green text-kidville-yellow font-barlow font-black text-lg uppercase tracking-wide hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50 flex items-center justify-center gap-2 py-3"
-                            >
-                                {isSaving
-                                    ? <><div className="w-5 h-5 border-2 border-kidville-yellow/40 border-t-kidville-yellow rounded-full animate-spin" /> Salvataggio...</>
-                                    : <><span>{cfg.emoji}</span> Salva {cfg.label} per tutti</>
-                                }
-                            </button>
-                        </div>
-                    </div>
-                </>
+            {/* ── Stato vuoto (nessuna sezione selezionata) ── */}
+            {!selectedEvent && students.length > 0 && (
+                <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.1, duration: 0.3 }}
+                    className="mt-6 text-center py-12"
+                >
+                    <p className="font-maven text-gray-400 text-sm">
+                        👆 Seleziona un evento per iniziare a compilare il diario
+                    </p>
+                </motion.div>
             )}
 
             {/* Toast di conferma salvataggio */}
-            {showSavedToast && (
-                <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[60] bg-emerald-600 text-white font-maven font-semibold px-6 py-3 rounded-2xl shadow-xl flex items-center gap-2 animate-bounce">
-                    ✅ Salvato con successo!
-                </div>
-            )}
+            <AnimatePresence>
+                {showSavedToast && (
+                    <motion.div
+                        initial={{ opacity: 0, y: -20, scale: 0.95 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        exit={{ opacity: 0, y: -10, scale: 0.95 }}
+                        className="fixed top-6 left-1/2 -translate-x-1/2 z-[60] bg-emerald-600 text-white font-maven font-semibold px-6 py-3 rounded-2xl shadow-xl flex items-center gap-2"
+                    >
+                        ✅ Salvato con successo!
+                    </motion.div>
+                )}
+            </AnimatePresence>
         </div>
     );
 }

@@ -98,6 +98,39 @@ export interface Database {
           section_id?: string
         }
       }
+      eventi_diario: {
+        Row: {
+          id: string
+          alunno_id: string
+          maestra_id: string
+          tipo_evento: string
+          orario_inizio: string
+          orario_fine: string | null
+          dettagli: Record<string, unknown> | null
+          nota_libera: string | null
+          activity_description: string | null
+          pubblicato: boolean
+          created_at: string
+        }
+        Insert: {
+          alunno_id: string
+          maestra_id: string
+          tipo_evento: string
+          orario_inizio?: string
+          orario_fine?: string | null
+          dettagli?: Record<string, unknown> | null
+          nota_libera?: string | null
+          activity_description?: string | null
+          pubblicato?: boolean
+        }
+        Update: {
+          dettagli?: Record<string, unknown> | null
+          orario_fine?: string | null
+          nota_libera?: string | null
+          activity_description?: string | null
+          pubblicato?: boolean
+        }
+      }
     }
   }
 }

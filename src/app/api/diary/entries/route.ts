@@ -1,25 +1,58 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server-client';
 
-// GET /api/diary/entries?sezione=Girasoli&date=2026-05-03
+// GET /api/diary/entries
+// Modalità insegnante: ?sezione=Girasoli&date=2026-05-12
+// Modalità genitore:   ?alunno_id=xxx&from=2026-04-28
 export async function GET(request: NextRequest) {
-    const sezione = request.nextUrl.searchParams.get('sezione') ?? 'Girasoli';
-    const date = request.nextUrl.searchParams.get('date') ?? new Date().toISOString().split('T')[0];
     const supabase = await createClient();
+    const params = request.nextUrl.searchParams;
 
-    // Prendi gli ID degli alunni della sezione
+    // ── Modalità genitore: per singolo alunno in un range di date ──
+    const alunnoId = params.get('alunno_id');
+    const from = params.get('from');
+    const to   = params.get('to');
+    if (alunnoId) {
+        const fromDate = from ?? (() => {
+            const d = new Date(); d.setDate(d.getDate() - 14); return d.toISOString().split('T')[0];
+        })();
+        const toDate = to ?? new Date().toISOString().split('T')[0];
+
+        const { data, error } = await supabase
+            .from('eventi_diario')
+            .select('id, tipo_evento, orario_inizio, dettagli, nota_libera')
+            .eq('alunno_id', alunnoId)
+            .gte('orario_inizio', `${fromDate}T00:00:00.000Z`)
+            .lte('orario_inizio', `${toDate}T23:59:59.999Z`)
+            .order('orario_inizio', { ascending: false });
+
+        if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+        const mapped = (data ?? []).map(e => ({
+            id:                   e.id,
+            tipo_evento:          e.tipo_evento,
+            timestamp_evento:     e.orario_inizio,
+            dettagli:             e.dettagli,
+            note:                 e.nota_libera,
+            activity_description: null,
+        }));
+        return NextResponse.json(mapped);
+    }
+
+    // ── Modalità insegnante: per sezione + data ──
+    const sezione = params.get('sezione') ?? 'Girasoli';
+    const date = params.get('date') ?? new Date().toISOString().split('T')[0];
+
     const { data: alunni } = await supabase
         .from('alunni')
         .select('id')
         .eq('classe_sezione', sezione);
 
-    if (!alunni || alunni.length === 0) {
-        return NextResponse.json([]);
-    }
+    if (!alunni || alunni.length === 0) return NextResponse.json([]);
 
     const ids = alunni.map(a => a.id);
     const startOfDay = `${date}T00:00:00.000Z`;
-    const endOfDay = `${date}T23:59:59.999Z`;
+    const endOfDay   = `${date}T23:59:59.999Z`;
 
     const { data, error } = await supabase
         .from('eventi_diario')
@@ -29,9 +62,7 @@ export async function GET(request: NextRequest) {
         .lte('orario_inizio', endOfDay)
         .order('orario_inizio', { ascending: false });
 
-    if (error) {
-        return NextResponse.json({ error: error.message }, { status: 500 });
-    }
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
     return NextResponse.json(data);
 }
@@ -70,9 +101,10 @@ export async function POST(request: NextRequest) {
                     dettagli: entry.dettagli ?? null,
                     orario_fine: entry.orario_fine ?? null,
                     nota_libera: entry.nota_libera ?? null,
+                    // activity_description escluso: colonna non ancora migrata
                 })
                 .eq('id', existing[0].id)
-                .select();
+                .select('id, alunno_id, tipo_evento');
 
             if (error) errors.push({ alunno_id: entry.alunno_id, error: error.message });
             else if (data) results.push(...data);
@@ -88,9 +120,10 @@ export async function POST(request: NextRequest) {
                     orario_fine: entry.orario_fine ?? null,
                     dettagli: entry.dettagli ?? null,
                     nota_libera: entry.nota_libera ?? null,
+                    // activity_description escluso: colonna non ancora migrata su Supabase
                     pubblicato: false,
                 })
-                .select();
+                .select('id, alunno_id, tipo_evento');
 
             if (error) errors.push({ alunno_id: entry.alunno_id, error: error.message });
             else if (data) results.push(...data);

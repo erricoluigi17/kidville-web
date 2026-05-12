@@ -1,4 +1,4 @@
-import { DiaryEventType } from '@/lib/offline/db';
+import { DiaryEventType, DiaryEventTypeLegacy } from '@/lib/offline/db';
 
 interface EventConfig {
     label: string;
@@ -8,12 +8,6 @@ interface EventConfig {
 }
 
 export const EVENT_CONFIG: Record<DiaryEventType, EventConfig> = {
-    entrata: {
-        label: 'Entrata',
-        emoji: '🌅',
-        color: 'bg-amber-50',
-        accentColor: 'text-amber-600 border-amber-200',
-    },
     attivita: {
         label: 'Attività',
         emoji: '🎨',
@@ -52,12 +46,39 @@ export const EVENT_CONFIG: Record<DiaryEventType, EventConfig> = {
     },
 };
 
+/** Fallback per tipi evento legacy (es. 'entrata') rimossi dal diario attivo */
+const LEGACY_FALLBACK: EventConfig = {
+    label: 'Evento',
+    emoji: '📝',
+    color: 'bg-gray-50',
+    accentColor: 'text-gray-600 border-gray-200',
+};
+
+/** Config specifica per eventi legacy noti */
+const LEGACY_EVENT_CONFIG: Partial<Record<string, EventConfig>> = {
+    entrata: {
+        label: 'Entrata',
+        emoji: '🌅',
+        color: 'bg-amber-50',
+        accentColor: 'text-amber-600 border-amber-200',
+    },
+};
+
+/**
+ * Restituisce la config per un tipo evento, inclusi i tipi legacy.
+ * Sicuro per eventi storici che non sono più nel tipo DiaryEventType attivo.
+ */
+export function getEventConfig(type: DiaryEventTypeLegacy | string): EventConfig {
+    if (type in EVENT_CONFIG) return EVENT_CONFIG[type as DiaryEventType];
+    return LEGACY_EVENT_CONFIG[type] ?? LEGACY_FALLBACK;
+}
+
 export const MEAL_QUANTITIES = [
-    { value: 'niente', label: 'Niente', icon: '❌' },
-    { value: 'poco', label: 'Poco', icon: '🤏' },
-    { value: 'meta', label: 'Metà', icon: '🍽️' },
-    { value: 'tanto', label: 'Tanto', icon: '😋' },
-    { value: 'tutto', label: 'Tutto!', icon: '⭐' },
+    { value: 'niente', label: 'Niente', icon: '❌', short: '✗' },
+    { value: 'poco', label: 'Poco', icon: '🤏', short: '¼' },
+    { value: 'meta', label: 'Metà', icon: '🍽️', short: '½' },
+    { value: 'quasi', label: 'Quasi tutto', icon: '😊', short: '¾' },
+    { value: 'tutto', label: 'Tutto!', icon: '⭐', short: '★' },
 ] as const;
 
 export const BATHROOM_TYPES = [

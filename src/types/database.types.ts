@@ -157,6 +157,163 @@ export interface Database {
           portato?: boolean
         }
       }
+      // ── Fase 3: Comunicazione e Multimedialità ──
+      chat_threads: {
+        Row: {
+          id: string
+          teacher_id: string
+          parent_id: string
+          student_id: string
+          last_message_at: string
+          created_at: string
+        }
+        Insert: {
+          teacher_id: string
+          parent_id: string
+          student_id: string
+          last_message_at?: string
+        }
+        Update: {
+          last_message_at?: string
+        }
+      }
+      chat_messages: {
+        Row: {
+          id: string
+          thread_id: string
+          sender_id: string
+          content: string
+          attachment_url: string | null
+          attachment_type: string | null
+          read_at: string | null
+          created_at: string
+        }
+        Insert: {
+          thread_id: string
+          sender_id: string
+          content: string
+          attachment_url?: string | null
+          attachment_type?: string | null
+        }
+        Update: {
+          content?: string
+          read_at?: string | null
+        }
+      }
+      avvisi: {
+        Row: {
+          id: string
+          author_id: string
+          titolo: string
+          contenuto: string
+          tipo: string
+          target_scope: string
+          target_classes: string[] | null
+          scadenza: string | null
+          attachment_url: string | null
+          created_at: string
+        }
+        Insert: {
+          author_id: string
+          titolo: string
+          contenuto: string
+          tipo?: string
+          target_scope?: string
+          target_classes?: string[] | null
+          scadenza?: string | null
+          attachment_url?: string | null
+        }
+        Update: {
+          titolo?: string
+          contenuto?: string
+          tipo?: string
+          target_scope?: string
+          target_classes?: string[] | null
+          scadenza?: string | null
+          attachment_url?: string | null
+        }
+      }
+      avvisi_risposte: {
+        Row: {
+          id: string
+          avviso_id: string
+          parent_id: string
+          student_id: string
+          letto_il: string | null
+          risposta: string | null
+          risposto_il: string | null
+        }
+        Insert: {
+          avviso_id: string
+          parent_id: string
+          student_id: string
+          letto_il?: string | null
+          risposta?: string | null
+          risposto_il?: string | null
+        }
+        Update: {
+          letto_il?: string | null
+          risposta?: string | null
+          risposto_il?: string | null
+        }
+      }
+      galleria_media_v2: {
+        Row: {
+          id: string
+          uploaded_by: string
+          file_url: string
+          file_type: string
+          caption: string | null
+          tag_students: string[]
+          is_broadcast: boolean
+          target_classes: string[] | null
+          created_at: string
+        }
+        Insert: {
+          uploaded_by: string
+          file_url: string
+          file_type?: string
+          caption?: string | null
+          tag_students?: string[]
+          is_broadcast?: boolean
+          target_classes?: string[] | null
+        }
+        Update: {
+          file_url?: string
+          file_type?: string
+          caption?: string | null
+          tag_students?: string[]
+          is_broadcast?: boolean
+          target_classes?: string[] | null
+        }
+      }
+      task_interni: {
+        Row: {
+          id: string
+          author_id: string
+          assigned_to: string | null
+          target_class: string | null
+          titolo: string
+          contenuto: string
+          completato: boolean
+          created_at: string
+        }
+        Insert: {
+          author_id: string
+          titolo: string
+          contenuto: string
+          assigned_to?: string | null
+          target_class?: string | null
+          completato?: boolean
+        }
+        Update: {
+          titolo?: string
+          contenuto?: string
+          assigned_to?: string | null
+          target_class?: string | null
+          completato?: boolean
+        }
+      }
     }
   }
 }

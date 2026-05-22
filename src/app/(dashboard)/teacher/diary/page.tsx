@@ -105,7 +105,7 @@ export default function TeacherDiaryPage() {
     const fetchStudents = async () => {
         setIsLoading(true);
         try {
-            const res = await fetch(`/api/diary/students?sezione=${SEZIONE}`);
+            const res = await fetch(`/api/diary/students?sezione=${SEZIONE}&onlyPresent=true`);
             const data = await res.json();
             if (Array.isArray(data)) {
                 const mapped: Student[] = data.map((a: { id: string; nome: string; cognome: string; note_mediche: string | null }) => ({

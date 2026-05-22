@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, Suspense } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronLeft, ChevronRight, BookOpen, Camera, ChevronDown } from 'lucide-react';
 import { getEventConfig } from '@/components/features/teacher/diary/eventConfig';
@@ -286,7 +286,7 @@ function PhotosSection({ photos }: { photos: DailyPhoto[] }) {
 
 // ─── Pagina principale ────────────────────────────────────────────────────────
 
-export default function ParentDiaryPage() {
+function ParentDiaryContent() {
     const searchParams = useSearchParams();
     const alunnoId = searchParams.get('id') || 'dc617529-e80d-4084-9041-fb28e864089f';
 
@@ -463,5 +463,17 @@ export default function ParentDiaryPage() {
                 </p>
             </div>
         </div>
+    );
+}
+
+export default function ParentDiaryPage() {
+    return (
+        <Suspense fallback={
+            <div className="max-w-lg mx-auto p-4 sm:p-6 flex flex-col items-center justify-center min-h-[60vh] gap-4">
+                <div className="w-10 h-10 border-4 border-kidville-green/30 border-t-kidville-green rounded-full animate-spin" />
+            </div>
+        }>
+            <ParentDiaryContent />
+        </Suspense>
     );
 }

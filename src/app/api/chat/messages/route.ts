@@ -17,6 +17,28 @@ export async function GET(request: Request) {
 
         const supabase = await createAdminClient();
 
+        // ── Controllo autorizzazione one-to-one ──────────────────────────
+        // Verifica che l'utente richiedente sia effettivamente un partecipante
+        // del thread (teacher_id o parent_id). Impedisce leak cross-account.
+        if (markReadFor) {
+            const { data: thread } = await supabase
+                .from('chat_threads')
+                .select('teacher_id, parent_id')
+                .eq('id', threadId)
+                .single();
+
+            if (!thread) {
+                return NextResponse.json({ error: 'Thread non trovato' }, { status: 404 });
+            }
+
+            if (thread.teacher_id !== markReadFor && thread.parent_id !== markReadFor) {
+                return NextResponse.json(
+                    { error: 'Non sei autorizzato a leggere questo thread' },
+                    { status: 403 }
+                );
+            }
+        }
+
         // Segna come letti i messaggi dell'interlocutore
         if (markReadFor) {
             await supabase

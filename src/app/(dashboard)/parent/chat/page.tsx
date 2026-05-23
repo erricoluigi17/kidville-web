@@ -6,6 +6,7 @@ import { ArrowLeft, MessageSquare, Plus, X, UserPlus } from 'lucide-react';
 import { ChatThreadList, ChatThread } from '@/components/features/chat/ChatThreadList';
 import { ChatMessageArea, ChatMessage } from '@/components/features/chat/ChatMessageArea';
 import { ChatInput } from '@/components/features/chat/ChatInput';
+import { useUnreadNotifications } from '@/components/features/chat/useUnreadNotifications';
 import { useSearchParams } from 'next/navigation';
 
 interface Contact {
@@ -30,11 +31,27 @@ function ParentChatContent() {
     const [showNewChat, setShowNewChat] = useState(false);
     const [contacts, setContacts] = useState<Contact[]>([]);
     const [loadingContacts, setLoadingContacts] = useState(false);
+    const [childrenNames, setChildrenNames] = useState<string[]>([]);
+    const [unreadCount, setUnreadCount] = useState(0);
+
+    // Notifiche non letti + browser notifications
+    useUnreadNotifications({
+        userId: parentId,
+        enabled: true,
+        onUnreadChange: setUnreadCount,
+        pollInterval: 8000,
+    });
 
     const loadThreads = useCallback(async () => {
         try {
             const res = await fetch(`/api/chat/threads?userId=${parentId}`);
-            if (res.ok) setThreads(await res.json());
+            if (res.ok) {
+                const data: ChatThread[] = await res.json();
+                setThreads(data);
+                // Estrai nomi figli dai thread
+                const names = [...new Set(data.map(t => t.student.nome))];
+                if (names.length > 0) setChildrenNames(names);
+            }
         } catch (err) {
             console.error('Errore caricamento thread:', err);
         } finally {
@@ -51,6 +68,9 @@ function ParentChatContent() {
             if (res.ok) {
                 const data = await res.json();
                 setContacts(data.contacts ?? []);
+                // Aggiorna nomi figli anche dai contatti
+                const names = [...new Set((data.contacts ?? []).map((c: Contact) => c.student_name.split(' ')[0]))];
+                if (names.length > 0) setChildrenNames(names);
             }
         } catch (err) {
             console.error('Errore caricamento contatti:', err);
@@ -58,6 +78,9 @@ function ParentChatContent() {
             setLoadingContacts(false);
         }
     }, [parentId]);
+
+    // Carica contatti al mount per ottenere i nomi dei figli anche senza thread
+    useEffect(() => { loadContacts(); }, [loadContacts]);
 
     const loadMessages = useCallback(async (threadId: string) => {
         setLoadingMessages(true);
@@ -156,10 +179,19 @@ function ParentChatContent() {
         <div className="max-w-5xl mx-auto p-4 sm:p-6">
             <div className="flex items-start justify-between mb-4">
                 <div>
-                    <h1 className="font-barlow font-black text-3xl text-kidville-green uppercase tracking-wide">
-                        💬 Messaggi
-                    </h1>
-                    <p className="font-maven text-gray-500 mt-1">Chatta con gli insegnanti</p>
+                    <div className="flex items-center gap-3">
+                        <h1 className="font-barlow font-black text-3xl text-kidville-green uppercase tracking-wide">
+                            💬 Messaggi
+                        </h1>
+                        {unreadCount > 0 && (
+                            <span className="inline-flex items-center justify-center min-w-[24px] h-6 px-2 rounded-full bg-red-500 text-white font-barlow font-bold text-xs animate-pulse shadow-lg shadow-red-500/30">
+                                {unreadCount > 99 ? '99+' : unreadCount}
+                            </span>
+                        )}
+                    </div>
+                    <p className="font-maven text-gray-500 mt-1">
+                        Chatta con gli insegnanti{childrenNames.length > 0 ? ` di ${childrenNames.join(' e ')}` : ''}
+                    </p>
                 </div>
                 <button
                     onClick={() => { setShowNewChat(true); loadContacts(); }}

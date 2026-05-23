@@ -6,6 +6,7 @@ import { ArrowLeft, MessageSquare, Plus, X, UserPlus } from 'lucide-react';
 import { ChatThreadList, ChatThread } from '@/components/features/chat/ChatThreadList';
 import { ChatMessageArea, ChatMessage } from '@/components/features/chat/ChatMessageArea';
 import { ChatInput } from '@/components/features/chat/ChatInput';
+import { useUnreadNotifications } from '@/components/features/chat/useUnreadNotifications';
 import { useSearchParams } from 'next/navigation';
 import { Suspense } from 'react';
 
@@ -31,6 +32,15 @@ function TeacherChatContent() {
     const [showNewChat, setShowNewChat] = useState(false);
     const [contacts, setContacts] = useState<Contact[]>([]);
     const [loadingContacts, setLoadingContacts] = useState(false);
+    const [unreadCount, setUnreadCount] = useState(0);
+
+    // Notifiche non letti + browser notifications
+    useUnreadNotifications({
+        userId: teacherId,
+        enabled: true,
+        onUnreadChange: setUnreadCount,
+        pollInterval: 8000,
+    });
 
     // Carica thread
     const loadThreads = useCallback(async () => {
@@ -163,9 +173,16 @@ function TeacherChatContent() {
             {/* Header */}
             <div className="flex items-start justify-between mb-4">
                 <div>
-                    <h1 className="font-barlow font-black text-3xl text-kidville-green uppercase tracking-wide">
-                        💬 Chat
-                    </h1>
+                    <div className="flex items-center gap-3">
+                        <h1 className="font-barlow font-black text-3xl text-kidville-green uppercase tracking-wide">
+                            💬 Chat
+                        </h1>
+                        {unreadCount > 0 && (
+                            <span className="inline-flex items-center justify-center min-w-[24px] h-6 px-2 rounded-full bg-red-500 text-white font-barlow font-bold text-xs animate-pulse shadow-lg shadow-red-500/30">
+                                {unreadCount > 99 ? '99+' : unreadCount}
+                            </span>
+                        )}
+                    </div>
                     <p className="font-maven text-gray-500 mt-1">Messaggi con le famiglie</p>
                 </div>
                 <button

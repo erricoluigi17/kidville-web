@@ -1,7 +1,7 @@
 'use client';
 
 import { motion } from 'framer-motion';
-import { Eye, ThumbsUp, ThumbsDown, Clock, ChevronDown, Users } from 'lucide-react';
+import { Eye, ThumbsUp, ThumbsDown, Clock, ChevronDown, Users, Pencil, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 
 export interface Avviso {
@@ -27,6 +27,8 @@ interface Props {
     onReadReceipt?: (avvisoId: string) => void;
     onAdesione?: (avvisoId: string, risposta: 'si' | 'no') => void;
     onShowDetails?: (avviso: Avviso) => void;
+    onEdit?: (avviso: Avviso) => void;
+    onDelete?: (avvisoId: string) => void;
 }
 
 function timeAgo(iso: string): string {
@@ -40,12 +42,29 @@ function timeAgo(iso: string): string {
     return `${days}g fa`;
 }
 
-export function AvvisoCard({ avviso, index, isTeacher, onReadReceipt, onAdesione, onShowDetails }: Props) {
+export function AvvisoCard({ avviso, index, isTeacher, onReadReceipt, onAdesione, onShowDetails, onEdit, onDelete }: Props) {
     const [expanded, setExpanded] = useState(false);
     const isAdesione = avviso.tipo === 'adesione';
     const isRead = !!avviso.my_response?.letto_il;
     const myAnswer = avviso.my_response?.risposta;
     const isExpired = avviso.scadenza && new Date(avviso.scadenza) < new Date();
+
+    // Decodifica allegato (JSON o link semplice)
+    let fileUrl = null;
+    let linkUrl = null;
+    if (avviso.attachment_url) {
+        if (avviso.attachment_url.startsWith('{')) {
+            try {
+                const parsed = JSON.parse(avviso.attachment_url);
+                fileUrl = parsed.file;
+                linkUrl = parsed.link;
+            } catch {
+                fileUrl = avviso.attachment_url;
+            }
+        } else {
+            fileUrl = avviso.attachment_url;
+        }
+    }
 
     const handleExpand = () => {
         setExpanded(v => !v);
@@ -136,17 +155,29 @@ export function AvvisoCard({ avviso, index, isTeacher, onReadReceipt, onAdesione
                             </div>
                         )}
 
-                        {/* Attachment */}
-                        {avviso.attachment_url && (
-                            <div className="mt-3">
-                                <a
-                                    href={avviso.attachment_url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="inline-flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-xl text-xs font-maven text-kidville-green hover:bg-gray-100 transition-colors"
-                                >
-                                    📎 Allegato
-                                </a>
+                        {/* Allegati e Link */}
+                        {(fileUrl || linkUrl) && (
+                            <div className="mt-3 flex flex-wrap gap-2">
+                                {fileUrl && (
+                                    <a
+                                        href={fileUrl}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="inline-flex items-center gap-1.5 px-3 py-2 bg-gray-50 hover:bg-gray-100 rounded-xl text-xs font-maven font-semibold text-kidville-green border border-gray-150 transition-colors"
+                                    >
+                                        📎 Allegato File
+                                    </a>
+                                )}
+                                {linkUrl && (
+                                    <a
+                                        href={linkUrl.startsWith('http') ? linkUrl : `https://${linkUrl}`}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="inline-flex items-center gap-1.5 px-3 py-2 bg-gray-50 hover:bg-gray-100 rounded-xl text-xs font-maven font-semibold text-blue-600 border border-gray-150 transition-colors"
+                                    >
+                                        🔗 Link Esterno
+                                    </a>
+                                )}
                             </div>
                         )}
                     </div>
@@ -183,9 +214,9 @@ export function AvvisoCard({ avviso, index, isTeacher, onReadReceipt, onAdesione
                         </div>
                     )}
 
-                    {/* Stats per insegnante */}
+                    {/* Stats e Azioni per insegnante */}
                     {isTeacher && (
-                        <div className="px-5 pb-4 flex items-center gap-4">
+                        <div className="px-5 pb-4 flex items-center gap-4 flex-wrap border-t border-gray-100/60 pt-3">
                             <div className="flex items-center gap-1.5 text-xs font-maven text-gray-500">
                                 <Eye size={12} strokeWidth={1.5} />
                                 <span>{avviso.stats.letti} hanno letto</span>
@@ -202,12 +233,26 @@ export function AvvisoCard({ avviso, index, isTeacher, onReadReceipt, onAdesione
                                     </div>
                                 </>
                             )}
-                            <button
-                                onClick={() => onShowDetails?.(avviso)}
-                                className="ml-auto flex items-center gap-1.5 text-xs font-maven text-kidville-green hover:underline"
-                            >
-                                <Users size={12} strokeWidth={1.5} /> Dettaglio
-                            </button>
+                            <div className="ml-auto flex items-center gap-3">
+                                <button
+                                    onClick={() => onShowDetails?.(avviso)}
+                                    className="flex items-center gap-1 text-xs font-maven font-bold text-kidville-green hover:underline"
+                                >
+                                    <Users size={12} strokeWidth={1.5} /> Dettaglio
+                                </button>
+                                <button
+                                    onClick={() => onEdit?.(avviso)}
+                                    className="flex items-center gap-1 text-xs font-maven font-bold text-blue-600 hover:underline"
+                                >
+                                    <Pencil size={12} strokeWidth={1.5} /> Modifica
+                                </button>
+                                <button
+                                    onClick={() => onDelete?.(avviso.id)}
+                                    className="flex items-center gap-1 text-xs font-maven font-bold text-red-600 hover:underline"
+                                >
+                                    <Trash2 size={12} strokeWidth={1.5} /> Elimina
+                                </button>
+                            </div>
                         </div>
                     )}
                 </motion.div>

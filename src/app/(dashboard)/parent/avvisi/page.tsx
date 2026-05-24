@@ -1,35 +1,60 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { AvvisoCard, Avviso } from '@/components/features/avvisi/AvvisoCard';
 
-const PARENT_ID = '33333333-3333-3333-3333-333333333333';
-const STUDENT_ID = 'dc617529-e80d-4084-9041-fb28e864089f'; // dev default
+const DEFAULT_PARENT_ID = '33333333-3333-3333-3333-333333333333';
+const DEFAULT_STUDENT_ID = 'dc617529-e80d-4084-9041-fb28e864089f';
 
-export default function ParentAvvisiPage() {
+function ParentAvvisiContent() {
+    const searchParams = useSearchParams();
+    const studentId = searchParams.get('id') || DEFAULT_STUDENT_ID;
+    const parentId = searchParams.get('userId') || DEFAULT_PARENT_ID;
+
     const [avvisi, setAvvisi] = useState<Avviso[]>([]);
     const [loading, setLoading] = useState(true);
+    const [studentName, setStudentName] = useState<string | null>(null);
+    const [classe, setClasse] = useState<string>('Girasoli');
 
+    // 1. Carica info studente (per ricavare nome e classe)
+    useEffect(() => {
+        fetch(`/api/diary/students?id=${studentId}`)
+            .then(r => r.ok ? r.json() : null)
+            .then(d => {
+                if (d?.nome) {
+                    setStudentName(`${d.nome} ${d.cognome ?? ''}`.trim());
+                }
+                if (d?.classe_sezione) {
+                    setClasse(d.classe_sezione);
+                }
+            })
+            .catch(err => console.error('Errore caricamento info studente:', err));
+    }, [studentId]);
+
+    // 2. Carica gli avvisi per la classe dello studente
     const loadAvvisi = useCallback(async () => {
         setLoading(true);
         try {
-            const res = await fetch(`/api/avvisi?classe=Girasoli&parentId=${PARENT_ID}`);
+            const res = await fetch(`/api/avvisi?classe=${classe}&parentId=${parentId}&studentId=${studentId}`);
             if (res.ok) setAvvisi(await res.json());
         } catch (err) {
             console.error('Errore caricamento avvisi:', err);
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [classe, parentId, studentId]);
 
-    useEffect(() => { loadAvvisi(); }, [loadAvvisi]);
+    useEffect(() => {
+        loadAvvisi();
+    }, [loadAvvisi]);
 
     const handleReadReceipt = async (avvisoId: string) => {
         try {
             await fetch(`/api/avvisi/${avvisoId}/risposte`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ parent_id: PARENT_ID, student_id: STUDENT_ID }),
+                body: JSON.stringify({ parent_id: parentId, student_id: studentId }),
             });
             await loadAvvisi();
         } catch (err) {
@@ -42,7 +67,7 @@ export default function ParentAvvisiPage() {
             await fetch(`/api/avvisi/${avvisoId}/risposte`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ parent_id: PARENT_ID, student_id: STUDENT_ID, risposta }),
+                body: JSON.stringify({ parent_id: parentId, student_id: studentId, risposta }),
             });
             await loadAvvisi();
         } catch (err) {
@@ -53,13 +78,28 @@ export default function ParentAvvisiPage() {
     return (
         <div className="max-w-lg mx-auto p-4 sm:p-6 pb-16">
             {/* Header */}
-            <div className="mb-6">
-                <h1 className="font-barlow font-black text-3xl text-kidville-green uppercase tracking-wide">
-                    📋 Avvisi
-                </h1>
-                <p className="font-maven text-gray-400 mt-1 text-sm">
-                    Comunicazioni dalla scuola
-                </p>
+            <div className="flex items-start justify-between mb-6">
+                <div>
+                    <h1 className="font-barlow font-black text-3xl text-kidville-green uppercase tracking-wide">
+                        📋 Avvisi
+                    </h1>
+                    <p className="font-maven text-gray-400 mt-1 text-sm">
+                        Comunicazioni dalla scuola
+                    </p>
+                </div>
+                {studentName && (
+                    <div className="flex items-center gap-2 bg-white/80 backdrop-blur-xl rounded-2xl border border-white/40 shadow-sm px-3 py-2 ml-3 flex-shrink-0">
+                        <div className="w-8 h-8 rounded-full bg-kidville-green flex items-center justify-center font-barlow font-black text-xs text-kidville-yellow flex-shrink-0">
+                            {studentName.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase()}
+                        </div>
+                        <div className="text-right">
+                            <p className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide leading-tight">
+                                {studentName}
+                            </p>
+                            <p className="font-maven text-[10px] text-gray-400">Classe {classe}</p>
+                        </div>
+                    </div>
+                )}
             </div>
 
             {/* Loading */}
@@ -100,5 +140,17 @@ export default function ParentAvvisiPage() {
                 </p>
             </div>
         </div>
+    );
+}
+
+export default function ParentAvvisiPage() {
+    return (
+        <Suspense fallback={
+            <div className="max-w-lg mx-auto p-4 sm:p-6 flex flex-col items-center justify-center min-h-[60vh] gap-4">
+                <div className="w-10 h-10 border-4 border-kidville-green/30 border-t-kidville-green rounded-full animate-spin" />
+            </div>
+        }>
+            <ParentAvvisiContent />
+        </Suspense>
     );
 }

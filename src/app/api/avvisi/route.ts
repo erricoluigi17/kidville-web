@@ -9,6 +9,7 @@ export async function GET(request: Request) {
         const scope = searchParams.get('scope');
         const classe = searchParams.get('classe');
         const parentId = searchParams.get('parentId');
+        const studentId = searchParams.get('studentId');
 
         const supabase = await createAdminClient();
 
@@ -48,6 +49,12 @@ export async function GET(request: Request) {
             );
         }
 
+        // Filtra per scadenza solo se è un genitore (parentId presente)
+        if (parentId) {
+            const todayStr = new Date().toISOString().split('T')[0];
+            filtered = filtered.filter(a => !a.scadenza || a.scadenza >= todayStr);
+        }
+
         // Arricchisci con conteggi risposte e info autore
         const enriched = await Promise.all(
             filtered.map(async (avviso) => {
@@ -80,13 +87,17 @@ export async function GET(request: Request) {
                 // Se è un genitore, controlla se ha letto
                 let myResponse = null;
                 if (parentId) {
-                    const { data: resp } = await supabase
+                    let rQuery = supabase
                         .from('avvisi_risposte')
                         .select('letto_il, risposta, risposto_il')
                         .eq('avviso_id', avviso.id)
-                        .eq('parent_id', parentId)
-                        .limit(1)
-                        .single();
+                        .eq('parent_id', parentId);
+
+                    if (studentId) {
+                        rQuery = rQuery.eq('student_id', studentId);
+                    }
+
+                    const { data: resp } = await rQuery.limit(1).maybeSingle();
                     myResponse = resp;
                 }
 

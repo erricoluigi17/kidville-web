@@ -79,22 +79,36 @@ export async function POST(request: Request, { params }: RouteParams) {
         const supabase = await createAdminClient();
         const now = new Date().toISOString();
 
+        // Controlla se esiste già una risposta per preservare i campi
+        const { data: existing } = await supabase
+            .from('avvisi_risposte')
+            .select('letto_il, risposta, risposto_il')
+            .eq('avviso_id', avvisoId)
+            .eq('parent_id', parent_id)
+            .eq('student_id', student_id)
+            .maybeSingle();
+
+        const insertPayload: any = {
+            avviso_id: avvisoId,
+            parent_id,
+            student_id,
+            letto_il: existing?.letto_il || now,
+        };
+
+        if (risposta !== undefined) {
+            insertPayload.risposta = risposta;
+            insertPayload.risposto_il = now;
+        } else if (existing) {
+            insertPayload.risposta = existing.risposta;
+            insertPayload.risposto_il = existing.risposto_il;
+        }
+
         // Upsert: se la risposta esiste già, aggiorna
         const { data, error } = await supabase
             .from('avvisi_risposte')
-            .upsert(
-                {
-                    avviso_id: avvisoId,
-                    parent_id,
-                    student_id,
-                    letto_il: now,
-                    risposta: risposta ?? null,
-                    risposto_il: risposta ? now : null,
-                },
-                {
-                    onConflict: 'avviso_id,parent_id,student_id',
-                }
-            )
+            .upsert(insertPayload, {
+                onConflict: 'avviso_id,parent_id,student_id',
+            })
             .select()
             .single();
 

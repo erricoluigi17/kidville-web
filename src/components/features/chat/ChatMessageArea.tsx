@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { Check, CheckCheck } from 'lucide-react';
 
@@ -20,6 +20,10 @@ interface Props {
     currentUserId: string;
     otherUserName: string;
     loading?: boolean;
+    /** ID del primo messaggio non letto (dall'interlocutore). Usato per il separatore e lo scroll. */
+    firstUnreadId?: string | null;
+    /** Callback quando messaggi non letti entrano nel viewport (debounced 500ms) */
+    onMarkRead?: (ids: string[]) => void;
 }
 
 function formatMessageTime(iso: string): string {
@@ -52,12 +56,118 @@ function groupByDate(messages: ChatMessage[]): { date: string; messages: ChatMes
     return groups;
 }
 
-export function ChatMessageArea({ messages, currentUserId, otherUserName, loading }: Props) {
+/** Separatore visivo "Nuovi Messaggi" stile Kidville/WhatsApp */
+function UnreadSeparator() {
+    return (
+        <motion.div
+            initial={{ opacity: 0, scaleX: 0.8 }}
+            animate={{ opacity: 1, scaleX: 1 }}
+            transition={{ duration: 0.3, ease: 'easeOut' }}
+            className="flex items-center gap-3 my-5 px-2"
+        >
+            <div className="flex-1 h-px bg-emerald-400/40" />
+            <span className="flex items-center gap-2 text-emerald-600 text-xs font-bold font-barlow uppercase tracking-widest px-4 py-1.5 rounded-full bg-emerald-50 border border-emerald-300/60 shadow-sm whitespace-nowrap">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                Nuovi Messaggi
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            </span>
+            <div className="flex-1 h-px bg-emerald-400/40" />
+        </motion.div>
+    );
+}
+
+export function ChatMessageArea({
+    messages,
+    currentUserId,
+    otherUserName,
+    loading,
+    firstUnreadId,
+    onMarkRead,
+}: Props) {
     const bottomRef = useRef<HTMLDivElement>(null);
+    const separatorRef = useRef<HTMLDivElement>(null);
+    const observerRef = useRef<IntersectionObserver | null>(null);
+    const pendingMarkRead = useRef<Set<string>>(new Set());
+    const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const onMarkReadRef = useRef(onMarkRead);
 
     useEffect(() => {
-        bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+        onMarkReadRef.current = onMarkRead;
+    }, [onMarkRead]);
+
+    // Flush degli ID da marcare come letti (debounced 500ms)
+    const flushMarkRead = useCallback(() => {
+        if (pendingMarkRead.current.size === 0) return;
+        const ids = Array.from(pendingMarkRead.current);
+        pendingMarkRead.current.clear();
+        onMarkReadRef.current?.(ids);
+    }, []);
+
+    const scheduleFlush = useCallback(() => {
+        if (debounceTimer.current) clearTimeout(debounceTimer.current);
+        debounceTimer.current = setTimeout(flushMarkRead, 500);
+    }, [flushMarkRead]);
+
+    // Scroll: se ci sono non letti → al separatore, altrimenti al fondo
+    useEffect(() => {
+        if (messages.length === 0) return;
+        if (firstUnreadId && separatorRef.current) {
+            separatorRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        } else {
+            bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+        }
+    // Solo quando cambia il thread (messages.length da 0 a N)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [messages.length > 0 ? messages[0]?.thread_id : null]);
+
+    // Scroll al fondo per nuovi messaggi in arrivo (non al caricamento iniziale)
+    const prevLengthRef = useRef(messages.length);
+    useEffect(() => {
+        const prev = prevLengthRef.current;
+        prevLengthRef.current = messages.length;
+        // Scrolla al fondo solo se sono arrivati nuovi messaggi (non il caricamento iniziale)
+        if (prev > 0 && messages.length > prev) {
+            bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+        }
     }, [messages.length]);
+
+    // IntersectionObserver per marcare come letti i messaggi non letti
+    useEffect(() => {
+        if (!onMarkRead) return;
+
+        // Disconnetti observer precedente
+        observerRef.current?.disconnect();
+
+        observerRef.current = new IntersectionObserver(
+            (entries) => {
+                let hasNew = false;
+                entries.forEach((entry) => {
+                    if (entry.isIntersecting) {
+                        const id = (entry.target as HTMLElement).dataset.messageId;
+                        if (id) {
+                            pendingMarkRead.current.add(id);
+                            hasNew = true;
+                            // Smetti di osservare una volta visto
+                            observerRef.current?.unobserve(entry.target);
+                        }
+                    }
+                });
+                if (hasNew) scheduleFlush();
+            },
+            { threshold: 0.5 }
+        );
+
+        // Osserva tutti i messaggi non letti dell'interlocutore
+        const unreadEls = document.querySelectorAll('[data-unread="true"]');
+        unreadEls.forEach(el => observerRef.current?.observe(el));
+
+        return () => {
+            observerRef.current?.disconnect();
+            if (debounceTimer.current) clearTimeout(debounceTimer.current);
+        };
+    // Ri-osserva quando cambiano i messaggi
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [messages, scheduleFlush]);
 
     if (loading) {
         return (
@@ -89,6 +199,7 @@ export function ChatMessageArea({ messages, currentUserId, otherUserName, loadin
     }
 
     const groups = groupByDate(messages);
+    let separatorInserted = false;
 
     return (
         <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
@@ -105,63 +216,84 @@ export function ChatMessageArea({ messages, currentUserId, otherUserName, loadin
                     <div className="space-y-1.5">
                         {group.messages.map((msg, idx) => {
                             const isMine = msg.sender_id === currentUserId;
+                            const isUnread = !isMine && msg.read_at === null;
+
+                            // Inserisci separatore prima del primo messaggio non letto
+                            const showSeparator =
+                                !separatorInserted &&
+                                firstUnreadId &&
+                                msg.id === firstUnreadId;
+
+                            if (showSeparator) separatorInserted = true;
 
                             return (
-                                <motion.div
-                                    key={msg.id}
-                                    initial={{ opacity: 0, y: 8, scale: 0.97 }}
-                                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                                    transition={{ delay: idx * 0.02, duration: 0.2 }}
-                                    className={`flex ${isMine ? 'justify-end' : 'justify-start'}`}
-                                >
-                                    <div className={`max-w-[75%] rounded-2xl px-4 py-2.5 shadow-sm ${
-                                        isMine
-                                            ? 'bg-kidville-green text-white rounded-br-md'
-                                            : 'bg-white/90 backdrop-blur-sm border border-white/40 text-gray-800 rounded-bl-md'
-                                    }`}>
-                                        {/* Attachment preview */}
-                                        {msg.attachment_url && msg.attachment_type === 'image' && (
-                                            <div className="mb-2 rounded-xl overflow-hidden">
-                                                {/* eslint-disable-next-line @next/next/no-img-element */}
-                                                <img
-                                                    src={msg.attachment_url}
-                                                    alt="Allegato"
-                                                    className="w-full h-auto max-h-48 object-cover"
-                                                />
-                                            </div>
-                                        )}
-                                        {msg.attachment_url && msg.attachment_type === 'document' && (
-                                            <div className={`mb-2 px-3 py-2 rounded-xl text-xs font-maven flex items-center gap-2 ${
-                                                isMine ? 'bg-white/20' : 'bg-gray-100'
-                                            }`}>
-                                                📎 Documento allegato
-                                            </div>
-                                        )}
-
-                                        {/* Text */}
-                                        <p className={`font-maven text-sm leading-relaxed ${
-                                            isMine ? 'text-white' : 'text-gray-800'
-                                        }`}>
-                                            {msg.content}
-                                        </p>
-
-                                        {/* Time + read status */}
-                                        <div className={`flex items-center gap-1 mt-1 ${
-                                            isMine ? 'justify-end' : 'justify-start'
-                                        }`}>
-                                            <span className={`font-maven text-[10px] ${
-                                                isMine ? 'text-white/60' : 'text-gray-400'
-                                            }`}>
-                                                {formatMessageTime(msg.created_at)}
-                                            </span>
-                                            {isMine && (
-                                                msg.read_at
-                                                    ? <CheckCheck size={12} className="text-blue-300" strokeWidth={1.5} />
-                                                    : <Check size={12} className="text-white/40" strokeWidth={1.5} />
-                                            )}
+                                <div key={msg.id}>
+                                    {showSeparator && (
+                                        <div ref={separatorRef}>
+                                            <UnreadSeparator />
                                         </div>
-                                    </div>
-                                </motion.div>
+                                    )}
+                                    <motion.div
+                                        initial={{ opacity: 0, y: 8, scale: 0.97 }}
+                                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                                        transition={{ delay: idx * 0.02, duration: 0.2 }}
+                                        className={`flex ${isMine ? 'justify-end' : 'justify-start'}`}
+                                        // Attributi per IntersectionObserver
+                                        data-message-id={isUnread ? msg.id : undefined}
+                                        data-unread={isUnread ? 'true' : undefined}
+                                    >
+                                        <div className={`max-w-[75%] rounded-2xl px-4 py-2.5 shadow-sm ${
+                                            isMine
+                                                ? 'bg-kidville-green text-white rounded-br-md'
+                                                : 'bg-white/90 backdrop-blur-sm border border-white/40 text-gray-800 rounded-bl-md'
+                                        }`}>
+                                            {/* Attachment preview */}
+                                            {msg.attachment_url && msg.attachment_type === 'image' && (
+                                                <div className="mb-2 rounded-xl overflow-hidden">
+                                                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                                                    <img
+                                                        src={msg.attachment_url}
+                                                        alt="Allegato"
+                                                        className="w-full h-auto max-h-48 object-cover"
+                                                    />
+                                                </div>
+                                            )}
+                                            {msg.attachment_url && msg.attachment_type === 'document' && (
+                                                <div className={`mb-2 px-3 py-2 rounded-xl text-xs font-maven flex items-center gap-2 ${
+                                                    isMine ? 'bg-white/20' : 'bg-gray-100'
+                                                }`}>
+                                                    📎 Documento allegato
+                                                </div>
+                                            )}
+
+                                            {/* Text */}
+                                            <p className={`font-maven text-sm leading-relaxed ${
+                                                isMine ? 'text-white' : 'text-gray-800'
+                                            }`}>
+                                                {msg.content}
+                                            </p>
+
+                                            {/* Time + read status */}
+                                            <div className={`flex items-center gap-1 mt-1 ${
+                                                isMine ? 'justify-end' : 'justify-start'
+                                            }`}>
+                                                <span className={`font-maven text-[10px] ${
+                                                    isMine ? 'text-white/60' : 'text-gray-400'
+                                                }`}>
+                                                    {formatMessageTime(msg.created_at)}
+                                                </span>
+                                                {isMine && (
+                                                    <span className="transition-all duration-300">
+                                                        {msg.read_at
+                                                            ? <CheckCheck size={12} className="text-blue-300" strokeWidth={1.5} />
+                                                            : <Check size={12} className="text-white/40" strokeWidth={1.5} />
+                                                        }
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </motion.div>
+                                </div>
                             );
                         })}
                     </div>

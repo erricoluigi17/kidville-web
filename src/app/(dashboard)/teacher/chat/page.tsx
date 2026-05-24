@@ -1,12 +1,13 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowLeft, MessageSquare, Plus, X, UserPlus } from 'lucide-react';
 import { ChatThreadList, ChatThread } from '@/components/features/chat/ChatThreadList';
 import { ChatMessageArea, ChatMessage } from '@/components/features/chat/ChatMessageArea';
 import { ChatInput } from '@/components/features/chat/ChatInput';
 import { useUnreadNotifications } from '@/components/features/chat/useUnreadNotifications';
+import { useChatRealtime } from '@/components/features/chat/useChatRealtime';
 import { useSearchParams } from 'next/navigation';
 import { Suspense } from 'react';
 
@@ -33,13 +34,19 @@ function TeacherChatContent() {
     const [contacts, setContacts] = useState<Contact[]>([]);
     const [loadingContacts, setLoadingContacts] = useState(false);
     const [unreadCount, setUnreadCount] = useState(0);
+    // ID del primo messaggio non letto: bloccato all'apertura del thread
+    const [firstUnreadId, setFirstUnreadId] = useState<string | null>(null);
 
-    // Notifiche non letti + browser notifications
+    // Ref stabile per selectedThread (evita re-render nei callback realtime)
+    const selectedThreadRef = useRef<ChatThread | null>(null);
+    useEffect(() => { selectedThreadRef.current = selectedThread; }, [selectedThread]);
+
+    // Notifiche non letti + badge titolo pagina (mantenuto come fallback)
     useUnreadNotifications({
         userId: teacherId,
         enabled: true,
         onUnreadChange: setUnreadCount,
-        pollInterval: 8000,
+        pollInterval: 30000, // ridotto a 30s ora che c'è il realtime
     });
 
     // Carica thread
@@ -72,14 +79,18 @@ function TeacherChatContent() {
         }
     }, [teacherId]);
 
-    // Carica messaggi del thread selezionato
     const loadMessages = useCallback(async (threadId: string) => {
         setLoadingMessages(true);
         try {
-            const res = await fetch(`/api/chat/messages?threadId=${threadId}&markRead=${teacherId}`);
+            const res = await fetch(`/api/chat/messages?threadId=${threadId}`);
             if (res.ok) {
                 const data = await res.json();
-                setMessages(data.messages ?? []);
+                const msgs: ChatMessage[] = data.messages ?? [];
+                setMessages(msgs);
+                const firstUnread = msgs.find(
+                    m => m.sender_id !== teacherId && m.read_at === null
+                );
+                setFirstUnreadId(firstUnread?.id ?? null);
             }
         } catch (err) {
             console.error('Errore caricamento messaggi:', err);
@@ -88,11 +99,98 @@ function TeacherChatContent() {
         }
     }, [teacherId]);
 
+    // ── Realtime: nuovo messaggio nel thread attivo ──────────────────────
+    const handleRealtimeNewMessage = useCallback((msg: ChatMessage) => {
+        setMessages(prev => {
+            if (prev.some(m => m.id === msg.id)) return prev;
+            return [...prev, msg];
+        });
+        // Segna subito come letto (il thread è aperto)
+        fetch('/api/chat/messages/read', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ messageIds: [msg.id], userId: teacherId }),
+        }).catch(() => {/* silenzioso */});
+    }, [teacherId]);
+
+    // ── Realtime: nuovo messaggio in thread non attivo → aggiorna badge ──
+    const handleRealtimeThreadUnread = useCallback((threadId: string, msg: ChatMessage) => {
+        setThreads(prev => prev.map(t => {
+            if (t.id !== threadId) return t;
+            return {
+                ...t,
+                unread_count: t.unread_count + 1,
+                last_message: {
+                    content: msg.content,
+                    sender_id: msg.sender_id,
+                    created_at: msg.created_at,
+                },
+                last_message_at: msg.created_at,
+            };
+        }).sort((a, b) => new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime()));
+        setUnreadCount(prev => prev + 1);
+    }, []);
+
+    // Attiva il realtime
+    useChatRealtime({
+        userId: teacherId,
+        selectedThreadId: selectedThread?.id ?? null,
+        threads,
+        onNewMessage: handleRealtimeNewMessage,
+        onThreadUnread: handleRealtimeThreadUnread,
+    });
+
+    // ── Polling thread list per tenere i badge sincronizzati ─────────────
+    useEffect(() => {
+        const interval = setInterval(loadThreads, 15000);
+        return () => clearInterval(interval);
+    }, [loadThreads]);
+
+    // Polling di backup ridotto (15s)
+    useEffect(() => {
+        if (!selectedThread) return;
+        const interval = setInterval(() => loadMessages(selectedThread.id), 15000);
+        return () => clearInterval(interval);
+    }, [selectedThread, loadMessages]);
+
+    // ── Mark as Read via IntersectionObserver ────────────────────────────
+    const handleMarkRead = useCallback(async (ids: string[]) => {
+        if (ids.length === 0) return;
+        try {
+            await fetch('/api/chat/messages/read', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ messageIds: ids, userId: teacherId }),
+            });
+            // Aggiornamento ottimistico locale
+            const now = new Date().toISOString();
+            setMessages(prev => prev.map(m =>
+                ids.includes(m.id) ? { ...m, read_at: now } : m
+            ));
+            if (selectedThreadRef.current) {
+                setThreads(prev => prev.map(t =>
+                    t.id === selectedThreadRef.current!.id
+                        ? { ...t, unread_count: 0 }
+                        : t
+                ));
+                setUnreadCount(prev => Math.max(0, prev - ids.length));
+            }
+        } catch (err) {
+            console.error('Errore mark-as-read:', err);
+        }
+    }, [teacherId]);
+
     const handleSelectThread = (thread: ChatThread) => {
         setSelectedThread(thread);
         setShowMobile('chat');
+        setMessages([]);
+        setFirstUnreadId(null);
         loadMessages(thread.id);
         setThreads(prev => prev.map(t => t.id === thread.id ? { ...t, unread_count: 0 } : t));
+        setUnreadCount(prev => {
+            const threadUnread = threads.find(t => t.id === thread.id)?.unread_count ?? 0;
+            return Math.max(0, prev - threadUnread);
+        });
     };
 
     const handleNewChat = async (contact: Contact) => {
@@ -110,7 +208,6 @@ function TeacherChatContent() {
                 setShowNewChat(false);
                 await loadThreads();
                 const newThread = await res.json();
-                // Seleziona il nuovo thread
                 const fresh = await fetch(`/api/chat/threads?userId=${teacherId}`);
                 if (fresh.ok) {
                     const allThreads: ChatThread[] = await fresh.json();
@@ -141,6 +238,7 @@ function TeacherChatContent() {
             if (res.ok) {
                 const newMsg = await res.json();
                 setMessages(prev => [...prev, newMsg]);
+                setFirstUnreadId(null); // inviato → separatore rimosso
                 setThreads(prev => prev.map(t =>
                     t.id === selectedThread.id
                         ? { ...t, last_message: { content, sender_id: teacherId, created_at: newMsg.created_at }, last_message_at: newMsg.created_at }
@@ -152,12 +250,6 @@ function TeacherChatContent() {
         }
     };
 
-    // Polling per nuovi messaggi
-    useEffect(() => {
-        if (!selectedThread) return;
-        const interval = setInterval(() => loadMessages(selectedThread.id), 5000);
-        return () => clearInterval(interval);
-    }, [selectedThread, loadMessages]);
 
     if (loading) {
         return (
@@ -177,11 +269,19 @@ function TeacherChatContent() {
                         <h1 className="font-barlow font-black text-3xl text-kidville-green uppercase tracking-wide">
                             💬 Chat
                         </h1>
-                        {unreadCount > 0 && (
-                            <span className="inline-flex items-center justify-center min-w-[24px] h-6 px-2 rounded-full bg-red-500 text-white font-barlow font-bold text-xs animate-pulse shadow-lg shadow-red-500/30">
-                                {unreadCount > 99 ? '99+' : unreadCount}
-                            </span>
-                        )}
+                        <AnimatePresence>
+                            {unreadCount > 0 && (
+                                <motion.span
+                                    initial={{ scale: 0, opacity: 0 }}
+                                    animate={{ scale: 1, opacity: 1 }}
+                                    exit={{ scale: 0, opacity: 0 }}
+                                    transition={{ type: 'spring', stiffness: 500, damping: 25 }}
+                                    className="inline-flex items-center justify-center min-w-[24px] h-6 px-2 rounded-full bg-emerald-500 text-white font-barlow font-bold text-xs shadow-lg shadow-emerald-500/30"
+                                >
+                                    {unreadCount > 99 ? '99+' : unreadCount}
+                                </motion.span>
+                            )}
+                        </AnimatePresence>
                     </div>
                     <p className="font-maven text-gray-500 mt-1">Messaggi con le famiglie</p>
                 </div>
@@ -223,8 +323,14 @@ function TeacherChatContent() {
                                     </p>
                                 </div>
                             </div>
-                            <ChatMessageArea messages={messages} currentUserId={teacherId}
-                                otherUserName={selectedThread.other_user.first_name} loading={loadingMessages} />
+                            <ChatMessageArea
+                                messages={messages}
+                                currentUserId={teacherId}
+                                otherUserName={selectedThread.other_user.first_name}
+                                loading={loadingMessages}
+                                firstUnreadId={firstUnreadId}
+                                onMarkRead={handleMarkRead}
+                            />
                             <ChatInput onSend={handleSendMessage} />
                         </>
                     ) : (
@@ -271,8 +377,14 @@ function TeacherChatContent() {
                                 <p className="font-maven text-[10px] text-gray-400">{selectedThread.student.nome}</p>
                             </div>
                         </div>
-                        <ChatMessageArea messages={messages} currentUserId={teacherId}
-                            otherUserName={selectedThread.other_user.first_name} loading={loadingMessages} />
+                        <ChatMessageArea
+                            messages={messages}
+                            currentUserId={teacherId}
+                            otherUserName={selectedThread.other_user.first_name}
+                            loading={loadingMessages}
+                            firstUnreadId={firstUnreadId}
+                            onMarkRead={handleMarkRead}
+                        />
                         <ChatInput onSend={handleSendMessage} />
                     </motion.div>
                 )}

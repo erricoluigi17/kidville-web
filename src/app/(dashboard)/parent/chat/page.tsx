@@ -1,12 +1,13 @@
 'use client';
 
-import { useState, useEffect, useCallback, Suspense } from 'react';
+import { useState, useEffect, useCallback, Suspense, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowLeft, MessageSquare, Plus, X, UserPlus } from 'lucide-react';
 import { ChatThreadList, ChatThread } from '@/components/features/chat/ChatThreadList';
 import { ChatMessageArea, ChatMessage } from '@/components/features/chat/ChatMessageArea';
 import { ChatInput } from '@/components/features/chat/ChatInput';
 import { useUnreadNotifications } from '@/components/features/chat/useUnreadNotifications';
+import { useChatRealtime } from '@/components/features/chat/useChatRealtime';
 import { useSearchParams } from 'next/navigation';
 
 interface Contact {
@@ -33,13 +34,20 @@ function ParentChatContent() {
     const [loadingContacts, setLoadingContacts] = useState(false);
     const [childrenNames, setChildrenNames] = useState<string[]>([]);
     const [unreadCount, setUnreadCount] = useState(0);
+    // ID del primo messaggio non letto: calcolato al caricamento del thread
+    // e "bloccato" finché l'utente non invia un messaggio o cambia chat.
+    const [firstUnreadId, setFirstUnreadId] = useState<string | null>(null);
 
-    // Notifiche non letti + browser notifications
+    // Ref stabile per selectedThread (evita re-render nei callback realtime)
+    const selectedThreadRef = useRef<ChatThread | null>(null);
+    useEffect(() => { selectedThreadRef.current = selectedThread; }, [selectedThread]);
+
+    // Notifiche non letti + badge titolo pagina (mantenuto come fallback)
     useUnreadNotifications({
         userId: parentId,
         enabled: true,
         onUnreadChange: setUnreadCount,
-        pollInterval: 8000,
+        pollInterval: 30000, // ridotto a 30s ora che c'è il realtime
     });
 
     const loadThreads = useCallback(async () => {
@@ -48,7 +56,6 @@ function ParentChatContent() {
             if (res.ok) {
                 const data: ChatThread[] = await res.json();
                 setThreads(data);
-                // Estrai nomi figli dai thread
                 const names = [...new Set(data.map(t => t.student.nome))];
                 if (names.length > 0) setChildrenNames(names);
             }
@@ -68,8 +75,7 @@ function ParentChatContent() {
             if (res.ok) {
                 const data = await res.json();
                 setContacts(data.contacts ?? []);
-                // Aggiorna nomi figli anche dai contatti
-                const names = [...new Set((data.contacts ?? []).map((c: Contact) => c.student_name.split(' ')[0]))];
+                const names: string[] = [...new Set<string>((data.contacts ?? []).map((c: Contact) => c.student_name.split(' ')[0]))];
                 if (names.length > 0) setChildrenNames(names);
             }
         } catch (err) {
@@ -79,16 +85,22 @@ function ParentChatContent() {
         }
     }, [parentId]);
 
-    // Carica contatti al mount per ottenere i nomi dei figli anche senza thread
     useEffect(() => { loadContacts(); }, [loadContacts]);
 
     const loadMessages = useCallback(async (threadId: string) => {
         setLoadingMessages(true);
         try {
-            const res = await fetch(`/api/chat/messages?threadId=${threadId}&markRead=${parentId}`);
+            const res = await fetch(`/api/chat/messages?threadId=${threadId}`);
             if (res.ok) {
                 const data = await res.json();
-                setMessages(data.messages ?? []);
+                const msgs: ChatMessage[] = data.messages ?? [];
+                setMessages(msgs);
+                // Blocca il separatore al primo messaggio non letto al momento
+                // dell'apertura — non cambierà finché l'utente non invia o cambia chat
+                const firstUnread = msgs.find(
+                    m => m.sender_id !== parentId && m.read_at === null
+                );
+                setFirstUnreadId(firstUnread?.id ?? null);
             }
         } catch (err) {
             console.error('Errore caricamento messaggi:', err);
@@ -97,11 +109,106 @@ function ParentChatContent() {
         }
     }, [parentId]);
 
+    // ── Realtime: nuovo messaggio nel thread attivo ──────────────────────
+    const handleRealtimeNewMessage = useCallback((msg: ChatMessage) => {
+        setMessages(prev => {
+            // Evita duplicati (il polling potrebbe già averlo aggiunto)
+            if (prev.some(m => m.id === msg.id)) return prev;
+            return [...prev, msg];
+        });
+        // Il messaggio è già nel viewport → marcalo come letto immediatamente
+        // (l'IntersectionObserver lo catturerà, ma lo mandiamo anche ora in background)
+        fetch('/api/chat/messages/read', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ messageIds: [msg.id], userId: parentId }),
+        }).catch(() => {/* silenzioso */});
+    }, [parentId]);
+
+    // ── Realtime: nuovo messaggio in thread non attivo → aggiorna badge ──
+    const handleRealtimeThreadUnread = useCallback((threadId: string, msg: ChatMessage) => {
+        setThreads(prev => prev.map(t => {
+            if (t.id !== threadId) return t;
+            return {
+                ...t,
+                unread_count: t.unread_count + 1,
+                last_message: {
+                    content: msg.content,
+                    sender_id: msg.sender_id,
+                    created_at: msg.created_at,
+                },
+                last_message_at: msg.created_at,
+            };
+        }).sort((a, b) => new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime()));
+        // Aggiorna anche il contatore globale nella intestazione
+        setUnreadCount(prev => prev + 1);
+    }, []);
+
+    // Attiva il realtime solo quando i thread sono caricati
+    useChatRealtime({
+        userId: parentId,
+        selectedThreadId: selectedThread?.id ?? null,
+        threads,
+        onNewMessage: handleRealtimeNewMessage,
+        onThreadUnread: handleRealtimeThreadUnread,
+    });
+
+    // ── Polling thread list per tenere i badge sincronizzati ─────────────
+    // Necessario perché loadThreads gira solo al mount; i nuovi messaggi
+    // arrivano via realtime (useChatRealtime) ma se non è abilitato o
+    // se si carica la pagina con messaggi già presenti, i badge scompaiono.
+    useEffect(() => {
+        const interval = setInterval(loadThreads, 15000);
+        return () => clearInterval(interval);
+    }, [loadThreads]);
+
+    // ── Polling di backup sui messaggi (ridotto, solo fallback) ──────────
+    useEffect(() => {
+        if (!selectedThread) return;
+        const interval = setInterval(() => loadMessages(selectedThread.id), 15000);
+        return () => clearInterval(interval);
+    }, [selectedThread, loadMessages]);
+
+    // ── Mark as Read via IntersectionObserver ────────────────────────────
+    const handleMarkRead = useCallback(async (ids: string[]) => {
+        if (ids.length === 0) return;
+        try {
+            await fetch('/api/chat/messages/read', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ messageIds: ids, userId: parentId }),
+            });
+            // Aggiornamento ottimistico locale
+            const now = new Date().toISOString();
+            setMessages(prev => prev.map(m =>
+                ids.includes(m.id) ? { ...m, read_at: now } : m
+            ));
+            // Azzera unread_count sul thread corrente
+            if (selectedThreadRef.current) {
+                setThreads(prev => prev.map(t =>
+                    t.id === selectedThreadRef.current!.id
+                        ? { ...t, unread_count: 0 }
+                        : t
+                ));
+                setUnreadCount(prev => Math.max(0, prev - ids.length));
+            }
+        } catch (err) {
+            console.error('Errore mark-as-read:', err);
+        }
+    }, [parentId]);
+
     const handleSelectThread = (thread: ChatThread) => {
         setSelectedThread(thread);
         setShowMobile('chat');
+        setMessages([]);
+        setFirstUnreadId(null); // reset prima del caricamento, sarà ri-calcolato
         loadMessages(thread.id);
+        // Azzeramento ottimistico immediato del badge
         setThreads(prev => prev.map(t => t.id === thread.id ? { ...t, unread_count: 0 } : t));
+        setUnreadCount(prev => {
+            const threadUnread = threads.find(t => t.id === thread.id)?.unread_count ?? 0;
+            return Math.max(0, prev - threadUnread);
+        });
     };
 
     const handleNewChat = async (contact: Contact) => {
@@ -149,6 +256,8 @@ function ParentChatContent() {
             if (res.ok) {
                 const newMsg = await res.json();
                 setMessages(prev => [...prev, newMsg]);
+                // L'utente ha inviato → il separatore non serve più
+                setFirstUnreadId(null);
                 setThreads(prev => prev.map(t =>
                     t.id === selectedThread.id
                         ? { ...t, last_message: { content, sender_id: parentId, created_at: newMsg.created_at }, last_message_at: newMsg.created_at }
@@ -160,11 +269,8 @@ function ParentChatContent() {
         }
     };
 
-    useEffect(() => {
-        if (!selectedThread) return;
-        const interval = setInterval(() => loadMessages(selectedThread.id), 5000);
-        return () => clearInterval(interval);
-    }, [selectedThread, loadMessages]);
+    // Rimuovere il calcolo reattivo: firstUnreadId è ora uno stato
+    // gestito da loadMessages e resettato da handleSendMessage/handleSelectThread
 
     if (loading) {
         return (
@@ -183,11 +289,19 @@ function ParentChatContent() {
                         <h1 className="font-barlow font-black text-3xl text-kidville-green uppercase tracking-wide">
                             💬 Messaggi
                         </h1>
-                        {unreadCount > 0 && (
-                            <span className="inline-flex items-center justify-center min-w-[24px] h-6 px-2 rounded-full bg-red-500 text-white font-barlow font-bold text-xs animate-pulse shadow-lg shadow-red-500/30">
-                                {unreadCount > 99 ? '99+' : unreadCount}
-                            </span>
-                        )}
+                        <AnimatePresence>
+                            {unreadCount > 0 && (
+                                <motion.span
+                                    initial={{ scale: 0, opacity: 0 }}
+                                    animate={{ scale: 1, opacity: 1 }}
+                                    exit={{ scale: 0, opacity: 0 }}
+                                    transition={{ type: 'spring', stiffness: 500, damping: 25 }}
+                                    className="inline-flex items-center justify-center min-w-[24px] h-6 px-2 rounded-full bg-emerald-500 text-white font-barlow font-bold text-xs shadow-lg shadow-emerald-500/30"
+                                >
+                                    {unreadCount > 99 ? '99+' : unreadCount}
+                                </motion.span>
+                            )}
+                        </AnimatePresence>
                     </div>
                     <p className="font-maven text-gray-500 mt-1">
                         Chatta con gli insegnanti{childrenNames.length > 0 ? ` di ${childrenNames.join(' e ')}` : ''}
@@ -229,8 +343,14 @@ function ParentChatContent() {
                                     </p>
                                 </div>
                             </div>
-                            <ChatMessageArea messages={messages} currentUserId={parentId}
-                                otherUserName={selectedThread.other_user.first_name} loading={loadingMessages} />
+                            <ChatMessageArea
+                                messages={messages}
+                                currentUserId={parentId}
+                                otherUserName={selectedThread.other_user.first_name}
+                                loading={loadingMessages}
+                                firstUnreadId={firstUnreadId}
+                                onMarkRead={handleMarkRead}
+                            />
                             <ChatInput onSend={handleSendMessage} placeholder="Scrivi un messaggio all'insegnante..." />
                         </>
                     ) : (
@@ -273,8 +393,14 @@ function ParentChatContent() {
                                 <p className="font-maven text-[10px] text-gray-400">{selectedThread.student.nome}</p>
                             </div>
                         </div>
-                        <ChatMessageArea messages={messages} currentUserId={parentId}
-                            otherUserName={selectedThread.other_user.first_name} loading={loadingMessages} />
+                        <ChatMessageArea
+                            messages={messages}
+                            currentUserId={parentId}
+                            otherUserName={selectedThread.other_user.first_name}
+                            loading={loadingMessages}
+                            firstUnreadId={firstUnreadId}
+                            onMarkRead={handleMarkRead}
+                        />
                         <ChatInput onSend={handleSendMessage} placeholder="Scrivi un messaggio..." />
                     </motion.div>
                 )}

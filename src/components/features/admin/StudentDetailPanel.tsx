@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { X, Trash2, Save, AlertTriangle, Users, Baby } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { LinkedAdultProfile, AdultProfileData, AdultType } from './LinkedAdultProfile';
+import { Task } from '../teacher/tasks/TaskCard';
 
 interface Student {
     id: string;
@@ -54,6 +55,10 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete }: Props
     const [siblings, setSiblings] = useState<Sibling[]>([]);
     const [siblingsLoading, setSiblingsLoading] = useState(false);
 
+    // Complaints / Reports states
+    const [studentTasks, setStudentTasks] = useState<Task[]>([]);
+    const [tasksLoading, setTasksLoading] = useState(false);
+
     useEffect(() => {
         fetch('/api/admin/sections').then(r => r.json()).then(d => { if (Array.isArray(d)) setSections(d); }).catch(() => {});
     }, []);
@@ -68,6 +73,18 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete }: Props
             })
             .catch(() => {})
             .finally(() => setSiblingsLoading(false));
+    }, [student?.id]);
+
+    useEffect(() => {
+        if (!student?.id) return;
+        setTasksLoading(true);
+        fetch(`/api/tasks?studentId=${student.id}`)
+            .then(r => r.json())
+            .then(d => {
+                if (Array.isArray(d)) setStudentTasks(d);
+            })
+            .catch(err => console.error('Errore caricamento task alunno:', err))
+            .finally(() => setTasksLoading(false));
     }, [student?.id]);
 
     useEffect(() => {
@@ -386,6 +403,84 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete }: Props
                             <div className="text-center py-5 bg-gray-50 rounded-xl border-2 border-dashed border-gray-200">
                                 <Baby size={20} className="mx-auto text-gray-300 mb-1.5" />
                                 <p className="font-maven text-sm text-gray-400">Nessun fratello/sorella registrato</p>
+                            </div>
+                        )}
+                    </section>
+
+                    {/* ===== SEGNALAZIONI E RECLAMI ===== */}
+                    <section className="pt-4 border-t border-gray-100">
+                        <h3 className="font-barlow font-bold text-kidville-green uppercase text-xs tracking-wide mb-3 flex items-center gap-2">
+                            📌 Segnalazioni e Reclami
+                        </h3>
+                        
+                        {tasksLoading ? (
+                            <div className="flex items-center gap-2 py-4 text-gray-400 font-maven text-sm">
+                                <div className="w-4 h-4 border-2 border-gray-200 border-t-kidville-green rounded-full animate-spin" />
+                                Caricamento segnalazioni...
+                            </div>
+                        ) : studentTasks.length > 0 ? (
+                            <div className="space-y-2">
+                                {studentTasks.map(task => {
+                                    const isCompleted = task.status === 'completed';
+                                    return (
+                                        <div key={task.id} className="p-3 bg-zinc-50/50 dark:bg-zinc-900/30 border border-gray-150 dark:border-zinc-800 rounded-xl space-y-1.5 text-left text-xs">
+                                            <div className="flex justify-between items-start gap-1">
+                                                <span className="font-bold text-zinc-700 dark:text-zinc-300 font-maven leading-tight block">
+                                                    {task.titolo}
+                                                </span>
+                                                <span className={`text-[8px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-md flex-shrink-0 ${
+                                                    isCompleted
+                                                        ? 'bg-emerald-100/50 text-emerald-700 dark:bg-emerald-950/20 dark:text-emerald-400' 
+                                                        : 'bg-amber-100/50 text-amber-700 dark:bg-amber-955/20 dark:text-amber-400'
+                                                }`}>
+                                                    {isCompleted ? 'Risolto' : 'Attivo'}
+                                                </span>
+                                            </div>
+                                            
+                                            {(task.descrizione || task.contenuto) && (
+                                                <p className="text-[10px] text-zinc-500 font-maven leading-relaxed">
+                                                    {task.descrizione || task.contenuto}
+                                                </p>
+                                            )}
+                                            
+                                            {isCompleted && task.resolution_notes && (
+                                                <div className="p-2 bg-emerald-50/20 border border-emerald-100/30 rounded-lg italic text-[9px] text-emerald-800 dark:text-emerald-400 font-maven">
+                                                    &ldquo;{task.resolution_notes}&rdquo;
+                                                </div>
+                                            )}
+                                            
+                                            {/* Render attachments in student panel */}
+                                            {task.attachments && task.attachments.length > 0 && (
+                                                <div className="mt-1.5 space-y-1">
+                                                    <p className="text-[8px] font-bold text-zinc-400 uppercase tracking-wider">Allegati:</p>
+                                                    <div className="flex flex-col gap-1">
+                                                        {task.attachments.map((att: any, attIdx: number) => (
+                                                            <a
+                                                                key={attIdx}
+                                                                href={att.fileUrl || att.url}
+                                                                target="_blank"
+                                                                rel="noopener noreferrer"
+                                                                className="inline-flex items-center gap-1 text-[9px] text-kidville-green hover:underline truncate max-w-full font-semibold"
+                                                            >
+                                                                📎 {att.name}
+                                                            </a>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
+                                            
+                                            <div className="text-[8px] text-zinc-400 flex justify-between pt-1 border-t border-gray-100/30">
+                                                <span>Categoria: {task.category}</span>
+                                                <span>Aperto il {new Date(task.created_at).toLocaleDateString('it-IT')}</span>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        ) : (
+                            <div className="text-center py-5 bg-gray-50 dark:bg-zinc-900/30 rounded-xl border-2 border-dashed border-gray-200 dark:border-zinc-800">
+                                <span className="text-2xl block mb-1">📋</span>
+                                <p className="font-maven text-sm text-gray-400">Nessun reclamo o segnalazione</p>
                             </div>
                         )}
                     </section>

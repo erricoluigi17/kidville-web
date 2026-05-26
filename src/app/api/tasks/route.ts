@@ -250,19 +250,41 @@ export async function GET(request: Request) {
         const isManager = role === 'admin' || role === 'coordinator';
 
         // Educator section names for class-based filter
+        // Derived dynamically from their uploaded media's tagged students' sections
         let sectionNames: string[] = [];
         if (!isManager) {
-            const { data: educatorSections } = await supabase
-                .from('educator_sections')
-                .select('section_id')
-                .eq('educator_id', userId);
-            const sectionIds = educatorSections?.map((es: { section_id: string }) => es.section_id) || [];
-            if (sectionIds.length > 0) {
-                const { data: sections } = await supabase
-                    .from('sections')
-                    .select('name')
-                    .in('id', sectionIds);
-                sectionNames = sections?.map((s: { name: string }) => s.name) || [];
+            // Get sections from educator's media uploads (tagged students' classes)
+            const { data: myMedia } = await supabase
+                .from('galleria_media_v2')
+                .select('tag_students')
+                .eq('uploaded_by', userId!)
+                .not('tag_students', 'is', null);
+
+            const myTaggedIds = (myMedia ?? [])
+                .flatMap((m: { tag_students: string[] | null }) => m.tag_students ?? [])
+                .filter(Boolean);
+
+            if (myTaggedIds.length > 0) {
+                const { data: students } = await supabase
+                    .from('alunni')
+                    .select('classe_sezione')
+                    .in('id', myTaggedIds);
+                sectionNames = [...new Set(
+                    (students ?? []).map((s: { classe_sezione: string }) => s.classe_sezione).filter(Boolean)
+                )];
+            }
+
+            // Fallback: use email-to-section mapping for known educators
+            if (sectionNames.length === 0) {
+                const { data: utEntryForSection } = await supabase
+                    .from('utenti').select('email').eq('id', userId!).maybeSingle();
+                const emailToSection: Record<string, string> = {
+                    'maestra.anna@kidville.it': 'Girasoli',
+                    'maestra.chiara@kidville.it': 'Tulipani',
+                };
+                if (utEntryForSection?.email && emailToSection[utEntryForSection.email]) {
+                    sectionNames = [emailToSection[utEntryForSection.email]];
+                }
             }
         }
 

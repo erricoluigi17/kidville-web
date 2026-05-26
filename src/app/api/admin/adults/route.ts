@@ -1,77 +1,110 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createAdminClient } from '@/lib/supabase/server-client';
 
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
-
+// GET /api/admin/adults?role=educator
+// Returns staff from utenti table (adults table not available in public schema)
 export async function GET(request: NextRequest) {
     try {
         const { searchParams } = new URL(request.url);
         const role = searchParams.get('role');
-        const supabaseAdmin = createClient(
-          process.env.NEXT_PUBLIC_SUPABASE_URL!,
-          process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-        );
-        let query = supabaseAdmin.from('adults').select('*');
+        
+        const supabase = await createAdminClient();
+
+        let query = supabase
+            .from('utenti')
+            .select('id, first_name, last_name, nome, cognome, ruolo, email, scuola_id')
+            .in('ruolo', ['maestra', 'educator', 'admin', 'coordinator', 'coordinatore', 'insegnante']);
+
         if (role) {
-            query = query.eq('role', role);
+            // Map role param to ruolo values
+            const ruoloMap: Record<string, string[]> = {
+                'educator': ['maestra', 'educator', 'insegnante'],
+                'coordinator': ['coordinator', 'coordinatore'],
+                'admin': ['admin'],
+            };
+            const ruoloValues = ruoloMap[role] || [role];
+            query = supabase
+                .from('utenti')
+                .select('id, first_name, last_name, nome, cognome, ruolo, email, scuola_id')
+                .in('ruolo', ruoloValues);
         }
+
         const { data, error } = await query;
         if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-        return NextResponse.json(data);
-    } catch (err: any) {
-        return NextResponse.json({ error: 'Errore interno del server', details: err.message }, { status: 500 });
+
+        const normalized = (data ?? []).map(u => ({
+            id: u.id,
+            first_name: u.first_name || u.nome || '',
+            last_name: u.last_name || u.cognome || '',
+            role: u.ruolo || 'educator',
+            emails: u.email ? [u.email] : [],
+            scuola_id: u.scuola_id,
+        }));
+
+        return NextResponse.json(normalized);
+    } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return NextResponse.json({ error: 'Errore interno del server', details: msg }, { status: 500 });
     }
 }
 
+// POST /api/admin/adults
+// Creates a new staff user in auth + utenti
 export async function POST(request: NextRequest) {
     try {
         const body = await request.json();
-        const { emails, first_name, last_name, role, ...otherData } = body;
+        const { emails, first_name, last_name, role, scuola_id, ...otherData } = body;
         
         const primaryEmail = emails && emails.length > 0 ? emails[0] : null;
 
         if (!primaryEmail) {
-            return NextResponse.json({ error: 'Primary Email is required for authentication' }, { status: 400 });
+            return NextResponse.json({ error: 'Primary Email is required' }, { status: 400 });
         }
 
-        // 1. Invita l'utente tramite Supabase Auth (crea l'utente e invia email)
-        const { data: authData, error: authError } = await supabaseAdmin.auth.admin.inviteUserByEmail(primaryEmail, {
+        const supabase = await createAdminClient();
+
+        // 1. Crea l'utente in Auth
+        const { data: authData, error: authError } = await supabase.auth.admin.inviteUserByEmail(primaryEmail, {
             data: { first_name, last_name, role }
         });
 
         if (authError) {
-             console.error('Error creating auth user:', authError);
-             return NextResponse.json({ error: authError.message }, { status: 400 });
+            return NextResponse.json({ error: authError.message }, { status: 400 });
         }
 
         const userId = authData.user.id;
 
-        // 2. Inserisci i dati anagrafici in 'adults'
-        const { data: adultData, error: adultError } = await supabaseAdmin
-            .from('adults')
-            .insert({
+        // 2. Inserisci in utenti
+        const { data: utentiData, error: utentiError } = await supabase
+            .from('utenti')
+            .upsert({
                 id: userId,
+                email: primaryEmail,
+                nome: first_name,
+                cognome: last_name,
                 first_name,
                 last_name,
-                role: role || 'parent',
-                emails: emails,
-                ...otherData
+                ruolo: role || 'educator',
+                scuola_id: scuola_id || '11111111-1111-1111-1111-111111111111',
+                attivo: true,
             })
             .select()
             .single();
 
-        if (adultError) {
-            console.error('Error creating adult record:', adultError);
-            return NextResponse.json({ error: adultError.message }, { status: 500 });
+        if (utentiError) {
+            console.error('Error creating utenti record:', utentiError);
+            return NextResponse.json({ error: utentiError.message }, { status: 500 });
         }
 
-        return NextResponse.json(adultData, { status: 201 });
+        return NextResponse.json({
+            ...utentiData,
+            first_name: utentiData.first_name || utentiData.nome,
+            last_name: utentiData.last_name || utentiData.cognome,
+            role: utentiData.ruolo,
+        }, { status: 201 });
 
-    } catch (err: any) {
-        console.error('Error in POST /api/admin/adults:', err);
-        return NextResponse.json({ error: 'Errore interno del server', details: err.message }, { status: 500 });
+    } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return NextResponse.json({ error: 'Errore interno del server', details: msg }, { status: 500 });
     }
 }

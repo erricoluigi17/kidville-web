@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronLeft, ChevronRight, BookOpen, Camera, ChevronDown } from 'lucide-react';
 import { getEventConfig } from '@/components/features/teacher/diary/eventConfig';
 import { useSearchParams } from 'next/navigation';
+import { MediaGrid, MediaItem } from '@/components/features/gallery/MediaGrid';
 
 // ─── Tipi ─────────────────────────────────────────────────────────────────────
 
@@ -229,7 +230,7 @@ function EventCard({ entry, index }: { entry: DiaryEntry; index: number }) {
     );
 }
 
-function PhotosSection({ photos }: { photos: DailyPhoto[] }) {
+function PhotosSection({ photos }: { photos: MediaItem[] }) {
     const [open, setOpen] = useState(false);
     if (photos.length === 0) return null;
     return (
@@ -269,13 +270,8 @@ function PhotosSection({ photos }: { photos: DailyPhoto[] }) {
                         transition={{ duration: 0.25 }}
                         className="overflow-hidden"
                     >
-                        <div className="grid grid-cols-3 gap-2 px-4 pb-4 pt-0 border-t border-gray-50">
-                            {photos.map(p => (
-                                <div key={p.id} className="aspect-square rounded-2xl overflow-hidden bg-gray-100">
-                                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                                    <img src={p.url} alt={p.caption} className="w-full h-full object-cover" />
-                                </div>
-                            ))}
+                        <div className="px-4 pb-4 pt-0 border-t border-gray-50 bg-black/5 rounded-b-3xl">
+                            <MediaGrid items={photos} showActions />
                         </div>
                     </motion.div>
                 )}
@@ -288,10 +284,12 @@ function PhotosSection({ photos }: { photos: DailyPhoto[] }) {
 
 function ParentDiaryContent() {
     const searchParams = useSearchParams();
-    const alunnoId = searchParams.get('id') || 'dc617529-e80d-4084-9041-fb28e864089f';
+    const alunnoId = searchParams.get('id') || 'dc617529-e80d-4084-9041-fb28e864089f'; // Default: Tommaso Bianchi
+    const parentId = searchParams.get('parentId') || null;
 
     const [dateKey, setDateKey] = useState<string>(toDateKey(new Date()));
     const [entries, setEntries] = useState<DiaryEntry[]>([]);
+    const [photos, setPhotos] = useState<MediaItem[]>([]);
     const [loading, setLoading] = useState(true);
     const [direction, setDirection] = useState<1 | -1>(1);
     const [studentName, setStudentName] = useState<string | null>(null);
@@ -310,6 +308,7 @@ function ParentDiaryContent() {
     const load = useCallback(async (dk: string) => {
         setLoading(true);
         try {
+            // Carica eventi diario
             const res = await fetch(`/api/diary/entries?alunno_id=${alunnoId}&from=${dk}&to=${dk}`);
             if (res.ok) {
                 const data: DiaryEntry[] = await res.json();
@@ -317,12 +316,25 @@ function ParentDiaryContent() {
             } else {
                 setEntries([]);
             }
-        } catch {
+
+            // Carica foto reali associate a questo alunno per il giorno selezionato
+            let photosUrl = `/api/gallery?studentId=${alunnoId}&date=${dk}`;
+            if (parentId) photosUrl += `&parentId=${parentId}`;
+            const photosRes = await fetch(photosUrl);
+            if (photosRes.ok) {
+                const photosData = await photosRes.json();
+                setPhotos(photosData.media ?? []);
+            } else {
+                setPhotos([]);
+            }
+        } catch (err) {
+            console.error('Errore nel caricamento del diario/foto:', err);
             setEntries([]);
+            setPhotos([]);
         } finally {
             setLoading(false);
         }
-    }, [alunnoId]);
+    }, [alunnoId, parentId]);
 
     useEffect(() => { load(dateKey); }, [dateKey, load]);
 
@@ -448,8 +460,8 @@ function ParentDiaryContent() {
                             {entries.map((entry, i) => (
                                 <EventCard key={entry.id} entry={entry} index={i} />
                             ))}
-                            {/* Foto (mock — nessuna per ora) */}
-                            <PhotosSection photos={[]} />
+                            {/* Foto reali della giornata */}
+                            <PhotosSection photos={photos} />
                         </div>
                     )}
                 </motion.div>

@@ -1,4 +1,4 @@
-import { db, LocalAttendanceLog, LocalDiaryEntry } from './db';
+import { db, LocalAttendanceLog, LocalDiaryEntry, LocalGalleryMedia } from './db';
 import { createBrowserClient } from '@supabase/ssr';
 
 function getSupabaseClient() {
@@ -211,17 +211,118 @@ export async function syncAdults() {
 
     try {
         const supabase = getSupabaseClient();
-        // Grazie alle RLS, l'educatore riceverà solo gli adulti pertinenti alle proprie sezioni
-        const { data, error } = await supabase.from('adults').select('*');
+        // Usa utenti come fonte per adulti (adults non è nel public schema)
+        const { data, error } = await supabase
+            .from('utenti')
+            .select('id, first_name, last_name, nome, cognome, ruolo, email')
+            .in('ruolo', ['maestra', 'educator', 'admin', 'coordinator', 'coordinatore']);
         if (error) throw error;
 
         if (data && data.length > 0) {
-            await db.adulti.clear(); // Sostituzione completa cache locale
-            await db.adulti.bulkAdd(data);
+            await db.adulti.clear();
+            await db.adulti.bulkAdd(data.map(u => ({
+                ...u,
+                first_name: u.first_name || u.nome || '',
+                last_name: u.last_name || u.cognome || '',
+                role: u.ruolo || 'educator',
+            })));
             console.log(`Cache adulti aggiornata: ${data.length} record offline.`);
         }
     } catch (error) {
         console.error('Errore sync adulti:', error);
+    }
+}
+
+// ============================================================
+// Galleria Foto e Video — Fase 3
+// ============================================================
+
+export async function saveLocalGalleryMedia(mediaData: Omit<LocalGalleryMedia, 'sync_status'>) {
+    try {
+        const fullMedia: LocalGalleryMedia = { ...mediaData, sync_status: 'pending' };
+        await db.galleria.put(fullMedia);
+        
+        if (typeof window !== 'undefined' && navigator.onLine) {
+            syncPendingGalleryMedia();
+        }
+    } catch (error) {
+        console.error('Errore nel salvataggio locale della galleria:', error);
+        throw error;
+    }
+}
+
+export async function syncPendingGalleryMedia() {
+    if (typeof window !== 'undefined' && !navigator.onLine) {
+        console.log('Sync galleria abortito: Dispositivo Offline');
+        return;
+    }
+
+    try {
+        const supabase = getSupabaseClient();
+        
+        const pending = await db.galleria
+            .where('sync_status')
+            .anyOf('pending', 'error')
+            .toArray();
+
+        if (pending.length === 0) return;
+
+        console.log(`Galleria: ${pending.length} record da sincronizzare...`);
+
+        for (const item of pending) {
+            try {
+                // 1. Carica il blob tramite API server-side
+                const formData = new FormData();
+                const fileObj = new File([item.file_blob], item.file_name, {
+                    type: item.file_type === 'video' ? 'video/mp4' : 'image/jpeg'
+                });
+                formData.append('file', fileObj);
+                formData.append('userId', item.uploaded_by);
+
+                const uploadRes = await fetch('/api/gallery/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!uploadRes.ok) {
+                    const uploadErrData = await uploadRes.json();
+                    console.error('Errore caricamento storage (API) per item:', item.id, uploadErrData.error);
+                    await db.galleria.update(item.id, { sync_status: 'error' });
+                    continue;
+                }
+
+                const { fileUrl } = await uploadRes.json();
+
+                // 2. Salva il record nel database tramite l'API POST
+                const response = await fetch('/api/gallery', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        uploaded_by: item.uploaded_by,
+                        file_url: fileUrl,
+                        file_type: item.file_type,
+                        caption: item.caption,
+                        tag_students: item.tag_students,
+                        is_broadcast: item.is_broadcast,
+                        target_classes: item.target_classes,
+                    }),
+                });
+
+                if (!response.ok) {
+                    const errRes = await response.json();
+                    throw new Error(errRes.error || 'Errore salvataggio DB');
+                }
+
+                // 4. Rimuovi dal database offline dopo il successo
+                await db.galleria.delete(item.id);
+                console.log(`Media ${item.file_name} sincronizzato con successo.`);
+            } catch (itemErr) {
+                console.error(`Errore nel sync del media ${item.id}:`, itemErr);
+                await db.galleria.update(item.id, { sync_status: 'error' });
+            }
+        }
+    } catch (error) {
+        console.error('Errore sync galleria:', error);
     }
 }
 

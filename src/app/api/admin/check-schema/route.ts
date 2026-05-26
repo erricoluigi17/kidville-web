@@ -4,17 +4,21 @@ import { createAdminClient } from '@/lib/supabase/server-client';
 export async function GET() {
   const supabase = await createAdminClient();
   
-  // Get all adults
-  const { data: adults, error } = await supabase
-    .from('adults')
-    .select('id, first_name, last_name, role')
-    .order('first_name');
-  
-  // Also check author_id FK constraint - can we insert with a utenti user?
-  const { data: utenti } = await supabase
+  // Get staff from utenti (adults table not in public schema)
+  const { data: staff, error } = await supabase
     .from('utenti')
-    .select('id, nome, cognome, first_name, last_name, ruolo, role')
-    .limit(5);
+    .select('id, first_name, last_name, nome, cognome, ruolo, email')
+    .in('ruolo', ['maestra', 'educator', 'admin', 'coordinator', 'coordinatore'])
+    .order('cognome');
     
-  return NextResponse.json({ adults, adultsError: error?.message, utenti });
+  return NextResponse.json({ 
+    staff: staff?.map(u => ({
+      id: u.id,
+      first_name: u.first_name || u.nome,
+      last_name: u.last_name || u.cognome,
+      role: u.ruolo,
+      email: u.email
+    })), 
+    staffError: error?.message 
+  });
 }

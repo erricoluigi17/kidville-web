@@ -73,6 +73,20 @@ export interface LocalStudentDocument {
     sync_status: 'synced' | 'pending' | 'error';
 }
 
+export interface LocalGalleryMedia {
+    id: string;
+    uploaded_by: string;
+    caption: string | null;
+    tag_students: string[];
+    is_broadcast: boolean;
+    target_classes: string[] | null;
+    file_type: 'foto' | 'video';
+    file_blob: Blob;
+    file_name: string;
+    sync_status: 'synced' | 'pending' | 'error';
+    creato_il: string;
+}
+
 const db = new Dexie('KidvilleOfflineDB') as Dexie & {
     presenze: EntityTable<LocalAttendanceLog, 'id'>;
     delegati: EntityTable<LocalDelegate, 'id'>;
@@ -81,6 +95,7 @@ const db = new Dexie('KidvilleOfflineDB') as Dexie & {
     genitori: EntityTable<LocalParent, 'id'>;
     documenti_alunni: EntityTable<LocalStudentDocument, 'id'>;
     adulti: EntityTable<any, 'id'>; // Anagrafica adulti estesa (Fase 6)
+    galleria: EntityTable<LocalGalleryMedia, 'id'>; // Galleria multimediale (Fase 3)
 };
 
 // v2: schema presenze + delegati (Fase 1)
@@ -147,4 +162,17 @@ db.version(8).stores({
     adulti: 'id, role'
 });
 
+// v9: aggiunta galleria per caricamento foto/video offline
+db.version(9).stores({
+    presenze: 'id, alunno_id, data, sync_status',
+    delegati: 'id, alunno_id',
+    diario: 'id, alunno_id, classe_id, tipo_evento, timestamp_evento, sync_status',
+    armadietto: 'id, alunno_id, materiale, date, sync_status',
+    genitori: 'id, sync_status',
+    documenti_alunni: 'id, alunno_id, tipo_documento, sync_status',
+    adulti: 'id, role',
+    galleria: 'id, uploaded_by, sync_status'
+});
+
 export { db };
+

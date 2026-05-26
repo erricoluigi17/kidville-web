@@ -37,14 +37,52 @@ export async function GET(request: Request) {
             sezione: string;
         }> = [];
 
-        if (role === 'maestra') {
-            // Maestra: trova tutti gli studenti della sua sezione, poi i genitori di ogni studente
-            // Prima trova la sezione della maestra via gli alunni (dato che educator_sections potrebbe non essere disponibile)
-            // Usiamo la sezione "Girasoli" come default per la maestra
+        if (role === 'maestra' || role === 'educator') {
+            // Maestra: trova la propria sezione dinamicamente dai media caricati
+            let teacherSection: string | null = null;
+
+            // Prova a derivare la sezione dai media caricati con studenti taggati
+            const { data: myMedia } = await supabase
+                .from('galleria_media_v2')
+                .select('tag_students')
+                .eq('uploaded_by', userId)
+                .not('tag_students', 'is', null)
+                .limit(10);
+
+            const myTaggedIds = (myMedia ?? [])
+                .flatMap((m: { tag_students: string[] | null }) => m.tag_students ?? [])
+                .filter(Boolean);
+
+            if (myTaggedIds.length > 0) {
+                const { data: taggedStudents } = await supabase
+                    .from('alunni')
+                    .select('classe_sezione')
+                    .in('id', myTaggedIds)
+                    .limit(1);
+                teacherSection = taggedStudents?.[0]?.classe_sezione ?? null;
+            }
+
+            // Fallback: mappa email→sezione per docenti noti
+            if (!teacherSection) {
+                const emailToSection: Record<string, string> = {
+                    'maestra.anna@kidville.it': 'Girasoli',
+                    'maestra.chiara@kidville.it': 'Tulipani',
+                };
+                const userEmail = user.id === '22222222-2222-2222-2222-222222222222'
+                    ? 'maestra.anna@kidville.it'
+                    : user.id === '22222222-2222-2222-2222-333333333333'
+                        ? 'maestra.chiara@kidville.it'
+                        : null;
+                if (userEmail) teacherSection = emailToSection[userEmail] ?? null;
+            }
+
+            const sectionFilter = teacherSection ?? 'Girasoli';
+
+            // Trova tutti gli studenti della sezione della maestra
             const { data: allStudents } = await supabase
                 .from('alunni')
                 .select('id, nome, cognome, classe_sezione')
-                .eq('classe_sezione', 'Girasoli'); // TODO: ricavare dalla sezione dell'educatrice
+                .eq('classe_sezione', sectionFilter);
 
             if (allStudents) {
                 for (const student of allStudents) {
@@ -56,7 +94,6 @@ export async function GET(request: Request) {
 
                     if (legami) {
                         for (const legame of legami) {
-                            // Prendi info genitore da utenti
                             const { data: parent } = await supabase
                                 .from('utenti')
                                 .select('id, nome, cognome, first_name, last_name')
@@ -64,7 +101,6 @@ export async function GET(request: Request) {
                                 .single();
 
                             if (parent) {
-                                // Evita duplicati
                                 const exists = contacts.some(c => c.user_id === parent.id && c.student_id === student.id);
                                 if (!exists) {
                                     contacts.push({

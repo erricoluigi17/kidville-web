@@ -453,6 +453,10 @@ export interface Database {
           /** FormSubmissionData serializzato: { field_id → valore } */
           data: FormSubmissionData
           status: FormSubmissionStatus
+          /** Punteggio totale calcolato dal trigger BEFORE (base + manual) */
+          score: number
+          /** Array di bonus/malus manuali applicati dallo staff */
+          manual_adjustments: { delta: number; reason: string; by?: string | null; at: string }[]
           /** Hash SHA-256 del segreto OTP — mai memorizzato in chiaro */
           otp_secret: string | null
           signed_at: string | null
@@ -465,6 +469,8 @@ export interface Database {
           user_id?: string | null
           data?: FormSubmissionData
           status?: FormSubmissionStatus
+          score?: number
+          manual_adjustments?: { delta: number; reason: string; by?: string | null; at: string }[]
           otp_secret?: string | null
           signed_at?: string | null
           created_at?: string
@@ -473,6 +479,8 @@ export interface Database {
         Update: {
           data?: FormSubmissionData
           status?: FormSubmissionStatus
+          score?: number
+          manual_adjustments?: { delta: number; reason: string; by?: string | null; at: string }[]
           otp_secret?: string | null
           signed_at?: string | null
           updated_at?: string

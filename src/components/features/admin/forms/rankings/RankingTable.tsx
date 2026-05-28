@@ -1,0 +1,414 @@
+'use client'
+
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { AnimatePresence, motion } from 'framer-motion'
+import {
+  Trophy, Medal, ChevronDown, Search, Loader2, Inbox, Info,
+  SlidersHorizontal,
+} from 'lucide-react'
+import { getSupabase } from '@/lib/supabase/browser-client'
+import { RankingAdjustModal, type RankingRow, type ManualAdjustment } from './RankingAdjustModal'
+
+/* ── helpers ───────────────────────────────────────────────── */
+
+function candidateLabel(data: Record<string, unknown>): string {
+  const nome =
+    (data['nome_alunno'] as string) ??
+    (data['child_first_name'] as string) ??
+    (data['nome'] as string) ??
+    ''
+  const cognome =
+    (data['cognome_alunno'] as string) ??
+    (data['child_last_name'] as string) ??
+    (data['cognome'] as string) ??
+    ''
+  if (nome || cognome) return `${cognome} ${nome}`.trim()
+  // fallback: parent name
+  const pn = (data['parent_first_name'] as string) ?? (data['nome_genitore'] as string) ?? ''
+  const ps = (data['parent_last_name'] as string) ?? (data['cognome_genitore'] as string) ?? ''
+  if (pn || ps) return `${ps} ${pn}`.trim()
+  return 'Candidato'
+}
+
+const MEDAL_STYLES: Record<number, { icon: typeof Trophy; color: string; glow: string; bg: string }> = {
+  1: { icon: Trophy, color: '#fbbf24', glow: 'rgba(251,191,36,0.35)', bg: 'rgba(251,191,36,0.08)' },
+  2: { icon: Medal, color: '#94a3b8', glow: 'rgba(148,163,184,0.25)', bg: 'rgba(148,163,184,0.06)' },
+  3: { icon: Medal, color: '#d97706', glow: 'rgba(217,119,6,0.25)', bg: 'rgba(217,119,6,0.06)' },
+}
+
+/* ── tooltip per manual_adjustments ────────────────────────── */
+
+function AdjustmentTooltip({ adjustments }: { adjustments: ManualAdjustment[] }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  if (!adjustments.length) return null
+
+  return (
+    <div className="relative inline-flex" ref={ref}>
+      <button
+        onMouseEnter={() => setOpen(true)}
+        onMouseLeave={() => setOpen(false)}
+        onClick={(e) => { e.stopPropagation(); setOpen(v => !v) }}
+        className="p-1 rounded-md transition-all"
+        style={{ color: 'rgba(99,102,241,0.7)' }}
+        onMouseOver={e => { (e.currentTarget as HTMLButtonElement).style.color = 'rgb(129,140,248)' }}
+        onMouseOut={e => { (e.currentTarget as HTMLButtonElement).style.color = 'rgba(99,102,241,0.7)' }}
+      >
+        <Info className="w-3.5 h-3.5" />
+      </button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, y: 4, scale: 0.97 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 4, scale: 0.97 }}
+            transition={{ duration: 0.15 }}
+            className="absolute right-0 bottom-full mb-2 z-50 w-64 p-3 rounded-xl space-y-2 pointer-events-auto"
+            style={{
+              background: 'rgba(15, 18, 36, 0.97)',
+              border: '1px solid rgba(255,255,255,0.08)',
+              backdropFilter: 'blur(24px)',
+              boxShadow: '0 16px 48px rgba(0,0,0,0.5)',
+            }}
+          >
+            <p className="text-[10px] font-bold text-slate-600 uppercase tracking-widest mb-1.5">
+              Modifiche manuali
+            </p>
+            {adjustments.map((adj, i) => (
+              <div key={i} className="flex items-start gap-2 text-xs">
+                <span
+                  className={`font-mono font-bold tabular-nums shrink-0 ${
+                    adj.delta >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                  }`}
+                >
+                  {adj.delta >= 0 ? `+${adj.delta}` : adj.delta}
+                </span>
+                <span className="text-slate-500 leading-snug flex-1">{adj.reason}</span>
+                <span className="text-slate-700 tabular-nums shrink-0">
+                  {adj.at ? new Date(adj.at).toLocaleDateString('it-IT', { day: '2-digit', month: 'short' }) : ''}
+                </span>
+              </div>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
+/* ── main component ────────────────────────────────────────── */
+
+interface SubmissionWithModel extends RankingRow {
+  form_model?: { id: string; title: string } | null
+}
+
+export function RankingTable() {
+  const [submissions, setSubmissions] = useState<SubmissionWithModel[]>([])
+  const [formModels, setFormModels] = useState<{ id: string; title: string }[]>([])
+  const [loading, setLoading] = useState(true)
+  const [filterFormId, setFilterFormId] = useState('')
+  const [search, setSearch] = useState('')
+
+  // Modal state
+  const [editingSub, setEditingSub] = useState<RankingRow | null>(null)
+  const [editingLabel, setEditingLabel] = useState('')
+
+  /* ── fetch form models ── */
+  useEffect(() => {
+    const supabase = getSupabase()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(supabase as any)
+      .from('form_models')
+      .select('id, title')
+      .order('title')
+      .then(({ data }: { data: { id: string; title: string }[] | null }) => {
+        if (data) setFormModels(data)
+      })
+  }, [])
+
+  /* ── fetch rankings ── */
+  const fetchRankings = useCallback(async () => {
+    setLoading(true)
+    const supabase = getSupabase()
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let query = (supabase as any)
+      .from('form_submissions')
+      .select('id, model_id, user_id, data, score, signed_at, manual_adjustments, status, created_at, form_model:form_models(id, title)')
+      .eq('status', 'completed')
+      .order('score', { ascending: false })
+      .order('signed_at', { ascending: true })
+
+    if (filterFormId) query = query.eq('model_id', filterFormId)
+
+    const { data, error } = await query
+    if (!error && data) {
+      setSubmissions(
+        (data as SubmissionWithModel[]).map(s => ({
+          ...s,
+          manual_adjustments: Array.isArray(s.manual_adjustments) ? s.manual_adjustments : [],
+        }))
+      )
+    }
+    setLoading(false)
+  }, [filterFormId])
+
+  useEffect(() => {
+    fetchRankings()
+  }, [fetchRankings])
+
+  /* ── filter by search ── */
+  const filtered = search
+    ? submissions.filter(s => {
+        const q = search.toLowerCase()
+        const label = candidateLabel(s.data).toLowerCase()
+        return (
+          label.includes(q) ||
+          (s.form_model?.title ?? '').toLowerCase().includes(q) ||
+          String(s.score).includes(q)
+        )
+      })
+    : submissions
+
+  /* ── stats ── */
+  const avgScore = filtered.length
+    ? Math.round(filtered.reduce((a, s) => a + s.score, 0) / filtered.length)
+    : 0
+  const maxScore = filtered.length ? Math.max(...filtered.map(s => s.score)) : 0
+
+  return (
+    <>
+      {/* Stat cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+        {[
+          { label: 'Candidati', value: filtered.length, accent: 'rgba(99,102,241,0.8)' },
+          { label: 'Punteggio medio', value: avgScore, accent: 'rgba(52,211,153,0.8)' },
+          { label: 'Punteggio massimo', value: maxScore, accent: 'rgba(251,191,36,0.8)' },
+        ].map(card => (
+          <div
+            key={card.label}
+            className="rounded-2xl px-5 py-4"
+            style={{
+              background: 'rgba(255,255,255,0.03)',
+              border: '1px solid rgba(255,255,255,0.06)',
+              backdropFilter: 'blur(12px)',
+            }}
+          >
+            <p className="text-[10px] font-bold text-slate-700 uppercase tracking-widest mb-1">{card.label}</p>
+            <p className="text-2xl font-bold tabular-nums" style={{ color: card.accent }}>
+              {card.value}
+            </p>
+          </div>
+        ))}
+      </div>
+
+      {/* Filter bar */}
+      <div className="flex flex-wrap gap-3 mb-6 items-center">
+        {/* Search */}
+        <div className="relative flex-1 min-w-[200px]">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-700 pointer-events-none" />
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Cerca candidato…"
+            className="w-full pl-9 pr-4 py-2.5 rounded-xl text-slate-300 placeholder-slate-700 text-sm focus:outline-none transition-colors"
+            style={{
+              background: 'rgba(255,255,255,0.04)',
+              border: '1px solid rgba(255,255,255,0.07)',
+            }}
+            onFocus={e => { e.currentTarget.style.border = '1px solid rgba(99,102,241,0.45)' }}
+            onBlur={e => { e.currentTarget.style.border = '1px solid rgba(255,255,255,0.07)' }}
+          />
+        </div>
+
+        {/* Form model filter */}
+        <div className="relative max-w-[260px]">
+          <select
+            value={filterFormId}
+            onChange={e => setFilterFormId(e.target.value)}
+            className="appearance-none pl-4 pr-8 py-2.5 rounded-xl text-slate-400 text-sm focus:outline-none transition-colors cursor-pointer w-full"
+            style={{
+              background: 'rgba(255,255,255,0.04)',
+              border: '1px solid rgba(255,255,255,0.07)',
+            }}
+          >
+            <option value="">Tutti i moduli</option>
+            {formModels.map(m => (
+              <option key={m.id} value={m.id}>{m.title}</option>
+            ))}
+          </select>
+          <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-700" />
+        </div>
+      </div>
+
+      {/* Table */}
+      {loading ? (
+        <div className="flex items-center justify-center py-28">
+          <Loader2 className="w-5 h-5 text-indigo-400 animate-spin" />
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-28 gap-3">
+          <Inbox className="w-12 h-12 text-slate-800" />
+          <p className="text-slate-700 text-sm">Nessuna compilazione completata trovata</p>
+          {(filterFormId || search) && (
+            <button
+              onClick={() => { setFilterFormId(''); setSearch('') }}
+              className="text-indigo-400 text-xs hover:underline"
+            >
+              Rimuovi filtri
+            </button>
+          )}
+        </div>
+      ) : (
+        <div
+          className="rounded-2xl overflow-hidden"
+          style={{ border: '1px solid rgba(255,255,255,0.06)' }}
+        >
+          {/* Header row */}
+          <div
+            className="grid items-center"
+            style={{
+              gridTemplateColumns: '56px 1fr 200px 120px 90px 48px',
+              borderBottom: '1px solid rgba(255,255,255,0.05)',
+              background: 'rgba(255,255,255,0.02)',
+            }}
+          >
+            {['#', 'Candidato', 'Modulo', 'Firma', 'Punti', ''].map(col => (
+              <div key={col} className="px-4 py-3 text-[10px] font-bold text-slate-700 uppercase tracking-widest">
+                {col}
+              </div>
+            ))}
+          </div>
+
+          {/* Data rows — layout animation for reordering */}
+          <AnimatePresence mode="popLayout">
+            {filtered.map((sub, i) => {
+              const rank = i + 1
+              const medal = MEDAL_STYLES[rank]
+              const label = candidateLabel(sub.data)
+              const manualTotal = (sub.manual_adjustments ?? []).reduce((s, a) => s + a.delta, 0)
+
+              return (
+                <motion.div
+                  key={sub.id}
+                  layout
+                  layoutId={sub.id}
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.97 }}
+                  transition={{
+                    layout: { type: 'spring', stiffness: 350, damping: 32 },
+                    opacity: { duration: 0.2 },
+                  }}
+                  onClick={() => {
+                    setEditingSub(sub)
+                    setEditingLabel(label)
+                  }}
+                  className="grid items-center cursor-pointer transition-colors"
+                  style={{
+                    gridTemplateColumns: '56px 1fr 200px 120px 90px 48px',
+                    borderBottom: '1px solid rgba(255,255,255,0.03)',
+                    background: medal?.bg ?? 'transparent',
+                  }}
+                  onMouseEnter={e => {
+                    (e.currentTarget as HTMLDivElement).style.background =
+                      medal ? `${medal.bg.replace(')', ', 0.14)')}` : 'rgba(255,255,255,0.025)'
+                  }}
+                  onMouseLeave={e => {
+                    (e.currentTarget as HTMLDivElement).style.background = medal?.bg ?? 'transparent'
+                  }}
+                >
+                  {/* Rank */}
+                  <div className="px-4 py-4 flex items-center justify-center">
+                    {medal ? (
+                      <div
+                        className="flex items-center justify-center w-8 h-8 rounded-full"
+                        style={{
+                          background: medal.bg,
+                          boxShadow: `0 0 12px ${medal.glow}`,
+                        }}
+                      >
+                        <medal.icon className="w-4 h-4" style={{ color: medal.color }} />
+                      </div>
+                    ) : (
+                      <span className="text-slate-600 text-sm font-medium tabular-nums">{rank}</span>
+                    )}
+                  </div>
+
+                  {/* Candidate name */}
+                  <div className="px-4 py-4">
+                    <p className={`text-sm font-medium truncate ${rank <= 3 ? 'text-white' : 'text-slate-300'}`}>
+                      {label}
+                    </p>
+                    <p className="text-[11px] text-slate-700 tabular-nums mt-0.5">
+                      {sub.id.slice(0, 8)}
+                    </p>
+                  </div>
+
+                  {/* Model */}
+                  <div className="px-4 py-4 text-slate-500 text-sm truncate">
+                    {sub.form_model?.title ?? '—'}
+                  </div>
+
+                  {/* Signed at */}
+                  <div className="px-4 py-4 text-xs">
+                    {sub.signed_at ? (
+                      <span className="text-slate-500 tabular-nums">
+                        {new Date(sub.signed_at).toLocaleDateString('it-IT', {
+                          day: '2-digit', month: 'short', year: '2-digit',
+                        })}
+                      </span>
+                    ) : (
+                      <span className="text-slate-800">—</span>
+                    )}
+                  </div>
+
+                  {/* Score */}
+                  <div className="px-4 py-4 flex items-center gap-1">
+                    <span
+                      className={`text-lg font-bold tabular-nums ${
+                        rank === 1 ? 'text-amber-400' : 'text-emerald-400'
+                      }`}
+                    >
+                      {sub.score}
+                    </span>
+                    {manualTotal !== 0 && (
+                      <span
+                        className={`text-[10px] font-mono tabular-nums ${
+                          manualTotal > 0 ? 'text-emerald-500/60' : 'text-rose-500/60'
+                        }`}
+                      >
+                        {manualTotal > 0 ? `+${manualTotal}` : manualTotal}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Info icon for adjustments */}
+                  <div className="px-2 py-4 flex items-center justify-center" onClick={e => e.stopPropagation()}>
+                    <AdjustmentTooltip adjustments={sub.manual_adjustments ?? []} />
+                    {!(sub.manual_adjustments ?? []).length && (
+                      <SlidersHorizontal className="w-3.5 h-3.5 text-slate-800" />
+                    )}
+                  </div>
+                </motion.div>
+              )
+            })}
+          </AnimatePresence>
+        </div>
+      )}
+
+      {/* Adjust modal */}
+      <RankingAdjustModal
+        submission={editingSub}
+        label={editingLabel}
+        onClose={() => setEditingSub(null)}
+        onApplied={() => {
+          setEditingSub(null)
+          fetchRankings()
+        }}
+      />
+    </>
+  )
+}

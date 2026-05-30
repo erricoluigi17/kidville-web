@@ -15,13 +15,14 @@ import { arrayMove } from '@dnd-kit/sortable'
 import {
   Save, ChevronLeft, Loader2, Check, AlertCircle, GripVertical,
   Type, AlignLeft, ChevronDown, Paperclip, PenLine, Hash,
+  Database, Baby, Heart, User, UserCheck,
 } from 'lucide-react'
 import { motion } from 'framer-motion'
 import Link from 'next/link'
 import { FormBuilderCanvas } from '@/components/features/admin/forms/builder/FormBuilderCanvas'
 import { PropertiesPanel } from '@/components/features/admin/forms/builder/PropertiesPanel'
-import { getSupabase } from '@/lib/supabase/browser-client'
 import type { FormSchemaConfig, FormField, FormFieldType, FormPage } from '@/types/database.types'
+import { ANAGRAFICA_GROUPS, type AnagraficaPresetField, type AnagraficaGroup } from '@/lib/forms/anagrafica-fields'
 
 // ── Field palette definition ─────────────────────────────────
 const PALETTE_ITEMS = [
@@ -78,6 +79,111 @@ function PaletteItem({
   )
 }
 
+// ── Accent color maps per gruppo anagrafica ──────────────────
+const ACCENT_ICON: Record<AnagraficaGroup['groupId'], React.ComponentType<{ className?: string }>> = {
+  bambino: Baby,
+  madre: Heart,
+  padre: User,
+  delegato: UserCheck,
+}
+
+const ACCENT_COLORS: Record<AnagraficaGroup['accent'], { border: string; bg: string; text: string; dot: string }> = {
+  sky:    { border: 'rgba(56,189,248,0.25)', bg: 'rgba(56,189,248,0.06)', text: 'text-sky-400', dot: 'bg-sky-400' },
+  rose:   { border: 'rgba(251,113,133,0.25)', bg: 'rgba(251,113,133,0.06)', text: 'text-rose-400', dot: 'bg-rose-400' },
+  indigo: { border: 'rgba(129,140,248,0.25)', bg: 'rgba(129,140,248,0.06)', text: 'text-indigo-400', dot: 'bg-indigo-400' },
+  amber:  { border: 'rgba(251,191,36,0.25)', bg: 'rgba(251,191,36,0.06)', text: 'text-amber-400', dot: 'bg-amber-400' },
+}
+
+// ── Palette item anagrafica (draggable) ──────────────────────
+function AnagraficaPaletteItem({
+  preset,
+  accent,
+}: {
+  preset: AnagraficaPresetField
+  accent: AnagraficaGroup['accent']
+}) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: `preset-${preset.presetId}`,
+  })
+  const field = preset.toFormField()
+  const colors = ACCENT_COLORS[accent]
+
+  return (
+    <div
+      ref={setNodeRef}
+      {...listeners}
+      {...attributes}
+      className={`flex items-center gap-2 px-2.5 py-2 rounded-lg border transition-all select-none cursor-grab active:cursor-grabbing ${
+        isDragging ? 'opacity-40' : 'hover:brightness-125'
+      }`}
+      style={{
+        borderColor: isDragging ? colors.border : 'rgba(255,255,255,0.05)',
+        background: isDragging ? colors.bg : 'rgba(255,255,255,0.02)',
+      }}
+      onMouseEnter={e => {
+        if (!isDragging) {
+          ;(e.currentTarget as HTMLElement).style.borderColor = colors.border
+          ;(e.currentTarget as HTMLElement).style.background = colors.bg
+        }
+      }}
+      onMouseLeave={e => {
+        if (!isDragging) {
+          ;(e.currentTarget as HTMLElement).style.borderColor = 'rgba(255,255,255,0.05)'
+          ;(e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.02)'
+        }
+      }}
+    >
+      <Database className={`w-3 h-3 ${colors.text} flex-shrink-0`} />
+      <div className="flex-1 min-w-0">
+        <p className="text-xs text-slate-300 truncate leading-tight">{field.label}</p>
+        <p className={`text-[9px] font-mono ${colors.text} opacity-60 truncate leading-tight`}>
+          {field.db_mapping}
+        </p>
+      </div>
+      <GripVertical className="w-3 h-3 text-slate-700 flex-shrink-0" />
+    </div>
+  )
+}
+
+// ── Gruppo anagrafica collassabile ───────────────────────────
+function AnagraficaGroupSection({
+  group,
+  collapsed,
+  onToggle,
+}: {
+  group: AnagraficaGroup
+  collapsed: boolean
+  onToggle: () => void
+}) {
+  const colors = ACCENT_COLORS[group.accent]
+  const GroupIcon = ACCENT_ICON[group.groupId]
+
+  return (
+    <div>
+      <button
+        onClick={onToggle}
+        className="w-full flex items-center gap-2 px-1 py-1.5 rounded-lg hover:bg-white/5 transition-all text-left"
+      >
+        <div className={`w-4 h-4 rounded flex items-center justify-center flex-shrink-0`}
+          style={{ background: colors.bg }}>
+          <GroupIcon className={`w-2.5 h-2.5 ${colors.text}`} />
+        </div>
+        <span className={`text-[11px] font-semibold ${colors.text} flex-1`}>{group.label}</span>
+        <ChevronDown
+          className={`w-3 h-3 text-slate-600 transition-transform ${collapsed ? '' : 'rotate-180'}`}
+        />
+      </button>
+      {!collapsed && (
+        <div className="mt-1 space-y-0.5 pl-1">
+          {group.fields.map(preset => (
+            <AnagraficaPaletteItem key={preset.presetId} preset={preset} accent={group.accent} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Page ─────────────────────────────────────────────────────
 export default function FormBuilderPage() {
   const [schema, setSchema] = useState<FormSchemaConfig>(() => ({
@@ -97,6 +203,10 @@ export default function FormBuilderPage() {
   const [formTitle, setFormTitle] = useState('Nuovo Modello')
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [draggingPaletteId, setDraggingPaletteId] = useState<string | null>(null)
+  const [draggingPresetId, setDraggingPresetId] = useState<string | null>(null)
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
+    new Set(['madre', 'padre', 'delegato'])
+  )
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
@@ -108,13 +218,26 @@ export default function FormBuilderPage() {
     ? PALETTE_ITEMS.find(p => `palette-${p.type}` === draggingPaletteId) ?? null
     : null
 
+  const draggingPreset = draggingPresetId
+    ? (() => {
+        const id = draggingPresetId.replace('preset-', '')
+        for (const group of ANAGRAFICA_GROUPS) {
+          const found = group.fields.find(f => f.presetId === id)
+          if (found) return { preset: found, group }
+        }
+        return null
+      })()
+    : null
+
   function handleDragStart(evt: DragStartEvent) {
     const id = String(evt.active.id)
     if (id.startsWith('palette-')) setDraggingPaletteId(id)
+    else if (id.startsWith('preset-')) setDraggingPresetId(id)
   }
 
   function handleDragEnd(evt: DragEndEvent) {
     setDraggingPaletteId(null)
+    setDraggingPresetId(null)
     const { active, over } = evt
     if (!over) return
 
@@ -138,8 +261,30 @@ export default function FormBuilderPage() {
       return
     }
 
+    if (aId.startsWith('preset-')) {
+      // Anagrafica preset → Canvas: insert pre-configured field
+      const presetId = aId.replace('preset-', '')
+      let found: AnagraficaPresetField | undefined
+      for (const group of ANAGRAFICA_GROUPS) {
+        found = group.fields.find(f => f.presetId === presetId)
+        if (found) break
+      }
+      if (!found) return
+      const newField = found.toFormField()
+      setSchema(prev => {
+        const pages = [...prev.pages]
+        pages[activePage] = {
+          ...pages[activePage],
+          fields: [...pages[activePage].fields, newField],
+        }
+        return { ...prev, pages }
+      })
+      setSelectedFieldId(newField.id)
+      return
+    }
+
     // Reorder within canvas
-    if (oId !== 'canvas-droppable' && !oId.startsWith('palette-') && aId !== oId) {
+    if (oId !== 'canvas-droppable' && !oId.startsWith('palette-') && !oId.startsWith('preset-') && aId !== oId) {
       setSchema(prev => {
         const pages = [...prev.pages]
         const fields = pages[activePage].fields
@@ -191,17 +336,20 @@ export default function FormBuilderPage() {
   async function handleSave() {
     setSaveState('saving')
     try {
-      const supabase = getSupabase()
-      const { error } = await supabase.from('form_models').insert({
-        title: formTitle,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        schema: schema as any,
-        is_active: false,
-        requires_signature: schema.pages
-          .flatMap(p => p.fields)
-          .some(f => f.type === 'signature'),
+      const res = await fetch('/api/admin/form-models', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: formTitle,
+          schema,
+          is_active: false,
+          requires_signature: schema.pages
+            .flatMap(p => p.fields)
+            .some(f => f.type === 'signature'),
+        }),
       })
-      if (error) throw error
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error ?? 'Salvataggio fallito')
       setSaveState('saved')
     } catch (err) {
       console.error('Errore salvataggio form_models:', err)
@@ -215,6 +363,7 @@ export default function FormBuilderPage() {
 
   return (
     <DndContext
+      id="form-builder-dnd"
       sensors={sensors}
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
@@ -288,29 +437,58 @@ export default function FormBuilderPage() {
         <div className="flex flex-1 min-h-0">
           {/* Left: Field palette */}
           <aside
-            className="w-56 flex-shrink-0 overflow-y-auto"
+            className="w-60 flex-shrink-0 overflow-y-auto"
             style={{
               background: 'rgba(11,15,31,0.8)',
               borderRight: '1px solid rgba(255,255,255,0.06)',
             }}
           >
-            <div className="p-4">
-              <p className="text-[10px] font-bold text-slate-700 uppercase tracking-widest mb-3">
-                Libreria Campi
-              </p>
-              <div className="space-y-1.5">
-                {PALETTE_ITEMS.map(item => (
-                  <PaletteItem
-                    key={item.type}
-                    type={item.type}
-                    label={item.label}
-                    Icon={item.Icon}
-                  />
-                ))}
+            <div className="p-4 space-y-4">
+              {/* Campi generici */}
+              <div>
+                <p className="text-[10px] font-bold text-slate-700 uppercase tracking-widest mb-3">
+                  Libreria Campi
+                </p>
+                <div className="space-y-1.5">
+                  {PALETTE_ITEMS.map(item => (
+                    <PaletteItem
+                      key={item.type}
+                      type={item.type}
+                      label={item.label}
+                      Icon={item.Icon}
+                    />
+                  ))}
+                </div>
               </div>
-              <p className="mt-4 text-[10px] text-slate-800 leading-relaxed">
-                Trascina i blocchi sul canvas per costruire il modulo passo dopo passo.
-              </p>
+
+              {/* Divisore */}
+              <div style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }} />
+
+              {/* Campi anagrafica */}
+              <div>
+                <p className="text-[10px] font-bold text-slate-700 uppercase tracking-widest mb-3">
+                  Campi Anagrafica
+                </p>
+                <div className="space-y-1">
+                  {ANAGRAFICA_GROUPS.map(group => (
+                    <AnagraficaGroupSection
+                      key={group.groupId}
+                      group={group}
+                      collapsed={collapsedGroups.has(group.groupId)}
+                      onToggle={() =>
+                        setCollapsedGroups(prev => {
+                          const next = new Set(prev)
+                          next.has(group.groupId) ? next.delete(group.groupId) : next.add(group.groupId)
+                          return next
+                        })
+                      }
+                    />
+                  ))}
+                </div>
+                <p className="mt-3 text-[10px] text-slate-800 leading-relaxed">
+                  I campi anagrafica si collegano automaticamente al database alla compilazione.
+                </p>
+              </div>
             </div>
           </aside>
 
@@ -349,6 +527,29 @@ export default function FormBuilderPage() {
             <span className="text-sm font-medium text-white">{draggingPaletteItem.label}</span>
           </div>
         )}
+        {draggingPreset && (() => {
+          const field = draggingPreset.preset.toFormField()
+          const colors = ACCENT_COLORS[draggingPreset.group.accent]
+          return (
+            <div
+              className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl border pointer-events-none w-52"
+              style={{
+                background: 'rgba(11,15,31,0.92)',
+                borderColor: colors.border,
+                boxShadow: '0 20px 40px rgba(0,0,0,0.5)',
+                backdropFilter: 'blur(8px)',
+              }}
+            >
+              <Database className={`w-4 h-4 ${colors.text} flex-shrink-0`} />
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-white truncate">{field.label}</p>
+                <p className={`text-[10px] font-mono ${colors.text} opacity-70 truncate`}>
+                  {field.db_mapping}
+                </p>
+              </div>
+            </div>
+          )
+        })()}
       </DragOverlay>
     </DndContext>
   )

@@ -186,6 +186,21 @@ export function PropertiesPanel({ field, onChange }: Props) {
               </section>
             )}
 
+            {/* Mapping ETL (read-only, solo se presente) */}
+            {field.db_mapping && (
+              <div className="pt-3 border-t border-white/[0.05]">
+                <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
+                  Mapping ETL
+                </p>
+                <p className="text-xs font-mono text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1.5 rounded-lg">
+                  {field.db_mapping}
+                </p>
+                <p className="text-[10px] text-slate-700 mt-1.5 leading-relaxed">
+                  Aggiorna automaticamente l&apos;anagrafica alla compilazione.
+                </p>
+              </div>
+            )}
+
             {/* Field type (read-only) */}
             <div className="pt-3 border-t border-white/[0.05]">
               <p className="text-[10px] text-slate-700">

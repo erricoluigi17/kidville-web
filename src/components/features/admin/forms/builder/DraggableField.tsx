@@ -104,7 +104,7 @@ export function DraggableField({ field, isSelected, onClick, onDelete }: Props) 
         {/* Field info */}
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium text-slate-200 truncate">{field.label}</p>
-          <div className="flex items-center gap-2 mt-0.5">
+          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
             <span className="text-[10px] text-slate-600 uppercase tracking-wide">
               {FIELD_LABELS[field.type] ?? field.type}
             </span>
@@ -113,6 +113,9 @@ export function DraggableField({ field, isSelected, onClick, onDelete }: Props) 
             )}
             {(field.points ?? 0) > 0 && (
               <span className="text-[10px] text-amber-400/80">+{field.points}pt</span>
+            )}
+            {field.db_mapping && (
+              <span className="text-[10px] text-emerald-400/70 font-mono">⇢ {field.db_mapping}</span>
             )}
           </div>
         </div>

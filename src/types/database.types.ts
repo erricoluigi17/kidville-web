@@ -60,6 +60,28 @@ export interface FormField {
   validation?: FormFieldValidation
 }
 
+// ─── Iscrizione nuovi alunni — submission raggruppata per persona ──
+
+export interface EnrollmentPersonData {
+  [column: string]: string | number | boolean | null | undefined
+}
+
+export interface EnrollmentChild extends EnrollmentPersonData {
+  documento_path?: string
+}
+
+export interface EnrollmentAdult extends EnrollmentPersonData {
+  ruolo: string
+  documento_path?: string
+}
+
+export interface EnrollmentSubmissionData {
+  children: EnrollmentChild[]
+  adults: EnrollmentAdult[]
+}
+
+export type EnrollmentStatus = 'pending' | 'approved' | 'rejected'
+
 /** Una pagina/step del wizard — mappata 1:1 a uno step Framer Motion */
 export interface FormPage {
   id: string

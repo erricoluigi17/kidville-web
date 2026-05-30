@@ -93,10 +93,7 @@ export default function AdminModulisticaPage() {
       const fData = await fRes.json();
       if (Array.isArray(fData)) setForms(fData);
 
-      // 2. Fetch Pre-inscriptions
-      const pRes = await fetch('/api/admin/pre-inscriptions');
-      const pData = await pRes.json();
-      if (Array.isArray(pData)) setPreInscriptions(pData);
+      // 2. Le pre-iscrizioni sono gestite nella nuova dashboard /admin/iscrizioni
 
       // 3. Fetch Classes/Sections
       const sRes = await fetch('/api/admin/sections');
@@ -380,12 +377,12 @@ export default function AdminModulisticaPage() {
         >
           <FileText size={16} /> Moduli Creati
         </button>
-        <button
-          className={`pb-3 px-2 font-barlow font-bold uppercase tracking-wide transition-colors flex items-center gap-1.5 ${activeTab === 'attesa' ? 'text-kidville-green border-b-2 border-kidville-green' : 'text-gray-400 hover:text-gray-600'}`}
-          onClick={() => setActiveTab('attesa')}
+        <a
+          href="/admin/iscrizioni"
+          className="pb-3 px-2 font-barlow font-bold uppercase tracking-wide transition-colors flex items-center gap-1.5 text-gray-400 hover:text-kidville-green"
         >
-          <UserCheck size={16} /> Sala d'Attesa ({preInscriptions.filter(p => p.status === 'pending').length})
-        </button>
+          <UserCheck size={16} /> Iscrizioni Nuovi Alunni
+        </a>
         <button
           className={`pb-3 px-2 font-barlow font-bold uppercase tracking-wide transition-colors flex items-center gap-1.5 ${activeTab === 'odt' ? 'text-kidville-green border-b-2 border-kidville-green' : 'text-gray-400 hover:text-gray-600'}`}
           onClick={() => setActiveTab('odt')}

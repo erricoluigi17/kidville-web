@@ -6,6 +6,126 @@ export type Json =
   | { [key: string]: Json | undefined }
   | Json[]
 
+// ─── Form Management — tipi JSONB strutturati ────────────────
+
+export type FormFieldType =
+  | 'text'
+  | 'textarea'
+  | 'number'
+  | 'email'
+  | 'phone'
+  | 'date'
+  | 'select'
+  | 'radio'
+  | 'checkbox'
+  | 'file'
+  | 'signature'
+  | 'section_header'
+  | 'paragraph'
+
+export interface FormFieldOption {
+  label: string
+  value: string
+  /** Punteggio assegnato alla scelta per lo scoring automatico */
+  points?: number
+}
+
+export interface FormFieldCondition {
+  field_id: string
+  operator: 'eq' | 'neq' | 'contains' | 'gt' | 'lt'
+  value: string | number | boolean
+}
+
+export interface FormFieldValidation {
+  min?: number
+  max?: number
+  pattern?: string
+  min_length?: number
+  max_length?: number
+}
+
+export interface FormField {
+  id: string
+  type: FormFieldType
+  label: string
+  placeholder?: string
+  required?: boolean
+  /** Punteggio base del campo per graduatorie e scoring */
+  points?: number
+  options?: FormFieldOption[]
+  /** Logica condizionale: mostra/nascondi in base a un altro campo */
+  condition?: FormFieldCondition
+  /** Mapping verso colonna DB per ETL (es. "adults.fiscal_code") */
+  db_mapping?: string
+  validation?: FormFieldValidation
+}
+
+// ─── Iscrizione nuovi alunni — submission raggruppata per persona ──
+
+export interface EnrollmentPersonData {
+  [column: string]: string | number | boolean | null | undefined
+}
+
+export interface EnrollmentChild extends EnrollmentPersonData {
+  documento_path?: string
+}
+
+export interface EnrollmentAdult extends EnrollmentPersonData {
+  ruolo: string
+  documento_path?: string
+}
+
+export interface EnrollmentSubmissionData {
+  children: EnrollmentChild[]
+  adults: EnrollmentAdult[]
+}
+
+export type EnrollmentStatus = 'pending' | 'approved' | 'rejected'
+
+/** Una pagina/step del wizard — mappata 1:1 a uno step Framer Motion */
+export interface FormPage {
+  id: string
+  title: string
+  description?: string
+  fields: FormField[]
+}
+
+export interface FormScoringConfig {
+  enabled: boolean
+  /** Punteggio massimo raggiungibile */
+  max_score?: number
+  /** Soglia di superamento (es. 60 su 100) */
+  passing_threshold?: number
+  /** Moltiplicatori per campo: { field_id: weight } */
+  weights?: Record<string, number>
+}
+
+/**
+ * Struttura del campo `schema` in form_models.
+ * Pensata per mappare direttamente il wizard Framer Motion:
+ *   - `pages` → ogni step del wizard
+ *   - `scoring` → calcolo automatico graduatorie
+ */
+export interface FormSchemaConfig {
+  version: string
+  pages: FormPage[]
+  scoring?: FormScoringConfig
+  settings?: {
+    allow_save_draft?: boolean
+    show_progress_bar?: boolean
+    show_page_numbers?: boolean
+    submit_confirmation_message?: string
+  }
+}
+
+/** Risposta dell'utente: { field_id → valore } */
+export type FormSubmissionData = Record<
+  string,
+  string | number | boolean | string[] | null
+>
+
+export type FormSubmissionStatus = 'draft' | 'pending_signature' | 'completed'
+
 export interface Database {
   public: {
     Tables: {
@@ -312,6 +432,80 @@ export interface Database {
           assigned_to?: string | null
           target_class?: string | null
           completato?: boolean
+        }
+      }
+      // ── Fase 5: Form Management — Modelli Dinamici ──
+      form_models: {
+        Row: {
+          id: string
+          title: string
+          description: string | null
+          /** FormSchemaConfig serializzato: pages, scoring, settings */
+          schema: FormSchemaConfig
+          is_active: boolean
+          requires_signature: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          title: string
+          description?: string | null
+          schema?: FormSchemaConfig
+          is_active?: boolean
+          requires_signature?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          title?: string
+          description?: string | null
+          schema?: FormSchemaConfig
+          is_active?: boolean
+          requires_signature?: boolean
+          updated_at?: string
+        }
+      }
+      form_submissions: {
+        Row: {
+          id: string
+          model_id: string
+          /** Null per compilazioni guest (genitore non ancora registrato) */
+          user_id: string | null
+          /** FormSubmissionData serializzato: { field_id → valore } */
+          data: FormSubmissionData
+          status: FormSubmissionStatus
+          /** Punteggio totale calcolato dal trigger BEFORE (base + manual) */
+          score: number
+          /** Array di bonus/malus manuali applicati dallo staff */
+          manual_adjustments: { delta: number; reason: string; by?: string | null; at: string }[]
+          /** Hash SHA-256 del segreto OTP — mai memorizzato in chiaro */
+          otp_secret: string | null
+          signed_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          model_id: string
+          user_id?: string | null
+          data?: FormSubmissionData
+          status?: FormSubmissionStatus
+          score?: number
+          manual_adjustments?: { delta: number; reason: string; by?: string | null; at: string }[]
+          otp_secret?: string | null
+          signed_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          data?: FormSubmissionData
+          status?: FormSubmissionStatus
+          score?: number
+          manual_adjustments?: { delta: number; reason: string; by?: string | null; at: string }[]
+          otp_secret?: string | null
+          signed_at?: string | null
+          updated_at?: string
         }
       }
     }

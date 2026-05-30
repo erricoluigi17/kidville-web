@@ -10,6 +10,9 @@
     "test": "vitest"
   },
   "dependencies": {
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
     "@supabase/ssr": "^0.10.3",
     "@supabase/supabase-js": "^2.105.4",
     "codice-fiscale-js": "^2.3.23",
@@ -22,6 +25,7 @@
     "next": "16.2.4",
     "react": "19.2.4",
     "react-dom": "19.2.4",
+    "react-hook-form": "^7.76.1",
     "xlsx": "^0.18.5",
     "zod": "^4.4.3"
   },

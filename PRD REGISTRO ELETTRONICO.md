@@ -427,50 +427,62 @@ linguistiche e garantire il pieno controllo amministrativo da parte della Direzi
 
 ---
 
-# PRD - Kidville App: Modulo Modulistica, Certificati e Onboarding Legale
+# PRD - Kidville App: Modulo Gestione Form di Raccolta Dati (Kidville)
 
-## 1. Obiettivo del Modulo
-Il modulo Modulistica e Certificati digitalizza l'intero flusso burocratico della scuola. Il suo scopo
-primario non è solo la dematerializzazione cartacea, ma l'innalzamento di uno scudo giuridico
-protettivo attorno all'ente, ai docenti e al Dirigente Scolastico. Attraverso l'uso di Firme
-Elettroniche Semplici (FES), cristallizzazione dei log e dichiarazioni sostitutive di atto di notorietà,
-il modulo garantisce l'inattaccabilità legale della scuola, automatizzando parallelamente
-l'aggiornamento dell'Anagrafica e la generazione di certificati.
+## 1. Descrizione Generale
+La funzione "Form" di Kidville rappresenta il motore avanzato per la creazione, compilazione, gestione e validazione di moduli digitali. Pensato per sostituire integralmente il cartaceo, il sistema gestisce l'intero ciclo di vita del dato: dalla raccolta tramite interfacce utente lussuose e guidate, fino all'importazione automatizzata nelle anagrafiche principali del gestionale, passando per la validazione legale tramite Firma Elettronica Avanzata (FEA).
 
-## 2. Lo Scudo Giuridico: Valore Legale e Compliance (Art. 20 CAD)
-Per garantire la massima efficacia probatoria, l'architettura dei moduli di autorizzazione (es. Uscite Didattiche, Consensi Privacy) è strutturata sui seguenti pilastri normativi:
-• Autenticazione Forte: Il sistema predilige un'identificazione inequivocabile dell'utente, allineata ai protocolli SPID/CIE (Art. 65 del CAD).
-• Firma Elettronica Semplice (FES): L'accettazione di un form genera una FES. II sistema cristallizza i log di sistema (Timestamp esatto, Indirizzo IP, ID univoco dell'utente) e genera un documento PDF statico, non modificabile a posteriori, archiviato nel rispetto del manuale di conservazione AgID.
-• Tutela sulle Dinamiche Familiari: I form integrano tassativamente le dichiarazioni sostitutive di atto di notorietà (D.P.R. 445/2000). II genitore dichiarante si assume la piena responsabilità del consenso (o della sua presunta condivisione ex artt. 316 e 337-ter c.c.), esentando l'ente scolastico da indagini sulle dinamiche intrafamiliari.
-• Isolamento GDPR (Art. 9): Il flusso di raccolta del consenso è parcellizzato. L'approvazione al trattamento dei dati particolari (es. sanitari, disabilità, intolleranze) è isolata tramite check-box dedicate, separata dal generale interesse istituzionale.
-• Vincoli Disciplinari e Sicurezza: Il contratto digitale impone l'accettazione vincolante, con spunte separate, delle condizioni assicurative, dei protocolli di sicurezza stradale e delle conseguenze disciplinari ed economiche (incluso l'onere del rientro anticipato a carico della famiglia), in rigida ottemperanza al D.P.R. 134/2025.
+## 2. Obiettivi
+- **Digitalizzazione Completa:** Gestire iscrizioni, deleghe, consensi (es. privacy/foto), sondaggi e creazione automatica di graduatorie.
+- **Esperienza Premium (UX):** Offrire ai genitori un flusso di compilazione "wizard" (passo-passo, una pagina per persona) fluido e privo di stress cognitivo.
+- **Gestione Staff Intuitiva:** Fornire agli amministratori un costruttore di form Drag & Drop altamente visivo.
+- **Sicurezza e Validità Legale:** Garantire la protezione dei dati (tramite RLS in Supabase) e la validità delle firme tramite verifica OTP via Email.
+- **Integrazione Nativa:** Automatizzare i flussi di ETL (Extract, Transform, Load) verso le anagrafiche direttamente tramite PostgreSQL.
 
-## 3. Motore di Creazione Form (Segreteria e Admin)
-### 3.1 Form Builder e Automazioni
-• Creazione Dinamica: La Segreteria non è limitata a template statici, ma dispone di un Form Builder interno per creare moduli personalizzati aggiungendo campi testuali, check-box e informative.
-• Scadenze Bloccanti: È possibile impostare una "Data di scadenza" tassativa (es. per l'adesione a una gita). Superata la data, il sistema blocca automaticamente nuove compilazioni.
-• Aggiornamento Automatico Anagrafica: I dati inseriti dal genitore nei moduli (es. aggiornamento recapiti, cambio pediatra) vanno a sovrascrivere e aggiornare automaticamente i campi corrispondenti nell'Anagrafica dell'alunno, azzerando il data-entry manuale della Segreteria.
+## 3. Stack Tecnologico di Riferimento
+- **Frontend:** Next.js 19, React, Tailwind CSS, Framer Motion (per micro-animazioni nei wizard), @dnd-kit/core (per il builder).
+- **Backend & Database:** Supabase (PostgreSQL per dati relazionali e JSONB per campi dinamici), Supabase Auth.
+- **Storage:** Supabase Storage.
+- **Automazioni & ETL:** Trigger e funzioni PL/pgSQL nativi, pg_cron per task schedulati.
+- **Generazione Documenti:** Server-side via API Routes (Next.js) integrato con librerie di generazione PDF (es. Puppeteer o PDFKit).
 
-### 3.2 Form di Onboarding Esterno (Pre-Iscrizione)
-• Link di Acquisizione: Il sistema permette alla Segreteria di generare un link esterno univoco da inviare alle nuove famiglie.
-• Compilazione e Import: II genitore compila l'intera scheda anagrafica (dati alunno, genitori, delegati, emergenze) via web. Al termine, la Segreteria visualizza la scheda in una "Sala d'attesa" virtuale e, con un solo click, importa l'alunno nel database ufficiale di Kidville.
+## 4. Requisiti Funzionali
+### 4.1. Creazione e Configurazione Modelli (Form Builder)
+- **Interfaccia Costruttore:** Area dedicata allo staff (Form > Modelli) dotata di un'interfaccia Drag & Drop per assemblare rapidamente i moduli.
+- **Componenti Dinamici:** Possibilità di inserire blocchi predefiniti (Dati Bambino, Dati Adulto, Consensi, Caricamento Allegati) o campi personalizzati.
+- **Logica Condizionale:** Impostazione di regole di visibilità e obbligatorietà basate sulle risposte precedenti.
+- **Scoring per Graduatorie:** Il builder deve permettere l'assegnazione di un "peso" o "punteggio" (scoring) a specifiche risposte o blocchi (es. +5 punti per genitori lavoratori, +3 punti per fratelli già iscritti) per automatizzare la generazione delle graduatorie.
+- **Configurazione Accessi:** Definizione di chi può compilare il form (utenti registrati o tramite link pubblico). Nota: Nessuna integrazione SPID richiesta.
+- **Impostazioni FEA:** Abilitazione della Firma Elettronica Avanzata, definendo i firmatari richiesti (firma singola o congiunta di entrambi i genitori).
 
-### 3.3 Esportazione Massiva
-• Merge PDF: Per le uscite didattiche, la Segreteria dispone di una funzione di export massivo che unisce tutti i form compilati e firmati dagli alunni di una specifica classe in un unico file PDF multipagina, pronto per essere stampato o consegnato ai docenti accompagnatori.
+### 4.2. Compilazione Form (Lato Utente/Genitore)
+- **Modalità di Rete:** Compilazione strettamente "Online-Only" per garantire l'immediata validazione degli OTP e la sicurezza dei caricamenti.
+- **UX / UI Design:** Flusso "Wizard" (Step-by-step). L'interfaccia mostrerà una sezione alla volta (es. "Pagina 1: Dati Madre", "Pagina 2: Dati Padre", "Pagina 3: Dati Bambino") con transizioni fluide gestite da Framer Motion.
+- **Firma Elettronica e OTP:** Al termine della compilazione, il sistema invierà un codice OTP via Email al firmatario per validare legalmente il documento prima dell'invio definitivo.
+- **Caricamento Allegati:** Supporto per l'upload di documenti (es. carte d'identità, certificati medici) direttamente all'interno dei passaggi del wizard.
 
-## 4. Esperienza Utente: Genitore (Self-Service e Certificati)
-### 4.1 Compilazione e Rilascio
-• Ricevuta PDF: Alla conclusione di ogni compilazione e apposizione della firma, l'app genera automaticamente una copia PDF del documento firmato, che il genitore può scaricare sul proprio dispositivo.
-• Certificati Self-Service: II genitore dispone di una sezione dedicata da cui può generare e scaricare in autonomia certificati pre-compilati con i dati della scuola (es. Certificato di Iscrizione, Certificato di Frequenza per bonus INPS), riducendo il carico di richieste in Segreteria.
+### 4.3. Gestione Compilazioni (Raccolta Dati)
+- **Dashboard Raccolta:** Vista a tabella/lista per lo staff con filtri avanzati (data, stato, modello, tag).
+- **Anteprima e Modifica:** Visualizzazione chiara dei dati JSONB raccolti. Possibilità per lo staff di applicare correzioni amministrative mantenendo un log della versione originale compilata dall'utente.
+- **Generazione ed Esportazione:**
+  - **Generazione PDF:** Gestita lato server per garantire un layout impeccabile e non gravare sul dispositivo dell'utente. I PDF escluderanno gli allegati fisici dalla stampa.
+  - **Esportazione XLSX:** Download dell'intero dataset per analisi esterne.
+  - **Integrazione Anagrafiche (ETL nativo):** I dati raccolti nei moduli di "Iscrizione" vengono riversati nelle tabelle anagrafiche principali di Kidville (Utenti, Bambini, Relazioni). Questo processo di mapping ed estrazione dai campi JSONB avviene direttamente nel database tramite funzioni e trigger PostgreSQL SQL, garantendo massima velocità e consistenza relazionale.
 
-### 4.2 Gestione Certificati Medici
-• Upload Diretto: In caso di assenza per malattia, il genitore carica la scansione/foto del certificato medico di riammissione direttamente in app.
-• Riammissione Immediata: L'upload sblocca automaticamente la posizione dell'alunno senza richiedere un'approvazione manuale preventiva da parte della Segreteria.
-• Nessuno Storico: Per ragioni di privacy e pulizia dell'interfaccia, il genitore non ha accesso a uno storico cumulativo dei certificati medici caricati in passato.
+### 4.4. Gestione Graduatorie
+- **Calcolo Punteggi:** Generazione automatica di liste di ammissione basate sui pesi/punteggi configurati nel Form Builder.
+- **Dashboard Graduatorie:** Possibilità per lo staff di visualizzare il ranking, applicare correzioni manuali (override di punteggio per casi eccezionali) e deliberare le ammissioni.
 
-## 5. Esperienza Utente: Insegnante (Monitoraggio in Classe)
-• Cruscotto Autorizzazioni (Semaforo): In vista di un'uscita didattica o di un'attività che richiede consenso, l'insegnante visualizza nella dashboard della propria classe un indicatore visivo "a semaforo" (es. lista degli alunni con spunta verde per chi ha firmato, rossa per i mancanti), aggiornato in tempo reale.
-• Caricamento per Conto Terzi (Proxy Upload): Qualora un genitore consegni fisicamente un documento cartaceo (es. certificato medico o delega) direttamente all'insegnante alla porta, quest'ultimo ha i permessi per fotografarlo e caricarlo a sistema per conto della famiglia, chiudendo l'iter burocratico.
+## 5. Requisiti Non Funzionali e Sicurezza
+### 5.1. Sicurezza e Storage (RLS)
+- **Row Level Security (RLS) Rigorosa:** Le policy su Supabase Storage e Database devono essere strettissime. Gli allegati caricati durante la compilazione devono essere accessibili esclusivamente al compilatore originale e al personale amministrativo autorizzato (Staff). Nessun accesso pubblico o inter-utente.
+
+### 5.2. Automazioni e Cron Jobs
+- **Motore di Automazione Interno:** L'invio di solleciti per firme non completate, promemoria di scadenza moduli e altri task periodici sono gestiti interamente dal database utilizzando l'estensione pg_cron di PostgreSQL su Supabase. Nessun servizio esterno per l'orchestrazione dei job.
+
+### 5.3. Performance e Accessibilità
+- L'approccio server-side per i documenti complessi e l'utilizzo di viste materializzate / query JSONB ottimizzate in PostgreSQL garantiranno altissime performance anche con migliaia di compilazioni storiche archiviate.
+- Compatibilità totale della web app su browser desktop e mobile.
 
 ---
 

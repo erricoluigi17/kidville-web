@@ -4,7 +4,7 @@ import { requireStaff, requireUser } from '@/lib/auth/require-staff'
 
 const SELECT = `
   id, alunno_id, scuola_id, descrizione, importo, importo_pagato, scadenza, stato,
-  tipo, obbligatorio, categoria_id, parent_payment_id, gruppo, periodo_competenza,
+  tipo, obbligatorio, categoria_id, parent_payment_id, gruppo, periodo_competenza, visibile_dal,
   fattura_stato, fattura_pdf_path, fattura_aruba_id, fattura_emessa_il,
   data_incasso, ultimo_sollecito_il, creato_il, aggiornato_il,
   payment_categories ( id, nome, slug, colore, icona ),
@@ -37,6 +37,12 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
         .eq('alunno_id', pag.alunno_id)
         .maybeSingle()
       if (!legame) return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
+
+      // visibilità ritardata: il genitore non può aprire un pagamento non ancora pubblicato
+      const oggi = new Date().toISOString().slice(0, 10)
+      if (pag.visibile_dal && String(pag.visibile_dal) > oggi) {
+        return NextResponse.json({ error: 'Pagamento non ancora disponibile' }, { status: 403 })
+      }
 
       if (pag.tipo === 'split') {
         const { data: q } = await supabase
@@ -96,7 +102,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     const { id } = await context.params
     const body = await request.json()
 
-    const allowed = ['descrizione', 'importo', 'scadenza', 'categoria_id', 'obbligatorio', 'periodo_competenza', 'gruppo', 'tipo']
+    const allowed = ['descrizione', 'importo', 'scadenza', 'categoria_id', 'obbligatorio', 'periodo_competenza', 'gruppo', 'tipo', 'visibile_dal']
     const updates: Record<string, unknown> = {}
     for (const f of allowed) if (body[f] !== undefined) updates[f] = body[f]
     if (Object.keys(updates).length === 0) {

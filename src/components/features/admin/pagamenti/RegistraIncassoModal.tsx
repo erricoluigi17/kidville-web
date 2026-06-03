@@ -156,7 +156,7 @@ export function RegistraIncassoModal({ pagamento, userId, onClose, onDone }: Pro
                     <div className="mt-5">
                         <div className="flex items-center justify-between gap-2 bg-green-50 rounded-xl px-3 py-2.5 mb-3">
                             <span className="font-maven text-sm text-green-700 font-bold">Pagamento saldato ✓</span>
-                            <FatturaButton pagamentoId={pagamento.id} userId={userId} fatturaStato={pagamento.fattura_stato} />
+                            <FatturaButton pagamentoId={pagamento.id} userId={userId} fatturaStato={pagamento.fattura_stato} descrizione={pagamento.descrizione} />
                         </div>
                         <button onClick={onDone}
                             className="w-full py-2.5 rounded-full bg-kidville-green font-maven font-bold text-sm text-white hover:opacity-90">

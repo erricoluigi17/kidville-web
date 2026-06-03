@@ -33,6 +33,7 @@ const STATI: Record<string, { label: string; cls: string }> = {
 export function StoricoPagamenti({ userId }: Props) {
     const [pagamenti, setPagamenti] = useState<Pagamento[]>([]);
     const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
     const idsRef = useRef<string>('');
 
     const load = useCallback(async () => {
@@ -42,7 +43,12 @@ export function StoricoPagamenti({ userId }: Props) {
             if (j.success) {
                 setPagamenti(j.data);
                 idsRef.current = j.data.map((p: Pagamento) => p.id).join(',');
+                setError(null);
+            } else {
+                setError(j.error || 'Impossibile caricare i pagamenti');
             }
+        } catch {
+            setError('Errore di rete');
         } finally { setLoading(false); }
     }, [userId]);
 
@@ -68,6 +74,8 @@ export function StoricoPagamenti({ userId }: Props) {
 
             {loading ? (
                 <p className="font-maven text-sm text-gray-400 text-center py-8">Caricamento…</p>
+            ) : error ? (
+                <p className="font-maven text-sm text-red-500 text-center py-8">{error}</p>
             ) : pagamenti.length === 0 ? (
                 <p className="font-maven text-sm text-gray-400 text-center py-8">Nessun pagamento.</p>
             ) : (

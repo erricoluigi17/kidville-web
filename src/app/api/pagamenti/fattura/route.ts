@@ -20,24 +20,37 @@ export async function POST(request: Request) {
     const supabase = await createAdminClient()
     const { data: pag } = await supabase
       .from('pagamenti')
-      .select('id, descrizione, importo, importo_pagato, stato, scuola_id, alunni:alunno_id ( intestatario_fatture )')
+      .select('id, descrizione, importo, importo_pagato, stato, scuola_id, periodo_competenza, alunni:alunno_id ( nome, cognome, intestatario_fatture )')
       .eq('id', pagamento_id).single()
     if (!pag) return NextResponse.json({ error: 'Pagamento non trovato' }, { status: 404 })
     if (pag.stato !== 'pagato') {
       return NextResponse.json({ error: 'La fattura può essere emessa solo per pagamenti saldati' }, { status: 400 })
     }
 
-    // config Aruba della scuola
+    // config Aruba + template causale della scuola
     const { data: settings } = await supabase
-      .from('admin_settings').select('aruba_config').eq('scuola_id', pag.scuola_id ?? DEFAULT_SCUOLA).maybeSingle()
+      .from('admin_settings').select('aruba_config, fattura_causale_template')
+      .eq('scuola_id', pag.scuola_id ?? DEFAULT_SCUOLA).maybeSingle()
     const cfg = (settings?.aruba_config ?? {}) as ArubaConfig
 
-    // stato in_attesa
-    await supabase.from('pagamenti').update({ fattura_stato: 'in_attesa' }).eq('id', pagamento_id)
+    // causale: dal body se fornita, altrimenti compone dal template
+    const al = pag.alunni as unknown as { nome?: string; cognome?: string; intestatario_fatture?: unknown }
+    const alunnoNome = `${al?.nome ?? ''} ${al?.cognome ?? ''}`.trim()
+    const periodo = pag.periodo_competenza ? String(pag.periodo_competenza).slice(0, 7) : ''
+    const template = settings?.fattura_causale_template || '{descrizione} - {alunno}'
+    const causaleDefault = template
+      .replace(/\{descrizione\}/g, pag.descrizione ?? '')
+      .replace(/\{alunno\}/g, alunnoNome)
+      .replace(/\{periodo\}/g, periodo)
+      .trim()
+    const causale = (typeof body.causale === 'string' && body.causale.trim()) ? body.causale.trim() : causaleDefault
 
-    const intestatario = (pag.alunni as unknown as { intestatario_fatture?: unknown })?.intestatario_fatture ?? null
+    // stato in_attesa + persiste la causale scelta
+    await supabase.from('pagamenti').update({ fattura_stato: 'in_attesa', fattura_causale: causale }).eq('id', pagamento_id)
+
+    const intestatario = al?.intestatario_fatture ?? null
     const res = await emettiFattura(
-      { pagamento_id, descrizione: pag.descrizione, importo: Number(pag.importo), intestatario: intestatario as never },
+      { pagamento_id, descrizione: causale, importo: Number(pag.importo), intestatario: intestatario as never },
       cfg
     )
 
@@ -74,7 +87,7 @@ export async function GET(request: Request) {
     const supabase = await createAdminClient()
     const { data: pag } = await supabase
       .from('pagamenti')
-      .select('id, descrizione, importo, fattura_stato, fattura_aruba_id, fattura_emessa_il, alunno_id, alunni:alunno_id ( nome, cognome )')
+      .select('id, descrizione, fattura_causale, importo, fattura_stato, fattura_aruba_id, fattura_emessa_il, alunno_id, alunni:alunno_id ( nome, cognome )')
       .eq('id', pagamentoId).single()
     if (!pag) return NextResponse.json({ error: 'Pagamento non trovato' }, { status: 404 })
 
@@ -101,7 +114,7 @@ export async function GET(request: Request) {
     doc.text(`N. documento: ${pag.fattura_aruba_id ?? '—'}`, 20, 55)
     doc.text(`Data: ${(pag.fattura_emessa_il ?? '').slice(0, 10)}`, 20, 63)
     doc.text(`Intestatario alunno: ${al?.nome ?? ''} ${al?.cognome ?? ''}`, 20, 71)
-    doc.text(`Descrizione: ${pag.descrizione}`, 20, 79)
+    doc.text(`Causale: ${pag.fattura_causale ?? pag.descrizione}`, 20, 79)
     doc.setFontSize(14)
     doc.text(`Importo: € ${Number(pag.importo).toFixed(2)}`, 20, 92)
 

@@ -50,6 +50,9 @@ export async function GET(request: Request) {
       const figli = (legami || []).map((l) => l.alunno_id)
       if (figli.length === 0) return NextResponse.json({ success: true, data: [] })
       query = query.in('alunno_id', figli)
+      // visibilità ritardata: nasconde i pagamenti non ancora "pubblicati" (es. retta del mese futuro)
+      const oggi = new Date().toISOString().slice(0, 10)
+      query = query.or(`visibile_dal.is.null,visibile_dal.lte.${oggi}`)
     }
 
     const { data, error } = await query
@@ -60,10 +63,12 @@ export async function GET(request: Request) {
 
     let rows = data || []
 
-    // Proiezione lato genitore: per gli split mostra SOLO la propria quota
+    // Proiezione lato genitore: nasconde i container rateali (padre); le rate
+    // figlie (tipo='rata') restano visibili come voci separate con la propria scadenza.
     if (user.role === 'genitore') {
+      rows = rows.filter((r) => r.tipo !== 'padre')
       const splitIds = rows.filter((r) => r.tipo === 'split').map((r) => r.id)
-      let quoteByPagamento: Record<string, { importo: number; quota_id: string } | undefined> = {}
+      const quoteByPagamento: Record<string, { importo: number; quota_id: string } | undefined> = {}
       if (splitIds.length > 0) {
         const { data: quote } = await supabase
           .from('pagamenti_quote')

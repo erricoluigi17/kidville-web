@@ -7,8 +7,10 @@ interface Props { userId: string; scuolaId: string }
 
 interface Categoria { id: string; nome: string; slug?: string; colore?: string; icona?: string; is_sistema: boolean; ordine: number }
 interface Settings {
-    retta_default_importo: number; retta_giorno_scadenza: number; retta_auto_enabled: boolean;
-    insoluto_tolleranza_giorni: number; ticket_pacchetti: { label: string; pezzi: number; costo: number }[];
+    retta_default_importo: number; retta_giorno_scadenza: number; retta_giorno_visibilita: number;
+    retta_auto_enabled: boolean; insoluto_tolleranza_giorni: number;
+    ticket_pacchetti: { label: string; pezzi: number; costo: number }[];
+    fattura_causale_template: string;
 }
 interface ArubaCfg {
     username: string; password_ref: string; has_password: boolean; abilitato: boolean; ambiente: string;
@@ -86,7 +88,9 @@ function RettaMorositaSettings({ userId }: Props) {
         setSaving(true);
         await fetch('/api/admin/settings', { method: 'PATCH', headers: hdr(userId), body: JSON.stringify({
             retta_default_importo: s.retta_default_importo, retta_giorno_scadenza: s.retta_giorno_scadenza,
+            retta_giorno_visibilita: s.retta_giorno_visibilita,
             retta_auto_enabled: s.retta_auto_enabled, insoluto_tolleranza_giorni: s.insoluto_tolleranza_giorni,
+            fattura_causale_template: s.fattura_causale_template,
         }) });
         setSaving(false);
     };
@@ -98,13 +102,22 @@ function RettaMorositaSettings({ userId }: Props) {
                     <input type="number" value={s.retta_default_importo || ''} onChange={e => setS({ ...s, retta_default_importo: Number(e.target.value) })} className={`${input} w-full`} /></div>
                 <div><label className={label}>Giorno scadenza (1-28)</label>
                     <input type="number" min={1} max={28} value={s.retta_giorno_scadenza} onChange={e => setS({ ...s, retta_giorno_scadenza: Number(e.target.value) })} className={`${input} w-full`} /></div>
+                <div><label className={label}>Visibile dal giorno (mese prec.)</label>
+                    <input type="number" min={1} max={28} value={s.retta_giorno_visibilita ?? 25} onChange={e => setS({ ...s, retta_giorno_visibilita: Number(e.target.value) })} className={`${input} w-full`} /></div>
                 <div><label className={label}><AlertTriangle size={11} className="inline" /> Tolleranza insoluti (gg)</label>
                     <input type="number" value={s.insoluto_tolleranza_giorni} onChange={e => setS({ ...s, insoluto_tolleranza_giorni: Number(e.target.value) })} className={`${input} w-full`} /></div>
             </div>
+            <p className="font-maven text-[11px] text-gray-400 mt-1">La retta mensile compare al genitore dal giorno indicato del mese precedente alla competenza.</p>
             <label className="flex items-center gap-2 cursor-pointer mt-3">
                 <input type="checkbox" checked={s.retta_auto_enabled} onChange={e => setS({ ...s, retta_auto_enabled: e.target.checked })} className="w-4 h-4 rounded text-kidville-green" />
                 <span className="font-maven text-sm text-kidville-green">Generazione automatica rette mensili</span>
             </label>
+            <div className="mt-4">
+                <label className={label}>Causale fattura (template)</label>
+                <input value={s.fattura_causale_template ?? ''} onChange={e => setS({ ...s, fattura_causale_template: e.target.value })}
+                    placeholder="{descrizione} - {alunno}" className={`${input} w-full`} />
+                <p className="font-maven text-[11px] text-gray-400 mt-1">Segnaposto disponibili: {'{descrizione}'}, {'{alunno}'}, {'{periodo}'}. Modificabile al momento dell&apos;emissione.</p>
+            </div>
             <div className="mt-4"><button onClick={save} disabled={saving} className={btnPrimary}><Save size={14} /> {saving ? 'Salvataggio…' : 'Salva'}</button></div>
         </section>
     );

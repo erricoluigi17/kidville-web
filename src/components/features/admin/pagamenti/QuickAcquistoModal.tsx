@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { X, ShoppingBag, CheckCircle2 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { FatturaButton } from './FatturaButton';
+import { RateizzaModal } from './RateizzaModal';
 
 interface Alunno { id: string; nome?: string; cognome?: string; classe_sezione?: string | null }
 interface Categoria { id: string; nome: string; slug?: string }
@@ -32,6 +33,8 @@ export function QuickAcquistoModal({ alunno, categoria, userId, scuolaId, onClos
     const [descrizione, setDescrizione] = useState(categoria.nome);
     const [importo, setImporto] = useState<number>(0);
     const [obbligatorio, setObbligatorio] = useState(false);
+    const [acconti, setAcconti] = useState(false);
+    const [rateizza, setRateizza] = useState(false);
     const [giaPagato, setGiaPagato] = useState(true);
     const [metodo, setMetodo] = useState('contanti');
     const [data, setData] = useState(() => new Date().toISOString().slice(0, 10));
@@ -123,7 +126,7 @@ export function QuickAcquistoModal({ alunno, categoria, userId, scuolaId, onClos
                         {error && <p className="font-maven text-xs text-amber-600 mb-3">{error}</p>}
                         {giaPagato && (
                             <div className="flex justify-center my-3">
-                                <FatturaButton pagamentoId={creato.id} userId={userId} fatturaStato={creato.fattura_stato} />
+                                <FatturaButton pagamentoId={creato.id} userId={userId} fatturaStato={creato.fattura_stato} descrizione={descrizione} />
                             </div>
                         )}
                         <button onClick={onDone}
@@ -160,12 +163,20 @@ export function QuickAcquistoModal({ alunno, categoria, userId, scuolaId, onClos
                             </label>
 
                             <label className="flex items-center gap-2 cursor-pointer">
-                                <input type="checkbox" checked={giaPagato} onChange={(e) => setGiaPagato(e.target.checked)}
+                                <input type="checkbox" checked={acconti} onChange={(e) => { setAcconti(e.target.checked); if (e.target.checked) setGiaPagato(false); }}
                                     className="w-4 h-4 rounded border-gray-300 text-kidville-green focus:ring-kidville-green" />
-                                <span className="font-maven text-xs text-kidville-green">Già pagato (registra subito l'incasso)</span>
+                                <span className="font-maven text-xs text-kidville-green">Dividi in acconti (rate)</span>
                             </label>
 
-                            {giaPagato && (
+                            {!acconti && (
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                    <input type="checkbox" checked={giaPagato} onChange={(e) => setGiaPagato(e.target.checked)}
+                                        className="w-4 h-4 rounded border-gray-300 text-kidville-green focus:ring-kidville-green" />
+                                    <span className="font-maven text-xs text-kidville-green">Già pagato (registra subito l&apos;incasso)</span>
+                                </label>
+                            )}
+
+                            {!acconti && giaPagato && (
                                 <div>
                                     <label className="font-maven text-xs text-gray-500 mb-1 block">Metodo di pagamento</label>
                                     <select value={metodo} onChange={(e) => setMetodo(e.target.value)}
@@ -182,14 +193,39 @@ export function QuickAcquistoModal({ alunno, categoria, userId, scuolaId, onClos
                             <button onClick={onClose} className="flex-1 py-2.5 rounded-full border-2 border-gray-200 font-maven font-bold text-sm text-gray-500 hover:bg-gray-50">
                                 Annulla
                             </button>
-                            <button onClick={submit} disabled={saving}
-                                className="flex-1 py-2.5 rounded-full bg-kidville-green font-maven font-bold text-sm text-white hover:opacity-90 disabled:opacity-50">
-                                {saving ? 'Salvataggio…' : 'Registra acquisto'}
-                            </button>
+                            {acconti ? (
+                                <button onClick={() => {
+                                    if (!descrizione.trim()) { setError('Inserisci una descrizione'); return; }
+                                    if (!importo || importo <= 0) { setError('Inserisci un importo maggiore di 0'); return; }
+                                    setError(null); setRateizza(true);
+                                }}
+                                    className="flex-1 py-2.5 rounded-full bg-kidville-green font-maven font-bold text-sm text-white hover:opacity-90">
+                                    Configura acconti
+                                </button>
+                            ) : (
+                                <button onClick={submit} disabled={saving}
+                                    className="flex-1 py-2.5 rounded-full bg-kidville-green font-maven font-bold text-sm text-white hover:opacity-90 disabled:opacity-50">
+                                    {saving ? 'Salvataggio…' : 'Registra acquisto'}
+                                </button>
+                            )}
                         </div>
                     </>
                 )}
             </motion.div>
+
+            {rateizza && (
+                <RateizzaModal
+                    alunno={alunno}
+                    userId={userId}
+                    scuolaId={scuolaId}
+                    categoriaId={categoria.id}
+                    descrizione={descrizione}
+                    importoTotale={importo}
+                    obbligatorio={obbligatorio}
+                    onClose={() => setRateizza(false)}
+                    onDone={() => { setRateizza(false); onDone(); }}
+                />
+            )}
         </div>
     );
 }

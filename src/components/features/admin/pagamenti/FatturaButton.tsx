@@ -1,20 +1,25 @@
 'use client';
 
 import { useState } from 'react';
-import { FileText, Download, Loader2 } from 'lucide-react';
+import { FileText, Download, Loader2, X } from 'lucide-react';
+import { motion } from 'framer-motion';
 
 interface Props {
     pagamentoId: string;
     userId: string;
     fatturaStato?: string;
+    /** descrizione del pagamento, usata per precompilare la causale */
+    descrizione?: string;
     onEmessa?: () => void;
 }
 
-// Pulsante "Invia Fattura" (scaffold Aruba). Mostra stato emessa/scartata e,
-// quando emessa, il link di download.
-export function FatturaButton({ pagamentoId, userId, fatturaStato, onEmessa }: Props) {
+// Pulsante "Invia Fattura" (scaffold Aruba). Prima dell'emissione apre un modale
+// per modificare la causale; quando emessa mostra il link di download.
+export function FatturaButton({ pagamentoId, userId, fatturaStato, descrizione, onEmessa }: Props) {
     const [stato, setStato] = useState(fatturaStato ?? 'non_richiesta');
     const [busy, setBusy] = useState(false);
+    const [open, setOpen] = useState(false);
+    const [causale, setCausale] = useState(descrizione ?? '');
 
     const emetti = async () => {
         setBusy(true);
@@ -22,10 +27,10 @@ export function FatturaButton({ pagamentoId, userId, fatturaStato, onEmessa }: P
             const res = await fetch('/api/pagamenti/fattura', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
-                body: JSON.stringify({ pagamento_id: pagamentoId }),
+                body: JSON.stringify({ pagamento_id: pagamentoId, causale: causale.trim() || undefined }),
             });
             const j = await res.json();
-            if (res.ok) { setStato('emessa'); onEmessa?.(); }
+            if (res.ok) { setStato('emessa'); setOpen(false); onEmessa?.(); }
             else { setStato(j.data?.fattura_stato ?? 'scartata'); alert(j.error); }
         } finally { setBusy(false); }
     };
@@ -40,10 +45,42 @@ export function FatturaButton({ pagamentoId, userId, fatturaStato, onEmessa }: P
     }
 
     return (
-        <button onClick={emetti} disabled={busy}
-            className="inline-flex items-center gap-1 px-2 py-1 rounded-full border border-gray-200 text-gray-500 text-xs font-bold hover:border-kidville-green hover:text-kidville-green disabled:opacity-50">
-            {busy ? <Loader2 size={12} className="animate-spin" /> : <FileText size={12} />}
-            {stato === 'scartata' ? 'Riprova fattura' : 'Invia fattura'}
-        </button>
+        <>
+            <button onClick={() => { setCausale(descrizione ?? ''); setOpen(true); }}
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-full border border-gray-200 text-gray-500 text-xs font-bold hover:border-kidville-green hover:text-kidville-green">
+                <FileText size={12} />
+                {stato === 'scartata' ? 'Riprova fattura' : 'Invia fattura'}
+            </button>
+
+            {open && (
+                <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4" onClick={() => setOpen(false)}>
+                    <motion.div
+                        initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
+                        className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="flex items-center justify-between mb-4">
+                            <h3 className="font-barlow font-black text-lg text-kidville-green uppercase flex items-center gap-2">
+                                <FileText size={18} /> Emetti fattura
+                            </h3>
+                            <button onClick={() => setOpen(false)} className="text-gray-400 hover:text-gray-600"><X size={20} /></button>
+                        </div>
+                        <label className="font-maven text-xs text-gray-500 mb-1 block">Causale fattura</label>
+                        <textarea value={causale} onChange={(e) => setCausale(e.target.value)} rows={3}
+                            placeholder="Lascia vuoto per usare il template delle impostazioni"
+                            className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
+                        <div className="flex gap-2 mt-4">
+                            <button onClick={() => setOpen(false)} className="flex-1 py-2.5 rounded-full border-2 border-gray-200 font-maven font-bold text-sm text-gray-500 hover:bg-gray-50">
+                                Annulla
+                            </button>
+                            <button onClick={emetti} disabled={busy}
+                                className="flex-1 py-2.5 rounded-full bg-kidville-green font-maven font-bold text-sm text-white hover:opacity-90 disabled:opacity-50 inline-flex items-center justify-center gap-1">
+                                {busy ? <Loader2 size={14} className="animate-spin" /> : null} Emetti
+                            </button>
+                        </div>
+                    </motion.div>
+                </div>
+            )}
+        </>
     );
 }

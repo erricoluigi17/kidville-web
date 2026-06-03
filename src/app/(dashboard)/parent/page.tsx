@@ -7,12 +7,22 @@ import Image from 'next/image';
 import { motion } from 'framer-motion';
 import {
   Bell, MessageCircle, BookOpen, Image as ImageIcon,
-  Package, FileText, BarChart3, CheckSquare, ChevronRight,
+  Package, FileText, BarChart3, CheckSquare, ChevronRight, Euro,
 } from 'lucide-react';
-
-const DEFAULT_STUDENT_ID = 'dc617529-e80d-4084-9041-fb28e864089f';
+import { getCurrentParentId, getCurrentStudentId, withIdentity } from '@/lib/auth/current-user';
+import { PagamentiSummary } from '@/components/features/parent/pagamenti/PagamentiSummary';
 
 const tiles = [
+  {
+    id: 'pagamenti',
+    label: 'Pagamenti',
+    desc: 'Rette & quote',
+    icon: Euro,
+    href: '/parent/pagamenti',
+    bg: '#E8F5F3',
+    fg: '#006A5F',
+    sub: '#A0A0A0',
+  },
   {
     id: 'avvisi',
     label: 'Avvisi',
@@ -104,7 +114,8 @@ function greetingByHour() {
 
 function ParentHomeContent() {
   const searchParams = useSearchParams();
-  const studentId = searchParams.get('id') || DEFAULT_STUDENT_ID;
+  const studentId = getCurrentStudentId(searchParams);
+  const parentId = getCurrentParentId(searchParams);
 
   const [studentName, setStudentName] = useState('');
   const [firstName, setFirstName] = useState('');
@@ -263,6 +274,9 @@ function ParentHomeContent() {
         </motion.div>
       )}
 
+      {/* ── RIEPILOGO PAGAMENTI ───────────────────── */}
+      <PagamentiSummary userId={parentId} href={withIdentity('/parent/pagamenti', parentId, studentId)} />
+
       {/* ── SECTION HEADER ────────────────────────── */}
       <div className="flex items-center gap-3 px-4 mb-3">
         <h2 className="font-barlow font-black text-lg text-kidville-green uppercase tracking-wide whitespace-nowrap">
@@ -288,7 +302,7 @@ function ParentHomeContent() {
               whileHover={{ scale: 1.03, y: -2 }}
               whileTap={{ scale: 0.96 }}
             >
-              <Link href={tile.href} className="block h-full">
+              <Link href={withIdentity(tile.href, parentId, studentId)} className="block h-full">
                 <div
                   className="relative overflow-hidden rounded-[20px] p-4 h-full min-h-[110px] flex flex-col"
                   style={{ backgroundColor: tile.bg }}

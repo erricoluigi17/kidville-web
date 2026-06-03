@@ -4,12 +4,11 @@ import { Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Euro } from 'lucide-react';
 import { StoricoPagamenti } from '@/components/features/parent/pagamenti/StoricoPagamenti';
-
-const DEV_PARENT = '33333333-3333-3333-3333-333333333333';
+import { getCurrentParentId } from '@/lib/auth/current-user';
 
 function Inner() {
     const params = useSearchParams();
-    const userId = params.get('userId') || DEV_PARENT;
+    const userId = getCurrentParentId(params);
     return (
         <div className="px-4 pt-6 pb-24">
             <header className="mb-5">

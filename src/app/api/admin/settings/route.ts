@@ -28,11 +28,13 @@ export async function GET(request: Request) {
     // default se non esiste ancora
     const settings = data ?? {
       scuola_id: scuolaId,
-      retta_default_importo: 0,
+      retta_default_importo: 150,
       retta_giorno_scadenza: 5,
+      retta_giorno_visibilita: 25,
       retta_auto_enabled: true,
       insoluto_tolleranza_giorni: 7,
       ticket_pacchetti: [],
+      fattura_causale_template: '{descrizione} - {alunno}',
       aruba_config: {},
     }
     return NextResponse.json({ success: true, data: settings })
@@ -57,9 +59,11 @@ export async function PATCH(request: Request) {
     const allowed = [
       'retta_default_importo',
       'retta_giorno_scadenza',
+      'retta_giorno_visibilita',
       'retta_auto_enabled',
       'insoluto_tolleranza_giorni',
       'ticket_pacchetti',
+      'fattura_causale_template',
     ]
     const updates: Record<string, unknown> = { scuola_id: scuolaId }
     for (const f of allowed) if (body[f] !== undefined) updates[f] = body[f]

@@ -2,16 +2,17 @@
 
 import { Suspense, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { Euro, CalendarClock, Ticket, Settings } from 'lucide-react';
+import { Euro, CalendarClock, Ticket, Settings, Layers } from 'lucide-react';
 import Link from 'next/link';
 import { PaymentsDashboard } from '@/components/features/admin/pagamenti/PaymentsDashboard';
 import { GeneratoreRette } from '@/components/features/admin/pagamenti/GeneratoreRette';
+import { GeneratoreCategoria } from '@/components/features/admin/pagamenti/GeneratoreCategoria';
 import { TicketMensaPanel } from '@/components/features/admin/pagamenti/TicketMensaPanel';
 
 const SCUOLA_ID = '11111111-1111-1111-1111-111111111111';
 const DEV_ADMIN = '22222222-2222-2222-2222-555555555555';
 
-type Tab = 'scadenziario' | 'rette' | 'ticket';
+type Tab = 'scadenziario' | 'rette' | 'categoria' | 'ticket';
 
 function PagamentiInner() {
     const params = useSearchParams();
@@ -21,6 +22,7 @@ function PagamentiInner() {
     const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
         { id: 'scadenziario', label: 'Scadenziario', icon: <Euro size={15} /> },
         { id: 'rette', label: 'Genera rette', icon: <CalendarClock size={15} /> },
+        { id: 'categoria', label: 'Genera pagamenti', icon: <Layers size={15} /> },
         { id: 'ticket', label: 'Ticket mensa', icon: <Ticket size={15} /> },
     ];
 
@@ -52,6 +54,7 @@ function PagamentiInner() {
                 <div className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
                     {tab === 'scadenziario' && <PaymentsDashboard userId={userId} scuolaId={SCUOLA_ID} />}
                     {tab === 'rette' && <GeneratoreRette userId={userId} scuolaId={SCUOLA_ID} />}
+                    {tab === 'categoria' && <GeneratoreCategoria userId={userId} scuolaId={SCUOLA_ID} />}
                     {tab === 'ticket' && <TicketMensaPanel userId={userId} scuolaId={SCUOLA_ID} />}
                 </div>
             </div>

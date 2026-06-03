@@ -1,10 +1,12 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Search, Filter, AlertTriangle, CheckCircle2, Clock, RefreshCw, Plus } from 'lucide-react';
+import { Search, Filter, AlertTriangle, CheckCircle2, Clock, RefreshCw, Plus, Pencil, Layers } from 'lucide-react';
 import { RegistraIncassoModal, PagamentoRow } from './RegistraIncassoModal';
 import { FatturaButton } from './FatturaButton';
 import { QuickAcquistoModal } from './QuickAcquistoModal';
+import { ModificaPagamentoModal } from './ModificaPagamentoModal';
+import { RateizzaModal } from './RateizzaModal';
 
 interface Categoria { id: string; nome: string; slug: string; colore?: string; icona?: string }
 interface Pagamento extends PagamentoRow {
@@ -49,6 +51,8 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
     const [fCategoria, setFCategoria] = useState<string>('');
     const [onlyMorosi, setOnlyMorosi] = useState(false);
     const [selected, setSelected] = useState<Pagamento | null>(null);
+    const [editing, setEditing] = useState<Pagamento | null>(null);
+    const [rateizza, setRateizza] = useState<{ alunno: Alunno; pagamento: Pagamento } | null>(null);
     const [quick, setQuick] = useState<{ alunno: Alunno; categoria: Categoria } | null>(null);
     const [generando, setGenerando] = useState(false);
 
@@ -256,12 +260,18 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                                 : <span className="inline-block px-2 py-0.5 rounded-full text-xs font-bold bg-gray-50 text-gray-400">Non generata</span>}
                                         </td>
                                         <td className="py-2 px-2 text-right">
-                                            {p && p.stato !== 'pagato' ? (
-                                                <button onClick={() => setSelected(p)}
-                                                    className="px-3 py-1 rounded-full bg-kidville-green text-white text-xs font-bold hover:opacity-90">Incassa</button>
-                                            ) : p ? (
-                                                <FatturaButton pagamentoId={p.id} userId={userId} fatturaStato={p.fattura_stato} />
-                                            ) : null}
+                                            <div className="flex items-center justify-end gap-2">
+                                                {p && p.stato !== 'pagato' ? (
+                                                    <button onClick={() => setSelected(p)}
+                                                        className="px-3 py-1 rounded-full bg-kidville-green text-white text-xs font-bold hover:opacity-90">Incassa</button>
+                                                ) : p ? (
+                                                    <FatturaButton pagamentoId={p.id} userId={userId} fatturaStato={p.fattura_stato} descrizione={p.descrizione} />
+                                                ) : null}
+                                                {p && (
+                                                    <button onClick={() => setEditing(p)} title="Modifica"
+                                                        className="text-gray-400 hover:text-kidville-green"><Pencil size={15} /></button>
+                                                )}
+                                            </div>
                                         </td>
                                     </tr>
                                 );
@@ -274,25 +284,39 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                 <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
                     {alunniFiltrati.map((a) => {
                         const acquisti = pagByAlunnoCat.get(a.id) || [];
-                        const tot = acquisti.reduce((s, p) => s + Number(p.importo || 0), 0);
                         return (
-                            <button key={a.id} onClick={() => categoriaSel && setQuick({ alunno: a, categoria: categoriaSel })}
-                                className="text-left bg-white border-2 border-gray-100 hover:border-kidville-green rounded-xl p-3 transition-colors group">
+                            <div key={a.id} className="text-left bg-white border-2 border-gray-100 rounded-xl p-3">
                                 <div className="flex items-center justify-between">
                                     <div>
                                         <p className="font-maven text-sm text-kidville-green font-bold">{a.nome} {a.cognome}</p>
                                         <p className="font-maven text-xs text-gray-400">{a.classe_sezione || '—'}</p>
                                     </div>
-                                    <span className="w-7 h-7 rounded-full bg-kidville-green/10 text-kidville-green flex items-center justify-center group-hover:bg-kidville-green group-hover:text-white">
+                                    <button onClick={() => categoriaSel && setQuick({ alunno: a, categoria: categoriaSel })}
+                                        title="Nuovo acquisto"
+                                        className="w-7 h-7 rounded-full bg-kidville-green/10 text-kidville-green flex items-center justify-center hover:bg-kidville-green hover:text-white">
                                         <Plus size={15} />
-                                    </span>
+                                    </button>
                                 </div>
                                 {acquisti.length > 0 && (
-                                    <p className="font-maven text-[11px] text-gray-500 mt-2">
-                                        {acquisti.length} acquisti · € {tot.toFixed(2)}
-                                    </p>
+                                    <div className="mt-2 space-y-1">
+                                        {acquisti.map((p) => (
+                                            <div key={p.id} className="flex items-center justify-between gap-2 bg-kidville-cream/40 rounded-lg px-2 py-1">
+                                                <span className="font-maven text-[11px] text-gray-600 truncate">
+                                                    {p.descrizione} · € {Number(p.importo).toFixed(2)}
+                                                </span>
+                                                <div className="flex items-center gap-1.5 shrink-0">
+                                                    {p.tipo === 'singolo' && p.stato !== 'pagato' && (
+                                                        <button onClick={() => setRateizza({ alunno: a, pagamento: p })} title="Dividi in acconti"
+                                                            className="text-gray-400 hover:text-kidville-green"><Layers size={13} /></button>
+                                                    )}
+                                                    <button onClick={() => setEditing(p)} title="Modifica"
+                                                        className="text-gray-400 hover:text-kidville-green"><Pencil size={13} /></button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
                                 )}
-                            </button>
+                            </div>
                         );
                     })}
                 </div>
@@ -315,6 +339,31 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                     scuolaId={scuolaId}
                     onClose={() => setQuick(null)}
                     onDone={() => { setQuick(null); load(); }}
+                />
+            )}
+
+            {editing && (
+                <ModificaPagamentoModal
+                    pagamento={editing}
+                    categorie={categorie}
+                    userId={userId}
+                    onClose={() => setEditing(null)}
+                    onDone={() => { setEditing(null); load(); }}
+                />
+            )}
+
+            {rateizza && (
+                <RateizzaModal
+                    alunno={rateizza.alunno}
+                    userId={userId}
+                    scuolaId={scuolaId}
+                    categoriaId={rateizza.pagamento.categoria_id}
+                    descrizione={rateizza.pagamento.descrizione}
+                    importoTotale={Number(rateizza.pagamento.importo)}
+                    obbligatorio={rateizza.pagamento.obbligatorio}
+                    replacePagamentoId={rateizza.pagamento.id}
+                    onClose={() => setRateizza(null)}
+                    onDone={() => { setRateizza(null); load(); }}
                 />
             )}
         </div>

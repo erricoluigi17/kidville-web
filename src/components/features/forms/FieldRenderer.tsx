@@ -15,8 +15,8 @@ import { getSupabase } from '@/lib/supabase/browser-client'
 import type { FormField } from '@/types/database.types'
 
 export const FIELD_BASE =
-  'w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white placeholder-slate-500 ' +
-  'backdrop-blur-md focus:outline-none focus:border-emerald-500/50 focus:bg-white/[0.07] transition-all'
+  'w-full px-4 py-3 rounded-xl bg-white border border-kidville-green/15 text-kidville-green placeholder-kidville-green/40 ' +
+  'focus:outline-none focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/20 transition-all'
 
 export function FieldRenderer({
   field,
@@ -40,19 +40,19 @@ export function FieldRenderer({
   // Blocchi non-input
   if (field.type === 'section_header') {
     return (
-      <h3 className="text-lg font-semibold text-white pt-2 border-b border-white/10 pb-2">
+      <h3 className="text-lg font-semibold text-kidville-green pt-2 border-b border-kidville-green/15 pb-2">
         {field.label}
       </h3>
     )
   }
   if (field.type === 'paragraph') {
-    return <p className="text-sm text-slate-400 leading-relaxed">{field.label}</p>
+    return <p className="text-sm text-gray-500 leading-relaxed">{field.label}</p>
   }
   if (field.type === 'signature') {
     return (
-      <div className="flex items-start gap-3 px-4 py-3 rounded-xl bg-emerald-500/[0.07] border border-emerald-500/20">
-        <PenLine className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" />
-        <p className="text-sm text-emerald-200/80">
+      <div className="flex items-start gap-3 px-4 py-3 rounded-xl bg-kidville-green-light border border-kidville-green/20">
+        <PenLine className="w-4 h-4 text-kidville-green flex-shrink-0 mt-0.5" />
+        <p className="text-sm text-kidville-green/80">
           {field.label || 'Questo modulo richiede la firma elettronica via OTP al termine.'}
         </p>
       </div>
@@ -61,9 +61,9 @@ export function FieldRenderer({
 
   return (
     <div className="space-y-2">
-      <label className="flex items-center gap-1.5 text-sm font-medium text-slate-300">
+      <label className="flex items-center gap-1.5 text-sm font-medium text-kidville-green/80">
         {field.label}
-        {field.required && <span className="text-emerald-400">*</span>}
+        {field.required && <span className="text-kidville-green">*</span>}
       </label>
 
       {/* Testo / numero / email / telefono */}
@@ -77,7 +77,7 @@ export function FieldRenderer({
       )}
 
       {field.type === 'date' && (
-        <input type="date" className={`${FIELD_BASE} [color-scheme:dark]`} {...register(field.id, rules)} />
+        <input type="date" className={`${FIELD_BASE} [color-scheme:light]`} {...register(field.id, rules)} />
       )}
 
       {field.type === 'textarea' && (
@@ -90,12 +90,12 @@ export function FieldRenderer({
       )}
 
       {field.type === 'select' && (
-        <select className={`${FIELD_BASE} [color-scheme:dark]`} defaultValue="" {...register(field.id, rules)}>
-          <option value="" disabled className="bg-slate-900">
+        <select className={`${FIELD_BASE} [color-scheme:light]`} defaultValue="" {...register(field.id, rules)}>
+          <option value="" disabled className="bg-white text-kidville-green">
             Seleziona…
           </option>
           {(field.options ?? []).map((opt, i) => (
-            <option key={i} value={opt.value} className="bg-slate-900">
+            <option key={i} value={opt.value} className="bg-white text-kidville-green">
               {opt.label}
             </option>
           ))}
@@ -107,10 +107,10 @@ export function FieldRenderer({
           {(field.options ?? []).map((opt, i) => (
             <label
               key={i}
-              className="flex items-center gap-3 px-4 py-3 rounded-xl bg-white/5 border border-white/10 cursor-pointer hover:border-emerald-500/30 transition-all"
+              className="flex items-center gap-3 px-4 py-3 rounded-xl bg-kidville-cream border border-kidville-green/15 cursor-pointer hover:border-kidville-green/30 transition-all"
             >
-              <input type="radio" value={opt.value} className="accent-emerald-500" {...register(field.id, rules)} />
-              <span className="text-sm text-slate-200">{opt.label}</span>
+              <input type="radio" value={opt.value} className="accent-kidville-green" {...register(field.id, rules)} />
+              <span className="text-sm text-kidville-green">{opt.label}</span>
             </label>
           ))}
         </div>
@@ -131,12 +131,12 @@ export function FieldRenderer({
                   return (
                     <label
                       key={i}
-                      className="flex items-center gap-3 px-4 py-3 rounded-xl bg-white/5 border border-white/10 cursor-pointer hover:border-emerald-500/30 transition-all"
+                      className="flex items-center gap-3 px-4 py-3 rounded-xl bg-kidville-cream border border-kidville-green/15 cursor-pointer hover:border-kidville-green/30 transition-all"
                     >
                       <input
                         type="checkbox"
                         checked={checked}
-                        className="accent-emerald-500"
+                        className="accent-kidville-green"
                         onChange={e =>
                           rhf.onChange(
                             e.target.checked
@@ -145,7 +145,7 @@ export function FieldRenderer({
                           )
                         }
                       />
-                      <span className="text-sm text-slate-200">{opt.label}</span>
+                      <span className="text-sm text-kidville-green">{opt.label}</span>
                     </label>
                   )
                 })}
@@ -168,7 +168,7 @@ export function FieldRenderer({
       )}
 
       {errMsg && (
-        <p className="flex items-center gap-1.5 text-xs text-rose-400">
+        <p className="flex items-center gap-1.5 text-xs text-kidville-error">
           <AlertCircle className="w-3.5 h-3.5" />
           {errMsg}
         </p>
@@ -236,18 +236,18 @@ export function FileField({
       <label
         className={`flex items-center gap-3 px-4 py-3 rounded-xl border border-dashed cursor-pointer transition-all ${
           value
-            ? 'border-emerald-500/40 bg-emerald-500/[0.07]'
-            : 'border-white/15 bg-white/5 hover:border-emerald-500/30'
+            ? 'border-kidville-green/40 bg-kidville-green-light'
+            : 'border-kidville-green/20 bg-kidville-cream hover:border-kidville-green/30'
         }`}
       >
         {uploading ? (
-          <Loader2 className="w-4 h-4 text-emerald-400 animate-spin flex-shrink-0" />
+          <Loader2 className="w-4 h-4 text-kidville-green animate-spin flex-shrink-0" />
         ) : value ? (
-          <FileCheck2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+          <FileCheck2 className="w-4 h-4 text-kidville-green flex-shrink-0" />
         ) : (
-          <Upload className="w-4 h-4 text-slate-400 flex-shrink-0" />
+          <Upload className="w-4 h-4 text-gray-500 flex-shrink-0" />
         )}
-        <span className="text-sm text-slate-300 truncate">
+        <span className="text-sm text-kidville-green/80 truncate">
           {uploading
             ? 'Caricamento…'
             : value
@@ -263,13 +263,13 @@ export function FileField({
         />
       </label>
       {uploadError && (
-        <p className="flex items-center gap-1.5 text-xs text-rose-400 mt-1.5">
+        <p className="flex items-center gap-1.5 text-xs text-kidville-error mt-1.5">
           <AlertCircle className="w-3.5 h-3.5" />
           {uploadError}
         </p>
       )}
       {value && !uploading && (
-        <p className="flex items-center gap-1.5 text-[11px] text-slate-500 mt-1.5">
+        <p className="flex items-center gap-1.5 text-[11px] text-gray-500 mt-1.5">
           <Info className="w-3 h-3" />
           <span className="font-mono truncate">{value}</span>
         </p>

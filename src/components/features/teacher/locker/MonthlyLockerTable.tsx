@@ -95,7 +95,7 @@ export function MonthlyLockerTable({
 
     if (students.length === 0) {
         return (
-            <div className="flex flex-col items-center justify-center py-16 text-zinc-500">
+            <div className="flex flex-col items-center justify-center py-16 text-gray-500">
                 <CalendarDays className="w-12 h-12 mb-3 opacity-30" />
                 <p className="text-sm">Nessun dato disponibile per {formatMonthLabel(month)}</p>
             </div>
@@ -108,7 +108,7 @@ export function MonthlyLockerTable({
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
                 <div className="flex items-center gap-2">
                     <CalendarDays className="w-5 h-5 text-violet-400" />
-                    <h2 className="text-lg font-semibold text-white capitalize">
+                    <h2 className="text-lg font-semibold text-kidville-green capitalize">
                         {formatMonthLabel(month)}
                     </h2>
                 </div>
@@ -119,22 +119,22 @@ export function MonthlyLockerTable({
                         id="material-filter-btn"
                         onClick={() => setDropdownOpen(o => !o)}
                         className="flex items-center gap-2 px-4 py-2 rounded-xl
-                                   bg-white/5 border border-white/10 text-sm text-zinc-300
-                                   hover:bg-white/10 hover:border-white/20
+                                   bg-kidville-cream border border-white/10 text-sm text-kidville-green/80
+                                   hover:bg-kidville-cream hover:border-white/20
                                    transition-all duration-300 min-w-[180px]"
                     >
                         <span className="flex-1 text-left">
                             {selectedMaterial === 'Tutti' ? 'Tutti i materiali' : selectedMaterial}
                         </span>
                         <ChevronDown
-                            className={`w-4 h-4 text-zinc-500 transition-transform duration-300 ${dropdownOpen ? 'rotate-180' : ''}`}
+                            className={`w-4 h-4 text-gray-500 transition-transform duration-300 ${dropdownOpen ? 'rotate-180' : ''}`}
                         />
                     </button>
 
                     {dropdownOpen && (
                         <div
                             className="absolute right-0 z-50 mt-2 w-56 rounded-2xl
-                                       bg-zinc-800/95 backdrop-blur-xl border border-white/10
+                                       bg-kidville-cream/95 backdrop-blur-xl border border-white/10
                                        shadow-2xl overflow-hidden"
                         >
                             {allMaterials.map(mat => (
@@ -149,7 +149,7 @@ export function MonthlyLockerTable({
                                                 transition-all duration-200
                                                 ${selectedMaterial === mat
                                                     ? 'bg-violet-600/30 text-violet-300 font-semibold'
-                                                    : 'text-zinc-300 hover:bg-white/5'
+                                                    : 'text-kidville-green/80 hover:bg-kidville-cream'
                                                 }`}
                                 >
                                     {mat === 'Tutti' ? '— Tutti i materiali —' : mat}
@@ -162,7 +162,7 @@ export function MonthlyLockerTable({
 
             {/* ── Tabella scrollabile ── */}
             <div
-                className="bg-zinc-900/50 backdrop-blur-xl border border-white/10
+                className="bg-kidville-cream0 backdrop-blur-xl border border-white/10
                            rounded-2xl overflow-hidden"
             >
                 <div className="overflow-x-auto">
@@ -170,21 +170,21 @@ export function MonthlyLockerTable({
                         <thead>
                             <tr className="border-b border-white/10">
                                 {!hideStudentColumn && (
-                                    <th className="sticky left-0 z-10 bg-zinc-900/80 backdrop-blur-sm
+                                    <th className="sticky left-0 z-10 bg-white/80 backdrop-blur-sm
                                                    text-left px-4 py-3 text-xs font-semibold
-                                                   text-zinc-400 uppercase tracking-wider whitespace-nowrap">
+                                                   text-gray-500 uppercase tracking-wider whitespace-nowrap">
                                         Studente
                                     </th>
                                 )}
                                 <th className="px-4 py-3 text-left text-xs font-semibold
-                                               text-zinc-400 uppercase tracking-wider whitespace-nowrap">
+                                               text-gray-500 uppercase tracking-wider whitespace-nowrap">
                                     Materiale
                                 </th>
                                 {days.map(d => (
                                     <th
                                         key={d}
                                         className="px-2 py-3 text-center text-xs font-semibold
-                                                   text-zinc-500 uppercase tracking-wider w-8"
+                                                   text-gray-500 uppercase tracking-wider w-8"
                                     >
                                         {d}
                                     </th>
@@ -203,7 +203,7 @@ export function MonthlyLockerTable({
                                     >
                                         {/* Colonna studente — solo sulla prima riga del materiale */}
                                         {!hideStudentColumn && (
-                                            <td className="sticky left-0 z-10 bg-zinc-900/80 backdrop-blur-sm
+                                            <td className="sticky left-0 z-10 bg-white/80 backdrop-blur-sm
                                                            px-4 py-3 whitespace-nowrap">
                                                 {mIdx === 0 ? (
                                                     <div className="flex items-center gap-2">
@@ -212,7 +212,7 @@ export function MonthlyLockerTable({
                                                                         justify-center text-xs font-bold text-violet-300">
                                                             {student.nome[0]}{student.cognome[0]}
                                                         </div>
-                                                        <span className="font-medium text-zinc-200 text-xs">
+                                                        <span className="font-medium text-kidville-green text-xs">
                                                             {student.nome} {student.cognome}
                                                         </span>
                                                     </div>
@@ -222,7 +222,7 @@ export function MonthlyLockerTable({
 
                                         {/* Colonna materiale */}
                                         <td className="px-4 py-3 whitespace-nowrap">
-                                            <span className="text-xs font-medium text-zinc-400 bg-white/5
+                                            <span className="text-xs font-medium text-gray-500 bg-kidville-cream
                                                             border border-white/10 rounded-full px-2.5 py-1">
                                                 {mat}
                                             </span>
@@ -249,7 +249,7 @@ export function MonthlyLockerTable({
                                                             />
                                                         )
                                                     ) : (
-                                                        <span className="text-zinc-600 text-xs select-none">—</span>
+                                                        <span className="text-gray-400 text-xs select-none">—</span>
                                                     )}
                                                 </td>
                                             );
@@ -265,15 +265,15 @@ export function MonthlyLockerTable({
                 <div className="flex items-center gap-6 px-4 py-3 border-t border-white/5">
                     <div className="flex items-center gap-1.5">
                         <CheckCircle2 className="w-4 h-4 text-emerald-400/90 drop-shadow-[0_0_6px_rgba(52,211,153,0.5)]" />
-                        <span className="text-xs text-zinc-500">Portato</span>
+                        <span className="text-xs text-gray-500">Portato</span>
                     </div>
                     <div className="flex items-center gap-1.5">
                         <XCircle className="w-4 h-4 text-rose-500/90 drop-shadow-[0_0_6px_rgba(244,63,94,0.5)]" />
-                        <span className="text-xs text-zinc-500">Non portato</span>
+                        <span className="text-xs text-gray-500">Non portato</span>
                     </div>
                     <div className="flex items-center gap-1.5">
-                        <span className="text-zinc-600 text-xs font-mono">—</span>
-                        <span className="text-xs text-zinc-500">Nessun dato</span>
+                        <span className="text-gray-400 text-xs font-mono">—</span>
+                        <span className="text-xs text-gray-500">Nessun dato</span>
                     </div>
                 </div>
             </div>

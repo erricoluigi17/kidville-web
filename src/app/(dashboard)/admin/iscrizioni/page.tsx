@@ -29,7 +29,7 @@ export default function IscrizioniPage() {
   const [assignments, setAssignments] = useState<Record<string, string>>({})
   const [referenteIndex, setReferenteIndex] = useState(0)
   const [working, setWorking] = useState(false)
-  const [result, setResult] = useState<{ credentials?: { email: string; password: string } | null; warnings?: string[] } | null>(null)
+  const [result, setResult] = useState<{ credentials?: { email: string; password: string } | null; credentialsEmailSent?: boolean; warnings?: string[] } | null>(null)
 
   useEffect(() => { load() }, [])
 
@@ -75,7 +75,7 @@ export default function IscrizioniPage() {
       })
       const json = await res.json()
       if (!res.ok) { alert(json.error ?? 'Import fallito'); return }
-      setResult({ credentials: json.credentials, warnings: json.warnings })
+      setResult({ credentials: json.credentials, credentialsEmailSent: json.credentialsEmailSent, warnings: json.warnings })
       await load()
     } catch (e) {
       console.error(e)
@@ -209,7 +209,7 @@ function DetailPanel({
   referenteIndex: number
   setReferenteIndex: (n: number) => void
   working: boolean
-  result: { credentials?: { email: string; password: string } | null; warnings?: string[] } | null
+  result: { credentials?: { email: string; password: string } | null; credentialsEmailSent?: boolean; warnings?: string[] } | null
   onImport: () => void
   onReject: () => void
   onViewDoc: (path?: string) => void
@@ -315,6 +315,13 @@ function DetailPanel({
               <KeyRound size={13} />
               <span>Credenziali: <strong>{result.credentials.email}</strong> / <code>{result.credentials.password}</code></span>
             </div>
+          )}
+          {result.credentials && (
+            <p className="text-xs flex items-center gap-1.5">
+              {result.credentialsEmailSent
+                ? <><CheckCircle2 size={12} className="text-emerald-700" /> <span className="text-emerald-700">Credenziali inviate via email al referente.</span></>
+                : <><AlertTriangle size={12} className="text-amber-700" /> <span className="text-amber-700">Email non inviata: comunicare le credenziali manualmente.</span></>}
+            </p>
           )}
           {result.warnings && result.warnings.length > 0 && (
             <div className="text-xs text-amber-700">

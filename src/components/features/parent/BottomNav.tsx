@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useState } from 'react';
 import {
   Home, Bell, MessageCircle, BookOpen, MoreHorizontal,
-  Image, Package, FileText, BarChart3, CheckSquare, X,
+  Image, Package, FileText, BarChart3, CheckSquare, X, Euro,
 } from 'lucide-react';
 
 const mainTabs = [
@@ -23,6 +23,7 @@ const extraItems = [
   { id: 'modulistica', label: 'Moduli', icon: FileText, href: '/parent/modulistica' },
   { id: 'register', label: 'Registro', icon: BarChart3, href: '/parent/register' },
   { id: 'attendance', label: 'Presenze', icon: CheckSquare, href: '/parent/attendance' },
+  { id: 'pagamenti', label: 'Pagamenti', icon: Euro, href: '/parent/pagamenti' },
 ] as const;
 
 export default function BottomNav() {
@@ -115,7 +116,7 @@ export default function BottomNav() {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 0.2 }}
-              className="fixed inset-0 bg-black/25 backdrop-blur-[2px] z-40"
+              className="fixed inset-0 bg-kidville-green/30 backdrop-blur-[2px] z-40"
               onClick={() => setShowAltro(false)}
             />
 

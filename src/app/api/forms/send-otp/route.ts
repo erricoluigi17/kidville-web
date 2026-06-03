@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createHash, randomInt } from 'crypto'
 import { createAdminClient } from '@/lib/supabase/server-client'
+import { sendEmail } from '@/lib/email/send'
 import type { FormSubmissionData } from '@/types/database.types'
 
 // Hash deterministico: lega il codice alla submission (sale anti-rainbow-table)
@@ -10,30 +11,11 @@ function hashOtp(submissionId: string, code: string): string {
 
 // Invio email: usa Resend se configurato, altrimenti log server-side (modalità dev)
 async function deliverOtp(email: string, code: string): Promise<boolean> {
-  const apiKey = process.env.RESEND_API_KEY
-  if (!apiKey) {
-    console.log(`[OTP] Codice firma per ${email}: ${code}`)
-    return false
-  }
-  try {
-    const res = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        from: process.env.OTP_FROM_EMAIL ?? 'Kidville <onboarding@resend.dev>',
-        to: email,
-        subject: 'Codice di firma elettronica — Kidville',
-        text: `Il tuo codice di firma è: ${code}\n\nInseriscilo per completare la firma del modulo. Il codice è valido per pochi minuti.`,
-      }),
-    })
-    return res.ok
-  } catch (err) {
-    console.error('[OTP] Invio email fallito:', err)
-    return false
-  }
+  return sendEmail({
+    to: email,
+    subject: 'Codice di firma elettronica — Kidville',
+    text: `Il tuo codice di firma è: ${code}\n\nInseriscilo per completare la firma del modulo. Il codice è valido per pochi minuti.`,
+  })
 }
 
 // ── POST: crea la submission (pending_signature) e invia l'OTP ──

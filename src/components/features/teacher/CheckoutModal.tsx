@@ -22,7 +22,7 @@ export function CheckoutModal({ studentName, delegates, onClose, onConfirmChecko
     };
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-kidville-green/30 p-4">
             <div className="bg-kidville-white w-full max-w-md rounded-card shadow-lg flex flex-col max-h-[90vh]">
                 
                 <div className="p-4 border-b border-gray-100 flex items-center justify-between">

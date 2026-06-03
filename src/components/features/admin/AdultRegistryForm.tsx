@@ -89,7 +89,7 @@ export function AdultRegistryForm() {
     };
 
     return (
-        <form onSubmit={handleSubmit} className="w-full max-w-3xl mx-auto p-8 bg-black/30 backdrop-blur-xl border border-white/10 rounded-3xl shadow-xl relative text-white">
+        <form onSubmit={handleSubmit} className="w-full max-w-3xl mx-auto p-8 bg-white backdrop-blur-xl border border-kidville-green/15 rounded-3xl shadow-xl relative text-kidville-green">
             <AnimatePresence>
                 {toast && (
                     <motion.div 
@@ -102,22 +102,22 @@ export function AdultRegistryForm() {
                 )}
             </AnimatePresence>
 
-            <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-3">
+            <h2 className="text-2xl font-bold text-kidville-green mb-6 flex items-center gap-3">
                 <UserPlus className="text-kidville-green" /> Nuovo Adulto
             </h2>
 
             <div className="grid grid-cols-2 gap-6">
                 <div>
-                    <label className="block text-sm font-bold text-gray-300 mb-1">Nome</label>
-                    <input name="first_name" value={formData.first_name} onChange={handleInputChange} className={`w-full p-3 rounded-xl border bg-black/20 outline-none focus:ring-2 focus:ring-kidville-green ${errors.first_name ? 'border-red-500' : 'border-white/10'}`} />
+                    <label className="block text-sm font-bold text-kidville-green/80 mb-1">Nome</label>
+                    <input name="first_name" value={formData.first_name} onChange={handleInputChange} className={`w-full p-3 rounded-xl border bg-white outline-none focus:ring-2 focus:ring-kidville-green ${errors.first_name ? 'border-red-500' : 'border-kidville-green/15'}`} />
                 </div>
                 <div>
-                    <label className="block text-sm font-bold text-gray-300 mb-1">Cognome</label>
-                    <input name="last_name" value={formData.last_name} onChange={handleInputChange} className={`w-full p-3 rounded-xl border bg-black/20 outline-none focus:ring-2 focus:ring-kidville-green ${errors.last_name ? 'border-red-500' : 'border-white/10'}`} />
+                    <label className="block text-sm font-bold text-kidville-green/80 mb-1">Cognome</label>
+                    <input name="last_name" value={formData.last_name} onChange={handleInputChange} className={`w-full p-3 rounded-xl border bg-white outline-none focus:ring-2 focus:ring-kidville-green ${errors.last_name ? 'border-red-500' : 'border-kidville-green/15'}`} />
                 </div>
                 <div>
-                    <label className="block text-sm font-bold text-gray-300 mb-1 flex items-center gap-2"><Shield size={14}/> Ruolo</label>
-                    <select name="role" value={formData.role} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-white/10 bg-gray-900 outline-none focus:ring-2 focus:ring-kidville-green">
+                    <label className="block text-sm font-bold text-kidville-green/80 mb-1 flex items-center gap-2"><Shield size={14}/> Ruolo</label>
+                    <select name="role" value={formData.role} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-white outline-none focus:ring-2 focus:ring-kidville-green">
                         <option value="parent">Genitore</option>
                         <option value="educator">Educatore</option>
                         <option value="coordinator">Coordinatore</option>
@@ -125,20 +125,20 @@ export function AdultRegistryForm() {
                     </select>
                 </div>
                 <div>
-                    <label className="block text-sm font-bold text-gray-300 mb-1 flex items-center gap-2"><Mail size={14}/> Email (Genera Credenziali)</label>
-                    <input type="email" name="email" value={formData.email} onChange={handleInputChange} className={`w-full p-3 rounded-xl border bg-black/20 outline-none focus:ring-2 focus:ring-kidville-green ${errors.email ? 'border-red-500' : 'border-white/10'}`} placeholder="mario.rossi@email.com" />
+                    <label className="block text-sm font-bold text-kidville-green/80 mb-1 flex items-center gap-2"><Mail size={14}/> Email (Genera Credenziali)</label>
+                    <input type="email" name="email" value={formData.email} onChange={handleInputChange} className={`w-full p-3 rounded-xl border bg-white outline-none focus:ring-2 focus:ring-kidville-green ${errors.email ? 'border-red-500' : 'border-kidville-green/15'}`} placeholder="mario.rossi@email.com" />
                 </div>
                 <div>
-                    <label className="block text-sm font-bold text-gray-300 mb-1">Codice Fiscale</label>
-                    <input name="fiscal_code" value={formData.fiscal_code} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-white/10 bg-black/20 outline-none focus:ring-2 focus:ring-kidville-green uppercase" />
+                    <label className="block text-sm font-bold text-kidville-green/80 mb-1">Codice Fiscale</label>
+                    <input name="fiscal_code" value={formData.fiscal_code} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-white outline-none focus:ring-2 focus:ring-kidville-green uppercase" />
                 </div>
                 <div>
-                    <label className="block text-sm font-bold text-gray-300 mb-1 flex items-center gap-2"><Phone size={14}/> Telefono</label>
-                    <input name="phone" value={formData.phone} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-white/10 bg-black/20 outline-none focus:ring-2 focus:ring-kidville-green" />
+                    <label className="block text-sm font-bold text-kidville-green/80 mb-1 flex items-center gap-2"><Phone size={14}/> Telefono</label>
+                    <input name="phone" value={formData.phone} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-white outline-none focus:ring-2 focus:ring-kidville-green" />
                 </div>
             </div>
 
-            <div className="mt-8 border-t border-white/10 pt-6 flex justify-end">
+            <div className="mt-8 border-t border-kidville-green/15 pt-6 flex justify-end">
                 <button type="submit" disabled={isSubmitting} className="flex items-center gap-2 px-8 py-3 rounded-full bg-kidville-green text-white font-bold hover:bg-kidville-green/90 shadow-lg disabled:opacity-50">
                     {isSubmitting ? <Loader2 size={18} className="animate-spin" /> : 'Salva Profilo'}
                 </button>

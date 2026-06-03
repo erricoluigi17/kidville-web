@@ -1,32 +1,59 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { 
-  FileText, Plus, UserCheck, Settings, Calendar, Users, 
-  Trash2, Download, CheckCircle, XCircle, ArrowRight, Eye, RefreshCw, Upload
+import {
+  FileText, Plus, UserCheck, Settings, Calendar, Users,
+  Trash2, Download, CheckCircle, XCircle, ArrowRight, Eye, RefreshCw, Upload, Shield
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
 
 const SCUOLA_ID = '11111111-1111-1111-1111-111111111111';
 
+type FormType = 'sondaggio' | 'gradimento' | 'autorizzazione';
+
+interface FieldOption { label: string; value: string }
+
 interface FormField {
   id: string;
-  type: 'text' | 'checkbox' | 'date';
+  type: 'text' | 'textarea' | 'checkbox' | 'date' | 'radio' | 'rating';
   label: string;
   required: boolean;
-  db_mapping: string; // e.g. "alunni.note_mediche"
+  db_mapping?: string;
+  options?: FieldOption[]; // per 'radio'
 }
 
 interface FormTemplate {
   id: string;
   title: string;
   description: string;
+  form_type: FormType;
   fields: FormField[];
   target_scope: 'class' | 'external';
   target_classes: string[];
   expiration_date: string | null;
   created_at: string;
+}
+
+// Metadati dei tre tipi di modulo per genitori iscritti
+const FORM_TYPE_META: Record<FormType, { label: string; desc: string; otp: boolean }> = {
+  sondaggio: { label: 'Sondaggio', desc: 'Domande aperte o a scelta. Nessuna firma richiesta.', otp: false },
+  gradimento: { label: 'Gradimento', desc: 'Valutazioni e feedback (scala 1-5). Nessuna firma.', otp: false },
+  autorizzazione: { label: 'Autorizzazione', desc: 'Consenso con firma OTP via email (valore legale).', otp: true },
+};
+
+// Tipi di campo disponibili per ciascun tipo di modulo
+const INPUT_TYPES_BY_FORM: Record<FormType, [FormField['type'], string][]> = {
+  sondaggio: [['text', 'Testo breve'], ['textarea', 'Testo lungo'], ['radio', 'Scelta singola'], ['date', 'Data']],
+  gradimento: [['rating', 'Valutazione 1-5'], ['radio', 'Scelta singola'], ['textarea', 'Commento']],
+  autorizzazione: [['checkbox', 'Consenso (Sì/No)'], ['text', 'Testo'], ['date', 'Data']],
+};
+
+// Campo di default coerente con il tipo di modulo
+function defaultFieldForType(formType: FormType): FormField {
+  if (formType === 'gradimento') return { id: 'f_1', type: 'rating', label: '', required: true };
+  if (formType === 'autorizzazione') return { id: 'f_1', type: 'checkbox', label: '', required: true };
+  return { id: 'f_1', type: 'text', label: '', required: true };
 }
 
 interface PreInscription {
@@ -50,7 +77,7 @@ interface PreInscription {
 }
 
 export default function AdminModulisticaPage() {
-  const [activeTab, setActiveTab] = useState<'moduli' | 'attesa' | 'odt'>('moduli');
+  const [activeTab, setActiveTab] = useState<'moduli-genitori' | 'moduli-esterni' | 'attesa' | 'odt'>('moduli-genitori');
   const [forms, setForms] = useState<FormTemplate[]>([]);
   const [preInscriptions, setPreInscriptions] = useState<PreInscription[]>([]);
   const [sections, setSections] = useState<{ id: string; name: string }[]>([]);
@@ -61,11 +88,10 @@ export default function AdminModulisticaPage() {
   const [formTitle, setFormTitle] = useState('');
   const [formDesc, setFormDesc] = useState('');
   const [formScope, setFormScope] = useState<'class' | 'external'>('class');
+  const [formType, setFormType] = useState<FormType>('autorizzazione');
   const [formClasses, setFormClasses] = useState<string[]>([]);
   const [formExpiration, setFormExpiration] = useState('');
-  const [formFields, setFormFields] = useState<FormField[]>([
-    { id: 'f_1', type: 'text', label: 'Nome Pediatra', required: true, db_mapping: '' }
-  ]);
+  const [formFields, setFormFields] = useState<FormField[]>([defaultFieldForType('autorizzazione')]);
 
   // Pre-inscription details modal
   const [selectedPre, setSelectedPre] = useState<PreInscription | null>(null);
@@ -113,8 +139,9 @@ export default function AdminModulisticaPage() {
 
   // Form Builder fields
   const handleAddField = () => {
-    const nextId = 'f_' + (formFields.length + 1);
-    setFormFields([...formFields, { id: nextId, type: 'text', label: '', required: false, db_mapping: '' }]);
+    const nextId = 'f_' + Date.now();
+    const defaultType = INPUT_TYPES_BY_FORM[formType][0][0];
+    setFormFields([...formFields, { id: nextId, type: defaultType, label: '', required: false }]);
   };
 
   const handleRemoveField = (index: number) => {
@@ -126,6 +153,29 @@ export default function AdminModulisticaPage() {
     const next = [...formFields];
     next[index] = { ...next[index], [key]: value };
     setFormFields(next);
+  };
+
+  // Apre il builder con lo scope coerente con la sezione attiva
+  const openBuilder = (scope: 'class' | 'external') => {
+    setFormScope(scope);
+    // Gli esterni (pre-iscrizione) sono compilati senza login → tipo neutro senza OTP
+    const initialType: FormType = scope === 'external' ? 'sondaggio' : 'autorizzazione';
+    setFormType(initialType);
+    setFormFields([defaultFieldForType(initialType)]);
+    if (scope === 'external') setFormClasses([]);
+    setShowBuilder(true);
+  };
+
+  // Cambia il tipo di modulo e reimposta un campo di default coerente
+  const selectFormType = (type: FormType) => {
+    setFormType(type);
+    setFormFields([defaultFieldForType(type)]);
+  };
+
+  // Aggiorna le opzioni di un campo 'radio' (input separato da virgole)
+  const handleFieldOptions = (index: number, raw: string) => {
+    const opts = raw.split(',').map(s => s.trim()).filter(Boolean).map(s => ({ label: s, value: s }));
+    handleFieldChange(index, 'options', opts);
   };
 
   const handleToggleClass = (clsName: string) => {
@@ -149,6 +199,7 @@ export default function AdminModulisticaPage() {
         body: JSON.stringify({
           title: formTitle,
           description: formDesc,
+          form_type: formType,
           target_scope: formScope,
           target_classes: formClasses,
           expiration_date: formExpiration || null,
@@ -157,17 +208,20 @@ export default function AdminModulisticaPage() {
         })
       });
 
-      if (!res.ok) throw new Error('Errore di salvataggio');
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Errore di salvataggio');
+      }
       showToastMsg('✅ Modulo creato con successo!');
       setShowBuilder(false);
-      
+
       // Reset
       setFormTitle('');
       setFormDesc('');
-      setFormScope('class');
+      setFormType('autorizzazione');
       setFormClasses([]);
       setFormExpiration('');
-      setFormFields([{ id: 'f_1', type: 'text', label: 'Nome Pediatra', required: true, db_mapping: '' }]);
+      setFormFields([defaultFieldForType('autorizzazione')]);
 
       fetchInitialData();
     } catch (err) {
@@ -346,6 +400,11 @@ export default function AdminModulisticaPage() {
     }
   };
 
+  // Moduli filtrati per sezione attiva (genitori = scope class, esterni = scope external)
+  const scopedForms = forms.filter(f =>
+    activeTab === 'moduli-esterni' ? f.target_scope === 'external' : f.target_scope !== 'external'
+  );
+
   return (
     <div className="flex-1 flex flex-col p-4 sm:p-6 max-w-6xl mx-auto w-full">
       {/* Header */}
@@ -359,12 +418,12 @@ export default function AdminModulisticaPage() {
           </p>
         </div>
 
-        {activeTab === 'moduli' && (
+        {(activeTab === 'moduli-genitori' || activeTab === 'moduli-esterni') && (
           <button
-            onClick={() => setShowBuilder(true)}
+            onClick={() => openBuilder(activeTab === 'moduli-esterni' ? 'external' : 'class')}
             className="flex items-center gap-2 px-5 py-2.5 bg-kidville-green text-kidville-yellow rounded-pill font-barlow font-black uppercase tracking-wider text-sm hover:opacity-90 transition-all shadow-md self-start md:self-auto"
           >
-            <Plus size={18} /> Nuovo Modulo FES
+            <Plus size={18} /> {activeTab === 'moduli-esterni' ? 'Nuovo Modulo Esterni' : 'Nuovo Modulo Genitori'}
           </button>
         )}
       </div>
@@ -372,10 +431,16 @@ export default function AdminModulisticaPage() {
       {/* Tabs */}
       <div className="flex gap-4 mb-6 border-b border-gray-200">
         <button
-          className={`pb-3 px-2 font-barlow font-bold uppercase tracking-wide transition-colors flex items-center gap-1.5 ${activeTab === 'moduli' ? 'text-kidville-green border-b-2 border-kidville-green' : 'text-gray-400 hover:text-gray-600'}`}
-          onClick={() => setActiveTab('moduli')}
+          className={`pb-3 px-2 font-barlow font-bold uppercase tracking-wide transition-colors flex items-center gap-1.5 ${activeTab === 'moduli-genitori' ? 'text-kidville-green border-b-2 border-kidville-green' : 'text-gray-400 hover:text-gray-600'}`}
+          onClick={() => setActiveTab('moduli-genitori')}
         >
-          <FileText size={16} /> Moduli Creati
+          <Users size={16} /> Moduli Genitori
+        </button>
+        <button
+          className={`pb-3 px-2 font-barlow font-bold uppercase tracking-wide transition-colors flex items-center gap-1.5 ${activeTab === 'moduli-esterni' ? 'text-kidville-green border-b-2 border-kidville-green' : 'text-gray-400 hover:text-gray-600'}`}
+          onClick={() => setActiveTab('moduli-esterni')}
+        >
+          <FileText size={16} /> Moduli Esterni
         </button>
         <a
           href="/admin/iscrizioni"
@@ -399,16 +464,20 @@ export default function AdminModulisticaPage() {
         </div>
       ) : (
         <>
-          {/* TAB 1: Moduli Creati */}
-          {activeTab === 'moduli' && (
+          {/* TAB 1: Moduli (Genitori iscritti / Esterni) */}
+          {(activeTab === 'moduli-genitori' || activeTab === 'moduli-esterni') && (
             <div className="space-y-4">
-              {forms.length === 0 ? (
+              {scopedForms.length === 0 ? (
                 <div className="bg-white rounded-card p-10 text-center border border-gray-100">
                   <FileText className="mx-auto text-gray-300 mb-3" size={48} />
-                  <p className="font-maven text-gray-500">Nessun modulo FES creato finora.</p>
+                  <p className="font-maven text-gray-500">
+                    {activeTab === 'moduli-esterni'
+                      ? 'Nessun modulo per gli esterni (pre-iscrizione) creato finora.'
+                      : 'Nessun modulo per i genitori iscritti creato finora.'}
+                  </p>
                 </div>
               ) : (
-                forms.map(form => (
+                scopedForms.map(form => (
                   <div key={form.id} className="bg-white rounded-card p-5 shadow-sm border border-gray-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
                     <div>
                       <h3 className="font-barlow font-bold text-xl text-kidville-green uppercase tracking-wide">
@@ -419,6 +488,12 @@ export default function AdminModulisticaPage() {
                       </p>
                       
                       <div className="flex flex-wrap items-center gap-3 mt-3">
+                        {form.form_type && (
+                          <span className="bg-kidville-green text-kidville-yellow px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider flex items-center gap-1">
+                            {FORM_TYPE_META[form.form_type]?.otp && <Shield size={11} />}
+                            {FORM_TYPE_META[form.form_type]?.label ?? form.form_type}
+                          </span>
+                        )}
                         <span className="bg-kidville-cream text-kidville-green px-2.5 py-1 rounded-full text-xs font-semibold">
                           Destinatari: {form.target_scope === 'external' ? 'Esterni (Pre-iscrizione)' : form.target_classes.join(', ')}
                         </span>
@@ -602,13 +677,42 @@ export default function AdminModulisticaPage() {
 
       {/* Modal: Form Builder */}
       {showBuilder && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 animate-fadeIn">
+        <div className="fixed inset-0 bg-kidville-green/30 z-50 flex items-center justify-center p-4 animate-fadeIn">
           <div className="bg-white w-full max-w-2xl rounded-card p-6 shadow-2xl flex flex-col max-h-[90vh]">
             <h2 className="font-barlow font-black text-2xl text-kidville-green uppercase tracking-wide mb-4">
-              Nuovo Modulo FES
+              {formScope === 'external' ? 'Nuovo Modulo Esterni' : `Nuovo Modulo · ${FORM_TYPE_META[formType].label}`}
             </h2>
 
             <div className="flex-1 overflow-y-auto space-y-5 pr-1">
+              {formScope === 'class' && (
+                <div>
+                  <label className="block font-maven text-sm font-semibold text-kidville-green mb-1.5">
+                    Tipo di Modulo
+                  </label>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                    {(Object.keys(FORM_TYPE_META) as FormType[]).map(t => {
+                      const meta = FORM_TYPE_META[t];
+                      const active = formType === t;
+                      return (
+                        <button
+                          key={t}
+                          type="button"
+                          onClick={() => selectFormType(t)}
+                          className={`text-left p-3 rounded-xl border-2 transition-all ${active ? 'border-kidville-green bg-kidville-green-light' : 'border-gray-100 hover:border-gray-300'}`}
+                        >
+                          <span className="flex items-center gap-1.5 font-barlow font-bold text-sm uppercase text-kidville-green">
+                            {t === 'autorizzazione' && <Shield size={14} className="text-kidville-yellow" />}
+                            {meta.label}
+                            {meta.otp && <span className="ml-auto text-[9px] bg-kidville-green text-kidville-yellow px-1.5 py-0.5 rounded-full tracking-wider">OTP</span>}
+                          </span>
+                          <span className="block font-maven text-[11px] text-gray-500 mt-1 leading-snug">{meta.desc}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               <div>
                 <label className="block font-maven text-sm font-semibold text-kidville-green mb-1.5">
                   Titolo Modulo *
@@ -640,14 +744,11 @@ export default function AdminModulisticaPage() {
                   <label className="block font-maven text-sm font-semibold text-kidville-green mb-1.5">
                     Ambito d'Uso (Scope)
                   </label>
-                  <select
-                    value={formScope}
-                    onChange={e => setFormScope(e.target.value as any)}
-                    className="w-full border-2 border-gray-100 rounded-xl px-3 py-2.5 font-maven text-sm text-gray-600 focus:outline-none bg-white"
-                  >
-                    <option value="class">Classi / Sezioni Specifiche</option>
-                    <option value="external">Esterni (Pre-Iscrizione)</option>
-                  </select>
+                  <div className="w-full border-2 border-kidville-green/15 rounded-xl px-3 py-2.5 font-maven text-sm text-kidville-green bg-kidville-cream flex items-center gap-2">
+                    {formScope === 'external'
+                      ? <><FileText size={14} /> Esterni (Pre-Iscrizione)</>
+                      : <><Users size={14} /> Genitori iscritti (Classi/Sezioni)</>}
+                  </div>
                 </div>
 
                 <div>
@@ -697,45 +798,45 @@ export default function AdminModulisticaPage() {
 
                 {formFields.map((field, idx) => (
                   <div key={field.id} className="bg-gray-50 p-4 rounded-xl border border-gray-100 flex flex-col md:flex-row gap-4 items-end">
-                    <div className="flex-1 w-full grid grid-cols-1 md:grid-cols-4 gap-3">
-                      <div className="md:col-span-2">
-                        <label className="block font-maven text-xs font-semibold text-gray-500 mb-1">Nome Etichetta</label>
+                    <div className="flex-1 w-full grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block font-maven text-xs font-semibold text-gray-500 mb-1">
+                          {formType === 'autorizzazione' ? 'Testo del consenso / domanda' : 'Domanda'}
+                        </label>
                         <input
                           type="text"
                           value={field.label}
                           onChange={e => handleFieldChange(idx, 'label', e.target.value)}
-                          className="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 font-maven text-xs bg-white focus:outline-none"
-                          placeholder="Es. Aggiorna Recapito"
+                          className="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 font-maven text-xs bg-white focus:outline-none focus:border-kidville-green"
+                          placeholder={formType === 'autorizzazione' ? 'Es. Autorizzo l\'uscita didattica' : formType === 'gradimento' ? 'Es. Come valuti il servizio mensa?' : 'Es. Quali attività preferite?'}
                         />
                       </div>
-                      
+
                       <div>
                         <label className="block font-maven text-xs font-semibold text-gray-500 mb-1">Tipo Input</label>
                         <select
                           value={field.type}
-                          onChange={e => handleFieldChange(idx, 'type', e.target.value)}
-                          className="w-full border border-gray-200 rounded-lg px-2 py-1.5 font-maven text-xs bg-white focus:outline-none"
+                          onChange={e => handleFieldChange(idx, 'type', e.target.value as FormField['type'])}
+                          className="w-full border border-gray-200 rounded-lg px-2 py-1.5 font-maven text-xs bg-white text-kidville-green focus:outline-none focus:border-kidville-green"
                         >
-                          <option value="text">Testo</option>
-                          <option value="checkbox">Consenso (Check)</option>
-                          <option value="date">Data</option>
+                          {INPUT_TYPES_BY_FORM[formType].map(([val, lbl]) => (
+                            <option key={val} value={val}>{lbl}</option>
+                          ))}
                         </select>
                       </div>
 
-                      <div>
-                        <label className="block font-maven text-xs font-semibold text-gray-500 mb-1">Mapping DB</label>
-                        <select
-                          value={field.db_mapping}
-                          onChange={e => handleFieldChange(idx, 'db_mapping', e.target.value)}
-                          className="w-full border border-gray-200 rounded-lg px-2 py-1.5 font-maven text-xs bg-white focus:outline-none"
-                        >
-                          <option value="">Nessuno</option>
-                          <option value="alunni.note_mediche">Allergie Alunno</option>
-                          <option value="alunni.codice_fiscale">CF Alunno</option>
-                          <option value="utenti.cellulare">Cellulare Genitore</option>
-                          <option value="utenti.nome">Nome Genitore</option>
-                        </select>
-                      </div>
+                      {field.type === 'radio' && (
+                        <div className="md:col-span-2">
+                          <label className="block font-maven text-xs font-semibold text-gray-500 mb-1">Opzioni di scelta (separate da virgola)</label>
+                          <input
+                            type="text"
+                            value={(field.options ?? []).map(o => o.label).join(', ')}
+                            onChange={e => handleFieldOptions(idx, e.target.value)}
+                            className="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 font-maven text-xs bg-white focus:outline-none focus:border-kidville-green"
+                            placeholder="Es. Sì, No, Forse"
+                          />
+                        </div>
+                      )}
                     </div>
 
                     <div className="flex items-center gap-3">
@@ -783,7 +884,7 @@ export default function AdminModulisticaPage() {
 
       {/* Modal: Pre-Inscription / Sala d'Attesa Details */}
       {selectedPre && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 animate-fadeIn">
+        <div className="fixed inset-0 bg-kidville-green/30 z-50 flex items-center justify-center p-4 animate-fadeIn">
           <div className="bg-white w-full max-w-xl rounded-card p-6 shadow-2xl flex flex-col max-h-[90vh]">
             <div className="flex items-center justify-between border-b border-gray-100 pb-3 mb-4">
               <h2 className="font-barlow font-black text-2xl text-kidville-green uppercase tracking-wide">
@@ -876,7 +977,7 @@ export default function AdminModulisticaPage() {
 
       {/* Secondary confirmation for Approval */}
       {showConfirmApproval && selectedPre && (
-        <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4 animate-fadeIn">
+        <div className="fixed inset-0 bg-kidville-green/30 z-[60] flex items-center justify-center p-4 animate-fadeIn">
           <div className="bg-white w-full max-w-sm rounded-card p-6 shadow-2xl text-center">
             <h3 className="font-barlow font-black text-xl text-kidville-green uppercase tracking-wide mb-3">Conferma Approvazione</h3>
             <p className="font-maven text-sm text-gray-500 mb-6">
@@ -903,7 +1004,7 @@ export default function AdminModulisticaPage() {
 
       {/* Generated Credentials Modal */}
       {showCredentials && (
-        <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4 animate-fadeIn">
+        <div className="fixed inset-0 bg-kidville-green/30 z-[60] flex items-center justify-center p-4 animate-fadeIn">
           <div className="bg-white w-full max-w-sm rounded-card p-6 shadow-2xl text-center border-t-4 border-kidville-green">
             <CheckCircle className="text-kidville-success mx-auto mb-3" size={48} />
             <h3 className="font-barlow font-black text-xl text-kidville-green uppercase tracking-wide mb-1">Account Creato!</h3>
@@ -926,7 +1027,7 @@ export default function AdminModulisticaPage() {
 
       {/* Toast notification */}
       {toast && (
-        <div className="fixed bottom-6 right-6 z-[60] bg-gray-900 text-white font-maven font-semibold px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-3 animate-slideIn">
+        <div className="fixed bottom-6 right-6 z-[60] bg-kidville-green text-white font-maven font-semibold px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-3 animate-slideIn">
           {toast}
         </div>
       )}

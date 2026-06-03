@@ -191,7 +191,7 @@ export default function TeacherLockerPage() {
                         id={`view-${key}-btn`}
                         onClick={() => setView(key)}
                         className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-xs font-semibold transition-all
-                            ${view === key ? 'bg-white shadow text-kidville-green' : 'text-zinc-500 hover:text-zinc-700'}`}
+                            ${view === key ? 'bg-white shadow text-kidville-green' : 'text-gray-500 hover:text-kidville-green'}`}
                     >
                         {icon} {label}
                     </button>
@@ -416,22 +416,22 @@ export default function TeacherLockerPage() {
 
             {/* ══════════════════════ MENSILE ══════════════════════════════════ */}
             {view === 'mensile' && (
-                <div className="bg-zinc-950 rounded-3xl p-5">
+                <div className="bg-white rounded-3xl p-5">
                     <div className="flex items-center justify-between mb-5">
                         <button id="prev-month-btn" onClick={() => setMonth(m => shiftMonth(m, -1))}
-                            className="p-2 rounded-xl text-zinc-400 hover:text-white hover:bg-white/10 transition-all">
+                            className="p-2 rounded-xl text-gray-500 hover:text-kidville-green hover:bg-kidville-cream transition-all">
                             <ChevronLeft size={18} />
                         </button>
-                        <span className="text-sm font-semibold text-zinc-300">Consegne mensili</span>
+                        <span className="text-sm font-semibold text-kidville-green/70">Consegne mensili</span>
                         <button id="next-month-btn" onClick={() => setMonth(m => shiftMonth(m, 1))}
-                            className="p-2 rounded-xl text-zinc-400 hover:text-white hover:bg-white/10 transition-all">
+                            className="p-2 rounded-xl text-gray-500 hover:text-kidville-green hover:bg-kidville-cream transition-all">
                             <ChevronRightIcon size={18} />
                         </button>
                     </div>
                     {mensileLoading ? (
                         <div className="flex items-center justify-center py-16 gap-3">
                             <div className="w-5 h-5 border-2 border-violet-500/30 border-t-violet-500 rounded-full animate-spin" />
-                            <span className="text-zinc-500 text-sm">Caricamento...</span>
+                            <span className="text-gray-500 text-sm">Caricamento...</span>
                         </div>
                     ) : (
                         <MonthlyLockerTable students={mensileStudents} month={month} hideStudentColumn={false} />

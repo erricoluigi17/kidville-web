@@ -25,12 +25,12 @@ export function FamilyDetailView({ familyData }: { familyData?: any }) {
     return (
         <div className="w-full max-w-5xl mx-auto">
             {/* Tab Navigation */}
-            <div className="flex gap-2 mb-6 p-2 bg-black/20 backdrop-blur-md rounded-2xl border border-white/5 w-fit">
+            <div className="flex gap-2 mb-6 p-2 bg-white backdrop-blur-md rounded-2xl border border-kidville-green/10 w-fit">
                 {tabs.map((tab: TabItem) => (
                     <button
                         key={tab.id}
                         onClick={() => setActiveTab(tab.id)}
-                        className={`relative px-6 py-3 rounded-xl font-bold text-sm transition-colors flex items-center gap-2 ${activeTab === tab.id ? 'text-white' : 'text-gray-400 hover:text-white'}`}
+                        className={`relative px-6 py-3 rounded-xl font-bold text-sm transition-colors flex items-center gap-2 ${activeTab === tab.id ? 'text-white' : 'text-gray-500 hover:text-kidville-green'}`}
                     >
                         {activeTab === tab.id && (
                             <motion.div 
@@ -59,19 +59,19 @@ export function FamilyDetailView({ familyData }: { familyData?: any }) {
                                 animate={{ opacity: 1, y: 0 }}
                                 exit={{ opacity: 0, y: -20 }}
                                 transition={{ duration: 0.3 }}
-                                className="absolute inset-0 bg-white/5 backdrop-blur-xl border border-white/10 p-8 rounded-3xl shadow-2xl"
+                                className="absolute inset-0 bg-kidville-cream backdrop-blur-xl border border-kidville-green/15 p-8 rounded-3xl shadow-2xl"
                             >
-                                <h3 className="text-2xl font-bold text-kidville-green mb-6 border-b border-white/10 pb-4">
+                                <h3 className="text-2xl font-bold text-kidville-green mb-6 border-b border-kidville-green/15 pb-4">
                                     Dettagli {tab.label.split(':')[0]}
                                 </h3>
                                 {/* Qui andrebbe il render del componente di dettaglio specifico (DettaglioAlunno o DettaglioAdulto) */}
-                                <div className="text-gray-300">
-                                    <p className="mb-4">Visualizzazione dati per: <strong className="text-white">{tab.data.nome}</strong></p>
+                                <div className="text-gray-600">
+                                    <p className="mb-4">Visualizzazione dati per: <strong className="text-kidville-green">{tab.data.nome}</strong></p>
                                     <div className="grid grid-cols-2 gap-4 opacity-50">
-                                        <div className="h-12 bg-white/5 rounded-xl animate-pulse"></div>
-                                        <div className="h-12 bg-white/5 rounded-xl animate-pulse"></div>
-                                        <div className="h-12 bg-white/5 rounded-xl animate-pulse col-span-2"></div>
-                                        <div className="h-32 bg-white/5 rounded-xl animate-pulse col-span-2 mt-4"></div>
+                                        <div className="h-12 bg-kidville-cream rounded-xl animate-pulse"></div>
+                                        <div className="h-12 bg-kidville-cream rounded-xl animate-pulse"></div>
+                                        <div className="h-12 bg-kidville-cream rounded-xl animate-pulse col-span-2"></div>
+                                        <div className="h-32 bg-kidville-cream rounded-xl animate-pulse col-span-2 mt-4"></div>
                                     </div>
                                 </div>
                             </motion.div>

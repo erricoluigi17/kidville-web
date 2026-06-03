@@ -203,7 +203,7 @@ export function AvvisoDetailsDrawer({ open, avviso, onClose, availableClasses = 
                         animate={{ opacity: 1 }}
                         exit={{ opacity: 0 }}
                         onClick={onClose}
-                        className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50"
+                        className="fixed inset-0 bg-kidville-green/30 backdrop-blur-sm z-50"
                     />
 
                     {/* Drawer */}

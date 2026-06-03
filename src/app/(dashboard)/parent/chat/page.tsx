@@ -411,7 +411,7 @@ function ParentChatContent() {
                 {showNewChat && (
                     <>
                         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                            className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50" onClick={() => setShowNewChat(false)} />
+                            className="fixed inset-0 bg-kidville-green/30 backdrop-blur-sm z-50" onClick={() => setShowNewChat(false)} />
                         <motion.div
                             initial={{ opacity: 0, y: 30, scale: 0.97 }}
                             animate={{ opacity: 1, y: 0, scale: 1 }}

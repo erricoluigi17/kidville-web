@@ -128,7 +128,9 @@ export async function PATCH(request: NextRequest) {
             try {
                 const updates: Record<string, unknown> = {};
                 // Raccogliamo le modifiche
-                const allowedFields = ['classe_sezione', 'stato', 'note_mediche', 'bes', 'note_bes', 'nome', 'cognome', 'data_nascita', 'codice_fiscale', 'gender', 'citizenship', 'birth_nation', 'birth_province', 'birth_city', 'residence_address', 'residence_city', 'zip_code', 'allergies', 'invoice_holder_type', 'invoice_holder_details', 'is_bes_dsa', 'section_id'];
+                const allowedFields = ['classe_sezione', 'stato', 'note_mediche', 'bes', 'note_bes', 'nome', 'cognome', 'data_nascita', 'codice_fiscale', 'gender', 'citizenship', 'birth_nation', 'birth_province', 'birth_city', 'residence_address', 'residence_city', 'zip_code', 'allergies', 'invoice_holder_type', 'invoice_holder_details', 'is_bes_dsa', 'section_id',
+                    // Dati economici (modulo Pagamenti)
+                    'importo_retta_mensile', 'genitori_separati', 'retta_split_config', 'intestatario_fatture'];
                 
                 for (const field of allowedFields) {
                     if (body[field] !== undefined) updates[field] = body[field];

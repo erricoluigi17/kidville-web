@@ -354,7 +354,7 @@ export default function TeacherModulisticaPage() {
 
       {/* Modal: Proxy Upload Paper Form */}
       {showProxyModal && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 animate-fadeIn">
+        <div className="fixed inset-0 bg-kidville-green/30 z-50 flex items-center justify-center p-4 animate-fadeIn">
           <div className="bg-white w-full max-w-sm rounded-card p-6 shadow-2xl text-center">
             <Upload className="text-kidville-green mx-auto mb-3" size={40} />
             <h3 className="font-barlow font-black text-xl text-kidville-green uppercase tracking-wide mb-1">Proxy Upload Cartaceo</h3>
@@ -402,7 +402,7 @@ export default function TeacherModulisticaPage() {
 
       {/* Modal: Covered Days Calendar Checklist */}
       {managingCert && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 animate-fadeIn">
+        <div className="fixed inset-0 bg-kidville-green/30 z-50 flex items-center justify-center p-4 animate-fadeIn">
           <div className="bg-white w-full max-w-md rounded-card p-6 shadow-2xl flex flex-col max-h-[85vh]">
             <div className="flex items-center justify-between border-b border-gray-100 pb-3 mb-4">
               <h2 className="font-barlow font-black text-xl text-kidville-green uppercase tracking-wide">
@@ -480,7 +480,7 @@ export default function TeacherModulisticaPage() {
 
       {/* Toast */}
       {toast && (
-        <div className="fixed bottom-6 right-6 z-[60] bg-gray-900 text-white font-maven font-semibold px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-3 animate-slideIn">
+        <div className="fixed bottom-6 right-6 z-[60] bg-kidville-green text-white font-maven font-semibold px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-3 animate-slideIn">
           {toast}
         </div>
       )}

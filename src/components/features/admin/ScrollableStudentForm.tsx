@@ -174,7 +174,7 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
     };
 
     return (
-        <div className="text-gray-200">
+        <div className="text-kidville-green">
             {/* Pannello di conferma salvataggio — mostrato al posto del form */}
             {savedStudent ? (
                 <motion.div
@@ -189,7 +189,7 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
                         <h3 className="text-2xl font-black font-barlow text-kidville-green uppercase tracking-wide">
                             Alunno Salvato!
                         </h3>
-                        <p className="text-gray-300 font-maven mt-1 text-lg">
+                        <p className="text-kidville-green/80 font-maven mt-1 text-lg">
                             {savedStudent.nome} {savedStudent.cognome}
                         </p>
                         <p className="text-gray-500 font-maven text-sm mt-1">
@@ -197,7 +197,7 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
                         </p>
                     </div>
 
-                    <div className="bg-green-500/10 border border-green-500/20 rounded-xl px-5 py-3 text-green-400 text-sm font-maven font-bold flex items-center gap-2">
+                    <div className="bg-green-50 border border-green-200 rounded-xl px-5 py-3 text-green-700 text-sm font-maven font-bold flex items-center gap-2">
                         <CheckCircle2 size={15} />
                         Ora compila Madre e Padre per collegare i genitori
                     </div>
@@ -214,7 +214,7 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
                                 setSavedStudent(null);
                                 setFormData({ nome: '', cognome: '', sesso: 'M', data_nascita: '', comune_nascita: '', provincia_nascita: '', codice_fiscale: '', indirizzo_residenza: '', comune_residenza: '', cap: '', classe_sezione: '', is_bes_dsa: false, note_bes: '', allergies: '', invoice_holder_type: 'mom', invoice_holder_details: { nome: '', cognome: '', codice_fiscale: '', adult_id: '' } });
                             }}
-                            className="flex items-center gap-2 px-5 py-2.5 bg-white/5 border border-white/10 text-gray-300 rounded-xl font-barlow font-bold uppercase text-sm hover:bg-white/10 transition-all"
+                            className="flex items-center gap-2 px-5 py-2.5 bg-kidville-cream border border-kidville-green/15 text-kidville-green rounded-xl font-barlow font-bold uppercase text-sm hover:bg-kidville-green-light transition-all"
                         >
                             <RefreshCw size={16} /> Nuovo alunno
                         </button>
@@ -234,7 +234,7 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
                 )}
             </AnimatePresence>
 
-            <div className="flex justify-between items-center mb-8 border-b border-white/10 pb-4">
+            <div className="flex justify-between items-center mb-8 border-b border-kidville-green/15 pb-4">
                 <h2 className="text-2xl font-bold text-kidville-green flex items-center gap-2">
                     <User /> Compilazione Alunno
                 </h2>
@@ -251,44 +251,44 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
             <div className="space-y-12">
                 {/* Sezione 1: Dati Personali */}
                 <section>
-                    <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2 border-l-4 border-kidville-green pl-3">
+                    <h3 className="text-lg font-bold text-kidville-green mb-4 flex items-center gap-2 border-l-4 border-kidville-green pl-3">
                         Dati Personali
                     </h3>
                     <div className="grid grid-cols-2 gap-6">
                         <div>
-                            <label className="block text-sm font-bold text-gray-300 mb-1">Nome</label>
-                            <input name="nome" value={formData.nome} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none bg-black/40 text-white placeholder-white/40 focus:ring-2 focus:ring-kidville-green ${errors.nome ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-white/10'}`} />
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Nome</label>
+                            <input name="nome" value={formData.nome} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green ${errors.nome ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} />
                             {errors.nome && <span className="text-xs text-red-500 font-bold">{errors.nome}</span>}
                         </div>
                         <div>
-                            <label className="block text-sm font-bold text-gray-300 mb-1">Cognome</label>
-                            <input name="cognome" value={formData.cognome} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none bg-black/40 text-white placeholder-white/40 focus:ring-2 focus:ring-kidville-green ${errors.cognome ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-white/10'}`} />
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Cognome</label>
+                            <input name="cognome" value={formData.cognome} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green ${errors.cognome ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} />
                             {errors.cognome && <span className="text-xs text-red-500 font-bold">{errors.cognome}</span>}
                         </div>
                         <div>
-                            <label className="block text-sm font-bold text-gray-300 mb-1">Sesso</label>
-                            <select name="sesso" value={formData.sesso} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-white/10 bg-black/40 text-white outline-none focus:ring-2 focus:ring-kidville-green">
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Sesso</label>
+                            <select name="sesso" value={formData.sesso} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-white text-kidville-green outline-none focus:ring-2 focus:ring-kidville-green">
                                 <option value="M">Maschio</option>
                                 <option value="F">Femmina</option>
                             </select>
                         </div>
                         <div>
-                            <label className="block text-sm font-bold text-gray-300 mb-1">Data di Nascita</label>
-                            <input type="date" name="data_nascita" value={formData.data_nascita} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none bg-black/40 text-white placeholder-white/40 focus:ring-2 focus:ring-kidville-green ${errors.data_nascita ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-white/10'}`} style={{ colorScheme: 'dark' }} />
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Data di Nascita</label>
+                            <input type="date" name="data_nascita" value={formData.data_nascita} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green ${errors.data_nascita ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} style={{ colorScheme: 'light' }} />
                             {errors.data_nascita && <span className="text-xs text-red-500 font-bold">{errors.data_nascita}</span>}
                         </div>
                         <div>
-                            <label className="block text-sm font-bold text-gray-300 mb-1">Comune di Nascita</label>
-                            <input name="comune_nascita" value={formData.comune_nascita} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none bg-black/40 text-white placeholder-white/40 focus:ring-2 focus:ring-kidville-green ${errors.comune_nascita ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-white/10'}`} />
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Comune di Nascita</label>
+                            <input name="comune_nascita" value={formData.comune_nascita} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green ${errors.comune_nascita ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} />
                             {errors.comune_nascita && <span className="text-xs text-red-500 font-bold">{errors.comune_nascita}</span>}
                         </div>
                         <div>
-                            <label className="block text-sm font-bold text-gray-300 mb-1">Prov. Nascita (Sigla)</label>
-                            <input name="provincia_nascita" value={formData.provincia_nascita} onChange={handleInputChange} maxLength={2} className={`w-full p-3 rounded-xl border outline-none uppercase bg-black/40 text-white placeholder-white/40 focus:ring-2 focus:ring-kidville-green ${errors.provincia_nascita ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-white/10'}`} />
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Prov. Nascita (Sigla)</label>
+                            <input name="provincia_nascita" value={formData.provincia_nascita} onChange={handleInputChange} maxLength={2} className={`w-full p-3 rounded-xl border outline-none uppercase bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green ${errors.provincia_nascita ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} />
                             {errors.provincia_nascita && <span className="text-xs text-red-500 font-bold">{errors.provincia_nascita}</span>}
                         </div>
                         <div className="col-span-2">
-                            <label className="block text-sm font-bold text-gray-300 mb-1 flex items-center gap-2">
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1 flex items-center gap-2">
                                 <Fingerprint size={16} /> Codice Fiscale 
                                 {isCfLoading && <Loader2 size={14} className="animate-spin text-kidville-green" />}
                                 {isCfAutoCalculated && <span className="text-xs text-kidville-green font-normal">Autocalcolato! ✨</span>}
@@ -297,7 +297,7 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
                                 name="codice_fiscale" 
                                 value={formData.codice_fiscale} 
                                 onChange={handleInputChange} 
-                                className={`w-full p-3 rounded-xl border outline-none uppercase transition-all duration-500 bg-black/40 text-white placeholder-white/40 ${errors.codice_fiscale ? 'border-red-500 bg-red-900/20 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : isCfAutoCalculated ? 'border-kidville-green ring-2 ring-kidville-green/50 bg-kidville-green/5' : 'border-white/10 focus:ring-2 focus:ring-kidville-green'}`} 
+                                className={`w-full p-3 rounded-xl border outline-none uppercase transition-all duration-500 bg-white text-kidville-green placeholder-kidville-green/40 ${errors.codice_fiscale ? 'border-red-500 bg-red-50 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : isCfAutoCalculated ? 'border-kidville-green ring-2 ring-kidville-green/50 bg-kidville-green/5' : 'border-kidville-green/15 focus:ring-2 focus:ring-kidville-green'}`} 
                             />
                             {errors.codice_fiscale && <span className="text-xs text-red-500 font-bold">{errors.codice_fiscale}</span>}
                         </div>
@@ -306,25 +306,25 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
 
                 {/* Sezione 1b: Sede e Sezione */}
                 <section>
-                    <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2 border-l-4 border-purple-500 pl-3">
+                    <h3 className="text-lg font-bold text-kidville-green mb-4 flex items-center gap-2 border-l-4 border-purple-500 pl-3">
                         Sede e Sezione
                     </h3>
                     <div className="grid grid-cols-2 gap-6">
                         <div>
-                            <label className="block text-sm font-bold text-gray-300 mb-1">Sede</label>
-                            <select className="w-full p-3 rounded-xl border border-white/10 bg-black/40 text-white outline-none focus:ring-2 focus:ring-kidville-green">
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Sede</label>
+                            <select className="w-full p-3 rounded-xl border border-kidville-green/15 bg-white text-kidville-green outline-none focus:ring-2 focus:ring-kidville-green">
                                 {schools.map(s => (
                                     <option key={s.id} value={s.id}>{s.nome}</option>
                                 ))}
                             </select>
                         </div>
                         <div>
-                            <label className="block text-sm font-bold text-gray-300 mb-1">Sezione</label>
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Sezione</label>
                             <select 
                                 name="classe_sezione" 
                                 value={formData.classe_sezione} 
                                 onChange={handleInputChange}
-                                className={`w-full p-3 rounded-xl border outline-none bg-black/40 text-white focus:ring-2 focus:ring-kidville-green ${errors.classe_sezione ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-white/10'}`}
+                                className={`w-full p-3 rounded-xl border outline-none bg-white text-kidville-green focus:ring-2 focus:ring-kidville-green ${errors.classe_sezione ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`}
                             >
                                 <option value="">— Seleziona sezione —</option>
                                 {sections.map(s => (
@@ -338,23 +338,23 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
 
                 {/* Sezione 2: Residenza */}
                 <section>
-                    <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2 border-l-4 border-blue-500 pl-3">
+                    <h3 className="text-lg font-bold text-kidville-green mb-4 flex items-center gap-2 border-l-4 border-blue-500 pl-3">
                         Residenza
                     </h3>
                     <div className="grid grid-cols-2 gap-6">
                         <div className="col-span-2">
-                            <label className="block text-sm font-bold text-gray-300 mb-1">Indirizzo di Residenza</label>
-                            <input name="indirizzo_residenza" value={formData.indirizzo_residenza} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none bg-black/40 text-white placeholder-white/40 focus:ring-2 focus:ring-kidville-green ${errors.indirizzo_residenza ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-white/10'}`} placeholder="Via Roma, 1" />
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Indirizzo di Residenza</label>
+                            <input name="indirizzo_residenza" value={formData.indirizzo_residenza} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green ${errors.indirizzo_residenza ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} placeholder="Via Roma, 1" />
                             {errors.indirizzo_residenza && <span className="text-xs text-red-500 font-bold">{errors.indirizzo_residenza}</span>}
                         </div>
                         <div>
-                            <label className="block text-sm font-bold text-gray-300 mb-1">Comune di Residenza</label>
-                            <input name="comune_residenza" value={formData.comune_residenza} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none bg-black/40 text-white placeholder-white/40 focus:ring-2 focus:ring-kidville-green ${errors.comune_residenza ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-white/10'}`} />
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Comune di Residenza</label>
+                            <input name="comune_residenza" value={formData.comune_residenza} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green ${errors.comune_residenza ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} />
                             {errors.comune_residenza && <span className="text-xs text-red-500 font-bold">{errors.comune_residenza}</span>}
                         </div>
                         <div>
-                            <label className="block text-sm font-bold text-gray-300 mb-1">CAP</label>
-                            <input name="cap" value={formData.cap} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none bg-black/40 text-white placeholder-white/40 focus:ring-2 focus:ring-kidville-green ${errors.cap ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-white/10'}`} maxLength={5} />
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">CAP</label>
+                            <input name="cap" value={formData.cap} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green ${errors.cap ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} maxLength={5} />
                             {errors.cap && <span className="text-xs text-red-500 font-bold">{errors.cap}</span>}
                         </div>
                     </div>
@@ -362,20 +362,20 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
 
                 {/* Sezione 3: Medica / BES */}
                 <section>
-                    <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2 border-l-4 border-red-500 pl-3">
+                    <h3 className="text-lg font-bold text-kidville-green mb-4 flex items-center gap-2 border-l-4 border-red-500 pl-3">
                         Informazioni Mediche / BES
                     </h3>
                     <div className="space-y-6">
                         <div>
-                            <label className="block text-sm font-bold text-gray-300 mb-1 flex items-center gap-2">
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1 flex items-center gap-2">
                                 <AlertTriangle size={16} className="text-red-500" /> Allergie e Intolleranze
                             </label>
-                            <textarea name="allergies" value={formData.allergies} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-white/10 bg-black/20 focus:ring-2 focus:ring-red-400 outline-none" rows={3} placeholder="Es. Lattosio, Fragole..." />
+                            <textarea name="allergies" value={formData.allergies} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-white focus:ring-2 focus:ring-red-400 outline-none" rows={3} placeholder="Es. Lattosio, Fragole..." />
                         </div>
 
                         <div className="p-4 bg-amber-500/10 rounded-2xl border border-amber-500/30">
                             <label className="flex items-center gap-3 cursor-pointer">
-                                <input type="checkbox" name="is_bes_dsa" checked={formData.is_bes_dsa} onChange={handleInputChange} className="w-5 h-5 rounded border-amber-300/50 bg-black/30 text-amber-500 focus:ring-amber-500" />
+                                <input type="checkbox" name="is_bes_dsa" checked={formData.is_bes_dsa} onChange={handleInputChange} className="w-5 h-5 rounded border-amber-300/50 bg-white text-amber-500 focus:ring-amber-500" />
                                 <span className="font-bold text-amber-500 flex items-center gap-2">
                                     <FileWarning size={18} /> Studente BES / DSA
                                 </span>
@@ -389,8 +389,8 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
                                         exit={{ opacity: 0, height: 0 }}
                                         className="mt-4 overflow-hidden"
                                     >
-                                        <label className="block text-sm font-bold text-amber-400 mb-1">Note BES / DSA</label>
-                                        <textarea name="note_bes" value={formData.note_bes} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-amber-500/30 bg-black/30 text-white focus:ring-2 focus:ring-amber-400 outline-none" rows={2} placeholder="Dettagli aggiuntivi..." />
+                                        <label className="block text-sm font-bold text-amber-700 mb-1">Note BES / DSA</label>
+                                        <textarea name="note_bes" value={formData.note_bes} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-amber-500/30 bg-white text-kidville-green focus:ring-2 focus:ring-amber-400 outline-none" rows={2} placeholder="Dettagli aggiuntivi..." />
                                         <div className="mt-3 text-sm text-amber-600/80">I documenti (PEI, Diagnosi) potranno essere caricati nella scheda Documenti dopo il salvataggio.</div>
                                     </motion.div>
                                 )}
@@ -401,15 +401,15 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
 
                 {/* Sezione 4: Amministrazione */}
                 <section>
-                    <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2 border-l-4 border-purple-500 pl-3">
+                    <h3 className="text-lg font-bold text-kidville-green mb-4 flex items-center gap-2 border-l-4 border-purple-500 pl-3">
                         Amministrazione & Fatturazione
                     </h3>
                     <div className="space-y-6">
                         <div>
-                            <label className="block text-sm font-bold text-gray-300 mb-2">Intestatario Fattura</label>
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-2">Intestatario Fattura</label>
                             <div className="flex gap-4">
                                 {['mom', 'dad', 'other'].map(type => (
-                                    <label key={type} className={`flex-1 flex items-center justify-center p-3 rounded-xl border cursor-pointer transition-all ${formData.invoice_holder_type === type ? 'border-kidville-green bg-kidville-green/20 text-kidville-green font-bold' : 'border-white/10 text-gray-400 hover:bg-white/5'}`}>
+                                    <label key={type} className={`flex-1 flex items-center justify-center p-3 rounded-xl border cursor-pointer transition-all ${formData.invoice_holder_type === type ? 'border-kidville-green bg-kidville-green/20 text-kidville-green font-bold' : 'border-kidville-green/15 text-gray-500 hover:bg-kidville-cream'}`}>
                                         <input type="radio" name="invoice_holder_type" value={type} checked={formData.invoice_holder_type === type} onChange={handleInputChange} className="hidden" />
                                         {type === 'mom' ? 'Madre' : type === 'dad' ? 'Padre' : 'Altro Soggetto'}
                                     </label>
@@ -431,16 +431,16 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
                                     
                                     <div className="grid grid-cols-2 gap-4">
                                         <div>
-                                            <label className="block text-sm font-bold text-gray-300 mb-1">Nome</label>
-                                            <input name="invoice_holder_details.nome" value={formData.invoice_holder_details.nome} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-white/10 bg-black/30 focus:ring-2 focus:ring-kidville-green outline-none" />
+                                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Nome</label>
+                                            <input name="invoice_holder_details.nome" value={formData.invoice_holder_details.nome} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-white focus:ring-2 focus:ring-kidville-green outline-none" />
                                         </div>
                                         <div>
-                                            <label className="block text-sm font-bold text-gray-300 mb-1">Cognome</label>
-                                            <input name="invoice_holder_details.cognome" value={formData.invoice_holder_details.cognome} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-white/10 bg-black/30 focus:ring-2 focus:ring-kidville-green outline-none" />
+                                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Cognome</label>
+                                            <input name="invoice_holder_details.cognome" value={formData.invoice_holder_details.cognome} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-white focus:ring-2 focus:ring-kidville-green outline-none" />
                                         </div>
                                         <div className="col-span-2">
-                                            <label className="block text-sm font-bold text-gray-300 mb-1">Codice Fiscale Intestatario</label>
-                                            <input name="invoice_holder_details.codice_fiscale" value={formData.invoice_holder_details.codice_fiscale} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-white/10 bg-black/30 focus:ring-2 focus:ring-kidville-green outline-none uppercase" />
+                                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Codice Fiscale Intestatario</label>
+                                            <input name="invoice_holder_details.codice_fiscale" value={formData.invoice_holder_details.codice_fiscale} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-white focus:ring-2 focus:ring-kidville-green outline-none uppercase" />
                                         </div>
                                         <div className="col-span-2 text-xs text-gray-400 mt-2">
                                             Nota: Salvando l'anagrafica, questo soggetto verrà registrato come intestatario della fattura per l'alunno.

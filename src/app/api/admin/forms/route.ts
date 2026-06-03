@@ -30,7 +30,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { title, description, fields, target_scope, target_classes, expiration_date, scuola_id } = body;
+    const { title, description, fields, target_scope, target_classes, expiration_date, scuola_id, form_type } = body;
 
     if (!title || !fields) {
       return NextResponse.json({ error: 'Titolo e campi obbligatori' }, { status: 400 });
@@ -38,10 +38,14 @@ export async function POST(request: NextRequest) {
 
     const supabase = await createAdminClient();
 
+    const ALLOWED_TYPES = ['sondaggio', 'gradimento', 'autorizzazione'];
+    const safeType = ALLOWED_TYPES.includes(form_type) ? form_type : 'autorizzazione';
+
     const record = {
       scuola_id: scuola_id || DEFAULT_SCUOLA_ID,
       title,
       description: description || '',
+      form_type: safeType,
       fields: fields || [],
       target_scope: target_scope || 'class',
       target_classes: target_classes || [],

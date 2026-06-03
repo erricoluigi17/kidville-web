@@ -71,24 +71,23 @@ export function OtpSignatureModal({
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           className="fixed inset-0 z-[80] flex items-center justify-center p-4"
-          style={{ background: 'rgba(3,7,18,0.75)', backdropFilter: 'blur(8px)' }}
+          style={{ background: 'rgba(0,106,95,0.30)', backdropFilter: 'blur(8px)' }}
         >
           <motion.div
             initial={{ opacity: 0, scale: 0.94, y: 16 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.94, y: 16 }}
             transition={{ type: 'spring', damping: 24, stiffness: 300 }}
-            className="w-full max-w-sm rounded-3xl p-6 relative"
+            className="w-full max-w-sm rounded-3xl p-6 relative bg-white"
             style={{
-              background: 'rgba(15,23,42,0.9)',
-              border: '1px solid rgba(255,255,255,0.1)',
-              boxShadow: '0 30px 60px rgba(0,0,0,0.5)',
+              border: '1px solid rgba(0,106,95,0.12)',
+              boxShadow: '0 30px 60px rgba(0,0,0,0.15)',
             }}
           >
             {!success && (
               <button
                 onClick={onClose}
-                className="absolute top-4 right-4 p-1.5 rounded-lg text-slate-500 hover:text-white hover:bg-white/10 transition-all"
+                className="absolute top-4 right-4 p-1.5 rounded-lg text-gray-400 hover:text-kidville-green hover:bg-kidville-cream transition-all"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -106,29 +105,29 @@ export function OtpSignatureModal({
                     initial={{ scale: 0 }}
                     animate={{ scale: 1 }}
                     transition={{ type: 'spring', damping: 12, stiffness: 200 }}
-                    className="w-16 h-16 rounded-2xl bg-emerald-500/15 flex items-center justify-center mb-4"
+                    className="w-16 h-16 rounded-2xl bg-kidville-green/10 flex items-center justify-center mb-4"
                   >
-                    <CheckCircle2 className="w-8 h-8 text-emerald-400" />
+                    <CheckCircle2 className="w-8 h-8 text-kidville-green" />
                   </motion.div>
-                  <h3 className="text-lg font-semibold text-white">Modulo firmato!</h3>
-                  <p className="text-sm text-slate-400 mt-1">
+                  <h3 className="text-lg font-semibold text-kidville-green">Modulo firmato!</h3>
+                  <p className="text-sm text-gray-500 mt-1">
                     La firma elettronica è stata registrata con successo.
                   </p>
                 </motion.div>
               ) : (
                 <motion.div key="form" initial={{ opacity: 1 }} exit={{ opacity: 0 }}>
-                  <div className="w-12 h-12 rounded-2xl bg-emerald-500/15 flex items-center justify-center mb-4">
-                    <ShieldCheck className="w-6 h-6 text-emerald-400" />
+                  <div className="w-12 h-12 rounded-2xl bg-kidville-green/10 flex items-center justify-center mb-4">
+                    <ShieldCheck className="w-6 h-6 text-kidville-green" />
                   </div>
-                  <h3 className="text-lg font-semibold text-white">Firma elettronica</h3>
-                  <p className="flex items-center gap-1.5 text-sm text-slate-400 mt-1.5">
+                  <h3 className="text-lg font-semibold text-kidville-green">Firma elettronica</h3>
+                  <p className="flex items-center gap-1.5 text-sm text-gray-500 mt-1.5">
                     <Mail className="w-3.5 h-3.5 flex-shrink-0" />
                     Codice inviato a{' '}
-                    <span className="text-slate-300">{email ?? 'la tua email'}</span>
+                    <span className="text-kidville-green/80">{email ?? 'la tua email'}</span>
                   </p>
 
                   {devCode && (
-                    <p className="mt-3 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-xs text-amber-300">
+                    <p className="mt-3 px-3 py-2 rounded-lg bg-kidville-yellow-light border border-kidville-yellow/40 text-xs text-kidville-green">
                       Dev: codice <span className="font-mono font-bold tracking-widest">{devCode}</span>
                     </p>
                   )}
@@ -140,11 +139,11 @@ export function OtpSignatureModal({
                     onKeyDown={e => e.key === 'Enter' && handleVerify()}
                     inputMode="numeric"
                     placeholder="••••••"
-                    className="mt-5 w-full px-4 py-4 rounded-xl bg-white/5 border border-white/10 text-center text-2xl font-mono tracking-[0.5em] text-white placeholder-slate-600 focus:outline-none focus:border-emerald-500/50 transition-all"
+                    className="mt-5 w-full px-4 py-4 rounded-xl bg-kidville-cream border border-kidville-green/15 text-center text-2xl font-mono tracking-[0.5em] text-kidville-green placeholder-kidville-green/30 focus:outline-none focus:border-kidville-green transition-all"
                   />
 
                   {error && (
-                    <p className="flex items-center gap-1.5 text-xs text-rose-400 mt-2">
+                    <p className="flex items-center gap-1.5 text-xs text-kidville-error mt-2">
                       <AlertCircle className="w-3.5 h-3.5" />
                       {error}
                     </p>
@@ -153,7 +152,7 @@ export function OtpSignatureModal({
                   <button
                     onClick={handleVerify}
                     disabled={verifying || code.length !== 6}
-                    className="mt-5 w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold transition-all"
+                    className="mt-5 w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-kidville-green hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed text-kidville-yellow font-semibold transition-all"
                   >
                     {verifying ? (
                       <Loader2 className="w-4 h-4 animate-spin" />

@@ -36,6 +36,10 @@ export async function GET(request: Request) {
       ticket_pacchetti: [],
       fattura_causale_template: '{descrizione} - {alunno}',
       aruba_config: {},
+      mensa_cutoff_ora: '09:30',
+      mensa_giorni_attivi: [1, 2, 3, 4, 5],
+      mensa_settimane_rotazione: 4,
+      mensa_soglia_saldo_basso: 5,
     }
     return NextResponse.json({ success: true, data: settings })
   } catch (err) {
@@ -64,6 +68,10 @@ export async function PATCH(request: Request) {
       'insoluto_tolleranza_giorni',
       'ticket_pacchetti',
       'fattura_causale_template',
+      'mensa_cutoff_ora',
+      'mensa_giorni_attivi',
+      'mensa_settimane_rotazione',
+      'mensa_soglia_saldo_basso',
     ]
     const updates: Record<string, unknown> = { scuola_id: scuolaId }
     for (const f of allowed) if (body[f] !== undefined) updates[f] = body[f]

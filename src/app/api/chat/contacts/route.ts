@@ -38,28 +38,38 @@ export async function GET(request: Request) {
         }> = [];
 
         if (role === 'maestra' || role === 'educator') {
-            // Maestra: trova la propria sezione dinamicamente dai media caricati
+            // Maestra: determina la propria sezione.
             let teacherSection: string | null = null;
 
-            // Prova a derivare la sezione dai media caricati con studenti taggati
-            const { data: myMedia } = await supabase
-                .from('galleria_media_v2')
-                .select('tag_students')
-                .eq('uploaded_by', userId)
-                .not('tag_students', 'is', null)
-                .limit(10);
+            // Fonte canonica: legame docente↔sezione (utenti_sezioni → sections).
+            const { data: legamiSez } = await supabase
+                .from('utenti_sezioni')
+                .select('sections(name)')
+                .eq('utente_id', userId)
+                .limit(1);
+            teacherSection = ((legamiSez?.[0]?.sections as { name?: string } | null)?.name) ?? null;
 
-            const myTaggedIds = (myMedia ?? [])
-                .flatMap((m: { tag_students: string[] | null }) => m.tag_students ?? [])
-                .filter(Boolean);
+            // Fallback storico: deriva la sezione dai media caricati con studenti taggati
+            if (!teacherSection) {
+                const { data: myMedia } = await supabase
+                    .from('galleria_media_v2')
+                    .select('tag_students')
+                    .eq('uploaded_by', userId)
+                    .not('tag_students', 'is', null)
+                    .limit(10);
 
-            if (myTaggedIds.length > 0) {
-                const { data: taggedStudents } = await supabase
-                    .from('alunni')
-                    .select('classe_sezione')
-                    .in('id', myTaggedIds)
-                    .limit(1);
-                teacherSection = taggedStudents?.[0]?.classe_sezione ?? null;
+                const myTaggedIds = (myMedia ?? [])
+                    .flatMap((m: { tag_students: string[] | null }) => m.tag_students ?? [])
+                    .filter(Boolean);
+
+                if (myTaggedIds.length > 0) {
+                    const { data: taggedStudents } = await supabase
+                        .from('alunni')
+                        .select('classe_sezione')
+                        .in('id', myTaggedIds)
+                        .limit(1);
+                    teacherSection = taggedStudents?.[0]?.classe_sezione ?? null;
+                }
             }
 
             // Fallback: mappa email→sezione per docenti noti
@@ -128,16 +138,35 @@ export async function GET(request: Request) {
                 for (const legame of legami) {
                     const { data: student } = await supabase
                         .from('alunni')
-                        .select('id, nome, cognome, classe_sezione')
+                        .select('id, nome, cognome, classe_sezione, section_id')
                         .eq('id', legame.alunno_id)
                         .single();
 
                     if (student) {
-                        // Trova le maestre (per ora tutte le maestre — in futuro filtrare per sezione)
-                        const { data: teachers } = await supabase
-                            .from('utenti')
-                            .select('id, nome, cognome, first_name, last_name')
-                            .eq('ruolo', 'maestra');
+                        // Insegnanti della sezione del figlio (fonte canonica utenti_sezioni).
+                        let teachers: { id: string; nome: string | null; cognome: string | null; first_name: string | null; last_name: string | null }[] = [];
+                        if (student.section_id) {
+                            const { data: legamiSez } = await supabase
+                                .from('utenti_sezioni')
+                                .select('utente_id')
+                                .eq('section_id', student.section_id);
+                            const ids = (legamiSez ?? []).map(r => r.utente_id);
+                            if (ids.length > 0) {
+                                const { data } = await supabase
+                                    .from('utenti')
+                                    .select('id, nome, cognome, first_name, last_name')
+                                    .in('id', ids);
+                                teachers = data ?? [];
+                            }
+                        }
+                        // Fallback storico: tutte le maestre se la sezione non è mappata.
+                        if (teachers.length === 0) {
+                            const { data } = await supabase
+                                .from('utenti')
+                                .select('id, nome, cognome, first_name, last_name')
+                                .or('ruolo.eq.maestra,role.eq.educator');
+                            teachers = data ?? [];
+                        }
 
                         if (teachers) {
                             for (const teacher of teachers) {

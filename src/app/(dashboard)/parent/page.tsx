@@ -7,7 +7,7 @@ import Image from 'next/image';
 import { motion } from 'framer-motion';
 import {
   Bell, MessageCircle, BookOpen, Image as ImageIcon,
-  Package, FileText, BarChart3, CheckSquare, ChevronRight, Euro,
+  Package, FileText, BarChart3, CheckSquare, ChevronRight, Euro, UtensilsCrossed,
 } from 'lucide-react';
 import { getCurrentParentId, getCurrentStudentId, withIdentity } from '@/lib/auth/current-user';
 import { PagamentiSummary } from '@/components/features/parent/pagamenti/PagamentiSummary';
@@ -24,14 +24,24 @@ const tiles = [
     sub: '#A0A0A0',
   },
   {
+    id: 'mensa',
+    label: 'Mensa',
+    desc: 'Prenota il pranzo',
+    icon: UtensilsCrossed,
+    href: '/parent/mensa',
+    bg: '#006A5F',
+    fg: '#FDC400',
+    sub: 'rgba(253,196,0,0.55)',
+  },
+  {
     id: 'avvisi',
     label: 'Avvisi',
     desc: 'Comunicazioni',
     icon: Bell,
     href: '/parent/avvisi',
-    bg: '#006A5F',
-    fg: '#FDC400',
-    sub: 'rgba(253,196,0,0.55)',
+    bg: '#FDC400',
+    fg: '#006A5F',
+    sub: 'rgba(0,106,95,0.55)',
   },
   {
     id: 'chat',

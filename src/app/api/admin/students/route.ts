@@ -34,6 +34,7 @@ export async function POST(request: NextRequest) {
             residence_city: body.comune_residenza || null,
             zip_code: body.cap || null,
             allergies: body.allergies || null,
+            allergeni: Array.isArray(body.allergeni) ? body.allergeni : [],
             is_bes_dsa: body.is_bes_dsa || false,
             note_mediche: body.note_bes || null,
             invoice_holder_type: body.invoice_holder_type || null,
@@ -128,7 +129,7 @@ export async function PATCH(request: NextRequest) {
             try {
                 const updates: Record<string, unknown> = {};
                 // Raccogliamo le modifiche
-                const allowedFields = ['classe_sezione', 'stato', 'note_mediche', 'bes', 'note_bes', 'nome', 'cognome', 'data_nascita', 'codice_fiscale', 'gender', 'citizenship', 'birth_nation', 'birth_province', 'birth_city', 'residence_address', 'residence_city', 'zip_code', 'allergies', 'invoice_holder_type', 'invoice_holder_details', 'is_bes_dsa', 'section_id',
+                const allowedFields = ['classe_sezione', 'stato', 'note_mediche', 'bes', 'note_bes', 'nome', 'cognome', 'data_nascita', 'codice_fiscale', 'gender', 'citizenship', 'birth_nation', 'birth_province', 'birth_city', 'residence_address', 'residence_city', 'zip_code', 'allergies', 'allergeni', 'invoice_holder_type', 'invoice_holder_details', 'is_bes_dsa', 'section_id',
                     // Dati economici (modulo Pagamenti)
                     'importo_retta_mensile', 'genitori_separati', 'retta_split_config', 'intestatario_fatture'];
                 

@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useState } from 'react';
 import {
   Home, Bell, MessageCircle, BookOpen, MoreHorizontal,
-  Image, Package, FileText, BarChart3, CheckSquare, X, Euro,
+  Image, Package, FileText, BarChart3, CheckSquare, X, Euro, UtensilsCrossed,
 } from 'lucide-react';
 
 const mainTabs = [
@@ -18,6 +18,7 @@ const mainTabs = [
 ] as const;
 
 const extraItems = [
+  { id: 'mensa', label: 'Mensa', icon: UtensilsCrossed, href: '/parent/mensa' },
   { id: 'gallery', label: 'Galleria', icon: Image, href: '/parent/gallery' },
   { id: 'locker', label: 'Armadietto', icon: Package, href: '/parent/locker' },
   { id: 'modulistica', label: 'Moduli', icon: FileText, href: '/parent/modulistica' },

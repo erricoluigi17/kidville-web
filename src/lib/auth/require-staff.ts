@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
 
 export type StaffRole = 'admin' | 'coordinator'
-export type AppRole = 'admin' | 'coordinator' | 'educator' | 'genitore'
+export type AppRole = 'admin' | 'coordinator' | 'educator' | 'genitore' | 'cuoca'
 
 export interface AppUser {
   id: string
@@ -99,6 +99,37 @@ export async function requireStaff(
     }
   }
 
+  return { user }
+}
+
+/**
+ * Garantisce accesso in SOLA LETTURA al modulo cucina (menu/report mensa).
+ * Ammessi: admin, coordinator, cuoca (tutte le classi) e educator (che però
+ * deve restare scoped alla propria sezione, da applicare in query).
+ * Le SCRITTURE restano riservate a `requireStaff` (admin/coordinator).
+ */
+export async function requireKitchenRead(
+  request: Request,
+  allowed: AppRole[] = ['admin', 'coordinator', 'cuoca', 'educator']
+): Promise<AuthResult> {
+  const userId = getRequestUserId(request)
+  if (!userId) {
+    return {
+      response: NextResponse.json(
+        { error: 'Non autenticato: userId mancante' },
+        { status: 401 }
+      ),
+    }
+  }
+  const user = await loadAppUser(userId)
+  if (!user || !allowed.includes(user.role)) {
+    return {
+      response: NextResponse.json(
+        { error: 'Accesso negato: operazione riservata a cucina/staff' },
+        { status: 403 }
+      ),
+    }
+  }
   return { user }
 }
 

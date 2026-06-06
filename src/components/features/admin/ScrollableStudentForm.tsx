@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Fingerprint, FileWarning, Users, Activity, Home, User, AlertTriangle, Loader2, CheckCircle2, XCircle, Save, ArrowRight, RefreshCw } from 'lucide-react';
 import { fetchFiscalCode } from '@/lib/utils/fiscalCodeApi';
 import { z } from 'zod';
+import { AllergeniSelect } from '@/components/features/admin/AllergeniSelect';
 
 const studentSchema = z.object({
     nome: z.string().min(2, "Il nome deve avere almeno 2 caratteri"),
@@ -21,6 +22,7 @@ const studentSchema = z.object({
     is_bes_dsa: z.boolean(),
     note_bes: z.string().optional(),
     allergies: z.string().optional(),
+    allergeni: z.array(z.string()).optional(),
     invoice_holder_type: z.enum(['mom', 'dad', 'other']),
     invoice_holder_details: z.object({
         nome: z.string().optional(),
@@ -50,6 +52,7 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
         is_bes_dsa: false,
         note_bes: '',
         allergies: '',
+        allergeni: [] as string[],
         invoice_holder_type: 'mom',
         invoice_holder_details: { nome: '', cognome: '', codice_fiscale: '', adult_id: '' }
     });
@@ -212,7 +215,7 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
                         <button
                             onClick={() => {
                                 setSavedStudent(null);
-                                setFormData({ nome: '', cognome: '', sesso: 'M', data_nascita: '', comune_nascita: '', provincia_nascita: '', codice_fiscale: '', indirizzo_residenza: '', comune_residenza: '', cap: '', classe_sezione: '', is_bes_dsa: false, note_bes: '', allergies: '', invoice_holder_type: 'mom', invoice_holder_details: { nome: '', cognome: '', codice_fiscale: '', adult_id: '' } });
+                                setFormData({ nome: '', cognome: '', sesso: 'M', data_nascita: '', comune_nascita: '', provincia_nascita: '', codice_fiscale: '', indirizzo_residenza: '', comune_residenza: '', cap: '', classe_sezione: '', is_bes_dsa: false, note_bes: '', allergies: '', allergeni: [], invoice_holder_type: 'mom', invoice_holder_details: { nome: '', cognome: '', codice_fiscale: '', adult_id: '' } });
                             }}
                             className="flex items-center gap-2 px-5 py-2.5 bg-kidville-cream border border-kidville-green/15 text-kidville-green rounded-xl font-barlow font-bold uppercase text-sm hover:bg-kidville-green-light transition-all"
                         >
@@ -371,6 +374,10 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
                                 <AlertTriangle size={16} className="text-red-500" /> Allergie e Intolleranze
                             </label>
                             <textarea name="allergies" value={formData.allergies} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-white focus:ring-2 focus:ring-red-400 outline-none" rows={3} placeholder="Es. Lattosio, Fragole..." />
+                        </div>
+
+                        <div>
+                            <AllergeniSelect value={formData.allergeni} onChange={next => setFormData(prev => ({ ...prev, allergeni: next }))} />
                         </div>
 
                         <div className="p-4 bg-amber-500/10 rounded-2xl border border-amber-500/30">

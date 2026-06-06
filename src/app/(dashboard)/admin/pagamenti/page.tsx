@@ -2,7 +2,7 @@
 
 import { Suspense, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { Euro, CalendarClock, Ticket, Settings, Layers } from 'lucide-react';
+import { Euro, CalendarClock, Ticket, Settings, Layers, UtensilsCrossed } from 'lucide-react';
 import Link from 'next/link';
 import { PaymentsDashboard } from '@/components/features/admin/pagamenti/PaymentsDashboard';
 import { GeneratoreRette } from '@/components/features/admin/pagamenti/GeneratoreRette';
@@ -36,10 +36,16 @@ function PagamentiInner() {
                         </h1>
                         <p className="font-maven text-sm text-gray-500">Scadenziario, incassi, rette e ticket mensa.</p>
                     </div>
-                    <Link href={`/admin/impostazioni?userId=${userId}`}
-                        className="px-3 py-2 rounded-full border-2 border-gray-200 text-gray-500 font-maven text-sm font-bold flex items-center gap-1 hover:border-kidville-green hover:text-kidville-green">
-                        <Settings size={15} /> Impostazioni
-                    </Link>
+                    <div className="flex items-center gap-2">
+                        <Link href={`/admin/mensa?userId=${userId}`}
+                            className="px-3 py-2 rounded-full border-2 border-gray-200 text-gray-500 font-maven text-sm font-bold flex items-center gap-1 hover:border-kidville-green hover:text-kidville-green">
+                            <UtensilsCrossed size={15} /> Mensa & Cucina
+                        </Link>
+                        <Link href={`/admin/impostazioni?userId=${userId}`}
+                            className="px-3 py-2 rounded-full border-2 border-gray-200 text-gray-500 font-maven text-sm font-bold flex items-center gap-1 hover:border-kidville-green hover:text-kidville-green">
+                            <Settings size={15} /> Impostazioni
+                        </Link>
+                    </div>
                 </header>
 
                 <div className="flex gap-2 mb-4">

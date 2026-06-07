@@ -1,4 +1,4 @@
-import { db, LocalAttendanceLog, LocalDiaryEntry, LocalGalleryMedia } from './db';
+import { db, LocalAttendanceLog, LocalDiaryEntry, LocalGalleryMedia, LocalPrimariaAppello, LocalPrimariaRegistro } from './db';
 import { createBrowserClient } from '@supabase/ssr';
 
 function getSupabaseClient() {
@@ -326,3 +326,71 @@ export async function syncPendingGalleryMedia() {
     }
 }
 
+
+// ============================================================
+// Primaria — Appello & Registro (Fase 1) — coda offline verso le API.
+// A differenza di presenze/diario (upsert diretto), qui passiamo dalle API
+// /api/primaria/* per applicare la logica server (compresenza, vincoli, notifiche).
+// ============================================================
+
+function teacherId(): string {
+    if (typeof window !== 'undefined') {
+        const stored = window.localStorage.getItem('kv_teacher_id');
+        if (stored) return stored;
+    }
+    return '22222222-2222-2222-2222-222222222222';
+}
+
+export async function saveLocalAppello(data: Omit<LocalPrimariaAppello, 'sync_status'>) {
+    const row: LocalPrimariaAppello = { ...data, sync_status: 'pending' };
+    await db.primaria_appello.put(row);
+    if (typeof window !== 'undefined' && navigator.onLine) syncPendingAppello();
+}
+
+export async function syncPendingAppello() {
+    if (typeof window !== 'undefined' && !navigator.onLine) return;
+    try {
+        const pending = await db.primaria_appello.where('sync_status').anyOf('pending', 'error').toArray();
+        if (pending.length === 0) return;
+        const uid = teacherId();
+        for (const r of pending) {
+            const res = await fetch(`/api/primaria/appello?userId=${uid}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'x-user-id': uid },
+                body: JSON.stringify({ sectionId: r.section_id, data: r.data, alunnoId: r.alunno_id, stato: r.stato }),
+            });
+            await db.primaria_appello.update(r.id, { sync_status: res.ok ? 'synced' : 'error' });
+        }
+    } catch (e) {
+        console.error('Errore sync appello primaria:', e);
+    }
+}
+
+export async function saveLocalRegistro(data: Omit<LocalPrimariaRegistro, 'sync_status'>) {
+    const row: LocalPrimariaRegistro = { ...data, sync_status: 'pending' };
+    await db.primaria_registro.put(row);
+    if (typeof window !== 'undefined' && navigator.onLine) syncPendingRegistro();
+}
+
+export async function syncPendingRegistro() {
+    if (typeof window !== 'undefined' && !navigator.onLine) return;
+    try {
+        const pending = await db.primaria_registro.where('sync_status').anyOf('pending', 'error').toArray();
+        if (pending.length === 0) return;
+        const uid = teacherId();
+        for (const r of pending) {
+            const res = await fetch(`/api/primaria/registro?userId=${uid}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'x-user-id': uid },
+                body: JSON.stringify({
+                    sectionId: r.section_id, data: r.data, oraLezione: r.ora_lezione,
+                    materiaId: r.materia_id, argomento: r.argomento, compiti: r.compiti,
+                    tipoCompresenza: r.tipo_compresenza,
+                }),
+            });
+            await db.primaria_registro.update(r.id, { sync_status: res.ok ? 'synced' : 'error' });
+        }
+    } catch (e) {
+        console.error('Errore sync registro primaria:', e);
+    }
+}

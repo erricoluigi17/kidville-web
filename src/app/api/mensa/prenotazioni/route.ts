@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
-import { loadMensaConfig, loadResolveOptions, entroCutoff, DEFAULT_SCUOLA } from '@/lib/mensa/server'
+import { loadMensaConfig, loadResolveOptions, resolveMenuConfigId, entroCutoff, DEFAULT_SCUOLA } from '@/lib/mensa/server'
 import { resolveMenuGiorno } from '@/lib/mensa/resolveMenu'
 import { notificaSaldoBasso } from '@/lib/mensa/notify'
 import { controllaAllergie } from '@/lib/mensa/allergie-check'
@@ -92,7 +92,10 @@ export async function POST(request: Request) {
     const { data: al } = await supabase.from('alunni').select('scuola_id, nome, cognome, classe_sezione, section_id, allergies, allergeni').eq('id', alunnoId).single()
     const scuolaId = al?.scuola_id ?? DEFAULT_SCUOLA
     const config = await loadMensaConfig(supabase, scuolaId)
-    const options = await loadResolveOptions(supabase, scuolaId, config)
+    // Usa la prima data richiesta per determinare il menu attivo (approx per range)
+    const primaData = dates[0]
+    const menuConfigId = await resolveMenuConfigId(supabase, scuolaId, al?.classe_sezione, primaData)
+    const options = await loadResolveOptions(supabase, scuolaId, config, menuConfigId)
 
     let saldo = await saldoCorrente(supabase, alunnoId)
     const esiti: { data: string; ok: boolean; motivo?: string }[] = []

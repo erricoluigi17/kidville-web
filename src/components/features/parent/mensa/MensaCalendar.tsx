@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
-import { Ticket, ChevronLeft, ChevronRight, Check, X, Lock, CalendarOff, UtensilsCrossed } from 'lucide-react';
+import { Ticket, ChevronLeft, ChevronRight, Check, X, Lock, CalendarOff, UtensilsCrossed, RefreshCw, AlertTriangle } from 'lucide-react';
 import { allergeniDelGiorno, allergeneLabel, allergeneEmoji, type AllergeniPortate } from '@/lib/mensa/allergeni';
 
 interface Props { userId: string; studentId: string }
@@ -32,6 +32,8 @@ export function MensaCalendar({ userId, studentId }: Props) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [menuNome, setMenuNome] = useState<string | null>(null);
 
   const from = ymd(weekStart);
   const to = ymd(addDays(weekStart, 6));
@@ -39,16 +41,23 @@ export function MensaCalendar({ userId, studentId }: Props) {
 
   const load = useCallback(async () => {
     setLoading(true);
+    setAuthError(null);
     try {
-      const [mRes, pRes] = await Promise.all([
-        fetch(`/api/mensa/menu?userId=${userId}&from=${from}&to=${to}`, { headers: hdr(userId) }).then(r => r.json()),
-        fetch(`/api/mensa/prenotazioni?userId=${userId}&alunno_id=${studentId}&from=${from}&to=${to}`, { headers: hdr(userId) }).then(r => r.json()),
+      const [mRes, pRaw] = await Promise.all([
+        fetch(`/api/mensa/menu?userId=${userId}&from=${from}&to=${to}&alunno_id=${studentId}`, { headers: hdr(userId) }).then(r => r.json()),
+        fetch(`/api/mensa/prenotazioni?userId=${userId}&alunno_id=${studentId}&from=${from}&to=${to}`, { headers: hdr(userId) }).then(async r => ({ status: r.status, data: await r.json() })),
       ]);
-      if (mRes.success) setMenu(mRes.data);
-      if (pRes.success) {
-        setSaldo(pRes.data.saldo);
+      if (mRes.success) {
+        setMenu(mRes.data);
+        setMenuNome(mRes.meta?.menuNome ?? null);
+      }
+      if (pRaw.status === 401 || pRaw.status === 403) {
+        setAuthError('Sessione non valida. Torna alla home e riapri la mensa dal menu principale.');
+        setSaldo(null);
+      } else if (pRaw.data.success) {
+        setSaldo(pRaw.data.saldo);
         const map: Record<string, Prenotazione> = {};
-        for (const p of pRes.data.prenotazioni as Prenotazione[]) map[p.data] = p;
+        for (const p of pRaw.data.prenotazioni as Prenotazione[]) map[p.data] = p;
         setPren(map);
       }
     } finally { setLoading(false); }
@@ -90,10 +99,25 @@ export function MensaCalendar({ userId, studentId }: Props) {
     <div>
       {/* Saldo + navigazione settimana */}
       <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-kidville-green text-white">
-          <Ticket size={15} />
-          <span className="font-maven text-sm font-bold">{saldo ?? '—'}</span>
-          <span className="font-maven text-[11px] opacity-80">ticket</span>
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-kidville-green text-white">
+            <Ticket size={15} />
+            <span className="font-maven text-sm font-bold">{saldo ?? '—'}</span>
+            <span className="font-maven text-[11px] opacity-80">ticket</span>
+          </div>
+          {menuNome && (
+            <span className="px-2.5 py-1 rounded-full bg-kidville-yellow/20 border border-kidville-yellow font-maven text-[10px] font-bold text-kidville-green">
+              {menuNome}
+            </span>
+          )}
+          <button
+            onClick={() => load()}
+            disabled={loading}
+            title="Aggiorna saldo"
+            className="w-8 h-8 rounded-full bg-white border-2 border-gray-200 flex items-center justify-center text-kidville-green disabled:opacity-40"
+          >
+            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+          </button>
         </div>
         <div className="flex items-center gap-1">
           <button onClick={() => setWeekStart(addDays(weekStart, -7))} className="w-8 h-8 rounded-full bg-white border-2 border-gray-200 flex items-center justify-center text-kidville-green">
@@ -108,7 +132,13 @@ export function MensaCalendar({ userId, studentId }: Props) {
         </div>
       </div>
 
-      {(saldo != null && saldo <= 0) && (
+      {authError && (
+        <div className="mb-3 px-3 py-2.5 rounded-xl bg-orange-50 border border-orange-200 font-maven text-xs text-orange-700 flex items-start gap-2">
+          <AlertTriangle size={14} className="flex-shrink-0 mt-0.5" />
+          <span>{authError}</span>
+        </div>
+      )}
+      {!authError && (saldo != null && saldo <= 0) && (
         <div className="mb-3 px-3 py-2 rounded-xl bg-red-50 border border-red-200 font-maven text-xs text-red-600">
           Saldo ticket esaurito. Contatta la segreteria per ricaricare prima di prenotare.
         </div>

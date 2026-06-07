@@ -22,3 +22,42 @@ export async function sezioniDiUtente(supabase: SupabaseClient, utenteId: string
     .eq('utente_id', utenteId)
   return (data ?? []).map(r => r.section_id as string)
 }
+
+// Sezioni di un docente filtrate per grado scolastico (es. solo 'primaria').
+// Restituisce le righe sections complete (id, name, school_type, scholastic_year).
+export interface SezioneInfo {
+  id: string
+  name: string
+  school_type: 'nido' | 'infanzia' | 'primaria'
+  scholastic_year?: string | null
+}
+
+export async function sezioniDiUtentePerGrado(
+  supabase: SupabaseClient,
+  utenteId: string,
+  schoolType: 'nido' | 'infanzia' | 'primaria'
+): Promise<SezioneInfo[]> {
+  const ids = await sezioniDiUtente(supabase, utenteId)
+  if (ids.length === 0) return []
+  const { data } = await supabase
+    .from('sections')
+    .select('id, name, school_type, scholastic_year')
+    .in('id', ids)
+    .eq('school_type', schoolType)
+  return (data ?? []) as SezioneInfo[]
+}
+
+// Materie insegnate da un docente in una specifica sezione (contitolarità +
+// isolamento per disciplina). Fonte: utenti_sezioni_materie.
+export async function materieDiDocenteInSezione(
+  supabase: SupabaseClient,
+  utenteId: string,
+  sectionId: string
+): Promise<string[]> {
+  const { data } = await supabase
+    .from('utenti_sezioni_materie')
+    .select('materia_id')
+    .eq('utente_id', utenteId)
+    .eq('section_id', sectionId)
+  return (data ?? []).map(r => r.materia_id as string)
+}

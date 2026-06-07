@@ -14,11 +14,13 @@ export async function POST(request: Request) {
 
     const supabase = await createAdminClient()
 
-    // notifiche da inviare (push non ancora spedita)
+    // notifiche da inviare (push non ancora spedita E buffer scaduto)
+    const nowIso = new Date().toISOString()
     const { data: pendenti } = await supabase
       .from('notifiche')
       .select('id, utente_id, titolo, corpo, link')
       .is('push_inviata_il', null)
+      .or(`invio_programmato_il.is.null,invio_programmato_il.lte.${nowIso}`)
       .order('creato_il', { ascending: true })
       .limit(500)
 

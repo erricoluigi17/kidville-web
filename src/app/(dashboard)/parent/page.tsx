@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useEffect, Suspense } from 'react';
-import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
 import { motion } from 'framer-motion';
@@ -9,7 +8,8 @@ import {
   Bell, MessageCircle, BookOpen, Image as ImageIcon,
   Package, FileText, BarChart3, CheckSquare, ChevronRight, Euro, UtensilsCrossed,
 } from 'lucide-react';
-import { getCurrentParentId, getCurrentStudentId, withIdentity } from '@/lib/auth/current-user';
+import { withIdentity } from '@/lib/auth/current-user';
+import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 import { PagamentiSummary } from '@/components/features/parent/pagamenti/PagamentiSummary';
 
 const tiles = [
@@ -123,9 +123,7 @@ function greetingByHour() {
 }
 
 function ParentHomeContent() {
-  const searchParams = useSearchParams();
-  const studentId = getCurrentStudentId(searchParams);
-  const parentId = getCurrentParentId(searchParams);
+  const { parentId, studentId } = useParentIdentity();
 
   const [studentName, setStudentName] = useState('');
   const [firstName, setFirstName] = useState('');
@@ -133,6 +131,7 @@ function ParentHomeContent() {
   const [mascotFailed, setMascotFailed] = useState(false);
 
   useEffect(() => {
+    if (!studentId) return;
     fetch(`/api/diary/students?id=${studentId}`)
       .then(r => r.ok ? r.json() : null)
       .then(d => {

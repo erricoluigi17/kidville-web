@@ -36,6 +36,7 @@ export interface RotazioneRow {
   ingredienti?: Ingredienti | null
   allergeni?: AllergeniPortate | null
   note?: string | null
+  menu_config_id?: string | null
 }
 export interface OverrideRow {
   data: string
@@ -44,6 +45,7 @@ export interface OverrideRow {
   ingredienti?: Ingredienti | null
   allergeni?: AllergeniPortate | null
   note?: string | null
+  menu_config_id?: string | null
 }
 
 // Giorno della settimana 1=lun … 7=dom (da una data YYYY-MM-DD, in UTC-safe).

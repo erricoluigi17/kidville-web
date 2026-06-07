@@ -1,15 +1,13 @@
 'use client';
 
 import { Suspense } from 'react';
-import { useSearchParams } from 'next/navigation';
 import { UtensilsCrossed } from 'lucide-react';
 import { MensaCalendar } from '@/components/features/parent/mensa/MensaCalendar';
-import { getCurrentParentId, getCurrentStudentId } from '@/lib/auth/current-user';
+import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 
 function Inner() {
-  const params = useSearchParams();
-  const userId = getCurrentParentId(params);
-  const studentId = getCurrentStudentId(params);
+  const { parentId, studentId, ready } = useParentIdentity();
+
   return (
     <div className="px-4 pt-6 pb-24">
       <header className="mb-5">
@@ -18,7 +16,10 @@ function Inner() {
         </h1>
         <p className="font-maven text-xs text-gray-500">Prenota il pranzo e consulta il menù della settimana.</p>
       </header>
-      <MensaCalendar userId={userId} studentId={studentId} />
+      {ready
+        ? <MensaCalendar userId={parentId} studentId={studentId} />
+        : <div className="py-12 flex justify-center"><div className="w-7 h-7 border-[3px] border-kidville-green/20 border-t-kidville-green rounded-full animate-spin" /></div>
+      }
     </div>
   );
 }

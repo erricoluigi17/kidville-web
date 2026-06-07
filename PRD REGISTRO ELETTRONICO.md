@@ -28,14 +28,29 @@
 > | Modulo | Stato | Pagine | API Routes |
 > |--------|-------|--------|------------|
 > | **Diario 0-6** | ✅ Operativo | `/teacher/diary` | `/api/diary/students`, `/api/diary/entries` |
-> | **Presenze** | 🔶 UI pronta | `/teacher/attendance`, `/parent/attendance` | `/api/panic-alert` |
+> | **Presenze** | 🔶 UI pronta | `/teacher/attendance`, `/parent/attendance` | `/api/panic-alert`, `/api/attendance/*` |
 > | **Registro Primaria** | 🔶 UI pronta | `/teacher/register`, `/parent/register` | `/api/grades`, `/api/notes` |
-> | **Armadietto** | ⬜ Da implementare | — | — |
-> | **Mensa** | ⬜ Da implementare | — | — |
-> | **Chat** | ⬜ Da implementare | — | — |
-> | **Pagamenti** | ⬜ Da implementare | — | — |
-> | **Modulistica** | ⬜ Da implementare | — | — |
-> | **Foto/Video** | ⬜ Da implementare | — | — |
+> | **Armadietto** | ✅ Operativo | `/teacher/locker`, `/parent/locker` | `/api/locker/*` |
+> | **Mensa** | ✅ Operativo | `/admin/mensa`, `/parent/mensa` | `/api/mensa/*` |
+> | **Chat** | ✅ Operativo | `/teacher/chat`, `/parent/chat` | `/api/chat/*` |
+> | **Pagamenti** | ✅ Operativo | `/admin/pagamenti`, `/parent/pagamenti` | `/api/pagamenti/*` |
+> | **Modulistica** | ✅ Operativo | `/admin/forms`, `/parent/forms` | `/api/forms/*` |
+> | **Foto/Video** | ✅ Operativo | `/teacher/gallery`, `/parent/gallery` | `/api/gallery/*` |
+>
+> ### 🎓 Moduli Normativi Scuola Primaria (gap da colmare)
+> Requisiti derivati da L. 150/2024, O.M. 3 del 9/1/2025 (All. A), note MIM 5274/2024 e 2773/2025,
+> D.M. 14/2024, Regolamento UE 2016/679 (GDPR), L. 4/2004 (Legge Stanca) e cooperazione SIDI.
+> | Modulo | Stato | Priorità / Fase | Note |
+> |--------|-------|-----------------|------|
+> | **Valutazione conforme O.M. 3/2025** | ❌ Non conforme | Fase 1 | Oggi voti numerici: vietati alla primaria. Da convertire a motore ibrido per grado (vedi §4) |
+> | **Orario / Tempo scuola / Materie master** | ❌ Da implementare | Fase 1 | `materia` oggi è testo libero; servono materie strutturate, campanelle, modelli 27/29/40h |
+> | **Compresenza avanzata** | 🔶 Parziale | Fase 1 | Firme indipendenti presenti; manca firma con argomenti/compiti per singoli alunni + oscuramento |
+> | **Vincoli temporali immodificabilità** | ❌ Da implementare | Fase 1 | Blocco 2gg classe/orali, 15gg scritti; sblocco solo dirigente |
+> | **Scrutinio + Pagella online** | ❌ Da implementare | Fase 2 | 6 giudizi sintetici, Ed. Civica, comportamento; PDF statico (firma qualificata rimandata) |
+> | **Fascicolo Personale + PEI/PDP** | 🔶 Parziale | Fase 2 | Oggi solo flag BES/DSA + delegati; serve fascicolo completo, RBAC ristretto, audit accessi |
+> | **Libretto web giustificazioni** | 🔶 Parziale | Fase 2 | Esiste preavviso assenza; manca giustificazione online con PIN dispositivo |
+> | **Interoperabilità SIDI / Piattaforma Unica** | ❌ Da implementare | Fase 3 | Import ZIP, Fase A, frequentanti, genitori-alunni, certificati competenze D.M. 14/2024 |
+> | **Accessibilità AgID / Legge Stanca** | ❌ Da verificare | Trasversale | WCAG, alto contrasto, screen reader; tracciamento consensi e audit accessi dati sensibili |
 
 # PRD - Kidville App: Modulo Anagrafica e Account Famiglia
 
@@ -243,10 +258,10 @@ La gestione delle scorte si basa su un algoritmo quantitativo:
 
 ## 1. Obiettivo del Modulo
 Il modulo "Diario Scuola Primaria" funge da vero e proprio Registro Elettronico ufficiale. A
-differenza del Nido/Infanzia, questo strumento gestisce logiche didattiche e ministeriali (voti, note,
-argomenti delle lezioni, presenze orarie). È progettato per garantire l'isolamento delle discipline tra
-i docenti, fornire una reportistica chiara ai genitori e supportare la direzione scolastica nella
-valutazione periodica.
+differenza del Nido/Infanzia, questo strumento gestisce logiche didattiche e ministeriali (valutazioni
+conformi alla normativa, note, argomenti delle lezioni, presenze orarie). È progettato per garantire
+l'isolamento delle discipline tra i docenti, fornire una reportistica chiara ai genitori e supportare la
+direzione scolastica nella valutazione periodica e negli adempimenti di scrutinio.
 
 ## 2. Appello, Orario e Registro di Classe
 ### 2.1 Gestione Presenze
@@ -268,19 +283,82 @@ valutazione periodica.
   • Recupero Assenti: I compiti assegnati e gli argomenti svolti rimangono visibili alle famiglie degli alunni risultati "Assenti" in quella giornata, garantendo il diritto al recupero.
 
 ## 4. Sistema di Valutazione e Voti
-### 4.1 Logica di Inserimento
-• Tipologia Voti: Il sistema supporta un modello ibrido. Sono ammessi sia voti numerici standard (es. 1-10) sia giudizi descrittivi (es. Base, Avanzato).
-• Mappatura per Medie: I giudizi descrittivi, impostati a livello di Admin, possiedono un valore numerico nascosto associato, indispensabile per permettere all'algoritmo di calcolare le medie in background.
-• Categorizzazione: Ogni valutazione inserita deve essere categorizzata per tipologia: Scritto, Orale o Pratico.
 
-### 4.2 Medie e Isolamento delle Materie
-• Privacy tra Colleghi: La visibilità delle valutazioni è strettamente limitata alla propria disciplina. Un docente non ha accesso ai voti assegnati allo stesso alunno da docenti di altre materie.
-• Calcolo della Media: Il sistema calcola una media automatica dei voti (visibile esclusivamente all'insegnante e non ai genitori). Questa media è calcolata dal sistema ma rimane modificabile/sovrascrivibile manualmente dall'insegnante in sede di scrutinio.
+> [!IMPORTANT]
+> **Adeguamento normativo (L. 1 ottobre 2024, n. 150 e O.M. n. 3 del 9 gennaio 2025).**
+> Nella scuola primaria i **voti numerici sono vietati**, sia in itinere sia in sede di scrutinio.
+> Il modello precedente (voti 1-10 + livelli Base/Intermedio/Avanzato dei riferimenti 2020) è
+> **superato** e va sostituito. Lo stato attuale del codice ([GradesTab.tsx](src/components/features/teacher/register/GradesTab.tsx),
+> tabella `valutazioni` con `voto_numerico`/`giudizio_testo`) **non è conforme** per la primaria.
 
-### 4.3 Comunicazione alle Famiglie
-• Buffer di Sicurezza: All'inserimento di un voto, il sistema attende 10 minuti prima di inviare la notifica push e rendere visibile la valutazione, consentendo al docente di correggere eventuali errori di battitura.
-• Nessuna Firma Richiesta: Non è richiesta la spunta di "presa visione" da parte del genitore per le normali valutazioni.
-• Persistenza Visiva: In caso di account genitore sospeso (es. per ritardi amministrativi), i dati del registro elettronico (voti e compiti) restano comunque visibili per garantire la trasparenza e il diritto all'informazione didattica.
+### 4.1 Motore di Valutazione Ibrido (configurabile per grado)
+Il sistema espone un **unico motore di valutazione**, il cui comportamento è determinato da una
+configurazione a livello di Admin per **grado d'istruzione / sezione**:
+• **Primaria:** modello a **giudizi** conforme O.M. 3/2025. La modalità a voti numerici è disabilitata
+  e non selezionabile dal docente.
+• **Altri gradi (es. eventuale secondaria di primo grado):** può essere abilitata la modalità a voti
+  numerici classici (1-10) con categorizzazione Scritto/Orale/Pratico.
+• La configurazione è impostata dalla Segreteria/Dirigenza e applicata automaticamente in base alla
+  classe dell'alunno: il docente non sceglie il "sistema di voto", lo eredita dal contesto.
+
+### 4.2 Valutazione in Itinere (Primaria) — per Obiettivi di Apprendimento
+La valutazione quotidiana mantiene **funzione formativa** e si articola così:
+• **Obiettivi di Apprendimento:** prima di inserire qualsiasi valutazione, il docente associa alla
+  propria disciplina gli obiettivi di apprendimento estratti dal **curricolo d'istituto** (definiti per
+  classi parallele). Gli obiettivi sono gestiti come anagrafica configurabile (Admin/Dirigenza).
+• **Valutazione per Dimensioni:** una prova viene legata a uno o più obiettivi e descritta tramite le
+  quattro dimensioni cardine:
+  1. **Autonomia** (Sì / No)
+  2. **Continuità** (Sì / No)
+  3. **Tipologia della situazione** (Nota / Non nota)
+  4. **Risorse mobilitate** (Interne / Esterne / Entrambe)
+• **Giudizio descrittivo auto-generato:** sulla base delle dimensioni il sistema propone un giudizio
+  descrittivo testuale, **pienamente modificabile** dall'insegnante.
+• **Giudizio sintetico in itinere (alternativa):** in alternativa al descrittivo esteso, il docente può
+  registrare direttamente un giudizio sintetico abbreviato (es. Buono, Sufficiente) correlato
+  all'obiettivo testato, per semplificare la visualizzazione nel prospetto.
+• **Nessun voto numerico** alla primaria, in nessuna delle due modalità.
+
+### 4.3 Scrutinio Periodico e Finale (Primaria) — Sei Giudizi Sintetici
+In sede di scrutinio (intermedio e finale), il team dei docenti contitolari attribuisce a ciascun
+alunno, **per ogni disciplina del curricolo** (compresa l'**Educazione Civica**), un unico **giudizio
+sintetico** correlato al livello di apprendimento raggiunto. La scala è quella dell'**Allegato A
+dell'O.M. 3/2025**, implementata in modo rigido (non rimodulabile nelle definizioni standard):
+
+| Giudizio sintetico | Livello |
+|--------------------|---------|
+| **Ottimo** | Autonomia e consapevolezza piene anche in situazioni complesse e non note |
+| **Distinto** | Buona autonomia, errori rari, gestione positiva di situazioni nuove simili a quelle note |
+| **Buono** | Attività portate a termine con autonomia, in situazioni note |
+| **Discreto** | Autonomia parziale, prevalentemente in situazioni note e con risorse fornite |
+| **Sufficiente** | Attività essenziali svolte solo in situazioni note e con supporto/risorse esterne |
+| **Non sufficiente** | Esecuzione incerta e non adeguata al contesto, anche con supporto |
+
+• **Declinazioni locali (PTOF):** pannello di configurazione lato Admin/Dirigente per importare le
+  declinazioni dei descrittori deliberate dagli organi collegiali, che integrano/sostituiscono i testi
+  standard in pagella (le definizioni della scala restano comunque ancorate all'Allegato A).
+• **Giudizio di comportamento:** espresso collegialmente come giudizio sintetico (no decimi).
+• Il giudizio di scrutinio può essere proposto a partire dal quadro delle valutazioni in itinere, ma
+  resta **modificabile/sovrascrivibile** collegialmente dal team docenti.
+
+### 4.4 Isolamento delle Materie e Riservatezza tra Colleghi
+• La visibilità delle valutazioni è limitata alla **propria disciplina**: un docente non accede alle
+  valutazioni assegnate allo stesso alunno da docenti di altre materie.
+• Eventuali aggregazioni/prospetti d'insieme sono riservate al team in sede di scrutinio e alla Dirigenza.
+
+### 4.5 Comunicazione alle Famiglie
+• **Buffer di Sicurezza:** all'inserimento di una valutazione il sistema attende 10 minuti prima di
+  inviare la notifica push e renderla visibile, per consentire correzioni.
+• **Nessuna firma richiesta** per le normali valutazioni in itinere.
+• **Persistenza Visiva:** in caso di account genitore sospeso (ritardi amministrativi), i dati del
+  registro (valutazioni e compiti) restano comunque visibili, a tutela del diritto all'informazione didattica.
+
+### 4.6 Note di Migrazione Dati
+La struttura attuale (`valutazioni.voto_numerico`, `valutazioni.giudizio_testo`, `materia` testo libero)
+va evoluta verso un modello che supporti: riferimento a **materia master** (vedi §6 Orario e Materie),
+**obiettivi di apprendimento**, le **quattro dimensioni**, il **giudizio sintetico** (enum vincolato per
+la primaria) e una distinzione tra valutazione *in itinere* e *di scrutinio*. La modalità a voti numerici
+resta supportata a schema solo per i gradi non-primaria.
 
 ## 5. Note e Provvedimenti Disciplinari
 • Categorizzazione Cromatica: Le note sono suddivise in tre categorie distinte, differenziate visivamente (tramite colori/icone) sull'app del genitore:
@@ -289,6 +367,80 @@ valutazione periodica.
   3. Compiti a casa non svolti
 • Assegnazione Massiva: L'insegnante può selezionare più alunni (o l'intera classe) e assegnare una nota collettiva con un'unica operazione.
 • Firma per Presa Visione: A differenza dei voti, le Note Disciplinari richiedono obbligatoriamente l'interazione del genitore, che deve apporre una firma digitale per "presa visione" direttamente dall'applicazione, confermando la ricezione della comunicazione.
+
+## 6. Orario, Tempo Scuola e Materie
+La primaria adotta la **contitolarità** (più docenti sulla stessa classe) e diversi modelli di tempo
+scuola. Il sistema supera la logica "una materia in testo libero per ora" introducendo dati strutturati.
+
+### 6.1 Materie Master (Discipline)
+• Anagrafica delle **discipline** gestita dalla Segreteria/Dirigenza (es. Italiano, Matematica, Storia,
+  Geografia, Scienze, Inglese, Arte, Musica, Ed. Fisica, Tecnologia, Religione/Alternativa).
+• **Educazione Civica** come disciplina trasversale dedicata (oggetto di valutazione autonoma a scrutinio).
+• **Mensa** modellabile come **turno/disciplina** del tempo scuola (vedi §6.3), associabile anche a
+  gruppi-classe quando gli alunni provengono da classi diverse.
+• Valutazioni (§4) e firme di lezione si **agganciano alla materia master** (non più testo libero).
+
+### 6.2 Campanelle e Matrice Oraria
+• Definizione delle **"campanelle"** (intervalli orari di lezione) per plesso/classe.
+• Matrice oraria settimanale che associa, per ciascuna campanella, **classe → materia → docente/i**.
+• Gestione molti-a-molti per contitolarità (più docenti sulla stessa ora/classe).
+
+### 6.3 Modelli di Tempo Scuola
+• Configurazione per plesso/classe dei modelli: **Tempo Normale (27 o 29 ore)** e **Tempo Pieno (40 ore)**.
+• Nel tempo pieno, l'orario include mensa e ricreazione come tempo scuola a tutti gli effetti.
+
+### 6.4 Configurazione e Visibilità
+• L'orario settimanale e l'assegnazione materie sono **gestiti dalla Segreteria** (pannello Admin).
+• Le famiglie consultano in app l'**orario settimanale** e le materie previste per il proprio figlio.
+
+## 7. Compresenza e Firma del Registro
+### 7.1 Firma di Lezione
+• La firma dell'ora avviene con un "tap" sulla campanella; contestualmente il docente inserisce
+  **argomento svolto** e **compiti** (con eventuali allegati, vedi §3).
+
+### 7.2 Compresenza — Cofirma Digitale
+• Più docenti possono accedere alla **stessa ora/classe**. Il secondo docente (es. sostegno o
+  potenziamento) può apporre la propria **cofirma** sull'argomento inserito dal docente ordinario,
+  selezionando la **tipologia di compresenza** dal pannello.
+
+### 7.3 Firma Indipendente per Alunni Specifici (oscuramento)
+• Quando il docente di sostegno svolge **attività individualizzate** non coincidenti con la
+  programmazione di classe, può firmare la medesima ora ma indirizzare **argomento, compiti e note
+  esclusivamente a uno o più alunni selezionati**.
+• Tali contenuti sono **oscurati alle famiglie degli altri alunni** per ragioni di riservatezza
+  (visibilità ristretta ai soli destinatari).
+
+## 8. Vincoli Temporali e Immodificabilità delle Registrazioni
+Il registro elettronico ha natura di **atto pubblico**: inserimenti e modifiche sono tracciati e
+sottoposti a vincoli temporali.
+
+| Operazione | Termine massimo (default, configurabile) |
+|------------|------------------------------------------|
+| Modifica annotazioni del registro di classe | 2 giorni dall'evento |
+| Inserimento valutazioni per prove orali | 2 giorni dallo svolgimento |
+| Inserimento valutazioni per prove scritte/pratiche | 15 giorni dallo svolgimento |
+
+• **Configurabilità:** i termini sono impostabili dall'istituto (con i valori di default sopra).
+• **Blocco automatico:** oltre la scadenza il sistema impedisce inserimenti/modifiche.
+• **Sblocco riservato:** solo Dirigente/Supervisor può sbloccare, **previa richiesta motivata**.
+• **Tracciamento:** ogni inserimento, modifica e sblocco è registrato nell'audit (`registro_modifiche`):
+  utente, azione, valore precedente/nuovo, timestamp, IP.
+
+## 9. Scrutinio e Pagella Online
+### 9.1 Workflow di Scrutinio
+• Sessione collegiale del **team docenti contitolari**: per ogni alunno si consolidano i giudizi
+  sintetici per disciplina + Educazione Civica + comportamento (vedi §4.3).
+• La Dirigenza coordina e chiude la sessione di scrutinio (periodico e finale).
+
+### 9.2 Documento di Valutazione (Pagella) — Livello Base
+• Al termine dello scrutinio il sistema **genera il documento di valutazione in PDF statico** non modificabile.
+• Le famiglie scaricano la pagella dall'area riservata, con l'**autenticazione attuale dell'app**.
+
+> [!NOTE]
+> **Conformità firma rimandata.** In questa fase la pagella **non** prevede firma digitale qualificata
+> del Dirigente, né contrassegno elettronico, né download previa autenticazione forte SPID/CIE.
+> Tali requisiti (integrazione certificatori di firma qualificata e identità digitale) sono pianificati
+> come **fase successiva** e andranno aggiunti per la piena dematerializzazione a norma.
 
 ---
 
@@ -364,6 +516,16 @@ altri moduli (come il Diario e il Registro di Classe).
 • Comunicazione Silenziosa: Non sono previste notifiche push in tempo reale per i normali eventi di Check-in e Check-out, per evitare di sovraccaricare il genitore con avvisi considerati di routine.
 • Preavviso di Assenza: Il genitore può inserire preventivamente, in totale autonomia tramite l'App, un avviso di assenza (es. per malattia o motivi familiari) prima dell'inizio delle lezioni.
 • Caricamento Certificati Medici: In caso di assenza prolungata (es. superiore ai giorni previsti dal regolamento), l'interfaccia richiede e permette al genitore l'upload diretto del certificato medico di riammissione, che andrà in validazione alla Segreteria.
+
+### 3.1 Libretto Web — Giustificazione Online (con PIN dispositivo)
+• **Giustificazione online:** in presenza di assenza, ritardo o uscita anticipata registrati dal docente,
+  l'area genitore abilita la funzione di **giustificazione digitale** dell'evento.
+• **PIN dispositivo:** l'operazione è protetta dall'inserimento di un **codice PIN dispositivo** scelto
+  dal genitore, per prevenire utilizzi non autorizzati (equivalente digitale del libretto cartaceo).
+• **Tracciamento:** ogni giustificazione registra autore, evento giustificato, motivazione, timestamp e
+  presa visione; lo storico è consultabile da genitore e Segreteria.
+• **Integrazione:** la funzione si lega agli eventi del modulo `presenze` e al flusso certificati medici
+  esistente; più tutori dello stesso alunno mantengono libretti/PIN distinti.
 
 ## 4. Dashboard Amministrazione e Cucina
 ### 4.1 Monitoraggio Segreteria
@@ -629,8 +791,10 @@ garantisce che la piattaforma sia scalabile e totalmente personalizzabile per og
 • Customizzazione Routine: La Segreteria può abilitare o disabilitare specifici widget di routine (es. "Bagno", "Nanna") a livello di singola classe (es. togliendo il modulo "Nanna" per le classi dell'Infanzia).
 
 ### 3.2 Diario Scuola Primaria
-• Orario e Materie: Pannello per la creazione del palinsesto settimanale (materie e orari) che si rifletterà automaticamente nei registri degli insegnanti.
-• Sistema di Valutazione: Impostazione della scala di valutazione. Se la scuola opta per i giudizi descrittivi (es. Base, Intermedio, Avanzato), questo pannello permette di mappare il giudizio testuale a un valore numerico nascosto per consentire all'algoritmo il calcolo automatico delle medie.
+• Materie Master e Orario: Pannello per la gestione delle discipline (incl. Educazione Civica e Mensa-turno), delle campanelle e del palinsesto settimanale (modelli tempo scuola 27/29/40 ore), che si riflette automaticamente nei registri degli insegnanti (vedi Modulo Primaria §6).
+• Sistema di Valutazione (motore ibrido per grado): Configurazione del modello di valutazione per grado/sezione. Per la **Primaria** è forzato il modello conforme **O.M. 3/2025** (giudizi per obiettivi in itinere + 6 giudizi sintetici allo scrutinio, voti numerici disabilitati); per eventuali gradi non-primaria è abilitabile il modello a voti numerici. Vedi Modulo Primaria §4.
+• Declinazioni Locali (PTOF): Importazione delle declinazioni dei descrittori dei giudizi sintetici deliberate dagli organi collegiali, che integrano/sostituiscono i testi standard dell'Allegato A in pagella.
+• Obiettivi di Apprendimento: Gestione del curricolo d'istituto (obiettivi per disciplina e classe) da rendere disponibili ai docenti per la valutazione in itinere.
 
 ## 4. Configurazione Armadietto e Mensa
 • Inventario Armadietto: Gestione della "Lista Default" dei materiali (es. Pannolini, Salviette, Cambi). La Segreteria può aggiungere nuove voci personalizzate che appariranno poi nei menu a tendina degli insegnanti.
@@ -652,3 +816,116 @@ garantisce che la piattaforma sia scalabile e totalmente personalizzabile per og
 • Credenziali API: Sezione sicura per l'inserimento e l'aggiornamento delle chiavi API di Aruba.
 • Dati Scuola: Inserimento dei dati di fatturazione dell'istituto (Partita IVA, Codice Fiscale, PEC) necessari per la corretta generazione del tracciato XML.
 • Regime IVA: Pannello per mappare le causali di default (es. Retta = Esente IVA Art. 10).
+
+---
+
+# PRD - Kidville App: Modulo Fascicolo Personale dell'Alunno
+
+## 1. Obiettivo del Modulo
+Il Fascicolo Personale è l'archivio documentale e storico dello studente. Contiene dati amministrativi
+comuni e **dati particolari (sensibili)** — stato di salute, documenti di inclusione — e deve quindi
+sottostare a tutele rigorose di accesso e tracciamento, in conformità al GDPR (Reg. UE 2016/679).
+Estende l'anagrafica esistente (oggi limitata a note mediche, flag BES/DSA e delegati).
+
+## 2. Composizione del Fascicolo
+### 2.1 Sezione Amministrativa
+• Anagrafica studente e genitori/tutori (con **codice fiscale validato**).
+• Recapiti telefonici ed e-mail per emergenze.
+• **Deleghe al prelievo** all'uscita, con allegato il documento d'identità dei delegati (riusa `delegati`).
+• Storico iscrizioni, **pagelle degli anni precedenti** e **certificati delle competenze**.
+
+### 2.2 Sezione Consensi e Privacy
+• Modulo di consenso al trattamento dati e informativa privacy firmata.
+• **Consenso specifico** per riprese foto/video durante attività didattiche e uscite (collegato al
+  Privacy Lock della Galleria).
+• Consenso al **trasferimento del fascicolo** informatico ad altra scuola in caso di mobilità.
+
+### 2.3 Sezione Riservata — Documenti di Inclusione (PEI/PDP)
+• Diagnosi funzionali, certificazioni ASL e relazioni (L. 104/1992).
+• **PEI** redatto dal GLO; **PDP** e certificazioni DSA (L. 170/2010).
+
+## 3. Protezione e Controllo Accessi
+> [!IMPORTANT]
+> **Livello di protezione adottato (decisione di prodotto): RBAC ristretto + audit accessi.**
+> La cifratura dei file è demandata allo storage gestito (Supabase Storage). Una crittografia
+> applicativa dedicata (AES-256 a livello di tabella/file) **non** è prevista in questa fase e potrà
+> essere introdotta successivamente se richiesto dal titolare del trattamento.
+
+• **RBAC ristretto:** l'accesso (visualizzazione/modifica) a PEI/PDP e documenti sanitari è limitato ai
+  **docenti contitolari della classe di riferimento**, al **Dirigente** e al personale di **segreteria
+  espressamente autorizzato**. Vietato l'accesso a docenti di altre classi o utenti non profilati.
+• **Audit log accessi:** ogni consultazione/modifica di un documento sensibile genera un log
+  **immodificabile** (chi, quando, quale documento, finalità) — estensione di `registro_modifiche`.
+• **Segregazione logica:** i documenti sensibili sono archiviati separatamente dalla documentazione
+  amministrativa, con bucket/percorsi dedicati e ACL distinte.
+• **Workflow firma GLO:** il PEI è atto che richiede la sottoscrizione di docenti contitolari,
+  specialisti ASL e genitori. Area di collaborazione protetta dove i membri del GLO visualizzano la
+  bozza, annotano e appongono la firma per accettazione (firma applicativa in linea con il livello
+  "Base" del documento; firma qualificata rimandata, cfr. §9.2 modulo Primaria).
+
+---
+
+# PRD - Kidville App: Modulo Interoperabilità SIDI / Piattaforma Unica
+
+## 1. Obiettivo del Modulo
+Garantire l'interoperabilità bidirezionale con il **SIDI** (Sistema Informativo dell'Istruzione) e con
+la **Piattaforma Unica** del Ministero, per l'efficienza amministrativa della segreteria e gli
+adempimenti di legge. Il registro non opera come sistema isolato.
+
+## 2. Importazione Nuovi Iscritti (Flusso SIDI)
+• **Ricezione file ZIP ministeriale:** upload diretto del file `.zip` generato dal SIDI (dati nuovi
+  iscritti e famiglie), **senza** che l'operatore debba rinominarlo o modificarlo.
+• **Matching su Numero di domanda:** l'associazione/deduplica avviene confrontando il **Numero di
+  domanda di iscrizione SIDI** contenuto nel flusso, evitando anagrafiche duplicate e garantendo il
+  corretto aggancio dei documenti del fascicolo.
+• **Sincronizzazione dati genitori:** sovrascrittura/integrazione dei contatti già presenti, usando il
+  **codice fiscale** come chiave primaria di associazione.
+
+## 3. Allineamento Strutturale e Invio Frequentanti
+• **Fase A — Struttura di base:** ricezione dal SIDI di sedi, sezioni, classi e tempo scuola per
+  allineare il database locale. Le modifiche strutturali lato SIDI vanno recepite **prima** dell'invio
+  dei dati alunni.
+• **Invio flusso di frequenza:** trasmissione telematica degli alunni effettivamente frequentanti per
+  classe. La corretta trasmissione è prerequisito per l'accesso di docenti/famiglie ai servizi della
+  Piattaforma Unica.
+
+## 4. Flusso Genitori-Alunni (Piattaforma Unica)
+• Flusso periodico (mensile/annuale) di **associazione Genitori-Alunni** trasmesso in cooperazione
+  applicativa al SIDI, con le relazioni parentali validate dalla segreteria, così che solo i soggetti
+  legalmente responsabili accedano ai dati riservati sulla piattaforma ministeriale.
+
+## 5. Export Certificati delle Competenze (Classe Quinta)
+• Generazione e trasmissione al SIDI della **scheda dei certificati delle competenze** di fine classe
+  quinta, compilata in sede di scrutinio finale, secondo il **D.M. n. 14 del 30/1/2024**.
+
+> [!NOTE]
+> L'attivazione dei flussi SIDI in cooperazione applicativa richiede l'**accreditamento ministeriale**
+> del software e le relative credenziali/canali. Le tempistiche (avvio anno scolastico, generalmente
+> entro fine ottobre) vincolano la sequenza Fase A → frequentanti → servizi Piattaforma Unica.
+
+---
+
+# PRD - Kidville App: Accessibilità, Sicurezza e Compliance (Trasversale)
+
+## 1. Obiettivo
+Requisiti trasversali a tutti i moduli per garantire conformità ad AgID, MIM e Garante Privacy. Il
+mancato rispetto può comportare l'esclusione dal mercato scolastico o sanzioni.
+
+## 2. Accessibilità (Legge Stanca)
+• Conformità a **L. 9/1/2004 n. 4 (Legge Stanca)** e s.m.i., **D.Lgs. 106/2018** e **Linee Guida AgID**
+  sull'accessibilità (aggiornamento 29/5/2023), con riferimento WCAG.
+• Interfaccia ad **alto contrasto** e compatibilità con i principali **screen reader**.
+• L'accessibilità è criterio di accettazione per il frontend di tutti i moduli (parent, teacher, admin).
+
+## 3. Privacy e Adempimenti
+• **Pubblicazione informative privacy** destinate ad alunni, genitori, docenti e personale ATA, sempre
+  disponibili in una sezione dedicata.
+• **Raccolta e tracciamento del consenso** per trattamenti che eccedono le attività istituzionali (es.
+  pubblicazione foto/video su canali della scuola), con archiviazione sicura del consenso digitale.
+• Per alunni con disabilità, BES o DSA, la raccolta del consenso per la trasmissione dati
+  all'Anagrafe Nazionale degli Studenti è documentata e, ove necessario, con copia firmata.
+
+## 4. Audit e Tracciabilità
+• **Audit log immodificabile** degli accessi a dati e documenti sensibili (chi, quando, finalità),
+  in conformità ai requisiti del Garante per le PA — estensione di `registro_modifiche` e
+  `firme_documenti` esistenti.

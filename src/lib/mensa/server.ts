@@ -34,22 +34,63 @@ export async function loadMensaConfig(supabase: SupabaseClient, scuolaId: string
 }
 
 // Carica le opzioni complete per risolvere il menu (rotazione + override).
+// Se menuConfigId è passato, filtra solo le righe di quel menu; altrimenti
+// torna le righe senza menu_config_id (legacy, menu unico).
 export async function loadResolveOptions(
   supabase: SupabaseClient,
   scuolaId: string,
-  config?: MensaConfig
+  config?: MensaConfig,
+  menuConfigId?: string | null
 ): Promise<ResolveOptions> {
   const cfg = config ?? (await loadMensaConfig(supabase, scuolaId))
-  const [{ data: rot }, { data: ovr }] = await Promise.all([
-    supabase.from('mensa_menu_rotazione').select('settimana, giorno_settimana, portate, ingredienti, allergeni, note').eq('scuola_id', scuolaId),
-    supabase.from('mensa_menu_override').select('data, chiuso, portate, ingredienti, allergeni, note').eq('scuola_id', scuolaId),
-  ])
+
+  let rotQ = supabase
+    .from('mensa_menu_rotazione')
+    .select('settimana, giorno_settimana, portate, ingredienti, allergeni, note, menu_config_id')
+    .eq('scuola_id', scuolaId)
+  let ovrQ = supabase
+    .from('mensa_menu_override')
+    .select('data, chiuso, portate, ingredienti, allergeni, note, menu_config_id')
+    .eq('scuola_id', scuolaId)
+
+  if (menuConfigId) {
+    rotQ = rotQ.eq('menu_config_id', menuConfigId)
+    ovrQ = ovrQ.eq('menu_config_id', menuConfigId)
+  } else {
+    rotQ = rotQ.is('menu_config_id', null)
+    ovrQ = ovrQ.is('menu_config_id', null)
+  }
+
+  const [{ data: rot }, { data: ovr }] = await Promise.all([rotQ, ovrQ])
   return {
     giorniAttivi: cfg.giorniAttivi,
     settimaneRotazione: cfg.settimaneRotazione,
     rotazione: (rot ?? []) as RotazioneRow[],
     override: (ovr ?? []) as OverrideRow[],
   }
+}
+
+// Dato un alunno (con classe_sezione) e una data, restituisce il menu_config_id
+// attivo per quella classe in quella data.
+// Regola: tra tutte le righe mensa_class_menu_assignment per quella classe,
+// prende quella con attivo_dal <= data più recente.
+export async function resolveMenuConfigId(
+  supabase: SupabaseClient,
+  scuolaId: string,
+  classeSezione: string | null | undefined,
+  data: string
+): Promise<string | null> {
+  if (!classeSezione) return null
+  const { data: row } = await supabase
+    .from('mensa_class_menu_assignment')
+    .select('menu_config_id')
+    .eq('scuola_id', scuolaId)
+    .eq('classe', classeSezione)
+    .lte('attivo_dal', data)
+    .order('attivo_dal', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  return (row?.menu_config_id as string | null) ?? null
 }
 
 // Data odierna del server in formato YYYY-MM-DD.

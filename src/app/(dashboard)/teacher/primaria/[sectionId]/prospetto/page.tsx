@@ -21,6 +21,7 @@ export default function ProspettoPage() {
   const [alunnoId, setAlunnoId] = useState('');
   const [materiaId, setMateriaId] = useState('');
   const [gruppi, setGruppi] = useState<GruppoObiettivo[]>([]);
+  const [media, setMedia] = useState<number | null>(null);
 
   useEffect(() => {
     fetch(`/api/primaria/classe/${sectionId}?userId=${userId}`)
@@ -31,10 +32,10 @@ export default function ProspettoPage() {
   }, [sectionId, userId]);
 
   const load = useCallback(async () => {
-    if (!alunnoId || !materiaId) { setGruppi([]); return; }
+    if (!alunnoId || !materiaId) { setGruppi([]); setMedia(null); return; }
     const r = await fetch(`/api/primaria/prospetto?alunnoId=${alunnoId}&materiaId=${materiaId}&userId=${userId}`);
     const d = await r.json();
-    if (d.success) setGruppi(d.data);
+    if (d.success) { setGruppi(d.data); setMedia(d.media ?? null); }
   }, [alunnoId, materiaId, userId]);
 
   useEffect(() => { load(); }, [load]);
@@ -44,7 +45,7 @@ export default function ProspettoPage() {
       <h2 className="font-barlow text-lg font-bold text-gray-800 mb-1 flex items-center gap-2">
         <BarChart3 size={18} className="text-kidville-green" /> Prospetto per obiettivi
       </h2>
-      <p className="font-maven text-xs text-gray-400 mb-4">Valutazioni in itinere aggregate per obiettivo. Nessuna media numerica (vietata alla primaria).</p>
+      <p className="font-maven text-xs text-gray-400 mb-4">Valutazioni in itinere aggregate per obiettivo, con media matematica dei giudizi sintetici (valori configurabili in Impostazioni → Giudizi).</p>
 
       <div className="grid grid-cols-2 gap-2 mb-4">
         <select value={alunnoId} onChange={(e) => setAlunnoId(e.target.value)} className="font-maven rounded-pill border border-gray-200 px-3 py-2 text-sm">
@@ -63,6 +64,12 @@ export default function ProspettoPage() {
         <p className="font-maven text-sm text-gray-400">Nessuna valutazione registrata.</p>
       ) : (
         <div className="space-y-4">
+          {media !== null && (
+            <div className="flex items-center justify-between rounded-card bg-kidville-green/5 border border-kidville-green/20 px-4 py-3">
+              <span className="font-maven text-sm text-gray-600">Media matematica (giudizi sintetici)</span>
+              <span className="font-barlow text-2xl font-bold text-kidville-green">{media.toFixed(2)}</span>
+            </div>
+          )}
           {gruppi.map((g) => (
             <div key={g.obiettivo.id} className="rounded-card border border-gray-100 p-3">
               <p className="font-maven text-sm font-semibold text-gray-800">

@@ -16,9 +16,12 @@ interface PrimariaData {
   materie: never[];
 }
 
+interface PagellaItem { scrutinioId: string; periodo: string; anno: string; chiusoIl: string | null }
+
 function RegisterInner() {
   const { parentId, studentId, ready } = useParentIdentity();
   const [data, setData] = useState<PrimariaData | null>(null);
+  const [pagelle, setPagelle] = useState<PagellaItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [signing, setSigning] = useState<string | null>(null);
 
@@ -26,11 +29,14 @@ function RegisterInner() {
     if (!ready || !studentId) return;
     setLoading(true);
     try {
-      const r = await fetch(`/api/parent/primaria?studentId=${studentId}&userId=${parentId}`, {
-        headers: { 'x-user-id': parentId },
-      });
+      const [r, rp] = await Promise.all([
+        fetch(`/api/parent/primaria?studentId=${studentId}&userId=${parentId}`, { headers: { 'x-user-id': parentId } }),
+        fetch(`/api/parent/primaria/pagella?studentId=${studentId}&userId=${parentId}`, { headers: { 'x-user-id': parentId } }),
+      ]);
       const d = await r.json();
       if (d.success) setData(d.data);
+      const dp = await rp.json();
+      if (dp.success) setPagelle(dp.data);
     } finally {
       setLoading(false);
     }
@@ -49,14 +55,37 @@ function RegisterInner() {
     load();
   };
 
-  // Giustifica un'assenza/ritardo/uscita del figlio (solo primaria).
-  const onGiustifica = async (dataAssenza: string, motivo: string) => {
-    await fetch(`/api/parent/presenze/giustifica?userId=${parentId}`, {
+  // Richiede l'OTP email per confermare una giustifica (FES).
+  const onRequestGiustificaOtp = async () => {
+    const r = await fetch(`/api/parent/presenze/giustifica/otp?userId=${parentId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-user-id': parentId },
-      body: JSON.stringify({ studentId, data: dataAssenza, motivo }),
     });
+    const d = await r.json();
+    if (!r.ok) return null;
+    return d.data as { expiry: number; ticket: string; devCode?: string };
+  };
+
+  // Giustifica un'assenza/ritardo/uscita del figlio (solo primaria), con conferma OTP.
+  const onGiustifica = async (
+    dataAssenza: string,
+    motivo: string,
+    otp: { code: string; expiry: number; ticket: string },
+  ) => {
+    const r = await fetch(`/api/parent/presenze/giustifica?userId=${parentId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-user-id': parentId },
+      body: JSON.stringify({ studentId, data: dataAssenza, motivo, ...otp }),
+    });
+    const d = await r.json();
     load();
+    if (!r.ok) throw new Error(d.error || 'Errore');
+  };
+
+  // Apre la pagella PDF del periodo (scrutinio chiuso).
+  const onScaricaPagella = (scrutinioId: string) => {
+    if (!studentId) return;
+    window.open(`/api/primaria/pagella?scrutinioId=${scrutinioId}&alunnoId=${studentId}&userId=${parentId}`, '_blank');
   };
 
   // Dichiara il figlio impreparato a priori (giustifica didattica), con materia opzionale.
@@ -114,10 +143,13 @@ function RegisterInner() {
             note={data.note as never[]}
             assenze={data.assenze}
             materie={data.materie}
+            pagelle={pagelle}
             onSign={onSign}
             onGiustifica={onGiustifica}
+            onRequestGiustificaOtp={onRequestGiustificaOtp}
             onImpreparato={onImpreparato}
             onComunicaAssenza={onComunicaAssenza}
+            onScaricaPagella={onScaricaPagella}
             signing={signing}
           />
         )}

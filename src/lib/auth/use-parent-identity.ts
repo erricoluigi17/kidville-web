@@ -18,28 +18,26 @@ export interface ParentIdentity {
 export function useParentIdentity(): ParentIdentity {
   const searchParams = useSearchParams();
   const parentId = getCurrentParentId(searchParams);
-  const [studentId, setStudentId] = useState<string>(() => getCurrentStudentId(searchParams));
-  const [ready, setReady] = useState<boolean>(() => {
-    // Già pronto se lo studentId è esplicito nell'URL o non è il fallback demo
-    const fromUrl = searchParams.get('id');
-    return !!fromUrl || getCurrentStudentId(searchParams) !== DEFAULT_STUDENT_ID;
-  });
+  // Inizializza solo dall'URL per evitare hydration mismatch (localStorage non
+  // è disponibile durante SSR). Il useEffect aggiorna dal localStorage dopo mount.
+  const fromUrl = searchParams.get('id');
+  const [studentId, setStudentId] = useState<string>(fromUrl ?? DEFAULT_STUDENT_ID);
+  const [ready, setReady] = useState<boolean>(!!fromUrl);
 
   useEffect(() => {
-    const fromUrl = searchParams.get('id');
-    const current = getCurrentStudentId(searchParams);
+    const urlId = searchParams.get('id');
 
-    // Se l'ID è esplicito nell'URL, è già corretto e va persistito (così la
-    // scelta del figlio sopravvive alla navigazione tra le pagine).
-    if (fromUrl) {
-      try { localStorage.setItem('kv_student_id', fromUrl); } catch { /* ignore */ }
-      setStudentId(fromUrl);
+    // Se l'ID è esplicito nell'URL, è già corretto e va persistito.
+    if (urlId) {
+      try { localStorage.setItem('kv_student_id', urlId); } catch { /* ignore */ }
+      setStudentId(urlId);
       setReady(true);
       return;
     }
 
-    // Se non è il fallback demo, è già persistito in localStorage
-    if (current !== DEFAULT_STUDENT_ID) { setStudentId(current); setReady(true); return; }
+    // Leggi da localStorage (solo lato client, dopo mount)
+    const stored = getCurrentStudentId(searchParams);
+    if (stored !== DEFAULT_STUDENT_ID) { setStudentId(stored); setReady(true); return; }
 
     // Auto-resolve: chiedi al backend i figli del genitore
     fetch(`/api/parent/students?userId=${parentId}`, {

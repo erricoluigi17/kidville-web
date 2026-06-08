@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { getRequestUserId } from '@/lib/auth/require-staff'
+import { mediaGiudizi, type ScalaVoce } from '@/lib/primaria/media'
 
 // GET /api/primaria/prospetto?alunnoId=&materiaId=&userId=
 // Aggrega le valutazioni in itinere di un alunno in una materia, raggruppate per
-// obiettivo. NESSUNA media numerica (vietata alla primaria) — isolamento materia.
+// obiettivo. Calcola la media matematica dei giudizi sintetici (mappati su
+// valore_numerico della scala configurata) — isolamento materia.
 export async function GET(request: NextRequest) {
   try {
     const sp = new URL(request.url).searchParams
@@ -26,6 +28,21 @@ export async function GET(request: NextRequest) {
       .order('creato_il', { ascending: false })
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
+    // Scala giudizi della scuola dell'alunno → mappa per la media numerica.
+    const { data: alunno } = await supabase.from('alunni').select('section_id').eq('id', alunnoId).single()
+    let scala: ScalaVoce[] = []
+    if (alunno?.section_id) {
+      const { data: sez } = await supabase.from('sections').select('scuola_id').eq('id', alunno.section_id).single()
+      if (sez?.scuola_id) {
+        const { data: s } = await supabase
+          .from('giudizi_sintetici_scala')
+          .select('etichetta, valore_numerico')
+          .eq('scuola_id', sez.scuola_id)
+        scala = (s ?? []) as ScalaVoce[]
+      }
+    }
+    const mediaMateria = mediaGiudizi(scala, (valutazioni ?? []).map((v) => v.giudizio_sintetico))
+
     // Raggruppa per obiettivo.
     const perObiettivo = new Map<string, { obiettivo: { id: string; codice: string | null; descrizione: string }; valutazioni: unknown[] }>()
     type ObiettivoRow = { id: string; codice: string | null; descrizione: string }
@@ -43,7 +60,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    return NextResponse.json({ success: true, data: Array.from(perObiettivo.values()) })
+    return NextResponse.json({ success: true, data: Array.from(perObiettivo.values()), media: mediaMateria })
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })

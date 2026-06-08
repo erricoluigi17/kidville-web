@@ -1,12 +1,14 @@
 'use client';
 
 import { useState } from 'react';
-import { Award, AlertTriangle, PenLine, CalendarOff, Hand, CalendarPlus } from 'lucide-react';
+import { Award, AlertTriangle, PenLine, CalendarOff, Hand, CalendarPlus, FileText, Download } from 'lucide-react';
 
 interface Valutazione { id: string; materia: string; tipo: string; modalita: string; argomento: string | null; giudizio_sintetico: string | null; giudizio_testo: string | null; creato_il: string }
 interface Nota { id: string; categoria: string; testo: string; richiede_firma: boolean; firmata_il: string | null; creato_il: string }
 interface Assenza { id: string; data: string; stato: string; giustificata: boolean; giustificazione_testo: string | null; giust_vista_il: string | null }
 interface Materia { id: string; nome: string }
+interface Pagella { scrutinioId: string; periodo: string; anno: string; chiusoIl: string | null }
+type OtpParams = { code: string; expiry: number; ticket: string };
 
 const CAT: Record<string, { label: string; cls: string }> = {
   disciplinare: { label: 'Nota disciplinare', cls: 'bg-kidville-error/10 text-kidville-error' },
@@ -21,17 +23,43 @@ const STATO_ASSENZA: Record<string, string> = {
 const oggiIso = () => new Date().toISOString().slice(0, 10);
 
 export function PrimariaParentView({
-  valutazioni, note, assenze, materie, onSign, onGiustifica, onImpreparato, onComunicaAssenza, signing,
+  valutazioni, note, assenze, materie, pagelle, onSign, onGiustifica, onRequestGiustificaOtp, onImpreparato, onComunicaAssenza, onScaricaPagella, signing,
 }: {
-  valutazioni: Valutazione[]; note: Nota[]; assenze: Assenza[]; materie: Materia[];
+  valutazioni: Valutazione[]; note: Nota[]; assenze: Assenza[]; materie: Materia[]; pagelle: Pagella[];
   onSign: (id: string) => void;
-  onGiustifica: (data: string, motivo: string) => void | Promise<void>;
+  onGiustifica: (data: string, motivo: string, otp: OtpParams) => void | Promise<void>;
+  onRequestGiustificaOtp: () => Promise<{ expiry: number; ticket: string; devCode?: string } | null>;
   onImpreparato: (data: string, motivo: string, materiaId?: string) => void | Promise<void>;
   onComunicaAssenza: (data: string, motivo: string) => void | Promise<void>;
+  onScaricaPagella: (scrutinioId: string) => void;
   signing: string | null;
 }) {
   return (
     <div className="space-y-5">
+      {/* Pagelle (documento di valutazione) */}
+      {pagelle.length > 0 && (
+        <section className="rounded-card bg-white p-5 shadow-sm">
+          <h3 className="font-barlow text-lg font-bold text-gray-800 flex items-center gap-2 mb-3">
+            <FileText size={18} className="text-kidville-green" /> Pagelle
+          </h3>
+          <ul className="divide-y divide-gray-100">
+            {pagelle.map((p) => (
+              <li key={p.scrutinioId} className="flex items-center justify-between gap-2 py-2.5">
+                <div>
+                  <p className="font-maven text-sm font-semibold text-gray-800">{p.periodo}</p>
+                  <p className="font-maven text-xs text-gray-400">
+                    {p.anno}{p.chiusoIl ? ` · ${new Date(p.chiusoIl).toLocaleDateString('it-IT')}` : ''}
+                  </p>
+                </div>
+                <button onClick={() => onScaricaPagella(p.scrutinioId)} className="font-maven inline-flex items-center gap-1.5 rounded-pill bg-kidville-green px-4 py-1.5 text-xs text-kidville-yellow">
+                  <Download size={13} /> Scarica PDF
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       {/* Note che richiedono firma — in evidenza */}
       {note.some((n) => n.richiede_firma && !n.firmata_il) && (
         <div className="rounded-card bg-kidville-error/5 border border-kidville-error/20 p-4">
@@ -54,7 +82,7 @@ export function PrimariaParentView({
 
       {/* Giustifiche: assenze + impreparato a priori (solo primaria) */}
       <div className="grid gap-5 md:grid-cols-2">
-        <AssenzeCard assenze={assenze} onGiustifica={onGiustifica} onComunicaAssenza={onComunicaAssenza} />
+        <AssenzeCard assenze={assenze} onGiustifica={onGiustifica} onRequestGiustificaOtp={onRequestGiustificaOtp} onComunicaAssenza={onComunicaAssenza} />
         <ImpreparatoForm materie={materie} onImpreparato={onImpreparato} />
       </div>
 
@@ -88,9 +116,10 @@ export function PrimariaParentView({
 }
 
 // Card "Assenze da giustificare" + pulsante "Comunica assenza in anticipo".
-function AssenzeCard({ assenze, onGiustifica, onComunicaAssenza }: {
+function AssenzeCard({ assenze, onGiustifica, onRequestGiustificaOtp, onComunicaAssenza }: {
   assenze: Assenza[];
-  onGiustifica: (data: string, motivo: string) => void | Promise<void>;
+  onGiustifica: (data: string, motivo: string, otp: OtpParams) => void | Promise<void>;
+  onRequestGiustificaOtp: () => Promise<{ expiry: number; ticket: string; devCode?: string } | null>;
   onComunicaAssenza: (data: string, motivo: string) => void | Promise<void>;
 }) {
   const [showForm, setShowForm] = useState(false);
@@ -136,7 +165,7 @@ function AssenzeCard({ assenze, onGiustifica, onComunicaAssenza }: {
       ) : (
         <ul className="space-y-2">
           {assenze.map((a) => (
-            <AssenzaRow key={a.id} assenza={a} onGiustifica={onGiustifica} />
+            <AssenzaRow key={a.id} assenza={a} onGiustifica={onGiustifica} onRequestGiustificaOtp={onRequestGiustificaOtp} />
           ))}
         </ul>
       )}
@@ -144,16 +173,40 @@ function AssenzeCard({ assenze, onGiustifica, onComunicaAssenza }: {
   );
 }
 
-// Riga assenza con form di giustificazione inline.
-function AssenzaRow({ assenza, onGiustifica }: { assenza: Assenza; onGiustifica: (data: string, motivo: string) => void | Promise<void> }) {
+// Riga assenza con giustificazione protetta da OTP (FES): motivo → invia codice → conferma.
+function AssenzaRow({ assenza, onGiustifica, onRequestGiustificaOtp }: {
+  assenza: Assenza;
+  onGiustifica: (data: string, motivo: string, otp: OtpParams) => void | Promise<void>;
+  onRequestGiustificaOtp: () => Promise<{ expiry: number; ticket: string; devCode?: string } | null>;
+}) {
   const [motivo, setMotivo] = useState('');
   const [busy, setBusy] = useState(false);
+  const [step, setStep] = useState<'motivo' | 'otp'>('motivo');
+  const [code, setCode] = useState('');
+  const [ticketData, setTicketData] = useState<{ expiry: number; ticket: string } | null>(null);
+  const [err, setErr] = useState('');
   const giorno = new Date(assenza.data).toLocaleDateString('it-IT', { weekday: 'short', day: 'numeric', month: 'short' });
 
-  const invia = async () => {
-    setBusy(true);
-    await onGiustifica(assenza.data, motivo);
+  const richiediCodice = async () => {
+    setBusy(true); setErr('');
+    const res = await onRequestGiustificaOtp();
     setBusy(false);
+    if (!res) { setErr('Invio codice non riuscito'); return; }
+    setTicketData({ expiry: res.expiry, ticket: res.ticket });
+    if (res.devCode) setCode(res.devCode); // dev: precompila
+    setStep('otp');
+  };
+
+  const conferma = async () => {
+    if (!ticketData) return;
+    setBusy(true); setErr('');
+    try {
+      await onGiustifica(assenza.data, motivo, { code, expiry: ticketData.expiry, ticket: ticketData.ticket });
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Errore');
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -172,7 +225,7 @@ function AssenzaRow({ assenza, onGiustifica }: { assenza: Assenza; onGiustifica:
       </div>
       {assenza.giustificata ? (
         assenza.giustificazione_testo && <p className="font-maven text-xs text-gray-500 mt-1">{assenza.giustificazione_testo}</p>
-      ) : (
+      ) : step === 'motivo' ? (
         <div className="mt-2 flex items-center gap-2">
           <input
             type="text"
@@ -181,11 +234,32 @@ function AssenzaRow({ assenza, onGiustifica }: { assenza: Assenza; onGiustifica:
             placeholder="Motivazione (es. malattia)"
             className="font-maven flex-1 rounded-pill border border-gray-200 px-3 py-1.5 text-xs"
           />
-          <button onClick={invia} disabled={busy} className="font-maven rounded-pill bg-kidville-green px-3 py-1.5 text-xs text-kidville-yellow disabled:opacity-50">
+          <button onClick={richiediCodice} disabled={busy} className="font-maven rounded-pill bg-kidville-green px-3 py-1.5 text-xs text-kidville-yellow disabled:opacity-50">
             {busy ? '…' : 'Giustifica'}
           </button>
         </div>
+      ) : (
+        <div className="mt-2 flex flex-col gap-1.5">
+          <p className="font-maven text-[11px] text-gray-500">Ti abbiamo inviato un codice via email. Inseriscilo per confermare la giustifica.</p>
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              inputMode="numeric"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              placeholder="Codice"
+              className="font-maven w-28 rounded-pill border border-gray-200 px-3 py-1.5 text-xs tracking-widest"
+            />
+            <button onClick={conferma} disabled={busy || code.length < 4} className="font-maven rounded-pill bg-kidville-green px-3 py-1.5 text-xs text-kidville-yellow disabled:opacity-50">
+              {busy ? '…' : 'Conferma'}
+            </button>
+            <button onClick={() => { setStep('motivo'); setCode(''); setErr(''); }} className="font-maven rounded-pill bg-gray-100 px-3 py-1.5 text-xs text-gray-500">
+              Annulla
+            </button>
+          </div>
+        </div>
       )}
+      {err && <p className="font-maven text-[11px] text-kidville-error mt-1">{err}</p>}
     </li>
   );
 }

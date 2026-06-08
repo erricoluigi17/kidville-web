@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getRequestUserId } from '@/lib/auth/require-staff'
+import { getRequestUserId, loadAppUser } from '@/lib/auth/require-staff'
 import { loadGradoContext } from '@/lib/auth/require-grado'
 
 // GET /api/primaria/me?userId=
@@ -11,11 +11,16 @@ export async function GET(request: NextRequest) {
     const ctx = await loadGradoContext(userId)
     if (!ctx) return NextResponse.json({ error: 'Utente non trovato' }, { status: 401 })
 
+    const appUser = await loadAppUser(userId)
+    const isDirigente = appUser?.role === 'admin' || appUser?.role === 'coordinator'
+
     return NextResponse.json({
       success: true,
       data: {
         userId: ctx.userId,
         gradi: ctx.gradi,
+        ruolo: appUser?.role ?? null,
+        isDirigente,
         funzioni: ctx.gradi.reduce<Record<string, Record<string, boolean>>>((acc, g) => {
           acc[g] = ctx.matrice?.[g] ?? {}
           return acc

@@ -39,11 +39,14 @@ export async function POST(request: NextRequest) {
     const supabase = await createAdminClient()
 
     if (action === 'scala') {
-      const { scuolaId, etichetta, ordine } = body
+      const { scuolaId, etichetta, ordine, valoreNumerico, giudizioDescrittivo } = body
       if (!scuolaId || !etichetta) return NextResponse.json({ error: 'scuolaId ed etichetta obbligatori' }, { status: 400 })
+      const row: Record<string, unknown> = { scuola_id: scuolaId, etichetta, ordine: ordine ?? 0 }
+      if (valoreNumerico !== undefined) row.valore_numerico = valoreNumerico === null || valoreNumerico === '' ? null : Number(valoreNumerico)
+      if (giudizioDescrittivo !== undefined) row.giudizio_descrittivo = giudizioDescrittivo || null
       const { data, error } = await supabase
         .from('giudizi_sintetici_scala')
-        .upsert({ scuola_id: scuolaId, etichetta, ordine: ordine ?? 0 }, { onConflict: 'scuola_id,etichetta' })
+        .upsert(row, { onConflict: 'scuola_id,etichetta' })
         .select()
         .single()
       if (error) return NextResponse.json({ error: error.message }, { status: 500 })

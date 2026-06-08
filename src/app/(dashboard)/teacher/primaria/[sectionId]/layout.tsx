@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams, usePathname, useSearchParams } from 'next/navigation';
-import { ArrowLeft, ClipboardList, CheckSquare, Star, AlertTriangle, CalendarDays, BarChart3 } from 'lucide-react';
+import { ArrowLeft, ClipboardList, CheckSquare, Star, AlertTriangle, CalendarDays, BarChart3, GraduationCap, FolderLock } from 'lucide-react';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 
 const NAV = [
@@ -13,6 +13,8 @@ const NAV = [
   { seg: 'note', label: 'Note', icon: AlertTriangle },
   { seg: 'orario', label: 'Orario', icon: CalendarDays },
   { seg: 'prospetto', label: 'Prospetto', icon: BarChart3 },
+  { seg: 'scrutinio', label: 'Scrutinio', icon: GraduationCap },
+  { seg: 'fascicolo', label: 'Fascicolo', icon: FolderLock },
 ];
 
 export default function PrimariaClasseLayout({ children }: { children: React.ReactNode }) {

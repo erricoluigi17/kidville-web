@@ -34,7 +34,7 @@ export function GradeWorldSwitch() {
   return (
     <div className="inline-flex rounded-pill bg-white p-1 shadow-sm">
       <button
-        onClick={() => router.push(`/teacher/diary${suffix}`)}
+        onClick={() => router.push(`/teacher${suffix}`)}
         className={`font-maven inline-flex items-center gap-1.5 rounded-pill px-3 py-1.5 text-sm transition ${
           !inPrimaria ? 'bg-kidville-green text-kidville-yellow' : 'text-gray-500'
         }`}

@@ -30,7 +30,7 @@ export async function GET(request: NextRequest) {
     }
 
     if (schoolType !== 'primaria') {
-      return NextResponse.json({ success: true, data: { schoolType, child: alunno, lezioni: [], valutazioni: [], note: [] } })
+      return NextResponse.json({ success: true, data: { schoolType, child: alunno, lezioni: [], valutazioni: [], note: [], assenze: [], materie: [] } })
     }
 
     // Buffer notifica (per la visibilità delle valutazioni).
@@ -45,7 +45,7 @@ export async function GET(request: NextRequest) {
     // Ultimi 14 giorni di registro per la sezione.
     const da = new Date(Date.now() - 14 * 86_400_000).toISOString().slice(0, 10)
 
-    const [{ data: registro }, { data: valutazioni }, { data: note }] = await Promise.all([
+    const [{ data: registro }, { data: valutazioni }, { data: note }, { data: assenze }, { data: materie }] = await Promise.all([
       supabase
         .from('registro_orario')
         .select(`
@@ -61,7 +61,7 @@ export async function GET(request: NextRequest) {
         .order('ora_lezione'),
       supabase
         .from('valutazioni')
-        .select('id, materia, tipo, modalita, giudizio_sintetico, giudizio_testo, creato_il')
+        .select('id, materia, tipo, modalita, argomento, giudizio_sintetico, giudizio_testo, creato_il')
         .eq('alunno_id', studentId)
         .not('modalita', 'is', null)
         .lte('creato_il', sogliaVal)
@@ -71,6 +71,21 @@ export async function GET(request: NextRequest) {
         .select('id, categoria, testo, richiede_firma, firmata_il, creato_il')
         .eq('alunno_id', studentId)
         .order('creato_il', { ascending: false }),
+      // Assenze/ritardi/uscite degli ultimi 30 giorni, con stato giustificazione.
+      supabase
+        .from('presenze')
+        .select('id, data, stato, giustificata, giustificazione_testo, giust_vista_il')
+        .eq('alunno_id', studentId)
+        .in('stato', ['assente', 'ritardo', 'uscita_anticipata'])
+        .gte('data', new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10))
+        .order('data', { ascending: false }),
+      // Materie della sezione (per il selettore della giustifica didattica).
+      supabase
+        .from('materie')
+        .select('id, nome')
+        .eq('section_id', alunno.section_id)
+        .eq('attiva', true)
+        .order('ordine'),
     ])
 
     // Applica oscuramento: contenuti "propri" visibili solo se il figlio è destinatario.
@@ -95,7 +110,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      data: { schoolType, child: alunno, lezioni, valutazioni: valutazioni ?? [], note: note ?? [] },
+      data: { schoolType, child: alunno, lezioni, valutazioni: valutazioni ?? [], note: note ?? [], assenze: assenze ?? [], materie: materie ?? [] },
     })
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Errore interno'

@@ -39,6 +39,9 @@ export async function POST(request: NextRequest) {
             note_mediche: body.note_bes || null,
             invoice_holder_type: body.invoice_holder_type || null,
             invoice_holder_details: body.invoice_holder_details || null,
+            // classe/sezione: il trigger DB sincronizza automaticamente section_id,
+            // così l'alunno compare subito in tutte le funzioni della sua sezione.
+            classe_sezione: body.classe_sezione || null,
             stato: 'iscritto',
         };
 

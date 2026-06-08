@@ -19,10 +19,9 @@ export async function GET(request: NextRequest) {
     let query = supabase
       .from('valutazioni')
       .select(`
-        id, alunno_id, materia, materia_id, tipo, modalita,
+        id, alunno_id, materia, materia_id, tipo, modalita, argomento,
         dim_autonomia, dim_continuita, dim_tipologia, dim_risorse,
-        giudizio_sintetico, giudizio_testo, pubblicato, creato_il,
-        valutazione_obiettivi(obiettivo_id, obiettivi_apprendimento(descrizione, codice))
+        giudizio_sintetico, giudizio_testo, pubblicato, creato_il
       `)
       .not('modalita', 'is', null) // solo valutazioni in itinere (primaria)
       .order('creato_il', { ascending: false })
@@ -48,15 +47,15 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
     const {
       alunnoId, sectionId, materiaId, tipoProva = 'orale', modalita,
-      dims, giudizioSintetico, giudizioTesto, obiettiviIds = [], data,
+      dims, giudizioSintetico, giudizioTesto, argomento, data,
     } = body
 
     if (!alunnoId || !sectionId || !materiaId) {
       return NextResponse.json({ error: 'alunnoId, sectionId, materiaId obbligatori' }, { status: 400 })
     }
-    // ≥1 obiettivo obbligatorio (O.M. 3/2025).
-    if (!Array.isArray(obiettiviIds) || obiettiviIds.length === 0) {
-      return NextResponse.json({ error: 'Associa almeno un obiettivo di apprendimento' }, { status: 400 })
+    // Argomento (testo libero) obbligatorio: sostituisce l'obiettivo di apprendimento.
+    if (typeof argomento !== 'string' || argomento.trim().length === 0) {
+      return NextResponse.json({ error: "Inserisci l'argomento della valutazione" }, { status: 400 })
     }
     if (modalita !== 'dimensioni' && modalita !== 'sintetico') {
       return NextResponse.json({ error: "modalita deve essere 'dimensioni' o 'sintetico'" }, { status: 400 })
@@ -103,6 +102,7 @@ export async function POST(request: NextRequest) {
         section_id: sectionId,
         materia: materia.nome, // legacy NOT NULL
         materia_id: materiaId,
+        argomento: argomento.trim(),
         tipo: tipoProva,
         modalita,
         dim_autonomia: modalita === 'dimensioni' ? dims.autonomia : null,
@@ -118,11 +118,6 @@ export async function POST(request: NextRequest) {
       .select()
       .single()
     if (valErr) return NextResponse.json({ error: valErr.message }, { status: 500 })
-
-    // Obiettivi associati.
-    const rows = obiettiviIds.map((oid: string) => ({ valutazione_id: val.id, obiettivo_id: oid }))
-    const { error: oErr } = await supabase.from('valutazione_obiettivi').insert(rows)
-    if (oErr) return NextResponse.json({ error: oErr.message }, { status: 500 })
 
     // Notifica valutazione con buffer (default 10 min). Best-effort.
     try {

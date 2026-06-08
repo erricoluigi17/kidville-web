@@ -29,8 +29,9 @@ export async function GET(
     }
 
     const [{ data: section }, { data: alunni }, materieIds] = await Promise.all([
-      supabase.from('sections').select('id, name, school_type, scholastic_year, scuola_id').eq('id', sectionId).single(),
-      supabase.from('alunni').select('id, nome, cognome, allergie, allergeni').eq('section_id', sectionId).order('cognome'),
+      supabase.from('sections').select('id, name, school_type, scuola_id').eq('id', sectionId).single(),
+      // Alunni attivi della sezione (fonte unica: alunni.section_id, sincronizzato dal trigger).
+      supabase.from('alunni').select('id, nome, cognome, allergies, allergeni').eq('section_id', sectionId).eq('stato', 'iscritto').order('cognome'),
       materieDiDocenteInSezione(supabase, userId, sectionId),
     ])
 

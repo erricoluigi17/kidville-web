@@ -7,10 +7,14 @@ import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 
 interface Alunno { id: string; nome: string; cognome: string }
 interface Materia { id: string; nome: string }
-interface Obiettivo { id: string; codice: string | null; descrizione: string }
 interface Valutazione {
-  id: string; tipo: string; modalita: string; giudizio_sintetico: string | null; giudizio_testo: string | null; creato_il: string;
+  id: string; tipo: string; modalita: string; argomento: string | null; giudizio_sintetico: string | null; giudizio_testo: string | null; creato_il: string;
 }
+interface Impreparato {
+  id: string; alunno_id: string; data: string; motivo: string | null; origine: string; alunni?: { nome: string; cognome: string } | null;
+}
+
+function oggiIso() { return new Date().toISOString().slice(0, 10); }
 
 export default function ValutazioniPage() {
   const params = useParams();
@@ -22,9 +26,9 @@ export default function ValutazioniPage() {
   const [materie, setMaterie] = useState<Materia[]>([]);
   const [alunnoId, setAlunnoId] = useState('');
   const [materiaId, setMateriaId] = useState('');
-  const [obiettivi, setObiettivi] = useState<Obiettivo[]>([]);
   const [scala, setScala] = useState<string[]>([]);
   const [recenti, setRecenti] = useState<Valutazione[]>([]);
+  const [impreparati, setImpreparati] = useState<Impreparato[]>([]);
 
   // form
   const [tipoProva, setTipoProva] = useState('orale');
@@ -35,7 +39,7 @@ export default function ValutazioniPage() {
   const [risorse, setRisorse] = useState<'interne' | 'esterne' | 'entrambe'>('interne');
   const [giudizioSintetico, setGiudizioSintetico] = useState('');
   const [giudizioTesto, setGiudizioTesto] = useState('');
-  const [obiettiviSel, setObiettiviSel] = useState<string[]>([]);
+  const [argomento, setArgomento] = useState('');
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
 
@@ -50,12 +54,12 @@ export default function ValutazioniPage() {
       });
   }, [sectionId, userId]);
 
-  const loadObiettivi = useCallback(async () => {
+  // Carica la scala dei giudizi sintetici per la materia/livello.
+  const loadScala = useCallback(async () => {
     if (!materiaId) return;
     const r = await fetch(`/api/primaria/obiettivi?materiaId=${materiaId}&sectionId=${sectionId}&userId=${userId}`);
     const d = await r.json();
     if (d.success) {
-      setObiettivi(d.data.obiettivi);
       setScala(d.data.scala);
       if (d.data.scala.length) setGiudizioSintetico(d.data.scala[0]);
     }
@@ -68,16 +72,31 @@ export default function ValutazioniPage() {
     if (d.success) setRecenti(d.data);
   }, [alunnoId, materiaId, userId]);
 
-  useEffect(() => { loadObiettivi(); }, [loadObiettivi]);
-  useEffect(() => { loadRecenti(); }, [loadRecenti]);
+  const loadImpreparati = useCallback(async () => {
+    const r = await fetch(`/api/primaria/giustifiche-didattiche?sectionId=${sectionId}&data=${oggiIso()}&userId=${userId}`);
+    const d = await r.json();
+    if (d.success) setImpreparati(d.data);
+  }, [sectionId, userId]);
 
-  const toggleObiettivo = (id: string) =>
-    setObiettiviSel((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  useEffect(() => { loadScala(); }, [loadScala]);
+  useEffect(() => { loadRecenti(); }, [loadRecenti]);
+  useEffect(() => { loadImpreparati(); }, [loadImpreparati]);
+
+  // Il docente segna l'alunno selezionato come impreparato giustificato (oggi).
+  const segnaImpreparato = async () => {
+    if (!alunnoId) { setMsg('Seleziona un alunno'); return; }
+    await fetch(`/api/primaria/giustifiche-didattiche?userId=${userId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
+      body: JSON.stringify({ sectionId, alunnoId, materiaId: materiaId || undefined, data: oggiIso(), motivo: 'Impreparato giustificato' }),
+    });
+    loadImpreparati();
+  };
 
   const salva = async () => {
     setMsg('');
     if (!alunnoId || !materiaId) { setMsg('Seleziona alunno e materia'); return; }
-    if (obiettiviSel.length === 0) { setMsg('Seleziona almeno un obiettivo'); return; }
+    if (!argomento.trim()) { setMsg("Inserisci l'argomento"); return; }
     setSaving(true);
     const r = await fetch(`/api/primaria/valutazioni?userId=${userId}`, {
       method: 'POST',
@@ -87,7 +106,7 @@ export default function ValutazioniPage() {
         dims: modalita === 'dimensioni' ? { autonomia, continuita, tipologia, risorse } : undefined,
         giudizioSintetico: modalita === 'sintetico' ? giudizioSintetico : undefined,
         giudizioTesto: giudizioTesto || undefined,
-        obiettiviIds: obiettiviSel,
+        argomento: argomento.trim(),
       }),
     });
     const d = await r.json();
@@ -96,7 +115,7 @@ export default function ValutazioniPage() {
     else {
       setMsg('Valutazione salvata ✓');
       setGiudizioTesto('');
-      setObiettiviSel([]);
+      setArgomento('');
       loadRecenti();
     }
   };
@@ -157,16 +176,14 @@ export default function ValutazioniPage() {
         )}
 
         <div className="mb-3">
-          <label className="block font-maven text-xs text-gray-500 mb-1">Obiettivi (almeno uno) *</label>
-          <div className="max-h-32 overflow-y-auto rounded-card border border-gray-100 p-2">
-            {obiettivi.map((o) => (
-              <label key={o.id} className="flex items-start gap-2 py-0.5 font-maven text-sm">
-                <input type="checkbox" checked={obiettiviSel.includes(o.id)} onChange={() => toggleObiettivo(o.id)} className="mt-1" />
-                <span>{o.codice && <b className="text-kidville-green mr-1">{o.codice}</b>}{o.descrizione}</span>
-              </label>
-            ))}
-            {obiettivi.length === 0 && <p className="font-maven text-xs text-gray-400">Nessun obiettivo per questa materia/livello. Configurali nell&apos;admin.</p>}
-          </div>
+          <label className="block font-maven text-xs text-gray-500 mb-1">Argomento *</label>
+          <input
+            type="text"
+            value={argomento}
+            onChange={(e) => setArgomento(e.target.value)}
+            placeholder="Es. Le tabelline del 7, La comprensione del testo…"
+            className="font-maven w-full rounded-pill border border-gray-200 px-3 py-2 text-sm"
+          />
         </div>
 
         {msg && <p className={`font-maven text-sm mb-2 ${msg.includes('✓') ? 'text-kidville-success' : 'text-kidville-error'}`}>{msg}</p>}
@@ -190,10 +207,36 @@ export default function ValutazioniPage() {
                   <span className="text-xs text-gray-400 capitalize">{v.tipo}</span>
                   <span className="text-xs text-gray-300">{new Date(v.creato_il).toLocaleDateString('it-IT')}</span>
                 </div>
+                {v.argomento && <p className="font-maven text-xs text-gray-600 mt-0.5"><span className="text-gray-400">Argomento:</span> {v.argomento}</p>}
                 {v.giudizio_testo && <p className="font-maven text-xs text-gray-500 mt-0.5">{v.giudizio_testo}</p>}
               </li>
             ))}
             {recenti.length === 0 && <li className="py-2 font-maven text-sm text-gray-400">Nessuna valutazione.</li>}
+          </ul>
+        )}
+      </div>
+
+      {/* Giustifiche didattiche (impreparato) di oggi */}
+      <div className="rounded-card bg-white p-5 shadow-sm md:col-span-2">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h3 className="font-barlow text-base font-bold text-gray-800">Impreparati giustificati — oggi</h3>
+          <button onClick={segnaImpreparato} className="font-maven rounded-pill bg-amber-100 px-3 py-1.5 text-xs text-amber-700">
+            Segna impreparato (alunno selezionato)
+          </button>
+        </div>
+        {impreparati.length === 0 ? (
+          <p className="font-maven text-sm text-gray-400">Nessuna giustifica didattica per oggi.</p>
+        ) : (
+          <ul className="divide-y divide-gray-100">
+            {impreparati.map((g) => (
+              <li key={g.id} className="flex items-center gap-2 py-2 font-maven text-sm">
+                <span className="text-gray-800">{g.alunni?.cognome} {g.alunni?.nome}</span>
+                <span className={`rounded-pill px-2 py-0.5 text-[11px] ${g.origine === 'genitore' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'}`}>
+                  {g.origine === 'genitore' ? 'dal genitore' : 'dal docente'}
+                </span>
+                {g.motivo && <span className="text-xs text-gray-500">— {g.motivo}</span>}
+              </li>
+            ))}
           </ul>
         )}
       </div>

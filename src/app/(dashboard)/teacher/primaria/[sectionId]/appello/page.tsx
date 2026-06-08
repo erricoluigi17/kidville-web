@@ -7,7 +7,24 @@ import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { saveLocalAppello, syncPendingAppello } from '@/lib/offline/syncEngine';
 
 type Stato = 'presente' | 'assente' | 'ritardo' | 'uscita_anticipata';
-interface Riga { id: string; nome: string; cognome: string; stato: Stato | null }
+interface Riga {
+  id: string; nome: string; cognome: string; stato: Stato | null;
+  orario_entrata: string | null; orario_uscita: string | null;
+  presenza_id: string | null; giustificata: boolean;
+  giustificazione_testo: string | null; giust_vista_il: string | null;
+}
+
+// Estrae HH:MM da un timestamp ISO; '' se assente.
+function oraDaTs(ts: string | null): string {
+  if (!ts) return '';
+  const d = new Date(ts);
+  return isNaN(d.getTime()) ? '' : `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+function oraCorrente(): string {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
 
 const STATI: { key: Stato; label: string; icon: React.ReactNode; cls: string }[] = [
   { key: 'presente', label: 'Presente', icon: <Check size={14} />, cls: 'bg-kidville-success text-white' },
@@ -52,9 +69,8 @@ export default function AppelloPage() {
     return () => window.removeEventListener('online', flush);
   }, [load]);
 
-  const setStato = async (alunnoId: string, stato: Stato) => {
-    setRighe((prev) => prev.map((r) => (r.id === alunnoId ? { ...r, stato } : r)));
-    // Offline-first: se non c'è rete, accoda localmente e sincronizza dopo.
+  // Invia (o riprova offline) lo stato di un alunno, con eventuali orari.
+  const invia = async (alunnoId: string, stato: Stato, orarioEntrata?: string, orarioUscita?: string) => {
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
       await saveLocalAppello({ id: `${alunnoId}|${data}`, section_id: sectionId, alunno_id: alunnoId, data, stato, aggiornato_il: new Date().toISOString() });
       return;
@@ -63,7 +79,7 @@ export default function AppelloPage() {
       const res = await fetch(`/api/primaria/appello?userId=${userId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
-        body: JSON.stringify({ sectionId, data, alunnoId, stato }),
+        body: JSON.stringify({ sectionId, data, alunnoId, stato, orarioEntrata, orarioUscita }),
       });
       if (!res.ok) throw new Error('save failed');
     } catch {
@@ -71,9 +87,40 @@ export default function AppelloPage() {
     }
   };
 
+  const setStato = async (alunnoId: string, stato: Stato) => {
+    // Per ritardo/uscita anticipata propone l'ora corrente come default modificabile.
+    const oraEntrata = stato === 'ritardo' ? oraCorrente() : '';
+    const oraUscita = stato === 'uscita_anticipata' ? oraCorrente() : '';
+    setRighe((prev) => prev.map((r) => (r.id === alunnoId
+      ? { ...r, stato, orario_entrata: oraEntrata ? `${data}T${oraEntrata}:00` : null, orario_uscita: oraUscita ? `${data}T${oraUscita}:00` : null }
+      : r)));
+    await invia(alunnoId, stato, oraEntrata || undefined, oraUscita || undefined);
+  };
+
+  // Aggiorna l'orario (entrata/uscita) di una riga già in stato ritardo/uscita.
+  const setOrario = async (alunnoId: string, ora: string) => {
+    const riga = righe.find((r) => r.id === alunnoId);
+    if (!riga || !riga.stato) return;
+    const isEntrata = riga.stato === 'ritardo';
+    setRighe((prev) => prev.map((r) => (r.id === alunnoId
+      ? { ...r, [isEntrata ? 'orario_entrata' : 'orario_uscita']: ora ? `${data}T${ora}:00` : null }
+      : r)));
+    await invia(alunnoId, riga.stato, isEntrata ? ora : undefined, isEntrata ? undefined : ora);
+  };
+
+  // Presa visione della giustifica inserita dal genitore.
+  const presaVisione = async (presenzaId: string) => {
+    await fetch(`/api/primaria/presenze/giust-vista?userId=${userId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
+      body: JSON.stringify({ presenzaId }),
+    });
+    load();
+  };
+
   const tuttiPresenti = async () => {
     setSaving(true);
-    setRighe((prev) => prev.map((r) => ({ ...r, stato: 'presente' })));
+    setRighe((prev) => prev.map((r) => ({ ...r, stato: 'presente', orario_entrata: null, orario_uscita: null })));
     await fetch(`/api/primaria/appello?userId=${userId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
@@ -114,7 +161,7 @@ export default function AppelloPage() {
           {righe.map((r) => (
             <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 py-2.5">
               <span className="font-maven text-gray-800">{r.cognome} {r.nome}</span>
-              <div className="flex gap-1.5">
+              <div className="flex flex-wrap items-center gap-1.5">
                 {STATI.map((s) => (
                   <button
                     key={s.key}
@@ -128,6 +175,32 @@ export default function AppelloPage() {
                     <span className="hidden sm:inline">{s.label}</span>
                   </button>
                 ))}
+                {/* Orario di entrata (ritardo) / uscita (uscita anticipata). */}
+                {(r.stato === 'ritardo' || r.stato === 'uscita_anticipata') && (
+                  <label className="font-maven inline-flex items-center gap-1 text-xs text-gray-500">
+                    {r.stato === 'ritardo' ? 'Entrata' : 'Uscita'}
+                    <input
+                      type="time"
+                      value={oraDaTs(r.stato === 'ritardo' ? r.orario_entrata : r.orario_uscita)}
+                      onChange={(e) => setOrario(r.id, e.target.value)}
+                      className="rounded-pill border border-gray-200 px-2 py-0.5 text-xs"
+                    />
+                  </label>
+                )}
+                {/* Stato giustificazione genitore + presa visione del docente. */}
+                {r.giustificata && (
+                  r.giust_vista_il ? (
+                    <span className="font-maven text-[11px] text-kidville-success" title={r.giustificazione_testo ?? undefined}>✓ giustif. vista</span>
+                  ) : (
+                    <button
+                      onClick={() => r.presenza_id && presaVisione(r.presenza_id)}
+                      title={r.giustificazione_testo ?? 'Giustificata dal genitore'}
+                      className="font-maven rounded-pill bg-amber-100 px-2.5 py-1 text-[11px] text-amber-700"
+                    >
+                      Giustificata · presa visione
+                    </button>
+                  )
+                )}
               </div>
             </li>
           ))}

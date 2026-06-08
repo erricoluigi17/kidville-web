@@ -7,29 +7,44 @@ import { useState } from 'react';
 import {
   Home, Bell, MessageCircle, BookOpen, MoreHorizontal,
   Image, Package, FileText, BarChart3, CheckSquare, X, Euro, UtensilsCrossed,
+  GraduationCap, ClipboardList,
 } from 'lucide-react';
+import { useChildSchoolType } from '@/lib/auth/use-child-school-type';
 
-const mainTabs = [
-  { id: 'home', label: 'Home', icon: Home, href: '/parent' as const },
-  { id: 'avvisi', label: 'Avvisi', icon: Bell, href: '/parent/avvisi' as const },
-  { id: 'chat', label: 'Chat', icon: MessageCircle, href: '/parent/chat' as const },
-  { id: 'diario', label: 'Diario', icon: BookOpen, href: '/parent/diary' as const },
-  { id: 'altro', label: 'Altro', icon: MoreHorizontal, href: null },
-] as const;
+// grado: 'comune' = visibile sempre; 'primaria'/'infanzia' = solo quel grado.
+type Grado = 'comune' | 'primaria' | 'infanzia';
 
-const extraItems = [
-  { id: 'mensa', label: 'Mensa', icon: UtensilsCrossed, href: '/parent/mensa' },
-  { id: 'gallery', label: 'Galleria', icon: Image, href: '/parent/gallery' },
-  { id: 'locker', label: 'Armadietto', icon: Package, href: '/parent/locker' },
-  { id: 'modulistica', label: 'Moduli', icon: FileText, href: '/parent/modulistica' },
-  { id: 'register', label: 'Registro', icon: BarChart3, href: '/parent/register' },
-  { id: 'attendance', label: 'Presenze', icon: CheckSquare, href: '/parent/attendance' },
-  { id: 'pagamenti', label: 'Pagamenti', icon: Euro, href: '/parent/pagamenti' },
+const extraAll = [
+  { id: 'mensa', label: 'Mensa', icon: UtensilsCrossed, href: '/parent/mensa', grado: 'comune' as Grado },
+  { id: 'gallery', label: 'Galleria', icon: Image, href: '/parent/gallery', grado: 'comune' as Grado },
+  { id: 'lezioni', label: 'Lezioni', icon: GraduationCap, href: '/parent/lezioni', grado: 'primaria' as Grado },
+  { id: 'compiti', label: 'Compiti', icon: ClipboardList, href: '/parent/compiti', grado: 'primaria' as Grado },
+  { id: 'locker', label: 'Armadietto', icon: Package, href: '/parent/locker', grado: 'infanzia' as Grado },
+  { id: 'attendance', label: 'Presenze', icon: CheckSquare, href: '/parent/attendance', grado: 'infanzia' as Grado },
+  { id: 'modulistica', label: 'Moduli', icon: FileText, href: '/parent/modulistica', grado: 'comune' as Grado },
+  { id: 'pagamenti', label: 'Pagamenti', icon: Euro, href: '/parent/pagamenti', grado: 'comune' as Grado },
 ] as const;
 
 export default function BottomNav() {
   const pathname = usePathname();
   const [showAltro, setShowAltro] = useState(false);
+  const { schoolType } = useChildSchoolType();
+  const isPrimaria = schoolType === 'primaria';
+
+  // Gating per grado: la primaria non vede le sezioni infanzia e viceversa.
+  const visibile = (g: Grado) => g === 'comune' || (isPrimaria ? g === 'primaria' : g === 'infanzia');
+  const extraItems = extraAll.filter((i) => visibile(i.grado));
+
+  // 4ª voce della barra: Registro (primaria) o Diario (infanzia/nido).
+  const mainTabs = [
+    { id: 'home', label: 'Home', icon: Home, href: '/parent' as const },
+    { id: 'avvisi', label: 'Avvisi', icon: Bell, href: '/parent/avvisi' as const },
+    { id: 'chat', label: 'Chat', icon: MessageCircle, href: '/parent/chat' as const },
+    isPrimaria
+      ? { id: 'registro', label: 'Registro', icon: BarChart3, href: '/parent/register' as const }
+      : { id: 'diario', label: 'Diario', icon: BookOpen, href: '/parent/diary' as const },
+    { id: 'altro', label: 'Altro', icon: MoreHorizontal, href: null },
+  ] as const;
 
   const isActive = (href: string) => {
     if (href === '/parent') return pathname === '/parent';

@@ -41,7 +41,7 @@ export async function sezioniDiUtentePerGrado(
   if (ids.length === 0) return []
   const { data } = await supabase
     .from('sections')
-    .select('id, name, school_type, scholastic_year')
+    .select('id, name, school_type')
     .in('id', ids)
     .eq('school_type', schoolType)
   return (data ?? []) as SezioneInfo[]

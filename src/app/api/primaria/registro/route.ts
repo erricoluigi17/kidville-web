@@ -26,6 +26,9 @@ export async function GET(request: NextRequest) {
     const supabase = await createAdminClient()
     const giorno = giornoSettimana(data)
 
+    // NB: niente embed `utenti(...)` nei join — la relazione firme_docenti/
+    // orario_settimanale → utenti non è nel cache PostgREST e farebbe fallire
+    // l'intera query (la firma non comparirebbe). I nomi docente si risolvono a parte.
     const [{ data: campanelle }, { data: orarioCelle }, { data: righe }] = await Promise.all([
       supabase
         .from('campanelle')
@@ -35,7 +38,7 @@ export async function GET(request: NextRequest) {
         .order('ordine'),
       supabase
         .from('orario_settimanale')
-        .select('campanella_id, materia_id, docente_id, materie(nome, codice), utenti(nome, cognome)')
+        .select('campanella_id, materia_id, docente_id, materie(nome, codice)')
         .eq('section_id', sectionId)
         .eq('giorno_settimana', giorno),
       supabase
@@ -43,7 +46,7 @@ export async function GET(request: NextRequest) {
         .select(`
           id, ora_lezione, materia, materia_id, argomento, compiti, data_consegna_compiti, locked_il,
           materie(nome, codice),
-          firme_docenti(id, maestra_id, tipo_compresenza, argomento_proprio, compiti_propri, firmato_il, utenti(nome, cognome)),
+          firme_docenti(id, maestra_id, tipo_compresenza, argomento_proprio, compiti_propri, firmato_il),
           registro_destinatari(id, firma_id, alunno_id),
           allegati_registro(id, ambito, tipo, file_url, file_name)
         `)
@@ -52,9 +55,24 @@ export async function GET(request: NextRequest) {
         .order('ora_lezione'),
     ])
 
+    // Risoluzione nomi docente (firme + orario) senza dipendere dalle FK del cache.
+    const docenteIds = new Set<string>()
+    for (const c of orarioCelle ?? []) if (c.docente_id) docenteIds.add(c.docente_id as string)
+    for (const r of righe ?? []) for (const f of (r.firme_docenti ?? []) as { maestra_id: string }[]) if (f.maestra_id) docenteIds.add(f.maestra_id)
+    const nomiById = new Map<string, { nome: string; cognome: string }>()
+    if (docenteIds.size) {
+      const { data: docenti } = await supabase.from('utenti').select('id, nome, cognome').in('id', [...docenteIds])
+      for (const d of docenti ?? []) nomiById.set(d.id, { nome: d.nome, cognome: d.cognome })
+    }
+    const orarioConNomi = (orarioCelle ?? []).map((c) => ({ ...c, utenti: c.docente_id ? nomiById.get(c.docente_id as string) ?? null : null }))
+    const righeConNomi = (righe ?? []).map((r) => ({
+      ...r,
+      firme_docenti: ((r.firme_docenti ?? []) as { maestra_id: string }[]).map((f) => ({ ...f, utenti: nomiById.get(f.maestra_id) ?? null })),
+    }))
+
     return NextResponse.json({
       success: true,
-      data: { giorno, campanelle: campanelle ?? [], orarioCelle: orarioCelle ?? [], righe: righe ?? [] },
+      data: { giorno, campanelle: campanelle ?? [], orarioCelle: orarioConNomi, righe: righeConNomi },
     })
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Errore interno'

@@ -12,6 +12,8 @@ interface PrimariaData {
   lezioni: never[];
   valutazioni: never[];
   note: { id: string; richiede_firma: boolean; firmata_il: string | null }[];
+  assenze: never[];
+  materie: never[];
 }
 
 function RegisterInner() {
@@ -47,6 +49,36 @@ function RegisterInner() {
     load();
   };
 
+  // Giustifica un'assenza/ritardo/uscita del figlio (solo primaria).
+  const onGiustifica = async (dataAssenza: string, motivo: string) => {
+    await fetch(`/api/parent/presenze/giustifica?userId=${parentId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-user-id': parentId },
+      body: JSON.stringify({ studentId, data: dataAssenza, motivo }),
+    });
+    load();
+  };
+
+  // Dichiara il figlio impreparato a priori (giustifica didattica), con materia opzionale.
+  const onImpreparato = async (dataGiust: string, motivo: string, materiaId?: string) => {
+    await fetch(`/api/parent/giustifiche-didattiche?userId=${parentId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-user-id': parentId },
+      body: JSON.stringify({ studentId, data: dataGiust, motivo, materiaId }),
+    });
+    load();
+  };
+
+  // Comunica un'assenza in anticipo (anche per date future).
+  const onComunicaAssenza = async (dataAssenza: string, motivo: string) => {
+    await fetch(`/api/parent/presenze/comunica-assenza?userId=${parentId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-user-id': parentId },
+      body: JSON.stringify({ studentId, data: dataAssenza, motivo }),
+    });
+    load();
+  };
+
   if (!ready || loading) {
     return <div className="p-8 font-maven text-gray-400 flex items-center gap-2"><RefreshCw className="animate-spin" size={16} /> Caricamento…</div>;
   }
@@ -78,10 +110,14 @@ function RegisterInner() {
         </header>
         {data && (
           <PrimariaParentView
-            lezioni={data.lezioni}
             valutazioni={data.valutazioni}
             note={data.note as never[]}
+            assenze={data.assenze}
+            materie={data.materie}
             onSign={onSign}
+            onGiustifica={onGiustifica}
+            onImpreparato={onImpreparato}
+            onComunicaAssenza={onComunicaAssenza}
             signing={signing}
           />
         )}

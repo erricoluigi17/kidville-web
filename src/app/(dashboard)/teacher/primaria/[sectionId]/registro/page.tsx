@@ -28,8 +28,17 @@ export default function RegistroPage() {
   const [righe, setRighe] = useState<Riga[]>([]);
   const [materie, setMaterie] = useState<Materia[]>([]);
   const [alunni, setAlunni] = useState<Alunno[]>([]);
+  const [sezioni, setSezioni] = useState<{ id: string; name: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState<{ ordine: number; materiaId: string } | null>(null);
+
+  // Elenco di tutte le sezioni primaria, per la "firma in un'altra classe" (supplenza).
+  useEffect(() => {
+    fetch(`/api/primaria/sezioni?userId=${userId}`)
+      .then((r) => r.json())
+      .then((d) => { if (d.success) setSezioni(d.data); })
+      .catch(() => {});
+  }, [userId]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -168,6 +177,7 @@ export default function RegistroPage() {
           ordine={modal.ordine}
           materie={materie}
           alunni={alunni}
+          sezioni={sezioni}
           defaultMateriaId={modal.materiaId}
           onClose={() => setModal(null)}
           onSaved={() => { setModal(null); load(); }}
@@ -178,12 +188,17 @@ export default function RegistroPage() {
 }
 
 function FirmaModal({
-  sectionId, userId, data, ordine, materie, alunni, defaultMateriaId, onClose, onSaved,
+  sectionId, userId, data, ordine, materie, alunni, sezioni, defaultMateriaId, onClose, onSaved,
 }: {
   sectionId: string; userId: string; data: string; ordine: number;
-  materie: Materia[]; alunni: Alunno[]; defaultMateriaId: string;
+  materie: Materia[]; alunni: Alunno[]; sezioni: { id: string; name: string }[]; defaultMateriaId: string;
   onClose: () => void; onSaved: () => void;
 }) {
+  // Classe in cui si firma: di default quella corrente, ma il docente può
+  // sceglierne un'altra (supplenza). Cambiando classe si azzera la materia
+  // (le materie sono per-sezione e non sono caricate per le altre classi).
+  const [targetSectionId, setTargetSectionId] = useState(sectionId);
+  const altraClasse = targetSectionId !== sectionId;
   const [materiaId, setMateriaId] = useState(defaultMateriaId);
   const [tipo, setTipo] = useState<'principale' | 'compresenza' | 'cofirma' | 'sostegno'>('principale');
   const [argomento, setArgomento] = useState('');
@@ -217,9 +232,9 @@ function FirmaModal({
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
       body: JSON.stringify({
-        sectionId, data, oraLezione: ordine, materiaId: materiaId || null,
+        sectionId: targetSectionId, data, oraLezione: ordine, materiaId: altraClasse ? null : (materiaId || null),
         argomento, compiti, tipoCompresenza: tipo,
-        argomentoProprio, compitiPropri, destinatariIds: tipo === 'sostegno' ? destinatari : [],
+        argomentoProprio, compitiPropri, destinatariIds: tipo === 'sostegno' && !altraClasse ? destinatari : [],
       }),
     });
     const d = await r.json();
@@ -238,13 +253,26 @@ function FirmaModal({
         <div className="max-h-[70vh] space-y-3 overflow-y-auto p-4">
           {error && <div className="rounded-card bg-kidville-error/10 text-kidville-error px-3 py-2 text-sm font-maven">{error}</div>}
 
-          <div>
-            <label className="block font-maven text-xs text-gray-500">Materia</label>
-            <select value={materiaId} onChange={(e) => setMateriaId(e.target.value)} className="font-maven w-full rounded-pill border border-gray-200 px-3 py-2 text-sm">
-              <option value="">— seleziona —</option>
-              {materie.map((m) => <option key={m.id} value={m.id}>{m.nome}</option>)}
-            </select>
-          </div>
+          {/* Classe: di default la corrente, ma è possibile firmare in un'altra (supplenza). */}
+          {sezioni.length > 1 && (
+            <div>
+              <label className="block font-maven text-xs text-gray-500">Classe</label>
+              <select value={targetSectionId} onChange={(e) => setTargetSectionId(e.target.value)} className="font-maven w-full rounded-pill border border-gray-200 px-3 py-2 text-sm">
+                {sezioni.map((s) => <option key={s.id} value={s.id}>{s.name}{s.id === sectionId ? ' (questa classe)' : ''}</option>)}
+              </select>
+              {altraClasse && <p className="mt-1 font-maven text-[11px] text-amber-600">Stai firmando in un&apos;altra classe (supplenza).</p>}
+            </div>
+          )}
+
+          {!altraClasse && (
+            <div>
+              <label className="block font-maven text-xs text-gray-500">Materia</label>
+              <select value={materiaId} onChange={(e) => setMateriaId(e.target.value)} className="font-maven w-full rounded-pill border border-gray-200 px-3 py-2 text-sm">
+                <option value="">— seleziona —</option>
+                {materie.map((m) => <option key={m.id} value={m.id}>{m.nome}</option>)}
+              </select>
+            </div>
+          )}
 
           <div>
             <label className="block font-maven text-xs text-gray-500">Tipo firma</label>

@@ -29,8 +29,14 @@ export function useParentIdentity(): ParentIdentity {
     const fromUrl = searchParams.get('id');
     const current = getCurrentStudentId(searchParams);
 
-    // Se l'ID è esplicito nell'URL, è già corretto
-    if (fromUrl) { setStudentId(fromUrl); setReady(true); return; }
+    // Se l'ID è esplicito nell'URL, è già corretto e va persistito (così la
+    // scelta del figlio sopravvive alla navigazione tra le pagine).
+    if (fromUrl) {
+      try { localStorage.setItem('kv_student_id', fromUrl); } catch { /* ignore */ }
+      setStudentId(fromUrl);
+      setReady(true);
+      return;
+    }
 
     // Se non è il fallback demo, è già persistito in localStorage
     if (current !== DEFAULT_STUDENT_ID) { setStudentId(current); setReady(true); return; }

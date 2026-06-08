@@ -7,9 +7,11 @@ import { motion } from 'framer-motion';
 import {
   Bell, MessageCircle, BookOpen, Image as ImageIcon,
   Package, FileText, BarChart3, CheckSquare, ChevronRight, Euro, UtensilsCrossed,
+  GraduationCap, ClipboardList,
 } from 'lucide-react';
 import { withIdentity } from '@/lib/auth/current-user';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
+import { useChildSchoolType } from '@/lib/auth/use-child-school-type';
 import { PagamentiSummary } from '@/components/features/parent/pagamenti/PagamentiSummary';
 
 const tiles = [
@@ -62,6 +64,7 @@ const tiles = [
     bg: '#FFF8E1',
     fg: '#006A5F',
     sub: '#A0A0A0',
+    grado: 'infanzia',
   },
   {
     id: 'gallery',
@@ -92,6 +95,29 @@ const tiles = [
     bg: '#FDC400',
     fg: '#006A5F',
     sub: 'rgba(0,106,95,0.55)',
+    grado: 'primaria',
+  },
+  {
+    id: 'lezioni',
+    label: 'Lezioni',
+    desc: 'Argomenti svolti',
+    icon: GraduationCap,
+    href: '/parent/lezioni',
+    bg: '#E8F5F3',
+    fg: '#006A5F',
+    sub: '#A0A0A0',
+    grado: 'primaria',
+  },
+  {
+    id: 'compiti',
+    label: 'Compiti',
+    desc: 'Da svolgere',
+    icon: ClipboardList,
+    href: '/parent/compiti',
+    bg: '#FDC400',
+    fg: '#006A5F',
+    sub: 'rgba(0,106,95,0.55)',
+    grado: 'primaria',
   },
   {
     id: 'locker',
@@ -102,6 +128,7 @@ const tiles = [
     bg: '#FFF8E1',
     fg: '#006A5F',
     sub: '#A0A0A0',
+    grado: 'infanzia',
   },
   {
     id: 'attendance',
@@ -112,6 +139,7 @@ const tiles = [
     bg: '#E8F5F3',
     fg: '#006A5F',
     sub: '#A0A0A0',
+    grado: 'infanzia',
   },
 ] as const;
 
@@ -124,6 +152,13 @@ function greetingByHour() {
 
 function ParentHomeContent() {
   const { parentId, studentId } = useParentIdentity();
+  const { schoolType } = useChildSchoolType();
+  const isPrimaria = schoolType === 'primaria';
+  // Gating per grado: la primaria non vede le tile infanzia e viceversa.
+  const visibleTiles = tiles.filter((t) => {
+    const g = (t as { grado?: string }).grado;
+    return !g || (isPrimaria ? g === 'primaria' : g === 'infanzia');
+  });
 
   const [studentName, setStudentName] = useState('');
   const [firstName, setFirstName] = useState('');
@@ -296,7 +331,7 @@ function ParentHomeContent() {
 
       {/* ── TILE GRID ─────────────────────────────── */}
       <div className="px-4 grid grid-cols-2 gap-3">
-        {tiles.map((tile, i) => {
+        {visibleTiles.map((tile, i) => {
           const Icon = tile.icon;
           return (
             <motion.div

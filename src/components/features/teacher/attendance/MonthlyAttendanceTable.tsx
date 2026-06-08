@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { ChevronLeft, ChevronRight, RefreshCw, AlertCircle, Download } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import type { MonthlyAttendanceRecord } from '@/app/api/attendance/monthly/route';
+import { calcolaOreAssenza } from '@/lib/primaria/oreAssenza';
 
 type AttendanceStatus = 'presente' | 'assente' | 'ritardo' | 'uscita_anticipata' | 'nessun_dato';
 
@@ -15,7 +16,7 @@ interface StudentMonthData {
     byDate: Record<string, MonthlyAttendanceRecord>;
 }
 
-interface StudentSummary { presenze: number; assenze: number; ritardi: number; uscite: number; }
+interface StudentSummary { presenze: number; assenze: number; ritardi: number; uscite: number; oreAssenza: number; }
 
 // Palette Kidville
 const KV = {
@@ -80,20 +81,34 @@ function calcSummary(s: StudentMonthData): StudentSummary {
         else if (r.stato === 'ritardo') ritardi++;
         else if (r.stato === 'uscita_anticipata') uscite++;
     }
-    return { presenze, assenze, ritardi, uscite };
+    // Monte ore di assenza (assenze intere + ritardi + permessi), giornata di default.
+    const { oreTotali } = calcolaOreAssenza(
+        Object.values(s.byDate).map((r) => ({ stato: r.stato, orario_entrata: r.orario_entrata, orario_uscita: r.orario_uscita })),
+    );
+    return { presenze, assenze, ritardi, uscite, oreAssenza: oreTotali };
 }
 
 // ─── Cella ───────────────────────────────────────────────────────────────────
 
+// HH:MM da un timestamp ISO (vuoto se assente/non valido).
+function hhmm(ts: string | null | undefined): string {
+    if (!ts) return '';
+    const d = new Date(ts);
+    return isNaN(d.getTime()) ? '' : `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
 function Cell({ record, isWeekend }: { record?: MonthlyAttendanceRecord; isWeekend: boolean }) {
     const s: AttendanceStatus = record?.stato ?? 'nessun_dato';
     const cfg = STATUS_CONFIG[s];
+    const ora = s === 'ritardo' ? hhmm(record?.orario_entrata) : s === 'uscita_anticipata' ? hhmm(record?.orario_uscita) : '';
+    const title = ora ? `${s === 'ritardo' ? 'Entrata' : 'Uscita'} ${ora}` : undefined;
     return (
-        <td className={`p-0 border-b border-gray-100 ${isWeekend ? 'bg-gray-50/60' : ''}`} style={{ width: 38 }}>
-            <div className="flex items-center justify-center" style={{ height: 40 }}>
+        <td className={`p-0 border-b border-gray-100 ${isWeekend ? 'bg-gray-50/60' : ''}`} style={{ width: 38 }} title={title}>
+            <div className="flex flex-col items-center justify-center" style={{ height: 40 }}>
                 <span className={`text-[11px] font-black w-6 h-6 rounded-full flex items-center justify-center ${s !== 'nessun_dato' ? `${cfg.bg} ${cfg.text}` : cfg.text}`}>
                     {cfg.short}
                 </span>
+                {ora && <span className="text-[8px] leading-none text-gray-500 mt-0.5">{ora}</span>}
             </div>
         </td>
     );
@@ -355,10 +370,10 @@ export function MonthlyAttendanceTable({ sezione = 'Girasoli' }: { sezione?: str
                                     );
                                 })}
                                 {/* Summary header — sticky right */}
-                                <th style={{ position: 'sticky', top: 0, right: 0, zIndex: 25, width: 120, background: KV.green }}
+                                <th style={{ position: 'sticky', top: 0, right: 0, zIndex: 25, width: 150, background: KV.green }}
                                     className="border-b border-l border-white/20 text-center">
                                     <div className="flex justify-around py-3 px-2">
-                                        {['P','A','R','U'].map(l => <span key={l} className="text-white/80 text-[10px] font-barlow font-black">{l}</span>)}
+                                        {['P','A','R','U','ORE'].map(l => <span key={l} className="text-white/80 text-[10px] font-barlow font-black">{l}</span>)}
                                     </div>
                                 </th>
                             </tr>
@@ -401,7 +416,7 @@ export function MonthlyAttendanceTable({ sezione = 'Girasoli' }: { sezione?: str
                                             <Cell key={toISO(day)} record={student.byDate[toISO(day)]} isWeekend={day.getDay()===0||day.getDay()===6} />
                                         ))}
                                         {/* Summary — sticky right */}
-                                        <td style={{ position: 'sticky', right: 0, zIndex: 10, width: 120, background: rowBg }}
+                                        <td style={{ position: 'sticky', right: 0, zIndex: 10, width: 150, background: rowBg }}
                                             className="border-b border-l border-gray-100 group-hover:bg-green-50/60 transition-colors">
                                             <div className="flex items-center justify-around px-2 py-1.5">
                                                 <div className="flex flex-col items-center">
@@ -422,6 +437,11 @@ export function MonthlyAttendanceTable({ sezione = 'Girasoli' }: { sezione?: str
                                                 <div className="flex flex-col items-center">
                                                     <span className="font-barlow font-black text-sm text-blue-500">{s.uscite}</span>
                                                     <span className="font-maven text-[8px] text-gray-300">U</span>
+                                                </div>
+                                                <div className="w-px h-5 bg-gray-100"/>
+                                                <div className="flex flex-col items-center">
+                                                    <span className="font-barlow font-black text-sm text-gray-700">{s.oreAssenza}</span>
+                                                    <span className="font-maven text-[8px] text-gray-300">ORE</span>
                                                 </div>
                                             </div>
                                         </td>

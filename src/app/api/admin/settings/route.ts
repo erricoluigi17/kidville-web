@@ -72,11 +72,63 @@ export async function PATCH(request: Request) {
       'mensa_giorni_attivi',
       'mensa_settimane_rotazione',
       'mensa_soglia_saldo_basso',
+      'timelock_giorni_classe_orale',
+      'timelock_giorni_scritto_pratico',
+      'notif_buffer_valutazioni_min',
+      'funzioni_matrice',
+      'diario_config',
+      'presenze_config',
+      'note_config',
+      'avvisi_config',
+      'chat_config',
+      'galleria_config',
+      'armadietto_config',
+      'modulistica_config',
+    ]
+    // Chiavi JSONB salvate in shallow-merge con l'esistente, così pannelli
+    // diversi possono salvare indipendentemente senza sovrascriversi.
+    const mergedKeys = [
+      'funzioni_matrice',
+      'diario_config',
+      'presenze_config',
+      'note_config',
+      'avvisi_config',
+      'chat_config',
+      'galleria_config',
+      'armadietto_config',
+      'modulistica_config',
     ]
     const updates: Record<string, unknown> = { scuola_id: scuolaId }
     for (const f of allowed) if (body[f] !== undefined) updates[f] = body[f]
 
     const supabase = await createAdminClient()
+
+    const incomingMerged = mergedKeys.filter((k) => updates[k] !== undefined)
+    if (incomingMerged.length > 0) {
+      const { data: existing } = await supabase
+        .from('admin_settings')
+        .select(incomingMerged.join(','))
+        .eq('scuola_id', scuolaId)
+        .maybeSingle()
+      const existingRow = (existing ?? {}) as Record<string, unknown>
+      for (const k of incomingMerged) {
+        const prev = (existingRow[k] ?? {}) as Record<string, unknown>
+        const next = updates[k] as Record<string, unknown>
+        if (k === 'funzioni_matrice') {
+          // merge per-grado: {primaria: {...prev, ...next}, ...}
+          const merged: Record<string, unknown> = { ...prev }
+          for (const grado of Object.keys(next)) {
+            merged[grado] = {
+              ...((prev[grado] as Record<string, unknown>) ?? {}),
+              ...((next[grado] as Record<string, unknown>) ?? {}),
+            }
+          }
+          updates[k] = merged
+        } else {
+          updates[k] = { ...prev, ...next }
+        }
+      }
+    }
     const { data, error } = await supabase
       .from('admin_settings')
       .upsert(updates, { onConflict: 'scuola_id' })

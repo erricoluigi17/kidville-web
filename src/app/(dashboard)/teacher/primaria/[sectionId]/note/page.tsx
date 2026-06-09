@@ -31,11 +31,15 @@ export default function NotePage() {
   const [richiedeFirma, setRichiedeFirma] = useState(true);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
+  const [apiError, setApiError] = useState<string | null>(null);
 
   useEffect(() => {
     fetch(`/api/primaria/classe/${sectionId}?userId=${userId}`)
       .then((r) => r.json())
-      .then((d) => { if (d.success) setAlunni(d.data.alunni ?? []); });
+      .then((d) => {
+        if (d.success) { setAlunni(d.data.alunni ?? []); setApiError(null); }
+        else setApiError(d.error ?? 'Impossibile caricare gli alunni');
+      });
   }, [sectionId, userId]);
 
   const loadNote = useCallback(async () => {
@@ -70,6 +74,12 @@ export default function NotePage() {
         <h2 className="font-barlow text-lg font-bold text-gray-800 mb-3 flex items-center gap-2">
           <AlertTriangle size={18} className="text-amber-500" /> Nuova nota
         </h2>
+
+        {apiError && (
+          <div className="mb-3 flex items-center gap-2 rounded-card bg-red-50 px-3 py-2 font-maven text-sm text-red-600">
+            <AlertTriangle size={14} /> {apiError}
+          </div>
+        )}
 
         <div className="mb-2 flex items-center justify-between">
           <label className="font-maven text-xs text-gray-500">Alunni</label>

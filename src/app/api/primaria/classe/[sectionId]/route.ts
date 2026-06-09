@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { getRequestUserId } from '@/lib/auth/require-staff'
+import { getRequestUserId, loadAppUser } from '@/lib/auth/require-staff'
 import { loadGradoContext } from '@/lib/auth/require-grado'
 import { sezioniDiUtente, materieDiDocenteInSezione } from '@/lib/sezioni/docenti'
 
@@ -22,10 +22,15 @@ export async function GET(
 
     const supabase = await createAdminClient()
 
-    // Scoping: il docente deve essere assegnato alla sezione.
-    const mieSezioni = await sezioniDiUtente(supabase, userId)
-    if (!mieSezioni.includes(sectionId)) {
-      return NextResponse.json({ error: 'Sezione non assegnata al docente' }, { status: 403 })
+    // Admin/coordinator bypass: possono accedere a qualsiasi sezione.
+    const appUser = await loadAppUser(userId)
+    const isStaff = appUser?.role === 'admin' || appUser?.role === 'coordinator'
+
+    if (!isStaff) {
+      const mieSezioni = await sezioniDiUtente(supabase, userId)
+      if (!mieSezioni.includes(sectionId)) {
+        return NextResponse.json({ error: 'Sezione non assegnata al docente' }, { status: 403 })
+      }
     }
 
     const [{ data: section }, { data: alunni }, materieIds] = await Promise.all([

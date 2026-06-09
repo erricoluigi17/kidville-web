@@ -7,7 +7,7 @@ import { useState } from 'react';
 import {
   Home, Bell, MessageCircle, BookOpen, MoreHorizontal,
   Image, Package, FileText, BarChart3, CheckSquare, X, Euro, UtensilsCrossed,
-  GraduationCap, ClipboardList,
+  GraduationCap, ClipboardList, AlertTriangle,
 } from 'lucide-react';
 import { useChildSchoolType } from '@/lib/auth/use-child-school-type';
 
@@ -19,6 +19,9 @@ const extraAll = [
   { id: 'gallery', label: 'Galleria', icon: Image, href: '/parent/gallery', grado: 'comune' as Grado },
   { id: 'lezioni', label: 'Lezioni', icon: GraduationCap, href: '/parent/lezioni', grado: 'primaria' as Grado },
   { id: 'compiti', label: 'Compiti', icon: ClipboardList, href: '/parent/compiti', grado: 'primaria' as Grado },
+  { id: 'note', label: 'Note', icon: AlertTriangle, href: '/parent/primaria/note', grado: 'primaria' as Grado },
+  { id: 'assenze', label: 'Assenze', icon: CheckSquare, href: '/parent/primaria/assenze', grado: 'primaria' as Grado },
+  { id: 'pagelle', label: 'Pagelle', icon: FileText, href: '/parent/primaria/pagelle', grado: 'primaria' as Grado },
   { id: 'locker', label: 'Armadietto', icon: Package, href: '/parent/locker', grado: 'infanzia' as Grado },
   { id: 'attendance', label: 'Presenze', icon: CheckSquare, href: '/parent/attendance', grado: 'infanzia' as Grado },
   { id: 'modulistica', label: 'Moduli', icon: FileText, href: '/parent/modulistica', grado: 'comune' as Grado },
@@ -41,7 +44,7 @@ export default function BottomNav() {
     { id: 'avvisi', label: 'Avvisi', icon: Bell, href: '/parent/avvisi' as const },
     { id: 'chat', label: 'Chat', icon: MessageCircle, href: '/parent/chat' as const },
     isPrimaria
-      ? { id: 'registro', label: 'Registro', icon: BarChart3, href: '/parent/register' as const }
+      ? { id: 'scuola', label: 'Scuola', icon: BarChart3, href: '/parent/primaria' as const }
       : { id: 'diario', label: 'Diario', icon: BookOpen, href: '/parent/diary' as const },
     { id: 'altro', label: 'Altro', icon: MoreHorizontal, href: null },
   ] as const;

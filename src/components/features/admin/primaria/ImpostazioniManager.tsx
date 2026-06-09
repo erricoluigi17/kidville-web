@@ -3,13 +3,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Save } from 'lucide-react';
 
-type Matrice = Record<string, Record<string, boolean>>;
-
-const GRADI = ['primaria', 'infanzia', 'nido'];
-const FUNZIONI = ['registro', 'valutazioni', 'note', 'orario', 'appello', 'diario', 'gallery'];
-
+// Vincoli temporali e buffer notifiche della didattica primaria.
+// La matrice funzioni per grado si gestisce da Impostazioni → Funzioni & moduli.
 export function ImpostazioniManager({ scuolaId, userId }: { scuolaId: string; userId: string }) {
-  const [matrice, setMatrice] = useState<Matrice>({});
   const [classeOrale, setClasseOrale] = useState(2);
   const [scrittoPratico, setScrittoPratico] = useState(15);
   const [buffer, setBuffer] = useState(10);
@@ -19,7 +15,6 @@ export function ImpostazioniManager({ scuolaId, userId }: { scuolaId: string; us
     const r = await fetch(`/api/admin/primaria/impostazioni?scuolaId=${scuolaId}`);
     const d = await r.json();
     if (d.success) {
-      setMatrice(d.data.funzioni_matrice ?? {});
       setClasseOrale(d.data.timelock_giorni_classe_orale ?? 2);
       setScrittoPratico(d.data.timelock_giorni_scritto_pratico ?? 15);
       setBuffer(d.data.notif_buffer_valutazioni_min ?? 10);
@@ -28,13 +23,6 @@ export function ImpostazioniManager({ scuolaId, userId }: { scuolaId: string; us
 
   useEffect(() => { load(); }, [load]);
 
-  const toggle = (grado: string, funzione: string) => {
-    setMatrice((prev) => ({
-      ...prev,
-      [grado]: { ...(prev[grado] ?? {}), [funzione]: !(prev[grado]?.[funzione]) },
-    }));
-  };
-
   const salva = async () => {
     setMsg('');
     const r = await fetch(`/api/admin/primaria/impostazioni?userId=${userId}`, {
@@ -42,7 +30,6 @@ export function ImpostazioniManager({ scuolaId, userId }: { scuolaId: string; us
       headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
       body: JSON.stringify({
         scuolaId,
-        funzioni_matrice: matrice,
         timelock_giorni_classe_orale: classeOrale,
         timelock_giorni_scritto_pratico: scrittoPratico,
         notif_buffer_valutazioni_min: buffer,
@@ -55,34 +42,10 @@ export function ImpostazioniManager({ scuolaId, userId }: { scuolaId: string; us
   return (
     <div className="space-y-6">
       <section>
-        <h3 className="font-barlow text-base font-bold text-gray-800 mb-2">Matrice funzioni per grado</h3>
-        <p className="font-maven text-xs text-gray-400 mb-3">Quali moduli sono attivi per ciascun grado (preset + override).</p>
-        <div className="overflow-x-auto">
-          <table className="text-sm font-maven">
-            <thead>
-              <tr className="text-gray-400">
-                <th className="p-2 text-left">Grado</th>
-                {FUNZIONI.map((f) => <th key={f} className="p-2 text-center capitalize">{f}</th>)}
-              </tr>
-            </thead>
-            <tbody>
-              {GRADI.map((g) => (
-                <tr key={g} className="border-t border-gray-100">
-                  <td className="p-2 capitalize text-gray-700">{g}</td>
-                  {FUNZIONI.map((f) => (
-                    <td key={f} className="p-2 text-center">
-                      <input type="checkbox" checked={!!matrice[g]?.[f]} onChange={() => toggle(g, f)} />
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <section>
         <h3 className="font-barlow text-base font-bold text-gray-800 mb-2">Vincoli temporali e notifiche</h3>
+        <p className="font-maven text-xs text-gray-400 mb-3">
+          Finestre di modifica del registro e buffer di invio notifiche valutazioni. L&apos;attivazione dei moduli per grado si gestisce da Impostazioni → Funzioni &amp; moduli.
+        </p>
         <div className="flex flex-wrap gap-4">
           <label className="font-maven text-sm text-gray-600">
             Registro/orali (giorni)

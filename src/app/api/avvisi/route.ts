@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/server-client';
+import { getModuleConfig } from '@/lib/settings/module-config';
 
 // GET /api/avvisi?scope=globale|classe&classe=xxx&parentId=xxx
 // Lista avvisi con filtri
@@ -140,6 +141,25 @@ export async function POST(request: Request) {
         }
 
         const supabase = await createAdminClient();
+
+        // Ruoli abilitati alla pubblicazione, configurabili da Impostazioni → Avvisi.
+        const { data: autore } = await supabase
+            .from('utenti')
+            .select('id, role, ruolo, scuola_id')
+            .eq('id', author_id)
+            .maybeSingle();
+        const ruolo = (autore?.role || autore?.ruolo || '').toLowerCase();
+        const gruppo = ['admin', 'coordinator'].includes(ruolo) ? 'admin' : 'teacher';
+        const avvisiCfg = await getModuleConfig<{ ruoli_pubblicazione: string[] }>(
+            supabase, 'avvisi_config', autore?.scuola_id
+        );
+        const abilitati = avvisiCfg.ruoli_pubblicazione ?? ['admin'];
+        if (!abilitati.includes(gruppo)) {
+            return NextResponse.json(
+                { error: 'La pubblicazione di avvisi è riservata alla segreteria (vedi Impostazioni → Avvisi)' },
+                { status: 403 }
+            );
+        }
 
         const { data, error } = await supabase
             .from('avvisi')

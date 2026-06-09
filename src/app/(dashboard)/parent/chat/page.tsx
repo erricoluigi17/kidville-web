@@ -315,6 +315,14 @@ function ParentChatContent() {
                 </button>
             </div>
 
+            {chatCfg && !chatCfg.in_orario && (
+                <div className="mb-4 rounded-2xl bg-amber-50 border border-amber-200 px-4 py-3 font-maven text-sm text-amber-800">
+                    {chatCfg.risposta_fuori_orario_msg || `I docenti rispondono dalle ${chatCfg.orario_docenti_da} alle ${chatCfg.orario_docenti_a} nei giorni scolastici.`}
+                </div>
+            )}
+            <div className="hidden">
+            </div>
+
             {/* Desktop */}
             <div className="hidden md:flex gap-4 h-[calc(100vh-200px)] min-h-[500px]">
                 <div className="w-80 flex-shrink-0 bg-white/80 backdrop-blur-xl rounded-3xl border border-white/40 shadow-sm overflow-hidden flex flex-col">

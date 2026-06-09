@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
-import { Check, X, Clock, LogOut, Users } from 'lucide-react';
+import { Check, X, Clock, LogOut, Users, BarChart2 } from 'lucide-react';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { saveLocalAppello, syncPendingAppello } from '@/lib/offline/syncEngine';
 
@@ -12,6 +12,19 @@ interface Riga {
   orario_entrata: string | null; orario_uscita: string | null;
   presenza_id: string | null; giustificata: boolean;
   giustificazione_testo: string | null; giust_vista_il: string | null;
+}
+interface AlunnoLight { id: string; nome: string; cognome: string }
+interface RiepilogoMateria { nome: string; minutiMancati: number; oreMancate: number }
+interface RiepilogoAssenze {
+  alunnoId: string; nome: string; cognome: string;
+  oreAssenza: number; oreRitardo: number; orePermesso: number; oreTotali: number;
+  perMateria?: Record<string, RiepilogoMateria>;
+}
+
+function annoScolasticoDefault(): { from: string; to: string } {
+  const oggi = new Date();
+  const anno = oggi.getMonth() >= 8 ? oggi.getFullYear() : oggi.getFullYear() - 1;
+  return { from: `${anno}-09-01`, to: `${anno + 1}-06-30` };
 }
 
 // Estrae HH:MM da un timestamp ISO; '' se assente.
@@ -47,6 +60,15 @@ export default function AppelloPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
+  // Riepilogo ore assenze
+  const defaultPeriodo = annoScolasticoDefault();
+  const [alunniList, setAlunniList] = useState<AlunnoLight[]>([]);
+  const [riepilogoAlunnoId, setRiepilogoAlunnoId] = useState('');
+  const [riepilogoDal, setRiepilogoDal] = useState(defaultPeriodo.from);
+  const [riepilogoAl, setRiepilogoAl] = useState(defaultPeriodo.to);
+  const [riepilogo, setRiepilogo] = useState<RiepilogoAssenze | null>(null);
+  const [riepilogoLoading, setRiepilogoLoading] = useState(false);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -57,6 +79,27 @@ export default function AppelloPage() {
       setLoading(false);
     }
   }, [sectionId, data, userId]);
+
+  // Carica lista alunni per il selettore riepilogo
+  useEffect(() => {
+    fetch(`/api/primaria/classe/${sectionId}?userId=${userId}`)
+      .then((r) => r.json())
+      .then((d) => { if (d.success) setAlunniList(d.data.alunni ?? []); });
+  }, [sectionId, userId]);
+
+  const caricaRiepilogo = useCallback(async () => {
+    if (!riepilogoAlunnoId) { setRiepilogo(null); return; }
+    setRiepilogoLoading(true);
+    const r = await fetch(
+      `/api/primaria/ore-assenza?sectionId=${sectionId}&alunnoId=${riepilogoAlunnoId}&from=${riepilogoDal}&to=${riepilogoAl}&includiMaterie=true&userId=${userId}`
+    );
+    const d = await r.json();
+    setRiepilogoLoading(false);
+    if (d.success && d.data.length > 0) setRiepilogo(d.data[0]);
+    else setRiepilogo(null);
+  }, [sectionId, riepilogoAlunnoId, riepilogoDal, riepilogoAl, userId]);
+
+  useEffect(() => { caricaRiepilogo(); }, [caricaRiepilogo]);
 
   useEffect(() => {
     load();
@@ -134,6 +177,7 @@ export default function AppelloPage() {
   };
 
   return (
+    <div className="space-y-4">
     <div className="rounded-card bg-white p-5 shadow-sm">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h2 className="font-barlow text-lg font-bold text-gray-800">Appello</h2>
@@ -207,6 +251,76 @@ export default function AppelloPage() {
           {righe.length === 0 && <li className="py-3 font-maven text-gray-400 text-sm">Nessun alunno nella classe.</li>}
         </ul>
       )}
+    </div>
+
+    {/* ── Riepilogo ore assenze per materia ───────────────────────── */}
+    <div className="rounded-card bg-white p-5 shadow-sm">
+      <h3 className="font-barlow text-base font-bold text-gray-800 mb-1 flex items-center gap-2">
+        <BarChart2 size={16} className="text-kidville-green" /> Riepilogo ore assenze
+      </h3>
+      <p className="font-maven text-xs text-gray-400 mb-3">Monte ore mancate totali e per materia, in base all&apos;orario settimanale.</p>
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-3">
+        <select
+          value={riepilogoAlunnoId}
+          onChange={(e) => setRiepilogoAlunnoId(e.target.value)}
+          className="font-maven rounded-pill border border-gray-200 px-3 py-2 text-sm"
+        >
+          <option value="">Alunno…</option>
+          {alunniList.map((a) => <option key={a.id} value={a.id}>{a.cognome} {a.nome}</option>)}
+        </select>
+        <input type="date" value={riepilogoDal} onChange={(e) => setRiepilogoDal(e.target.value)}
+          className="font-maven rounded-pill border border-gray-200 px-3 py-2 text-sm" />
+        <input type="date" value={riepilogoAl} onChange={(e) => setRiepilogoAl(e.target.value)}
+          className="font-maven rounded-pill border border-gray-200 px-3 py-2 text-sm" />
+      </div>
+
+      {!riepilogoAlunnoId ? (
+        <p className="font-maven text-sm text-gray-400">Seleziona un alunno.</p>
+      ) : riepilogoLoading ? (
+        <p className="font-maven text-sm text-gray-400">Calcolo in corso…</p>
+      ) : !riepilogo ? (
+        <p className="font-maven text-sm text-gray-400">Nessuna assenza registrata nel periodo.</p>
+      ) : (
+        <div className="space-y-3">
+          {/* Totale */}
+          <div className="grid grid-cols-4 gap-2">
+            {[
+              { label: 'Ore assenze', val: riepilogo.oreAssenza },
+              { label: 'Ore ritardi', val: riepilogo.oreRitardo },
+              { label: 'Ore permessi', val: riepilogo.orePermesso },
+              { label: 'Totale ore', val: riepilogo.oreTotali },
+            ].map((s) => (
+              <div key={s.label} className="rounded-card bg-kidville-green/5 border border-kidville-green/20 px-3 py-2 text-center">
+                <p className="font-maven text-[10px] text-gray-500 mb-0.5">{s.label}</p>
+                <p className="font-barlow text-xl font-bold text-kidville-green">{s.val.toFixed(1)}h</p>
+              </div>
+            ))}
+          </div>
+          {/* Per materia */}
+          {riepilogo.perMateria && Object.keys(riepilogo.perMateria).length > 0 && (
+            <table className="w-full font-maven text-sm">
+              <thead>
+                <tr className="border-b border-gray-100">
+                  <th className="text-left py-1.5 text-xs font-semibold text-gray-500">Materia</th>
+                  <th className="text-right py-1.5 text-xs font-semibold text-gray-500">Ore mancate</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(riepilogo.perMateria)
+                  .sort((a, b) => b[1].oreMancate - a[1].oreMancate)
+                  .map(([id, m]) => (
+                    <tr key={id} className="border-b border-gray-50">
+                      <td className="py-1.5 text-gray-700">{m.nome}</td>
+                      <td className="py-1.5 text-right font-semibold text-kidville-green">{m.oreMancate.toFixed(1)}h</td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+    </div>
     </div>
   );
 }

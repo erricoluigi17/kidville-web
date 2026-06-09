@@ -6,13 +6,12 @@ import { UtensilsCrossed, CalendarRange, ClipboardList, Settings, CalendarPlus, 
 import Link from 'next/link';
 import { MenuBuilder } from '@/components/features/admin/mensa/MenuBuilder';
 import { MensaReport } from '@/components/features/admin/mensa/MensaReport';
-import { MensaSettings } from '@/components/features/admin/mensa/MensaSettings';
 import { PrenotazioneSegreteria } from '@/components/features/admin/mensa/PrenotazioneSegreteria';
 
 const SCUOLA_ID = '11111111-1111-1111-1111-111111111111';
 const DEV_ADMIN = '22222222-2222-2222-2222-555555555555';
 
-type Tab = 'menu' | 'report' | 'prenota' | 'impostazioni';
+type Tab = 'menu' | 'report' | 'prenota';
 
 function MensaInner() {
   const params = useSearchParams();
@@ -33,7 +32,6 @@ function MensaInner() {
     { id: 'menu', label: 'Menu', icon: <CalendarRange size={15} /> },
     { id: 'report', label: 'Report cucina', icon: <ClipboardList size={15} /> },
     { id: 'prenota', label: 'Inserisci ticket', icon: <CalendarPlus size={15} /> },
-    { id: 'impostazioni', label: 'Impostazioni', icon: <Settings size={15} /> },
   ];
 
   return (
@@ -59,13 +57,16 @@ function MensaInner() {
               {t.icon} {t.label}
             </button>
           ))}
+          <Link href={`/admin/impostazioni?userId=${userId}&sezione=mensa`}
+            className="px-4 py-2 rounded-full font-maven font-bold text-sm flex items-center gap-1 bg-white text-gray-500 border border-gray-200 hover:border-kidville-green hover:text-kidville-green">
+            <Settings size={15} /> Impostazioni mensa
+          </Link>
         </div>
 
         <div className="bg-white rounded-2xl shadow-sm p-4 md:p-6">
           {tab === 'menu' && <MenuBuilder userId={userId} scuolaId={SCUOLA_ID} />}
           {tab === 'report' && <MensaReport userId={userId} scuolaId={SCUOLA_ID} sezioni={sezioni} />}
           {tab === 'prenota' && <PrenotazioneSegreteria userId={userId} scuolaId={SCUOLA_ID} />}
-          {tab === 'impostazioni' && <MensaSettings userId={userId} scuolaId={SCUOLA_ID} />}
         </div>
       </div>
     </div>

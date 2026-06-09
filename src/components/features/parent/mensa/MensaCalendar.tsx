@@ -54,10 +54,10 @@ export function MensaCalendar({ userId, studentId }: Props) {
       if (pRaw.status === 401 || pRaw.status === 403) {
         setAuthError('Sessione non valida. Torna alla home e riapri la mensa dal menu principale.');
         setSaldo(null);
-      } else if (pRaw.data.success) {
+      } else if (pRaw.data?.success) {
         setSaldo(pRaw.data.saldo);
         const map: Record<string, Prenotazione> = {};
-        for (const p of pRaw.data.prenotazioni as Prenotazione[]) map[p.data] = p;
+        for (const p of (pRaw.data.prenotazioni ?? []) as Prenotazione[]) map[p.data] = p;
         setPren(map);
       }
     } finally { setLoading(false); }

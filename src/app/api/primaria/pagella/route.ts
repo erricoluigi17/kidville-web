@@ -18,12 +18,21 @@ export async function GET(request: NextRequest) {
     const supabase = await createAdminClient()
 
     // Gate visibilità: lo staff (admin/coordinator) può generare/anteprima anche
-    // prima della pubblicazione; gli altri (genitori) solo se pubblicato.
+    // prima della pubblicazione; il genitore solo se pubblicato E dopo aver
+    // firmato la ricezione (OTP/FES, una volta per pagella).
     const appUser = await loadAppUser(userId)
     const isStaff = appUser?.role === 'admin' || appUser?.role === 'coordinator'
     if (!isStaff) {
       const { data: scr } = await supabase.from('scrutini').select('pubblicato').eq('id', scrutinioId).single()
       if (!scr?.pubblicato) return NextResponse.json({ error: 'Pagella non ancora pubblicata' }, { status: 403 })
+      const { data: firma } = await supabase
+        .from('pagella_ricezioni')
+        .select('id')
+        .eq('scrutinio_id', scrutinioId)
+        .eq('alunno_id', alunnoId)
+        .eq('genitore_id', userId)
+        .maybeSingle()
+      if (!firma) return NextResponse.json({ error: 'Firma di ricezione richiesta' }, { status: 403 })
     }
 
     const { pdf, error, status } = await generaPagella(supabase, scrutinioId, alunnoId, userId, persist)

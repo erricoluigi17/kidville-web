@@ -1,13 +1,14 @@
 'use client';
 
 import { useState } from 'react';
-import { Award, AlertTriangle, PenLine, CalendarOff, Hand, CalendarPlus, FileText, Download } from 'lucide-react';
+import { Award, AlertTriangle, PenLine, CalendarOff, Hand, CalendarPlus, FileText, Download, Lock } from 'lucide-react';
 
 interface Valutazione { id: string; materia: string; tipo: string; modalita: string; argomento: string | null; giudizio_sintetico: string | null; giudizio_testo: string | null; creato_il: string }
 interface Nota { id: string; categoria: string; testo: string; richiede_firma: boolean; firmata_il: string | null; creato_il: string }
 interface Assenza { id: string; data: string; stato: string; giustificata: boolean; giustificazione_testo: string | null; giust_vista_il: string | null }
 interface Materia { id: string; nome: string }
-interface Pagella { scrutinioId: string; periodo: string; anno: string; chiusoIl: string | null }
+interface Pagella { scrutinioId: string; periodo: string; anno: string; chiusoIl: string | null; firmato: boolean }
+export interface ScrutinioView { firmato: boolean; periodo: string; anno: string; discipline: { materia: string; giudizio: string }[]; comportamento: string | null; giudizioGlobale: string | null }
 type OtpParams = { code: string; expiry: number; ticket: string };
 
 const CAT: Record<string, { label: string; cls: string }> = {
@@ -23,7 +24,7 @@ const STATO_ASSENZA: Record<string, string> = {
 const oggiIso = () => new Date().toISOString().slice(0, 10);
 
 export function PrimariaParentView({
-  valutazioni, note, assenze, materie, pagelle, onSign, onGiustifica, onRequestGiustificaOtp, onImpreparato, onComunicaAssenza, onScaricaPagella, signing,
+  valutazioni, note, assenze, materie, pagelle, onSign, onGiustifica, onRequestGiustificaOtp, onImpreparato, onComunicaAssenza, onScaricaPagella, onRequestPagellaOtp, onFirmaPagella, onCaricaScrutinio, signing,
 }: {
   valutazioni: Valutazione[]; note: Nota[]; assenze: Assenza[]; materie: Materia[]; pagelle: Pagella[];
   onSign: (id: string) => void;
@@ -32,6 +33,9 @@ export function PrimariaParentView({
   onImpreparato: (data: string, motivo: string, materiaId?: string) => void | Promise<void>;
   onComunicaAssenza: (data: string, motivo: string) => void | Promise<void>;
   onScaricaPagella: (scrutinioId: string) => void;
+  onRequestPagellaOtp: () => Promise<{ expiry: number; ticket: string; devCode?: string } | null>;
+  onFirmaPagella: (scrutinioId: string, otp: OtpParams) => Promise<void>;
+  onCaricaScrutinio: (scrutinioId: string) => Promise<ScrutinioView | null>;
   signing: string | null;
 }) {
   return (
@@ -42,21 +46,18 @@ export function PrimariaParentView({
           <h3 className="font-barlow text-lg font-bold text-gray-800 flex items-center gap-2 mb-3">
             <FileText size={18} className="text-kidville-green" /> Pagelle
           </h3>
-          <ul className="divide-y divide-gray-100">
+          <div className="space-y-3">
             {pagelle.map((p) => (
-              <li key={p.scrutinioId} className="flex items-center justify-between gap-2 py-2.5">
-                <div>
-                  <p className="font-maven text-sm font-semibold text-gray-800">{p.periodo}</p>
-                  <p className="font-maven text-xs text-gray-400">
-                    {p.anno}{p.chiusoIl ? ` · ${new Date(p.chiusoIl).toLocaleDateString('it-IT')}` : ''}
-                  </p>
-                </div>
-                <button onClick={() => onScaricaPagella(p.scrutinioId)} className="font-maven inline-flex items-center gap-1.5 rounded-pill bg-kidville-green px-4 py-1.5 text-xs text-kidville-yellow">
-                  <Download size={13} /> Scarica PDF
-                </button>
-              </li>
+              <PagellaCard
+                key={p.scrutinioId}
+                pagella={p}
+                onScarica={onScaricaPagella}
+                onRequestOtp={onRequestPagellaOtp}
+                onFirma={onFirmaPagella}
+                onCaricaScrutinio={onCaricaScrutinio}
+              />
             ))}
-          </ul>
+          </div>
         </section>
       )}
 
@@ -111,6 +112,131 @@ export function PrimariaParentView({
           </ul>
         )}
       </section>
+    </div>
+  );
+}
+
+// Card pagella: prima della firma OTP mostra il flusso di presa visione; dopo
+// la firma (una volta per pagella) mostra i giudizi a schermo + download PDF.
+function PagellaCard({ pagella, onScarica, onRequestOtp, onFirma, onCaricaScrutinio }: {
+  pagella: Pagella;
+  onScarica: (scrutinioId: string) => void;
+  onRequestOtp: () => Promise<{ expiry: number; ticket: string; devCode?: string } | null>;
+  onFirma: (scrutinioId: string, otp: OtpParams) => Promise<void>;
+  onCaricaScrutinio: (scrutinioId: string) => Promise<ScrutinioView | null>;
+}) {
+  const [firmato, setFirmato] = useState(pagella.firmato);
+  const [view, setView] = useState<ScrutinioView | null>(null);
+  const [open, setOpen] = useState(false);
+  const [step, setStep] = useState<'idle' | 'otp'>('idle');
+  const [code, setCode] = useState('');
+  const [ticketData, setTicketData] = useState<{ expiry: number; ticket: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  const caricaView = async () => {
+    const v = await onCaricaScrutinio(pagella.scrutinioId);
+    if (v && v.firmato) { setView(v); setOpen(true); }
+  };
+
+  const richiediCodice = async () => {
+    setBusy(true); setErr('');
+    const res = await onRequestOtp();
+    setBusy(false);
+    if (!res) { setErr('Invio codice non riuscito'); return; }
+    setTicketData({ expiry: res.expiry, ticket: res.ticket });
+    if (res.devCode) setCode(res.devCode);
+    setStep('otp');
+  };
+
+  const conferma = async () => {
+    if (!ticketData) return;
+    setBusy(true); setErr('');
+    try {
+      await onFirma(pagella.scrutinioId, { code, expiry: ticketData.expiry, ticket: ticketData.ticket });
+      setFirmato(true);
+      setStep('idle');
+      setCode('');
+      await caricaView();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Errore');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="rounded-card border border-gray-100 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <p className="font-maven text-sm font-semibold text-gray-800">{pagella.periodo}</p>
+          <p className="font-maven text-xs text-gray-400">
+            {pagella.anno}{pagella.chiusoIl ? ` · ${new Date(pagella.chiusoIl).toLocaleDateString('it-IT')}` : ''}
+          </p>
+        </div>
+        {firmato ? (
+          <div className="flex items-center gap-2">
+            <button onClick={() => (open ? setOpen(false) : caricaView())} className="font-maven inline-flex items-center gap-1.5 rounded-pill bg-kidville-green/10 px-3 py-1.5 text-xs text-kidville-green">
+              {open ? 'Nascondi' : 'Vedi a schermo'}
+            </button>
+            <button onClick={() => onScarica(pagella.scrutinioId)} className="font-maven inline-flex items-center gap-1.5 rounded-pill bg-kidville-green px-4 py-1.5 text-xs text-kidville-yellow">
+              <Download size={13} /> Scarica PDF
+            </button>
+          </div>
+        ) : step === 'idle' ? (
+          <button onClick={richiediCodice} disabled={busy} className="font-maven inline-flex items-center gap-1.5 rounded-pill bg-kidville-green px-4 py-1.5 text-xs text-kidville-yellow disabled:opacity-50">
+            <Lock size={13} /> {busy ? '…' : 'Firma e visualizza'}
+          </button>
+        ) : null}
+      </div>
+
+      {!firmato && step === 'otp' && (
+        <div className="mt-2 flex flex-col gap-1.5">
+          <p className="font-maven text-[11px] text-gray-500">Ti abbiamo inviato un codice via email. Inseriscilo per confermare la ricezione e sbloccare la pagella.</p>
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              inputMode="numeric"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              placeholder="Codice"
+              className="font-maven w-28 rounded-pill border border-gray-200 px-3 py-1.5 text-xs tracking-widest"
+            />
+            <button onClick={conferma} disabled={busy || code.length < 4} className="font-maven rounded-pill bg-kidville-green px-3 py-1.5 text-xs text-kidville-yellow disabled:opacity-50">
+              {busy ? '…' : 'Conferma'}
+            </button>
+            <button onClick={() => { setStep('idle'); setCode(''); setErr(''); }} className="font-maven rounded-pill bg-gray-100 px-3 py-1.5 text-xs text-gray-500">
+              Annulla
+            </button>
+          </div>
+        </div>
+      )}
+      {err && <p className="font-maven text-[11px] text-kidville-error mt-1">{err}</p>}
+
+      {firmato && open && view && (
+        <div className="mt-3 border-t border-gray-100 pt-3">
+          <ul className="divide-y divide-gray-100">
+            {view.discipline.map((d) => (
+              <li key={d.materia} className="flex items-center justify-between py-1.5">
+                <span className="font-maven text-sm text-gray-700">{d.materia}</span>
+                <span className="font-maven text-sm font-semibold text-kidville-green">{d.giudizio}</span>
+              </li>
+            ))}
+          </ul>
+          {view.comportamento && (
+            <div className="mt-2">
+              <p className="font-maven text-[11px] font-semibold text-gray-500">Comportamento</p>
+              <p className="font-maven text-sm text-gray-700">{view.comportamento}</p>
+            </div>
+          )}
+          {view.giudizioGlobale && (
+            <div className="mt-2">
+              <p className="font-maven text-[11px] font-semibold text-gray-500">Giudizio globale</p>
+              <p className="font-maven text-sm text-gray-700">{view.giudizioGlobale}</p>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

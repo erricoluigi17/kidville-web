@@ -32,7 +32,7 @@ export async function loadPagellaData(
       supabase.from('sections').select('id, name, scuola_id').eq('id', scrutinio.section_id).single(),
       supabase.from('scrutinio_periodi').select('nome, anno_scolastico').eq('id', scrutinio.periodo_id).single(),
       supabase.from('alunni').select('id, nome, cognome').eq('id', alunnoId).single(),
-      supabase.from('materie').select('id, nome, ordine').eq('section_id', scrutinio.section_id).eq('attiva', true).order('ordine'),
+      supabase.from('materie').select('id, nome, codice, ordine').eq('section_id', scrutinio.section_id).eq('attiva', true).order('ordine'),
       supabase.from('scrutinio_giudizi').select('materia_id, giudizio_sintetico').eq('scrutinio_id', scrutinioId).eq('alunno_id', alunnoId),
       supabase.from('scrutinio_comportamento').select('giudizio_testo, giudizio_globale').eq('scrutinio_id', scrutinioId).eq('alunno_id', alunnoId).maybeSingle(),
       supabase.from('sezione_materia_obiettivo').select('materia_id, obiettivi_apprendimento(codice, descrizione)').eq('section_id', scrutinio.section_id),
@@ -40,7 +40,8 @@ export async function loadPagellaData(
 
   if (!alunno) return { error: 'Alunno non trovato', status: 404 }
 
-  // Mappa giudizio_descrittivo per etichetta dalla scala della scuola.
+  // Mappa giudizio_descrittivo per etichetta dalla scala della scuola (fallback
+  // generico, usato quando manca il testo specifico di scrutinio).
   const scalaDescr = new Map<string, string>()
   if (sezione?.scuola_id) {
     const { data: scala } = await supabase
@@ -49,6 +50,23 @@ export async function loadPagellaData(
       .eq('scuola_id', sezione.scuola_id)
     for (const s of scala ?? []) {
       if (s.giudizio_descrittivo) scalaDescr.set(s.etichetta, s.giudizio_descrittivo)
+    }
+  }
+
+  // Giudizi descrittivi di scrutinio specifici per livello × materia × periodo ×
+  // voto. Chiave: `${materia_codice}|${etichetta_voto}`. Hanno priorità sulla
+  // scala generica. Il livello si deduce dal nome sezione (es. "3A" → 3).
+  const scrutDescr = new Map<string, string>()
+  const livello = Number(sezione?.name?.match(/[1-5]/)?.[0] ?? 0)
+  if (sezione?.scuola_id && livello) {
+    const { data: descr } = await supabase
+      .from('scrutinio_giudizio_descrittivo')
+      .select('materia_codice, etichetta_voto, giudizio_descrittivo')
+      .eq('scuola_id', sezione.scuola_id)
+      .eq('livello', livello)
+      .eq('periodo_id', scrutinio.periodo_id)
+    for (const d of descr ?? []) {
+      scrutDescr.set(`${d.materia_codice}|${d.etichetta_voto}`, d.giudizio_descrittivo)
     }
   }
 
@@ -63,11 +81,14 @@ export async function loadPagellaData(
   const giudMap = new Map((giudizi ?? []).map((g) => [g.materia_id, g.giudizio_sintetico]))
   const discipline = (materie ?? []).map((m) => {
     const giudizio = giudMap.get(m.id) ?? '—'
+    // Priorità: testo specifico di scrutinio (livello×materia×periodo×voto),
+    // poi descrittivo generico della scala.
+    const specifico = m.codice ? scrutDescr.get(`${m.codice}|${giudizio}`) : undefined
     return {
       materia: m.nome,
       giudizio,
       obiettivo: obMap.get(m.id) ?? null,
-      descrittivo: giudizio ? scalaDescr.get(giudizio) ?? null : null,
+      descrittivo: giudizio ? specifico ?? scalaDescr.get(giudizio) ?? null : null,
     }
   })
 

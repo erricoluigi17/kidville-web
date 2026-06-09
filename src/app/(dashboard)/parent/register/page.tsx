@@ -4,7 +4,7 @@ import { Suspense, useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Baby, RefreshCw } from 'lucide-react';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
-import { PrimariaParentView } from '@/components/features/parent/PrimariaParentView';
+import { PrimariaParentView, type ScrutinioView } from '@/components/features/parent/PrimariaParentView';
 
 interface PrimariaData {
   schoolType: string | null;
@@ -16,7 +16,7 @@ interface PrimariaData {
   materie: never[];
 }
 
-interface PagellaItem { scrutinioId: string; periodo: string; anno: string; chiusoIl: string | null }
+interface PagellaItem { scrutinioId: string; periodo: string; anno: string; chiusoIl: string | null; firmato: boolean }
 
 function RegisterInner() {
   const { parentId, studentId, ready } = useParentIdentity();
@@ -82,10 +82,44 @@ function RegisterInner() {
     if (!r.ok) throw new Error(d.error || 'Errore');
   };
 
-  // Apre la pagella PDF del periodo (scrutinio chiuso).
+  // Apre la pagella PDF del periodo (scrutinio chiuso, firmato).
   const onScaricaPagella = (scrutinioId: string) => {
     if (!studentId) return;
     window.open(`/api/primaria/pagella?scrutinioId=${scrutinioId}&alunnoId=${studentId}&userId=${parentId}`, '_blank');
+  };
+
+  // Richiede l'OTP email per firmare la ricezione della pagella (FES).
+  const onRequestPagellaOtp = async () => {
+    const r = await fetch(`/api/parent/primaria/pagella/firma/otp?userId=${parentId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-user-id': parentId },
+    });
+    const d = await r.json();
+    if (!r.ok) return null;
+    return d.data as { expiry: number; ticket: string; devCode?: string };
+  };
+
+  // Firma la ricezione della pagella con conferma OTP, poi ricarica.
+  const onFirmaPagella = async (scrutinioId: string, otp: { code: string; expiry: number; ticket: string }) => {
+    const r = await fetch(`/api/parent/primaria/pagella/firma?userId=${parentId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-user-id': parentId },
+      body: JSON.stringify({ scrutinioId, studentId, ...otp }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Errore');
+    load();
+  };
+
+  // Carica i giudizi di scrutinio a schermo (solo dopo la firma).
+  const onCaricaScrutinio = async (scrutinioId: string): Promise<ScrutinioView | null> => {
+    if (!studentId) return null;
+    const r = await fetch(`/api/parent/primaria/scrutinio?scrutinioId=${scrutinioId}&studentId=${studentId}&userId=${parentId}`, {
+      headers: { 'x-user-id': parentId },
+    });
+    const d = await r.json();
+    if (!r.ok || !d.success) return null;
+    return d.data as ScrutinioView;
   };
 
   // Dichiara il figlio impreparato a priori (giustifica didattica), con materia opzionale.
@@ -150,6 +184,9 @@ function RegisterInner() {
             onImpreparato={onImpreparato}
             onComunicaAssenza={onComunicaAssenza}
             onScaricaPagella={onScaricaPagella}
+            onRequestPagellaOtp={onRequestPagellaOtp}
+            onFirmaPagella={onFirmaPagella}
+            onCaricaScrutinio={onCaricaScrutinio}
             signing={signing}
           />
         )}

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 
-interface ScalaItem { id: string; etichetta: string; ordine: number; valore_numerico: number | null; giudizio_descrittivo: string | null }
+interface ScalaItem { id: string; etichetta: string; ordine: number; valore_numerico: number | null; giudizio_descrittivo: string | null; attivo: boolean }
 interface TemplateItem { id: string; scuola_id: string | null; dimensione: string; valore: string; frammento: string }
 
 export function GiudiziManager({ scuolaId, userId }: { scuolaId: string; userId: string }) {
@@ -46,6 +46,25 @@ export function GiudiziManager({ scuolaId, userId }: { scuolaId: string; userId:
     load();
   };
 
+  // Rinomina l'etichetta (UPDATE-by-id lato API, con cascade sui giudizi descrittivi).
+  const renameScala = async (s: ScalaItem, etichetta: string) => {
+    await fetch(`/api/admin/primaria/giudizi?action=scala-rename&userId=${userId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
+      body: JSON.stringify({ scuolaId, id: s.id, etichetta }),
+    });
+    load();
+  };
+
+  const toggleAttivo = async (s: ScalaItem) => {
+    await fetch(`/api/admin/primaria/giudizi?action=scala&userId=${userId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
+      body: JSON.stringify({ scuolaId, etichetta: s.etichetta, ordine: s.ordine, attivo: !s.attivo }),
+    });
+    load();
+  };
+
   const saveFrammento = async (t: TemplateItem, frammento: string) => {
     await fetch(`/api/admin/primaria/giudizi?action=template&userId=${userId}`, {
       method: 'POST',
@@ -62,10 +81,22 @@ export function GiudiziManager({ scuolaId, userId }: { scuolaId: string; userId:
         <p className="font-maven text-xs text-gray-400 mb-3">Usata in itinere e a scrutinio. Pre-impostata con i 6 giudizi ufficiali (Allegato A). Il valore numerico serve per la media in itinere; il giudizio descrittivo viene applicato in automatico nella pagella.</p>
         <ul className="divide-y divide-gray-100 mb-3">
           {scala.map((s) => (
-            <li key={s.id} className="py-2">
-              <div className="flex items-center justify-between">
-                <span className="font-maven text-sm text-gray-700">{s.ordine}. {s.etichetta}</span>
-                <button onClick={() => removeScala(s.id)} className="text-gray-400 hover:text-kidville-error"><Trash2 size={15} /></button>
+            <li key={s.id} className={`py-2 ${s.attivo ? '' : 'opacity-50'}`}>
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                  <span className="font-maven text-sm text-gray-400 shrink-0">{s.ordine}.</span>
+                  <input
+                    key={`${s.id}-${s.etichetta}`}
+                    defaultValue={s.etichetta}
+                    onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== s.etichetta) renameScala(s, v); }}
+                    className="font-maven flex-1 min-w-0 rounded border border-transparent px-1.5 py-0.5 text-sm text-gray-700 hover:border-gray-200 focus:border-gray-300 focus:outline-none"
+                  />
+                </div>
+                <label className="font-maven inline-flex items-center gap-1 text-[11px] text-gray-400 shrink-0">
+                  <input type="checkbox" checked={s.attivo} onChange={() => toggleAttivo(s)} />
+                  attivo
+                </label>
+                <button onClick={() => removeScala(s.id)} className="text-gray-400 hover:text-kidville-error shrink-0"><Trash2 size={15} /></button>
               </div>
               <div className="mt-1.5 flex items-center gap-2">
                 <label className="font-maven text-[11px] text-gray-400 w-14 shrink-0">Valore</label>

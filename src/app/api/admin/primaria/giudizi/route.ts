@@ -39,11 +39,12 @@ export async function POST(request: NextRequest) {
     const supabase = await createAdminClient()
 
     if (action === 'scala') {
-      const { scuolaId, etichetta, ordine, valoreNumerico, giudizioDescrittivo } = body
+      const { scuolaId, etichetta, ordine, valoreNumerico, giudizioDescrittivo, attivo } = body
       if (!scuolaId || !etichetta) return NextResponse.json({ error: 'scuolaId ed etichetta obbligatori' }, { status: 400 })
       const row: Record<string, unknown> = { scuola_id: scuolaId, etichetta, ordine: ordine ?? 0 }
       if (valoreNumerico !== undefined) row.valore_numerico = valoreNumerico === null || valoreNumerico === '' ? null : Number(valoreNumerico)
       if (giudizioDescrittivo !== undefined) row.giudizio_descrittivo = giudizioDescrittivo || null
+      if (attivo !== undefined) row.attivo = !!attivo
       const { data, error } = await supabase
         .from('giudizi_sintetici_scala')
         .upsert(row, { onConflict: 'scuola_id,etichetta' })
@@ -51,6 +52,43 @@ export async function POST(request: NextRequest) {
         .single()
       if (error) return NextResponse.json({ error: error.message }, { status: 500 })
       return NextResponse.json({ success: true, data }, { status: 201 })
+    }
+
+    if (action === 'scala-rename') {
+      const { scuolaId, id, etichetta } = body
+      if (!scuolaId || !id || !etichetta) return NextResponse.json({ error: 'scuolaId, id ed etichetta obbligatori' }, { status: 400 })
+
+      // Etichetta vecchia: serve per propagare la rinomina ai giudizi descrittivi
+      // configurati (referenziati per testo via etichetta_voto).
+      const { data: prev } = await supabase
+        .from('giudizi_sintetici_scala')
+        .select('etichetta')
+        .eq('id', id)
+        .eq('scuola_id', scuolaId)
+        .single()
+      if (!prev) return NextResponse.json({ error: 'Giudizio non trovato' }, { status: 404 })
+
+      const { data, error } = await supabase
+        .from('giudizi_sintetici_scala')
+        .update({ etichetta })
+        .eq('id', id)
+        .eq('scuola_id', scuolaId)
+        .select()
+        .single()
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+      // Cascade: scrutinio_giudizio_descrittivo.etichetta_voto referenzia l'etichetta
+      // per testo. Senza questo update i giudizi descrittivi resterebbero orfani.
+      if (prev.etichetta !== etichetta) {
+        const { error: cascadeErr } = await supabase
+          .from('scrutinio_giudizio_descrittivo')
+          .update({ etichetta_voto: etichetta })
+          .eq('scuola_id', scuolaId)
+          .eq('etichetta_voto', prev.etichetta)
+        if (cascadeErr) return NextResponse.json({ error: cascadeErr.message }, { status: 500 })
+      }
+
+      return NextResponse.json({ success: true, data })
     }
 
     if (action === 'template') {

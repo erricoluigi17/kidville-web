@@ -1,15 +1,17 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { BookOpen, Users, Star, GraduationCap, SlidersHorizontal } from 'lucide-react';
+import { BookOpen, Users, Star, GraduationCap, SlidersHorizontal, Target, ListChecks } from 'lucide-react';
 import { MaterieManager } from '@/components/features/admin/primaria/MaterieManager';
 import { DocentiMaterieManager } from '@/components/features/admin/primaria/DocentiMaterieManager';
 import { GiudiziManager } from '@/components/features/admin/primaria/GiudiziManager';
+import { ObiettiviManager } from '@/components/features/admin/primaria/ObiettiviManager';
 import { ScrutinioPeriodiManager } from '@/components/features/admin/primaria/ScrutinioPeriodiManager';
+import { ScrutinioGiudiziManager } from '@/components/features/admin/primaria/ScrutinioGiudiziManager';
 import { ClassificazioneDocenti } from '@/components/features/admin/primaria/ClassificazioneDocenti';
 import { ImpostazioniManager } from '@/components/features/admin/primaria/ImpostazioniManager';
 
-type Tab = 'materie' | 'docenti' | 'giudizi' | 'scrutinio' | 'classificazione' | 'abilitazione';
+type Tab = 'materie' | 'docenti' | 'obiettivi' | 'giudizi' | 'scrutinio' | 'giudizi-scrutinio' | 'classificazione' | 'abilitazione';
 
 interface Section { id: string; name: string; school_type: string; scholastic_year?: string | null }
 
@@ -35,8 +37,10 @@ export function DidatticaPrimariaPanel({ scuolaId, userId }: { scuolaId: string;
   const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
     { id: 'materie', label: 'Materie', icon: <BookOpen size={15} /> },
     { id: 'docenti', label: 'Docenti & Materie', icon: <Users size={15} /> },
+    { id: 'obiettivi', label: 'Obiettivi', icon: <Target size={15} /> },
     { id: 'giudizi', label: 'Giudizi', icon: <Star size={15} /> },
-    { id: 'scrutinio', label: 'Scrutinio', icon: <GraduationCap size={15} /> },
+    { id: 'scrutinio', label: 'Scrutinio (periodi)', icon: <GraduationCap size={15} /> },
+    { id: 'giudizi-scrutinio', label: 'Giudizi scrutinio', icon: <ListChecks size={15} /> },
     { id: 'classificazione', label: 'Classificazione docenti', icon: <GraduationCap size={15} /> },
     { id: 'abilitazione', label: 'Abilitazione funzioni', icon: <SlidersHorizontal size={15} /> },
   ];
@@ -79,8 +83,10 @@ export function DidatticaPrimariaPanel({ scuolaId, userId }: { scuolaId: string;
       <div className="rounded-card bg-white p-4 md:p-6 shadow-sm">
         {tab === 'materie' && <MaterieManager sectionId={sezioneId} sezione={sezioneCorrente} userId={userId} scuolaId={scuolaId} />}
         {tab === 'docenti' && <DocentiMaterieManager sectionId={sezioneId} scuolaId={scuolaId} userId={userId} />}
+        {tab === 'obiettivi' && <ObiettiviManager scuolaId={scuolaId} userId={userId} />}
         {tab === 'giudizi' && <GiudiziManager scuolaId={scuolaId} userId={userId} />}
         {tab === 'scrutinio' && <ScrutinioPeriodiManager scuolaId={scuolaId} userId={userId} />}
+        {tab === 'giudizi-scrutinio' && <ScrutinioGiudiziManager scuolaId={scuolaId} userId={userId} />}
         {tab === 'classificazione' && <ClassificazioneDocenti scuolaId={scuolaId} userId={userId} />}
         {tab === 'abilitazione' && <ImpostazioniManager scuolaId={scuolaId} userId={userId} />}
       </div>

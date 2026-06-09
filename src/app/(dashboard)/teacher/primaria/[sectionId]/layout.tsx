@@ -24,6 +24,7 @@ export default function PrimariaClasseLayout({ children }: { children: React.Rea
   const sectionId = params?.sectionId as string;
   const userId = getCurrentTeacherId(search);
   const [nomeClasse, setNomeClasse] = useState('');
+  const [isStaff, setIsStaff] = useState(false);
 
   useEffect(() => {
     if (!sectionId) return;
@@ -34,6 +35,13 @@ export default function PrimariaClasseLayout({ children }: { children: React.Rea
       })
       .catch(() => {});
   }, [sectionId, userId]);
+
+  useEffect(() => {
+    fetch(`/api/primaria/me?userId=${userId}`)
+      .then((r) => r.json())
+      .then((d) => { if (d.success) setIsStaff(d.data.ruolo === 'admin' || d.data.ruolo === 'coordinator'); })
+      .catch(() => {});
+  }, [userId]);
 
   const base = `/teacher/primaria/${sectionId}`;
   const suffix = `?userId=${userId}`;
@@ -52,6 +60,11 @@ export default function PrimariaClasseLayout({ children }: { children: React.Rea
             <span className="rounded-pill bg-kidville-green/10 px-2.5 py-0.5 text-[11px] font-maven text-kidville-green">
               Primaria
             </span>
+            {isStaff && (
+              <span className="rounded-pill bg-amber-100 px-2.5 py-0.5 text-[11px] font-maven text-amber-700">
+                Modalità segreteria
+              </span>
+            )}
           </div>
           <nav className="mt-3 flex gap-1 overflow-x-auto pb-1">
             {NAV.map(({ seg, label, icon: Icon }) => {

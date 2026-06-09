@@ -2,15 +2,15 @@
 
 import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { Target, CalendarDays, FolderLock } from 'lucide-react';
-import { ObiettiviManager } from '@/components/features/admin/primaria/ObiettiviManager';
+import { ClipboardList, CalendarDays, FolderLock } from 'lucide-react';
+import { RegistriClassePanel } from '@/components/features/admin/primaria/RegistriClassePanel';
 import { OrarioManager } from '@/components/features/admin/primaria/OrarioManager';
 import { FascicoloAuditViewer } from '@/components/features/admin/primaria/FascicoloAuditViewer';
 
 const SCUOLA_ID = '11111111-1111-1111-1111-111111111111';
 const DEV_ADMIN = '22222222-2222-2222-2222-555555555555';
 
-type Tab = 'obiettivi' | 'orario' | 'fascicoli';
+type Tab = 'registri' | 'orario' | 'fascicoli';
 
 interface Section {
   id: string;
@@ -22,7 +22,7 @@ interface Section {
 function PrimariaAdminInner() {
   const params = useSearchParams();
   const userId = params.get('userId') || DEV_ADMIN;
-  const [tab, setTab] = useState<Tab>('obiettivi');
+  const [tab, setTab] = useState<Tab>('registri');
   const [sezioni, setSezioni] = useState<Section[]>([]);
   const [sezioneId, setSezioneId] = useState<string>('');
 
@@ -39,7 +39,7 @@ function PrimariaAdminInner() {
   }, []);
 
   const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
-    { id: 'obiettivi', label: 'Obiettivi', icon: <Target size={15} /> },
+    { id: 'registri', label: 'Registri di classe', icon: <ClipboardList size={15} /> },
     { id: 'orario', label: 'Orario', icon: <CalendarDays size={15} /> },
     { id: 'fascicoli', label: 'Fascicoli/Accessi', icon: <FolderLock size={15} /> },
   ];
@@ -52,7 +52,7 @@ function PrimariaAdminInner() {
             Scuola Primaria
           </h1>
           <p className="font-maven text-gray-500 text-sm">
-            Area operativa: obiettivi di apprendimento, orario e registro accessi ai fascicoli. La configurazione (materie, docenti, giudizi, scrutinio) è in Impostazioni → Didattica primaria.
+            Area operativa: registri di classe (tutto ciò che fa il docente), orario e registro accessi ai fascicoli. La configurazione (materie, docenti, obiettivi, giudizi, scrutinio) è in Impostazioni → Didattica primaria.
           </p>
         </header>
 
@@ -93,7 +93,7 @@ function PrimariaAdminInner() {
         </nav>
 
         <div className="rounded-card bg-white p-4 md:p-6 shadow-sm">
-          {tab === 'obiettivi' && <ObiettiviManager scuolaId={SCUOLA_ID} userId={userId} />}
+          {tab === 'registri' && <RegistriClassePanel scuolaId={SCUOLA_ID} userId={userId} />}
           {tab === 'orario' && (
             <OrarioManager sectionId={sezioneId} scuolaId={SCUOLA_ID} userId={userId} />
           )}

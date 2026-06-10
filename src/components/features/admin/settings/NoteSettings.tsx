@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { StickyNote, Plus, Trash2 } from 'lucide-react';
 import { useAdminSettings } from './useAdminSettings';
 import { card, h3, hint, input, label } from './ui';
-import { CheckField, SaveRow } from './fields';
+import { CheckField, SaveRow, ComingSoonBadge } from './fields';
 
 interface NoteConfig {
     firma_otp_richiesta: boolean;
@@ -35,7 +35,7 @@ export function NoteSettings({ userId }: { userId: string }) {
 
             <div className="space-y-2">
                 <CheckField checked={cfg.firma_otp_richiesta ?? true} onChange={(v) => set({ firma_otp_richiesta: v })}>
-                    Presa visione del genitore con firma OTP
+                    <>Presa visione del genitore con firma OTP <ComingSoonBadge /></>
                 </CheckField>
                 <CheckField checked={cfg.visibile_genitore_immediata ?? true} onChange={(v) => set({ visibile_genitore_immediata: v })}>
                     Nota visibile al genitore subito dopo la creazione

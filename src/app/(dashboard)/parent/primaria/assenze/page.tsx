@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 import { CheckSquare, AlertCircle } from 'lucide-react';
 
@@ -23,7 +23,7 @@ function oraDaTs(ts: string | null): string {
   return isNaN(d.getTime()) ? '' : `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
-export default function AssenzeGenitore() {
+function AssenzeGenitore() {
   const { parentId, studentId, ready } = useParentIdentity();
   const [presenze, setPresenze] = useState<Presenza[]>([]);
   const [loading, setLoading] = useState(true);
@@ -96,5 +96,13 @@ export default function AssenzeGenitore() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function AssenzeGenitorePage() {
+  return (
+    <Suspense fallback={<div className="p-8 font-maven text-gray-400">Caricamento…</div>}>
+      <AssenzeGenitore />
+    </Suspense>
   );
 }

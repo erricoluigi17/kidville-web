@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { Suspense, useCallback, useEffect, useState } from 'react';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 import { FileText, Download, Check } from 'lucide-react';
 
@@ -11,7 +11,7 @@ interface ScrutinioView {
   giudizioGlobale: string | null;
 }
 
-export default function PagelleGenitore() {
+function PagelleGenitore() {
   const { parentId, studentId, ready } = useParentIdentity();
   const [pagelle, setPagelle] = useState<PagellaItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -175,5 +175,13 @@ export default function PagelleGenitore() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function PagelleGenitorePage() {
+  return (
+    <Suspense fallback={<div className="p-8 font-maven text-gray-400">Caricamento…</div>}>
+      <PagelleGenitore />
+    </Suspense>
   );
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 import { AlertTriangle, Check } from 'lucide-react';
 
@@ -15,7 +15,7 @@ const CATEGORIE: Record<string, { label: string; cls: string }> = {
   compiti_non_svolti: { label: 'Compiti non svolti', cls: 'bg-amber-100 text-amber-700' },
 };
 
-export default function NoteGenitore() {
+function NoteGenitore() {
   const { parentId, studentId, ready } = useParentIdentity();
   const [note, setNote] = useState<Nota[]>([]);
   const [loading, setLoading] = useState(true);
@@ -97,5 +97,13 @@ export default function NoteGenitore() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function NoteGenitorePage() {
+  return (
+    <Suspense fallback={<div className="p-8 font-maven text-gray-400">Caricamento…</div>}>
+      <NoteGenitore />
+    </Suspense>
   );
 }

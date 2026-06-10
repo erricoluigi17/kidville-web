@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 import { BarChart3 } from 'lucide-react';
 
@@ -13,7 +13,7 @@ interface MateriaVoce {
   materiaId: string; nome: string; media: number | null; valutazioni: ValBreve[];
 }
 
-export default function ValutazioniGenitore() {
+function ValutazioniGenitore() {
   const { parentId, studentId, ready } = useParentIdentity();
   const [materie, setMaterie] = useState<MateriaVoce[]>([]);
   const [loading, setLoading] = useState(true);
@@ -85,5 +85,13 @@ export default function ValutazioniGenitore() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function ValutazioniGenitorePage() {
+  return (
+    <Suspense fallback={<div className="p-8 font-maven text-gray-400">Caricamento…</div>}>
+      <ValutazioniGenitore />
+    </Suspense>
   );
 }

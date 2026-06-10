@@ -34,6 +34,12 @@ function ParentChatContent() {
     const [loadingContacts, setLoadingContacts] = useState(false);
     const [childrenNames, setChildrenNames] = useState<string[]>([]);
     const [unreadCount, setUnreadCount] = useState(0);
+    const [chatCfg, setChatCfg] = useState<{
+        in_orario: boolean;
+        orario_docenti_da: string;
+        orario_docenti_a: string;
+        risposta_fuori_orario_msg: string;
+    } | null>(null);
     // ID del primo messaggio non letto: calcolato al caricamento del thread
     // e "bloccato" finché l'utente non invia un messaggio o cambia chat.
     const [firstUnreadId, setFirstUnreadId] = useState<string | null>(null);
@@ -67,6 +73,14 @@ function ParentChatContent() {
     }, [parentId]);
 
     useEffect(() => { loadThreads(); }, [loadThreads]);
+
+    // Config chat (orari docenti, messaggio fuori orario) dalle impostazioni scuola.
+    useEffect(() => {
+        fetch('/api/chat/config')
+            .then(r => r.json())
+            .then(d => { if (d.success) setChatCfg(d.data); })
+            .catch(() => {});
+    }, []);
 
     const loadContacts = useCallback(async () => {
         setLoadingContacts(true);
@@ -320,8 +334,6 @@ function ParentChatContent() {
                     {chatCfg.risposta_fuori_orario_msg || `I docenti rispondono dalle ${chatCfg.orario_docenti_da} alle ${chatCfg.orario_docenti_a} nei giorni scolastici.`}
                 </div>
             )}
-            <div className="hidden">
-            </div>
 
             {/* Desktop */}
             <div className="hidden md:flex gap-4 h-[calc(100vh-200px)] min-h-[500px]">

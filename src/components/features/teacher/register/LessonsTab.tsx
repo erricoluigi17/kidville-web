@@ -241,7 +241,7 @@ export default function LessonsTab() {
 
             {/* MODAL */}
             {modalHour !== null && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-kidville-green/30 backdrop-blur-sm p-4">
                     <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
                         {/* Header */}
                         <div className="bg-kidville-green p-5 flex items-center justify-between">

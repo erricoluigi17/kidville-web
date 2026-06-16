@@ -270,7 +270,7 @@ export default function ParentLockerPage() {
                     className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold transition-all duration-200
                                 ${activeTab === 'overview'
                                     ? 'bg-white shadow text-kidville-green'
-                                    : 'text-zinc-500 hover:text-zinc-700'}`}
+                                    : 'text-gray-500 hover:text-kidville-green'}`}
                 >
                     <Package size={14} /> Panoramica
                 </button>
@@ -280,7 +280,7 @@ export default function ParentLockerPage() {
                     className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold transition-all duration-200
                                 ${activeTab === 'monthly'
                                     ? 'bg-white shadow text-kidville-green'
-                                    : 'text-zinc-500 hover:text-zinc-700'}`}
+                                    : 'text-gray-500 hover:text-kidville-green'}`}
                 >
                     <Table2 size={14} /> Andamento Mensile
                 </button>
@@ -454,21 +454,21 @@ export default function ParentLockerPage() {
             {/* TAB: ANDAMENTO MENSILE                                    */}
             {/* ══════════════════════════════════════════════════════════ */}
             {activeTab === 'monthly' && (
-                <div className="bg-zinc-950 rounded-3xl p-5">
+                <div className="bg-white rounded-3xl p-5">
                     {/* Navigazione mese */}
                     <div className="flex items-center justify-between mb-5">
                         <button
                             id="parent-prev-month-btn"
                             onClick={() => setMonth(m => prevMonth(m))}
-                            className="p-2 rounded-xl text-zinc-400 hover:text-white hover:bg-white/10 transition-all"
+                            className="p-2 rounded-xl text-gray-500 hover:text-kidville-green hover:bg-kidville-cream transition-all"
                         >
                             <ChevronLeft size={18} />
                         </button>
-                        <span className="text-sm font-semibold text-zinc-300">Andamento mensile di {CHILD_NAME}</span>
+                        <span className="text-sm font-semibold text-kidville-green/70">Andamento mensile di {CHILD_NAME}</span>
                         <button
                             id="parent-next-month-btn"
                             onClick={() => setMonth(m => nextMonth(m))}
-                            className="p-2 rounded-xl text-zinc-400 hover:text-white hover:bg-white/10 transition-all"
+                            className="p-2 rounded-xl text-gray-500 hover:text-kidville-green hover:bg-kidville-cream transition-all"
                         >
                             <ChevronRight size={18} />
                         </button>
@@ -477,7 +477,7 @@ export default function ParentLockerPage() {
                     {isMonthlyLoading ? (
                         <div className="flex items-center justify-center py-16 gap-3">
                             <div className="w-6 h-6 border-2 border-violet-500/30 border-t-violet-500 rounded-full animate-spin" />
-                            <span className="text-zinc-500 text-sm">Caricamento...</span>
+                            <span className="text-gray-500 text-sm">Caricamento...</span>
                         </div>
                     ) : (
                         <MonthlyLockerTable

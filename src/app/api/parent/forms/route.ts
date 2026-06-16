@@ -78,6 +78,7 @@ export async function GET(request: NextRequest) {
           form_id: temp.id,
           title: temp.title,
           description: temp.description,
+          form_type: temp.form_type ?? 'autorizzazione',
           fields: temp.fields,
           expiration_date: temp.expiration_date,
           student: {

@@ -87,6 +87,31 @@ export interface LocalGalleryMedia {
     creato_il: string;
 }
 
+// Primaria — appello giornaliero offline (coda di scrittura verso /api/primaria/appello)
+export interface LocalPrimariaAppello {
+    id: string; // `${alunno_id}|${data}`
+    section_id: string;
+    alunno_id: string;
+    data: string; // YYYY-MM-DD
+    stato: 'presente' | 'assente' | 'ritardo' | 'uscita_anticipata';
+    sync_status: 'synced' | 'pending' | 'error';
+    aggiornato_il: string;
+}
+
+// Primaria — firma/lezione del registro offline (coda verso /api/primaria/registro)
+export interface LocalPrimariaRegistro {
+    id: string; // UUID client-side
+    section_id: string;
+    data: string; // YYYY-MM-DD
+    ora_lezione: number;
+    materia_id: string | null;
+    argomento: string | null;
+    compiti: string | null;
+    tipo_compresenza: string;
+    sync_status: 'synced' | 'pending' | 'error';
+    creato_il: string;
+}
+
 const db = new Dexie('KidvilleOfflineDB') as Dexie & {
     presenze: EntityTable<LocalAttendanceLog, 'id'>;
     delegati: EntityTable<LocalDelegate, 'id'>;
@@ -96,6 +121,8 @@ const db = new Dexie('KidvilleOfflineDB') as Dexie & {
     documenti_alunni: EntityTable<LocalStudentDocument, 'id'>;
     adulti: EntityTable<any, 'id'>; // Anagrafica adulti estesa (Fase 6)
     galleria: EntityTable<LocalGalleryMedia, 'id'>; // Galleria multimediale (Fase 3)
+    primaria_appello: EntityTable<LocalPrimariaAppello, 'id'>; // Appello primaria (Fase 1)
+    primaria_registro: EntityTable<LocalPrimariaRegistro, 'id'>; // Registro primaria (Fase 1)
 };
 
 // v2: schema presenze + delegati (Fase 1)
@@ -172,6 +199,20 @@ db.version(9).stores({
     documenti_alunni: 'id, alunno_id, tipo_documento, sync_status',
     adulti: 'id, role',
     galleria: 'id, uploaded_by, sync_status'
+});
+
+// v10: store primaria (appello + registro) per offline-first del registro primaria
+db.version(10).stores({
+    presenze: 'id, alunno_id, data, sync_status',
+    delegati: 'id, alunno_id',
+    diario: 'id, alunno_id, classe_id, tipo_evento, timestamp_evento, sync_status',
+    armadietto: 'id, alunno_id, materiale, date, sync_status',
+    genitori: 'id, sync_status',
+    documenti_alunni: 'id, alunno_id, tipo_documento, sync_status',
+    adulti: 'id, role',
+    galleria: 'id, uploaded_by, sync_status',
+    primaria_appello: 'id, section_id, alunno_id, data, sync_status',
+    primaria_registro: 'id, section_id, data, sync_status'
 });
 
 export { db };

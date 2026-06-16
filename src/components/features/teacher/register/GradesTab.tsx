@@ -1,5 +1,10 @@
 'use client';
 
+// ⛔ DEPRECATO — Tab voti "legacy" (voti numerici 1-10 + scala Base/Intermedio/Avanzato),
+// NON conforme O.M. 3/2025. Non più referenziato (la pagina /teacher/register reindirizza
+// a /teacher/primaria). Conservato come storico; la valutazione conforme vive in
+// /teacher/primaria/[sectionId]/valutazioni (giudizi sintetici Allegato A). NON usare in nuove UI.
+
 import { useState, useEffect, useCallback } from 'react';
 import { Plus, X, Award } from 'lucide-react';
 
@@ -229,7 +234,7 @@ export default function GradesTab() {
 
             {/* MODAL INSERIMENTO VOTO */}
             {showModal && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-kidville-green/30 backdrop-blur-sm p-4">
                     <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
                         <div className="bg-kidville-green p-5 flex items-center justify-between">
                             <div>

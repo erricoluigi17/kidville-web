@@ -34,18 +34,30 @@ export async function POST(request: NextRequest) {
             residence_city: body.comune_residenza || null,
             zip_code: body.cap || null,
             allergies: body.allergies || null,
+            allergeni: Array.isArray(body.allergeni) ? body.allergeni : [],
             is_bes_dsa: body.is_bes_dsa || false,
             note_mediche: body.note_bes || null,
+            usa_pannolino: body.usa_pannolino ?? false,
             invoice_holder_type: body.invoice_holder_type || null,
             invoice_holder_details: body.invoice_holder_details || null,
+            // classe/sezione: il trigger DB sincronizza automaticamente section_id,
+            // così l'alunno compare subito in tutte le funzioni della sua sezione.
+            classe_sezione: body.classe_sezione || null,
             stato: 'iscritto',
         };
 
-        const { data, error } = await supabase
+        let { data, error } = await supabase
             .from('alunni')
             .insert(record)
             .select()
             .single();
+
+        // Resilienza pre-migration: se la colonna usa_pannolino non esiste ancora,
+        // riprova senza, così la creazione alunno non si rompe prima della migration.
+        if (error && (error as { code?: string }).code === '42703' && /usa_pannolino/.test(error.message)) {
+            delete record.usa_pannolino;
+            ({ data, error } = await supabase.from('alunni').insert(record).select().single());
+        }
 
         if (error) {
             return NextResponse.json({ error: error.message }, { status: 500 });
@@ -128,8 +140,10 @@ export async function PATCH(request: NextRequest) {
             try {
                 const updates: Record<string, unknown> = {};
                 // Raccogliamo le modifiche
-                const allowedFields = ['classe_sezione', 'stato', 'note_mediche', 'bes', 'note_bes', 'nome', 'cognome', 'data_nascita', 'codice_fiscale', 'gender', 'citizenship', 'birth_nation', 'birth_province', 'birth_city', 'residence_address', 'residence_city', 'zip_code', 'allergies', 'invoice_holder_type', 'invoice_holder_details', 'is_bes_dsa', 'section_id'];
-                
+                const allowedFields = ['classe_sezione', 'stato', 'note_mediche', 'bes', 'note_bes', 'nome', 'cognome', 'data_nascita', 'codice_fiscale', 'gender', 'citizenship', 'birth_nation', 'birth_province', 'birth_city', 'residence_address', 'residence_city', 'zip_code', 'allergies', 'allergeni', 'invoice_holder_type', 'invoice_holder_details', 'is_bes_dsa', 'usa_pannolino', 'section_id',
+                    // Dati economici (modulo Pagamenti)
+                    'importo_retta_mensile', 'genitori_separati', 'retta_split_config', 'intestatario_fatture'];
+
                 for (const field of allowedFields) {
                     if (body[field] !== undefined) updates[field] = body[field];
                 }
@@ -138,12 +152,18 @@ export async function PATCH(request: NextRequest) {
                     return NextResponse.json({ error: 'Nessun campo da aggiornare' }, { status: 400 });
                 }
 
-                const { data, error } = await supabase
+                let { data, error } = await supabase
                     .from('alunni')
                     .update(updates)
                     .eq('id', body.id)
                     .select()
                     .single();
+
+                // Resilienza pre-migration: se usa_pannolino non esiste ancora, riprova senza.
+                if (error && (error as { code?: string }).code === '42703' && /usa_pannolino/.test(error.message)) {
+                    delete updates.usa_pannolino;
+                    ({ data, error } = await supabase.from('alunni').update(updates).eq('id', body.id).select().single());
+                }
 
                 if (error) throw new Error(error.message);
                 return NextResponse.json(data);

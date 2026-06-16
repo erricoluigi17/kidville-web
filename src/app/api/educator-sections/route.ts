@@ -8,6 +8,20 @@ async function getEducatorSectionNames(
     supabase: Awaited<ReturnType<typeof createAdminClient>>,
     userId: string
 ): Promise<string[]> {
+    // Method 0 (canonico): legame docente↔sezione in utenti_sezioni → sections.name.
+    const { data: legamiSez } = await supabase
+        .from('utenti_sezioni')
+        .select('sections(name)')
+        .eq('utente_id', userId);
+    const canonicalNames = [...new Set(
+        (legamiSez ?? []).flatMap((r: { sections: { name?: string }[] | { name?: string } | null }) => {
+            const s = r.sections;
+            if (!s) return [];
+            return (Array.isArray(s) ? s : [s]).map(x => x.name);
+        }).filter(Boolean) as string[]
+    )];
+    if (canonicalNames.length > 0) return canonicalNames;
+
     // Method 1: Check if the educator has any media uploads with tagged students
     // → derive their section from those students' classe_sezione
     const { data: myMedia } = await supabase

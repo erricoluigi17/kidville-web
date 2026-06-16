@@ -15,6 +15,7 @@
     "@dnd-kit/utilities": "^3.2.2",
     "@supabase/ssr": "^0.10.3",
     "@supabase/supabase-js": "^2.105.4",
+    "@types/web-push": "^3.6.4",
     "codice-fiscale-js": "^2.3.23",
     "dexie": "^4.4.2",
     "dexie-react-hooks": "^4.4.0",
@@ -26,6 +27,8 @@
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "react-hook-form": "^7.76.1",
+    "recharts": "^3.8.1",
+    "web-push": "^3.6.7",
     "xlsx": "^0.18.5",
     "zod": "^4.4.3"
   },
@@ -41,6 +44,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.4",
     "jsdom": "^29.1.1",
+    "pg": "^8.21.0",
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "^4.1.5"

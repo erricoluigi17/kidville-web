@@ -1,14 +1,17 @@
 # Prompt Atomico: Fase 4 - Modulo Modulistica, Certificati e Onboarding Legale
 
+> [!IMPORTANT]
+> **Fonte di verità = PRD.** Documento di pianificazione storico: in caso di conflitto con il file `PRD REGISTRO ELETTRONICO.md` **vince sempre il PRD**. I contenuti in contrasto con il PRD sono marcati **[SUPERATO]** qui sotto (conservati per storico, non rimossi). Allineamento PRD: giugno 2026.
+
 ## Contesto Generale
 Sei un AI Software Engineer Senior. Il tuo task è costruire il **Modulo Modulistica e Certificati** (Fase 4), che digitalizza la burocrazia scolastica conferendole valore legale.
 
 ## Obiettivo del Task
-Fornire alla Segreteria un Form Builder dinamico per raccogliere Firme Elettroniche Semplici (FES) inattaccabili, e al genitore un portale self-service per certificati medici.
+Fornire alla Segreteria un Form Builder dinamico per raccogliere **Firme Elettroniche Avanzate (FEA)** **[SUPERATO: "FES" → FEA, vedi PRD Modulo Form]** inattaccabili, e al genitore un portale self-service per certificati medici.
 
 ## Specifiche estratte dal PRD
-1. **Scudo Giuridico e FES:**
-   - Raccolta consenso tramite Firma Elettronica Semplice.
+1. **Scudo Giuridico e Firma (FEA):** **[SUPERATO: "FES" → FEA — vedi PRD Modulo Form §4.1]**
+   - Raccolta consenso tramite **Firma Elettronica Avanzata (FEA)** validata da **OTP via email** (non "Semplice"). ⚠️ L'implementazione tecnica della firma sarà realizzata dal committente.
    - Cristallizzazione dei log (Timestamp esatto, IP, ID utente) e generazione di un documento PDF statico e immodificabile.
    - Isolamento moduli GDPR (check-box separati).
 2. **Form Builder e Automazioni:**
@@ -24,14 +27,14 @@ Fornire alla Segreteria un Form Builder dinamico per raccogliere Firme Elettroni
 
 ## Agent Consigliati
 Per massimizzare la qualità e l'affidabilità di questa fase, raccomandiamo l'uso dei seguenti sub-agent specializzati (configurazioni disponibili in `agents/awesome-claude-code-subagents-main/categories`):
-- `@compliance-auditor.md` (04-quality-security) per garantire l'efficacia legale della Firma Elettronica Semplice (log IP/Timestamp).
+- `@compliance-auditor.md` (04-quality-security) per garantire l'efficacia legale della **Firma Elettronica Avanzata (FEA)** **[SUPERATO: "Semplice" → Avanzata]** (log IP/Timestamp).
 - `@fullstack-developer.md` (01-core-development) per la costruzione fluida del drag-and-drop Form Builder.
 
 ## Linee Guida Design (UI/UX)
 - **Tassativo:** Tutte le interfacce utente sviluppate per questo modulo devono attenersi rigorosamente alle specifiche visive, alla palette cromatica e ai componenti definiti nel file `design.md` presente nella root del progetto. Consultalo prima di scrivere codice UI.
 
 ## Istruzioni Operative
-1. **Architettura PDF e FES:** Integra una libreria PDF-generation sul backend per generare il certificato firmato inserendo footer con Hash, IP e Timestamp.
+1. **Architettura PDF e FEA:** **[SUPERATO: "FES" → FEA]** Integra una libreria PDF-generation sul backend per generare il certificato firmato inserendo footer con Hash, IP e Timestamp.
 2. **DB & JSONB:** Utilizza campi JSONB in Supabase per salvare flessibilmente i dati dinamici dei form creati col Form Builder.
 3. **Automazioni:** Usa i trigger del DB per aggiornare i campi core dell'Anagrafica quando un form specifico viene "Sottomesso".
 4. **UI:** Costruisci il costruttore drag-and-drop di form per la segreteria. Sviluppa le view per i cruscotti insegnante.

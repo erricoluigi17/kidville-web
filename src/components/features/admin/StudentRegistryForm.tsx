@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Fingerprint, FileWarning, Users, Activity, Home, User, AlertTriangle, Loader2, CheckCircle2, XCircle } from 'lucide-react';
 import { fetchFiscalCode } from '@/lib/utils/fiscalCodeApi';
 import { z } from 'zod';
+import { AllergeniSelect } from '@/components/features/admin/AllergeniSelect';
 
 const studentSchema = z.object({
     nome: z.string().min(2, "Il nome deve avere almeno 2 caratteri"),
@@ -20,6 +21,7 @@ const studentSchema = z.object({
     is_bes_dsa: z.boolean(),
     note_bes: z.string().optional(),
     allergies: z.string().optional(),
+    allergeni: z.array(z.string()).optional(),
     invoice_holder_type: z.enum(['mom', 'dad', 'other']),
     invoice_holder_details: z.object({
         nome: z.string().optional(),
@@ -47,6 +49,7 @@ export function StudentRegistryForm() {
         is_bes_dsa: false,
         note_bes: '',
         allergies: '',
+        allergeni: [] as string[],
         invoice_holder_type: 'mom',
         invoice_holder_details: { nome: '', cognome: '', codice_fiscale: '', adult_id: '' }
     });
@@ -269,6 +272,10 @@ export function StudentRegistryForm() {
                                 <AlertTriangle size={16} className="text-red-500" /> Allergie e Intolleranze
                             </label>
                             <textarea name="allergies" value={formData.allergies} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-red-400 outline-none" rows={3} placeholder="Es. Lattosio, Fragole..." />
+                        </div>
+
+                        <div>
+                            <AllergeniSelect value={formData.allergeni} onChange={next => setFormData(prev => ({ ...prev, allergeni: next }))} />
                         </div>
 
                         <div className="p-4 bg-amber-50 rounded-2xl border border-amber-100">

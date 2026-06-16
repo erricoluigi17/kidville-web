@@ -1,27 +1,34 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { 
-  FileText, Clock, Archive, Award, HeartPulse, Shield, 
-  ArrowRight, Download, CheckCircle2, User, Key, Info, Upload
+import {
+  FileText, Clock, Archive, Award, HeartPulse, Shield,
+  ArrowRight, Download, CheckCircle2, User, Key, Info, Upload, Mail
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import { getSupabase } from '@/lib/supabase/browser-client';
+import { OtpEmailModal } from '@/components/features/parent/forms/OtpEmailModal';
 
 const PARENT_ID = '33333333-3333-3333-3333-333333333333'; // Sarah Pagano
 
+type FormType = 'sondaggio' | 'gradimento' | 'autorizzazione';
+
+interface FieldOption { label: string; value: string }
+
 interface FormField {
   id: string;
-  type: 'text' | 'checkbox' | 'date';
+  type: 'text' | 'textarea' | 'checkbox' | 'date' | 'radio' | 'rating';
   label: string;
   required: boolean;
-  db_mapping: string;
+  db_mapping?: string;
+  options?: FieldOption[];
 }
 
 interface AssignedForm {
   form_id: string;
   title: string;
   description: string;
+  form_type: FormType;
   fields: FormField[];
   expiration_date: string | null;
   student: {
@@ -67,10 +74,9 @@ export default function ParentModulisticaPage() {
   // Active Compiler state
   const [compilingForm, setCompilingForm] = useState<AssignedForm | null>(null);
   const [formAnswers, setFormAnswers] = useState<Record<string, any>>({});
-  const [spidAuthenticated, setSpidAuthenticated] = useState(false);
-  const [showSpidModal, setShowSpidModal] = useState(false);
-  const [spidSimulating, setSpidSimulating] = useState(false);
-  const [spidLog, setSpidLog] = useState<any>(null);
+  // Firma OTP via email (FES)
+  const [showOtpModal, setShowOtpModal] = useState(false);
+  const [otpSession, setOtpSession] = useState<{ email: string | null; expiry: number; ticket: string; devCode?: string } | null>(null);
 
   // Medical Certificate form
   const [selectedChildId, setSelectedChildId] = useState('');
@@ -143,8 +149,8 @@ export default function ParentModulisticaPage() {
   // Compiler Setup & Autofill
   const startCompiling = (form: AssignedForm) => {
     setCompilingForm(form);
-    setSpidAuthenticated(false);
-    setSpidLog(null);
+    setOtpSession(null);
+    setShowOtpModal(false);
 
     // Prefill form answers from DB info
     const initialAnswers: Record<string, any> = {};
@@ -172,53 +178,23 @@ export default function ParentModulisticaPage() {
     setFormAnswers({ ...formAnswers, [fieldId]: value });
   };
 
-  // SPID/CIE Simulation
-  const handleStartSpidAuth = () => {
-    setShowSpidModal(true);
-  };
-
-  const handleSelectSpidProvider = (providerName: string) => {
-    setSpidSimulating(true);
-    setTimeout(() => {
-      setSpidSimulating(false);
-      setShowSpidModal(false);
-      setSpidAuthenticated(true);
-      
-      // Save simulated signature metadata
-      const simulatedLog = {
-        ip: '192.168.1.45', // Simulated home IP
-        timestamp: new Date().toISOString(),
-        user_agent: window.navigator.userAgent,
-        hash: 'SHA256-' + Math.random().toString(16).substring(2, 10).toUpperCase() + Math.random().toString(16).substring(2, 10).toUpperCase(),
-        provider: providerName,
-        parent_details: {
-          nome: parentInfo?.nome || 'Sarah',
-          cognome: parentInfo?.cognome || 'Pagano',
-          cf: parentInfo?.cellulare ? 'PGNSRH82E45H501K' : 'PGNSRH82E45H501K' // Mock CF
-        }
-      };
-      setSpidLog(simulatedLog);
-      showToastMsg('✅ Identità verificata con ' + providerName + '!');
-    }, 1500);
-  };
-
-  // Submit and Generate PDF
-  const handleSubmitSubmission = async () => {
-    if (!compilingForm) return;
-
-    // Validate fields
+  // Firma OTP via email — step 1: valida i campi e invia il codice
+  // Verifica i campi obbligatori del modulo in compilazione
+  const validateRequired = (): boolean => {
+    if (!compilingForm) return false;
     for (const field of compilingForm.fields) {
-      if (field.required && !formAnswers[field.id]) {
-        showToastMsg(`❌ Compilare il campo obbligatorio: ${field.label}`);
-        return;
+      const v = formAnswers[field.id];
+      if (field.required && (v === undefined || v === null || v === '' || v === false)) {
+        showToastMsg(`❌ Compilare il campo obbligatorio: ${field.label || 'campo'}`);
+        return false;
       }
     }
+    return true;
+  };
 
-    if (!spidAuthenticated || !spidLog) {
-      showToastMsg('❌ Autenticazione SPID/CIE richiesta per firmare legalmente');
-      return;
-    }
-
+  // Invio diretto (sondaggio / gradimento) — nessuna firma OTP richiesta
+  const handleSubmitDirect = async () => {
+    if (!compilingForm || !validateRequired()) return;
     try {
       const res = await fetch('/api/parent/submissions', {
         method: 'POST',
@@ -227,23 +203,81 @@ export default function ParentModulisticaPage() {
           form_id: compilingForm.form_id,
           student_id: compilingForm.student.id,
           answers: formAnswers,
-          is_signed: true,
-          signature_log: spidLog,
-          parent_id: PARENT_ID
-        })
+          is_signed: false,
+          parent_id: PARENT_ID,
+        }),
       });
-
-      if (!res.ok) throw new Error('Errore durante l\'invio');
-
-      showToastMsg('✅ Modulo firmato ed inviato con successo!');
-      
-      // Generate and Download PDF receipt
-      generateReceiptPDF(compilingForm, formAnswers, spidLog);
-
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        showToastMsg(`❌ ${j.error ?? 'Invio fallito'}`);
+        return;
+      }
+      showToastMsg('✅ Risposte inviate con successo!');
       setCompilingForm(null);
       fetchData();
+    } catch {
+      showToastMsg('❌ Errore durante l\'invio');
+    }
+  };
+
+  const handleStartSigning = async () => {
+    if (!compilingForm || !validateRequired()) return;
+
+    try {
+      const res = await fetch('/api/parent/forms/otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ parent_id: PARENT_ID }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        showToastMsg(`❌ ${json.error ?? 'Invio codice fallito'}`);
+        return;
+      }
+      setOtpSession({ email: json.email, expiry: json.expiry, ticket: json.ticket, devCode: json.devCode });
+      setShowOtpModal(true);
+      if (!json.sent) {
+        showToastMsg('ℹ️ Email non configurata: usa il codice mostrato (dev).');
+      }
     } catch (err) {
-      showToastMsg('❌ Errore durante l\'invio del modulo');
+      showToastMsg('❌ Errore durante l\'invio del codice');
+    }
+  };
+
+  // Firma OTP via email — step 2: verifica il codice, finalizza la firma e genera la ricevuta
+  const verifyOtpAndSign = async (code: string): Promise<{ ok: boolean; error?: string }> => {
+    if (!compilingForm || !otpSession) return { ok: false, error: 'Sessione di firma scaduta' };
+    try {
+      const res = await fetch('/api/parent/forms/otp', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          parent_id: PARENT_ID,
+          code,
+          expiry: otpSession.expiry,
+          ticket: otpSession.ticket,
+          form_id: compilingForm.form_id,
+          student_id: compilingForm.student.id,
+          answers: formAnswers,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) return { ok: false, error: json.error ?? 'Verifica fallita' };
+
+      // Ricevuta PDF con il signature_log autorevole restituito dal server
+      generateReceiptPDF(compilingForm, formAnswers, json.signature_log);
+
+      // La modale mostra l'esito; chiudiamo e ricarichiamo dopo un attimo
+      setTimeout(() => {
+        setShowOtpModal(false);
+        setCompilingForm(null);
+        setOtpSession(null);
+        fetchData();
+      }, 1600);
+
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: 'Errore di rete. Riprova.' };
     }
   };
 
@@ -488,10 +522,21 @@ export default function ParentModulisticaPage() {
                       </p>
                       
                       <div className="flex flex-wrap items-center gap-3 mt-3">
+                        {form.form_type === 'autorizzazione' && (
+                          <span className="bg-kidville-green text-kidville-yellow px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider flex items-center gap-1">
+                            <Shield size={11} /> Autorizzazione
+                          </span>
+                        )}
+                        {form.form_type === 'sondaggio' && (
+                          <span className="bg-kidville-yellow-light text-kidville-green px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider">Sondaggio</span>
+                        )}
+                        {form.form_type === 'gradimento' && (
+                          <span className="bg-kidville-yellow-light text-kidville-green px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider">Gradimento</span>
+                        )}
                         <span className="bg-kidville-cream text-kidville-green px-2.5 py-1 rounded-full text-xs font-semibold">
                           Figlio: {form.student.nome} {form.student.cognome}
                         </span>
-                        
+
                         {form.expiration_date && (
                           <span className="bg-amber-50 text-amber-600 px-2.5 py-1 rounded-full text-xs font-semibold flex items-center gap-1">
                             <Clock size={12} />
@@ -505,7 +550,7 @@ export default function ParentModulisticaPage() {
                       onClick={() => startCompiling(form)}
                       className="flex items-center gap-1.5 px-4.5 py-2 bg-kidville-green text-kidville-yellow rounded-pill font-barlow font-black uppercase text-xs sm:text-sm tracking-wider hover:opacity-90 transition-opacity shadow-sm self-start md:self-auto"
                     >
-                      Compila e Firma <ArrowRight size={16} />
+                      {form.form_type === 'autorizzazione' ? 'Compila e Firma' : 'Compila'} <ArrowRight size={16} />
                     </button>
                   </div>
                 ))
@@ -549,43 +594,78 @@ export default function ParentModulisticaPage() {
                         <label className="block font-maven font-semibold text-sm text-kidville-green">
                           {field.label} {field.required && <span className="text-red-500">*</span>}
                         </label>
-                        <input
-                          type={field.type === 'date' ? 'date' : 'text'}
-                          value={formAnswers[field.id] || ''}
-                          onChange={e => handleFieldChange(field.id, e.target.value)}
-                          className="w-full border-2 border-gray-100 rounded-xl px-4 py-2.5 font-maven text-sm focus:outline-none focus:border-kidville-green"
-                          placeholder={`Inserisci ${field.label.toLowerCase()}...`}
-                        />
+
+                        {field.type === 'textarea' && (
+                          <textarea
+                            value={formAnswers[field.id] || ''}
+                            onChange={e => handleFieldChange(field.id, e.target.value)}
+                            className="w-full border-2 border-gray-100 rounded-xl px-4 py-2.5 font-maven text-sm focus:outline-none focus:border-kidville-green resize-none h-24"
+                            placeholder="Scrivi la tua risposta..."
+                          />
+                        )}
+
+                        {field.type === 'radio' && (
+                          <div className="flex flex-wrap gap-2">
+                            {(field.options ?? []).map(opt => (
+                              <button
+                                key={opt.value}
+                                type="button"
+                                onClick={() => handleFieldChange(field.id, opt.value)}
+                                className={`px-4 py-2 rounded-pill text-sm font-semibold border-2 transition-colors ${formAnswers[field.id] === opt.value ? 'bg-kidville-green text-kidville-yellow border-kidville-green' : 'border-gray-200 text-gray-600 hover:border-kidville-green/40'}`}
+                              >
+                                {opt.label}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+
+                        {field.type === 'rating' && (
+                          <div className="flex gap-2">
+                            {[1, 2, 3, 4, 5].map(n => (
+                              <button
+                                key={n}
+                                type="button"
+                                onClick={() => handleFieldChange(field.id, n)}
+                                className={`w-11 h-11 rounded-full text-sm font-barlow font-bold border-2 transition-colors ${Number(formAnswers[field.id]) >= n ? 'bg-kidville-yellow text-kidville-green border-kidville-yellow' : 'border-gray-200 text-gray-400 hover:border-kidville-yellow'}`}
+                              >
+                                {n}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+
+                        {(field.type === 'text' || field.type === 'date') && (
+                          <input
+                            type={field.type === 'date' ? 'date' : 'text'}
+                            value={formAnswers[field.id] || ''}
+                            onChange={e => handleFieldChange(field.id, e.target.value)}
+                            className="w-full border-2 border-gray-100 rounded-xl px-4 py-2.5 font-maven text-sm focus:outline-none focus:border-kidville-green"
+                            placeholder={`Inserisci ${field.label.toLowerCase()}...`}
+                          />
+                        )}
                       </>
                     )}
                   </div>
                 ))}
               </div>
 
-              {/* FES SPID CIE Section */}
-              <div className="bg-kidville-cream/40 p-5 rounded-card border-2 border-dashed border-kidville-green/10 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <div className="space-y-1">
-                  <h4 className="font-barlow font-bold text-lg text-kidville-green uppercase tracking-wide flex items-center gap-1.5">
-                    <Shield size={18} className="text-kidville-yellow" /> Firma Elettonica Semplice (FES)
-                  </h4>
-                  <p className="font-maven text-xs text-gray-500 max-w-md leading-relaxed">
-                    Il modulo richiede l'identificazione SPID/CIE per validare la firma ai sensi dell'Art. 20 CAD con valore legale.
-                  </p>
-                </div>
-
-                {spidAuthenticated ? (
-                  <div className="bg-emerald-50 text-emerald-700 px-4 py-2 rounded-xl text-xs font-bold border border-emerald-200 flex items-center gap-1.5 self-start md:self-auto">
-                    <CheckCircle2 size={16} /> Identità verificata con SPID
+              {/* FES — Firma con OTP via email (solo per le autorizzazioni) */}
+              {compilingForm.form_type === 'autorizzazione' && (
+                <div className="bg-kidville-cream/40 p-5 rounded-card border-2 border-dashed border-kidville-green/10 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div className="space-y-1">
+                    <h4 className="font-barlow font-bold text-lg text-kidville-green uppercase tracking-wide flex items-center gap-1.5">
+                      <Shield size={18} className="text-kidville-yellow" /> Firma Elettronica Semplice (FES)
+                    </h4>
+                    <p className="font-maven text-xs text-gray-500 max-w-md leading-relaxed">
+                      Per validare la firma con valore legale (Art. 20 CAD) invieremo un codice OTP
+                      alla tua email registrata. Inseriscilo per completare la firma.
+                    </p>
                   </div>
-                ) : (
-                  <button
-                    onClick={handleStartSpidAuth}
-                    className="flex items-center gap-1.5 px-4.5 py-2.5 bg-[#0066cc] text-white rounded-pill font-barlow font-black uppercase tracking-wider text-xs shadow-sm hover:opacity-90 transition-opacity"
-                  >
-                    Entra con SPID / CIE
-                  </button>
-                )}
-              </div>
+                  <div className="bg-kidville-green-light text-kidville-green px-4 py-2 rounded-xl text-xs font-bold border border-kidville-green/15 flex items-center gap-1.5 self-start md:self-auto">
+                    <Mail size={15} /> Verifica via email
+                  </div>
+                </div>
+              )}
 
               {/* Action Buttons */}
               <div className="flex gap-3 justify-end border-t border-gray-100 pt-4">
@@ -596,11 +676,10 @@ export default function ParentModulisticaPage() {
                   Annulla
                 </button>
                 <button
-                  disabled={!spidAuthenticated}
-                  onClick={handleSubmitSubmission}
+                  onClick={compilingForm.form_type === 'autorizzazione' ? handleStartSigning : handleSubmitDirect}
                   className="px-5 py-2.5 bg-kidville-green text-kidville-yellow rounded-pill font-barlow font-black uppercase tracking-wider text-sm hover:opacity-90 disabled:opacity-50 transition-all shadow-md flex items-center gap-1.5"
                 >
-                  Invia e Firma Ricevuta
+                  {compilingForm.form_type === 'autorizzazione' ? 'Invia e Firma Ricevuta' : 'Invia Risposte'}
                 </button>
               </div>
             </div>
@@ -785,51 +864,18 @@ export default function ParentModulisticaPage() {
         </>
       )}
 
-      {/* SPID Identity Provider Selector Modal */}
-      {showSpidModal && (
-        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 animate-fadeIn">
-          <div className="bg-white w-full max-w-sm rounded-card p-6 shadow-2xl flex flex-col max-h-[85vh]">
-            <div className="text-center mb-4">
-              <h3 className="font-barlow font-black text-xl text-kidville-green uppercase tracking-wide flex items-center justify-center gap-1.5">
-                <Shield size={20} className="text-[#0066cc]" /> Scegli il tuo SPID
-              </h3>
-              <p className="font-maven text-xs text-gray-500 mt-1">
-                Seleziona il provider per la verifica dell'identità
-              </p>
-            </div>
-
-            {spidSimulating ? (
-              <div className="flex-1 flex flex-col items-center justify-center py-10 gap-3">
-                <div className="w-10 h-10 border-4 border-[#0066cc]/30 border-t-[#0066cc] rounded-full animate-spin" />
-                <p className="font-maven text-xs font-semibold text-gray-600">Reindirizzamento protetto AgID...</p>
-              </div>
-            ) : (
-              <div className="flex-1 overflow-y-auto grid grid-cols-2 gap-3 p-1">
-                {['Poste SPID', 'Aruba ID', 'InfoCert ID', 'Lepida SPID', 'TIM ID', 'Namirial ID'].map(prov => (
-                  <button
-                    key={prov}
-                    onClick={() => handleSelectSpidProvider(prov)}
-                    className="h-14 border border-gray-200 rounded-xl flex items-center justify-center font-barlow font-bold text-sm text-[#0066cc] hover:border-[#0066cc] hover:bg-[#0066cc]/5 transition-all uppercase tracking-wider"
-                  >
-                    {prov}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            <button
-              onClick={() => setShowSpidModal(false)}
-              className="mt-4 w-full h-10 font-maven text-sm rounded-pill border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors"
-            >
-              Annulla
-            </button>
-          </div>
-        </div>
-      )}
+      {/* Modale Firma OTP via email (FES) */}
+      <OtpEmailModal
+        open={showOtpModal}
+        email={otpSession?.email ?? null}
+        devCode={otpSession?.devCode}
+        onClose={() => setShowOtpModal(false)}
+        onVerify={verifyOtpAndSign}
+      />
 
       {/* Toast */}
       {toast && (
-        <div className="fixed bottom-6 right-6 z-[60] bg-gray-900 text-white font-maven font-semibold px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-3 animate-slideIn">
+        <div className="fixed bottom-6 right-6 z-[60] bg-kidville-green text-white font-maven font-semibold px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-3 animate-slideIn">
           {toast}
         </div>
       )}

@@ -5,6 +5,7 @@ import { X, Trash2, Save, AlertTriangle, Users, Baby } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { LinkedAdultProfile, AdultProfileData, AdultType } from './LinkedAdultProfile';
 import { Task } from '../teacher/tasks/TaskCard';
+import { StudentEconomicSection } from './StudentEconomicSection';
 
 interface Student {
     id: string;
@@ -28,6 +29,11 @@ interface Student {
         parents: AdultProfileData;
     }[];
     delegates?: AdultProfileData[];
+    // Dati economici (modulo Pagamenti)
+    importo_retta_mensile?: number | null;
+    genitori_separati?: boolean | null;
+    retta_split_config?: { quote: { adult_id?: string; nome?: string; importo: number }[] } | null;
+    intestatario_fatture?: { tipo: 'adult' | 'altro'; adult_id?: string; nome?: string; dati?: Record<string, string> } | null;
 }
 
 interface Sibling {
@@ -151,7 +157,7 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete }: Props
     return (
         <>
             {/* Backdrop */}
-            <div className="fixed inset-0 z-40 bg-black/30 backdrop-blur-[1px]" onClick={onClose} />
+            <div className="fixed inset-0 z-40 bg-kidville-green/30 backdrop-blur-[1px]" onClick={onClose} />
 
             {/* Panel slide-in */}
             <div className="fixed inset-y-0 right-0 z-50 w-full max-w-md bg-white shadow-2xl flex flex-col">
@@ -306,6 +312,14 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete }: Props
                             />
                         )}
                     </section>
+
+                    {/* Dati Economici (modulo Pagamenti) */}
+                    <StudentEconomicSection
+                        alunnoId={student.id}
+                        form={form as Record<string, unknown>}
+                        updateForm={updateForm}
+                        parents={student.student_parents}
+                    />
 
                     {/* Famiglia e Delegati */}
                     <section className="pt-4 border-t border-gray-100">

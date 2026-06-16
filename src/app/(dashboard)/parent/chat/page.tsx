@@ -34,6 +34,12 @@ function ParentChatContent() {
     const [loadingContacts, setLoadingContacts] = useState(false);
     const [childrenNames, setChildrenNames] = useState<string[]>([]);
     const [unreadCount, setUnreadCount] = useState(0);
+    const [chatCfg, setChatCfg] = useState<{
+        in_orario: boolean;
+        orario_docenti_da: string;
+        orario_docenti_a: string;
+        risposta_fuori_orario_msg: string;
+    } | null>(null);
     // ID del primo messaggio non letto: calcolato al caricamento del thread
     // e "bloccato" finché l'utente non invia un messaggio o cambia chat.
     const [firstUnreadId, setFirstUnreadId] = useState<string | null>(null);
@@ -67,6 +73,14 @@ function ParentChatContent() {
     }, [parentId]);
 
     useEffect(() => { loadThreads(); }, [loadThreads]);
+
+    // Config chat (orari docenti, messaggio fuori orario) dalle impostazioni scuola.
+    useEffect(() => {
+        fetch('/api/chat/config')
+            .then(r => r.json())
+            .then(d => { if (d.success) setChatCfg(d.data); })
+            .catch(() => {});
+    }, []);
 
     const loadContacts = useCallback(async () => {
         setLoadingContacts(true);
@@ -315,6 +329,12 @@ function ParentChatContent() {
                 </button>
             </div>
 
+            {chatCfg && !chatCfg.in_orario && (
+                <div className="mb-4 rounded-2xl bg-amber-50 border border-amber-200 px-4 py-3 font-maven text-sm text-amber-800">
+                    {chatCfg.risposta_fuori_orario_msg || `I docenti rispondono dalle ${chatCfg.orario_docenti_da} alle ${chatCfg.orario_docenti_a} nei giorni scolastici.`}
+                </div>
+            )}
+
             {/* Desktop */}
             <div className="hidden md:flex gap-4 h-[calc(100vh-200px)] min-h-[500px]">
                 <div className="w-80 flex-shrink-0 bg-white/80 backdrop-blur-xl rounded-3xl border border-white/40 shadow-sm overflow-hidden flex flex-col">
@@ -411,7 +431,7 @@ function ParentChatContent() {
                 {showNewChat && (
                     <>
                         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                            className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50" onClick={() => setShowNewChat(false)} />
+                            className="fixed inset-0 bg-kidville-green/30 backdrop-blur-sm z-50" onClick={() => setShowNewChat(false)} />
                         <motion.div
                             initial={{ opacity: 0, y: 30, scale: 0.97 }}
                             animate={{ opacity: 1, y: 0, scale: 1 }}

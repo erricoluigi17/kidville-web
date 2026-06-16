@@ -422,7 +422,7 @@ export default function AdminStudentsPage() {
 
       {/* Toast */}
       {showToast && (
-        <div className="fixed bottom-6 right-6 z-[60] bg-gray-900 text-white font-maven font-semibold px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-3 animate-[slideInRight_0.3s_ease-out]">
+        <div className="fixed bottom-6 right-6 z-[60] bg-kidville-green text-white font-maven font-semibold px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-3 animate-[slideInRight_0.3s_ease-out]">
           {toastMessage}
         </div>
       )}

@@ -1,5 +1,8 @@
 # Prompt Atomico: Fase 4 - Modulo Menu e Mensa
 
+> [!IMPORTANT]
+> **Fonte di verità = PRD.** Documento di pianificazione storico: in caso di conflitto con il file `PRD REGISTRO ELETTRONICO.md` **vince sempre il PRD**. I contenuti in contrasto con il PRD sono marcati **[SUPERATO]** qui sotto (conservati per storico, non rimossi). Allineamento PRD: giugno 2026.
+
 ## Contesto Generale
 Sei un AI Software Engineer Senior. Sviluppa il **Modulo Menu e Mensa** (Fase 4) per automatizzare la filiera di ristorazione.
 

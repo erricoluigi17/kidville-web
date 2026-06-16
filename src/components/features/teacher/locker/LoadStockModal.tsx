@@ -88,7 +88,7 @@ export function LoadStockModal({
 
     return (
         <>
-            <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-[1px]" onClick={onClose} />
+            <div className="fixed inset-0 z-50 bg-kidville-green/30 backdrop-blur-[1px]" onClick={onClose} />
             <div className="fixed inset-x-4 top-1/2 -translate-y-1/2 z-50 max-w-md mx-auto bg-white rounded-3xl shadow-2xl p-6">
 
                 {/* Header */}

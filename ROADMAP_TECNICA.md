@@ -1,5 +1,8 @@
 # Roadmap Tecnica di Alto Livello - Kidville SaaS
 
+> [!IMPORTANT]
+> **Fonte di verità = PRD.** Documento di pianificazione storico: in caso di conflitto con il file `PRD REGISTRO ELETTRONICO.md` **vince sempre il PRD**. I contenuti in contrasto con il PRD sono marcati **[SUPERATO]** qui sotto (conservati per storico, non rimossi). Allineamento PRD: giugno 2026.
+
 Questa roadmap tecnica delinea le fasi di sviluppo per il SaaS Kidville, basata sul Product Requirements Document (PRD). L'obiettivo primario è sviluppare e rilasciare rapidamente le funzionalità core legate all'operatività didattica (Registro Elettronico, Presenze e Diario), considerando che l'infrastruttura di base (Database e Autenticazione Supabase) è già configurata.
 
 ## Fase 1: Core Registro Elettronico e Presenze (Mesi 1-2)
@@ -12,7 +15,7 @@ Questa roadmap tecnica delinea le fasi di sviluppo per il SaaS Kidville, basata 
 *   **Modulo Diario Scuola Primaria (Registro Elettronico):**
     *   Gestione appello orario e firme dei docenti (supporto compresenza).
     *   Inserimento argomenti della lezione, compiti assegnati e allegati multimediali.
-    *   Sistema di valutazione ibrido (voti numerici e giudizi descrittivi) con isolamento per materia e calcolo automatico medie.
+    *   Sistema di valutazione **per grado** con isolamento per materia, **calcolo automatico medie** e buffer notifica 10 min. **[AGGIORNATO — vedi PRD §4]** Alla **primaria** il voto **visibile** è il **giudizio sintetico** (Allegato A O.M. 3/2025), **non** un voto numerico 1-10; resta però un'**associazione numerica nascosta** ai giudizi usata per il **calcolo della media** (mantenuto) e si mantengono le **categorie Scritto/Orale/Pratico**. **La media numerica è strumento del docente: visibile solo a docenti/segreteria, MAI al genitore** (non inviata al client dell'app famiglia; endpoint docente come il prospetto hanno gate di ruolo — vedi PRD §4 #3 e §4.5). La scala **Base/Intermedio/Avanzato è superata**. I voti numerici **visibili** restano solo per i gradi non-primaria.
     *   Gestione note disciplinari/didattiche con richiesta di Firma per Presa Visione da parte del genitore.
 
 ## Fase 2: Gestione Nido/Infanzia e Anagrafica (Mesi 3-4)
@@ -47,7 +50,7 @@ Questa roadmap tecnica delinea le fasi di sviluppo per il SaaS Kidville, basata 
 
 *   **Modulo Modulistica, Certificati e Onboarding Legale:**
     *   Form Builder dinamico per la Segreteria (Uscite didattiche, consensi).
-    *   Integrazione Firma Elettronica Semplice (FES) e generazione ricevute PDF inattaccabili (log IP/Timestamp).
+    *   ~~Integrazione Firma Elettronica Semplice (FES)~~ **[SUPERATO → FEA, vedi PRD Modulo Form §4.1]** Integrazione **Firma Elettronica Avanzata (FEA)** (OTP via email) e generazione ricevute PDF inattaccabili (log IP/Timestamp). ⚠️ Implementazione firma a carico del committente.
     *   Upload self-service di certificati medici per la riammissione rapida.
 *   **Modulo Menu e Mensa:**
     *   Menu Builder con logica ciclica e associazione obbligatoria allergeni (alert incrociati con l'Anagrafica).

@@ -50,16 +50,16 @@ export function LinkedAdultProfile({ data, type }: Props) {
     };
 
     return (
-        <div className="bg-black/20 backdrop-blur-md rounded-2xl border border-white/10 p-5 mt-4 shadow-inner">
-            <div className="flex items-center gap-3 mb-5 border-b border-white/10 pb-3">
+        <div className="bg-white backdrop-blur-md rounded-2xl border border-kidville-green/15 p-5 mt-4 shadow-inner">
+            <div className="flex items-center gap-3 mb-5 border-b border-kidville-green/15 pb-3">
                 <div className="w-10 h-10 rounded-full bg-kidville-green/20 flex items-center justify-center text-kidville-green">
                     <Icon size={20} />
                 </div>
                 <div>
-                    <h4 className="font-barlow font-bold text-lg text-white uppercase tracking-wide leading-tight">
+                    <h4 className="font-barlow font-bold text-lg text-kidville-green uppercase tracking-wide leading-tight">
                         {data.first_name} {data.last_name}
                     </h4>
-                    <p className="text-xs text-gray-400 capitalize font-maven">
+                    <p className="text-xs text-gray-500 capitalize font-maven">
                         {type === 'mother' ? 'Madre' : type === 'father' ? 'Padre' : 'Delegato'}
                     </p>
                 </div>
@@ -118,15 +118,15 @@ export function LinkedAdultProfile({ data, type }: Props) {
                 {/* Documento Delegato */}
                 {type === 'delegate' && (
                     <div className="space-y-4 lg:col-span-1 md:col-span-2">
-                        <div className="bg-white/5 rounded-xl p-4 border border-white/5 h-full">
+                        <div className="bg-kidville-cream rounded-xl p-4 border border-kidville-green/10 h-full">
                             <Label>Documento d&apos;Identità</Label>
                             <div className="mt-2 space-y-3">
                                 <div>
-                                    <div className="text-xs text-gray-400 mb-0.5">Tipo:</div>
+                                    <div className="text-xs text-gray-500 mb-0.5">Tipo:</div>
                                     <Value>{data.document_type || 'Non specificato'}</Value>
                                 </div>
                                 <div>
-                                    <div className="text-xs text-gray-400 mb-0.5">Numero:</div>
+                                    <div className="text-xs text-gray-500 mb-0.5">Numero:</div>
                                     <Value>{data.document_number || 'Non specificato'}</Value>
                                 </div>
                                 

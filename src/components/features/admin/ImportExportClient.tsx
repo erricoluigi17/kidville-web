@@ -68,38 +68,38 @@ export function ImportExportClient() {
     };
 
     return (
-        <div className="p-8 bg-black/30 backdrop-blur-xl border border-white/10 rounded-3xl text-white">
+        <div className="p-8 bg-white backdrop-blur-xl border border-kidville-green/15 rounded-3xl text-kidville-green">
             <h2 className="text-xl font-bold mb-6 flex items-center gap-3">
                 <FileSpreadsheet className="text-kidville-green" /> Import/Export Dati Client-Side
             </h2>
 
             <div className="grid grid-cols-2 gap-8">
                 {/* Export Card */}
-                <div className="bg-white/5 border border-white/10 p-6 rounded-2xl flex flex-col items-center justify-center text-center gap-4">
+                <div className="bg-kidville-cream border border-kidville-green/15 p-6 rounded-2xl flex flex-col items-center justify-center text-center gap-4">
                     <div className="p-4 bg-kidville-green/20 rounded-full text-kidville-green">
                         <Download size={32} />
                     </div>
                     <div>
                         <h3 className="font-bold text-lg">Esporta Anagrafiche</h3>
-                        <p className="text-sm text-gray-400 mt-1">Scarica i dati completi in formato Excel.</p>
+                        <p className="text-sm text-gray-500 mt-1">Scarica i dati completi in formato Excel.</p>
                     </div>
                     <button 
                         onClick={handleExport}
                         disabled={isExporting}
-                        className="mt-4 px-6 py-2 bg-white/10 hover:bg-white/20 rounded-full font-medium transition-all flex items-center gap-2"
+                        className="mt-4 px-6 py-2 bg-kidville-cream hover:bg-kidville-green-light rounded-full font-medium transition-all flex items-center gap-2"
                     >
                         {isExporting ? <Loader2 size={18} className="animate-spin" /> : "Genera Esportazione"}
                     </button>
                 </div>
 
                 {/* Import Card */}
-                <div className="bg-white/5 border border-white/10 p-6 rounded-2xl flex flex-col items-center justify-center text-center gap-4">
+                <div className="bg-kidville-cream border border-kidville-green/15 p-6 rounded-2xl flex flex-col items-center justify-center text-center gap-4">
                     <div className="p-4 bg-blue-500/20 rounded-full text-blue-400">
                         <Upload size={32} />
                     </div>
                     <div>
                         <h3 className="font-bold text-lg">Importa e Sincronizza</h3>
-                        <p className="text-sm text-gray-400 mt-1">Carica un file Excel per aggiornare o inserire record.</p>
+                        <p className="text-sm text-gray-500 mt-1">Carica un file Excel per aggiornare o inserire record.</p>
                     </div>
                     
                     <label className={`mt-4 px-6 py-2 bg-blue-600 hover:bg-blue-500 rounded-full font-medium transition-all cursor-pointer flex items-center gap-2 ${isImporting ? 'opacity-50 pointer-events-none' : ''}`}>
@@ -115,7 +115,7 @@ export function ImportExportClient() {
                 </div>
             </div>
             
-            <div className="mt-6 text-xs text-gray-500 bg-white/5 p-4 rounded-xl border border-white/5">
+            <div className="mt-6 text-xs text-gray-500 bg-kidville-cream p-4 rounded-xl border border-kidville-green/10">
                 <strong>Nota Tecnica:</strong> Questa operazione viene eseguita interamente lato browser utilizzando <code>xlsx</code> e il client Supabase. Questo approccio aggira i limiti di timeout di esecuzione dei serverless function di Next.js su Vercel, ideali per elaborazioni massive di dati.
             </div>
         </div>

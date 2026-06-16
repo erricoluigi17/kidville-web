@@ -87,7 +87,7 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave }: Props) {
     return (
         <>
             {/* Backdrop */}
-            <div className="fixed inset-0 z-40 bg-black/30 backdrop-blur-[1px]" onClick={onClose} />
+            <div className="fixed inset-0 z-40 bg-kidville-green/30 backdrop-blur-[1px]" onClick={onClose} />
 
             {/* Panel slide-in (Stile Bianco Kidville come Alunni) */}
             <div className="fixed inset-y-0 right-0 z-50 w-full max-w-md bg-white shadow-2xl flex flex-col">

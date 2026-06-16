@@ -1,27 +1,49 @@
 'use client';
 
 import { useState, useEffect, Suspense } from 'react';
-import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
 import { motion } from 'framer-motion';
 import {
   Bell, MessageCircle, BookOpen, Image as ImageIcon,
-  Package, FileText, BarChart3, CheckSquare, ChevronRight,
+  Package, FileText, BarChart3, CheckSquare, ChevronRight, Euro, UtensilsCrossed,
+  GraduationCap, ClipboardList,
 } from 'lucide-react';
-
-const DEFAULT_STUDENT_ID = 'dc617529-e80d-4084-9041-fb28e864089f';
+import { withIdentity } from '@/lib/auth/current-user';
+import { useParentIdentity } from '@/lib/auth/use-parent-identity';
+import { useChildSchoolType } from '@/lib/auth/use-child-school-type';
+import { PagamentiSummary } from '@/components/features/parent/pagamenti/PagamentiSummary';
 
 const tiles = [
+  {
+    id: 'pagamenti',
+    label: 'Pagamenti',
+    desc: 'Rette & quote',
+    icon: Euro,
+    href: '/parent/pagamenti',
+    bg: '#E8F5F3',
+    fg: '#006A5F',
+    sub: '#A0A0A0',
+  },
+  {
+    id: 'mensa',
+    label: 'Mensa',
+    desc: 'Prenota il pranzo',
+    icon: UtensilsCrossed,
+    href: '/parent/mensa',
+    bg: '#006A5F',
+    fg: '#FDC400',
+    sub: 'rgba(253,196,0,0.55)',
+  },
   {
     id: 'avvisi',
     label: 'Avvisi',
     desc: 'Comunicazioni',
     icon: Bell,
     href: '/parent/avvisi',
-    bg: '#006A5F',
-    fg: '#FDC400',
-    sub: 'rgba(253,196,0,0.55)',
+    bg: '#FDC400',
+    fg: '#006A5F',
+    sub: 'rgba(0,106,95,0.55)',
   },
   {
     id: 'chat',
@@ -42,6 +64,7 @@ const tiles = [
     bg: '#FFF8E1',
     fg: '#006A5F',
     sub: '#A0A0A0',
+    grado: 'infanzia',
   },
   {
     id: 'gallery',
@@ -68,10 +91,33 @@ const tiles = [
     label: 'Registro',
     desc: 'Voti & note',
     icon: BarChart3,
-    href: '/parent/register',
+    href: '/parent/primaria',
     bg: '#FDC400',
     fg: '#006A5F',
     sub: 'rgba(0,106,95,0.55)',
+    grado: 'primaria',
+  },
+  {
+    id: 'lezioni',
+    label: 'Lezioni',
+    desc: 'Argomenti svolti',
+    icon: GraduationCap,
+    href: '/parent/lezioni',
+    bg: '#E8F5F3',
+    fg: '#006A5F',
+    sub: '#A0A0A0',
+    grado: 'primaria',
+  },
+  {
+    id: 'compiti',
+    label: 'Compiti',
+    desc: 'Da svolgere',
+    icon: ClipboardList,
+    href: '/parent/compiti',
+    bg: '#FDC400',
+    fg: '#006A5F',
+    sub: 'rgba(0,106,95,0.55)',
+    grado: 'primaria',
   },
   {
     id: 'locker',
@@ -82,6 +128,7 @@ const tiles = [
     bg: '#FFF8E1',
     fg: '#006A5F',
     sub: '#A0A0A0',
+    grado: 'infanzia',
   },
   {
     id: 'attendance',
@@ -92,6 +139,7 @@ const tiles = [
     bg: '#E8F5F3',
     fg: '#006A5F',
     sub: '#A0A0A0',
+    grado: 'infanzia',
   },
 ] as const;
 
@@ -103,8 +151,14 @@ function greetingByHour() {
 }
 
 function ParentHomeContent() {
-  const searchParams = useSearchParams();
-  const studentId = searchParams.get('id') || DEFAULT_STUDENT_ID;
+  const { parentId, studentId } = useParentIdentity();
+  const { schoolType } = useChildSchoolType();
+  const isPrimaria = schoolType === 'primaria';
+  // Gating per grado: la primaria non vede le tile infanzia e viceversa.
+  const visibleTiles = tiles.filter((t) => {
+    const g = (t as { grado?: string }).grado;
+    return !g || (isPrimaria ? g === 'primaria' : g === 'infanzia');
+  });
 
   const [studentName, setStudentName] = useState('');
   const [firstName, setFirstName] = useState('');
@@ -112,6 +166,7 @@ function ParentHomeContent() {
   const [mascotFailed, setMascotFailed] = useState(false);
 
   useEffect(() => {
+    if (!studentId) return;
     fetch(`/api/diary/students?id=${studentId}`)
       .then(r => r.ok ? r.json() : null)
       .then(d => {
@@ -263,6 +318,9 @@ function ParentHomeContent() {
         </motion.div>
       )}
 
+      {/* ── RIEPILOGO PAGAMENTI ───────────────────── */}
+      <PagamentiSummary userId={parentId} href={withIdentity('/parent/pagamenti', parentId, studentId)} />
+
       {/* ── SECTION HEADER ────────────────────────── */}
       <div className="flex items-center gap-3 px-4 mb-3">
         <h2 className="font-barlow font-black text-lg text-kidville-green uppercase tracking-wide whitespace-nowrap">
@@ -273,7 +331,7 @@ function ParentHomeContent() {
 
       {/* ── TILE GRID ─────────────────────────────── */}
       <div className="px-4 grid grid-cols-2 gap-3">
-        {tiles.map((tile, i) => {
+        {visibleTiles.map((tile, i) => {
           const Icon = tile.icon;
           return (
             <motion.div
@@ -288,7 +346,7 @@ function ParentHomeContent() {
               whileHover={{ scale: 1.03, y: -2 }}
               whileTap={{ scale: 0.96 }}
             >
-              <Link href={tile.href} className="block h-full">
+              <Link href={withIdentity(tile.href, parentId, studentId)} className="block h-full">
                 <div
                   className="relative overflow-hidden rounded-[20px] p-4 h-full min-h-[110px] flex flex-col"
                   style={{ backgroundColor: tile.bg }}

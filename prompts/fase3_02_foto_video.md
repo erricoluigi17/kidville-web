@@ -1,5 +1,8 @@
 # Prompt Atomico: Fase 3 - Modulo Foto e Video (Galleria)
 
+> [!IMPORTANT]
+> **Fonte di verità = PRD.** Documento di pianificazione storico: in caso di conflitto con il file `PRD REGISTRO ELETTRONICO.md` **vince sempre il PRD**. I contenuti in contrasto con il PRD sono marcati **[SUPERATO]** qui sotto (conservati per storico, non rimossi). Allineamento PRD: giugno 2026.
+
 ## Contesto Generale
 Sei un AI Software Engineer Senior. Il tuo task è sviluppare il **Modulo Foto e Video** (Fase 3), una galleria multimediale sicura e compliance al GDPR.
 

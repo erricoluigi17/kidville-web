@@ -15,7 +15,8 @@ const SEZIONE = 'Girasoli';
 const MAESTRA_ID = '22222222-2222-2222-2222-222222222222'; // dev default
 
 // Entrata rimossa — gestita dal modulo Presenze
-const ALL_EVENT_TYPES: DiaryEventType[] = ['attivita', 'merenda', 'pranzo', 'nanna_inizio', 'bagno'];
+// Nanna e Sveglia sono DUE pulsanti distinti (PRD §3.1.1): Nanna = orario inizio, Sveglia = orario fine.
+const ALL_EVENT_TYPES: DiaryEventType[] = ['attivita', 'merenda', 'pranzo', 'nanna_inizio', 'nanna_fine', 'bagno'];
 
 function now() {
     const d = new Date();
@@ -37,9 +38,11 @@ function buildInitialState(type: DiaryEventType, students: Student[]) {
         } else if (type === 'merenda') {
             state[s.id] = { corsi: { merenda: null } };
         } else if (type === 'nanna_inizio') {
-            state[s.id] = { orario_inizio: '', orario_fine: '' };
+            state[s.id] = { orario_inizio: '' };
+        } else if (type === 'nanna_fine') {
+            state[s.id] = { orario_fine: '' };
         } else if (type === 'bagno') {
-            state[s.id] = { pipi: 0, cacca: 0 };
+            state[s.id] = { pipi: 0, cacca: 0, vasino: 0 };
         } else {
             state[s.id] = {};
         }
@@ -215,7 +218,7 @@ export default function TeacherDiaryPage() {
         updateStudent(studentId, { corsi: { ...prev, [corsoId]: value } });
     };
 
-    const counter = (id: string, field: 'pipi' | 'cacca', delta: number) => {
+    const counter = (id: string, field: 'pipi' | 'cacca' | 'vasino', delta: number) => {
         const cur = (studentStates[id]?.[field] as number) ?? 0;
         updateStudent(id, { [field]: Math.max(0, cur + delta) });
     };
@@ -226,18 +229,27 @@ export default function TeacherDiaryPage() {
             if (!selectedEvent) return;
             const nowIso = new Date().toISOString();
             const payload = students.map(student => {
-                // Per ogni studente costruiamo il suo dettagli con la sua partecipazione per ogni attività
-                const studentActivities = activities.map(a => ({
-                    tipo: a.tipo,
-                    descrizione: a.descrizione,
-                    partecipazione: a.studentPartecipazione[student.id] ?? null,
-                }));
+                // dettagli specifico per tipo evento:
+                // - attività   → elenco attività con partecipazione per-studente
+                // - nanna/sveglia/bagno/pranzo/merenda → stato per-studente (orari, contatori, portate)
+                let dettagli: Record<string, unknown>;
+                if (selectedEvent === 'attivita') {
+                    dettagli = {
+                        activities: activities.map(a => ({
+                            tipo: a.tipo,
+                            descrizione: a.descrizione,
+                            partecipazione: a.studentPartecipazione[student.id] ?? null,
+                        })),
+                    };
+                } else {
+                    dettagli = studentStates[student.id] ?? {};
+                }
                 return {
                     alunno_id: student.id,
                     maestra_id: MAESTRA_ID,
                     tipo_evento: selectedEvent,
                     orario_inizio: nowIso,
-                    dettagli: { activities: studentActivities },
+                    dettagli,
                 };
             });
 
@@ -306,7 +318,7 @@ export default function TeacherDiaryPage() {
             {/* ── Griglia eventi ── */}
             <div className="w-full bg-white/80 backdrop-blur-xl rounded-3xl p-4 shadow-sm border border-white/40">
                 <p className="font-barlow font-bold text-kidville-green uppercase text-xs tracking-wide mb-3">Cosa vuoi registrare?</p>
-                <div className="grid grid-cols-5 gap-2">
+                <div className="grid grid-cols-3 gap-2">
                     {ALL_EVENT_TYPES.map(type => (
                         <div
                             key={type}
@@ -379,10 +391,11 @@ export default function TeacherDiaryPage() {
                                     />
                                 )}
 
-                                {/* ── NANNA ── */}
-                                {selectedEvent === 'nanna_inizio' && students.map((student, idx) => {
+                                {/* ── NANNA (inizio) / SVEGLIA (fine) — due eventi distinti (PRD §3.1.1) ── */}
+                                {(selectedEvent === 'nanna_inizio' || selectedEvent === 'nanna_fine') && students.map((student, idx) => {
                                     const state = studentStates[student.id] ?? {};
                                     const isSaved = savedStudentIds.has(student.id);
+                                    const isInizio = selectedEvent === 'nanna_inizio';
                                     return (
                                         <motion.div
                                             key={student.id}
@@ -401,32 +414,20 @@ export default function TeacherDiaryPage() {
                                                     {isSaved && <span className="ml-1.5 text-emerald-500">✅</span>}
                                                 </span>
                                             </div>
-                                            <div className="grid grid-cols-2 gap-3">
-                                                <div>
-                                                    <div className="flex items-center gap-1.5 mb-1.5">
-                                                        <Moon size={12} className="text-blue-400" strokeWidth={1.5} />
-                                                        <p className="font-maven text-xs text-gray-500">Si addormenta</p>
-                                                    </div>
-                                                    <input
-                                                        type="time"
-                                                        value={(state.orario_inizio as string) ?? ''}
-                                                        onChange={e => updateStudent(student.id, { orario_inizio: e.target.value })}
-                                                        className="w-full border-2 border-gray-200/60 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white/60 focus:outline-none focus:ring-2 focus:ring-blue-300/40 focus:border-blue-300/60 transition-all"
-                                                    />
-                                                </div>
-                                                <div>
-                                                    <div className="flex items-center gap-1.5 mb-1.5">
-                                                        <Sun size={12} className="text-yellow-500" strokeWidth={1.5} />
-                                                        <p className="font-maven text-xs text-gray-500">Si sveglia</p>
-                                                    </div>
-                                                    <input
-                                                        type="time"
-                                                        value={(state.orario_fine as string) ?? ''}
-                                                        onChange={e => updateStudent(student.id, { orario_fine: e.target.value })}
-                                                        className="w-full border-2 border-gray-200/60 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white/60 focus:outline-none focus:ring-2 focus:ring-yellow-300/40 focus:border-yellow-300/60 transition-all"
-                                                    />
-                                                </div>
+                                            <div className="flex items-center gap-1.5 mb-1.5">
+                                                {isInizio
+                                                    ? <Moon size={12} className="text-blue-400" strokeWidth={1.5} />
+                                                    : <Sun size={12} className="text-yellow-500" strokeWidth={1.5} />}
+                                                <p className="font-maven text-xs text-gray-500">
+                                                    {isInizio ? 'Si addormenta (inizio nanna)' : 'Si sveglia (fine nanna)'}
+                                                </p>
                                             </div>
+                                            <input
+                                                type="time"
+                                                value={(isInizio ? (state.orario_inizio as string) : (state.orario_fine as string)) ?? ''}
+                                                onChange={e => updateStudent(student.id, isInizio ? { orario_inizio: e.target.value } : { orario_fine: e.target.value })}
+                                                className={`w-full border-2 border-gray-200/60 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white/60 focus:outline-none focus:ring-2 transition-all ${isInizio ? 'focus:ring-blue-300/40 focus:border-blue-300/60' : 'focus:ring-yellow-300/40 focus:border-yellow-300/60'}`}
+                                            />
                                         </motion.div>
                                     );
                                 })}
@@ -436,6 +437,7 @@ export default function TeacherDiaryPage() {
                                     const state = studentStates[student.id] ?? {};
                                     const pipi = (state.pipi as number) ?? 0;
                                     const cacca = (state.cacca as number) ?? 0;
+                                    const vasino = (state.vasino as number) ?? 0;
                                     const isSaved = savedStudentIds.has(student.id);
                                     return (
                                         <motion.div
@@ -457,7 +459,7 @@ export default function TeacherDiaryPage() {
                                                 </span>
                                             </div>
                                             {/* Contatori in griglia */}
-                                            <div className="grid grid-cols-2 gap-3">
+                                            <div className="grid grid-cols-3 gap-2">
                                                 {/* Pipì */}
                                                 <div className="flex items-center gap-2 bg-sky-50/80 backdrop-blur-sm rounded-xl px-3 py-2 border border-sky-100/40">
                                                     <span className="text-lg leading-none">💧</span>
@@ -488,6 +490,23 @@ export default function TeacherDiaryPage() {
                                                     <button
                                                         onClick={() => counter(student.id, 'cacca', 1)}
                                                         className="w-7 h-7 rounded-full bg-amber-500 text-white flex items-center justify-center hover:bg-amber-600 transition-colors"
+                                                    >
+                                                        <Plus size={10} strokeWidth={1.5} />
+                                                    </button>
+                                                </div>
+                                                {/* Vasino (potty training) */}
+                                                <div className="flex items-center gap-2 bg-emerald-50/80 backdrop-blur-sm rounded-xl px-3 py-2 border border-emerald-100/40">
+                                                    <span className="text-lg leading-none">🪣</span>
+                                                    <button
+                                                        onClick={() => counter(student.id, 'vasino', -1)}
+                                                        className="w-7 h-7 rounded-full bg-white border border-emerald-200 text-emerald-600 flex items-center justify-center hover:bg-emerald-50 transition-colors"
+                                                    >
+                                                        <Minus size={10} strokeWidth={1.5} />
+                                                    </button>
+                                                    <span className="font-barlow font-black text-xl text-emerald-700 w-6 text-center">{vasino}</span>
+                                                    <button
+                                                        onClick={() => counter(student.id, 'vasino', 1)}
+                                                        className="w-7 h-7 rounded-full bg-emerald-500 text-white flex items-center justify-center hover:bg-emerald-600 transition-colors"
                                                     >
                                                         <Plus size={10} strokeWidth={1.5} />
                                                     </button>

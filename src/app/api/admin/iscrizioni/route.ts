@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
+import { sendEmail, credentialsEmailBody } from '@/lib/email/send'
 import type { EnrollmentSubmissionData, EnrollmentAdult, EnrollmentChild } from '@/types/database.types'
 
 const DEFAULT_SCUOLA_ID = '11111111-1111-1111-1111-111111111111'
@@ -85,6 +86,7 @@ export async function PATCH(request: NextRequest) {
 
     const warnings: string[] = []
     let credentials: { email: string; password: string } | null = null
+    let credentialsEmailSent = false
 
     // 2. ADULTI → parents (dedup per CF) + account per il referente
     const parentLinks: { parentId: string; role: string; isReferente: boolean }[] = []
@@ -169,6 +171,18 @@ export async function PATCH(request: NextRequest) {
             scuola_id: scuolaId,
             attivo: true,
           })
+
+          // Invio automatico delle credenziali (solo per un account appena creato)
+          if (!authErr) {
+            credentialsEmailSent = await sendEmail({
+              to: adultEmail,
+              subject: 'Le tue credenziali di accesso — Kidville',
+              text: credentialsEmailBody(a.first_name != null ? String(a.first_name) : null, adultEmail, tempPassword),
+            })
+            if (!credentialsEmailSent) {
+              warnings.push('Email credenziali non inviata (provider non configurato) — comunicarle manualmente al referente.')
+            }
+          }
         }
       }
 
@@ -257,6 +271,7 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({
       success: true,
       credentials,
+      credentialsEmailSent,
       created_students: createdStudents,
       linked_parents: parentLinks.length,
       warnings,

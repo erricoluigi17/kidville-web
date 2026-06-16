@@ -31,8 +31,10 @@ const EVENT_ORDER: Record<string, number> = {
     merenda:  1,
     attivita: 2,
     pranzo:   3,
-    nanna:    4,
-    bagno:    5,
+    nanna:        4,
+    nanna_inizio: 4,
+    nanna_fine:   4.5,
+    bagno:        5,
 };
 
 // ─── Narrativa in prima persona ───────────────────────────────────────────────
@@ -136,12 +138,22 @@ function buildFirstPersonNarrative(tipo: string, dettagli: Record<string, unknow
         return { emoji: '😴', lines };
     }
 
+    if (tipo === 'nanna_fine') {
+        const fin = dettagli?.orario_fine as string | undefined;
+        return {
+            emoji: '☀️',
+            lines: fin ? [`Mi sono svegliato/a alle ${fin} ☀️`] : ['Mi sono svegliato/a dal sonnellino! ☀️'],
+        };
+    }
+
     if (tipo === 'bagno') {
-        const pipi  = Number(dettagli?.pipi  ?? 0);
-        const cacca = Number(dettagli?.cacca ?? 0);
+        const pipi   = Number(dettagli?.pipi   ?? 0);
+        const cacca  = Number(dettagli?.cacca  ?? 0);
+        const vasino = Number(dettagli?.vasino ?? 0);
         const lines: string[] = [];
-        if (pipi  > 0) lines.push(`💧 Ho fatto pipì ${pipi === 1 ? 'una volta' : `${pipi} volte`}`);
-        if (cacca > 0) lines.push(`💩 Ho fatto cacca ${cacca === 1 ? 'una volta' : `${cacca} volte`}`);
+        if (pipi   > 0) lines.push(`💧 Ho fatto pipì ${pipi === 1 ? 'una volta' : `${pipi} volte`}`);
+        if (cacca  > 0) lines.push(`💩 Ho fatto cacca ${cacca === 1 ? 'una volta' : `${cacca} volte`}`);
+        if (vasino > 0) lines.push(`🪣 Ho usato il vasino ${vasino === 1 ? 'una volta' : `${vasino} volte`}`);
         if (lines.length === 0) lines.push('Sono stato/a al bagno oggi!');
         return { emoji: '🚿', lines };
     }

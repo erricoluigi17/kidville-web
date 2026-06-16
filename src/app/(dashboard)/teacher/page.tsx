@@ -26,7 +26,7 @@ import { GradeWorldSwitch } from '@/components/features/teacher/GradeWorldSwitch
 // Solo quelle con una destinazione reale nel "mondo" Infanzia/Nido: le altre
 // (valutazioni/note/orario) vivono nel flusso Primaria per-sezione.
 const ACTIVITY_DEFS = [
-  { key: 'registro', label: 'Registro di Classe', href: '/teacher/register', icon: BookOpen, tint: 'bg-kidville-green/10 text-kidville-green' },
+  { key: 'registro', label: 'Registro di Classe', href: '/teacher/primaria', icon: BookOpen, tint: 'bg-kidville-green/10 text-kidville-green' },
   { key: 'appello', label: 'Presenze · Appello', href: '/teacher/attendance', icon: ClipboardCheck, tint: 'bg-emerald-50 text-emerald-600' },
   { key: 'diario', label: 'Diario del Giorno', href: '/teacher/diary', icon: NotebookPen, tint: 'bg-amber-50 text-amber-600' },
   { key: 'gallery', label: 'Galleria', href: '/teacher/gallery', icon: Images, tint: 'bg-kidville-yellow/20 text-kidville-green' },

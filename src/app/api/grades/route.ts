@@ -1,3 +1,8 @@
+// ⛔ DEPRECATO — API voti "legacy" (voto_numerico, scala Base/Intermedio/Avanzato),
+// NON conforme O.M. 3/2025. Usato solo dal GradesTab legacy (pagina /teacher/register
+// ora reindirizza a /teacher/primaria). La valutazione conforme passa da
+// /api/primaria/valutazioni e /api/primaria/prospetto. Conservato come storico.
+
 import { NextResponse } from 'next/server';
 import { createClient, createAdminClient } from '@/lib/supabase/server-client';
 

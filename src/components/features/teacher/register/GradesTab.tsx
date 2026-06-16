@@ -1,5 +1,10 @@
 'use client';
 
+// ⛔ DEPRECATO — Tab voti "legacy" (voti numerici 1-10 + scala Base/Intermedio/Avanzato),
+// NON conforme O.M. 3/2025. Non più referenziato (la pagina /teacher/register reindirizza
+// a /teacher/primaria). Conservato come storico; la valutazione conforme vive in
+// /teacher/primaria/[sectionId]/valutazioni (giudizi sintetici Allegato A). NON usare in nuove UI.
+
 import { useState, useEffect, useCallback } from 'react';
 import { Plus, X, Award } from 'lucide-react';
 

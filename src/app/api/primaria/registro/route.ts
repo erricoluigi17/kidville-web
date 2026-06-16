@@ -219,7 +219,7 @@ export async function POST(request: NextRequest) {
           tipo: 'compiti',
           titolo: 'Nuovi compiti assegnati',
           corpo: (compiti || compitiPropri || '').slice(0, 140),
-          link: '/parent/register',
+          link: '/parent/compiti',
           entitaTipo: 'registro',
           entitaId: registroRow.id,
         })

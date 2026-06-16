@@ -131,7 +131,7 @@ export async function POST(request: NextRequest) {
         tipo: 'valutazione',
         titolo: `Nuova valutazione di ${materia.nome}`,
         corpo: giudizioSintetico || testo || undefined,
-        link: '/parent/register',
+        link: '/parent/primaria/valutazioni',
         entitaTipo: 'valutazione',
         entitaId: val.id,
         bufferMin: settings?.notif_buffer_valutazioni_min ?? 10,

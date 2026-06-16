@@ -51,7 +51,7 @@ export async function POST(request: NextRequest) {
             tipo: 'pagella',
             titolo: 'Pagella disponibile',
             corpo: 'Il documento di valutazione è disponibile nell’area riservata.',
-            link: '/parent/register',
+            link: '/parent/primaria/pagelle',
             entitaTipo: 'scrutinio',
             entitaId: scrutinioId,
           })

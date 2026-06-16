@@ -91,7 +91,7 @@ const tiles = [
     label: 'Registro',
     desc: 'Voti & note',
     icon: BarChart3,
-    href: '/parent/register',
+    href: '/parent/primaria',
     bg: '#FDC400',
     fg: '#006A5F',
     sub: 'rgba(0,106,95,0.55)',

@@ -69,7 +69,7 @@ export async function POST(request: NextRequest) {
         tipo: richiedeFirma ? 'nota_firma' : 'nota',
         titolo: richiedeFirma ? 'Nuova nota — richiesta firma' : 'Nuova nota',
         corpo: testo.slice(0, 140),
-        link: '/parent/register',
+        link: '/parent/primaria/note',
         entitaTipo: 'nota',
       })
     } catch { /* non bloccare */ }

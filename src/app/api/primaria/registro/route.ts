@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { getRequestUserId } from '@/lib/auth/require-staff'
+import { requireDocente } from '@/lib/auth/require-staff'
 import { isOltreScadenza } from '@/lib/primaria/timelock'
 import { enqueueNotifichePerAlunni } from '@/lib/primaria/notifiche'
-
-const DEV_TEACHER = '22222222-2222-2222-2222-222222222222'
 
 // ISO date → giorno_settimana 1..6 (Lun..Sab); domenica (0) → 7 (fuori range).
 function giornoSettimana(dataIso: string): number {
@@ -17,11 +15,12 @@ function giornoSettimana(dataIso: string): number {
 // righe di registro firmate (con firme, contenuti propri e destinatari).
 export async function GET(request: NextRequest) {
   try {
+    const auth = await requireDocente(request)
+    if (auth.response) return auth.response
     const sp = new URL(request.url).searchParams
     const sectionId = sp.get('sectionId')
     const data = sp.get('data')
     if (!sectionId || !data) return NextResponse.json({ error: 'sectionId e data obbligatori' }, { status: 400 })
-    if (!getRequestUserId(request)) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
 
     const supabase = await createAdminClient()
     const giorno = giornoSettimana(data)
@@ -84,7 +83,9 @@ export async function GET(request: NextRequest) {
 // Firma/salva una lezione. Gestisce cofirma e firma indipendente (destinatari).
 export async function POST(request: NextRequest) {
   try {
-    const userId = getRequestUserId(request) ?? DEV_TEACHER
+    const auth = await requireDocente(request)
+    if (auth.response) return auth.response
+    const userId = auth.user.id
     const body = await request.json()
     const {
       sectionId,

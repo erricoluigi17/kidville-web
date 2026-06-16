@@ -1,18 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { getRequestUserId } from '@/lib/auth/require-staff'
+import { requireDocente } from '@/lib/auth/require-staff'
 import { enqueueNotifichePerAlunni } from '@/lib/primaria/notifiche'
 
-const DEV_TEACHER = '22222222-2222-2222-2222-222222222222'
 const CATEGORIE = ['disciplinare', 'didattica', 'compiti_non_svolti'] as const
 
 // GET /api/primaria/note?sectionId=&userId=  (vista docente: ultime note della classe)
 export async function GET(request: NextRequest) {
   try {
+    const auth = await requireDocente(request)
+    if (auth.response) return auth.response
     const sp = new URL(request.url).searchParams
     const sectionId = sp.get('sectionId')
     if (!sectionId) return NextResponse.json({ error: 'sectionId obbligatorio' }, { status: 400 })
-    if (!getRequestUserId(request)) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
 
     const supabase = await createAdminClient()
     const { data, error } = await supabase
@@ -33,7 +33,9 @@ export async function GET(request: NextRequest) {
 // body: { sectionId, alunnoIds[], categoria, testo, richiedeFirma?, oscurataAdAltri? }
 export async function POST(request: NextRequest) {
   try {
-    const userId = getRequestUserId(request) ?? DEV_TEACHER
+    const auth = await requireDocente(request)
+    if (auth.response) return auth.response
+    const userId = auth.user.id
     const body = await request.json()
     const { sectionId, alunnoIds, categoria, testo, richiedeFirma, oscurataAdAltri } = body
 

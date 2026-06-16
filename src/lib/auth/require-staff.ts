@@ -156,3 +156,38 @@ export async function requireUser(request: Request): Promise<AuthResult> {
   }
   return { user }
 }
+
+/**
+ * Garantisce che la richiesta provenga dal personale DOCENTE/segreteria
+ * (`educator`/`admin`/`coordinator`). Esclude esplicitamente `genitore` e `cuoca`.
+ *
+ * Da usare per le route docente che leggono/scrivono dati di classe o riservati
+ * (registro, note, prospetto/medie, annotazioni): nel modello app-level un
+ * genitore possiede un `userId` valido e, senza questo gate, potrebbe raggiungerle
+ * chiamandole con il proprio id. Enforcement applicativo (vedi requireStaff).
+ *
+ * Uso:
+ * ```ts
+ * const auth = await requireDocente(request)
+ * if (auth.response) return auth.response
+ * const userId = auth.user.id
+ * ```
+ */
+export async function requireDocente(
+  request: Request,
+  allowed: AppRole[] = ['educator', 'admin', 'coordinator']
+): Promise<AuthResult> {
+  const userId = getRequestUserId(request)
+  if (!userId) {
+    return {
+      response: NextResponse.json({ error: 'Non autenticato: userId mancante' }, { status: 401 }),
+    }
+  }
+  const user = await loadAppUser(userId)
+  if (!user || !allowed.includes(user.role)) {
+    return {
+      response: NextResponse.json({ error: 'Accesso negato: riservato al personale docente' }, { status: 403 }),
+    }
+  }
+  return { user }
+}

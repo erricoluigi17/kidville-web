@@ -7,7 +7,8 @@ import { getRequestUserId } from '@/lib/auth/require-staff'
 // NB: nessuna media numerica nella risposta. La media (associazione numerica
 // nascosta dei giudizi) è strumento di lavoro del docente e NON va MAI esposta
 // al genitore — O.M. 3/2025, PRD §4 (#1/#3) e §4.5.
-// Rispetta il buffer di visibilità configurato dalla scuola.
+// Visibilità A TEMPO: il genitore vede una valutazione solo trascorso il buffer
+// (notif_buffer_valutazioni_min, default 10') dalla creazione (PRD §4.5).
 export async function GET(request: NextRequest) {
   try {
     const sp = new URL(request.url).searchParams
@@ -39,7 +40,9 @@ export async function GET(request: NextRequest) {
         .from('valutazioni')
         .select('id, materia_id, tipo, modalita, giudizio_sintetico, giudizio_testo, creato_il, argomento')
         .eq('alunno_id', studentId)
-        .eq('pubblicato', true)
+        // Buffer a tempo: visibile solo se creata da più di `bufferMin`, così il
+        // docente ha la finestra di correzione. Nessun filtro `pubblicato`: per le
+        // valutazioni in itinere non viene mai impostato a true (PRD §4.5).
         .lte('creato_il', soglia)
         .order('creato_il', { ascending: false }),
       supabase

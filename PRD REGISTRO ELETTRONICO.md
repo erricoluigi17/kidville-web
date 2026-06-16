@@ -364,8 +364,11 @@ dell'O.M. 3/2025**, implementata in modo rigido (non rimodulabile nelle definizi
   descrittivi) e l'argomento della prova. **Nessun voto numerico e nessuna media** sono visibili al
   genitore, in itinere o a scrutinio; la media numerica resta uno strumento riservato al docente (vedi
   §4 #3) e non viene neppure trasmessa al client dell'app genitore.
-• **Buffer di Sicurezza:** all'inserimento di una valutazione il sistema attende 10 minuti prima di
-  inviare la notifica push e renderla visibile, per consentire correzioni.
+• **Buffer di Sicurezza (a tempo):** una valutazione in itinere diventa visibile al genitore (e la
+  notifica push parte) solo **trascorso il buffer dalla creazione** — `notif_buffer_valutazioni_min`,
+  default 10 minuti — per consentire correzioni. La visibilità è calcolata sul **tempo di creazione**
+  (`creato_il`), non su un flag di pubblicazione separato: il docente vede subito la propria valutazione,
+  il genitore solo dopo il buffer.
 • **Nessuna firma richiesta** per le normali valutazioni in itinere.
 • **Persistenza Visiva:** in caso di account genitore sospeso (ritardi amministrativi), i dati del
   registro (valutazioni e compiti) restano comunque visibili, a tutela del diritto all'informazione didattica.

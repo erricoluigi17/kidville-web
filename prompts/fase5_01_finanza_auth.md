@@ -1,5 +1,8 @@
 # Prompt Atomico: Fase 5 - Gestione Finanziaria, Aruba e Sicurezza (Cloud Auth)
 
+> [!IMPORTANT]
+> **Fonte di verità = PRD.** Documento di pianificazione storico: in caso di conflitto con il file `PRD REGISTRO ELETTRONICO.md` **vince sempre il PRD**. I contenuti in contrasto con il PRD sono marcati **[SUPERATO]** qui sotto (conservati per storico, non rimossi). Allineamento PRD: giugno 2026.
+
 ## Contesto Generale
 Sei un AI Software Engineer Senior. Chiudi la roadmap con la **Fase 5**, incentrata sulla Gestione Economica, Integrazione Aruba e configurazione globale di Sicurezza (Cloud Auth).
 

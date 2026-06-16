@@ -1,5 +1,8 @@
 # Prompt Atomico: Fase 1 - Modulo Presenze e Check-in/Check-out
 
+> [!IMPORTANT]
+> **Fonte di verità = PRD.** Documento di pianificazione storico: in caso di conflitto con il file `PRD REGISTRO ELETTRONICO.md` **vince sempre il PRD**. I contenuti in contrasto con il PRD sono marcati **[SUPERATO]** qui sotto (conservati per storico, non rimossi). Allineamento PRD: giugno 2026.
+
 ## Contesto Generale
 Sei un AI Software Engineer Senior. Il tuo compito è sviluppare il **Modulo Presenze e Check-in/Check-out** per il SaaS Kidville, basandoti sulla Fase 1 della Roadmap Tecnica. L'architettura di base (Supabase) è già configurata. 
 

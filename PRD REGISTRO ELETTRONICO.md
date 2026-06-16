@@ -66,6 +66,9 @@ sede, garantire l'operatività offline per i docenti e mantenere la rigorosa con
 Indirizzo di residenza, Cittadinanza, Sede di appartenenza, Classe/Sezione.
 ***Stato dell'Alunno:** Iscritto, Non iscritto, Ritirato, Sospeso.
 ***Dati Medico/Mensa:** Allergie e Intolleranze (con blocco visivo in fase di appello/mensa).
+Flag **"Usa pannolino"** (Si/No): se attivo, ogni evento "Bagno/Igiene" registrato nel Diario 0-6
+scala automaticamente un pannolino dall'Armadietto del bambino (vedi Modulo Armadietto §2.2). Per i
+bambini senza questo flag, gli eventi Bagno non generano alcuno scalo di materiale.
 ***Dati Didattici:** Profilo BES (Si/No), Storico valutazioni, Note disciplinari, Accesso allo storico
 del "Diario 0-6" degli anni precedenti.
 ***Gestione Delegati:** Lista dinamica di persone autorizzate al ritiro. Non vi è limite numerico.
@@ -150,9 +153,9 @@ Il data-entry segue un flusso sequenziale in **due step** per ridurre gli errori
 - **Attività:** Quattro pulsanti di partecipazione per ogni bambino: "Non fatta", "Con difficoltà", "Con aiuto", "In autonomia". Codice colore: rosso, arancio, giallo, verde.
 - **Pranzo (Multi-Portata):** Per ogni bambino, una riga di pulsanti quantità (✗ Niente / ¼ Poco / ½ Metà / ¾ Quasi tutto / ★ Tutto) per **ciascuna portata del giorno** (Primo, Secondo, Contorno, Frutta). Se il menu del giorno prevede N portate, compaiono N righe per bambino. I bambini con allergie appaiono evidenziati in rosso.
 - **Merenda:** Come il Pranzo, ma con una sola portata generica.
-- **Nanna (Inizio):** Campo orario d'inizio del riposo pomeridiano per ogni bambino.
-- **Sveglia (Fine Nanna):** Campo orario di fine riposo per ogni bambino.
-- **Bagno/Igiene:** Due contatori cumulativi per bambino — **Pipì** (💧) e **Cacca** (💩) — con pulsanti + e − per incrementare/decrementare il conteggio. Il valore viene salvato come numero intero (es. "Pipì: 2, Cacca: 1").
+- **Nanna (Inizio):** evento con **pulsante dedicato e distinto**; campo orario d'inizio del riposo pomeridiano per ogni bambino. *(Decisione definitiva — incongruenza #6: Nanna e Sveglia restano DUE pulsanti separati, non un pulsante unico.)*
+- **Sveglia (Fine Nanna):** evento con **pulsante dedicato e distinto** dalla Nanna; campo orario di fine riposo per ogni bambino. La coppia Nanna→Sveglia documenta il riposo nella forma "dalle … alle …".
+- **Bagno/Igiene:** Tre contatori cumulativi per bambino — **Pipì** (💧), **Cacca** (💩) e **Vasino** (🚽, potty training) — con pulsanti + e − per incrementare/decrementare il conteggio. Il valore viene salvato come numero intero (es. "Pipì: 2, Cacca: 1, Vasino: 1"). *(Decisione definitiva — incongruenza #7: il Vasino è un controllo previsto e implementato.)* Ogni evento Bagno scala 1 pannolino dall'Armadietto solo per i bambini con flag "Usa pannolino" (vedi Anagrafica §2.1 e Armadietto §2.2; incongruenza #9).
 
 
 ### 3.2 Sicurezza e Validazione
@@ -198,9 +201,11 @@ Il data-entry segue un flusso sequenziale in **due step** per ridurre gli errori
 > - ✅ Badge ✅ per alunni salvati, toast di conferma
 > - ✅ Alunni caricati da database (`alunni` filtrati per `classe_sezione`)
 >
-> **Differenze rispetto al PRD:**
-> - ⚠️ Il campo "Nanna" e "Sveglia" sono unificati in un unico pulsante "Nanna" con due input orario (inizio/fine), anziché due pulsanti separati come da PRD §3.1.1
-> - ⚠️ Il filtro presenze (mostrare solo bambini "Presenti") non è ancora attivo — vengono mostrati tutti gli alunni della sezione
+> **Differenze rispetto al PRD — decisioni definitive e correzioni pianificate (Blocco 3):**
+> - 🔧 **Nanna/Sveglia (incongruenza #6 — RISOLTA):** oggi unificati in un unico pulsante "Nanna" con due input orario. Decisione: DUE pulsanti distinti "Nanna (Inizio)" e "Sveglia (Fine Nanna)" che registrano "dalle … alle …". *Da correggere nel codice.*
+> - 🔧 **Filtro presenze (incongruenza #8 — RISOLTA):** oggi vengono mostrati tutti gli alunni della sezione. Decisione: requisito **ATTIVO** — mostrare solo i bambini "Presenti" nel modulo Presenze. *Da implementare.*
+> - ✅ **Bagno/Igiene — Vasino (incongruenza #7 — RISOLTA):** contatori Pipì 💧, Cacca 💩 e **Vasino 🚽** (potty training) sono controlli previsti e implementati.
+> - 🔧 **Armadietto/pannolino (incongruenza #9 — RISOLTA):** decisione — ogni evento Bagno scala 1 pannolino dall'Armadietto solo per i bambini con flag "Usa pannolino" in Anagrafica. *Da implementare.*
 > - ⚠️ I nomi delle portate pranzo sono ancora mock (`MOCK_MEAL_COURSES`) — in futuro saranno caricati dal modulo Mensa via Supabase
 > - ⚠️ Il buffer di modifica 10 minuti (§3.2) non è ancora implementato
 > - ⚠️ Le note libere per evento non sono ancora esposte nell'interfaccia (il campo `nota_libera` esiste nel DB)
@@ -226,7 +231,7 @@ massima chiarezza per i genitori e un basso carico cognitivo per lo staff.
 ### 2.2 Sistema a Scalare e Logica del Semaforo
 La gestione delle scorte si basa su un algoritmo quantitativo:
 • Carico Merci: Quando il genitore consegna il materiale, l'insegnante registra fisicamente l'ingresso nell'app, specificando i dettagli (es. marca, taglia e quantità totale di pannolini).
-• Consumo Automatico: Ad ogni azione registrata nel modulo Diario 0-6 (es. cambio pannolino), il sistema scala automaticamente un'unità dal totale disponibile nell'armadietto.
+• Consumo Automatico: Ad **ogni evento "Bagno/Igiene"** registrato nel modulo Diario 0-6 il sistema scala automaticamente **un'unità di pannolino** dal totale disponibile nell'armadietto, **esclusivamente per i bambini con il flag "Usa pannolino" attivo in Anagrafica** (vedi §2.1 Anagrafica Alunno). I bambini senza tale flag non subiscono alcuno scalo, anche se per loro viene registrato un evento Bagno (es. solo uso del vasino). Lo scalo riguarda il solo materiale "pannolino"; gli altri materiali si scalano unicamente con consumo manuale registrato dall'insegnante.
 • Alert Visivi (Semaforo): Il livello delle scorte viene comunicato cromaticamente:
   • Verde: Scorte sufficienti.
   • Giallo: Allerta di esaurimento (giacenza inferiore a 5 unità).
@@ -290,6 +295,13 @@ direzione scolastica nella valutazione periodica e negli adempimenti di scrutini
 > Il modello precedente (voti 1-10 + livelli Base/Intermedio/Avanzato dei riferimenti 2020) è
 > **superato** e va sostituito. Lo stato attuale del codice ([GradesTab.tsx](src/components/features/teacher/register/GradesTab.tsx),
 > tabella `valutazioni` con `voto_numerico`/`giudizio_testo`) **non è conforme** per la primaria.
+
+> [!IMPORTANT]
+> **Decisioni definitive — incongruenze #1, #2, #3, #4 (vedi Appendice → Note di coerenza).** *(Aggiornate dopo revisione del committente: media e categorie di prova confermate.)*
+> - **#1 (Voto visibile = giudizio sintetico):** alla **primaria** il voto **visibile/ufficiale** mostrato a docenti e famiglie è **esclusivamente il giudizio sintetico** (in itinere e a scrutinio); **non si mostrano voti numerici 1-10**. È però **mantenuta un'associazione numerica interna/nascosta** a ciascun giudizio (es. *Sufficiente* = 6), usata **solo internamente** per il calcolo della media (vedi #3). I voti numerici visibili restano possibili solo per i gradi non-primaria.
+> - **#2 (Scala giudizi):** l'unica scala ammessa per i giudizi sintetici della primaria è quella dell'**Allegato A O.M. 3/2025** — *Ottimo, Distinto, Buono, Discreto, Sufficiente, Non sufficiente*. La vecchia scala **Base/Intermedio/Avanzato** è **SUPERATA**.
+> - **#3 (Medie — MANTENUTE):** alla primaria **il calcolo della media È PREVISTO**, basato sull'**associazione numerica nascosta** dei giudizi sintetici (#1). La media è uno strumento interno di sintesi per il docente; il documento di valutazione resta espresso in giudizi.
+> - **#4 (Scritto/Orale/Pratico — MANTENUTE):** la categorizzazione **Scritto/Orale/Pratico è mantenuta anche alla primaria**: serve sia come tipologia della prova sia per i **termini di immodificabilità §8** (orali 2gg / scritte-pratiche 15gg). La valutazione in itinere usa comunque obiettivi di apprendimento e quattro dimensioni.
 
 ### 4.1 Motore di Valutazione Ibrido (configurabile per grado)
 Il sistema espone un **unico motore di valutazione**, il cui comportamento è determinato da una
@@ -929,3 +941,1971 @@ mancato rispetto può comportare l'esclusione dal mercato scolastico o sanzioni.
 • **Audit log immodificabile** degli accessi a dati e documenti sensibili (chi, quando, finalità),
   in conformità ai requisiti del Garante per le PA — estensione di `registro_modifiche` e
   `firme_documenti` esistenti.
+
+---
+
+# Appendice — Checklist Controlli Richiesti per Ruolo e Pagina
+
+> [!NOTE]
+> Questa appendice è la **spec OBIETTIVO**: elenca per ogni ruolo e pagina i pulsanti, le azioni, i badge e gli elementi UI chiave che la pagina **deve** avere, per consentire un confronto (diff visivo) col design implementato. I controlli previsti restano in lista anche se non ancora presenti nel codice. Consolidata da PRD + ROADMAP_TECNICA + prompts/ + codice applicativo.
+
+
+## Genitore
+
+### `/parent` — Home / Dashboard Genitore
+_Modulo PRD: Trasversale + Mobile UI_
+
+**Checklist controlli richiesti:**
+- Selettore 'Seleziona figlio' (switch tra figli)
+- Indicatore 'Figlio attivo' (avatar iniziali + nome + classe)
+- Indicatore stato presenza 'A scuola'
+- Widget 'Riepilogo presenze'
+- Widget 'Avvisi non letti' (badge contatore)
+- Widget 'Pagamenti in scadenza' (riepilogo)
+- Indicatore 'Tutto in regola' (pagamenti saldati)
+- Azione 'Vai a Pagamenti' (widget riepilogo cliccabile)
+- Lista 'Accessi rapidi ai moduli' (griglia tile)
+- Pulsante tile 'Pagamenti'
+- Pulsante tile 'Mensa'
+- Pulsante tile 'Avvisi'
+- Pulsante tile 'Chat'
+- Pulsante tile 'Diario' (infanzia/nido)
+- Pulsante tile 'Galleria'
+- Pulsante tile 'Moduli'
+- Pulsante tile 'Registro' (primaria)
+- Pulsante tile 'Lezioni' (primaria)
+- Pulsante tile 'Compiti' (primaria)
+- Pulsante tile 'Armadietto' (infanzia)
+- Pulsante tile 'Presenze' (infanzia)
+- Indicatore 'Saluto orario' (Buongiorno/pomeriggio/sera)
+- Tab navigazione 'Home'
+- Tab navigazione 'Avvisi'
+- Tab navigazione 'Chat'
+- Tab navigazione 'Scuola/Diario' (per grado)
+- Pulsante 'Altro' (apre sheet sezioni)
+- Pulsante 'Chiudi' sheet sezioni
+- Lista 'Tutte le sezioni' (sheet Altro)
+
+### `/parent/attendance` — Presenze & Assenze
+_Modulo PRD: Presenze §3_
+
+**Checklist controlli richiesti:**
+- Selettore figlio (alunno)
+- Campo 'Motivo dell'assenza' (opzionale)
+- Selettore date assenza (da / a)
+- Selettore tipologia (Assenza / Ritardo / Uscita anticipata)
+- Pulsante 'Comunica Assenza'
+- Banner 'Avviso Inviato' (conferma)
+- Pulsante 'Torna Indietro'
+- Pulsante 'Carica certificato medico'
+- Indicatore stato validazione certificato (in attesa / approvato)
+- Pulsante 'Giustifica' evento (assenza/ritardo/uscita)
+- Campo PIN dispositivo (giustificazione)
+- Campo 'Motivazione giustifica'
+- Lista eventi da giustificare
+- Lista storico giustificazioni
+- Banner Panic Alert ricevuto (ritiro non autorizzato)
+
+### `/parent/primaria/assenze` — Libretto Web / Giustificazioni
+_Modulo PRD: Presenze §3.1_
+
+**Checklist controlli richiesti:**
+- Lista eventi presenza (assenza/ritardo/uscita anticipata)
+- Badge stato 'Assente'
+- Badge stato 'Ritardo'
+- Badge stato 'Uscita anticipata'
+- Badge '✓ Giustificata'
+- Badge 'Da giustificare'
+- Banner 'N assenze non ancora giustificate'
+- Indicatore orario entrata (ritardo)
+- Indicatore orario uscita (uscita anticipata)
+- Indicatore testo motivazione giustifica
+- Indicatore 'Nota docente'
+- Pulsante 'Giustifica' su evento da giustificare
+- Campo PIN dispositivo per confermare la giustifica
+- Campo motivazione giustifica
+- Pulsante 'Invia codice OTP' (firma FES via email)
+- Campo inserimento codice OTP
+- Pulsante 'Conferma giustifica'
+- Pulsante 'Comunica assenza in anticipo'
+- Selettore data assenza preventiva
+- Azione upload certificato medico di riammissione
+- Indicatore 'Presa visione' della giustifica
+- Indicatore firma FES (autore/timestamp giustifica)
+- Banner errore 'Giustifica non più possibile oltre N giorni'
+
+### `/parent/avvisi` — Bacheca Avvisi / Circolari
+_Modulo PRD: Comunicazione §3_
+
+**Checklist controlli richiesti:**
+- Lista Avvisi/Circolari (card cliccabili)
+- Azione Apri/espandi avviso (registra presa visione automatica)
+- Pulsante 'Sì, aderisco'
+- Pulsante 'No'
+- Pulsante 'Allegato File' (apre PDF/documento circolare)
+- Pulsante 'Link Esterno'
+- Badge 'Nuovo' (avviso non ancora letto)
+- Indicatore stato risposta 'Hai aderito ✓' / 'Hai declinato'
+- Banner Scadenza / 'Scaduto il' avviso
+- Badge Tipo avviso (📢 presa visione / 📋 adesione)
+- Indicatore Mittente e tempo pubblicazione
+- Indicatore Classe/destinatario avviso
+- Selettore/Indicatore Studente attivo (avatar + classe)
+- Banner stato vuoto 'Nessun avviso'
+
+### `/parent/chat` — Chat con Insegnante
+_Modulo PRD: Comunicazione §2_
+
+**Checklist controlli richiesti:**
+- Pulsante 'Nuova Chat'
+- Lista Thread insegnanti
+- Campo Scrivi messaggio
+- Pulsante 'Invia messaggio'
+- Pulsante 'Allega file'
+- Azione Invio nota vocale
+- Indicatore Traduzione automatica messaggio
+- Toggle Mostra originale/Traduzione
+- Badge Messaggi non letti (contatore intestazione)
+- Badge Non letti per thread
+- Separatore 'Nuovi Messaggi'
+- Indicatore Conferma di lettura (doppia spunta)
+- Anteprima Allegato immagine
+- Anteprima Allegato documento
+- Banner Orario risposta docenti (fuori orario)
+- Selettore Insegnante nel modal Nuova Chat
+- Indicatore Insegnante e classe/sezione
+- Pulsante 'Indietro' (vista mobile chat)
+- Azione Rimuovi allegato dalla composizione
+
+### `/parent/compiti` — Bacheca Compiti
+_Modulo PRD: Primaria §3_
+
+**Checklist controlli richiesti:**
+- Lista 'Compiti' raggruppata per giorno
+- Indicatore materia del compito
+- Campo testo compiti assegnati
+- Indicatore 'Consegna' (data scadenza compito)
+- Indicatore 'Compiti' attività individualizzata (sostegno)
+- Banner 'Nessun compito assegnato di recente'
+- Azione 'Apri allegato' del compito (foto/scheda/PDF)
+- Filtro per materia
+- Filtro per data
+- Banner 'Visibile anche se assente' (diritto al recupero)
+- Indicatore 'Sezione disponibile solo per la primaria'
+- Pulsante 'Vai al Diario'
+
+### `/parent/diary` — Diario 0-6 (Timeline)
+_Modulo PRD: Diario 0-6 §4_
+
+**Checklist controlli richiesti:**
+- Lista 'Timeline cronologica eventi della giornata'
+- Indicatore 'Orario evento' su ogni card
+- Card evento 'Entrata' (sola lettura)
+- Card evento 'Attivita' (sola lettura)
+- Card evento 'Merenda' (sola lettura)
+- Card evento 'Pranzo' (sola lettura)
+- Card evento 'Nanna' (sola lettura)
+- Card evento 'Bagno/Igiene' (sola lettura)
+- Indicatore 'Nota libera maestra' su card evento
+- Pulsante 'Giorno precedente' (navigazione data)
+- Pulsante 'Giorno successivo' (navigazione data, disabilitato su Oggi)
+- Indicatore 'Etichetta giorno' (Oggi/Ieri/data)
+- Sezione 'Le foto di oggi' (accordion collassabile)
+- Lista 'Griglia foto taggate del giorno'
+- Pulsante 'Scarica' foto
+- Pulsante 'Condividi' foto
+- Azione 'Apri foto a schermo intero' (lightbox)
+- Pulsante 'Foto precedente/successiva' nel lightbox
+- Badge 'Generale' su foto broadcast
+- Banner 'Visibilita 14 giorni / contatta segreteria'
+- Indicatore 'Chip nome bambino + sezione'
+- Indicatore 'Stato vuoto - nessuna voce diario'
+- Selettore 'Cambio bambino / avatar' (multi-figlio)
+- Indicatore 'Traduzione multilingua delle routine'
+
+### `/parent/forms/[id]` — Compilazione Form (Wizard)
+_Modulo PRD: Form §4.2_
+
+**Checklist controlli richiesti:**
+- Indicatore barra di avanzamento wizard
+- Indicatore 'Passo X di N'
+- Indicatore titolo/descrizione pagina (step)
+- Pulsante 'Indietro'
+- Pulsante 'Avanti'
+- Pulsante 'Invia' (ultimo step, senza firma)
+- Pulsante 'Firma il modulo' (ultimo step, con firma)
+- Indicatore stato 'Invio…' (caricamento submit)
+- Campo testo/numero/email/telefono dinamico
+- Campo data
+- Campo area di testo (textarea)
+- Selettore a tendina (select)
+- Selettore a scelta singola (radio)
+- Campo consenso a scelta multipla (checkbox)
+- Pulsante 'Seleziona un file (PDF, JPG…)' upload allegato
+- Indicatore caricamento allegato (spinner/'Caricamento…')
+- Badge allegato caricato (icona FileCheck2 + nome file)
+- Banner 'Allegato caricato' con percorso file
+- Banner errore caricamento allegato
+- Banner informativo firma OTP richiesta
+- Indicatore campo obbligatorio (asterisco)
+- Banner errore validazione campo
+- Modale firma elettronica OTP/FEA
+- Campo codice OTP a 6 cifre
+- Indicatore 'Codice inviato a <email>'
+- Pulsante 'Firma e completa' (verifica OTP)
+- Pulsante 'Reinvia codice OTP'
+- Pulsante chiudi modale firma (X)
+- Banner errore verifica OTP
+- Indicatore 'Modulo firmato!' (firma OTP riuscita)
+- Indicatore 'Modulo inviato!' (conferma invio)
+- Pulsante 'Torna ai moduli'
+- Firma congiunta secondo firmatario (entrambi i genitori)
+- Indicatore campo a visibilità/obbligatorietà condizionale
+
+### `/parent/gallery` — Galleria Foto/Video
+_Modulo PRD: Foto e Video §3_
+
+**Checklist controlli richiesti:**
+- Lista Feed media taggati del proprio figlio
+- Pulsante 'Scarica' (download su card)
+- Pulsante 'Scarica' (download in lightbox)
+- Pulsante 'Condividi' (condivisione nativa su card)
+- Pulsante 'Condividi' (condivisione nativa in lightbox)
+- Azione Apri media a schermo intero (lightbox)
+- Pulsante Navigazione 'Precedente' (lightbox)
+- Pulsante Navigazione 'Successiva' (lightbox)
+- Pulsante 'Chiudi' lightbox
+- Icona Play video
+- Pulsante 'Carica Altre Foto' (paginazione)
+- Badge 'Generale' (media broadcast)
+- Indicatore Conteggio foto disponibili
+- Indicatore Caption + autore/uploader del media
+- Banner 'Solo foto in cui tuo figlio è taggato'
+- Indicatore Avatar/nome del proprio figlio (selezione profilo)
+- Banner Stato vuoto 'Nessuna foto disponibile'
+
+### `/parent/lezioni` — Orario Lezioni
+_Modulo PRD: Primaria §2.2 / §6.4_
+
+**Checklist controlli richiesti:**
+- Indicatore griglia orario settimanale (matrice giorni x ore)
+- Lista materie previste per il figlio
+- Indicatore campanelle / fasce orarie (ora inizio-fine)
+- Selettore giorno della settimana (Lun-Sab)
+- Badge blocco 'Mensa'
+- Badge blocco 'Intervallo'
+- Indicatore docente per ora/materia
+- Indicatore modello tempo scuola (27/29/40 ore)
+- Lista lezioni recenti raggruppate per giorno
+- Indicatore materia + argomento svolto per lezione
+- Banner attività individualizzata (sostegno) per la lezione
+- Icona allegato lezione (PDF / immagine) apribile
+- Pulsante 'Aggiorna' (ricarica dati)
+- Indicatore figlio selezionato (nome e cognome)
+- Banner 'Sezione non disponibile' per non-primaria con link al Diario
+- Banner stato vuoto 'Nessuna lezione registrata di recente'
+
+### `/parent/locker` — Armadietto (Lista della Spesa)
+_Modulo PRD: Armadietto §4_
+
+**Checklist controlli richiesti:**
+- Lista 'Situazione Materiale' (scorte residue per materiale)
+- Indicatore semaforo scorte Verde/Giallo/Rosso
+- Indicatore quantità residua numerica per materiale
+- Lista 'Da portare a scuola' (materiali richiesti dall'insegnante)
+- Badge contatore richieste pendenti
+- Pulsante 'Preso in carico'
+- Pulsante 'Lo porto domani' (acknowledgment alternativo)
+- Indicatore stato 'Preso in carico' (richieste acknowledged)
+- Banner notifica richiesta materiale (avviso immediato)
+- Banner reminder automatico ore 07:00
+- Selettore profilo figlio (isolamento multi-figlio)
+- Indicatore nome figlio corrente
+- Tab 'Panoramica'
+- Tab 'Andamento Mensile'
+- Pulsante mese precedente (andamento mensile)
+- Pulsante mese successivo (andamento mensile)
+- Toggle 'Storico richieste'
+- Pulsante 'Aggiorna' (refresh manuale)
+- Badge 'LIVE' (aggiornamento realtime)
+- Indicatore 'Aggiornato alle' (ultimo refresh)
+- Toast conferma salvataggio acknowledgment
+
+### `/parent/mensa` — Menu & Mensa
+_Modulo PRD: Mensa §3-§4_
+
+**Checklist controlli richiesti:**
+- Indicatore 'Saldo ticket' (pill verde con icona Ticket)
+- Badge nome menu ciclico (es. 'Menu Primavera')
+- Pulsante 'Aggiorna saldo' (refresh)
+- Pulsante 'Settimana precedente' (chevron sinistra)
+- Pulsante 'Settimana successiva' (chevron destra)
+- Indicatore 'Intervallo settimana' (range date)
+- Lista 'Calendario menu settimanale' (giorni con portate)
+- Pulsante 'Prenota pranzo'
+- Pulsante 'Disdici' (annulla prenotazione)
+- Badge 'Prenotato' (giorno confermato, stile emerald)
+- Icona 'Allerta allergeni del piatto' (semaforo rosso per pasto pericoloso al bambino)
+- Badge 'Allergene presente' (etichetta allergene del giorno)
+- Banner 'Reminder ticket in esaurimento / saldo esaurito'
+- Indicatore 'Menu non ancora pubblicato'
+- Indicatore 'Mensa chiusa' (giorno di chiusura/festività)
+- Indicatore 'Inserito dalla segreteria' (origine prenotazione)
+- Badge 'Prenotato' bloccato (giorno passato, icona Lock)
+- Banner 'Sessione non valida' (errore auth)
+
+### `/parent/modulistica` — Modulistica & Certificati
+_Modulo PRD: Form + Presenze §3_
+
+**Checklist controlli richiesti:**
+- Tab 'Da Compilare'
+- Tab 'Archivio Firmati'
+- Tab 'Certificati Self-Service'
+- Tab 'Certificati Medici'
+- Lista moduli da compilare
+- Badge 'Autorizzazione'
+- Badge 'Sondaggio'
+- Badge 'Gradimento'
+- Badge figlio destinatario modulo
+- Badge scadenza modulo 'Scade il'
+- Pulsante 'Compila' (sondaggio/gradimento)
+- Pulsante 'Compila e Firma' (autorizzazione)
+- Campo dinamico testo/data/textarea
+- Selettore radio risposta a opzioni
+- Campo checkbox consenso GDPR
+- Selettore rating 1-5
+- Indicatore campo obbligatorio asterisco
+- Banner FES 'Firma Elettronica Semplice'
+- Indicatore 'Verifica via email'
+- Pulsante 'Invia Risposte' (invio diretto)
+- Pulsante 'Invia e Firma Ricevuta' (autorizzazione)
+- Pulsante 'Annulla' compilazione
+- Campo OTP a 6 cifre (modale firma)
+- Pulsante 'Firma e completa' (modale OTP)
+- Banner conferma 'Modulo firmato!'
+- Lista archivio moduli firmati
+- Badge 'Ricevuta FES Protetta'
+- Pulsante 'Ricevuta PDF' (download)
+- Pulsante 'Scarica PDF' Certificato Frequenza
+- Pulsante 'Scarica PDF' Certificato Iscrizione
+- Selettore 'Seleziona Figlio' (certificato medico)
+- Pulsante 'Carica Certificato' (upload file)
+- Campo 'Note di accompagnamento'
+- Pulsante 'Invia Certificato Medico'
+- Lista 'Ricevute Caricamenti Medici Recenti'
+- Badge 'Giustificato' giorni coperti
+- Badge 'In attesa di abbinamento assenza'
+- Banner 'Non hai moduli da compilare'
+- Wizard step-by-step (una sezione per persona)
+- Indicatore firma congiunta entrambi i genitori
+- Banner scadenza bloccante modulo
+
+### `/parent/pagamenti` — Pagamenti & Fatture
+_Modulo PRD: Pagamenti §4 + Aruba §5_
+
+**Checklist controlli richiesti:**
+- Lista pagamenti da pagare
+- Lista storico pagamenti effettuati
+- Indicatore importo voce (€)
+- Indicatore importo residuo (resta €)
+- Badge stato 'Pagato'
+- Badge stato 'Scaduto' in rosso
+- Badge stato 'Da pagare'
+- Badge stato 'Parziale'
+- Indicatore voce obbligatoria (•obbl.)
+- Indicatore quota split 'tua quota'
+- Icona download fattura PDF su voce saldata
+- Indicatore fattura non disponibile su voce pagata
+- Toggle 'Attiva promemoria pagamenti' (push opt-in)
+- Badge 'Promemoria attivi'
+- Indicatore alunno (nome/cognome) per voce
+- Indicatore data scadenza voce
+- Icona categoria voce (Rette/Mensa/Gite...)
+- Filtro/Tab categorie (Rette/Quote/Mensa/Gite)
+- Indicatore totale da pagare (riepilogo home)
+
+### `/parent/primaria` — Hub Primaria Genitore
+_Modulo PRD: Primaria (navigazione)_
+
+**Checklist controlli richiesti:**
+- Pulsante 'Lezioni' (Argomenti e compiti)
+- Pulsante 'Valutazioni' (Giudizi e medie per materia)
+- Pulsante 'Note' (Note disciplinari e didattiche)
+- Pulsante 'Presenze' (Assenze, ritardi e giustifiche)
+- Pulsante 'Pagelle' (Scarica e firma le pagelle)
+- Pulsante 'Orario' (Orario settimanale e materie del figlio)
+- Pulsante 'Compiti' (bacheca compiti dedicata)
+- Indicatore 'Scuola Primaria' (titolo sezione con icona)
+- Selettore figlio (per famiglie con più alunni primaria)
+
+### `/parent/primaria/note` — Note Disciplinari (Presa Visione)
+_Modulo PRD: Primaria §5_
+
+**Checklist controlli richiesti:**
+- Lista note del figlio
+- Badge categoria 'Disciplinare' (rosso)
+- Badge categoria 'Didattica' (blu)
+- Badge categoria 'Compiti non svolti' (giallo/ambra)
+- Pulsante 'Firma presa visione'
+- Badge 'Firmata'
+- Indicatore 'In attesa di firma'
+- Banner 'N nota in attesa di firma'
+- Campo testo della nota
+- Indicatore data nota
+- Indicatore stato firma in corso 'Firma…'
+- Banner certificazione FES (IP/timestamp) presa visione
+- Azione download ricevuta PDF della firma
+
+### `/parent/primaria/pagelle` — Pagelle / Documento di Valutazione
+_Modulo PRD: Primaria §9 + Fascicolo_
+
+**Checklist controlli richiesti:**
+- Lista pagelle per periodo (Intermedio/Finale)
+- Campo 'Periodo' (es. Intermedio/Finale)
+- Campo 'A.S. anno scolastico'
+- Pulsante 'PDF' (download documento di valutazione)
+- Lista giudizi sintetici per disciplina
+- Indicatore giudizio sintetico Educazione Civica
+- Indicatore 'Comportamento' (giudizio sintetico)
+- Indicatore 'Giudizio globale'
+- Toggle 'Dettaglio/Nascondi' giudizi
+- Pulsante 'Firma' (avvia firma pagella OTP)
+- Campo 'Codice OTP' (firma via email)
+- Pulsante 'Conferma' (firma OTP)
+- Pulsante 'Annulla' (firma OTP)
+- Badge 'Firmata' (presa visione pagella)
+- Banner esito firma (successo/errore)
+- Indicatore 'Dev OTP code' (ambiente sviluppo)
+- Banner 'Nessuna pagella disponibile' (stato vuoto)
+- Lista pagelle anni precedenti (storico)
+- Pulsante 'Scarica certificato delle competenze'
+- Filtro 'Anno scolastico'
+
+### `/parent/primaria/valutazioni` — Valutazioni / Andamento
+_Modulo PRD: Primaria §4.5_
+
+**Checklist controlli richiesti:**
+- Lista Materie (prospetto valutazioni in itinere per disciplina)
+- Azione 'Espandi/Comprimi materia' (accordion card materia)
+- Filtro per materia
+- Badge 'Giudizio sintetico' (es. Ottimo/Buono/Sufficiente)
+- Campo 'Giudizio descrittivo' (testo della valutazione)
+- Indicatore 'Tipo prova' (orale/scritto/pratica)
+- Campo 'Argomento' della valutazione
+- Indicatore 'Data valutazione'
+- Indicatore 'Conteggio valutazioni per materia'
+- Indicatore 'Media per materia'
+- Banner 'Buffer visibilità 10 minuti' (ritardo pubblicazione valutazione)
+- Banner 'Persistenza dati anche con account sospeso'
+- Indicatore 'Stato vuoto' (Nessuna valutazione disponibile)
+
+### `/parent/register` — Registro (vista Genitore) — ⛔ DEPRECATA
+_Modulo PRD: Primaria (vista genitore)_
+
+> [!WARNING]
+> **Pagina DEPRECATA.** Sostituita dalle pagine genitore dedicate e conformi O.M. 3/2025:
+> `/parent/primaria` (hub), `/parent/primaria/valutazioni`, `/parent/primaria/note`, `/parent/primaria/pagelle`, `/parent/primaria/assenze`, `/parent/compiti`, `/parent/lezioni`.
+> La rotta legacy va **reindirizzata** a queste pagine (Blocco 3). I controlli sotto restano come snapshot storico; il target è distribuito nelle pagine canoniche elencate.
+
+**Checklist controlli (legacy — snapshot storico, NON target):**
+- Lista 'Valutazioni' (giudizi per materia)
+- Indicatore giudizio sintetico/descrittivo per valutazione
+- Indicatore materia/tipo prova per valutazione
+- Indicatore argomento collegato alla valutazione
+- Lista 'Compiti' (bacheca compiti per il genitore/alunno)
+- Indicatore allegati multimediali dei compiti/argomenti
+- Banner 'Recupero assenti' (compiti/argomenti visibili anche se assente)
+- Lista 'Orario settimanale' (materie del figlio)
+- Indicatore 'Andamento scolastico' (riepilogo andamento)
+- Banner 'Note da firmare' (note in attesa di presa visione)
+- Pulsante 'Firma' (presa visione nota disciplinare)
+- Badge categoria nota (Disciplinare/Didattica/Compiti non svolti)
+- Lista 'Pagelle' (documento di valutazione per periodo)
+- Pulsante 'Firma e visualizza' (firma ricezione pagella)
+- Campo 'Codice' OTP firma pagella
+- Pulsante 'Conferma' codice firma pagella
+- Pulsante 'Vedi a schermo' (giudizi pagella dopo firma)
+- Pulsante 'Scarica PDF' pagella
+- Lista 'Assenze da giustificare'
+- Indicatore stato assenza (Assenza/Ritardo/Uscita anticipata)
+- Badge 'presa visione / in attesa / da giustificare'
+- Pulsante 'Giustifica' (avvia giustifica assenza)
+- Campo 'Motivazione' giustifica assenza
+- Campo 'Codice' OTP/PIN giustifica assenza
+- Pulsante 'Conferma' codice giustifica
+- Pulsante 'Comunica assenza in anticipo'
+- Campo 'Data' assenza in anticipo
+- Campo 'Motivo' assenza in anticipo
+- Pulsante 'Invia' assenza in anticipo
+- Campo upload certificato medico (riammissione)
+- Pulsante 'Dichiara impreparato (a priori)'
+- Selettore 'Materia' dichiarazione impreparato
+- Campo 'Data' dichiarazione impreparato
+- Campo 'Motivo' dichiarazione impreparato
+- Pulsante 'Invia dichiarazione' impreparato
+- Banner 'Diario 0-6' (redirect se figlio non in primaria)
+- Indicatore 'Persistenza dati con account sospeso'
+
+## Insegnante
+
+### `/teacher` — Home / Dashboard Docente
+_Modulo PRD: Diario §3.2 + Trasversale_
+
+**Checklist controlli richiesti:**
+- Banner Allergie del giorno
+- Lista Allergie/intolleranze del giorno (nome alunno in rosso + badge)
+- Indicatore Stato compilazione diario (classi compilate/inattive)
+- Badge ✅ Diario del giorno completato
+- Lista Accessi rapidi alle classi/sezioni
+- Azione 'Registro di Classe' (accesso rapido modulo)
+- Azione 'Presenze · Appello' (accesso rapido modulo)
+- Azione 'Diario del Giorno' (accesso rapido modulo)
+- Azione 'Galleria' (accesso rapido modulo)
+- Azione 'Avvisi' (comunicazione)
+- Azione 'Chat famiglie' (comunicazione)
+- Azione 'Modulistica' (comunicazione)
+- Azione 'Attività' (task/bacheca interna)
+- Azione 'Armadietto' (gestione materiale)
+- Selettore Mondo Infanzia/Nido ↔ Primaria (GradeWorldSwitch)
+- Badge Grado abilitato (Infanzia / Nido / Primaria)
+- Indicatore Data odierna
+- Pulsante 'Vai alla Primaria' (fallback docente solo-primaria)
+- Indicatore stato 'Nessuna funzione abilitata' (gating matrice)
+- Bottom navigation docente
+
+### `/teacher/attendance` — Appello Presenze (Nido/Infanzia)
+_Modulo PRD: Presenze §2_
+
+**Checklist controlli richiesti:**
+- Tab 'Oggi'
+- Tab 'Mese'
+- Indicatore 'Presenti X/N'
+- Indicatore 'Offline'
+- Indicatore stato sync / sincronizzazione automatica
+- Lista alunni della propria classe (empty state)
+- Pulsante 'Presente' (per alunno)
+- Pulsante 'Ritardo' (per alunno)
+- Pulsante 'Assente' (per alunno)
+- Badge stato alunno (Presente/Ritardo/Uscita Ant./Assente)
+- Campo 'Orario Check-in' modificabile
+- Indicatore 'Ingresso HH:MM' (orario check-in)
+- Indicatore 'Uscita HH:MM' (orario check-out)
+- Pulsante 'Uscita Ant.' (uscita anticipata rapida)
+- Pulsante 'Uscita' (apri scheda delegati)
+- Pulsante 'Reset / Cambia stato' (per alunno)
+- Indicatore di caricamento riga alunno
+- Lista 'Delegati Autorizzati' (sola lettura)
+- Indicatore foto documento delegato
+- Campo nome/relazione delegato
+- Pulsante 'Conferma' uscita con delegato
+- Pulsante 'Panic Alert - Ritiro Non Autorizzato'
+- Banner 'Blocca uscita e notifica Segreteria + Genitore'
+- Pulsante 'Chiudi' scheda delegati
+- Selettore data (navigatore giorno)
+- Pulsante 'Oggi' (torna a oggi)
+- Pulsante 'Aggiorna presenze' (refresh)
+- Indicatore legenda stati (Presente/Ritardo/Uscita Ant./Assente)
+- Selettore mese (Mese precedente/successivo)
+- Pulsante 'Esporta PDF' registro mensile
+- Indicatore riepilogo P/A/R/U/ORE per alunno
+
+### `/teacher/avvisi` — Bacheca Avvisi Docente
+_Modulo PRD: Comunicazione §3_
+
+**Checklist controlli richiesti:**
+- Pulsante 'Nuovo' (crea avviso)
+- Campo 'Titolo' avviso
+- Campo 'Contenuto' avviso
+- Selettore Tipo 'Presa visione'
+- Selettore Tipo 'Adesione'
+- Selettore Destinatari 'Per classe'
+- Selettore Destinatari 'Tutti' (globale)
+- Selettore classi target (chip multi-selezione)
+- Campo 'Scadenza' avviso/adesione (data)
+- Pulsante 'Carica File (PDF, Immagini)'
+- Campo 'Link Esterno'
+- Azione 'Rimuovi file allegato'
+- Pulsante 'Pubblica Avviso'
+- Pulsante 'Salva Modifiche' (avviso esistente)
+- Lista avvisi pubblicati
+- Azione 'Espandi avviso' (chevron card)
+- Indicatore destinatari su card (classi/globale)
+- Badge tipo avviso (Presa visione / Adesione)
+- Indicatore 'X hanno letto' (read receipt)
+- Indicatore conteggio adesioni 'Si'
+- Indicatore conteggio adesioni 'No'
+- Banner scadenza/scaduto su card
+- Icona allegato 'Allegato File'
+- Icona 'Link Esterno'
+- Pulsante 'Dettaglio' (apre cruscotto monitoraggio)
+- Pulsante 'Modifica' avviso
+- Pulsante 'Elimina' avviso
+- Tab 'Stato Lettura' (cruscotto)
+- Tab 'Adesioni' (cruscotto)
+- Indicatore 'Letti' su totale + percentuale
+- Indicatore 'Non letti'
+- Indicatore adesioni 'Si / No / Attesa'
+- Filtro 'Classe' (cruscotto)
+- Filtro 'Risposta' (Si/No/Attesa/Date)
+- Campo ricerca 'Cerca alunno o genitore'
+- Pulsante 'Azzera' filtri
+- Sub-tab 'Letti' / 'Non letti'
+- Lista alunni/genitori con stato lettura
+- Lista risposte adesione per alunno (Si/No/Attesa)
+
+### `/teacher/chat` — Chat Docente
+_Modulo PRD: Comunicazione §2_
+
+**Checklist controlli richiesti:**
+- Pulsante 'Nuova Chat'
+- Modal 'Nuova Chat' (selezione genitore)
+- Lista contatti genitori della propria classe
+- Lista conversazioni (thread 1-a-1)
+- Indicatore associazione genitore-alunno nel thread
+- Badge contatore messaggi non letti (per thread)
+- Indicatore puntino non letto sull'avatar
+- Badge contatore globale non letti (header)
+- Campo 'Scrivi un messaggio'
+- Pulsante 'Invia messaggio'
+- Pulsante 'Allega file'
+- Azione invio allegato foto/immagine
+- Azione invio allegato documento/PDF
+- Pulsante 'Nota vocale'
+- Toggle 'Traduzione automatica'
+- Indicatore messaggio tradotto
+- Azione 'Mostra originale / traduzione'
+- Indicatore stato lettura messaggio (spunte)
+- Separatore 'Nuovi Messaggi'
+- Indicatore data messaggi (Oggi/Ieri)
+- Indicatore orario messaggio
+- Banner chat sempre attiva (H24 / emergenze)
+
+### `/teacher/diary` — Diario 0-6 Data-Entry
+_Modulo PRD: Diario 0-6 §3_
+
+**Checklist controlli richiesti:**
+- Pulsante evento 'Entrata'
+- Pulsante evento 'Attività'
+- Pulsante evento 'Merenda'
+- Pulsante evento 'Pranzo'
+- Pulsante evento 'Nanna'
+- Pulsante evento 'Sveglia'
+- Pulsante evento 'Bagno'
+- Pulsante 'Salva per tutti'
+- Campo orario 'Entrata' per bambino
+- Selettore livello partecipazione 'Non fatta'
+- Selettore livello partecipazione 'Con difficoltà'
+- Selettore livello partecipazione 'Con aiuto'
+- Selettore livello partecipazione 'In autonomia'
+- Selettore tipo attività
+- Campo 'Descrizione attività'
+- Pulsante 'Aggiungi attività'
+- Pulsante 'Rimuovi attività'
+- Selettore quantità pasto '✗ Niente'
+- Selettore quantità pasto '¼ Poco'
+- Selettore quantità pasto '½ Metà'
+- Selettore quantità pasto '¾ Quasi tutto'
+- Selettore quantità pasto '★ Tutto'
+- Indicatore quantità 'Bis'
+- Lista portate pranzo (Primo/Secondo/Contorno/Frutta)
+- Banner 'Menu del giorno'
+- Campo orario 'Si addormenta' (inizio nanna)
+- Campo orario 'Si sveglia' (fine nanna)
+- Contatore +/- 'Pipì'
+- Contatore +/- 'Cacca'
+- Contatore 'Vasino' (potty training)
+- Campo 'Note libere' per evento
+- Banner allergie
+- Indicatore allergia nome in rosso
+- Filtro presenze (solo bambini presenti)
+- Badge ✅ alunno salvato
+- Toast 'Salvato con successo'
+- Indicatore 'Offline'
+- Pulsante 'Chiudi' pannello evento (X)
+- Indicatore conteggio compilati per attività
+- Azione 'Bulk / Nanna per tutti' (selezione multipla alunni)
+- Pulsante 'Indietro' (Step 1 da Step 2)
+
+### `/teacher/gallery` — Galleria Upload & Tagging
+_Modulo PRD: Foto e Video §2_
+
+**Checklist controlli richiesti:**
+- Pulsante 'Carica' (apre step upload)
+- Pulsante 'Annulla' (esce dal flusso upload/tag)
+- Selettore 'Sezione'
+- Azione 'Selezione multipla / Bulk Upload' (drag&drop o file picker multiplo)
+- Azione 'Trascina foto o video' (drop zone)
+- Lista 'Anteprime file selezionati' (griglia preview pre-tag)
+- Icona 'Rimuovi file' (X su anteprima)
+- Pulsante 'Carica N file' (conferma selezione, va al tagging)
+- Lista 'Miniature caricamento multiplo' (selettore foto attiva per tag)
+- Badge 'Conteggio tag' (numero alunni taggati sulla miniatura)
+- Badge '!' (foto senza tag, non pubblicabile)
+- Badge 'G' Generale (miniatura broadcast)
+- Indicatore 'Foto X di N'
+- Pulsante 'Applica a tutte' (propaga tag/config a tutte le foto)
+- Campo 'Cerca alunno o genitore'
+- Lista 'Alunni della classe (completa, non filtrata per presenze)'
+- Azione 'Tagga alunno' (toggle selezione nella foto)
+- Indicatore 'Privacy Lock' (alunno senza liberatoria disabilitato)
+- Icona 'EyeOff' (alunno senza liberatoria)
+- Badge 'Solo genitori' (alunno senza liberatoria)
+- Icona 'Check' (alunno taggato/selezionato)
+- Pulsante 'Seleziona tutti' / 'Deseleziona tutti'
+- Banner 'Foto Privata' (selezionato alunno senza liberatoria)
+- Banner 'Info liberatoria/Privacy Lock'
+- Pulsante 'Pubblica N file' (conferma upload con watermark)
+- Indicatore 'Watermark automatico' (logo applicato in upload)
+- Lista 'Feed cronologico unico' (griglia media sezione)
+- Indicatore 'Tempo fa' (timestamp relativo media)
+- Badge 'Generale' (media broadcast nel feed)
+- Azione 'Apri lightbox media'
+- Icona 'Naviga precedente/successivo' (frecce lightbox)
+- Lista 'Bambini taggati nella foto' (riepilogo lightbox)
+- Pulsante 'Modifica Tag' (ri-tagging media già pubblicato)
+- Pulsante 'Salva' tag modificati
+- Pulsante 'Elimina Media' (cancellazione dal feed)
+- Toggle 'Caricamento in Broadcast' (invia a tutta la classe)
+- Banner 'Offline' (upload salvato in locale)
+- Pulsante 'Scarica' media (download)
+- Pulsante 'Condividi' media nativo
+
+### `/teacher/locker` — Armadietto Docente
+_Modulo PRD: Armadietto §3_
+
+**Checklist controlli richiesti:**
+- Tab 'Carico Genitore'
+- Tab 'Consumo'
+- Tab 'Mensile'
+- Pulsante 'Registra Carico Odierno'
+- Pulsante 'Aggiungi carico per <alunno>'
+- Selettore 'Alunno' (modale carico)
+- Selettore 'Materiale' (modale carico)
+- Campo 'Materiale custom (testo libero)'
+- Campo 'Quantità' (stepper +/-)
+- Campo 'Marca/Taglia' (dettagli carico)
+- Pulsante 'Conferma Carico'
+- Indicatore 'Stock Totale Attuale'
+- Indicatore Semaforo scorte Verde/Giallo(<5)/Rosso(<2)
+- Badge 'ESAURITO'
+- Badge consegne odierne '✓ N'
+- Badge '✅ Consegnato oggi'
+- Pulsante riga materiale 'Registra consumo'
+- Campo 'Quantità usata' (stepper consumo)
+- Pulsante 'Conferma' (consumo)
+- Pulsante 'Annulla' (form consumo)
+- Azione 'Richiesta materiale al genitore'
+- Azione 'Selezione massiva alunni (Bulk)'
+- Pulsante 'Invia richiesta collettiva'
+- Selettore 'Materiale richiesta' (anche custom)
+- Azione 'Chiudi/Risolvi ciclo richiesta (ricezione)'
+- Indicatore stato richiesta 'Preso in carico dal genitore'
+- Banner 'Supporto offline (salvato in cache / sincronizza)'
+- Indicatore 'Richiesta indipendente dalle presenze'
+- Indicatore 'Scalo automatico pannolino da eventi Bagno (solo bambini con flag Usa pannolino)'
+- Filtro materiale (vista Mensile)
+- Pulsante 'Mese precedente'
+- Pulsante 'Mese successivo'
+- Icona 'Portato' / 'Non portato' (griglia mensile)
+- Pulsante 'Aggiorna' (refresh)
+- Icona/Link 'Impostazioni materiali'
+
+### `/teacher/settings/locker` — Config Armadietto (Catalogo)
+_Modulo PRD: Armadietto §2 / Impostazioni §4_
+
+**Checklist controlli richiesti:**
+- Pulsante 'Indietro' (torna ad Armadietto)
+- Filtro Classe/Sezione (tab Girasoli/Coccinelle/Tulipani/Margherite)
+- Lista materiali del catalogo per classe
+- Pulsante 'Aggiungi Materiale per <classe>'
+- Pulsante 'Elimina' materiale (Trash)
+- Toggle 'Attivo/Disattiva' materiale
+- Campo 'Nome materiale'
+- Selettore 'Icona materiale'
+- Campo 'Unita di misura'
+- Campo 'Soglia Allerta (Giallo)'
+- Campo 'Soglia Urgente/Esaurito (Rosso)'
+- Indicatore semaforo soglie sulla card (Giallo Allerta / Rosso Urgente)
+- Azione 'Riordina materiale' (frecce su/giu)
+- Pulsante 'Salva Materiale'
+- Pulsante 'Annulla' (form nuovo materiale)
+- Banner informativo 'Come funziona' (semafori e visibilita)
+- Indicatore stato vuoto 'Nessun materiale configurato'
+- Indicatore salvataggio in corso (spinner per riga)
+- Campo 'Richiesta materiale custom (testo libero)'
+- Selettore default catalogo sede (Pannolini/Asciugamani/Creme/Cambi)
+- Toggle abilitazione widget Armadietto per classe/grado
+
+### `/teacher/modulistica` — Modulistica Docente (Cruscotto)
+_Modulo PRD: Form §4 (cruscotto insegnante)_
+
+**Checklist controlli richiesti:**
+- Tab 'Semaforo Consensi'
+- Tab 'Certificati Medici'
+- Selettore 'Modulo di Autorizzazione'
+- Indicatore 'Stato approvazioni classe' (semaforo verde/rosso)
+- Badge 'N Firmati' (conteggio verdi)
+- Badge 'N Mancanti' (conteggio rossi)
+- Lista alunni con stato firma
+- Badge 'FES OK' (consenso firmato)
+- Pulsante 'Invia Sollecito' (campana)
+- Pulsante 'Proxy' (upload cartaceo)
+- Banner 'Proxy Upload Cartaceo' (modale)
+- Campo 'Carica File' (modale proxy)
+- Pulsante 'Registra Firma' (conferma proxy)
+- Pulsante 'Annulla' (modale proxy)
+- Pulsante 'Gestisci Giorni' (certificato medico)
+- Badge 'Certificato Medico'
+- Badge giorni coperti (date)
+- Indicatore 'Da registrare giorni coperti'
+- Campo 'Aggiungi Giorno' (data)
+- Pulsante 'Aggiungi' giorno coperto
+- Lista 'Giorni di Copertura Inseriti'
+- Pulsante 'Salva Copertura'
+- Pulsante 'Esporta PDF consensi classe'
+- Indicatore semaforo Giallo (firma congiunta parziale)
+- Indicatore 'Scadenza modulo' (deadline bloccante)
+
+### `/teacher/register` — Registro Primaria (legacy) — ⛔ DEPRECATA
+_Modulo PRD: Primaria §4_
+
+> [!WARNING]
+> **Pagina DEPRECATA.** Sostituita dalle pagine conformi O.M. 3/2025 basate sui **giudizi sintetici**:
+> `/teacher/primaria/[sectionId]/registro` (firma lezione + argomenti/compiti), `/teacher/primaria/[sectionId]/valutazioni` (valutazione in itinere per obiettivi/dimensioni/giudizi), `/teacher/primaria/[sectionId]/prospetto`, `/teacher/primaria/[sectionId]/note`, `/teacher/primaria/[sectionId]/scrutinio`.
+> La rotta legacy va **reindirizzata** a queste pagine (Blocco 3). Sono **SUPERATI** (non target) solo i controlli a **voti numerici visibili (1-10)** e alla scala **Base/Intermedio/Avanzato**, sostituiti dai **giudizi sintetici Allegato A**. Le pagine canoniche mantengono invece le **categorie Scritto/Orale/Pratico** e la **media** (calcolata sull'associazione numerica nascosta dei giudizi).
+
+**Checklist controlli (legacy — snapshot storico, NON target):**
+- Tab 'Lezioni'
+- Tab 'Valutazioni'
+- Tab 'Note'
+- Indicatore 'Classe 3A Primaria'
+- Lista ore di lezione (1ª-8ª ora)
+- Pulsante 'Firma' (per ora)
+- Selettore Materia (firma lezione)
+- Campo 'Argomento svolto in classe'
+- Campo 'Compiti per casa'
+- Campo 'Data di consegna compiti'
+- Pulsante 'Salva e Firma'
+- Pulsante 'Modifica' (lezione firmata)
+- Pulsante 'Allegato' (media lezione)
+- Indicatore 'Firmato' (ora firmata)
+- Azione Cofirma compresenza
+- Selettore tipologia compresenza
+- Azione Firma indipendente per alunni specifici (oscuramento)
+- Indicatore stato presenza alunno (Presente/Assente/Ritardo/Uscita Anticipata)
+- Pulsante 'Aggiungi Voto'
+- Selettore Alunno (valutazione)
+- Selettore Materia (valutazione)
+- Selettore Tipo prova (Scritto/Orale/Pratico)
+- Toggle modalità voto Numerico vs Giudizio
+- Campo Voto numerico (1-10)
+- Selettore Giudizio (Base/Intermedio/Avanzato)
+- Selettore Obiettivo di apprendimento
+- Toggle dimensione 'Autonomia' (Sì/No)
+- Toggle dimensione 'Continuità' (Sì/No)
+- Selettore dimensione 'Tipologia situazione' (Nota/Non nota)
+- Selettore dimensione 'Risorse mobilitate' (Interne/Esterne/Entrambe)
+- Campo Giudizio descrittivo auto-generato (modificabile)
+- Selettore Giudizio sintetico in itinere (es. Buono/Sufficiente)
+- Selettore Giudizio sintetico scrutinio (Ottimo/Distinto/Buono/Discreto/Sufficiente/Non sufficiente)
+- Pulsante 'Salva Voto'
+- Lista valutazioni inserite (tabella)
+- Badge voto/giudizio colorato in tabella
+- Banner 'Buffer Notifica 10 minuti'
+- Badge 'Voto salvato!' (conferma)
+- Lista selezione alunni (note)
+- Pulsante 'Seleziona Tutti'/'Deseleziona Tutti'
+- Selettore Categoria nota (Disciplinare/Didattica/Compiti non svolti)
+- Campo 'Testo della nota'
+- Toggle 'Richiedi Firma per Presa Visione'
+- Pulsante 'Assegna Nota (n)'
+- Lista 'Note Recenti' (storico)
+- Badge stato firma nota ('Firmata'/'In attesa')
+- Banner blocco modifiche oltre vincolo temporale
+
+### `/teacher/tasks` — Task Staff
+_Modulo PRD: Comunicazione §4_
+
+**Checklist controlli richiesti:**
+- Tab 'Assegnati a me'
+- Tab 'Creati da me'
+- Tab 'Archivio'
+- Tab 'Da Controllare'
+- Tab 'Tutti i Task'
+- Pulsante 'Prendo in carico'
+- Pulsante 'Risolvi Task'
+- Pulsante 'Conferma Risolto'
+- Campo 'Note di Risoluzione'
+- Pulsante 'Scegli file' allegati risoluzione
+- Pulsante 'Completa Compito'
+- Pulsante 'Chiarimenti'
+- Pulsante 'Invia' chiarimento
+- Pulsante 'Vedi dettagli' / 'Nascondi dettagli'
+- Pulsante 'Nuovo'
+- Badge contatore task in sospeso
+- Badge priorita' (Bassa/Media/Alta/Urgente)
+- Badge stato 'Da Fare' / 'In Corso' / 'Da Controllare' / 'Completato'
+- Badge categoria task
+- Badge destinatario (singolo/classe/ruolo/globale)
+- Badge 'In Attesa di Approvazione'
+- Badge 'Aggiornato'
+- Indicatore deadline / 'SCADUTO'
+- Indicatore progresso 'Compiti Approvati'
+- Badge allergie alunno collegato
+- Lista allegati con anteprima/download
+- Banner 'Revisione Richiesta'
+- Indicatore lucchetto compito non proprio
+- Pulsante 'Elimina task'
+- Pulsante 'Modifica task'
+- Pulsante 'Approva Task' / 'Approva Compito'
+- Pulsante 'Richiedi Modifica' (revisione)
+- Indicatore ruolo utente (Direzione/Coordinatore/Insegnante)
+- Notifica browser nuovo task / compito risolto / revisione
+
+### `/teacher/primaria` — Hub Sezioni Primaria
+_Modulo PRD: Primaria (navigazione)_
+
+**Checklist controlli richiesti:**
+- Lista 'Le mie classi' (classi/sezioni in carico)
+- Azione 'Seleziona classe' (card classe verso registro)
+- Indicatore numero alunni della classe
+- Indicatore anno scolastico della classe
+- Icona ChevronRight (apertura classe)
+- Selettore 'Mondo' Infanzia/Primaria (GradeWorldSwitch)
+- Banner 'Nessuna classe primaria assegnata'
+- Banner errore caricamento classi
+- Indicatore di caricamento 'Caricamento…'
+
+### `/teacher/primaria/[sectionId]` — Dashboard Sezione
+_Modulo PRD: Primaria (sezione)_
+
+**Checklist controlli richiesti:**
+- Tab 'Registro'
+- Tab 'Appello'
+- Tab 'Valutazioni'
+- Tab 'Note'
+- Tab 'Orario'
+- Tab 'Prospetto'
+- Tab 'Scrutinio'
+- Tab 'Fascicolo'
+- Icona 'Indietro' (torna a Le mie classi)
+- Indicatore 'Nome classe' (titolo sezione)
+- Badge 'Primaria' (grado)
+- Badge 'Modalità segreteria'
+- Lista 'Alunni' della sezione con contatore
+- Lista 'Le mie materie' (chip discipline assegnate)
+- Banner 'Empty state alunni' (Nessun alunno)
+- Banner 'Empty state materie' (Nessuna materia assegnata)
+- Indicatore 'Hint navigazione schede' (usa le schede in alto)
+- Indicatore 'Riepilogo presenze del giorno'
+- Indicatore 'Allergie alunno' (nome in rosso + badge)
+
+### `/teacher/primaria/[sectionId]/appello` — Appello Orario Primaria
+_Modulo PRD: Primaria §2.1_
+
+**Checklist controlli richiesti:**
+- Pulsante 'Presente' (per alunno)
+- Pulsante 'Assente' (per alunno)
+- Pulsante 'Ritardo' (per alunno)
+- Pulsante 'Uscita' (uscita anticipata, per alunno)
+- Campo 'Entrata' (orario ritardo)
+- Campo 'Uscita' (orario uscita anticipata)
+- Pulsante 'Tutti presenti'
+- Campo 'Data appello' (selettore data)
+- Pulsante 'Giustificata · presa visione' (giustifica genitore)
+- Badge 'giustif. vista'
+- Selettore 'Alunno' (riepilogo ore assenze)
+- Campo 'Dal' (periodo riepilogo)
+- Campo 'Al' (periodo riepilogo)
+- Indicatore 'Ore assenze' (totale)
+- Indicatore 'Ore ritardi'
+- Indicatore 'Ore permessi'
+- Indicatore 'Totale ore' mancate
+- Lista 'Ore mancate per materia'
+- Indicatore sync offline appello
+- Azione 'Firma docente (tap sull'ora di lezione)'
+- Indicatore 'Compresenza' (firme docenti indipendenti)
+- Selettore 'Tipologia compresenza' (cofirma)
+- Campo 'Argomento svolto' (contestuale alla firma)
+- Campo 'Compiti assegnati' (contestuale alla firma)
+- Selettore 'Ora/Campanella' (griglia oraria)
+- Indicatore 'Sync con presenze generali'
+
+### `/teacher/primaria/[sectionId]/registro` — Registro di Classe / Firma Lezione
+_Modulo PRD: Primaria §3 + §7_
+
+**Checklist controlli richiesti:**
+- Selettore data registro
+- Lista campanelle (ore di lezione)
+- Indicatore ora e fascia oraria
+- Indicatore materia della lezione
+- Pulsante 'Firma' lezione (tap sulla campanella)
+- Pulsante 'Modifica' lezione firmata
+- Badge ✅ firma apposta
+- Campo 'Argomento svolto'
+- Campo 'Compiti'
+- Indicatore argomento lezione (riga)
+- Badge 'Compiti' (riga)
+- Azione 'Allega' file multimediale
+- Lista allegati lezione
+- Icona tipo allegato (PDF/Immagine)
+- Selettore 'Tipo firma' (compresenza)
+- Azione 'Cofirma' su argomento del docente ordinario
+- Indicatore firme docenti sulla riga
+- Selettore destinatari alunni (firma indipendente sostegno)
+- Campo 'Argomento (per i destinatari)'
+- Campo 'Compiti (per i destinatari)'
+- Indicatore 'attività individualizzata' (riga)
+- Banner privacy attività individualizzata
+- Selettore 'Classe' (firma supplenza in altra sezione)
+- Banner 'supplenza' altra classe
+- Indicatore stato offline / coda di sincronizzazione
+- Pulsante 'Annulla' modale firma
+- Pulsante 'Firma' (conferma modale)
+- Banner vincolo temporale / blocco immodificabilità
+- Indicatore alunni 'Assenti' (recupero compiti)
+
+### `/teacher/primaria/[sectionId]/valutazioni` — Valutazioni in Itinere
+_Modulo PRD: Primaria §4.1-§4.2_
+
+**Checklist controlli richiesti:**
+- Selettore 'Alunno'
+- Selettore 'Materia'
+- Selettore 'Obiettivo di apprendimento'
+- Pulsante 'Associa obiettivi alla disciplina'
+- Selettore 'Tipo prova' (Orale/Scritto/Pratico)
+- Tab 'Per dimensioni'
+- Tab 'Giudizio sintetico'
+- Toggle 'Autonomia' (Sì/No)
+- Toggle 'Continuità' (Sì/No)
+- Toggle 'Tipologia della situazione' (Nota/Non nota)
+- Toggle 'Risorse mobilitate' (Interne/Esterne/Entrambe)
+- Campo 'Giudizio descrittivo' (auto-generato, editabile)
+- Selettore 'Giudizio sintetico in itinere'
+- Campo 'Argomento' (obbligatorio)
+- Pulsante 'Salva valutazione'
+- Banner 'Buffer di sicurezza 10 minuti'
+- Lista 'Valutazioni recenti'
+- Indicatore 'Modalità valutazione' (Per dimensioni / sintetico) sulla valutazione recente
+- Banner 'Voti numerici disabilitati alla primaria'
+- Messaggio 'Valutazione salvata'
+- Pulsante 'Segna impreparato (alunno selezionato)'
+- Lista 'Impreparati giustificati — oggi'
+- Badge origine impreparato (dal genitore / dal docente)
+
+### `/teacher/primaria/[sectionId]/prospetto` — Prospetto Valutazioni
+_Modulo PRD: Primaria §4.4_
+
+**Checklist controlli richiesti:**
+- Selettore 'Alunno'
+- Selettore 'Materia'
+- Filtro 'Tutte le materie' (panoramica)
+- Lista panoramica medie per materia
+- Indicatore 'Media' per materia (panoramica, da associazione numerica nascosta dei giudizi)
+- Indicatore 'Valutazioni' (conteggio) per materia
+- Azione 'Apri dettaglio per obiettivo' (riga panoramica)
+- Indicatore 'Media matematica (giudizi sintetici)' per materia
+- Lista valutazioni raggruppate per obiettivo
+- Indicatore 'Codice obiettivo'
+- Badge 'Giudizio sintetico'
+- Indicatore 'Tipo prova' (scritto/orale/pratico)
+- Indicatore 'Data valutazione'
+- Indicatore 'Giudizio descrittivo' (testo)
+- Banner 'Errore caricamento'
+- Indicatore 'Nessuna valutazione registrata'
+- Filtro per obiettivo di apprendimento
+- Indicatore isolamento 'Solo la propria disciplina'
+
+### `/teacher/primaria/[sectionId]/note` — Note Disciplinari (Docente)
+_Modulo PRD: Primaria §5_
+
+**Checklist controlli richiesti:**
+- Selettore categoria 'Disciplinare (Comportamento)'
+- Selettore categoria 'Didattica'
+- Selettore categoria 'Compiti non svolti'
+- Lista alunni con checkbox di selezione
+- Pulsante 'Tutta la classe' / 'Deseleziona tutti'
+- Campo 'Testo della nota'
+- Toggle 'Richiedi firma di presa visione al genitore'
+- Pulsante 'Invia nota'
+- Lista 'Note recenti'
+- Badge categoria sulla nota (cromatico)
+- Indicatore stato 'attesa firma' / 'firmata'
+- Banner errore caricamento alunni
+- Banner conferma 'Nota inviata'
+- Filtro alunni presenti per inserimento massivo
+- Azione 'Modifica nota' (entro finestra temporale)
+- Indicatore blocco temporale (immodificabilita oltre scadenza)
+
+### `/teacher/primaria/[sectionId]/orario` — Orario Lezioni (Docente)
+_Modulo PRD: Primaria §6_
+
+**Checklist controlli richiesti:**
+- Indicatore 'Orario settimanale' (titolo pagina)
+- Lista Griglia oraria settimanale (matrice campanelle x giorni)
+- Indicatore Intestazioni giorni (Lun-Sab)
+- Indicatore Fascia oraria campanella (ora_inizio-ora_fine)
+- Indicatore Materia per cella (nome disciplina master)
+- Indicatore Docente assegnato per cella
+- Badge Mensa (cella tipo mensa)
+- Badge Intervallo/Ricreazione (cella tipo intervallo)
+- Banner 'Orario non ancora configurato' (empty state)
+- Indicatore Caricamento orario (loading)
+- Indicatore Cella vuota '—' (campanella lezione senza materia)
+- Indicatore Contitolarita (piu docenti sulla stessa ora/classe)
+- Indicatore Gruppo-classe per disciplina (es. mensa/alternativa)
+- Indicatore Modello tempo scuola (Tempo Normale 27/29h / Tempo Pieno 40h)
+
+### `/teacher/primaria/[sectionId]/scrutinio` — Scrutinio & Pagella
+_Modulo PRD: Primaria §4.3 + §9_
+
+**Checklist controlli richiesti:**
+- Selettore 'Periodo' (intermedio/finale + anno scolastico)
+- Banner 'Nessun periodo di scrutinio configurato'
+- Indicatore stato scrutinio 'Aperto — proposta giudizi' / 'Chiuso il <data>'
+- Banner esito operazione (salvataggi/errori, badge ✓)
+- Tabella 'Giudizi alunno x disciplina'
+- Selettore 'Giudizio sintetico' per cella (scala Allegato A)
+- Indicatore disciplina 'Educazione Civica' (marcatore *)
+- Indicatore isolamento materie (celle disciplina altrui disabilitate)
+- Pulsante 'Salva giudizi'
+- Pulsante 'Template CSV'
+- Pulsante 'Importa CSV'
+- Azione 'Proponi giudizi da valutazioni in itinere'
+- Campo 'Giudizio del comportamento'
+- Campo 'Giudizio globale' (facoltativo)
+- Pulsante 'Salva comportamento'
+- Azione 'Override collegiale giudizio' (modifica/sovrascrittura)
+- Pulsante 'Chiudi scrutinio' (solo Dirigente)
+- Indicatore 'Scrutinio incompleto: mancano N giudizi'
+- Pulsante 'Genera pagelle (tutte)' (solo Dirigente)
+- Pulsante 'Pagella PDF' per alunno (post-chiusura)
+- Indicatore 'Pubblicato ai genitori' / 'Non pubblicato (solo staff)'
+- Pulsante 'Pubblica ai genitori' / 'Revoca pubblicazione' (solo Dirigente)
+- Banner conferma 'Pubblicare i voti? I genitori riceveranno una notifica'
+- Selettore 'Declinazione descrittori PTOF' applicata in pagella
+
+### `/teacher/primaria/[sectionId]/fascicolo` — Fascicolo Personale Alunno
+_Modulo PRD: Fascicolo Personale_
+
+**Checklist controlli richiesti:**
+- Selettore 'Alunno'
+- Banner 'Accesso tracciato' (documenti riservati)
+- Banner 'Accesso non autorizzato' (RBAC negato)
+- Banner errore caricamento alunni
+- Tab/Sezione 'Documenti ufficiali' (PEI/PDP/sanitari)
+- Tab/Sezione 'Pagelle' (storico anni)
+- Tab/Sezione 'Sezione amministrativa'
+- Tab/Sezione 'Consensi e Privacy'
+- Selettore 'Tipo documento' (Diagnosi/PEI/PDP/L.104)
+- Campo 'Descrizione documento'
+- Campo 'Data di scadenza' documento
+- Campo 'File' (upload PDF/immagine)
+- Pulsante 'Carica' documento
+- Indicatore 'Caricamento…' (stato upload)
+- Badge 'Documento caricato' (conferma salvataggio)
+- Badge tipo documento (PEI/PDP/104) sulla riga
+- Indicatore 'Scade il' (scadenza documento)
+- Pulsante 'Apri' (download documento ufficiale)
+- Pulsante 'Apri PDF' pagella
+- Lista 'Pagelle per anno scolastico' (accordion)
+- Toggle anno scolastico (espandi/chiudi)
+- Indicatore 'Pubblicata il' (data pagella)
+- Pulsante 'Apri/Scarica certificato delle competenze'
+- Indicatore 'Audit log accessi' (chi/quando/finalità)
+- Campo 'Finalità di accesso' (motivazione consultazione)
+- Sezione/Area 'Workflow firma GLO' (PEI)
+- Pulsante 'Visualizza bozza PEI' (GLO)
+- Campo 'Annotazione PEI' (collaborazione GLO)
+- Pulsante 'Firma per accettazione PEI' (firma Base)
+- Badge 'Firme GLO' (stato sottoscrizioni)
+- Lista 'Deleghe al prelievo' (con documento delegato)
+- Indicatore segregazione 'Documento sensibile' (bucket riservato)
+
+## Segreteria/Admin
+
+### `/admin` — Dashboard Segreteria
+_Modulo PRD: Presenze §4.1 + Trasversale_
+
+**Checklist controlli richiesti:**
+- Indicatore 'Alunni presenti in tempo reale' (totale struttura)
+- Azione 'Drill-down presenze per classe'
+- Azione 'Sovrascrivi/correggi presenze docente'
+- Pulsante 'Export registro presenze (Excel/PDF) MIUR'
+- Indicatore 'Alunni in Ritardo post cut-off da approvare'
+- Banner 'Panic Alert ritiro non autorizzato'
+- Lista 'Accessi rapidi moduli' (hub Tutti i moduli)
+- Pulsante 'Iscrizioni' (azione rapida header)
+- Pulsante 'Genera rette'
+- Indicatore KPI 'Alunni iscritti'
+- Indicatore KPI 'Pagamenti scaduti'
+- Indicatore KPI 'Incassato nel mese'
+- Indicatore KPI 'Iscrizioni in attesa'
+- Indicatore KPI 'Prenotazioni mensa oggi'
+- Indicatore KPI 'Fatture da emettere'
+- Indicatore 'Incassi ultimi 6 mesi' (grafico trend)
+- Indicatore 'Alunni per classe' (grafico)
+- Pannello 'Pagamenti scaduti' (alert con badge contatore)
+- Pannello 'Iscrizioni da processare' (alert con badge contatore)
+- Pulsante 'Apri' (link di dettaglio nei pannelli alert)
+- Badge contatore notifiche su pannelli alert
+
+### `/admin/students` — Anagrafica Alunni
+_Modulo PRD: Anagrafica §2-§4_
+
+**Checklist controlli richiesti:**
+- Tab 'Alunni'
+- Tab 'Genitori'
+- Tab 'Sezioni'
+- Tab 'Staff'
+- Filtro 'Cerca per nome/cognome/codice fiscale'
+- Filtro 'Classe / Sezione'
+- Filtro 'Stato alunno'
+- Tabella alunni (Cognome/Nome/Nascita/Classe/Stato/Info)
+- Selettore 'Seleziona tutti' (checkbox header)
+- Selettore riga alunno (checkbox)
+- Azione 'Ordina colonna' (sort header)
+- Indicatore 'Sezione: X (n alunni)' (group-by)
+- Badge 'Allergie' (nome/badge ROSSO + AlertTriangle)
+- Badge 'BES'
+- Badge stato alunno (Iscritto/Ritirato/Sospeso)
+- Indicatore 'Totale Alunni'
+- Indicatore 'Iscritti'
+- Indicatore 'Con BES'
+- Indicatore 'Con Allergie'
+- Pulsante 'Nuovo Alunno'
+- Pulsante 'Esporta'
+- Pulsante 'Importa pre-iscrizioni' (import dati con 1 click)
+- Pulsante 'Genera link pre-iscrizione sicuro'
+- Barra 'Assegnazione massiva (Bulk)' selezionati
+- Selettore 'Classe destinazione' (bulk)
+- Selettore 'Gruppo mensa' (bulk)
+- Pulsante 'Assegna' (bulk)
+- Pulsante 'Annulla selezione' (bulk)
+- Pulsante 'Trasferisci alunno tra sedi'
+- Azione 'Apri scheda alunno' (riga cliccabile)
+- Campo 'Nome' alunno
+- Campo 'Cognome' alunno
+- Campo 'Data di nascita'
+- Campo 'Codice Fiscale'
+- Campo 'Luogo di nascita'
+- Campo 'Sesso'
+- Campo 'Indirizzo di residenza'
+- Campo 'Cittadinanza'
+- Selettore 'Sede di appartenenza'
+- Selettore 'Classe / Sezione' (scheda)
+- Selettore 'Stato alunno' (Iscritto/Ritirato/Sospeso)
+- Campo 'Allergie / Intolleranze'
+- Badge allergeni ROSSI (chip da note_mediche)
+- Toggle 'BES (Bisogni Educativi Speciali)'
+- Campo 'Note BES'
+- Lista 'Famiglia e Delegati' (tab Madre/Padre/Delegato)
+- Pulsante 'Aggiungi delegato'
+- Indicatore 'Documento identità delegato' (tipo/numero)
+- Pulsante 'Visualizza Allegato' documento delegato
+- Pulsante 'Carica documento identità delegato'
+- Lista 'Fratelli / Sorelle'
+- Lista 'Segnalazioni e Reclami' (note disciplinari)
+- Sezione 'Dati Economici / Retta' (connessione Payments)
+- Pulsante 'Salva Modifiche' alunno
+- Badge conferma salvataggio (toast ✅)
+- Pulsante 'Elimina Alunno (GDPR)' (Hard Delete)
+- Banner 'Conferma eliminazione definitiva (GDPR)'
+- Pulsante 'Reset password / re-invio credenziali genitore'
+- Pulsante 'Invita genitore / crea legame parent-student'
+- Pulsante 'Reset password staff'
+- Lista 'Audit Log modifiche anagrafiche'
+- Filtro 'Audit log per utente (Insegnante/Genitore)'
+
+### `/admin/students/new` — Nuovo Alunno
+_Modulo PRD: Anagrafica §2_
+
+**Checklist controlli richiesti:**
+- Tab 'Alunno'
+- Tab 'Madre'
+- Tab 'Padre'
+- Pulsante 'Aggiungi Componente'
+- Icona Cestino rimozione tab componente
+- Banner 'Salva prima l'alunno per collegamento automatico'
+- Campo Nome alunno
+- Campo Cognome alunno
+- Selettore Sesso alunno
+- Campo Data di Nascita alunno
+- Campo Comune di Nascita
+- Campo Provincia di Nascita (sigla)
+- Campo Codice Fiscale alunno
+- Indicatore 'Codice Fiscale Autocalcolato'
+- Selettore Sede di appartenenza
+- Selettore Sezione (Classe/Sezione)
+- Campo Indirizzo di Residenza
+- Campo Comune di Residenza
+- Campo CAP residenza
+- Campo Cittadinanza alunno
+- Selettore Stato dell'Alunno (Iscritto/Non iscritto/Ritirato/Sospeso)
+- Campo Allergie e Intolleranze
+- Selettore Allergeni (14 allergeni UE, badge rosso)
+- Toggle 'Studente BES / DSA'
+- Campo Note BES / DSA
+- Toggle 'Usa pannolino' (abilita scalo automatico pannolino dagli eventi Bagno del Diario — incongruenza #9)
+- Selettore Intestatario Fattura (Madre/Padre/Altro)
+- Campo Dettagli Intestatario alternativo (Nome/Cognome/CF)
+- Campo Importo Retta
+- Campo Scadenza mensile pagamento
+- Campo Sconti applicati (es. sconto fratelli)
+- Pulsante 'Salva Alunno'
+- Badge 'Alunno Salvato!' (conferma con ID)
+- Pulsante 'Vai alla lista alunni'
+- Pulsante 'Nuovo alunno'
+- Campo Nome adulto
+- Campo Cognome adulto
+- Selettore Ruolo Familiare/Operativo
+- Selettore Sesso adulto
+- Campo Data di Nascita adulto
+- Campo Cittadinanza adulto
+- Campo Nazione di Nascita adulto
+- Campo Comune di Nascita adulto
+- Campo Codice Fiscale adulto
+- Campo Indirizzo Completo adulto
+- Campo Città di Residenza adulto
+- Campo CAP adulto
+- Campo Numeri di Cellulare (multipli)
+- Pulsante 'Aggiungi Numero'
+- Campo Indirizzi Email (multipli, prima per Auth)
+- Badge 'Primaria' su email principale
+- Pulsante 'Aggiungi Email'
+- Pulsante 'Rigenera Credenziali'
+- Pulsante 'Salva Adulto'
+- Azione Upload documento identità delegato
+- Azione Upload documenti BES/PEI/Diagnosi
+
+### `/admin/iscrizioni` — Iscrizioni & Onboarding (SIDI)
+_Modulo PRD: Anagrafica §4.1 + SIDI_
+
+**Checklist controlli richiesti:**
+- Lista 'Richieste di iscrizione' (pending/totale)
+- Indicatore 'In attesa (n) · Totale {n}'
+- Badge stato 'In attesa'
+- Badge stato 'Importata'
+- Badge stato 'Rifiutata'
+- Indicatore conteggio Bambini per richiesta
+- Indicatore conteggio Adulti per richiesta
+- Azione 'Apri dettaglio richiesta'
+- Sezione 'Bambini' del dettaglio
+- Campo 'Codice fiscale alunno'
+- Selettore 'Classe / Sezione' per alunno
+- Sezione 'Adulti' del dettaglio
+- Campo 'Codice fiscale adulto'
+- Selettore 'Referente / intestatario' (radio)
+- Pulsante 'Documento' alunno
+- Pulsante 'Documento' adulto
+- Pulsante 'Importa nelle anagrafiche'
+- Pulsante 'Rifiuta'
+- Banner 'Iscrizione importata' con credenziali
+- Indicatore 'Credenziali inviate via email al referente'
+- Banner 'Email non inviata - comunicare manualmente'
+- Lista 'Avvisi' import (warnings)
+- Banner 'Nessuna richiesta ricevuta' (empty state)
+- Indicatore 'Caricamento' (spinner)
+- Pulsante 'Upload ZIP ministeriale SIDI'
+- Azione 'Matching su Numero di domanda SIDI'
+- Azione 'Sincronizzazione dati genitori (chiave CF)'
+- Campo 'Numero domanda iscrizione SIDI'
+- Azione 'Fase A - Allineamento struttura (sedi/sezioni/classi/tempo scuola)'
+- Pulsante 'Invia flusso frequentanti al SIDI'
+- Azione 'Trasmissione associazione Genitori-Alunni (Piattaforma Unica)'
+- Indicatore stato sincronizzazione SIDI (Fase A → frequentanti → Piattaforma Unica)
+- Pulsante 'Genera link sicuro pre-iscrizione'
+- Azione 'Assegnazione massiva (bulk) a classi/sezioni/gruppi mensa'
+
+### `/admin/forms/builder` — Form Builder
+_Modulo PRD: Form §4.1_
+
+**Checklist controlli richiesti:**
+- Campo 'Nome del modello'
+- Pulsante 'Indietro' (torna a Modulistica)
+- Lista 'Libreria Campi' (palette drag&drop)
+- Azione 'Trascina campo dalla palette al canvas'
+- Selettore tipo campo 'Testo Corto'
+- Selettore tipo campo 'Testo Lungo'
+- Selettore tipo campo 'Menu a Tendina'
+- Selettore tipo campo 'Numero'
+- Selettore tipo campo 'Allegato File'
+- Selettore tipo campo 'Firma'
+- Lista 'Campi Anagrafica' (blocchi predefiniti)
+- Blocco predefinito 'Bambino' (collassabile)
+- Blocco predefinito 'Madre' (collassabile)
+- Blocco predefinito 'Padre' (collassabile)
+- Blocco predefinito 'Delegato / Tutore' (collassabile)
+- Toggle espandi/collassa gruppo anagrafica
+- Indicatore 'Mapping ETL' del campo anagrafica (db_mapping)
+- Tab pagine wizard (step del modulo)
+- Pulsante 'Aggiungi pagina'
+- Indicatore 'Step X / N' della pagina attiva
+- Azione 'Trascina per riordinare i campi'
+- Azione 'Seleziona campo per modificarne le proprietà'
+- Pulsante 'Elimina campo' (cestino)
+- Campo 'Etichetta' del campo
+- Campo 'Testo Segnaposto' (placeholder)
+- Toggle 'Obbligatorio'
+- Campo 'Punteggio Graduatoria' (punti del campo)
+- Editor 'Opzioni & Punteggi' (select/radio/checkbox)
+- Campo punti per singola opzione
+- Pulsante 'Aggiungi opzione'
+- Pulsante 'Rimuovi opzione'
+- Indicatore 'Mapping ETL' nel pannello proprietà
+- Badge 'Obbligatorio' sul campo nel canvas
+- Badge '+N pt' (punteggio) sul campo nel canvas
+- Pulsante 'Salva Modello'
+- Badge stato salvataggio 'Salvato!' (check)
+- Banner errore 'Errore' salvataggio
+- Indicatore conteggio 'N pagine · N campi'
+- Editor 'Logica Condizionale' (regole di visibilità campo)
+- Pulsante 'Pubblica modello' (attiva il modello)
+- Pannello 'Impostazioni FEA' (abilita Firma Elettronica)
+- Selettore 'Firmatari richiesti' (firma singola / congiunta genitori)
+- Configurazione accessi 'Chi può compilare' (registrati / link pubblico)
+- Campo 'Scadenza bloccante del modulo'
+- Configurazione 'Scoring graduatoria' a livello modello (soglia / max punteggio)
+- Blocco predefinito 'Consensi' (GDPR check-box separati)
+
+### `/admin/forms/submissions` — Raccolta Compilazioni
+_Modulo PRD: Form §4.3_
+
+**Checklist controlli richiesti:**
+- Campo 'Cerca per modello o contenuto'
+- Filtro Stato compilazione
+- Filtro Modello
+- Filtro Data invio
+- Filtro Tag
+- Pulsante 'Esporta tutto (N)' XLSX massivo
+- Azione 'Scarica PDF' (riga)
+- Azione 'Esporta XLSX' (riga)
+- Azione 'Apri anteprima compilazione' (riga)
+- Lista campi compilati (dati JSONB)
+- Badge Stato compilazione
+- Indicatore 'Firma' / data firma
+- Indicatore 'Modello rimosso'
+- Pulsante 'Scarica PDF' (anteprima)
+- Pulsante 'Esporta XLSX' (anteprima)
+- Pulsante 'Chiudi' anteprima
+- Pulsante 'Rimuovi filtri'
+- Azione 'Modifica amministrativa compilazione'
+- Indicatore 'Log versione originale'
+- Azione 'Importa in Anagrafica (ETL)'
+- Indicatore 'Allegati esclusi dal PDF'
+
+### `/admin/forms/rankings` — Graduatorie
+_Modulo PRD: Form §4.4_
+
+**Checklist controlli richiesti:**
+- Indicatore 'Candidati' (conteggio totale)
+- Indicatore 'Punteggio medio'
+- Indicatore 'Punteggio massimo'
+- Campo Cerca candidato
+- Filtro Modulo (selettore 'Tutti i moduli')
+- Lista Ranking candidati ordinata per punteggio
+- Indicatore Posizione/rank in classifica
+- Badge Medaglia top 3 (1°/2°/3°)
+- Indicatore Punteggio calcolato
+- Indicatore Delta modifiche manuali (+/- accanto al punteggio)
+- Indicatore Data firma (Firma)
+- Icona Info tooltip 'Modifiche manuali'
+- Azione Apri regolazione (click su riga candidato)
+- Pulsante 'Rimuovi filtri'
+- Modale 'Regola punteggio' (override manuale)
+- Campo Bonus/Malus (stepper +/- e input numerico)
+- Campo Motivazione (obbligatorio)
+- Indicatore Punteggio base / Modifiche manuali / Totale attuale
+- Lista Storico modifiche manuali nel modale
+- Pulsante 'Applica' (salva override punteggio)
+- Pulsante 'Annulla' (chiudi modale senza salvare)
+- Azione Delibera ammissioni
+- Indicatore Stato ammesso/non ammesso candidato
+- Pulsante Esporta graduatoria (XLSX/PDF)
+
+### `/admin/modulistica` — Modulistica Admin
+_Modulo PRD: Form (gestione modelli)_
+
+**Checklist controlli richiesti:**
+- Tab 'Moduli Genitori'
+- Tab 'Moduli Esterni'
+- Tab 'Iscrizioni Nuovi Alunni'
+- Tab 'Template Certificati ODT'
+- Pulsante 'Nuovo Modulo Genitori'
+- Pulsante 'Nuovo Modulo Esterni'
+- Azione 'Form Builder Drag & Drop'
+- Selettore 'Tipo di Modulo' (Sondaggio/Gradimento/Autorizzazione)
+- Campo 'Titolo Modulo'
+- Campo 'Descrizione / Istruzioni'
+- Campo 'Scadenza Modulo'
+- Selettore 'Classi Target'
+- Pulsante 'Aggiungi Campo'
+- Selettore 'Tipo Input' campo
+- Campo 'Opzioni di scelta' (radio)
+- Toggle 'Campo Obbligatorio'
+- Pulsante 'Rimuovi Campo'
+- Pulsante 'Salva Modulo'
+- Azione 'Blocco Dati Bambino / Adulto / Consensi / Allegati'
+- Azione 'Logica Condizionale campi'
+- Campo 'Scoring / Punteggio per Graduatorie'
+- Selettore 'Configurazione Accessi' (utenti registrati / link pubblico)
+- Toggle 'Abilita Firma Elettronica (FEA/FES)'
+- Selettore 'Firmatari richiesti' (singola/congiunta genitori)
+- Badge 'Tipo Modulo' (etichetta)
+- Badge 'OTP / Firma FES' (scudo)
+- Badge 'Destinatari' (classi/esterni)
+- Badge 'Scadenza' (semaforo scaduto/in scadenza)
+- Pulsante 'Merge [Classe]' (export massivo PDF cumulativo)
+- Indicatore 'Stato firma per alunno' (AUTORIZZATO/NON AUTORIZZATO)
+- Indicatore 'Log FES' (IP / Timestamp / Hash SHA-256)
+- Pulsante 'Modifica Scadenza'
+- Pulsante 'Elimina Modulo'
+- Azione 'Sollecito firme non completate'
+- Pulsante 'Esporta XLSX dataset'
+- Lista 'Dashboard Raccolta Compilazioni' con filtri (data/stato/modello/tag)
+- Azione 'Anteprima e Modifica compilazione (con log versione)'
+- Pulsante 'Genera PDF singola compilazione'
+- Azione 'Dashboard Graduatorie (ranking + override + ammissioni)'
+- Selettore 'Upload Template ODT Carta Intestata'
+- Selettore 'Upload Template ODT Certificato Frequenza'
+- Selettore 'Upload Template ODT Certificato Iscrizione'
+- Badge 'Template ODT caricato' (conferma)
+
+### `/admin/mensa` — Mensa Admin / Menu Builder & Ticket
+_Modulo PRD: Mensa §2 + §4_
+
+**Checklist controlli richiesti:**
+- Tab 'Menu' (Menu Builder)
+- Tab 'Report cucina'
+- Tab 'Inserisci ticket'
+- Pulsante 'Ricarica ticket' (vai a Pagamenti)
+- Pulsante 'Impostazioni mensa'
+- Selettore Menu (multi-menu / Menu unico legacy)
+- Selettore Settimana ciclo (1..N)
+- Campo 'Nome piatto' per portata
+- Campo 'Ingredienti' per portata
+- Toggle allergene per portata (14 allergeni UE)
+- Pulsante 'Salva settimana N'
+- Badge 'Salvato' (conferma rotazione)
+- Campo 'Data' eccezione (override giornaliero)
+- Toggle 'Mensa chiusa' (chiusura per data)
+- Editor portate variazione giornaliera (override)
+- Pulsante 'Aggiungi' eccezione
+- Lista eccezioni/chiusure impostate
+- Icona 'Elimina' eccezione (cestino)
+- Indicatore impostazione durata ciclo (n. settimane)
+- Azione autocompilazione calendario ciclico
+- Banner notifica variazione alle famiglie
+- Filtro 'Data' report cucina
+- Filtro 'Sezione' report cucina
+- Indicatore 'Totale pasti' del giorno
+- Indicatore conteggio 'allergie nel menu di oggi'
+- Lista 'Prenotati per sezione'
+- Badge allergene per alunno (rosso se in conflitto)
+- Indicatore conflitto allergene-menu (riga rossa + dettaglio portate)
+- Indicatore numeri per tipo dieta (Standard/Bianco/Speciale)
+- Pulsante 'Esporta report catering' (Excel/PDF)
+- Campo ricerca alunno (inserimento ticket)
+- Indicatore 'Saldo' ticket alunno
+- Campo 'Data del pasto'
+- Pulsante 'Inserisci ticket (scala 1)'
+- Banner avviso forzatura saldo negativo (debito)
+- Badge conferma 'Ticket inserito / nuovo saldo'
+- Pulsante 'Ricarica manuale ticket' (accredito pacchetto+importo)
+- Selettore 'Pacchetto ticket' (es. 10/20 pasti)
+- Azione 'Storno / rimborso ticket'
+- Indicatore semaforo scorte ticket (Verde/Giallo<5/Rosso<2)
+- Banner reminder esaurimento scorte (soglia critica)
+
+### `/admin/pagamenti` — Pagamenti, Morosità & Fatturazione
+_Modulo PRD: Pagamenti §2-§3 + Aruba_
+
+**Checklist controlli richiesti:**
+- Tab 'Scadenziario'
+- Tab 'Genera rette'
+- Tab 'Genera pagamenti'
+- Tab 'Ticket mensa'
+- Pulsante 'Mensa & Cucina'
+- Pulsante 'Impostazioni'
+- Indicatore KPI 'Incassato'
+- Indicatore KPI 'Da incassare'
+- Indicatore KPI 'Scaduto (morosità)' in rosso
+- Campo 'Cerca alunno o sezione'
+- Filtro 'Categoria pagamento'
+- Selettore 'Anno scolastico'
+- Selettore 'Mese di competenza'
+- Filtro 'Morosi'
+- Pulsante 'Aggiorna' (refresh)
+- Banner 'Alunni senza retta generata'
+- Pulsante 'Genera mancanti'
+- Indicatore 'Riga moroso in rosso'
+- Badge stato pagamento (Da pagare/Parziale/Pagato/Scaduto)
+- Badge 'Non generata'
+- Pulsante 'Incassa'
+- Icona 'Modifica pagamento' (matita)
+- Pulsante 'Nuovo acquisto' (+)
+- Icona 'Dividi in acconti'
+- Lista 'Acquisti per alunno' (categoria)
+- Selettore 'Anno scolastico / Mese singolo' (generatore rette)
+- Selettore 'Anno scolastico' (generatore rette)
+- Campo 'Mese di competenza' (generatore rette)
+- Pulsante 'Anteprima' rette
+- Indicatore 'Retta default'
+- Indicatore 'Split (genitori separati)'
+- Pulsante 'Genera N rette'
+- Selettore 'Categoria' (generatore pagamenti)
+- Selettore 'Classe (vuoto = tutti)'
+- Campo 'Causale / descrizione'
+- Campo 'Importo'
+- Campo 'Scadenza'
+- Campo 'Gruppo (evita duplicati)'
+- Toggle 'Obbligatorio'
+- Toggle 'Dividi in acconti'
+- Campo 'N° rate'
+- Pulsante 'Genera per N alunni'
+- Campo 'Importo incassato'
+- Selettore 'Metodo' (Contanti/Bonifico/POS/Assegno/Altro)
+- Campo 'Data incasso'
+- Campo 'Note incasso'
+- Indicatore 'Pagamento parziale residuo'
+- Toggle 'Riporta eccedenza sulla rata successiva'
+- Pulsante 'Registra' (incasso)
+- Badge 'Pagamento saldato'
+- Pulsante 'Invia fattura'
+- Campo 'Causale fattura'
+- Pulsante 'Emetti' fattura
+- Pulsante 'Riprova fattura'
+- Pulsante 'Scarica fattura' (download PDF)
+- Banner 'Scarto SDI' con motivo
+- Campo 'Descrizione' (modifica pagamento)
+- Campo 'Importo' (modifica/override retta)
+- Campo 'Scadenza' (modifica)
+- Selettore 'Categoria' (modifica)
+- Toggle 'Pagamento obbligatorio' (modifica)
+- Lista 'Incassi registrati'
+- Azione 'Modifica incasso'
+- Azione 'Storna incasso' (elimina)
+- Pulsante 'Salva modifiche'
+- Campo 'Descrizione' (nuovo acquisto)
+- Campo 'Importo' (nuovo acquisto)
+- Toggle 'Pagamento obbligatorio (genera solleciti)'
+- Toggle 'Dividi in acconti (rate)' (nuovo acquisto)
+- Toggle 'Già pagato (registra subito incasso)'
+- Selettore 'Metodo di pagamento' (nuovo acquisto)
+- Pulsante 'Registra acquisto'
+- Pulsante 'Configura acconti'
+- Pulsante 'Genera rate uguali'
+- Campo 'Totale piano rateale'
+- Campo 'N° rate' (piano)
+- Campo '1ª scadenza' (piano)
+- Azione 'Aggiungi rata'
+- Azione 'Elimina rata'
+- Indicatore 'Somma rate vs Totale'
+- Pulsante 'Crea piano rateale'
+- Campo 'Cerca alunno' (ticket mensa)
+- Indicatore 'Saldo ticket'
+- Selettore 'Pacchetto ticket'
+- Campo 'Pezzi / Costo / Metodo' (ricarica)
+- Pulsante 'Ricarica (crea pagamento Mensa saldato)'
+- Pulsante 'Sospendi account moroso'
+- Toggle 'Override retta da anagrafica (sconto fratelli / data)'
+- Indicatore 'Reminder aggressivo insoluti'
+- Indicatore 'Quota saldata per gita (semaforo verde)'
+
+### `/admin/primaria` — Config Primaria (Materie/Orario/Valutazione)
+_Modulo PRD: Impostazioni §3.2 + Primaria §6_
+
+**Checklist controlli richiesti:**
+- Selettore Classe/Sezione (primaria)
+- Tab 'Orario'
+- Selettore Tempo scuola (27/29/40 ore)
+- Selettore Giorni settimana (5/6 giorni)
+- Pulsante 'Genera orario'
+- Pulsante 'Rigenera campanelle'
+- Indicatore 'Attivo: Xh/Ygg'
+- Selettore Materia per cella oraria
+- Selettore Docente per cella oraria
+- Indicatore cella Mensa 🍽
+- Indicatore cella Intervallo ☕
+- Lista Materie master di sezione
+- Pulsante 'Applica preset materie per livello'
+- Selettore Livello classe (1ª-5ª) per preset
+- Campo 'Nome materia' + Codice
+- Pulsante 'Aggiungi' materia
+- Toggle 'attiva' materia
+- Pulsante 'Elimina' materia
+- Badge 'Ed. Civica' su materia
+- Badge 'Mensa' (turno) su materia
+- Selettore 'Obiettivo della classe' per materia
+- Selettore Materia (gestione obiettivi curricolo)
+- Selettore Livello (gestione obiettivi curricolo)
+- Campo Codice + Descrizione obiettivo
+- Pulsante 'Aggiungi' obiettivo
+- Pulsante 'Elimina' obiettivo
+- Banner motore valutazione forzato O.M. 3/2025 (Primaria)
+- Selettore modello valutazione per grado/sezione
+- Lista 'Scala giudizi sintetici' (6 ufficiali Allegato A)
+- Campo 'Valore numerico' giudizio (media in itinere)
+- Campo 'Giudizio descrittivo (pagella)'
+- Toggle 'attivo' giudizio della scala
+- Pulsante Aggiungi/Elimina giudizio scala
+- Lista 'Template giudizio descrittivo' (PTOF/Allegato A)
+- Editor giudizio di scrutinio per voto (livello×materia×periodo)
+- Lista Assegnazione Docenti & Materie
+- Toggle 'contitolare' docente-materia
+- Campo Vincoli temporali registro (giorni orali/scritti)
+- Campo Buffer notifiche valutazioni (min)
+- Pulsante 'Salva impostazioni' (vincoli/notifiche)
+- Tab 'Registri di classe'
+- Tab 'Fascicoli/Accessi'
+
+### `/admin/impostazioni` — Impostazioni Globali (Super-Admin)
+_Modulo PRD: Modulo Impostazioni (tutto)_
+
+**Checklist controlli richiesti:**
+- Tab 'Funzioni & moduli'
+- Tab 'Pagamenti & Fatturazione'
+- Tab 'Modulistica'
+- Tab 'Didattica primaria'
+- Tab 'Pagelle & Scrutinio'
+- Tab 'Diario'
+- Tab 'Presenze & Giustifiche'
+- Tab 'Note disciplinari'
+- Tab 'Mensa'
+- Tab 'Armadietto'
+- Tab 'Avvisi'
+- Tab 'Chat'
+- Tab 'Galleria'
+- Selettore sezione (sidebar/pills navigazione impostazioni)
+- Pulsante 'Aggiungi sede'
+- Azione 'Rinomina/Disattiva sede'
+- Pulsante 'Crea grado/classe'
+- Pulsante 'Aggiungi staff' (onboarding personale)
+- Selettore 'Ruolo' (Docente/Segreteria/Cuoca/Direzione)
+- Azione 'Associa docente a classe'
+- Lista 'Categorie pagamento'
+- Badge 'Categoria di sistema' (lucchetto)
+- Campo 'Nuova categoria pagamento'
+- Pulsante 'Aggiungi categoria pagamento'
+- Icona 'Elimina categoria pagamento'
+- Campo 'Retta default (€)'
+- Campo 'Giorno scadenza retta (1-28)'
+- Campo 'Visibile dal giorno (mese prec.)'
+- Campo 'Tolleranza insoluti (giorni)'
+- Toggle 'Generazione automatica rette mensili'
+- Campo 'Causale fattura (template)'
+- Pulsante 'Salva' (Retta e morosità)
+- Lista 'Pacchetti ticket mensa'
+- Campo 'Nome/Pezzi/Costo pacchetto ticket'
+- Pulsante 'Aggiungi pacchetto'
+- Icona 'Elimina pacchetto ticket'
+- Pulsante 'Salva' (Pacchetti ticket)
+- Campo 'Username Aruba'
+- Campo 'Password Aruba (riferimento vault)'
+- Campo 'Partita IVA'
+- Campo 'Codice Fiscale'
+- Campo 'PEC'
+- Campo 'Ragione sociale'
+- Campo 'Sede legale'
+- Campo 'Regime fiscale'
+- Selettore 'Mappatura aliquote/cause IVA'
+- Toggle 'Abilita invio fatture (produzione)'
+- Selettore 'Ambiente Aruba (test/prod)'
+- Badge 'Scaffold' (Fatturazione Aruba)
+- Pulsante 'Salva' (Fatturazione Aruba)
+- Tabella 'Funzioni × Grado' (matrice attivazione moduli)
+- Toggle 'Funzione attiva per grado'
+- Pulsante 'Salva' (Funzioni & moduli)
+- Badge 'Salvato ✓'
+- Selettore 'Routine attive nel diario'
+- Campo 'Compilazione diario dalle/alle'
+- Campo 'Diario visibile ai genitori dalle'
+- Toggle 'Note libere docenti abilitate'
+- Badge 'Coming soon' (Diario)
+- Pulsante 'Salva' (Diario)
+- Campo 'Orario cut-off mensa'
+- Selettore 'Giorni mensa attivi'
+- Campo 'Settimane di rotazione menu'
+- Campo 'Soglia avviso saldo basso'
+- Pulsante 'Salva impostazioni mensa'
+- Lista 'Menu mensa' (creazione menu per ordine)
+- Pulsante 'Aggiungi menu'
+- Icona 'Elimina menu'
+- Pulsante 'Aggiungi assegnazione classe→menu'
+- Selettore 'Menu' (assegnazione classe)
+- Indicatore 'Assegnazione attiva/programmata' (✓/⏳)
+- Calendario chiusure scolastiche (giorni festivi)
+- Campo 'Costo singolo ticket pasto'
+- Campo 'Soglia scorta bassa (pezzi)'
+- Toggle 'Notifica genitore scorta bassa'
+- Toggle 'Richieste materiale ai genitori abilitate'
+- Lista 'Categorie materiale extra'
+- Pulsante 'Aggiungi categoria armadietto'
+- Pulsante 'Salva' (Armadietto)
+- Tab 'Materie' (didattica primaria)
+- Tab 'Docenti & Materie'
+- Tab 'Obiettivi' (curricolo d'istituto)
+- Tab 'Classificazione docenti'
+- Tab 'Vincoli & notifiche'
+- Selettore 'Classe/Sezione' (didattica primaria)
+- Campo 'Orario/campanelle e palinsesto settimanale'
+- Campo 'Time-lock registro orali (giorni)'
+- Campo 'Time-lock scritti/pratici (giorni)'
+- Campo 'Buffer notifiche valutazioni (min)'
+- Tab 'Periodi scrutinio'
+- Tab 'Scala giudizi'
+- Tab 'Giudizi scrutinio' (declinazioni PTOF)
+- Selettore 'Modello valutazione per grado'
+- Selettore 'Chi può inviare moduli' (ruoli)
+- Toggle 'Firma moduli con OTP'
+- Campo 'Promemoria moduli non compilati (giorni)'
+- Selettore 'Formato export submissions (CSV/XLSX)'
+- Azione 'Apri Form Builder'
+- Pulsante 'Salva' (Modulistica)
+- Campo 'Giorni max per giustificare'
+- Campo 'Soglia alert assenze (%)'
+- Campo 'Appello entro le'
+- Toggle 'Giustifica obbligatoria assenze'
+- Toggle 'Giustifica con firma OTP genitore'
+- Toggle 'Uscite anticipate richiedono delega'
+- Toggle 'Presa visione nota con firma OTP'
+- Toggle 'Nota visibile al genitore subito'
+- Toggle 'Notifica segreteria a nuova nota'
+- Lista 'Categorie nota disciplinare'
+
+### `/admin/tools` — Strumenti / Audit / Export
+_Modulo PRD: Anagrafica §4.2 + Presenze §4.1_
+
+**Checklist controlli richiesti:**
+- Pulsante 'Genera Esportazione' (Excel anagrafiche)
+- Pulsante 'Scegli File .xlsx' (importa e sincronizza)
+- Campo upload file Excel/CSV (.xlsx/.xls/.csv)
+- Indicatore caricamento import/export (spinner)
+- Badge 'Importati N su M record!' (esito import)
+- Banner nota tecnica elaborazione lato browser
+- Lista Audit Log cronologico modifiche anagrafiche
+- Filtro Audit Log per singolo utente (Insegnante/Genitore)
+- Pulsante 'Recupero credenziali / Reset password' utente
+- Pulsante 'Export ministeriale registri presenze' (Excel/PDF)
+- Selettore formato export (Excel / PDF)
+- Filtro export presenze per grado (Nido/Infanzia/Primaria)
+- Pulsante 'Importa pre-iscrizioni' (un click da form esterno)
+- Azione 'Diritto all'oblio / Hard Delete' GDPR
+
+## Cuoca
+
+### `/admin/mensa/cucina` — Dashboard Cucina
+_Modulo PRD: Mensa §2.2_
+
+**Checklist controlli richiesti:**
+- Indicatore 'Pasti Standard' (conteggio per tipologia)
+- Indicatore 'Diete in Bianco' (conteggio per tipologia)
+- Indicatore 'Diete Speciali' (conteggio per intolleranze)
+- Indicatore 'Totale pasti del giorno'
+- Indicatore 'Cut-off' (orario limite, es. 09:30)
+- Banner 'Numeri provvisori / definitivi (pre/post cut-off)'
+- Indicatore real-time / aggiornamento automatico pasti
+- Pulsante 'Aggiorna' (refresh manuale dati)
+- Lista 'Menu di oggi' (Primo/Secondo/Contorno/Frutta)
+- Banner 'Mensa chiusa' (giorno di chiusura)
+- Lista 'Allergeni del menu di oggi'
+- Badge allergene piatto (nome in rosso + emoji)
+- Lista 'Prenotati per sezione' (conteggio per classe)
+- Indicatore 'Conflitti allergie nel menu di oggi'
+- Badge alunno con allergia/conflitto (nome in ROSSO + alert)
+- Filtro 'Data' (selettore giorno report)
+- Filtro 'Sezione' (selettore classe)
+- Azione 'Approvazione ritardi / richiesta oltre cut-off'
+- Indicatore 'Isolamento interfaccia' (sola lettura, nessun dato sensibile)
+
+## Pubblico/Onboarding
+
+### `/iscrizione` — Form Iscrizione Pubblico
+_Modulo PRD: Form §4.2 (pre-iscrizione)_
+
+**Checklist controlli richiesti:**
+- Indicatore 'Passo X di N'
+- Indicatore barra di avanzamento wizard
+- Banner 'Iscrizione Nuovo Alunno'
+- Pulsante 'Avanti'
+- Pulsante 'Indietro'
+- Pulsante 'Invia richiesta'
+- Tab Bambino (pagina dati minore)
+- Tab Adulto (pagina genitore/tutore/delegato)
+- Tab Riepilogo
+- Pulsante 'Aggiungi un altro figlio'
+- Pulsante 'Aggiungi adulto / tutore'
+- Pulsante 'Rimuovi' (figlio/adulto)
+- Campo Documento d'identità del minore (upload)
+- Campo Documento d'identità adulto (upload)
+- Indicatore stato upload allegato (caricamento/caricato)
+- Campo Codice Fiscale alunno
+- Campo Codice Fiscale adulto
+- Campo Allergie / Intolleranze alunno
+- Selettore Ruolo adulto (Madre/Padre/Tutore/Delegato)
+- Banner 'È obbligatorio almeno un adulto / usa stesso CF'
+- Banner conferma 'Richiesta inviata!'
+- Indicatore stato invio in corso ('Invio…')
+- Selettore consenso GDPR / privacy (check-box separati)
+- Campo firma elettronica (FES/FEA)
+- Pulsante 'Invia codice OTP' (email firmatario)
+- Campo inserimento codice OTP
+- Indicatore firmatari richiesti (singola/congiunta genitori)
+
+### `/onboarding` — Onboarding Genitore
+_Modulo PRD: Anagrafica + Auth_
+
+**Checklist controlli richiesti:**
+- Banner 'Benvenuto in Kidville' di primo accesso genitore
+- Campo Email account (precompilato dall'invito Segreteria)
+- Campo Numero di cellulare
+- Campo Nuova password
+- Campo Conferma password
+- Indicatore robustezza password
+- Toggle 'Mostra password'
+- Toggle 'Accetto l'Informativa Privacy (GDPR)'
+- Toggle 'Accetto i Termini e Condizioni del servizio'
+- Toggle 'Consenso uso dati anagrafici/medici figli'
+- Pulsante 'Leggi informativa completa' (apertura documento)
+- Campo PIN dispositivo libretto
+- Campo Conferma PIN dispositivo libretto
+- Pulsante 'Completa attivazione account'
+- Indicatore stato avanzamento step onboarding
+- Banner 'Invito non valido / scaduto'
+- Pulsante 'Vai al login' al termine onboarding
+- Azione Redirect automatico a /iscrizione
+
+### `/` — Login / Landing
+_Modulo PRD: Trasversale (Auth/Accessibilità)_
+
+**Checklist controlli richiesti:**
+- Campo 'Email'
+- Campo 'Password'
+- Pulsante 'Accedi'
+- Toggle 'Mostra password'
+- Pulsante 'Password dimenticata? / Recupero credenziali'
+- Banner 'Accesso solo su invito Segreteria (no auto-registrazione)'
+- Toggle 'Alto contrasto'
+- Indicatore 'Compatibilità screen reader (label/ARIA sui campi)'
+- Banner messaggio errore credenziali
+- Indicatore selezione Sede/Tenant
+- Pulsante 'Deploy Now'
+- Pulsante 'Documentation'
+
+## Note di coerenza — Incongruenze PRD ↔ Roadmap/Prompt
+
+> [!NOTE]
+> **STATO: tutte le 9 incongruenze sono RISOLTE** con le decisioni definitive qui sotto recepite nel PRD (giugno 2026). Il PRD resta la fonte di verità.
+> - Blocco 1 (questo PRD): decisioni recepite nel corpo e nelle checklist. ✅
+> - Blocco 2 (`ROADMAP_TECNICA.md` + `prompts/`): contenuti in conflitto marcati come SUPERATI e allineati al PRD.
+> - Blocco 3 (codice): correzioni applicate per #1–#4, #6, #8, #9 (vedi sezioni successive). La firma (#5, FEA) è **esclusa dal Blocco 3** e sarà implementata dal committente.
+
+- ✅ **RISOLTA** — **Valutazione primaria: voti numerici vietati vs modello ibrido numerico/descrittivo** (alta). **Decisione recepita (rev. committente):** voto **visibile** = **giudizio sintetico** Allegato A; **nessun voto numerico 1-10 visibile** alla primaria. È **MANTENUTA l'associazione numerica nascosta** (es. *Sufficiente* = 6) usata solo internamente per la media (#3). I voti numerici visibili restano solo per i gradi non-primaria. *Analisi originale:* PRD: PRD §4 (Diario Scuola Primaria) è categorico: per la primaria i voti numerici sono VIETATI sia in itinere sia a scrutinio (L.150/2024, O.M.3/2025). Il motore è 'ibrido per grado': per la Primaria la modalità a voti numerici è 'disabilitata e non selezionabile dal docente'; i numerici (1-10) sono ammessi SOLO per gradi non-primaria. La valutazione in itinere è per obiettivi/4 dimensioni con giudizio descrittivo; lo scrutinio usa i 6 giudizi sintetici dell'Allegato A. Lo stato attuale del codice (GradesTab.tsx, valutazioni.voto_numerico) è dichiarato 'NON conforme'. · Roadmap/Prompt: ROADMAP_TECNICA.md (riga 15, Fase 1) prescrive per il registro primaria un 'Sistema di valutazione ibrido (voti numerici e giudizi descrittivi)' senza alcuna restrizione per grado. prompts/fase1_02_registro_primaria.md (punto 3) ordina esplicitamente: 'Valutazioni (Voti): Modello ibrido: numerici (es. 1-10) o descrittivi (es. Base, Avanzato)' come spec del modulo Primaria. Questo contraddice direttamente il divieto del PRD: la roadmap/prompt fanno implementare i voti numerici proprio dove sono vietati.
+- ✅ **RISOLTA** — **Scala di giudizio primaria: Allegato A (Ottimo→Non sufficiente) vs 'Base/Avanzato'** (media). **Decisione recepita:** l'unica scala ammessa alla primaria è quella dell'**Allegato A O.M. 3/2025** (Ottimo, Distinto, Buono, Discreto, Sufficiente, Non sufficiente). La scala **Base/Intermedio/Avanzato è SUPERATA** e non va più usata. *Analisi originale:* PRD: PRD §4.3 impone in modo rigido la scala dell'Allegato A O.M.3/2025 a SEI giudizi sintetici (Ottimo, Distinto, Buono, Discreto, Sufficiente, Non sufficiente), 'non rimodulabile nelle definizioni standard'. Il box IMPORTANT di §4 dichiara esplicitamente SUPERATO e 'da sostituire' il vecchio modello a livelli 'Base/Intermedio/Avanzato' (riferimenti 2020). · Roadmap/Prompt: prompts/fase1_02_registro_primaria.md (punto 3) usa come esempio di giudizi descrittivi proprio 'Base, Avanzato', cioè la scala dichiarata superata dal PRD. Manca ogni riferimento alla scala a 6 livelli dell'Allegato A o all'enum vincolato per la primaria.
+- ✅ **RISOLTA** — **Calcolo automatico delle medie dei voti (primaria)** (alta). **Decisione recepita (rev. committente):** il **calcolo della media è MANTENUTO**, basato sull'**associazione numerica nascosta** dei giudizi sintetici (#1). La media è uno strumento interno di sintesi per il docente (il documento di valutazione resta espresso in giudizi). *Analisi originale:* PRD: Il PRD non prevede alcun 'calcolo medie' per la primaria: la valutazione in itinere è formativa, per obiettivi di apprendimento e 4 dimensioni (Autonomia, Continuità, Tipologia situazione, Risorse), con giudizio descrittivo/sintetico; lo scrutinio aggrega in 6 giudizi sintetici per disciplina, modificabili collegialmente. Non esiste il concetto di media numerica alla primaria (coerente col divieto dei voti numerici). · Roadmap/Prompt: ROADMAP_TECNICA.md (riga 15) richiede 'calcolo automatico medie'. prompts/fase1_02_registro_primaria.md istruisce: 'I giudizi descrittivi devono avere un valore numerico nascosto per il calcolo delle medie' e (Istruzioni Operative, punto 2 Backend) 'Crea la logica per il calcolo asincrono delle medie'. Introdurre un valore numerico nascosto e una media reintroduce di fatto la valutazione numerica vietata dal PRD.
+- ✅ **RISOLTA** — **Categorizzazione voti Scritto/Orale/Pratico applicata alla primaria** (media). **Decisione recepita (rev. committente):** le categorie **Scritto/Orale/Pratico sono MANTENUTE anche alla primaria** — servono come tipologia della prova e per i termini di immodificabilità §8 (orali 2gg / scritte-pratiche 15gg). *Analisi originale:* PRD: PRD §4.1 riserva la categorizzazione Scritto/Orale/Pratico (con voti 1-10) esclusivamente ai gradi NON-primaria ('eventuale secondaria di primo grado'). Per la primaria la valutazione è per obiettivi e dimensioni, senza categorie scritto/orale/pratico. · Roadmap/Prompt: prompts/fase1_02_registro_primaria.md (punto 3, modulo Primaria) elenca tra le specifiche delle Valutazioni: 'Categorizzazione: Scritto, Orale, Pratico', senza limitarla ai gradi non-primaria, quindi imponendola al registro primaria.
+- ✅ **RISOLTA** — **Firma documenti modulistica: FEA (Avanzata) vs FES (Semplice)** (alta). **Decisione recepita:** la firma documenti è **FEA (Firma Elettronica Avanzata)**, come da PRD, confermata. I riferimenti a **FES** in roadmap/prompt sono **SUPERATI**. ⚠️ **Nota:** l'implementazione tecnica della firma è **esclusa dal Blocco 3** e sarà realizzata dal committente. *Analisi originale:* PRD: PRD Modulo Form (prd.md e sezione omologa nel PRD principale) descrive la validazione legale tramite 'Firma Elettronica Avanzata (FEA)' — §1 Descrizione Generale e §4.1 'Impostazioni FEA: Abilitazione della Firma Elettronica Avanzata, definendo i firmatari richiesti'. La validità è garantita da OTP via email. · Roadmap/Prompt: ROADMAP_TECNICA.md (Fase 4, riga 50) parla di 'Integrazione Firma Elettronica Semplice (FES)'. prompts/fase4_01_modulistica.md intitola la sezione 'Scudo Giuridico e FES' e ripete 'Firma Elettronica Semplice (FES)' / 'efficacia legale della Firma Elettronica Semplice'. FEA e FES sono due livelli giuridici diversi (eIDAS): contraddizione sul tipo di firma da implementare e sul valore probatorio.
+- ✅ **RISOLTA** — **Diario: pulsanti Nanna e Sveglia separati vs pulsante unico 'Nanna' (inizio+fine)** (media). **Decisione recepita:** **DUE pulsanti distinti** — "Nanna (Inizio)" e "Sveglia (Fine Nanna)" — che registrano l'orario "dalle … alle …". Il pulsante unico attuale va corretto (Blocco 3). *Analisi originale:* PRD: PRD §3.1 e §3.1.1 elencano DUE eventi/pulsanti distinti nella griglia: 'Nanna (Inizio)' (orario inizio riposo) e 'Sveglia (Fine Nanna)' (orario fine). La griglia Step 1 include esplicitamente sia 'Nanna' sia 'Sveglia' come pulsanti separati. La nota di implementazione del PRD segnala già come deviazione l'unificazione. · Roadmap/Prompt: prompts/fase2_01_diario_infanzia.md (punto 1 e Flusso UX) tratta 'Nanna (inizio e fine)' come singola routine/pulsante unico con due input. ROADMAP_TECNICA.md (Fase 2) elenca solo 'Nanna' tra le routine, senza 'Sveglia'. La griglia eventi quindi prevede un solo pulsante anziché i due richiesti dal PRD.
+- ✅ **RISOLTA** — **Filtro presenze nel Diario 0-6 (mostrare solo i 'Presenti')** (bassa). **Decisione recepita:** requisito **ATTIVO** — le sezioni di inserimento del Diario mostrano **solo i bambini "Presenti"** nel modulo Presenze. Da implementare nel codice (Blocco 3). *Analisi originale:* PRD: PRD §3.1 (Filtro Presenze) richiede che le sezioni di inserimento del Diario mostrino esclusivamente i bambini 'Presenti' nel modulo Presenze, rimuovendo automaticamente gli assenti. Tuttavia la nota di implementazione dello stesso PRD avverte che 'Il filtro presenze ... non è ancora attivo — vengono mostrati tutti gli alunni della sezione'. · Roadmap/Prompt: prompts/fase2_01_diario_infanzia.md richiede ripetutamente il filtro presenze come requisito attivo (punto 2 'Filtro presenze: Mostra solo i bambini Presenti oggi', Flusso UX Step 2 'compare la lista dei bambini Presenti oggi', Istruzioni punto 3). Esiste quindi una incongruenza tra requisito di prodotto (filtro obbligatorio) e stato dichiarato nel PRD (filtro non implementato, lista completa mostrata).
+- ✅ **RISOLTA** — **Diario Bagno/Igiene: 'Vasino/potty training' vs soli contatori Pipì/Cacca** (bassa). **Decisione recepita:** il **Vasino 🚽** è un **controllo previsto e già implementato**, accanto a Pipì 💧 e Cacca 💩 (documentato in §3.1.1). *Analisi originale:* PRD: PRD §2.1 indica per Bagno/Igiene il monitoraggio di Pipì, Cacca e 'Uso del Vasino (per potty training)'. La sezione §3.1.1 e la nota di implementazione descrivono però solo due contatori +/- (Pipì 💧 e Cacca 💩), senza il tracciamento Vasino. · Roadmap/Prompt: prompts/fase2_01_diario_infanzia.md (punto 1) elenca 'Bagno/Igiene (Pipì, Cacca, Vasino)' come routine da supportare, reintroducendo il Vasino che la parte operativa del PRD e l'implementazione non prevedono come controllo dedicato.
+- ✅ **RISOLTA** — **Armadietto: trigger consumo su 'cambio pannolino' vs evento 'Bagno/Igiene'** (bassa). **Decisione recepita:** lo scalo di **1 pannolino** avviene ad **ogni evento Bagno** del Diario, ma **solo per i bambini con flag "Usa pannolino"** attivo in Anagrafica (§2.1). I bambini senza flag non subiscono scalo. Da implementare nel codice (Blocco 3). *Analisi originale:* PRD: PRD Armadietto §2.2 (Consumo Automatico) scala un'unità ad ogni azione specifica di consumo registrata nel Diario, citando esplicitamente l'esempio 'cambio pannolino'. Nel Diario, però, l'evento Bagno è modellato come contatori Pipì/Cacca, non come 'cambio pannolino' dedicato. · Roadmap/Prompt: prompts/fase2_02_armadietto_anagrafica.md (Istruzioni punto 1) prescrive un trigger che 'alla registrazione di un evento Bagno/Igiene nel Diario ... decrementa la disponibilità', legando lo scalo a qualunque evento Bagno (es. pipì) e non al solo cambio pannolino: ambiguità su quale azione consuma lo stock, con rischio di decremento errato.

@@ -1,5 +1,8 @@
 # Prompt Atomico: Fase 1 - Modulo Registro Elettronico Primaria
 
+> [!IMPORTANT]
+> **Fonte di verità = PRD.** Documento di pianificazione storico: in caso di conflitto con il file `PRD REGISTRO ELETTRONICO.md` **vince sempre il PRD**. I contenuti in contrasto con il PRD sono marcati **[SUPERATO]** qui sotto (conservati per storico, non rimossi). Allineamento PRD: giugno 2026.
+
 ## Contesto Generale
 Sei un AI Software Engineer Senior. Il tuo compito è sviluppare il **Modulo Diario Scuola Primaria (Registro Elettronico)** per il SaaS Kidville, basandoti sulla Fase 1 della Roadmap Tecnica.
 
@@ -14,10 +17,10 @@ Costruire il registro elettronico ministeriale per la scuola primaria, con isola
    - Inserimento argomento lezione e compiti assegnati contestualmente alla firma.
    - Possibilità di allegare media (foto lavagna, schede).
    - Compiti visibili sulla bacheca dell'alunno (senza spunta di completamento e senza notifiche push). Visibili anche in caso di assenza.
-3. **Valutazioni (Voti):**
-   - Modello ibrido: numerici (es. 1-10) o descrittivi (es. Base, Avanzato). I giudizi descrittivi devono avere un valore numerico nascosto per il calcolo delle medie.
-   - Categorizzazione: Scritto, Orale, Pratico.
-   - Isolamento materia: il docente vede solo i voti della propria materia.
+3. **Valutazioni:** **[AGGIORNATO — vedi PRD §4]**
+   - Alla **primaria** il voto **visibile** è il **giudizio sintetico** conforme all'**Allegato A O.M. 3/2025** (Ottimo, Distinto, Buono, Discreto, Sufficiente, Non sufficiente): ~~numerici (es. 1-10) o descrittivi (es. Base, Avanzato)~~ **niente voti numerici 1-10 visibili e niente scala Base/Intermedio/Avanzato (superate)**. È **mantenuta un'associazione numerica nascosta** ai giudizi (es. Sufficiente=6) **per il calcolo delle medie**. Valutazione in itinere anche per **obiettivi di apprendimento** e **4 dimensioni** (Autonomia, Continuità, Tipologia situazione, Risorse) con giudizio descrittivo editabile; scrutinio con 6 giudizi sintetici.
+   - Categorizzazione: **Scritto, Orale, Pratico** (mantenuta; usata anche per i termini di immodificabilità §8).
+   - Isolamento materia: il docente vede solo le valutazioni della propria materia.
    - Buffer Notifica: invio notifica al genitore ritardata di 10 minuti per permettere correzioni.
 4. **Note e Provvedimenti:**
    - 3 categorie (Disciplinare, Didattica, Compiti non svolti) con codifica visiva.
@@ -34,6 +37,6 @@ Per massimizzare la qualità e l'affidabilità di questa fase, raccomandiamo l'u
 
 ## Istruzioni Operative
 1. **Database:** Definisci le tabelle Supabase `class_schedule`, `lessons_log`, `assignments`, `grades` e `disciplinary_notes`. Applica Row Level Security (RLS) per garantire l'isolamento dei voti tra docenti di materie diverse.
-2. **Backend:** Crea la logica per il calcolo asincrono delle medie e il job ritardato (10 min) per l'invio delle notifiche dei voti.
+2. **Backend:** Crea la logica per il calcolo asincrono delle medie (sull'associazione numerica nascosta dei giudizi sintetici) e il job ritardato (10 min) per l'invio delle notifiche delle valutazioni.
 3. **UI Docente:** Sviluppa la griglia oraria, modale per firma, form inserimento valutazioni e assegnazione note massiva.
 4. **UI Genitore:** Sviluppa le sezioni per visualizzare orario, compiti, andamento scolastico e il flusso di "Firma per presa visione" delle note.

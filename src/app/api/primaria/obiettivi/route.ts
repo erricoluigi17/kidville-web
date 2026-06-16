@@ -42,7 +42,7 @@ export async function GET(request: NextRequest) {
       q,
       supabase
         .from('giudizi_sintetici_scala')
-        .select('etichetta, ordine')
+        .select('etichetta, valore_numerico, ordine')
         .eq('scuola_id', materia.scuola_id)
         .eq('attivo', true)
         .order('ordine'),
@@ -50,7 +50,13 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      data: { obiettivi: obiettivi ?? [], scala: (scala ?? []).map((s) => s.etichetta) },
+      data: {
+        obiettivi: obiettivi ?? [],
+        scala: (scala ?? []).map((s) => s.etichetta),
+        // Scala con valore numerico nascosto: usata SOLO lato docente per suggerire
+        // un giudizio dall'annotazione numerica privata (mai esposta al genitore).
+        scalaValori: (scala ?? []).map((s) => ({ etichetta: s.etichetta, valore_numerico: s.valore_numerico })),
+      },
     })
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Errore interno'

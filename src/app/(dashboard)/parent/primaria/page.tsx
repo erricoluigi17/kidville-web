@@ -5,7 +5,7 @@ import { GraduationCap, AlertTriangle, CheckSquare, FileText, BarChart3, BookOpe
 
 const SEZIONI = [
   { href: '/parent/lezioni', label: 'Lezioni', sub: 'Argomenti e compiti', icon: BookOpen, color: 'bg-blue-50 text-blue-600' },
-  { href: '/parent/primaria/valutazioni', label: 'Valutazioni', sub: 'Giudizi e medie per materia', icon: BarChart3, color: 'bg-kidville-green/10 text-kidville-green' },
+  { href: '/parent/primaria/valutazioni', label: 'Valutazioni', sub: 'Giudizi per materia', icon: BarChart3, color: 'bg-kidville-green/10 text-kidville-green' },
   { href: '/parent/primaria/note', label: 'Note', sub: 'Note disciplinari e didattiche', icon: AlertTriangle, color: 'bg-amber-50 text-amber-600' },
   { href: '/parent/primaria/assenze', label: 'Presenze', sub: 'Assenze, ritardi e giustifiche', icon: CheckSquare, color: 'bg-purple-50 text-purple-600' },
   { href: '/parent/primaria/pagelle', label: 'Pagelle', sub: 'Scarica e firma le pagelle', icon: FileText, color: 'bg-emerald-50 text-emerald-600' },

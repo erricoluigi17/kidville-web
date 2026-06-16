@@ -1,11 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { getRequestUserId } from '@/lib/auth/require-staff'
+import { getRequestUserId, loadAppUser } from '@/lib/auth/require-staff'
 import { mediaGiudizi, type ScalaVoce } from '@/lib/primaria/media'
 
 // GET /api/primaria/prospetto?alunnoId=&materiaId=&userId=
 // Con materiaId: valutazioni raggruppate per obiettivo + media per quella materia.
 // Senza materiaId: panoramica medie per tutte le materie dell'alunno nella sezione.
+//
+// ⚠️ Endpoint RISERVATO AL PERSONALE DOCENTE: restituisce la media numerica, che
+// per la primaria è uno strumento di lavoro del docente e NON deve MAI essere
+// accessibile al genitore (O.M. 3/2025, PRD §4 #3 e §4.5). Senza un gate di ruolo
+// un genitore — che possiede un userId valido — potrebbe leggerla chiamando
+// direttamente questa route con l'id del proprio figlio.
 export async function GET(request: NextRequest) {
   try {
     const sp = new URL(request.url).searchParams
@@ -14,6 +20,16 @@ export async function GET(request: NextRequest) {
     const userId = getRequestUserId(request)
     if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
     if (!alunnoId) return NextResponse.json({ error: 'alunnoId obbligatorio' }, { status: 400 })
+
+    // Gate di ruolo: solo docenti/segreteria. Il genitore (role 'genitore') è escluso
+    // così la media numerica non gli è mai accessibile via API. Vedi nota sopra.
+    const appUser = await loadAppUser(userId)
+    if (!appUser || !['educator', 'admin', 'coordinator'].includes(appUser.role)) {
+      return NextResponse.json(
+        { error: 'Accesso negato: prospetto riservato al personale docente' },
+        { status: 403 }
+      )
+    }
 
     const supabase = await createAdminClient()
 

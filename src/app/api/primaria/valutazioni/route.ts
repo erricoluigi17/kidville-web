@@ -1,11 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { getRequestUserId } from '@/lib/auth/require-staff'
+import { getRequestUserId, loadAppUser } from '@/lib/auth/require-staff'
 import { isOltreScadenza } from '@/lib/primaria/timelock'
 import { renderGiudizioDescrittivo } from '@/lib/primaria/giudizio'
 import { enqueueNotifichePerAlunni } from '@/lib/primaria/notifiche'
 
 const DEV_TEACHER = '22222222-2222-2222-2222-222222222222'
+
+// Queste valutazioni includono l'annotazione numerica privata del docente: l'endpoint
+// è RISERVATO al personale docente/segreteria. Il genitore (role 'genitore') è escluso
+// così il suo appunto numerico non gli è mai accessibile via API (PRD §4 e §4.5).
+const RUOLI_DOCENTE = ['educator', 'admin', 'coordinator']
+async function negaSeNonDocente(userId: string | null): Promise<NextResponse | null> {
+  if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
+  const u = await loadAppUser(userId)
+  if (!u || !RUOLI_DOCENTE.includes(u.role)) {
+    return NextResponse.json({ error: 'Accesso negato: riservato al personale docente' }, { status: 403 })
+  }
+  return null
+}
 
 // GET /api/primaria/valutazioni?alunnoId=&materiaId=&userId=
 export async function GET(request: NextRequest) {
@@ -13,7 +26,8 @@ export async function GET(request: NextRequest) {
     const sp = new URL(request.url).searchParams
     const alunnoId = sp.get('alunnoId')
     const materiaId = sp.get('materiaId')
-    if (!getRequestUserId(request)) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
+    const denied = await negaSeNonDocente(getRequestUserId(request))
+    if (denied) return denied
 
     const supabase = await createAdminClient()
     let query = supabase
@@ -21,7 +35,7 @@ export async function GET(request: NextRequest) {
       .select(`
         id, alunno_id, materia, materia_id, tipo, modalita, argomento,
         dim_autonomia, dim_continuita, dim_tipologia, dim_risorse,
-        giudizio_sintetico, giudizio_testo, pubblicato, creato_il
+        giudizio_sintetico, giudizio_testo, annotazione_numerica, pubblicato, creato_il
       `)
       .not('modalita', 'is', null) // solo valutazioni in itinere (primaria)
       .order('creato_il', { ascending: false })
@@ -44,14 +58,26 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const userId = getRequestUserId(request) ?? DEV_TEACHER
+    const denied = await negaSeNonDocente(userId)
+    if (denied) return denied
     const body = await request.json()
     const {
       alunnoId, sectionId, materiaId, tipoProva = 'orale', modalita,
-      dims, giudizioSintetico, giudizioTesto, argomento, data,
+      dims, giudizioSintetico, giudizioTesto, argomento, data, annotazioneNumerica,
     } = body
 
     if (!alunnoId || !sectionId || !materiaId) {
       return NextResponse.json({ error: 'alunnoId, sectionId, materiaId obbligatori' }, { status: 400 })
+    }
+
+    // Annotazione numerica privata (facoltativa, scala /10). Solo appunto del docente.
+    let annNum: number | null = null
+    if (annotazioneNumerica !== undefined && annotazioneNumerica !== null && annotazioneNumerica !== '') {
+      const n = Number(annotazioneNumerica)
+      if (Number.isNaN(n) || n < 0 || n > 10) {
+        return NextResponse.json({ error: "L'annotazione numerica deve essere un valore tra 0 e 10" }, { status: 400 })
+      }
+      annNum = Math.round(n * 100) / 100
     }
     // Argomento (testo libero) obbligatorio: sostituisce l'obiettivo di apprendimento.
     if (typeof argomento !== 'string' || argomento.trim().length === 0) {
@@ -111,7 +137,8 @@ export async function POST(request: NextRequest) {
         dim_risorse: modalita === 'dimensioni' ? dims.risorse : null,
         giudizio_sintetico: modalita === 'sintetico' ? giudizioSintetico : null,
         giudizio_testo: testo,
-        voto_numerico: null, // vietato alla primaria
+        voto_numerico: null, // voto ufficiale numerico vietato alla primaria
+        annotazione_numerica: annNum, // appunto privato del docente (mai al genitore)
         lock_tipo: lockTipo,
         pubblicato: false, // buffer notifica (F1.8)
       })

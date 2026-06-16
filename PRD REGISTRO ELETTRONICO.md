@@ -300,7 +300,7 @@ direzione scolastica nella valutazione periodica e negli adempimenti di scrutini
 > **Decisioni definitive — incongruenze #1, #2, #3, #4 (vedi Appendice → Note di coerenza).** *(Aggiornate dopo revisione del committente: media e categorie di prova confermate.)*
 > - **#1 (Voto visibile = giudizio sintetico):** alla **primaria** il voto **visibile/ufficiale** mostrato a docenti e famiglie è **esclusivamente il giudizio sintetico** (in itinere e a scrutinio); **non si mostrano voti numerici 1-10**. È però **mantenuta un'associazione numerica interna/nascosta** a ciascun giudizio (es. *Sufficiente* = 6), usata **solo internamente** per il calcolo della media (vedi #3). I voti numerici visibili restano possibili solo per i gradi non-primaria.
 > - **#2 (Scala giudizi):** l'unica scala ammessa per i giudizi sintetici della primaria è quella dell'**Allegato A O.M. 3/2025** — *Ottimo, Distinto, Buono, Discreto, Sufficiente, Non sufficiente*. La vecchia scala **Base/Intermedio/Avanzato** è **SUPERATA**.
-> - **#3 (Medie — MANTENUTE):** alla primaria **il calcolo della media È PREVISTO**, basato sull'**associazione numerica nascosta** dei giudizi sintetici (#1). La media è uno strumento interno di sintesi per il docente; il documento di valutazione resta espresso in giudizi.
+> - **#3 (Medie — MANTENUTE, solo docente):** alla primaria **il calcolo della media È PREVISTO**, basato sull'**associazione numerica nascosta** dei giudizi sintetici (#1). La media è uno strumento interno di sintesi **del docente**. **Visibilità: la media numerica è mostrata ESCLUSIVAMENTE al personale docente/segreteria e NON è MAI visibile al genitore** — né in itinere né nell'area famiglia, e non viene nemmeno inviata al client dell'app genitore. L'app genitore espone solo i giudizi (sintetici/descrittivi), mai valori numerici o medie. Il documento di valutazione resta espresso in giudizi.
 > - **#4 (Scritto/Orale/Pratico — MANTENUTE):** la categorizzazione **Scritto/Orale/Pratico è mantenuta anche alla primaria**: serve sia come tipologia della prova sia per i **termini di immodificabilità §8** (orali 2gg / scritte-pratiche 15gg). La valutazione in itinere usa comunque obiettivi di apprendimento e quattro dimensioni.
 
 ### 4.1 Motore di Valutazione Ibrido (configurabile per grado)
@@ -330,6 +330,7 @@ La valutazione quotidiana mantiene **funzione formativa** e si articola così:
   registrare direttamente un giudizio sintetico abbreviato (es. Buono, Sufficiente) correlato
   all'obiettivo testato, per semplificare la visualizzazione nel prospetto.
 • **Nessun voto numerico** alla primaria, in nessuna delle due modalità.
+• **Annotazione numerica privata (facoltativa):** sulla singola verifica in itinere il docente può registrare un **appunto numerico** (scala /10) come **strumento di lavoro personale**. Vincoli: (a) il valore **ufficiale** periodico/finale per disciplina resta il **giudizio sintetico** (Allegato A) scelto dal docente; (b) l'annotazione **non compare** sul documento di valutazione (pagella/scrutinio); (c) **non è MAI visibile al genitore** (endpoint docente con gate di ruolo; gli endpoint `/api/parent/**` non la espongono); (d) **non genera automaticamente** il giudizio e **non produce medie automatiche**. Il sistema può al massimo **suggerire** un giudizio sintetico a partire dal numero (giudizio col valore nascosto più vicino), ma il docente deve **confermarlo** esplicitamente.
 
 ### 4.3 Scrutinio Periodico e Finale (Primaria) — Sei Giudizi Sintetici
 In sede di scrutinio (intermedio e finale), il team dei docenti contitolari attribuisce a ciascun
@@ -359,6 +360,10 @@ dell'O.M. 3/2025**, implementata in modo rigido (non rimodulabile nelle definizi
 • Eventuali aggregazioni/prospetti d'insieme sono riservate al team in sede di scrutinio e alla Dirigenza.
 
 ### 4.5 Comunicazione alle Famiglie
+• **Solo giudizi, mai numeri:** l'area genitore mostra **esclusivamente i giudizi** (sintetici e/o
+  descrittivi) e l'argomento della prova. **Nessun voto numerico e nessuna media** sono visibili al
+  genitore, in itinere o a scrutinio; la media numerica resta uno strumento riservato al docente (vedi
+  §4 #3) e non viene neppure trasmessa al client dell'app genitore.
 • **Buffer di Sicurezza:** all'inserimento di una valutazione il sistema attende 10 minuti prima di
   inviare la notifica push e renderla visibile, per consentire correzioni.
 • **Nessuna firma richiesta** per le normali valutazioni in itinere.

@@ -10,7 +10,7 @@ interface ValBreve {
   creato_il: string; argomento: string | null;
 }
 interface MateriaVoce {
-  materiaId: string; nome: string; media: number | null; valutazioni: ValBreve[];
+  materiaId: string; nome: string; valutazioni: ValBreve[];
 }
 
 function ValutazioniGenitore() {
@@ -54,9 +54,6 @@ function ValutazioniGenitore() {
                     <p className="font-maven text-xs text-gray-400">{m.valutazioni.length} valutazion{m.valutazioni.length === 1 ? 'e' : 'i'}</p>
                   </div>
                 </div>
-                {m.media !== null && (
-                  <span className="font-barlow text-2xl font-black text-kidville-green">{m.media.toFixed(2)}</span>
-                )}
               </button>
 
               {aperta === m.materiaId && (

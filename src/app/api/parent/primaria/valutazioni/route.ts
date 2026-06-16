@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { getRequestUserId } from '@/lib/auth/require-staff'
-import { mediaGiudizi, type ScalaVoce } from '@/lib/primaria/media'
 
 // GET /api/parent/primaria/valutazioni?studentId=&userId=
-// Valutazioni in itinere del figlio con medie per materia.
+// Valutazioni in itinere del figlio, raggruppate per materia.
+// NB: nessuna media numerica nella risposta. La media (associazione numerica
+// nascosta dei giudizi) è strumento di lavoro del docente e NON va MAI esposta
+// al genitore — O.M. 3/2025, PRD §4 (#1/#3) e §4.5.
 // Rispetta il buffer di visibilità configurato dalla scuola.
 export async function GET(request: NextRequest) {
   try {
@@ -32,7 +34,7 @@ export async function GET(request: NextRequest) {
     const bufferMin = settings?.notif_buffer_valutazioni_min ?? 10
     const soglia = new Date(Date.now() - bufferMin * 60_000).toISOString()
 
-    const [{ data: valutazioni }, { data: materie }, { data: scala }] = await Promise.all([
+    const [{ data: valutazioni }, { data: materie }] = await Promise.all([
       supabase
         .from('valutazioni')
         .select('id, materia_id, tipo, modalita, giudizio_sintetico, giudizio_testo, creato_il, argomento')
@@ -46,19 +48,12 @@ export async function GET(request: NextRequest) {
         .eq('section_id', alunno.section_id)
         .eq('attiva', true)
         .order('ordine'),
-      supabase
-        .from('giudizi_sintetici_scala')
-        .select('etichetta, valore_numerico')
-        .eq('scuola_id', alunno.scuola_id),
     ])
 
-    const scalaVoci = (scala ?? []) as ScalaVoce[]
-
-    // Raggruppa per materia e calcola medie
-    const perMateria = new Map<string, { giudizi: string[]; valutazioni: unknown[] }>()
+    // Raggruppa per materia. Nessuna media: è riservata al docente (vedi nota in testa).
+    const perMateria = new Map<string, { valutazioni: unknown[] }>()
     for (const v of valutazioni ?? []) {
-      const entry = perMateria.get(v.materia_id) ?? { giudizi: [], valutazioni: [] }
-      if (v.giudizio_sintetico) entry.giudizi.push(v.giudizio_sintetico)
+      const entry = perMateria.get(v.materia_id) ?? { valutazioni: [] }
       entry.valutazioni.push(v)
       perMateria.set(v.materia_id, entry)
     }
@@ -70,7 +65,6 @@ export async function GET(request: NextRequest) {
         return {
           materiaId: m.id,
           nome: m.nome,
-          media: mediaGiudizi(scalaVoci, entry.giudizi),
           valutazioni: entry.valutazioni,
         }
       })

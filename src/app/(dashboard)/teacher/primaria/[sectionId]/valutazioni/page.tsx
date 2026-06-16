@@ -2,13 +2,15 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
-import { Star, Check } from 'lucide-react';
+import { Star, Check, Lock } from 'lucide-react';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
+import { suggerisciGiudizio } from '@/lib/primaria/suggerimento';
+import type { ScalaVoce } from '@/lib/primaria/media';
 
 interface Alunno { id: string; nome: string; cognome: string }
 interface Materia { id: string; nome: string }
 interface Valutazione {
-  id: string; tipo: string; modalita: string; argomento: string | null; giudizio_sintetico: string | null; giudizio_testo: string | null; creato_il: string;
+  id: string; tipo: string; modalita: string; argomento: string | null; giudizio_sintetico: string | null; giudizio_testo: string | null; annotazione_numerica: number | null; creato_il: string;
 }
 interface Impreparato {
   id: string; alunno_id: string; data: string; motivo: string | null; origine: string; alunni?: { nome: string; cognome: string } | null;
@@ -27,6 +29,7 @@ export default function ValutazioniPage() {
   const [alunnoId, setAlunnoId] = useState('');
   const [materiaId, setMateriaId] = useState('');
   const [scala, setScala] = useState<string[]>([]);
+  const [scalaValori, setScalaValori] = useState<ScalaVoce[]>([]);
   const [recenti, setRecenti] = useState<Valutazione[]>([]);
   const [impreparati, setImpreparati] = useState<Impreparato[]>([]);
 
@@ -39,6 +42,7 @@ export default function ValutazioniPage() {
   const [risorse, setRisorse] = useState<'interne' | 'esterne' | 'entrambe'>('interne');
   const [giudizioSintetico, setGiudizioSintetico] = useState('');
   const [giudizioTesto, setGiudizioTesto] = useState('');
+  const [annotazioneNumerica, setAnnotazioneNumerica] = useState('');
   const [argomento, setArgomento] = useState('');
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
@@ -61,6 +65,7 @@ export default function ValutazioniPage() {
     const d = await r.json();
     if (d.success) {
       setScala(d.data.scala);
+      setScalaValori(d.data.scalaValori ?? []);
       if (d.data.scala.length) setGiudizioSintetico(d.data.scala[0]);
     }
   }, [materiaId, sectionId, userId]);
@@ -106,6 +111,7 @@ export default function ValutazioniPage() {
         dims: modalita === 'dimensioni' ? { autonomia, continuita, tipologia, risorse } : undefined,
         giudizioSintetico: modalita === 'sintetico' ? giudizioSintetico : undefined,
         giudizioTesto: giudizioTesto || undefined,
+        annotazioneNumerica: annotazioneNumerica.trim() ? annotazioneNumerica.replace(',', '.') : undefined,
         argomento: argomento.trim(),
       }),
     });
@@ -115,10 +121,17 @@ export default function ValutazioniPage() {
     else {
       setMsg('Valutazione salvata ✓');
       setGiudizioTesto('');
+      setAnnotazioneNumerica('');
       setArgomento('');
       loadRecenti();
     }
   };
+
+  // Suggerimento (non vincolante) del giudizio a partire dall'annotazione numerica.
+  const numAnnot = annotazioneNumerica.trim() === '' ? null : Number(annotazioneNumerica.replace(',', '.'));
+  const giudizioSuggerito = numAnnot !== null && !Number.isNaN(numAnnot)
+    ? suggerisciGiudizio(scalaValori, numAnnot)
+    : null;
 
   return (
     <div className="grid gap-4 md:grid-cols-2">
@@ -145,6 +158,41 @@ export default function ValutazioniPage() {
               <button key={t} onClick={() => setTipoProva(t)} className={`font-maven rounded-pill px-3 py-1 text-xs capitalize ${tipoProva === t ? 'bg-kidville-green text-kidville-yellow' : 'bg-gray-100 text-gray-500'}`}>{t}</button>
             ))}
           </div>
+        </div>
+
+        {/* Annotazione numerica privata (facoltativa) — strumento di lavoro del docente */}
+        <div className="mb-3 rounded-card border border-amber-100 bg-amber-50/60 p-3">
+          <label className="mb-1 flex items-center gap-1.5 font-maven text-xs text-gray-600">
+            <Lock size={12} className="text-amber-500" /> Annotazione numerica (privata, /10)
+          </label>
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              type="number"
+              min={0}
+              max={10}
+              step={0.5}
+              value={annotazioneNumerica}
+              onChange={(e) => setAnnotazioneNumerica(e.target.value)}
+              placeholder="Es. 7.5"
+              className="font-maven w-24 rounded-pill border border-gray-200 px-3 py-2 text-sm"
+            />
+            {giudizioSuggerito && (
+              <div className="flex items-center gap-1.5">
+                <span className="font-maven text-xs text-gray-500">Suggerito:</span>
+                <span className="font-maven rounded-pill border border-amber-200 bg-white px-2.5 py-1 text-xs font-semibold text-amber-700">{giudizioSuggerito}</span>
+                <button
+                  type="button"
+                  onClick={() => { setModalita('sintetico'); setGiudizioSintetico(giudizioSuggerito); }}
+                  className="font-maven rounded-pill bg-kidville-green px-3 py-1 text-xs text-kidville-yellow"
+                >
+                  Usa
+                </button>
+              </div>
+            )}
+          </div>
+          <p className="mt-1 font-maven text-[11px] text-gray-400">
+            Solo per te: non visibile al genitore, non sul documento di valutazione. Suggerisce un giudizio, non lo genera.
+          </p>
         </div>
 
         <div className="mb-3 flex gap-1.5">
@@ -205,6 +253,14 @@ export default function ValutazioniPage() {
                     {v.giudizio_sintetico || (v.modalita === 'dimensioni' ? 'Per dimensioni' : '—')}
                   </span>
                   <span className="text-xs text-gray-400 capitalize">{v.tipo}</span>
+                  {v.annotazione_numerica !== null && v.annotazione_numerica !== undefined && (
+                    <span
+                      title="Annotazione privata del docente — non visibile al genitore"
+                      className="font-maven rounded-pill border border-amber-100 bg-amber-50 px-2 py-0.5 text-[11px] text-amber-700"
+                    >
+                      ✎ {String(v.annotazione_numerica).replace('.', ',')}
+                    </span>
+                  )}
                   <span className="text-xs text-gray-300">{new Date(v.creato_il).toLocaleDateString('it-IT')}</span>
                 </div>
                 {v.argomento && <p className="font-maven text-xs text-gray-600 mt-0.5"><span className="text-gray-400">Argomento:</span> {v.argomento}</p>}

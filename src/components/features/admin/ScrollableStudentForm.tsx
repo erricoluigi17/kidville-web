@@ -21,6 +21,7 @@ const studentSchema = z.object({
     classe_sezione: z.string().optional().or(z.literal('')),
     is_bes_dsa: z.boolean(),
     note_bes: z.string().optional(),
+    usa_pannolino: z.boolean().optional(),
     allergies: z.string().optional(),
     allergeni: z.array(z.string()).optional(),
     invoice_holder_type: z.enum(['mom', 'dad', 'other']),
@@ -51,6 +52,7 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
         classe_sezione: '',
         is_bes_dsa: false,
         note_bes: '',
+        usa_pannolino: false,
         allergies: '',
         allergeni: [] as string[],
         invoice_holder_type: 'mom',
@@ -215,7 +217,7 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
                         <button
                             onClick={() => {
                                 setSavedStudent(null);
-                                setFormData({ nome: '', cognome: '', sesso: 'M', data_nascita: '', comune_nascita: '', provincia_nascita: '', codice_fiscale: '', indirizzo_residenza: '', comune_residenza: '', cap: '', classe_sezione: '', is_bes_dsa: false, note_bes: '', allergies: '', allergeni: [], invoice_holder_type: 'mom', invoice_holder_details: { nome: '', cognome: '', codice_fiscale: '', adult_id: '' } });
+                                setFormData({ nome: '', cognome: '', sesso: 'M', data_nascita: '', comune_nascita: '', provincia_nascita: '', codice_fiscale: '', indirizzo_residenza: '', comune_residenza: '', cap: '', classe_sezione: '', is_bes_dsa: false, note_bes: '', usa_pannolino: false, allergies: '', allergeni: [], invoice_holder_type: 'mom', invoice_holder_details: { nome: '', cognome: '', codice_fiscale: '', adult_id: '' } });
                             }}
                             className="flex items-center gap-2 px-5 py-2.5 bg-kidville-cream border border-kidville-green/15 text-kidville-green rounded-xl font-barlow font-bold uppercase text-sm hover:bg-kidville-green-light transition-all"
                         >
@@ -402,6 +404,16 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
                                     </motion.div>
                                 )}
                             </AnimatePresence>
+                        </div>
+
+                        <div className="p-4 bg-sky-500/10 rounded-2xl border border-sky-500/30">
+                            <label className="flex items-center gap-3 cursor-pointer">
+                                <input type="checkbox" name="usa_pannolino" checked={formData.usa_pannolino} onChange={handleInputChange} className="w-5 h-5 rounded border-sky-300/50 bg-white text-sky-500 focus:ring-sky-500" />
+                                <span className="font-bold text-sky-600 flex items-center gap-2">
+                                    🧷 Usa pannolino
+                                </span>
+                            </label>
+                            <p className="mt-2 text-sm text-sky-600/80">Se attivo, ogni evento &quot;Bagno&quot; nel Diario 0-6 scala automaticamente 1 pannolino dall&apos;armadietto del bambino.</p>
                         </div>
                     </div>
                 </section>

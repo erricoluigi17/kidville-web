@@ -128,6 +128,47 @@ export async function POST(request: NextRequest) {
             if (error) errors.push({ alunno_id: entry.alunno_id, error: error.message });
             else if (data) results.push(...data);
         }
+
+        // #9 — Scalo automatico pannolino: ad ogni evento "bagno" scala 1 pannolino
+        // dall'armadietto, SOLO per i bambini con flag "usa_pannolino" in anagrafica.
+        // Best-effort e idempotente per giorno: non blocca mai il salvataggio del diario.
+        if (entry.tipo_evento === 'bagno') {
+            try {
+                const { data: al } = await supabase
+                    .from('alunni')
+                    .select('usa_pannolino')
+                    .eq('id', entry.alunno_id)
+                    .maybeSingle();
+
+                if (al?.usa_pannolino === true) {
+                    // Evita doppio scalo nello stesso giorno (idempotenza su update ripetuti)
+                    const { data: giaScalato } = await supabase
+                        .from('armadietto')
+                        .select('id')
+                        .eq('alunno_id', entry.alunno_id)
+                        .eq('materiale', 'Pannolini')
+                        .eq('date', today)
+                        .eq('portato', false)
+                        .limit(1);
+
+                    if (!giaScalato || giaScalato.length === 0) {
+                        await supabase.from('armadietto').insert({
+                            alunno_id: entry.alunno_id,
+                            nome_oggetto: 'Pannolini',
+                            materiale: 'Pannolini',
+                            quantita: 1,
+                            quantita_residua: 0,
+                            date: today,
+                            portato: false, // consumo: sottrae dallo stock aggregato
+                            livello_allerta: 5,
+                            livello_emergenza: 2,
+                        });
+                    }
+                }
+            } catch (e) {
+                console.warn('[diary/entries] scalo pannolino saltato:', (e as Error).message);
+            }
+        }
     }
 
     if (errors.length > 0) {

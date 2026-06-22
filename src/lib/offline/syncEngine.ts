@@ -1,5 +1,6 @@
 import { db, LocalAttendanceLog, LocalDiaryEntry, LocalGalleryMedia, LocalPrimariaAppello, LocalPrimariaRegistro } from './db';
 import { createBrowserClient } from '@supabase/ssr';
+import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 
 function getSupabaseClient() {
     return createBrowserClient(
@@ -145,7 +146,8 @@ export async function syncLockerInventory(classeSezione: string) {
     }
 
     try {
-        const res = await fetch(`/api/locker/inventory?classe_sezione=${classeSezione}`);
+        const userId = getCurrentTeacherId(null);
+        const res = await fetch(`/api/locker/inventory?classe_sezione=${classeSezione}&userId=${userId}`);
         const data = await res.json();
 
         if (!Array.isArray(data)) return;

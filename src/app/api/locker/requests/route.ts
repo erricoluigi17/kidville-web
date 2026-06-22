@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server-client';
+import { createClient, createAdminClient } from '@/lib/supabase/server-client';
+import { requireDocente } from '@/lib/auth/require-staff';
+import { scuoleDiUtente } from '@/lib/auth/scope';
 
 // ============================================================
 // GET /api/locker/requests
@@ -35,12 +37,20 @@ export async function GET(request: NextRequest) {
             return NextResponse.json(data);
 
         } else if (classeSezione) {
-            // Ottieni gli alunni della sezione
+            // Ramo docente/staff: gate ruolo + isolamento per plesso.
+            const auth = await requireDocente(request);
+            if (auth.response) return auth.response;
+            const admin = await createAdminClient();
+            const plessi = await scuoleDiUtente(admin, auth.user);
+            if (plessi.length === 0) return NextResponse.json([]);
+
+            // Ottieni gli alunni della sezione (solo dei propri plessi)
             const { data: alunni } = await supabase
                 .from('alunni')
                 .select('id')
                 .eq('classe_sezione', classeSezione)
-                .eq('stato', 'iscritto');
+                .eq('stato', 'iscritto')
+                .in('scuola_id', plessi);
 
             if (!alunni || alunni.length === 0) return NextResponse.json([]);
             const ids = alunni.map(a => a.id);

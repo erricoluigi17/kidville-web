@@ -1,11 +1,13 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import {
     Settings, Plus, Trash2, GripVertical, ToggleLeft, ToggleRight,
     ChevronUp, ChevronDown, Package, Save, ArrowLeft,
 } from 'lucide-react';
 import Link from 'next/link';
+import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 
 // ─── Tipi ────────────────────────────────────────────────────────────────────
 
@@ -26,7 +28,9 @@ const ICONE_SUGGERITE = ['🧷', '🧻', '🧴', '👕', '🍼', '🧸', '📦',
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function LockerSettingsPage() {
+function LockerSettingsInner() {
+    const search = useSearchParams();
+    const userId = getCurrentTeacherId(search);
     const [classeFilter, setClasseFilter] = useState('Girasoli');
     const [materiali, setMateriali]       = useState<MaterialeConfig[]>([]);
     const [loading, setLoading]           = useState(true);
@@ -43,7 +47,7 @@ export default function LockerSettingsPage() {
     const fetchMateriali = async (classe: string) => {
         setLoading(true);
         try {
-            const res = await fetch(`/api/locker/materials?classe_sezione=${classe}`);
+            const res = await fetch(`/api/locker/materials?classe_sezione=${classe}&userId=${userId}`);
             const data = await res.json();
             setMateriali(Array.isArray(data) ? data : []);
         } catch (e) { console.error(e); }
@@ -56,9 +60,9 @@ export default function LockerSettingsPage() {
     const toggleAttivo = async (mat: MaterialeConfig) => {
         setSaving(mat.id);
         try {
-            await fetch('/api/locker/materials', {
+            await fetch(`/api/locker/materials?userId=${userId}`, {
                 method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
                 body: JSON.stringify({ id: mat.id, attivo: !mat.attivo }),
             });
             setMateriali(ms => ms.map(m => m.id === mat.id ? { ...m, attivo: !m.attivo } : m));
@@ -69,9 +73,9 @@ export default function LockerSettingsPage() {
     const updateSoglie = async (mat: MaterialeConfig, field: 'livello_allerta' | 'livello_emergenza', val: number) => {
         setSaving(mat.id);
         try {
-            await fetch('/api/locker/materials', {
+            await fetch(`/api/locker/materials?userId=${userId}`, {
                 method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
                 body: JSON.stringify({ id: mat.id, [field]: val }),
             });
             setMateriali(ms => ms.map(m => m.id === mat.id ? { ...m, [field]: val } : m));
@@ -91,14 +95,14 @@ export default function LockerSettingsPage() {
         // Salva ordine per entrambi
         setSaving(mat.id);
         await Promise.all([
-            fetch('/api/locker/materials', {
+            fetch(`/api/locker/materials?userId=${userId}`, {
                 method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
                 body: JSON.stringify({ id: mat.id, ordine: targetIdx + 1 }),
             }),
-            fetch('/api/locker/materials', {
+            fetch(`/api/locker/materials?userId=${userId}`, {
                 method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
                 body: JSON.stringify({ id: newList[idx].id, ordine: idx + 1 }),
             }),
         ]);
@@ -110,7 +114,7 @@ export default function LockerSettingsPage() {
         if (!confirm(`Eliminare "${mat.nome}"? Questa azione non può essere annullata.`)) return;
         setSaving(mat.id);
         try {
-            await fetch(`/api/locker/materials?id=${mat.id}`, { method: 'DELETE' });
+            await fetch(`/api/locker/materials?id=${mat.id}&userId=${userId}`, { method: 'DELETE', headers: { 'x-user-id': userId } });
             setMateriali(ms => ms.filter(m => m.id !== mat.id));
         } finally { setSaving(null); }
     };
@@ -122,7 +126,7 @@ export default function LockerSettingsPage() {
         try {
             const res = await fetch('/api/locker/materials', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
                 body: JSON.stringify({
                     ...newMat,
                     classe_sezione: classeFilter,
@@ -353,5 +357,13 @@ export default function LockerSettingsPage() {
                 </ul>
             </div>
         </div>
+    );
+}
+
+export default function LockerSettingsPage() {
+    return (
+        <Suspense fallback={null}>
+            <LockerSettingsInner />
+        </Suspense>
     );
 }

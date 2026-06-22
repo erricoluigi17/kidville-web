@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import {
     Package, RefreshCw, ChevronDown, ChevronRight,
     PlusCircle, MinusCircle, Table2, Truck, ChevronLeft,
@@ -9,6 +10,7 @@ import {
 import Link from 'next/link';
 import { LoadStockModal } from '@/components/features/teacher/locker/LoadStockModal';
 import { MonthlyLockerTable, type StudentInfo } from '@/components/features/teacher/locker/MonthlyLockerTable';
+import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 
 const SEZIONE = 'Girasoli';
 
@@ -30,7 +32,9 @@ interface CaricoDayStudent { id: string; nome: string; cognome: string; inventar
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function TeacherLockerPage() {
+function TeacherLockerInner() {
+    const search = useSearchParams();
+    const userId = getCurrentTeacherId(search);
     // 'carico' | 'consumo' | 'mensile'
     const [view, setView]   = useState<'carico' | 'consumo' | 'mensile'>('carico');
     const [month, setMonth] = useState(currentYearMonth());
@@ -62,7 +66,7 @@ export default function TeacherLockerPage() {
         try {
             const today = new Date().toISOString().slice(0, 10);
             const res = await fetch(
-                `/api/locker/inventory?classe_sezione=${SEZIONE}&mode=carico&month=${today.slice(0, 7)}`
+                `/api/locker/inventory?classe_sezione=${SEZIONE}&mode=carico&month=${today.slice(0, 7)}&userId=${userId}`
             );
             const data = await res.json();
             if (Array.isArray(data)) {
@@ -82,7 +86,7 @@ export default function TeacherLockerPage() {
     const fetchConsumo = useCallback(async () => {
         setConsumoLoading(true);
         try {
-            const res = await fetch(`/api/locker/inventory?classe_sezione=${SEZIONE}&mode=stock`);
+            const res = await fetch(`/api/locker/inventory?classe_sezione=${SEZIONE}&mode=stock&userId=${userId}`);
             const data = await res.json();
             if (Array.isArray(data)) {
                 setConsumoStudents(data);
@@ -97,7 +101,7 @@ export default function TeacherLockerPage() {
         setMensileLoading(true);
         try {
             const res = await fetch(
-                `/api/locker/inventory?classe_sezione=${SEZIONE}&mode=carico&month=${ym}`
+                `/api/locker/inventory?classe_sezione=${SEZIONE}&mode=carico&month=${ym}&userId=${userId}`
             );
             const data = await res.json();
             if (Array.isArray(data)) {
@@ -138,9 +142,9 @@ export default function TeacherLockerPage() {
         if (!consumoForm) return;
         setConsumoSaving(true);
         try {
-            const res = await fetch('/api/locker/inventory', {
+            const res = await fetch(`/api/locker/inventory?userId=${userId}`, {
                 method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
                 body: JSON.stringify({
                     alunno_id: consumoForm.sid,
                     materiale: consumoForm.mat,
@@ -439,5 +443,13 @@ export default function TeacherLockerPage() {
                 </div>
             )}
         </div>
+    );
+}
+
+export default function TeacherLockerPage() {
+    return (
+        <Suspense fallback={null}>
+            <TeacherLockerInner />
+        </Suspense>
     );
 }

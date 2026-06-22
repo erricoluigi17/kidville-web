@@ -74,6 +74,36 @@ export async function assertSezioneInScope(
 }
 
 /**
+ * Verifica che una classe identificata per NOME (es. 'Girasoli') appartenga a un
+ * plesso dell'utente. Per i moduli 0-6/trasversali keyed sul nome sezione: il
+ * nome viene risolto SOLO entro i plessi consentiti, così non porta mai
+ * cross-tenant (i nomi sono unici solo per scuola_id). 403 se fuori scope.
+ */
+export async function assertClasseNomeInScope(
+  supabase: SupabaseClient,
+  user: AppUser,
+  classeNome: string | null | undefined,
+): Promise<NextResponse | null> {
+  if (!classeNome) {
+    return NextResponse.json({ error: 'classe (nome) obbligatoria' }, { status: 400 })
+  }
+  const plessi = await scuoleDiUtente(supabase, user)
+  if (plessi.length === 0) {
+    return NextResponse.json({ error: 'Nessun plesso associato' }, { status: 403 })
+  }
+  const { data } = await supabase
+    .from('sections')
+    .select('id')
+    .eq('name', classeNome)
+    .in('scuola_id', plessi)
+    .limit(1)
+  if (!data || data.length === 0) {
+    return NextResponse.json({ error: 'Classe fuori dal tuo plesso' }, { status: 403 })
+  }
+  return null
+}
+
+/**
  * Verifica che l'alunno (`alunnoId`) sia nello scope dell'utente, risolvendo la
  * sua sezione/plesso. Per gli endpoint che ricevono alunnoId e non sectionId
  * (valutazioni, prospetto, fascicolo, diario, ...). 403/404 se fuori scope.

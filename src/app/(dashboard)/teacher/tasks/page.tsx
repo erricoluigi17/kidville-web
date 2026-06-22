@@ -138,7 +138,7 @@ function TeacherTasksContent() {
 
     const loadMetadata = useCallback(async () => {
         try {
-            const metaRes = await fetch('/api/tasks/meta');
+            const metaRes = await fetch(`/api/tasks/meta?userId=${teacherId}`);
             if (metaRes.ok) {
                 const meta = await metaRes.json();
                 setStaff(meta.staff);
@@ -148,7 +148,7 @@ function TeacherTasksContent() {
         } catch (err) {
             console.error('Errore caricamento metadata:', err);
         }
-    }, []);
+    }, [teacherId]);
 
     // Helper to upload files to backend
     const uploadFiles = async (files: File[]) => {
@@ -156,8 +156,9 @@ function TeacherTasksContent() {
         for (const file of files) {
             const formData = new FormData();
             formData.append('file', file);
-            const res = await fetch('/api/tasks/upload', {
+            const res = await fetch(`/api/tasks/upload?userId=${teacherId}`, {
                 method: 'POST',
+                headers: { 'x-user-id': teacherId },
                 body: formData
             });
             if (res.ok) {
@@ -313,7 +314,7 @@ function TeacherTasksContent() {
     // Take charge
     const handleTakeCharge = async (taskId: string) => {
         try {
-            const res = await fetch(`/api/tasks/${taskId}`, {
+            const res = await fetch(`/api/tasks/${taskId}?userId=${teacherId}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ status: 'in_progress' })
@@ -350,7 +351,7 @@ function TeacherTasksContent() {
                 uploadedAttachments = await uploadFiles(resolvingFiles);
             }
 
-            const res = await fetch(`/api/tasks/${resolvingTask.id}`, {
+            const res = await fetch(`/api/tasks/${resolvingTask.id}?userId=${teacherId}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -376,9 +377,9 @@ function TeacherTasksContent() {
     // Create task
     const handleCreateTask = async (data: TaskFormData) => {
         try {
-            const res = await fetch('/api/tasks', {
+            const res = await fetch(`/api/tasks?userId=${teacherId}`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'x-user-id': teacherId },
                 body: JSON.stringify({ ...data, author_id: teacherId })
             });
             if (res.ok) {
@@ -393,7 +394,7 @@ function TeacherTasksContent() {
 
     // Edit task fields (managers only)
     const handleSaveEdit = async (taskId: string, updates: Record<string, unknown>, toastMessage?: string) => {
-        const res = await fetch(`/api/tasks/${taskId}`, {
+        const res = await fetch(`/api/tasks/${taskId}?userId=${teacherId}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(updates)
@@ -407,7 +408,7 @@ function TeacherTasksContent() {
     const handleDeleteTask = async (taskId: string) => {
         if (!window.confirm('Eliminare definitivamente questo task?')) return;
         try {
-            const res = await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' });
+            const res = await fetch(`/api/tasks/${taskId}?userId=${teacherId}`, { method: 'DELETE' });
             if (res.ok) {
                 setTasks(prev => prev.filter(t => t.id !== taskId));
                 triggerToast('Task eliminato.');
@@ -445,7 +446,7 @@ function TeacherTasksContent() {
             body.resolved_by = teacherId;
         }
 
-        const res = await fetch(`/api/tasks/${taskId}`, {
+        const res = await fetch(`/api/tasks/${taskId}?userId=${teacherId}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body)
@@ -471,7 +472,7 @@ function TeacherTasksContent() {
             body.resolved_by = teacherId;
         }
 
-        const res = await fetch(`/api/tasks/${taskId}`, {
+        const res = await fetch(`/api/tasks/${taskId}?userId=${teacherId}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body)

@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { LinkedAdultProfile, AdultProfileData, AdultType } from './LinkedAdultProfile';
 import { Task } from '../teacher/tasks/TaskCard';
 import { StudentEconomicSection } from './StudentEconomicSection';
+import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 
 interface Student {
     id: string;
@@ -84,7 +85,7 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete }: Props
     useEffect(() => {
         if (!student?.id) return;
         setTasksLoading(true);
-        fetch(`/api/tasks?studentId=${student.id}`)
+        fetch(`/api/tasks?studentId=${student.id}&userId=${getCurrentTeacherId(null)}`)
             .then(r => r.json())
             .then(d => {
                 if (Array.isArray(d)) setStudentTasks(d);

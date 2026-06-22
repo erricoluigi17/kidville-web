@@ -161,7 +161,8 @@ Riuso di `RegistriClassePanel` (deep-link `/teacher/primaria/[sectionId]/[seg]?u
 | fascicolo | `puoAccedereFascicolo` (RBAC + tenant + segreteria) | alunno | `fascicolo_accessi_audit` + `logScrittura` (upload) | ✅ Fatto |
 | diary 0-6 | `requireDocente` (rami genitore aperti) | `assertAlunnoInScope` / nome→plesso | `logScrittura` | ✅ Fatto (UI cablata a `getCurrentTeacherId`; verifica runtime lato utente — vedi nota) |
 | armadietto | `requireDocente` (carico/ack genitore aperti) | `assertAlunnoInScope` / `assertClasseNomeInScope` | `logScrittura` | ✅ Fatto (consumo/materiali/catalogo gatati; carico + "preso in carico" + reads alunno genitore aperti; verifica runtime lato utente) |
-| tasks, avvisi | `requireDocente` | nuovo `scuola_id` | `logScrittura` | ⏳ In corso (richiede migrazione 20260719) |
+| tasks | `requireDocente` (intero modulo) | `task_interni.scuola_id` (migrazione 20260719) | `logScrittura` | ✅ Fatto (proxy author → backfill via real_author_id; UI cablata; verifica runtime lato utente dopo migrazione) |
+| avvisi | `requireDocente` (staff) | `avvisi.scuola_id` (migrazione 20260719) | `logScrittura` | ⏳ In corso |
 | Selettore classe Segreteria (stub) + toggle notifica | `requireDocente` (via /classi) | `scuoleDiUtente` | — | ✅ Fatto (stub, Claude Design) |
 
 ### 6.1 Nota — moduli 0-6 / tasks / avvisi: prerequisito di cablaggio auth

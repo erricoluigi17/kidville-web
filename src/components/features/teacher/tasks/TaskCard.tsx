@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import {
     Clock, User, CheckCircle, Play, Trash2, Tag, Calendar,
     ChevronDown, ChevronUp, Edit2, Eye, AlertCircle, Lock,
@@ -174,8 +175,9 @@ export function TaskCard({
         for (const file of files) {
             const formData = new FormData();
             formData.append('file', file);
-            const res = await fetch('/api/tasks/upload', {
+            const res = await fetch(`/api/tasks/upload?userId=${getCurrentTeacherId(null)}`, {
                 method: 'POST',
+                headers: { 'x-user-id': getCurrentTeacherId(null) },
                 body: formData
             });
             if (res.ok) {

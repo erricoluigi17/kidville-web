@@ -1,5 +1,8 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/server-client';
+import { requireDocente } from '@/lib/auth/require-staff';
+import { scuoleDiUtente } from '@/lib/auth/scope';
+import { logScrittura } from '@/lib/audit/scrittura';
 
 // ─── Schema note ─────────────────────────────────────────────────────────────
 // task_interni actual columns: id, author_id(*FK adults), assigned_to(*FK adults),
@@ -236,7 +239,13 @@ export async function GET(request: Request) {
             return NextResponse.json({ error: 'userId o studentId è richiesto' }, { status: 400 });
         }
 
+        // tasks = compiti INTERNI staff: gate ruolo + isolamento per plesso. Nessun flusso genitore.
+        const auth = await requireDocente(request);
+        if (auth.response) return auth.response;
+
         const supabase = await createAdminClient();
+        const plessi = await scuoleDiUtente(supabase, auth.user);
+        if (plessi.length === 0) return NextResponse.json([]);
 
         // Determine role
         let role = 'educator';
@@ -291,7 +300,8 @@ export async function GET(request: Request) {
         // Fetch rows (all tasks — filtering happens in JS since author/assignee are in JSON)
         const { data: rows, error: rowsErr } = await supabase
             .from('task_interni')
-            .select('id, author_id, assigned_to, target_class, titolo, contenuto, completato, created_at')
+            .select('id, author_id, assigned_to, target_class, titolo, contenuto, completato, created_at, scuola_id')
+            .in('scuola_id', plessi)
             .order('created_at', { ascending: false });
 
         if (rowsErr) {
@@ -375,6 +385,9 @@ export async function GET(request: Request) {
 // ─── POST /api/tasks ──────────────────────────────────────────────────────────
 export async function POST(request: Request) {
     try {
+        const auth = await requireDocente(request);
+        if (auth.response) return auth.response;
+
         const body = await request.json();
         const {
             titolo, contenuto: rawDescrizione, priority, category, deadline,
@@ -428,6 +441,7 @@ export async function POST(request: Request) {
                 titolo,
                 contenuto,
                 completato: false,
+                scuola_id: auth.user.scuola_id ?? null, // tenant: plesso dell'attore
             })
             .select()
             .single();
@@ -436,6 +450,11 @@ export async function POST(request: Request) {
             console.error('Errore creazione task:', error);
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
+
+        await logScrittura(supabase, {
+            attore: auth.user, entitaTipo: 'task', entitaId: (data as { id?: string })?.id ?? null,
+            azione: 'insert', scuolaId: auth.user.scuola_id ?? null, valoreDopo: { id: (data as { id?: string })?.id, titolo },
+        });
 
         return NextResponse.json(decodeRow(data as Record<string, unknown>), { status: 201 });
     } catch (error) {

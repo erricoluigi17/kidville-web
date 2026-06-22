@@ -1,5 +1,8 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/server-client';
+import { requireDocente } from '@/lib/auth/require-staff';
+import { scuoleDiUtente } from '@/lib/auth/scope';
+import { logScrittura } from '@/lib/audit/scrittura';
 
 interface Attachment {
     name: string;
@@ -94,6 +97,8 @@ export async function PUT(
     { params }: RouteParams
 ) {
     try {
+        const auth = await requireDocente(request);
+        if (auth.response) return auth.response;
         const { id } = await params;
         const body = await request.json();
         const {
@@ -120,12 +125,18 @@ export async function PUT(
         // 1. Fetch current row
         const { data: currentRow, error: getErr } = await supabase
             .from('task_interni')
-            .select('id, author_id, assigned_to, target_class, titolo, contenuto, completato, created_at')
+            .select('id, author_id, assigned_to, target_class, titolo, contenuto, completato, created_at, scuola_id')
             .eq('id', id)
             .single();
 
         if (getErr || !currentRow) {
             return NextResponse.json({ error: 'Task non trovato' }, { status: 404 });
+        }
+
+        // Tenant: la task deve essere in un plesso dell'attore.
+        const plessi = await scuoleDiUtente(supabase, auth.user);
+        if (!currentRow.scuola_id || !plessi.includes(currentRow.scuola_id as string)) {
+            return NextResponse.json({ error: 'Accesso negato: task fuori dal tuo plesso' }, { status: 403 });
         }
 
         // 2. Decode existing JSON payload
@@ -200,6 +211,11 @@ export async function PUT(
         const row = data as Record<string, unknown>;
         const payload = decodeContenuto(row.contenuto as string | null);
 
+        await logScrittura(supabase, {
+            attore: auth.user, entitaTipo: 'task', entitaId: id, azione: 'update',
+            scuolaId: (currentRow.scuola_id as string) ?? null, valoreDopo: { id, status: payload.status, titolo: row.titolo },
+        });
+
         return NextResponse.json({
             id: row.id,
             titolo: row.titolo,
@@ -223,8 +239,17 @@ export async function DELETE(
     { params }: RouteParams
 ) {
     try {
+        const auth = await requireDocente(request);
+        if (auth.response) return auth.response;
         const { id } = await params;
         const supabase = await createAdminClient();
+
+        // Tenant: la task deve essere in un plesso dell'attore.
+        const { data: row } = await supabase.from('task_interni').select('scuola_id').eq('id', id).maybeSingle();
+        const plessi = await scuoleDiUtente(supabase, auth.user);
+        if (!row || !row.scuola_id || !plessi.includes(row.scuola_id as string)) {
+            return NextResponse.json({ error: 'Accesso negato: task fuori dal tuo plesso' }, { status: 403 });
+        }
 
         const { error } = await supabase
             .from('task_interni')
@@ -235,6 +260,11 @@ export async function DELETE(
             console.error('Errore eliminazione task:', error);
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
+
+        await logScrittura(supabase, {
+            attore: auth.user, entitaTipo: 'task', entitaId: id, azione: 'delete',
+            scuolaId: (row.scuola_id as string) ?? null,
+        });
 
         return NextResponse.json({ success: true, message: 'Task eliminato con successo' });
     } catch (error) {

@@ -156,7 +156,7 @@ Riuso di `RegistriClassePanel` (deep-link `/teacher/primaria/[sectionId]/[seg]?u
 |---|---|---|---|---|
 | Fondamenta (ruolo, `utenti_scuole`, `audit_scritture_docente`, helper, fix grado) | — | — | — | ✅ Fatto |
 | classe/[sectionId], classi | `requireDocente` | `assertSezioneInScope` / `scuoleDiUtente` | — (read) | ✅ Fatto |
-| Leak in lettura (sezioni, prospetto, fascicolo-rbac, bypass pagella) | — | tenant | — | ⏳ Da fare |
+| Leak in lettura (sezioni, prospetto, fascicolo-rbac, bypass pagella) | `requireDocente` dove serve | `scuoleDiUtente`/`assertAlunnoInScope` (tenant) | — (read) | ✅ Fatto |
 | appello, registro, note, valutazioni, scrutinio, orario | `requireDocente` | sezione/alunno | `logScrittura` | ⏳ Da fare |
 | fascicolo | RBAC + tenant | alunno | `fascicolo_accessi_audit` + `logScrittura` | ⏳ Da fare |
 | diary 0-6, armadietto | `requireDocente` | nome→scuola | `logScrittura` | ⏳ Da fare |

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { getRequestUserId, loadAppUser } from '@/lib/auth/require-staff'
+import { requireDocente } from '@/lib/auth/require-staff'
+import { assertAlunnoInScope } from '@/lib/auth/scope'
 import { mediaGiudizi, type ScalaVoce } from '@/lib/primaria/media'
 
 // GET /api/primaria/prospetto?alunnoId=&materiaId=&userId=
@@ -17,21 +18,19 @@ export async function GET(request: NextRequest) {
     const sp = new URL(request.url).searchParams
     const alunnoId = sp.get('alunnoId')
     const materiaId = sp.get('materiaId')
-    const userId = getRequestUserId(request)
-    if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
     if (!alunnoId) return NextResponse.json({ error: 'alunnoId obbligatorio' }, { status: 400 })
 
-    // Gate di ruolo: solo docenti/segreteria. Il genitore (role 'genitore') è escluso
-    // così la media numerica non gli è mai accessibile via API. Vedi nota sopra.
-    const appUser = await loadAppUser(userId)
-    if (!appUser || !['educator', 'admin', 'coordinator'].includes(appUser.role)) {
-      return NextResponse.json(
-        { error: 'Accesso negato: prospetto riservato al personale docente' },
-        { status: 403 }
-      )
-    }
+    // Gate di ruolo: solo docenti/segreteria/staff. Il genitore (role 'genitore')
+    // è escluso, così la media numerica non gli è mai accessibile via API (vedi nota sopra).
+    const auth = await requireDocente(request)
+    if (auth.response) return auth.response
 
     const supabase = await createAdminClient()
+
+    // Scope per tenant/classe: educator solo sui propri alunni; staff/segreteria
+    // su tutto il plesso; mai cross-tenant.
+    const scopeErr = await assertAlunnoInScope(supabase, auth.user, alunnoId)
+    if (scopeErr) return scopeErr
 
     // Recupera scala giudizi una sola volta (serve sia per materia singola sia per panoramica).
     const { data: alunno } = await supabase.from('alunni').select('section_id').eq('id', alunnoId).single()

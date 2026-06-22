@@ -1,9 +1,11 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Plus, Minus, Clock, Users, WifiOff, Moon, Sun } from 'lucide-react';
 import { DiaryEventType } from '@/lib/offline/db';
+import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { EventTypeButton } from '@/components/features/teacher/diary/EventTypeButton';
 import { EVENT_CONFIG } from '@/components/features/teacher/diary/eventConfig';
 import { MealDetailInline } from '@/components/features/teacher/diary/MealDetailInline';
@@ -12,7 +14,6 @@ import { ActivityDetailInline, ActivityItem } from '@/components/features/teache
 interface Student { id: string; firstName: string; lastName: string; allergie: string[]; }
 
 const SEZIONE = 'Girasoli';
-const MAESTRA_ID = '22222222-2222-2222-2222-222222222222'; // dev default
 
 // Entrata rimossa — gestita dal modulo Presenze
 // Nanna e Sveglia sono DUE pulsanti distinti (PRD §3.1.1): Nanna = orario inizio, Sveglia = orario fine.
@@ -83,7 +84,9 @@ const itemVariants = {
 
 // ─── Componente Principale ────────────────────────────────────────────────────
 
-export default function TeacherDiaryPage() {
+function TeacherDiaryInner() {
+    const search = useSearchParams();
+    const userId = getCurrentTeacherId(search);
     const [students, setStudents] = useState<Student[]>([]);
     const [selectedEvent, setSelectedEvent] = useState<DiaryEventType | null>(null);
     const [studentStates, setStudentStates] = useState<Record<string, Record<string, unknown>>>({});
@@ -108,7 +111,7 @@ export default function TeacherDiaryPage() {
     const fetchStudents = async () => {
         setIsLoading(true);
         try {
-            const res = await fetch(`/api/diary/students?sezione=${SEZIONE}&onlyPresent=true`);
+            const res = await fetch(`/api/diary/students?sezione=${SEZIONE}&onlyPresent=true&userId=${userId}`);
             const data = await res.json();
             if (Array.isArray(data)) {
                 const mapped: Student[] = data.map((a: { id: string; nome: string; cognome: string; note_mediche: string | null }) => ({
@@ -132,7 +135,7 @@ export default function TeacherDiaryPage() {
         if (list.length === 0) { setSavedStudentIds(new Set()); return; }
         try {
             const today = todayISO();
-            const res = await fetch(`/api/diary/entries?sezione=${SEZIONE}&date=${today}`);
+            const res = await fetch(`/api/diary/entries?sezione=${SEZIONE}&date=${today}&userId=${userId}`);
             const entries = await res.json();
             if (!Array.isArray(entries)) { setSavedStudentIds(new Set()); return; }
 
@@ -246,16 +249,16 @@ export default function TeacherDiaryPage() {
                 }
                 return {
                     alunno_id: student.id,
-                    maestra_id: MAESTRA_ID,
+                    maestra_id: userId,
                     tipo_evento: selectedEvent,
                     orario_inizio: nowIso,
                     dettagli,
                 };
             });
 
-            const res = await fetch('/api/diary/entries', {
+            const res = await fetch(`/api/diary/entries?userId=${userId}`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
                 body: JSON.stringify(payload),
             });
 
@@ -563,5 +566,13 @@ export default function TeacherDiaryPage() {
                 )}
             </AnimatePresence>
         </div>
+    );
+}
+
+export default function TeacherDiaryPage() {
+    return (
+        <Suspense fallback={null}>
+            <TeacherDiaryInner />
+        </Suspense>
     );
 }

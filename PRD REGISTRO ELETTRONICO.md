@@ -159,8 +159,9 @@ Riuso di `RegistriClassePanel` (deep-link `/teacher/primaria/[sectionId]/[seg]?u
 | Leak in lettura (sezioni, prospetto, fascicolo-rbac, bypass pagella) | `requireDocente` dove serve | `scuoleDiUtente`/`assertAlunnoInScope` (tenant) | — (read) | ✅ Fatto |
 | appello, registro, note, valutazioni, scrutinio, orario | `requireDocente` | `assertSezioneInScope`/`assertAlunnoInScope` | `logScrittura` + `notificaTitolariScrittura` | ✅ Fatto (valutatore preservato via `risolviValutatore`; nuove valutazioni/firme della segreteria richiedono `docenteId` → 422 senza UI selezione docente) |
 | fascicolo | `puoAccedereFascicolo` (RBAC + tenant + segreteria) | alunno | `fascicolo_accessi_audit` + `logScrittura` (upload) | ✅ Fatto |
-| diary 0-6, armadietto | `requireDocente` | nome→scuola | `logScrittura` | ⛔ Bloccato — vedi nota |
-| tasks, avvisi | `requireDocente` | nuovo `scuola_id` | `logScrittura` | ⛔ Bloccato — vedi nota |
+| diary 0-6 | `requireDocente` (rami genitore aperti) | `assertAlunnoInScope` / nome→plesso | `logScrittura` | ✅ Fatto (UI cablata a `getCurrentTeacherId`; verifica runtime lato utente — vedi nota) |
+| armadietto | `requireDocente` (carico/ack genitore aperti) | `assertAlunnoInScope` / nome→plesso | `logScrittura` | ⏳ In corso |
+| tasks, avvisi | `requireDocente` | nuovo `scuola_id` | `logScrittura` | ⏳ In corso (richiede migrazione 20260719) |
 | Selettore classe Segreteria (stub) + toggle notifica | `requireDocente` (via /classi) | `scuoleDiUtente` | — | ✅ Fatto (stub, Claude Design) |
 
 ### 6.1 Nota — moduli 0-6 / tasks / avvisi: prerequisito di cablaggio auth

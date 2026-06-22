@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server-client';
+import { createClient, createAdminClient } from '@/lib/supabase/server-client';
+import { requireDocente } from '@/lib/auth/require-staff';
+import { scuoleDiUtente } from '@/lib/auth/scope';
 
 // GET /api/diary/students?sezione=Girasoli                    → lista classe (tutti)
 // GET /api/diary/students?sezione=Girasoli&onlyPresent=true   → solo presenti oggi
@@ -26,7 +28,7 @@ export async function GET(request: NextRequest) {
             .select('genitore_id')
             .eq('alunno_id', alunno.id);
 
-        let parents: any[] = [];
+        let parents: { id: string; nome: string; cognome: string; email: string }[] = [];
         if (legami && legami.length > 0) {
             const parentIds = legami.map(l => l.genitore_id);
             const { data: utenti } = await supabase
@@ -42,15 +44,23 @@ export async function GET(request: NextRequest) {
         });
     }
 
+    // ── Modalità insegnante/staff (per sezione): gate ruolo + isolamento per plesso. ──
+    const auth = await requireDocente(request);
+    if (auth.response) return auth.response;
+    const admin = await createAdminClient();
+    const plessi = await scuoleDiUtente(admin, auth.user);
+    if (plessi.length === 0) return NextResponse.json([]);
+
     // Supporta sia "sezione" (Girasoli) che "classeSezione" (3A)
     const sezione = params.get('sezione') ?? params.get('classeSezione') ?? 'Girasoli';
     const onlyPresent = params.get('onlyPresent') === 'true';
     const date = params.get('date') ?? new Date().toISOString().split('T')[0];
 
-    const { data: alunni, error } = await supabase
+    const { data: alunni, error } = await admin
         .from('alunni')
         .select('id, nome, cognome, note_mediche, classe_sezione, consenso_privacy')
         .eq('classe_sezione', sezione)
+        .in('scuola_id', plessi)
         .order('cognome');
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
@@ -68,7 +78,7 @@ export async function GET(request: NextRequest) {
         .in('alunno_id', alunnoIds);
 
     // Recupera tutti i genitori collegati
-    let parentsMap: Record<string, { id: string; nome: string; cognome: string; email: string }[]> = {};
+    const parentsMap: Record<string, { id: string; nome: string; cognome: string; email: string }[]> = {};
     if (legami && legami.length > 0) {
         const parentIds = [...new Set(legami.map(l => l.genitore_id))];
         const { data: utenti } = await supabase

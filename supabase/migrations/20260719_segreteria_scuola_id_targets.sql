@@ -37,6 +37,8 @@ CREATE INDEX IF NOT EXISTS idx_task_interni_scuola ON public.task_interni (scuol
 -- NB: task_interni.author_id e' un PROXY FK fisso; l'autore REALE sta nel JSON
 -- contenuto.real_author_id. Backfill via real_author_id -> utenti.scuola_id, con
 -- guardia anti-JSON-non-valido (alcune righe legacy hanno contenuto = testo libero).
+-- NB: in questo schema 'resolved_by' NON e' una colonna (vive nel JSON contenuto):
+-- il backfill usa solo real_author_id dal JSON.
 UPDATE public.task_interni t
 SET scuola_id = u.scuola_id
 FROM public.utenti u
@@ -46,12 +48,6 @@ WHERE t.scuola_id IS NULL
          THEN NULLIF(t.contenuto::jsonb ->> 'real_author_id', '')::uuid
          ELSE NULL END
   );
-
--- Fallback: resolved_by (chi ha risolto) se ancora NULL.
-UPDATE public.task_interni t
-SET scuola_id = u.scuola_id
-FROM public.utenti u
-WHERE t.resolved_by = u.id AND t.scuola_id IS NULL;
 
 -- -----------------------------------------------------------------------------
 -- 3. AVVISI  (backfill via autore: utenti.scuola_id)

@@ -159,9 +159,31 @@ Riuso di `RegistriClassePanel` (deep-link `/teacher/primaria/[sectionId]/[seg]?u
 | Leak in lettura (sezioni, prospetto, fascicolo-rbac, bypass pagella) | `requireDocente` dove serve | `scuoleDiUtente`/`assertAlunnoInScope` (tenant) | — (read) | ✅ Fatto |
 | appello, registro, note, valutazioni, scrutinio, orario | `requireDocente` | `assertSezioneInScope`/`assertAlunnoInScope` | `logScrittura` + `notificaTitolariScrittura` | ✅ Fatto (valutatore preservato via `risolviValutatore`; nuove valutazioni/firme della segreteria richiedono `docenteId` → 422 senza UI selezione docente) |
 | fascicolo | `puoAccedereFascicolo` (RBAC + tenant + segreteria) | alunno | `fascicolo_accessi_audit` + `logScrittura` (upload) | ✅ Fatto |
-| diary 0-6, armadietto | `requireDocente` | nome→scuola | `logScrittura` | ⏳ Da fare |
-| tasks, avvisi | `requireDocente` | nuovo `scuola_id` | `logScrittura` | ⏳ Da fare |
-| Selettore classe + toggle notifica | — | `scuoleDiUtente` | — | ⏳ Da fare |
+| diary 0-6, armadietto | `requireDocente` | nome→scuola | `logScrittura` | ⛔ Bloccato — vedi nota |
+| tasks, avvisi | `requireDocente` | nuovo `scuola_id` | `logScrittura` | ⛔ Bloccato — vedi nota |
+| Selettore classe Segreteria (stub) + toggle notifica | `requireDocente` (via /classi) | `scuoleDiUtente` | — | ✅ Fatto (stub, Claude Design) |
+
+### 6.1 Nota — moduli 0-6 / tasks / avvisi: prerequisito di cablaggio auth
+A differenza della primaria (interamente auth-wired: identità via `?userId=`/`x-user-id`,
+gate `requireDocente`), le **UI docente di diary, armadietto, tasks e avvisi NON sono
+cablate al modello auth applicativo**: usano identità hardcoded (`MAESTRA_ID`, `SEZIONE`,
+`ALUNNO_ID`) o passano `userId` solo su alcune chiamate (tasks/avvisi: assente su GET,
+`meta`, `upload`, operazioni by-id). Applicare ora `requireDocente` a questi endpoint
+**romperebbe le UI esistenti** (401 senza identità). Inoltre `armadietto`, `task_interni`,
+`avvisi` non hanno `scuola_id` (scoping per nome insicuro tra plessi).
+
+Prerequisito (task dedicato, naturale insieme a Claude Design):
+1. cablare le pagine `teacher/diary`, `teacher/locker`, `teacher/settings/locker`,
+   `teacher/tasks`, `teacher/avvisi` (e `syncEngine`) al pattern `getCurrentTeacherId` →
+   passare `userId` su TUTTE le chiamate (incl. `meta`/`upload`/by-id);
+2. migrazione `scuola_id` su `armadietto`/`task_interni`/`avvisi` + backfill;
+3. applicare poi gate `requireDocente` + scope (`assertSezioneInScope`/`assertAlunnoInScope`
+   o filtro `scuola_id`) + `logScrittura`, distinguendo i flussi GENITORE (carico
+   armadietto, "preso in carico" richieste, timeline diario) che NON vanno gatati.
+
+Finché non fatto: la Segreteria può comunque operare su questi moduli come oggi (endpoint
+non gatati), ma senza isolamento per tenant/audit dedicato. La primaria — cuore
+conforme O.M. 3/2025 + FEA — è invece pienamente coperta.
 
 ---
 

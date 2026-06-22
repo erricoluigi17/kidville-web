@@ -84,6 +84,7 @@ export async function PATCH(request: Request) {
       'galleria_config',
       'armadietto_config',
       'modulistica_config',
+      'segreteria_config',
     ]
     // Chiavi JSONB salvate in shallow-merge con l'esistente, così pannelli
     // diversi possono salvare indipendentemente senza sovrascriversi.
@@ -97,6 +98,7 @@ export async function PATCH(request: Request) {
       'galleria_config',
       'armadietto_config',
       'modulistica_config',
+      'segreteria_config',
     ]
     const updates: Record<string, unknown> = { scuola_id: scuolaId }
     for (const f of allowed) if (body[f] !== undefined) updates[f] = body[f]

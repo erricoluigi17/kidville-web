@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
 
 export type StaffRole = 'admin' | 'coordinator'
-export type AppRole = 'admin' | 'coordinator' | 'educator' | 'genitore' | 'cuoca'
+export type AppRole = 'admin' | 'coordinator' | 'educator' | 'segreteria' | 'genitore' | 'cuoca'
 
 export interface AppUser {
   id: string
@@ -159,12 +159,18 @@ export async function requireUser(request: Request): Promise<AuthResult> {
 
 /**
  * Garantisce che la richiesta provenga dal personale DOCENTE/segreteria
- * (`educator`/`admin`/`coordinator`). Esclude esplicitamente `genitore` e `cuoca`.
+ * (`educator`/`admin`/`coordinator`/`segreteria`). Esclude esplicitamente
+ * `genitore` e `cuoca`.
  *
  * Da usare per le route docente che leggono/scrivono dati di classe o riservati
  * (registro, note, prospetto/medie, annotazioni): nel modello app-level un
  * genitore possiede un `userId` valido e, senza questo gate, potrebbe raggiungerle
  * chiamandole con il proprio id. Enforcement applicativo (vedi requireStaff).
+ *
+ * ⚠️ Il gate verifica SOLO il ruolo: NON applica scoping per plesso/classe. Dopo
+ * il gate va sempre chiamato lo scope (`assertSezioneInScope`/`assertAlunnoInScope`
+ * in `@/lib/auth/scope`) per impedire accessi cross-tenant e, per `educator`,
+ * fuori dalle sezioni assegnate.
  *
  * Uso:
  * ```ts
@@ -175,7 +181,7 @@ export async function requireUser(request: Request): Promise<AuthResult> {
  */
 export async function requireDocente(
   request: Request,
-  allowed: AppRole[] = ['educator', 'admin', 'coordinator']
+  allowed: AppRole[] = ['educator', 'admin', 'coordinator', 'segreteria']
 ): Promise<AuthResult> {
   const userId = getRequestUserId(request)
   if (!userId) {

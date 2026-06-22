@@ -1,51 +1,64 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { getRequestUserId, loadAppUser } from '@/lib/auth/require-staff'
+import { requireDocente } from '@/lib/auth/require-staff'
+import { assertSezioneInScope } from '@/lib/auth/scope'
 import { loadGradoContext } from '@/lib/auth/require-grado'
-import { sezioniDiUtente, materieDiDocenteInSezione } from '@/lib/sezioni/docenti'
+import { materieDiDocenteInSezione } from '@/lib/sezioni/docenti'
 
 // GET /api/primaria/classe/[sectionId]?userId=
-// Bundle di contesto classe: dati sezione, alunni, materie del docente in classe.
+// Bundle di contesto classe: dati sezione, alunni, materie.
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ sectionId: string }> }
 ) {
   try {
     const { sectionId } = await params
-    const userId = getRequestUserId(request)
-    if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
 
-    const ctx = await loadGradoContext(userId)
-    if (!ctx || !ctx.gradi.includes('primaria')) {
-      return NextResponse.json({ error: 'Docente non abilitato alla primaria' }, { status: 403 })
-    }
+    // 1) Gate ruolo (educator/admin/coordinator/segreteria; genitore escluso).
+    const auth = await requireDocente(request)
+    if (auth.response) return auth.response
+    const user = auth.user
 
     const supabase = await createAdminClient()
 
-    // Admin/coordinator bypass: possono accedere a qualsiasi sezione.
-    const appUser = await loadAppUser(userId)
-    const isStaff = appUser?.role === 'admin' || appUser?.role === 'coordinator'
+    // 2) Scope per plesso/classe (educator: solo sezioni assegnate; staff/segreteria: tutto il plesso).
+    const scopeErr = await assertSezioneInScope(supabase, user, sectionId)
+    if (scopeErr) return scopeErr
 
-    if (!isStaff) {
-      const mieSezioni = await sezioniDiUtente(supabase, userId)
-      if (!mieSezioni.includes(sectionId)) {
-        return NextResponse.json({ error: 'Sezione non assegnata al docente' }, { status: 403 })
+    // 3) Abilitazione al grado primaria: solo per il docente puro
+    //    (admin/coordinator/segreteria bypassano — agiscono su tutta la scuola).
+    if (user.role === 'educator') {
+      const ctx = await loadGradoContext(user.id)
+      if (!ctx || !ctx.gradi.includes('primaria')) {
+        return NextResponse.json({ error: 'Docente non abilitato alla primaria' }, { status: 403 })
       }
     }
 
-    const [{ data: section }, { data: alunni }, materieIds] = await Promise.all([
+    const [{ data: section }, { data: alunni }] = await Promise.all([
       supabase.from('sections').select('id, name, school_type, scuola_id').eq('id', sectionId).single(),
       // Alunni attivi della sezione (fonte unica: alunni.section_id, sincronizzato dal trigger).
       supabase.from('alunni').select('id, nome, cognome, allergies, allergeni').eq('section_id', sectionId).eq('stato', 'iscritto').order('cognome'),
-      materieDiDocenteInSezione(supabase, userId, sectionId),
     ])
 
+    // Materie: il docente vede SOLO le proprie (contitolarità/isolamento disciplina);
+    // staff/segreteria operano sull'intera classe → tutte le materie attive della sezione.
     let materie: unknown[] = []
-    if (materieIds.length) {
+    if (user.role === 'educator') {
+      const materieIds = await materieDiDocenteInSezione(supabase, user.id, sectionId)
+      if (materieIds.length) {
+        const { data } = await supabase
+          .from('materie')
+          .select('id, nome, codice, e_civica, turno_mensa')
+          .in('id', materieIds)
+          .eq('attiva', true)
+          .order('ordine')
+        materie = data ?? []
+      }
+    } else {
       const { data } = await supabase
         .from('materie')
         .select('id, nome, codice, e_civica, turno_mensa')
-        .in('id', materieIds)
+        .eq('section_id', sectionId)
         .eq('attiva', true)
         .order('ordine')
       materie = data ?? []

@@ -39,7 +39,7 @@ export default function PrimariaClasseLayout({ children }: { children: React.Rea
   useEffect(() => {
     fetch(`/api/primaria/me?userId=${userId}`)
       .then((r) => r.json())
-      .then((d) => { if (d.success) setIsStaff(d.data.ruolo === 'admin' || d.data.ruolo === 'coordinator'); })
+      .then((d) => { if (d.success) setIsStaff(d.data.ruolo === 'admin' || d.data.ruolo === 'coordinator' || d.data.ruolo === 'segreteria'); })
       .catch(() => {});
   }, [userId]);
 

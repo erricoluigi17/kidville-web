@@ -87,9 +87,10 @@ l'accesso avviene tramite un unico account globale che gestisce permessi incroci
 ## 3. Gestione Ruoli e Permessi (RBAC)
 | Ruolo | Permessi di Lettura | Permessi di Azione e Scrittura |
 |---|---|---|
-| **Segreteria / Admin** | Accesso illimitato ai dati anagrafici della propria Sede di appartenenza. | Creazione, modifica e importazione dati. Trasferimento alunni tra sedi. Gestione inviti genitori e reset password staff. |
-| **Insegnante** | Visibilità completa sull'anagrafica degli alunni in carico (dati medici, didattici e deleghe), con l'**esclusione assoluta** dei recapiti di contatto dei genitori. Visibilità dello storico limitata all'anno in corso. | Modalità *Sola Lettura*. Nessuna facoltà di modifica autonoma dei record anagrafici. |
-| **Genitore** | Accesso all'anagrafica dei propri figli e al proprio profilo personale. | Può aggiornare in autonomia esclusivamente i propri recapiti di contatto e i documenti di identità in scadenza. Nessuna modifica ai dati core dell'alunno. |
+| **Direzione** (ruolo tecnico `admin`) | Accesso illimitato ai dati di **tutti i plessi associati** (ponte `utenti_scuole`; in assenza di righe, ricade sul proprio `scuola_id`). | Tutte le azioni della Segreteria, ma estese a **ogni plesso associato**. Mai cross-tenant fuori dai plessi assegnati. Chiusura/pubblicazione scrutinio (operazione di dirigenza) e sblocco voci time-lockate restano riservati alla dirigenza (`requireStaff`). |
+| **Segreteria** (ruolo tecnico `segreteria`) | Accesso illimitato ai dati del **proprio plesso** (`utenti.scuola_id`), mai cross-tenant. | Creazione, modifica e importazione dati del proprio plesso. **Accesso in scrittura a TUTTE le funzioni docente** di qualunque classe del proprio plesso (registro, appello, valutazioni, note, scrutinio, fascicolo, diario 0-6, armadietto), **riusando** le schermate/endpoint del docente (nessun fork UI). Vincoli: l'**autore/valutatore ufficiale** (firma FEA — *vero valutatore*) resta **sempre il docente** (`maestra_id`/`proposto_da` invariati); ogni scrittura è tracciata in `audit_scritture_docente` (diff `valore_prima`/`valore_dopo`); le voci time-lockate/firmate richiedono lo sblocco motivato della dirigenza (`sblocchi_audit`). Gestione inviti genitori e reset password staff del proprio plesso. |
+| **Insegnante** (ruolo tecnico `educator`) | Visibilità completa sull'anagrafica degli alunni in carico (dati medici, didattici e deleghe), con l'**esclusione assoluta** dei recapiti di contatto dei genitori. Visibilità limitata alle **proprie sezioni** (`utenti_sezioni`) e allo storico dell'anno in corso. | Scrittura sulle funzioni didattiche **solo per le proprie sezioni/materie** (registro, appello, valutazioni, note, ...). Modalità *Sola Lettura* sui record anagrafici core: nessuna modifica autonoma dell'anagrafe. |
+| **Genitore** (ruolo tecnico `genitore`) | Accesso all'anagrafica dei propri figli e al proprio profilo personale. | Può aggiornare in autonomia esclusivamente i propri recapiti di contatto e i documenti di identità in scadenza. Nessuna modifica ai dati core dell'alunno. **Escluso da tutti gli endpoint docente** (`requireDocente`). |
 
 ## 4. Flussi Operativi e Funzionalità Core
 ### 4.1 Onboarding e Acquisizione Dati
@@ -117,6 +118,50 @@ bypassando il normale "Soft Delete" applicato in fase di ritiro/sospensione.
 ***Cloud Authentication:** Relazione rigorosa e vincolata. I genitori non dispongono di codici di auto-invito; è unicamente la Segreteria a creare il legame parent_id <-> student_id ed effettuare l'onboarding. L'autenticazione è gestita tramite **Supabase Auth** (`auth.users` + `auth.identities`) con email/password.
 ***Offline-First per Docenti:** Le anagrafiche degli studenti vengono salvate in un database locale IndexedDB (tramite **Dexie.js**) per permettere l'appello e il registro offline. Un **Sync Engine** personalizzato (`src/lib/offline/syncEngine.ts`) si occupa di allineare i dati locali con il database centrale PostgreSQL non appena il dispositivo torna online. Le fotografie e i media pesanti sono esclusi dal caching per minimizzare l'impatto sulla memoria del dispositivo.
 ***Multi-Tenant:** La proprietà `scuola_id` (Sede di appartenenza, FK verso tabella `schools`) è obbligatoria su ogni tabella radice (`utenti`, `alunni`), garantendo isolamento logico dei dati tra plessi diversi all'interno dello stesso ambiente Kidville.
+
+---
+
+# PRD - Kidville App: Modulo Segreteria/Direzione (Accesso Scrittura per Classe)
+
+## 1. Obiettivo del Modulo
+Dare ai ruoli **Segreteria** e **Direzione** accesso in **scrittura a tutte le funzioni del docente**, per qualunque classe della propria scuola/plesso, **riusando le stesse schermate/endpoint del docente** (nessuna duplicazione di UI). In questo modo la conformità **O.M. 3/2025** e la **firma FEA** restano intatte, perché si opera sugli stessi flussi certificati del docente.
+
+- **Segreteria** (`segreteria`): vede e scrive **solo sul proprio plesso** (`utenti.scuola_id`).
+- **Direzione** (`admin`): può seguire **più plessi**, tramite il ponte `utenti_scuole` (fallback al proprio `scuola_id`).
+- Provisioning ruolo Segreteria: valore applicativo in `utenti.ruolo = 'segreteria'` (free-text; l'enum non viene alterato — `loadAppUser` legge `role || ruolo`).
+
+## 2. Modello di Sicurezza (gate uniforme + scope + audit)
+Ogni endpoint docente applica, nell'ordine:
+1. **Gate ruolo** — `requireDocente` (allowlist `educator/admin/coordinator/segreteria`; **genitore e cuoca esclusi**). Chiude anche la falla che lasciava raggiungere gli endpoint docente al genitore.
+2. **Scope per tenant/classe** — helper in `src/lib/auth/scope.ts`:
+   - `scuoleDiUtente(user)` → plessi consentiti (proprio `scuola_id`; per `admin` la lista in `utenti_scuole`).
+   - `assertSezioneInScope(user, sectionId)` → aree section-keyed (appello, registro, note, scrutinio, orario).
+   - `assertAlunnoInScope(user, alunnoId)` → aree student-keyed (valutazioni, prospetto, fascicolo, diario, ...).
+   - Regola: `educator` → solo sezioni assegnate (`utenti_sezioni`); `segreteria`/`coordinator`/`admin` → tutte le classi dei propri plessi. **Mai cross-tenant.**
+3. **Audit** — `logScrittura()` (`src/lib/audit/scrittura.ts`) registra in `audit_scritture_docente`: attore (id+ruolo), plesso, classe, entità, azione e **diff `valore_prima`/`valore_dopo`**. Log immodificabile (RLS: solo INSERT/SELECT).
+
+## 3. Vincoli di Conformità
+- **Firma FEA / vero valutatore**: l'autore ufficiale resta **sempre il docente**. I campi `valutazioni.maestra_id`, `note_disciplinari.maestra_id`, `firme_docenti.maestra_id`, `scrutinio_giudizi.proposto_da` **non** assumono mai l'identità della Segreteria; l'attore Segreteria figura **solo** in `audit_scritture_docente.attore_id`. Per una **nuova** scrittura valutativa la UI Segreteria deve **selezionare il docente** titolare/contitolare (validato su `utenti_sezioni`/`utenti_sezioni_materie`); senza un docente valido → **422** (mai forgiare la firma).
+- **O.M. 3/2025**: sui documenti ufficiali solo **giudizi sintetici**; la **media numerica** resta ausilio interno, mai su pagella/viste famiglie (già garantito; la Segreteria non la espone).
+- **Conflitti**: last-write-wins + audit; voci in time-lock/firmate richiedono lo sblocco motivato della dirigenza (`sblocchi_audit`). *Conflitti → segnala, non forzare.*
+
+## 4. Notifiche
+Toggle `admin_settings.segreteria_config.notifica_docente` (Settings Hub): se attivo, quando Segreteria/Direzione scrive su una classe non propria, il docente titolare riceve notifica (riuso del sistema notifiche esistente).
+
+## 5. Selettore Classe (unica UI nuova — stub)
+Riuso di `RegistriClassePanel` (deep-link `/teacher/primaria/[sectionId]/[seg]?userId=`), con elenco classi filtrato per `scuoleDiUtente`. **Stub minimale, da rifinire con Claude Design.** Nessun fork delle viste docente.
+
+## 6. Stato per area (aggiornato a ogni commit)
+| Area | Gate | Scope | Audit | Stato |
+|---|---|---|---|---|
+| Fondamenta (ruolo, `utenti_scuole`, `audit_scritture_docente`, helper, fix grado) | — | — | — | ✅ Fatto |
+| classe/[sectionId], classi | `requireDocente` | `assertSezioneInScope` / `scuoleDiUtente` | — (read) | ✅ Fatto |
+| Leak in lettura (sezioni, prospetto, fascicolo-rbac, bypass pagella) | — | tenant | — | ⏳ Da fare |
+| appello, registro, note, valutazioni, scrutinio, orario | `requireDocente` | sezione/alunno | `logScrittura` | ⏳ Da fare |
+| fascicolo | RBAC + tenant | alunno | `fascicolo_accessi_audit` + `logScrittura` | ⏳ Da fare |
+| diary 0-6, armadietto | `requireDocente` | nome→scuola | `logScrittura` | ⏳ Da fare |
+| tasks, avvisi | `requireDocente` | nuovo `scuola_id` | `logScrittura` | ⏳ Da fare |
+| Selettore classe + toggle notifica | — | `scuoleDiUtente` | — | ⏳ Da fare |
 
 ---
 

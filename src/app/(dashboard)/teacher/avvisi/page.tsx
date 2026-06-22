@@ -23,14 +23,14 @@ function TeacherAvvisiContent() {
     const loadAvvisi = useCallback(async () => {
         setLoading(true);
         try {
-            const res = await fetch('/api/avvisi');
+            const res = await fetch(`/api/avvisi?userId=${teacherId}`);
             if (res.ok) setAvvisi(await res.json());
         } catch (err) {
             console.error('Errore caricamento avvisi:', err);
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [teacherId]);
 
     useEffect(() => { loadAvvisi(); }, [loadAvvisi]);
 
@@ -42,9 +42,9 @@ function TeacherAvvisiContent() {
         try {
             if (editingAvviso) {
                 // UPDATE (PUT)
-                const res = await fetch(`/api/avvisi/${editingAvviso.id}`, {
+                const res = await fetch(`/api/avvisi/${editingAvviso.id}?userId=${teacherId}`, {
                     method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', 'x-user-id': teacherId },
                     body: JSON.stringify(data),
                 });
                 if (res.ok) {
@@ -53,9 +53,9 @@ function TeacherAvvisiContent() {
                 }
             } else {
                 // CREATE (POST)
-                const res = await fetch('/api/avvisi', {
+                const res = await fetch(`/api/avvisi?userId=${teacherId}`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', 'x-user-id': teacherId },
                     body: JSON.stringify({ author_id: teacherId, ...data }),
                 });
                 if (res.ok) await loadAvvisi();
@@ -68,8 +68,9 @@ function TeacherAvvisiContent() {
     const handleDelete = async (avvisoId: string) => {
         if (!window.confirm("Sei sicuro di voler eliminare definitivamente questo avviso? Questa azione eliminerà anche tutte le risposte associate.")) return;
         try {
-            const res = await fetch(`/api/avvisi/${avvisoId}`, {
+            const res = await fetch(`/api/avvisi/${avvisoId}?userId=${teacherId}`, {
                 method: 'DELETE',
+                headers: { 'x-user-id': teacherId },
             });
             if (res.ok) await loadAvvisi();
         } catch (err) {

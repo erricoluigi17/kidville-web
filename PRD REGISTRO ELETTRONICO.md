@@ -162,30 +162,24 @@ Riuso di `RegistriClassePanel` (deep-link `/teacher/primaria/[sectionId]/[seg]?u
 | diary 0-6 | `requireDocente` (rami genitore aperti) | `assertAlunnoInScope` / nome→plesso | `logScrittura` | ✅ Fatto (UI cablata a `getCurrentTeacherId`; verifica runtime lato utente — vedi nota) |
 | armadietto | `requireDocente` (carico/ack genitore aperti) | `assertAlunnoInScope` / `assertClasseNomeInScope` | `logScrittura` | ✅ Fatto (consumo/materiali/catalogo gatati; carico + "preso in carico" + reads alunno genitore aperti; verifica runtime lato utente) |
 | tasks | `requireDocente` (intero modulo) | `task_interni.scuola_id` (migrazione 20260719) | `logScrittura` | ✅ Fatto (proxy author → backfill via real_author_id; UI cablata; verifica runtime lato utente dopo migrazione) |
-| avvisi | `requireDocente` (staff) | `avvisi.scuola_id` (migrazione 20260719) | `logScrittura` | ⏳ In corso |
+| avvisi | `requireDocente` (staff; genitore lettura/risposte aperte) | `avvisi.scuola_id` (migrazione 20260719) | `logScrittura` | ✅ Fatto (GET ramo genitore + POST risposte aperti; create/edit/delete/risposte-GET/upload gatati; UI cablata) |
 | Selettore classe Segreteria (stub) + toggle notifica | `requireDocente` (via /classi) | `scuoleDiUtente` | — | ✅ Fatto (stub, Claude Design) |
 
-### 6.1 Nota — moduli 0-6 / tasks / avvisi: prerequisito di cablaggio auth
-A differenza della primaria (interamente auth-wired: identità via `?userId=`/`x-user-id`,
-gate `requireDocente`), le **UI docente di diary, armadietto, tasks e avvisi NON sono
-cablate al modello auth applicativo**: usano identità hardcoded (`MAESTRA_ID`, `SEZIONE`,
-`ALUNNO_ID`) o passano `userId` solo su alcune chiamate (tasks/avvisi: assente su GET,
-`meta`, `upload`, operazioni by-id). Applicare ora `requireDocente` a questi endpoint
-**romperebbe le UI esistenti** (401 senza identità). Inoltre `armadietto`, `task_interni`,
-`avvisi` non hanno `scuola_id` (scoping per nome insicuro tra plessi).
+### 6.1 Nota — moduli 0-6 / tasks / avvisi: cablaggio auth COMPLETATO
+Prerequisito **risolto**: le UI docente di diary, armadietto, tasks e avvisi sono state
+cablate al modello auth (`getCurrentTeacherId` → `userId` su TUTTE le chiamate, incl.
+`meta`/`upload`/by-id; `syncEngine` incluso) e i relativi endpoint ora applicano
+gate `requireDocente` + scope per tenant + `logScrittura`, **distinguendo i flussi
+GENITORE che restano aperti** (carico armadietto, "preso in carico" richieste, timeline
+diario, lettura/risposte avvisi). Aggiunta la migrazione `20260719` con `scuola_id` su
+`armadietto`/`task_interni`/`avvisi` (backfill via join canonici: alunno→scuola,
+autore→scuola; per `task_interni` via `real_author_id` JSON, non il proxy `author_id`).
 
-Prerequisito (task dedicato, naturale insieme a Claude Design):
-1. cablare le pagine `teacher/diary`, `teacher/locker`, `teacher/settings/locker`,
-   `teacher/tasks`, `teacher/avvisi` (e `syncEngine`) al pattern `getCurrentTeacherId` →
-   passare `userId` su TUTTE le chiamate (incl. `meta`/`upload`/by-id);
-2. migrazione `scuola_id` su `armadietto`/`task_interni`/`avvisi` + backfill;
-3. applicare poi gate `requireDocente` + scope (`assertSezioneInScope`/`assertAlunnoInScope`
-   o filtro `scuola_id`) + `logScrittura`, distinguendo i flussi GENITORE (carico
-   armadietto, "preso in carico" richieste, timeline diario) che NON vanno gatati.
-
-Finché non fatto: la Segreteria può comunque operare su questi moduli come oggi (endpoint
-non gatati), ma senza isolamento per tenant/audit dedicato. La primaria — cuore
-conforme O.M. 3/2025 + FEA — è invece pienamente coperta.
+**Da fare lato utente (ambiente agent offline verso Supabase):** applicare la migrazione
+`20260719` e verificare a runtime (genitore 200 sulle sue azioni / 403 sulle azioni staff;
+pagine esistenti senza 401; cross-tenant 403). NB: la lista `tasks` è vuota finché la
+migrazione non è applicata (filtra per `scuola_id`). La primaria — cuore conforme
+O.M. 3/2025 + FEA — resta pienamente coperta.
 
 ---
 

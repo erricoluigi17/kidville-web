@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Send, Upload, Link, AlertCircle } from 'lucide-react';
 import { Avviso } from './AvvisoCard';
+import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 
 interface Props {
     open: boolean;
@@ -92,8 +93,9 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
             const formData = new FormData();
             formData.append('file', file);
 
-            const res = await fetch('/api/avvisi/upload', {
+            const res = await fetch(`/api/avvisi/upload?userId=${getCurrentTeacherId(null)}`, {
                 method: 'POST',
+                headers: { 'x-user-id': getCurrentTeacherId(null) },
                 body: formData,
             });
 

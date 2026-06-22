@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Search, AlertCircle, Users, ThumbsUp, ThumbsDown, Eye, HelpCircle } from 'lucide-react';
 import { Avviso } from './AvvisoCard';
+import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 
 interface Props {
     open: boolean;
@@ -51,7 +52,7 @@ export function AvvisoDetailsDrawer({ open, avviso, onClose, availableClasses = 
             setLoading(true);
             try {
                 // 1. Carica le risposte/letture reali registrate nel database
-                const risposteRes = await fetch(`/api/avvisi/${avviso.id}/risposte`);
+                const risposteRes = await fetch(`/api/avvisi/${avviso.id}/risposte?userId=${getCurrentTeacherId(null)}`);
                 let risposteData: RispostaDettaglio[] = [];
                 if (risposteRes.ok) {
                     risposteData = await risposteRes.json();
@@ -66,7 +67,7 @@ export function AvvisoDetailsDrawer({ open, avviso, onClose, availableClasses = 
                 // 3. Carica tutti gli studenti per le sezioni target
                 const studentsPromises = targetClasses.map(async (classe) => {
                     try {
-                        const res = await fetch(`/api/diary/students?sezione=${classe}`);
+                        const res = await fetch(`/api/diary/students?sezione=${classe}&userId=${getCurrentTeacherId(null)}`);
                         if (res.ok) {
                             return (await res.json()) as StudentBasic[];
                         }

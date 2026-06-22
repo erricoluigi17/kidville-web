@@ -34,11 +34,20 @@ ALTER TABLE public.task_interni
   ADD COLUMN IF NOT EXISTS scuola_id UUID REFERENCES public.schools(id) ON DELETE CASCADE;
 CREATE INDEX IF NOT EXISTS idx_task_interni_scuola ON public.task_interni (scuola_id);
 
+-- NB: task_interni.author_id e' un PROXY FK fisso; l'autore REALE sta nel JSON
+-- contenuto.real_author_id. Backfill via real_author_id -> utenti.scuola_id, con
+-- guardia anti-JSON-non-valido (alcune righe legacy hanno contenuto = testo libero).
 UPDATE public.task_interni t
 SET scuola_id = u.scuola_id
 FROM public.utenti u
-WHERE t.author_id = u.id AND t.scuola_id IS NULL;
+WHERE t.scuola_id IS NULL
+  AND u.id = (
+    CASE WHEN left(btrim(coalesce(t.contenuto, '')), 1) = '{'
+         THEN NULLIF(t.contenuto::jsonb ->> 'real_author_id', '')::uuid
+         ELSE NULL END
+  );
 
+-- Fallback: resolved_by (chi ha risolto) se ancora NULL.
 UPDATE public.task_interni t
 SET scuola_id = u.scuola_id
 FROM public.utenti u

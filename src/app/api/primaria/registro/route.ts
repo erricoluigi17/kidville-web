@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
+import { assertSezioneInScope } from '@/lib/auth/scope'
+import { logScrittura } from '@/lib/audit/scrittura'
+import { risolviValutatore } from '@/lib/audit/valutatore'
 import { isOltreScadenza } from '@/lib/primaria/timelock'
-import { enqueueNotifichePerAlunni } from '@/lib/primaria/notifiche'
+import { enqueueNotifichePerAlunni, notificaTitolariScrittura } from '@/lib/primaria/notifiche'
 
 // ISO date → giorno_settimana 1..6 (Lun..Sab); domenica (0) → 7 (fuori range).
 function giornoSettimana(dataIso: string): number {
@@ -23,6 +26,8 @@ export async function GET(request: NextRequest) {
     if (!sectionId || !data) return NextResponse.json({ error: 'sectionId e data obbligatori' }, { status: 400 })
 
     const supabase = await createAdminClient()
+    const scopeErr = await assertSezioneInScope(supabase, auth.user, sectionId)
+    if (scopeErr) return scopeErr
     const giorno = giornoSettimana(data)
 
     // NB: niente embed `utenti(...)` nei join — la relazione firme_docenti/
@@ -85,7 +90,6 @@ export async function POST(request: NextRequest) {
   try {
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
-    const userId = auth.user.id
     const body = await request.json()
     const {
       sectionId,
@@ -106,6 +110,16 @@ export async function POST(request: NextRequest) {
     }
 
     const supabase = await createAdminClient()
+
+    // Scope per tenant/classe (educator: solo sezioni assegnate; staff/segreteria: plesso).
+    const scopeErr = await assertSezioneInScope(supabase, auth.user, sectionId)
+    if (scopeErr) return scopeErr
+
+    // La FIRMA del registro deve restare del docente (vincolo FEA). educator → sé
+    // stesso; segreteria → docente titolare indicato in body.docenteId, altrimenti 422.
+    const vr = await risolviValutatore(supabase, auth.user, sectionId, { docenteId: body.docenteId, materiaId })
+    if (vr.response) return vr.response
+    const firmaUserId = vr.valutatoreId
 
     // Risolve scuola + nome classe (classe_sezione per compat con il vincolo unico).
     const { data: section } = await supabase
@@ -184,7 +198,7 @@ export async function POST(request: NextRequest) {
       .upsert(
         {
           registro_id: registroRow.id,
-          maestra_id: userId,
+          maestra_id: firmaUserId,
           tipo_compresenza: tipoCompresenza,
           argomento_proprio: isIndipendente ? argomentoProprio || null : null,
           compiti_propri: isIndipendente ? compitiPropri || null : null,
@@ -226,6 +240,17 @@ export async function POST(request: NextRequest) {
         })
       }
     } catch { /* non bloccare il salvataggio */ }
+
+    await logScrittura(supabase, {
+      attore: auth.user,
+      entitaTipo: 'registro',
+      entitaId: registroRow.id,
+      azione: 'update',
+      scuolaId: section.scuola_id,
+      sectionId,
+      valoreDopo: { registro: registroRow, firma: firmaRow },
+    })
+    await notificaTitolariScrittura(supabase, { attore: auth.user, sectionId, scuolaId: section.scuola_id, area: 'registro', link: `/teacher/primaria/${sectionId}/registro` })
 
     return NextResponse.json({ success: true, data: { registro: registroRow, firma: firmaRow } })
   } catch (err) {

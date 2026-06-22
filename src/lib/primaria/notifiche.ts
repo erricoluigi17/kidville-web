@@ -1,4 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import type { AppUser } from '@/lib/auth/require-staff'
+import { getModuleConfig } from '@/lib/settings/module-config'
+import { docentiDiSezione } from '@/lib/sezioni/docenti'
 
 interface EnqueueParams {
   alunnoIds: string[]
@@ -44,4 +47,50 @@ export async function enqueueNotifichePerAlunni(
   }))
 
   await supabase.from('notifiche').insert(rows)
+}
+
+/**
+ * Notifica i docenti TITOLARI di una sezione quando una scrittura è stata
+ * effettuata da Segreteria/Direzione (non dal titolare stesso). Trasparenza
+ * PRD §12. Configurabile per scuola via admin_settings.segreteria_config
+ * (notifica_docente, default true). Best-effort: non blocca il flusso.
+ */
+export async function notificaTitolariScrittura(
+  supabase: SupabaseClient,
+  opts: {
+    attore: AppUser
+    sectionId: string
+    scuolaId?: string | null
+    area: string
+    link?: string
+  }
+): Promise<void> {
+  try {
+    // Solo per scritture NON del docente titolare (segreteria/direzione/coordinator).
+    if (opts.attore.role === 'educator') return
+
+    const cfg = await getModuleConfig<{ notifica_docente?: boolean }>(
+      supabase,
+      'segreteria_config',
+      opts.scuolaId ?? opts.attore.scuola_id,
+    )
+    if (cfg?.notifica_docente === false) return // default: notifica attiva
+
+    const titolari = (await docentiDiSezione(supabase, opts.sectionId)).filter((id) => id !== opts.attore.id)
+    if (titolari.length === 0) return
+
+    const nome = [opts.attore.nome, opts.attore.cognome].filter(Boolean).join(' ').trim() || 'La Segreteria'
+    const rows = titolari.map((uid) => ({
+      utente_id: uid,
+      tipo: 'segreteria_scrittura',
+      titolo: `Aggiornamento Segreteria — ${opts.area}`,
+      corpo: `${nome} ha aggiornato "${opts.area}" nella tua classe.`,
+      link: opts.link ?? null,
+      entita_tipo: opts.area,
+      invio_programmato_il: new Date().toISOString(),
+    }))
+    await supabase.from('notifiche').insert(rows)
+  } catch (e) {
+    console.error('notificaTitolariScrittura:', e)
+  }
 }

@@ -1,17 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { getRequestUserId } from '@/lib/auth/require-staff'
+import { requireDocente } from '@/lib/auth/require-staff'
+import { assertSezioneInScope } from '@/lib/auth/scope'
 
 // GET /api/primaria/orario?sectionId=&userId=
-// Orario settimanale in SOLA LETTURA (docente/genitore): campanelle + griglia.
+// Orario settimanale in SOLA LETTURA (personale docente/segreteria): campanelle + griglia.
+// (Il genitore consulta l'orario dalle proprie pagine /api/parent/**.)
 export async function GET(request: NextRequest) {
   try {
     const sp = new URL(request.url).searchParams
     const sectionId = sp.get('sectionId')
     if (!sectionId) return NextResponse.json({ error: 'sectionId obbligatorio' }, { status: 400 })
-    if (!getRequestUserId(request)) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
+
+    const auth = await requireDocente(request)
+    if (auth.response) return auth.response
 
     const supabase = await createAdminClient()
+    const scopeErr = await assertSezioneInScope(supabase, auth.user, sectionId)
+    if (scopeErr) return scopeErr
     const [{ data: campanelle }, { data: orario }] = await Promise.all([
       supabase.from('campanelle').select('*').eq('section_id', sectionId).order('giorno_settimana').order('ordine'),
       supabase

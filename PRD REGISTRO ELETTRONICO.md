@@ -157,7 +157,7 @@ Riuso di `RegistriClassePanel` (deep-link `/teacher/primaria/[sectionId]/[seg]?u
 | Fondamenta (ruolo, `utenti_scuole`, `audit_scritture_docente`, helper, fix grado) | — | — | — | ✅ Fatto |
 | classe/[sectionId], classi | `requireDocente` | `assertSezioneInScope` / `scuoleDiUtente` | — (read) | ✅ Fatto |
 | Leak in lettura (sezioni, prospetto, fascicolo-rbac, bypass pagella) | `requireDocente` dove serve | `scuoleDiUtente`/`assertAlunnoInScope` (tenant) | — (read) | ✅ Fatto |
-| appello, registro, note, valutazioni, scrutinio, orario | `requireDocente` | sezione/alunno | `logScrittura` | ⏳ Da fare |
+| appello, registro, note, valutazioni, scrutinio, orario | `requireDocente` | `assertSezioneInScope`/`assertAlunnoInScope` | `logScrittura` + `notificaTitolariScrittura` | ✅ Fatto (valutatore preservato via `risolviValutatore`; nuove valutazioni/firme della segreteria richiedono `docenteId` → 422 senza UI selezione docente) |
 | fascicolo | RBAC + tenant | alunno | `fascicolo_accessi_audit` + `logScrittura` | ⏳ Da fare |
 | diary 0-6, armadietto | `requireDocente` | nome→scuola | `logScrittura` | ⏳ Da fare |
 | tasks, avvisi | `requireDocente` | nuovo `scuola_id` | `logScrittura` | ⏳ Da fare |

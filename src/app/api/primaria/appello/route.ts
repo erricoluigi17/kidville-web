@@ -1,21 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { getRequestUserId } from '@/lib/auth/require-staff'
+import { requireDocente } from '@/lib/auth/require-staff'
+import { assertSezioneInScope } from '@/lib/auth/scope'
+import { logScrittura } from '@/lib/audit/scrittura'
+import { notificaTitolariScrittura } from '@/lib/primaria/notifiche'
 
-const DEV_TEACHER = '22222222-2222-2222-2222-222222222222'
 const STATI = ['presente', 'assente', 'ritardo', 'uscita_anticipata'] as const
 
 // GET /api/primaria/appello?sectionId=&data=&userId=
 // Alunni della classe + stato presenza del giorno.
 export async function GET(request: NextRequest) {
   try {
+    const auth = await requireDocente(request)
+    if (auth.response) return auth.response
     const sp = new URL(request.url).searchParams
     const sectionId = sp.get('sectionId')
     const data = sp.get('data')
     if (!sectionId || !data) return NextResponse.json({ error: 'sectionId e data obbligatori' }, { status: 400 })
-    if (!getRequestUserId(request)) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
 
     const supabase = await createAdminClient()
+    const scopeErr = await assertSezioneInScope(supabase, auth.user, sectionId)
+    if (scopeErr) return scopeErr
+
     const [{ data: alunni }, { data: presenze }] = await Promise.all([
       supabase.from('alunni').select('id, nome, cognome').eq('section_id', sectionId).order('cognome'),
       supabase
@@ -53,10 +59,16 @@ export async function GET(request: NextRequest) {
 //   bulk:    { sectionId, data, records: [{ alunnoId, stato, noteAppello? }] }
 export async function POST(request: NextRequest) {
   try {
-    const userId = getRequestUserId(request) ?? DEV_TEACHER
+    const auth = await requireDocente(request)
+    if (auth.response) return auth.response
+    const userId = auth.user.id
     const body = await request.json()
     const { sectionId, data } = body
     if (!sectionId || !data) return NextResponse.json({ error: 'sectionId e data obbligatori' }, { status: 400 })
+
+    const supabase = await createAdminClient()
+    const scopeErr = await assertSezioneInScope(supabase, auth.user, sectionId)
+    if (scopeErr) return scopeErr
 
     const records: { alunnoId: string; stato: string; noteAppello?: string; orarioEntrata?: string; orarioUscita?: string }[] = Array.isArray(body.records)
       ? body.records
@@ -72,7 +84,15 @@ export async function POST(request: NextRequest) {
     const toTs = (orario?: string) =>
       orario && /^\d{2}:\d{2}$/.test(orario) ? `${data}T${orario}:00` : null
 
-    const supabase = await createAdminClient()
+    // Stato PRIMA (per audit diff).
+    const alunnoIds = records.map((r) => r.alunnoId)
+    const { data: prima } = await supabase
+      .from('presenze')
+      .select('*')
+      .eq('section_id', sectionId)
+      .eq('data', data)
+      .in('alunno_id', alunnoIds)
+
     const rows = records.map((r) => ({
       alunno_id: r.alunnoId,
       section_id: sectionId,
@@ -82,6 +102,7 @@ export async function POST(request: NextRequest) {
       // Orario di entrata solo per ritardo, orario di uscita solo per uscita anticipata.
       orario_entrata: r.stato === 'ritardo' ? toTs(r.orarioEntrata) : null,
       orario_uscita: r.stato === 'uscita_anticipata' ? toTs(r.orarioUscita) : null,
+      // Provenienza operativa: chi ha registrato (può essere la segreteria). NON è una firma.
       registrato_da: userId,
     }))
 
@@ -90,6 +111,17 @@ export async function POST(request: NextRequest) {
       .upsert(rows, { onConflict: 'alunno_id,data' })
       .select()
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+    // Audit (diff prima/dopo) + notifica al docente titolare (se segreteria/direzione).
+    await logScrittura(supabase, {
+      attore: auth.user,
+      entitaTipo: 'presenze',
+      azione: 'update',
+      sectionId,
+      valorePrima: prima ?? [],
+      valoreDopo: saved ?? [],
+    })
+    await notificaTitolariScrittura(supabase, { attore: auth.user, sectionId, area: 'appello', link: `/teacher/primaria/${sectionId}/appello` })
 
     return NextResponse.json({ success: true, data: saved ?? [] })
   } catch (err) {

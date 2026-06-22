@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
-import { enqueueNotifichePerAlunni } from '@/lib/primaria/notifiche'
+import { assertSezioneInScope } from '@/lib/auth/scope'
+import { logScrittura } from '@/lib/audit/scrittura'
+import { risolviValutatore } from '@/lib/audit/valutatore'
+import { enqueueNotifichePerAlunni, notificaTitolariScrittura } from '@/lib/primaria/notifiche'
 
 const CATEGORIE = ['disciplinare', 'didattica', 'compiti_non_svolti'] as const
 
@@ -15,6 +18,8 @@ export async function GET(request: NextRequest) {
     if (!sectionId) return NextResponse.json({ error: 'sectionId obbligatorio' }, { status: 400 })
 
     const supabase = await createAdminClient()
+    const scopeErr = await assertSezioneInScope(supabase, auth.user, sectionId)
+    if (scopeErr) return scopeErr
     const { data, error } = await supabase
       .from('note_disciplinari')
       .select('id, alunno_id, categoria, testo, richiede_firma, firmata_il, oscurata_ad_altri, nota_gruppo_id, creato_il, alunni(nome, cognome)')
@@ -35,7 +40,6 @@ export async function POST(request: NextRequest) {
   try {
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
-    const userId = auth.user.id
     const body = await request.json()
     const { sectionId, alunnoIds, categoria, testo, richiedeFirma, oscurataAdAltri } = body
 
@@ -47,13 +51,22 @@ export async function POST(request: NextRequest) {
     }
 
     const supabase = await createAdminClient()
+    const scopeErr = await assertSezioneInScope(supabase, auth.user, sectionId)
+    if (scopeErr) return scopeErr
+
+    // Autore della nota = docente (vincolo FEA). educator → sé stesso; segreteria
+    // → docente titolare indicato in body.docenteId (validato), altrimenti 422.
+    const vr = await risolviValutatore(supabase, auth.user, sectionId, { docenteId: body.docenteId })
+    if (vr.response) return vr.response
+    const maestraId = vr.valutatoreId
+
     // Gruppo condiviso per assegnazione massiva (trattamento coerente delle note collettive).
     const notaGruppoId = crypto.randomUUID()
 
     const rows = alunnoIds.map((aid: string) => ({
       alunno_id: aid,
       section_id: sectionId,
-      maestra_id: userId,
+      maestra_id: maestraId,
       categoria,
       testo,
       richiede_firma: !!richiedeFirma,
@@ -63,6 +76,16 @@ export async function POST(request: NextRequest) {
 
     const { data, error } = await supabase.from('note_disciplinari').insert(rows).select()
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+    await logScrittura(supabase, {
+      attore: auth.user,
+      entitaTipo: 'nota',
+      entitaId: notaGruppoId,
+      azione: 'insert',
+      sectionId,
+      valoreDopo: data ?? [],
+    })
+    await notificaTitolariScrittura(supabase, { attore: auth.user, sectionId, area: 'note', link: `/teacher/primaria/${sectionId}/note` })
 
     // Notifica nota (con buffer; richiesta firma se prevista). Best-effort.
     try {

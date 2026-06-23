@@ -40,6 +40,13 @@ CREATE INDEX IF NOT EXISTS idx_utenti_scuole_scuola ON public.utenti_scuole (scu
 COMMENT ON TABLE public.utenti_scuole IS
   'Ponte multi-plesso: plessi (schools) su cui un utente può operare. Usato per la Direzione (admin) che segue più sedi. Segreteria/docenti restano sul singolo utenti.scuola_id.';
 
+-- RLS: service_role pieno; authenticated solo lettura (enforcement applicativo via service-role).
+ALTER TABLE public.utenti_scuole ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "service utenti_scuole" ON public.utenti_scuole;
+CREATE POLICY "service utenti_scuole" ON public.utenti_scuole FOR ALL TO service_role USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "read utenti_scuole" ON public.utenti_scuole;
+CREATE POLICY "read utenti_scuole" ON public.utenti_scuole FOR SELECT TO authenticated USING (true);
+
 -- -----------------------------------------------------------------------------
 -- 3. audit_scritture_docente — log IMMODIFICABILE delle scritture (diff prima/dopo)
 -- -----------------------------------------------------------------------------

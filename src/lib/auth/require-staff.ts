@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
 
-export type StaffRole = 'admin' | 'coordinator'
+export type StaffRole = 'admin' | 'coordinator' | 'segreteria'
 export type AppRole = 'admin' | 'coordinator' | 'educator' | 'segreteria' | 'genitore' | 'cuoca'
 
 export interface AppUser {
@@ -58,26 +58,32 @@ export async function loadAppUser(userId: string): Promise<AppUser | null> {
 }
 
 /**
- * Garantisce che la richiesta provenga da un membro dello staff
- * (`admin`/`coordinator`). Enforcement APPLICATIVO: legge l'id dalla richiesta
- * (`x-user-id`/`?userId=`) e ne verifica il ruolo su `utenti`.
+ * Garantisce che la richiesta provenga da un membro dello staff di gestione.
+ * Default: `admin`/`coordinator`/`segreteria` (la Segreteria ha la dashboard
+ * gestionale completa — anagrafe, iscrizioni, pagamenti, impostazioni — coerente
+ * col PRD §3 che equipara Segreteria↔Admin). Enforcement APPLICATIVO: legge l'id
+ * dalla richiesta (`x-user-id`/`?userId=`) e ne verifica il ruolo su `utenti`.
+ *
+ * ⚠️ Le operazioni di DIRIGENZA legate alla firma FEA (chiusura/pubblicazione
+ * scrutinio, generazione pagella ufficiale, sblocco time-lock) NON usano questo
+ * default: passano la lista esplicita `['admin','coordinator']`, così la
+ * Segreteria resta esclusa (vincolo O.M. 3/2025 + FEA).
  *
  * ⚠️ NOTA DI SICUREZZA (da irrigidire in produzione): il client fornisce il
  * proprio `userId`, esattamente come nel resto della codebase. La protezione
- * forte (RLS via `auth.uid()`) richiede la migrazione a Supabase Auth; le
- * policy RLS sono già scritte e si attiveranno allora. Vedi memoria
- * `kidville-auth-model`.
+ * forte (RLS via `auth.uid()`) richiede la migrazione a Supabase Auth.
  *
  * Uso:
  * ```ts
- * const auth = await requireStaff(request)
+ * const auth = await requireStaff(request)            // staff gestione (incl. segreteria)
+ * const auth = await requireStaff(request, ['admin','coordinator'])  // solo dirigenza
  * if (auth.response) return auth.response
  * const staffId = auth.user.id
  * ```
  */
 export async function requireStaff(
   request: Request,
-  allowed: StaffRole[] = ['admin', 'coordinator']
+  allowed: StaffRole[] = ['admin', 'coordinator', 'segreteria']
 ): Promise<AuthResult> {
   const userId = getRequestUserId(request)
   if (!userId) {

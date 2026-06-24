@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, Suspense } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { usePathname, useSearchParams } from 'next/navigation';
 import {
     Package, RefreshCw, ChevronDown, ChevronRight,
     PlusCircle, MinusCircle, Table2, Truck, ChevronLeft,
@@ -34,7 +34,14 @@ interface CaricoDayStudent { id: string; nome: string; cognome: string; inventar
 
 function TeacherLockerInner() {
     const search = useSearchParams();
+    const pathname = usePathname();
     const userId = getCurrentTeacherId(search);
+    // Link impostazioni base-path-aware: dentro il cockpit (/admin) resta nella shell;
+    // sotto /teacher invariato. Evita una fuga dalla cornice Direzione/Segreteria.
+    const uid = search.get('userId');
+    const settingsHref = pathname?.startsWith('/admin')
+        ? `/admin/impostazioni?sezione=armadietto${uid ? `&userId=${uid}` : ''}`
+        : '/teacher/settings/locker';
     // 'carico' | 'consumo' | 'mensile'
     const [view, setView]   = useState<'carico' | 'consumo' | 'mensile'>('carico');
     const [month, setMonth] = useState(currentYearMonth());
@@ -168,7 +175,7 @@ function TeacherLockerInner() {
                     <Package size={28} /> Armadietto
                 </h1>
                 <div className="flex items-center gap-2">
-                    <Link href="/teacher/settings/locker"
+                    <Link href={settingsHref}
                         className="p-2 rounded-xl text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
                         title="Impostazioni materiali">
                         <Settings size={18} />

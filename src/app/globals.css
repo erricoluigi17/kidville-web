@@ -22,3 +22,16 @@ body {
   color: var(--color-kidville-green);
   font-family: var(--font-maven);
 }
+
+/* =============================================================================
+   Cockpit Direzione/Segreteria — la cornice persistente (sidebar) non deve MAI
+   essere coperta da un overlay/modal a tutto schermo. Su desktop (>=1024px) gli
+   overlay `fixed inset-0` dentro l'area contenuto partono DOPO la sidebar (16rem),
+   quindi la barra laterale resta sempre visibile e cliccabile. Regola NON-layered
+   (Tailwind v4) -> vince sulle utility `inset-0` senza !important.
+   ============================================================================= */
+@media (min-width: 1024px) {
+  [data-cockpit-content] .fixed.inset-0 {
+    left: 16rem;
+  }
+}

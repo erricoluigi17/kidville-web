@@ -3,6 +3,10 @@ import { createHash, randomInt } from 'crypto'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { sendEmail } from '@/lib/email/send'
 import { rateLimit, clientIp } from '@/lib/security/rate-limit'
+import { getUserEmail } from '@/lib/auth/otp-ticket'
+import { buildSignatureLog, extractRequestMeta } from '@/lib/fea/signature-log'
+import { recordSignerSlot } from '@/lib/fea/slots'
+import { logFeaEvent } from '@/lib/fea/audit'
 import type { FormSubmissionData } from '@/types/database.types'
 
 // Hash deterministico: lega il codice alla submission (sale anti-rainbow-table)
@@ -124,7 +128,7 @@ export async function PATCH(request: Request) {
 
     const { data: submission, error: fetchErr } = await supabase
       .from('form_submissions')
-      .select('id, otp_secret, status')
+      .select('id, otp_secret, status, user_id')
       .eq('id', submissionId)
       .maybeSingle()
 
@@ -141,11 +145,28 @@ export async function PATCH(request: Request) {
     }
 
     const signedAt = new Date().toISOString()
+
+    // FEA (DL-001): registra il signature_log canonico anche su questo path
+    // (prima non salvava alcuna evidenza FES). Identità da user_id della submission.
+    const userId: string | null = submission.user_id ?? null
+    const email = userId ? await getUserEmail(supabase, userId) : null
+    const { ip, userAgent } = extractRequestMeta(request)
+    const hash = `SHA256-${hashOtp(submissionId, code).slice(0, 32).toUpperCase()}`
+    const signature_log = buildSignatureLog({
+      method: 'OTP_EMAIL',
+      email: email ?? 'N.D.',
+      ip,
+      userAgent,
+      hash,
+      signedAt,
+    })
+
     const { error: updErr } = await supabase
       .from('form_submissions')
       .update({
         status: 'completed',
         signed_at: signedAt,
+        signature_log,
         otp_secret: null, // consuma il codice dopo l'uso
       })
       .eq('id', submissionId)
@@ -154,6 +175,24 @@ export async function PATCH(request: Request) {
       console.error('Errore finalizzazione firma:', updErr)
       return NextResponse.json({ error: updErr.message }, { status: 500 })
     }
+
+    // Ledger slot + audit immutabile (best-effort).
+    await recordSignerSlot(supabase, {
+      entitaTipo: 'forms',
+      entitaId: submissionId,
+      signerUserId: userId,
+      signatureLog: signature_log,
+    })
+    await logFeaEvent(supabase, {
+      entitaTipo: 'forms',
+      entitaId: submissionId,
+      signerUserId: userId,
+      email,
+      evento: 'signed',
+      hash,
+      ip,
+      userAgent,
+    })
 
     return NextResponse.json({ ok: true, signedAt })
   } catch (err) {

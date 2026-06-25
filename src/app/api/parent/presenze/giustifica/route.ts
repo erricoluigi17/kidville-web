@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { getRequestUserId } from '@/lib/auth/require-staff'
 import { getUserEmail, verifyTicket, codeHash } from '@/lib/auth/otp-ticket'
+import { buildSignatureLog, extractRequestMeta } from '@/lib/fea/signature-log'
+import { recordSignerSlot } from '@/lib/fea/slots'
+import { logFeaEvent } from '@/lib/fea/audit'
 import { getModuleConfig } from '@/lib/settings/module-config'
 
 // POST /api/parent/presenze/giustifica?userId=
@@ -48,9 +51,13 @@ export async function POST(request: NextRequest) {
     // Conferma OTP email (FES) prima di procedere (se richiesta dalle impostazioni).
     const email = await getUserEmail(supabase, userId)
     if (!email) return NextResponse.json({ error: 'Email del genitore non trovata' }, { status: 400 })
+    const { ip, userAgent } = extractRequestMeta(request)
     if (richiedeOtp) {
       const check = verifyTicket(email, String(code ?? ''), Number(expiry ?? 0), String(ticket ?? ''))
-      if (!check.ok) return NextResponse.json({ error: check.error }, { status: 400 })
+      if (!check.ok) {
+        await logFeaEvent(supabase, { entitaTipo: 'giustifica', signerUserId: userId, email, evento: 'verify_failed', ip, userAgent })
+        return NextResponse.json({ error: check.error }, { status: 400 })
+      }
     }
 
     let schoolType: string | null = null
@@ -62,24 +69,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Giustifica disponibile solo per la scuola primaria' }, { status: 403 })
     }
 
-    const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'N.D.'
     const firma = richiedeOtp
-      ? {
+      ? buildSignatureLog({
           method: 'OTP_EMAIL',
-          provider: 'Firma OTP via email (FES)',
           email,
           ip,
-          timestamp: new Date().toISOString(),
+          userAgent,
           hash: codeHash(email, String(code), Number(expiry)),
-          compliance: 'CAD Art. 20 / DPR 445/2000',
-        }
-      : {
-          method: 'CONFERMA_APP',
-          provider: 'Conferma in app (OTP disattivato dalle impostazioni scuola)',
-          email,
-          ip,
-          timestamp: new Date().toISOString(),
-        }
+        })
+      : buildSignatureLog({ method: 'CONFERMA_APP', email, ip, userAgent })
 
     // Aggiorna la riga presenza del giorno (deve esistere: appello registrato dal docente).
     const { data: updated, error } = await supabase
@@ -101,6 +99,26 @@ export async function POST(request: NextRequest) {
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     if (!updated) return NextResponse.json({ error: 'Nessuna assenza registrata per quella data' }, { status: 404 })
+
+    // Ledger slot firmatari (additivo, best-effort).
+    if (updated?.id) {
+      await recordSignerSlot(supabase, {
+        entitaTipo: 'giustifica',
+        entitaId: updated.id,
+        signerUserId: userId,
+        signatureLog: firma,
+      })
+      await logFeaEvent(supabase, {
+        entitaTipo: 'giustifica',
+        entitaId: updated.id,
+        signerUserId: userId,
+        email,
+        evento: 'signed',
+        hash: firma.hash,
+        ip,
+        userAgent,
+      })
+    }
 
     return NextResponse.json({ success: true, data: updated })
   } catch (err) {

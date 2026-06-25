@@ -23,7 +23,8 @@
 - **S13** — `ALLOW_HEADER_IDENTITY='false'` (sigillo sola-sessione) dopo l'onboarding.
 
 ## P1 — Conformità normativa & core didattico incompleto
-- **Accessibilità Legge Stanca (L.4/2004 / AgID)** — criterio legale: alto contrasto + toggle, ARIA/screen reader, WCAG. Oggi missing/partial.
+- **Accessibilità Legge Stanca (L.4/2004 / AgID)** — criterio legale: alto contrasto + toggle, ARIA/screen reader, WCAG. **✅ Baseline P1 (DL-008):** provider alto-contrasto globale persistito (cookie SSR, no-FOUC), token HC + focus-ring + reduced-motion, Modal accessibile, landmark/skip-link/aria-current, smoke `jest-axe`. WCAG-AA = definition-of-done; audit AA per-pagina incrementale.
+- *(NB — i servizi trasversali **FEA** e **Push bufferizzato** del master plan P1 sono completati: vedi PRD §6 Stato per area e DL-001/006/007/009/010.)*
 - **Presenze (Fase 1, 17/36)**:
   - Operatività **offline-first** reale (cache locale + sync al ripristino) + indicatore Offline/stato sync.
   - **Check-out**: verifica visiva delegato con **foto documento d'identità**.
@@ -93,4 +94,4 @@
 - Flusso Genitori-Alunni Piattaforma Unica; **export Certificati delle Competenze** (classe quinta, D.M. 14/2024); indicatore stato sync.
 
 ## Escluso by-design (a carico del committente)
-- **FEA — Firma Elettronica Avanzata** (tecnica/qualificata): esplicitamente esclusa dal Blocco 3 del PRD. Richiesta in: Modulistica/Form, Pagelle (firma dirigente/SPID-CIE), firma di registro docente. **Da realizzare lato committente** — ma vanno comunque predisposti i ganci UI/dati.
+- ~~**FEA — Firma Elettronica Avanzata**: esclusa dal Blocco 3, a carico del committente.~~ **[SUPERATO — DL-001/Fase P1]** La FEA è **in scope e realizzata in-house** (servizio `src/lib/fea/`: OTP email + identità da sessione + slot firmatari + ricevuta PDF inattaccabile + audit immutabile). ✅ Implementata in P1. *(Nota: una FEA qualificata/eIDAS resterebbe eventualmente lato committente; il livello in-house è una firma elettronica rafforzata — informativa da validare.)*

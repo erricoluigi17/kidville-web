@@ -3,6 +3,7 @@
 import { Suspense, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { getSupabase } from '@/lib/supabase/browser-client';
+import { useAccessibility } from '@/lib/accessibility/useAccessibility';
 
 function LoginForm() {
   const router = useRouter();
@@ -12,7 +13,8 @@ function LoginForm() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [highContrast, setHighContrast] = useState(false);
+  // Alto contrasto: stato globale (provider + cookie SSR), non più locale.
+  const { highContrast, toggle: toggleContrast } = useAccessibility();
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -115,7 +117,7 @@ function LoginForm() {
 
         <button
           type="button"
-          onClick={() => setHighContrast((c) => !c)}
+          onClick={toggleContrast}
           className="mt-4 w-full text-center text-xs underline"
           aria-pressed={highContrast}
         >

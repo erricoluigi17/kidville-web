@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { AppUser } from '@/lib/auth/require-staff'
 import { getModuleConfig } from '@/lib/settings/module-config'
 import { docentiDiSezione } from '@/lib/sezioni/docenti'
+import { enqueueNotifiche } from '@/lib/push/enqueue'
 
 interface EnqueueParams {
   alunnoIds: string[]
@@ -34,19 +35,17 @@ export async function enqueueNotifichePerAlunni(
   const genitori = [...new Set((legami ?? []).map((l) => l.genitore_id as string))]
   if (genitori.length === 0) return
 
-  const programmato = new Date(Date.now() + bufferMin * 60_000).toISOString()
-  const rows = genitori.map((gid) => ({
-    utente_id: gid,
+  // Delega l'insert al core generico del servizio push (buffer condiviso).
+  await enqueueNotifiche(supabase, {
+    utenteIds: genitori,
     tipo,
     titolo,
-    corpo: corpo ?? null,
-    link: link ?? null,
-    entita_tipo: entitaTipo ?? null,
-    entita_id: entitaId ?? null,
-    invio_programmato_il: programmato,
-  }))
-
-  await supabase.from('notifiche').insert(rows)
+    corpo,
+    link,
+    entitaTipo,
+    entitaId,
+    bufferMin,
+  })
 }
 
 /**
@@ -80,16 +79,15 @@ export async function notificaTitolariScrittura(
     if (titolari.length === 0) return
 
     const nome = [opts.attore.nome, opts.attore.cognome].filter(Boolean).join(' ').trim() || 'La Segreteria'
-    const rows = titolari.map((uid) => ({
-      utente_id: uid,
+    await enqueueNotifiche(supabase, {
+      utenteIds: titolari,
       tipo: 'segreteria_scrittura',
       titolo: `Aggiornamento Segreteria — ${opts.area}`,
       corpo: `${nome} ha aggiornato "${opts.area}" nella tua classe.`,
       link: opts.link ?? null,
-      entita_tipo: opts.area,
-      invio_programmato_il: new Date().toISOString(),
-    }))
-    await supabase.from('notifiche').insert(rows)
+      entitaTipo: opts.area,
+      bufferMin: 0,
+    })
   } catch (e) {
     console.error('notificaTitolariScrittura:', e)
   }

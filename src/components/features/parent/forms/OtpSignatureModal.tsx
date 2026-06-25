@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { ShieldCheck, Loader2, AlertCircle, Mail, X, CheckCircle2 } from 'lucide-react'
+import { Modal } from '@/components/ui/Modal'
 
 interface Props {
   open: boolean
@@ -28,12 +29,15 @@ export function OtpSignatureModal({
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    if (open) {
+    if (!open) return
+    // Reset + focus all'apertura, in callback async (no setState sincrono in effect).
+    const t = setTimeout(() => {
       setCode('')
       setError(null)
       setSuccess(false)
-      setTimeout(() => inputRef.current?.focus(), 150)
-    }
+      inputRef.current?.focus()
+    }, 0)
+    return () => clearTimeout(t)
   }, [open])
 
   async function handleVerify() {
@@ -63,30 +67,21 @@ export function OtpSignatureModal({
     }
   }
 
+  // Durante il successo non interrompere la conferma (auto-avanza con onSigned).
+  const requestClose = () => { if (!success) onClose() }
+
   return (
-    <AnimatePresence>
-      {open && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          className="fixed inset-0 z-[80] flex items-center justify-center p-4"
-          style={{ background: 'rgba(0,106,95,0.30)', backdropFilter: 'blur(8px)' }}
-        >
-          <motion.div
-            initial={{ opacity: 0, scale: 0.94, y: 16 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.94, y: 16 }}
-            transition={{ type: 'spring', damping: 24, stiffness: 300 }}
-            className="w-full max-w-sm rounded-3xl p-6 relative bg-white"
-            style={{
-              border: '1px solid rgba(0,106,95,0.12)',
-              boxShadow: '0 30px 60px rgba(0,0,0,0.15)',
-            }}
-          >
+    <Modal
+      open={open}
+      onClose={requestClose}
+      title="Firma elettronica"
+      closeOnBackdrop={false}
+      className="w-full max-w-sm rounded-3xl p-6 relative bg-white border border-kidville-green/10 shadow-2xl"
+    >
             {!success && (
               <button
                 onClick={onClose}
+                aria-label="Chiudi"
                 className="absolute top-4 right-4 p-1.5 rounded-lg text-gray-400 hover:text-kidville-green hover:bg-kidville-cream transition-all"
               >
                 <X className="w-4 h-4" />
@@ -138,6 +133,7 @@ export function OtpSignatureModal({
                     onChange={e => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
                     onKeyDown={e => e.key === 'Enter' && handleVerify()}
                     inputMode="numeric"
+                    aria-label="Codice di firma a 6 cifre"
                     placeholder="••••••"
                     className="mt-5 w-full px-4 py-4 rounded-xl bg-kidville-cream border border-kidville-green/15 text-center text-2xl font-mono tracking-[0.5em] text-kidville-green placeholder-kidville-green/30 focus:outline-none focus:border-kidville-green transition-all"
                   />
@@ -164,9 +160,6 @@ export function OtpSignatureModal({
                 </motion.div>
               )}
             </AnimatePresence>
-          </motion.div>
-        </motion.div>
-      )}
-    </AnimatePresence>
+    </Modal>
   )
 }

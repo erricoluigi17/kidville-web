@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { persistSignedSubmission } from '@/lib/forms/persist-submission'
 import { getUserEmail, sendOtp, verifyTicket, codeHash } from '@/lib/auth/otp-ticket'
+import { buildSignatureLog, extractRequestMeta } from '@/lib/fea/signature-log'
 
 const DEFAULT_PARENT_ID = '33333333-3333-3333-3333-333333333333'
 
@@ -47,9 +48,7 @@ export async function PATCH(request: NextRequest) {
     if (!check.ok) return NextResponse.json({ error: check.error }, { status: 400 })
 
     // signature_log FES autorevole, costruito lato server
-    const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'N.D.'
-    const userAgent = request.headers.get('user-agent') || 'N.D.'
-    const timestamp = new Date().toISOString()
+    const { ip, userAgent } = extractRequestMeta(request)
 
     const { data: parent } = await supabase
       .from('utenti')
@@ -58,14 +57,13 @@ export async function PATCH(request: NextRequest) {
       .maybeSingle()
 
     const signature_log = {
-      method: 'OTP_EMAIL',
-      provider: 'Firma OTP via email (FES)',
-      email,
-      ip,
-      user_agent: userAgent,
-      timestamp,
-      hash: codeHash(email, String(code), Number(expiry)),
-      compliance: 'CAD Art. 20 / DPR 445/2000',
+      ...buildSignatureLog({
+        method: 'OTP_EMAIL',
+        email,
+        ip,
+        userAgent,
+        hash: codeHash(email, String(code), Number(expiry)),
+      }),
       parent_details: { nome: parent?.nome ?? null, cognome: parent?.cognome ?? null },
     }
 

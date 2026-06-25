@@ -50,7 +50,7 @@ Questa roadmap tecnica delinea le fasi di sviluppo per il SaaS Kidville, basata 
 
 *   **Modulo Modulistica, Certificati e Onboarding Legale:**
     *   Form Builder dinamico per la Segreteria (Uscite didattiche, consensi).
-    *   ~~Integrazione Firma Elettronica Semplice (FES)~~ **[SUPERATO → FEA, vedi PRD Modulo Form §4.1]** Integrazione **Firma Elettronica Avanzata (FEA)** (OTP via email) e generazione ricevute PDF inattaccabili (log IP/Timestamp). ⚠️ Implementazione firma a carico del committente.
+    *   ~~Integrazione Firma Elettronica Semplice (FES)~~ **[SUPERATO → FEA, vedi PRD Modulo Form §4.1]** Integrazione **Firma Elettronica Avanzata (FEA)** (OTP via email) e generazione ricevute PDF inattaccabili (log IP/Timestamp). **[AGGIORNATO — DL-001, vedi PRD Decision Log]** L'implementazione della FEA è **in scope** e realizzata **in-house** (Fase P1 del master plan), **non più a carico del committente**.
     *   Upload self-service di certificati medici per la riammissione rapida.
 *   **Modulo Menu e Mensa:**
     *   Menu Builder con logica ciclica e associazione obbligatoria allergeni (alert incrociati con l'Anagrafica).

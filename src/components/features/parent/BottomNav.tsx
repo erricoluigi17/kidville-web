@@ -62,7 +62,7 @@ export default function BottomNav() {
       <div className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[430px] z-50 px-3 pb-3"
         style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}>
         <div className="bg-white/96 backdrop-blur-2xl rounded-[26px] shadow-[0_-2px_24px_rgba(0,106,95,0.10),0_8px_32px_rgba(0,0,0,0.08)] border border-white/60">
-          <div className="flex items-stretch justify-around px-1 h-[60px]">
+          <nav aria-label="Navigazione principale" className="flex items-stretch justify-around px-1 h-[60px]">
             {mainTabs.map((tab) => {
               const Icon = tab.icon;
               const active = tab.href ? isActive(tab.href) : (isAltroSectionActive || showAltro);
@@ -72,6 +72,9 @@ export default function BottomNav() {
                   <button
                     key="altro"
                     onClick={() => setShowAltro(v => !v)}
+                    aria-haspopup="menu"
+                    aria-expanded={showAltro}
+                    aria-label="Altre sezioni"
                     className="flex flex-col items-center justify-center gap-[3px] flex-1 py-1 relative"
                   >
                     <motion.div
@@ -99,6 +102,7 @@ export default function BottomNav() {
                 <Link
                   key={tab.id}
                   href={tab.href!}
+                  aria-current={active ? 'page' : undefined}
                   className="flex flex-col items-center justify-center gap-[3px] flex-1 py-1 relative"
                 >
                   <motion.div
@@ -121,7 +125,7 @@ export default function BottomNav() {
                 </Link>
               );
             })}
-          </div>
+          </nav>
         </div>
       </div>
 
@@ -155,6 +159,7 @@ export default function BottomNav() {
                   </h3>
                   <button
                     onClick={() => setShowAltro(false)}
+                    aria-label="Chiudi"
                     className="w-7 h-7 rounded-full bg-gray-100 flex items-center justify-center hover:bg-gray-200 transition-colors"
                   >
                     <X className="w-3.5 h-3.5 text-gray-500" />

@@ -35,3 +35,52 @@ body {
     left: 16rem;
   }
 }
+
+/* =============================================================================
+   Accessibilità — Alto contrasto (Legge Stanca / AgID), baseline P1.
+   Attivato da `<html data-contrast="high">` (provider globale + cookie SSR).
+   Rimappa i token cromatici Kidville su una coppia ad alto contrasto e forza
+   un focus-ring visibile ovunque (WCAG 2.4.7). I residui per-componente
+   (utility neutre `bg-white`/`text-zinc-*`) sono rifiniti incrementalmente
+   come definition-of-done nelle fasi successive.
+   ============================================================================= */
+[data-contrast="high"] {
+  --color-kidville-cream: #000000;
+  --color-kidville-white: #000000;
+  --color-kidville-green: #FFFFFF;
+  --color-kidville-green-light: #000000;
+  --color-kidville-yellow: #FFE500;
+  --color-kidville-yellow-light: #1A1A1A;
+  --color-kidville-success: #00E676;
+  --color-kidville-error: #FF5252;
+}
+[data-contrast="high"] body {
+  background-color: #000000;
+  color: #FFFFFF;
+}
+[data-contrast="high"] a,
+[data-contrast="high"] button {
+  text-decoration-thickness: from-font;
+}
+[data-contrast="high"] *:focus-visible {
+  outline: 3px solid #FFE500;
+  outline-offset: 2px;
+}
+
+/* Focus-ring visibile anche in modalità normale (baseline WCAG). */
+:focus-visible {
+  outline: 2px solid var(--color-kidville-green);
+  outline-offset: 2px;
+}
+
+/* Rispetta la preferenza di movimento ridotto (vestibolarità). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

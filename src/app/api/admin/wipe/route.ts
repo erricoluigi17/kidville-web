@@ -1,12 +1,15 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { sealDangerous } from '@/lib/security/seal';
 
 const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-export async function POST() {
+export async function POST(request: Request) {
+    const sealed = await sealDangerous(request);
+    if (sealed) return sealed;
     try {
         const tablesToClear = [
             'student_parents', 'legame_genitori_alunni', 'student_adults', 

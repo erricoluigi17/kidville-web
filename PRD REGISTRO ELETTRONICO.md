@@ -14,7 +14,7 @@
 > | Tabella | Descrizione | RLS |
 > |---------|-------------|-----|
 > | `schools` | Anagrafica sedi (multi-tenant) | ✅ Policy anon SELECT |
-> | `utenti` | Staff e genitori (FK → auth.users) | ✅ RLS attivo |
+> | `utenti` | Staff (PK `id` FK → `auth.users`); **genitori reali su `parents`** | ⚠️ RLS abilitata ma **bypassata via `service_role`** — lockdown letture genitore in P0 (DL-003) |
 > | `alunni` | Anagrafica alunni con allergie | ✅ Policy anon SELECT |
 > | `eventi_diario` | Eventi giornalieri del Diario 0-6 | ✅ SELECT + INSERT + UPDATE |
 > | `legame_genitori_alunni` | Relazione genitore↔figlio | ✅ RLS attivo |
@@ -90,7 +90,7 @@ l'accesso avviene tramite un unico account globale che gestisce permessi incroci
 | **Direzione** (ruolo tecnico `admin`) | Accesso illimitato ai dati di **tutti i plessi associati** (ponte `utenti_scuole`; in assenza di righe, ricade sul proprio `scuola_id`). | Tutte le azioni della Segreteria, ma estese a **ogni plesso associato**. Mai cross-tenant fuori dai plessi assegnati. Chiusura/pubblicazione scrutinio (operazione di dirigenza) e sblocco voci time-lockate restano riservati alla dirigenza (`requireStaff`). |
 | **Segreteria** (ruolo tecnico `segreteria`) | Accesso illimitato ai dati del **proprio plesso** (`utenti.scuola_id`), mai cross-tenant. | Creazione, modifica e importazione dati del proprio plesso. **Accesso in scrittura a TUTTE le funzioni docente** di qualunque classe del proprio plesso (registro, appello, valutazioni, note, scrutinio, fascicolo, diario 0-6, armadietto), **riusando** le schermate/endpoint del docente (nessun fork UI). Vincoli: l'**autore/valutatore ufficiale** (firma FEA — *vero valutatore*) resta **sempre il docente** (`maestra_id`/`proposto_da` invariati); ogni scrittura è tracciata in `audit_scritture_docente` (diff `valore_prima`/`valore_dopo`); le voci time-lockate/firmate richiedono lo sblocco motivato della dirigenza (`sblocchi_audit`). Gestione inviti genitori e reset password staff del proprio plesso. **Dashboard gestionale completa** (`/admin`: anagrafe/iscrizioni, pagamenti, mensa, impostazioni, modulistica) via `requireStaff` (default include `segreteria`). **Escluse** (solo dirigenza `admin`/`coordinator`): chiusura/pubblicazione scrutinio, generazione pagella ufficiale, sblocco time-lock — vincolo O.M. 3/2025 + FEA. |
 | **Insegnante** (ruolo tecnico `educator`) | Visibilità completa sull'anagrafica degli alunni in carico (dati medici, didattici e deleghe), con l'**esclusione assoluta** dei recapiti di contatto dei genitori. Visibilità limitata alle **proprie sezioni** (`utenti_sezioni`) e allo storico dell'anno in corso. | Scrittura sulle funzioni didattiche **solo per le proprie sezioni/materie** (registro, appello, valutazioni, note, ...). Modalità *Sola Lettura* sui record anagrafici core: nessuna modifica autonoma dell'anagrafe. |
-| **Genitore** (ruolo tecnico `genitore`) | Accesso all'anagrafica dei propri figli e al proprio profilo personale. | Può aggiornare in autonomia esclusivamente i propri recapiti di contatto e i documenti di identità in scadenza. Nessuna modifica ai dati core dell'alunno. **Escluso da tutti gli endpoint docente** (`requireDocente`). |
+| **Genitore** (ruolo tecnico `genitore`) | Accesso all'anagrafica dei propri figli e al proprio profilo personale. | Può aggiornare in autonomia esclusivamente i propri recapiti di contatto e i documenti di identità in scadenza. Nessuna modifica ai dati core dell'alunno. **Escluso da tutti gli endpoint docente** (`requireDocente`). **Login reale** (Supabase Auth, identità risolta dalla sessione su `parents.auth_user_id = auth.uid()`); **nessuna auto-registrazione** né self-service reset password (DL-002/DL-005, Fase P0). |
 
 ## 4. Flussi Operativi e Funzionalità Core
 ### 4.1 Onboarding e Acquisizione Dati
@@ -105,8 +105,11 @@ mensa.
 ***Audit Log di Sistema:** Tracciamento immutabile di tutte le modifiche anagrafiche in una
 collection separata. La dashboard permette alla Segreteria di filtrare l'elenco cronologico delle
 operazioni per singolo utente (Insegnante o Genitore).
-**Recupero Credenziali:** Un pulsante dedicato all'interno dell'anagrafica permette alla
-Segreteria di forzare il reset della password di un utente e re-inviarla via mail.
+**Recupero Credenziali (DL-005, Fase P0):** Un pulsante **"Rigenera credenziali"** dedicato
+all'interno dell'anagrafica del genitore (e del record staff) permette alla Segreteria di
+forzare il reset della password (`auth.admin.updateUserById` con password random) e di
+**inviarla automaticamente via email** all'utente. **Nessun self-service "password
+dimenticata"**: il recupero passa sempre dalla Segreteria.
 ***Gestione Diritto all'Oblio:** In base alle normative GDPR, in caso di esplicita richiesta del
 genitore, è previsto un flusso di *Hard Delete* che rimuove fisicamente i dati dai server,
 bypassando il normale "Soft Delete" applicato in fase di ritiro/sospensione.
@@ -664,7 +667,7 @@ linguistiche e garantire il pieno controllo amministrativo da parte della Direzi
 
 ## 5. Sicurezza e Amministrazione (Direzione)
 ### 5.1 Permessi di "Super-Admin"
-* La Direzione/Segreteria dispone di privilegi di livello Super-Admin. Questo garantisce la facoltà di accedere in sola lettura e in chiaro a tutte le chat private intercorse tra insegnanti e genitori, al fine di tutelare l'istituto e risolvere eventuali controversie.
+* La Direzione/Segreteria dispone di privilegi di livello Super-Admin. Questo garantisce la facoltà di accedere in sola lettura e in chiaro a tutte le chat private intercorse tra insegnanti e genitori, al fine di tutelare l'istituto e risolvere eventuali controversie. *(P0: l'identità Super-Admin è risolta dalla sessione (`requireStaff` → `resolveIdentity`), non più da `?userId=`.)*
 
 ### 5.2 Persistenza dei Dati
 ***Conservazione Storico:** I thread di chat non vengono mai cancellati automaticamente (nemmeno al termine dell'anno scolastico), ma fungono da storico. La cancellazione di una chat può avvenire solo tramite intervento manuale e insindacabile della Direzione.
@@ -698,7 +701,7 @@ La funzione "Form" di Kidville rappresenta il motore avanzato per la creazione, 
 - **Logica Condizionale:** Impostazione di regole di visibilità e obbligatorietà basate sulle risposte precedenti.
 - **Scoring per Graduatorie:** Il builder deve permettere l'assegnazione di un "peso" o "punteggio" (scoring) a specifiche risposte o blocchi (es. +5 punti per genitori lavoratori, +3 punti per fratelli già iscritti) per automatizzare la generazione delle graduatorie.
 - **Configurazione Accessi:** Definizione di chi può compilare il form (utenti registrati o tramite link pubblico). Nota: Nessuna integrazione SPID richiesta.
-- **Impostazioni FEA:** Abilitazione della Firma Elettronica Avanzata, definendo i firmatari richiesti (firma singola o congiunta di entrambi i genitori).
+- **Impostazioni FEA:** Abilitazione della Firma Elettronica Avanzata, definendo i firmatari richiesti (firma singola o congiunta di entrambi i genitori). *(DL-001: FEA realizzata in-house come servizio trasversale Fase P1 — OTP email + ricevuta PDF con log IP/Timestamp/Hash SHA-256.)*
 
 ### 4.2. Compilazione Form (Lato Utente/Genitore)
 - **Modalità di Rete:** Compilazione strettamente "Online-Only" per garantire l'immediata validazione degli OTP e la sicurezza dei caricamenti.
@@ -985,6 +988,9 @@ adempimenti di legge. Il registro non opera come sistema isolato.
 > L'attivazione dei flussi SIDI in cooperazione applicativa richiede l'**accreditamento ministeriale**
 > del software e le relative credenziali/canali. Le tempistiche (avvio anno scolastico, generalmente
 > entro fine ottobre) vincolano la sequenza Fase A → frequentanti → servizi Piattaforma Unica.
+>
+> **Pianificazione (DL-004, 2026-06-25):** modulo incluso nel master plan come **Fase P5 (finale)**,
+> dopo i moduli core. Oggi ~2/12 requisiti implementati.
 
 ---
 
@@ -1012,6 +1018,28 @@ mancato rispetto può comportare l'esclusione dal mercato scolastico o sanzioni.
 • **Audit log immodificabile** degli accessi a dati e documenti sensibili (chi, quando, finalità),
   in conformità ai requisiti del Garante per le PA — estensione di `registro_modifiche` e
   `firme_documenti` esistenti.
+• **RLS in produzione (DL-003, Fase P0):** attivazione effettiva della **Row Level Security** (oggi
+  bypassata via `service_role`). Letture lato genitore via `createSessionClient()` (isolamento per
+  figlio/sede, identità `parents.auth_user_id = auth.uid()`); scritture staff via `service_role` con
+  **audit obbligatorio** (`audit_scritture_docente`). **Roll-out per famiglia-tabella** (alunni →
+  presenze → eventi_diario → galleria → valutazioni/note → pagamenti → comunicazione), con
+  `get_advisors(security)` a **zero ERROR** come gate tra una famiglia e l'altra; rimozione delle
+  policy dev `TO anon`. Nota: lo **staff è già auth-backed** (`utenti.id` FK → `auth.users`, quindi
+  `utenti.id = auth.uid()`); le policy staff esistenti restano valide.
+
+## 5. Autenticazione e Accesso (DL-002, Fase P0)
+• **Login reale invite-only** su Supabase Auth: pagina `/auth/login` (email+password), `src/middleware.ts`
+  di protezione route con redirect anonimo → login, identità risolta **server-side dalla sessione**
+  (`resolveIdentity()`: `auth.getUser()` → id app), non più via `?userId=`/header o fallback `DEV_*`.
+• **Transizione incrementale (shim):** i gate preferiscono la sessione; l'header `x-user-id` è **ignorato
+  se ≠ sessione** (anti-spoofing) e tollerato solo dietro flag `ALLOW_HEADER_IDENTITY` finché i ~104
+  punti client non sono ripuliti. Nessun big-bang.
+• **Cloud Auth rigida:** **nessuna auto-registrazione** dei genitori; il legame `parent_id ↔ student_id`
+  è creato **esclusivamente dalla Segreteria**. Identità unificata: **staff già auth-backed**
+  (`utenti.id` FK → `auth.users`); **genitori** autoritativi su `parents`+`student_parents`, resi
+  auth-backed via colonna **`parents.auth_user_id`** (la PK `parents.id` non viene ripuntata perché
+  referenziata da `student_parents`). `legame_genitori_alunni` resta come compat (record demo).
+• **Recupero credenziali:** Segreteria-managed con invio automatico email (DL-005), nessun self-service.
 
 ---
 
@@ -2969,14 +2997,52 @@ _Modulo PRD: Trasversale (Auth/Accessibilità)_
 > **STATO: tutte le 9 incongruenze sono RISOLTE** con le decisioni definitive qui sotto recepite nel PRD (giugno 2026). Il PRD resta la fonte di verità.
 > - Blocco 1 (questo PRD): decisioni recepite nel corpo e nelle checklist. ✅
 > - Blocco 2 (`ROADMAP_TECNICA.md` + `prompts/`): contenuti in conflitto marcati come SUPERATI e allineati al PRD.
-> - Blocco 3 (codice): correzioni applicate per #1–#4, #6, #8, #9 (vedi sezioni successive). La firma (#5, FEA) è **esclusa dal Blocco 3** e sarà implementata dal committente.
+> - Blocco 3 (codice): correzioni applicate per #1–#4, #6, #8, #9 (vedi sezioni successive). La firma (#5, FEA) era esclusa dal Blocco 3 ma è stata **rimessa in scope** come servizio in-house — vedi **DL-001** nel Decision Log.
 
 - ✅ **RISOLTA** — **Valutazione primaria: voti numerici vietati vs modello ibrido numerico/descrittivo** (alta). **Decisione recepita (rev. committente):** voto **visibile** = **giudizio sintetico** Allegato A; **nessun voto numerico 1-10 visibile** alla primaria. È **MANTENUTA l'associazione numerica nascosta** (es. *Sufficiente* = 6) usata solo internamente per la media (#3). I voti numerici visibili restano solo per i gradi non-primaria. *Analisi originale:* PRD: PRD §4 (Diario Scuola Primaria) è categorico: per la primaria i voti numerici sono VIETATI sia in itinere sia a scrutinio (L.150/2024, O.M.3/2025). Il motore è 'ibrido per grado': per la Primaria la modalità a voti numerici è 'disabilitata e non selezionabile dal docente'; i numerici (1-10) sono ammessi SOLO per gradi non-primaria. La valutazione in itinere è per obiettivi/4 dimensioni con giudizio descrittivo; lo scrutinio usa i 6 giudizi sintetici dell'Allegato A. Lo stato attuale del codice (GradesTab.tsx, valutazioni.voto_numerico) è dichiarato 'NON conforme'. · Roadmap/Prompt: ROADMAP_TECNICA.md (riga 15, Fase 1) prescrive per il registro primaria un 'Sistema di valutazione ibrido (voti numerici e giudizi descrittivi)' senza alcuna restrizione per grado. prompts/fase1_02_registro_primaria.md (punto 3) ordina esplicitamente: 'Valutazioni (Voti): Modello ibrido: numerici (es. 1-10) o descrittivi (es. Base, Avanzato)' come spec del modulo Primaria. Questo contraddice direttamente il divieto del PRD: la roadmap/prompt fanno implementare i voti numerici proprio dove sono vietati.
 - ✅ **RISOLTA** — **Scala di giudizio primaria: Allegato A (Ottimo→Non sufficiente) vs 'Base/Avanzato'** (media). **Decisione recepita:** l'unica scala ammessa alla primaria è quella dell'**Allegato A O.M. 3/2025** (Ottimo, Distinto, Buono, Discreto, Sufficiente, Non sufficiente). La scala **Base/Intermedio/Avanzato è SUPERATA** e non va più usata. *Analisi originale:* PRD: PRD §4.3 impone in modo rigido la scala dell'Allegato A O.M.3/2025 a SEI giudizi sintetici (Ottimo, Distinto, Buono, Discreto, Sufficiente, Non sufficiente), 'non rimodulabile nelle definizioni standard'. Il box IMPORTANT di §4 dichiara esplicitamente SUPERATO e 'da sostituire' il vecchio modello a livelli 'Base/Intermedio/Avanzato' (riferimenti 2020). · Roadmap/Prompt: prompts/fase1_02_registro_primaria.md (punto 3) usa come esempio di giudizi descrittivi proprio 'Base, Avanzato', cioè la scala dichiarata superata dal PRD. Manca ogni riferimento alla scala a 6 livelli dell'Allegato A o all'enum vincolato per la primaria.
 - ✅ **RISOLTA** — **Calcolo automatico delle medie dei voti (primaria)** (alta). **Decisione recepita (rev. committente):** il **calcolo della media è MANTENUTO**, basato sull'**associazione numerica nascosta** dei giudizi sintetici (#1). La media è uno strumento interno di sintesi per il docente (il documento di valutazione resta espresso in giudizi). *Analisi originale:* PRD: Il PRD non prevede alcun 'calcolo medie' per la primaria: la valutazione in itinere è formativa, per obiettivi di apprendimento e 4 dimensioni (Autonomia, Continuità, Tipologia situazione, Risorse), con giudizio descrittivo/sintetico; lo scrutinio aggrega in 6 giudizi sintetici per disciplina, modificabili collegialmente. Non esiste il concetto di media numerica alla primaria (coerente col divieto dei voti numerici). · Roadmap/Prompt: ROADMAP_TECNICA.md (riga 15) richiede 'calcolo automatico medie'. prompts/fase1_02_registro_primaria.md istruisce: 'I giudizi descrittivi devono avere un valore numerico nascosto per il calcolo delle medie' e (Istruzioni Operative, punto 2 Backend) 'Crea la logica per il calcolo asincrono delle medie'. Introdurre un valore numerico nascosto e una media reintroduce di fatto la valutazione numerica vietata dal PRD.
 - ✅ **RISOLTA** — **Categorizzazione voti Scritto/Orale/Pratico applicata alla primaria** (media). **Decisione recepita (rev. committente):** le categorie **Scritto/Orale/Pratico sono MANTENUTE anche alla primaria** — servono come tipologia della prova e per i termini di immodificabilità §8 (orali 2gg / scritte-pratiche 15gg). *Analisi originale:* PRD: PRD §4.1 riserva la categorizzazione Scritto/Orale/Pratico (con voti 1-10) esclusivamente ai gradi NON-primaria ('eventuale secondaria di primo grado'). Per la primaria la valutazione è per obiettivi e dimensioni, senza categorie scritto/orale/pratico. · Roadmap/Prompt: prompts/fase1_02_registro_primaria.md (punto 3, modulo Primaria) elenca tra le specifiche delle Valutazioni: 'Categorizzazione: Scritto, Orale, Pratico', senza limitarla ai gradi non-primaria, quindi imponendola al registro primaria.
-- ✅ **RISOLTA** — **Firma documenti modulistica: FEA (Avanzata) vs FES (Semplice)** (alta). **Decisione recepita:** la firma documenti è **FEA (Firma Elettronica Avanzata)**, come da PRD, confermata. I riferimenti a **FES** in roadmap/prompt sono **SUPERATI**. ⚠️ **Nota:** l'implementazione tecnica della firma è **esclusa dal Blocco 3** e sarà realizzata dal committente. *Analisi originale:* PRD: PRD Modulo Form (prd.md e sezione omologa nel PRD principale) descrive la validazione legale tramite 'Firma Elettronica Avanzata (FEA)' — §1 Descrizione Generale e §4.1 'Impostazioni FEA: Abilitazione della Firma Elettronica Avanzata, definendo i firmatari richiesti'. La validità è garantita da OTP via email. · Roadmap/Prompt: ROADMAP_TECNICA.md (Fase 4, riga 50) parla di 'Integrazione Firma Elettronica Semplice (FES)'. prompts/fase4_01_modulistica.md intitola la sezione 'Scudo Giuridico e FES' e ripete 'Firma Elettronica Semplice (FES)' / 'efficacia legale della Firma Elettronica Semplice'. FEA e FES sono due livelli giuridici diversi (eIDAS): contraddizione sul tipo di firma da implementare e sul valore probatorio.
+- ✅ **RISOLTA** — **Firma documenti modulistica: FEA (Avanzata) vs FES (Semplice)** (alta). **Decisione recepita:** la firma documenti è **FEA (Firma Elettronica Avanzata)**, come da PRD, confermata. I riferimenti a **FES** in roadmap/prompt sono **SUPERATI**. ⚠️ **Aggiornamento (DL-001, 2026-06-25):** l'implementazione tecnica della FEA è ora **in scope** e sarà realizzata **in-house** (OTP email + verifica identità + ricevuta PDF con log IP/Timestamp/User-Agent/Hash SHA-256) nella Fase P1 del master plan — non più a carico del committente. *Analisi originale:* PRD: PRD Modulo Form (prd.md e sezione omologa nel PRD principale) descrive la validazione legale tramite 'Firma Elettronica Avanzata (FEA)' — §1 Descrizione Generale e §4.1 'Impostazioni FEA: Abilitazione della Firma Elettronica Avanzata, definendo i firmatari richiesti'. La validità è garantita da OTP via email. · Roadmap/Prompt: ROADMAP_TECNICA.md (Fase 4, riga 50) parla di 'Integrazione Firma Elettronica Semplice (FES)'. prompts/fase4_01_modulistica.md intitola la sezione 'Scudo Giuridico e FES' e ripete 'Firma Elettronica Semplice (FES)' / 'efficacia legale della Firma Elettronica Semplice'. FEA e FES sono due livelli giuridici diversi (eIDAS): contraddizione sul tipo di firma da implementare e sul valore probatorio.
 - ✅ **RISOLTA** — **Diario: pulsanti Nanna e Sveglia separati vs pulsante unico 'Nanna' (inizio+fine)** (media). **Decisione recepita:** **DUE pulsanti distinti** — "Nanna (Inizio)" e "Sveglia (Fine Nanna)" — che registrano l'orario "dalle … alle …". Il pulsante unico attuale va corretto (Blocco 3). *Analisi originale:* PRD: PRD §3.1 e §3.1.1 elencano DUE eventi/pulsanti distinti nella griglia: 'Nanna (Inizio)' (orario inizio riposo) e 'Sveglia (Fine Nanna)' (orario fine). La griglia Step 1 include esplicitamente sia 'Nanna' sia 'Sveglia' come pulsanti separati. La nota di implementazione del PRD segnala già come deviazione l'unificazione. · Roadmap/Prompt: prompts/fase2_01_diario_infanzia.md (punto 1 e Flusso UX) tratta 'Nanna (inizio e fine)' come singola routine/pulsante unico con due input. ROADMAP_TECNICA.md (Fase 2) elenca solo 'Nanna' tra le routine, senza 'Sveglia'. La griglia eventi quindi prevede un solo pulsante anziché i due richiesti dal PRD.
 - ✅ **RISOLTA** — **Filtro presenze nel Diario 0-6 (mostrare solo i 'Presenti')** (bassa). **Decisione recepita:** requisito **ATTIVO** — le sezioni di inserimento del Diario mostrano **solo i bambini "Presenti"** nel modulo Presenze. Da implementare nel codice (Blocco 3). *Analisi originale:* PRD: PRD §3.1 (Filtro Presenze) richiede che le sezioni di inserimento del Diario mostrino esclusivamente i bambini 'Presenti' nel modulo Presenze, rimuovendo automaticamente gli assenti. Tuttavia la nota di implementazione dello stesso PRD avverte che 'Il filtro presenze ... non è ancora attivo — vengono mostrati tutti gli alunni della sezione'. · Roadmap/Prompt: prompts/fase2_01_diario_infanzia.md richiede ripetutamente il filtro presenze come requisito attivo (punto 2 'Filtro presenze: Mostra solo i bambini Presenti oggi', Flusso UX Step 2 'compare la lista dei bambini Presenti oggi', Istruzioni punto 3). Esiste quindi una incongruenza tra requisito di prodotto (filtro obbligatorio) e stato dichiarato nel PRD (filtro non implementato, lista completa mostrata).
 - ✅ **RISOLTA** — **Diario Bagno/Igiene: 'Vasino/potty training' vs soli contatori Pipì/Cacca** (bassa). **Decisione recepita:** il **Vasino 🚽** è un **controllo previsto e già implementato**, accanto a Pipì 💧 e Cacca 💩 (documentato in §3.1.1). *Analisi originale:* PRD: PRD §2.1 indica per Bagno/Igiene il monitoraggio di Pipì, Cacca e 'Uso del Vasino (per potty training)'. La sezione §3.1.1 e la nota di implementazione descrivono però solo due contatori +/- (Pipì 💧 e Cacca 💩), senza il tracciamento Vasino. · Roadmap/Prompt: prompts/fase2_01_diario_infanzia.md (punto 1) elenca 'Bagno/Igiene (Pipì, Cacca, Vasino)' come routine da supportare, reintroducendo il Vasino che la parte operativa del PRD e l'implementazione non prevedono come controllo dedicato.
 - ✅ **RISOLTA** — **Armadietto: trigger consumo su 'cambio pannolino' vs evento 'Bagno/Igiene'** (bassa). **Decisione recepita:** lo scalo di **1 pannolino** avviene ad **ogni evento Bagno** del Diario, ma **solo per i bambini con flag "Usa pannolino"** attivo in Anagrafica (§2.1). I bambini senza flag non subiscono scalo. Da implementare nel codice (Blocco 3). *Analisi originale:* PRD: PRD Armadietto §2.2 (Consumo Automatico) scala un'unità ad ogni azione specifica di consumo registrata nel Diario, citando esplicitamente l'esempio 'cambio pannolino'. Nel Diario, però, l'evento Bagno è modellato come contatori Pipì/Cacca, non come 'cambio pannolino' dedicato. · Roadmap/Prompt: prompts/fase2_02_armadietto_anagrafica.md (Istruzioni punto 1) prescrive un trigger che 'alla registrazione di un evento Bagno/Igiene nel Diario ... decrementa la disponibilità', legando lo scalo a qualunque evento Bagno (es. pipì) e non al solo cambio pannolino: ambiguità su quale azione consuma lo stock, con rischio di decremento errato.
+
+---
+
+# Decision Log (Implementazione)
+
+> [!IMPORTANT]
+> Registro cronologico delle decisioni prese durante l'implementazione del **Master Plan** (vedi `ROADMAP_GAP_2026.md` + piano `a-crea-un-piano`). Ogni voce è recepita anche **inline** nelle sezioni/checklist pertinenti del PRD. In caso di conflitto con testo più vecchio, **vince la voce più recente del Decision Log**.
+
+### 2026-06-25 — DL-001 — [Fase P1] FEA: da "esclusa/committente" a "in scope, in-house"
+- **Contesto:** il PRD (incongruenza #5 e nota Blocco 3) dichiarava la firma FEA **esclusa** dall'implementazione e "a carico del committente". Il committente ha deciso di **includerla nello scope** del prodotto.
+- **Decisione:** la **FEA è in scope** e verrà realizzata **in-house** come servizio trasversale (Fase P1): slot firmatari (singola/congiunta genitori), invio/reinvio **OTP via email** (base `forms/send-otp` esistente), verifica identità, **ricevuta PDF inattaccabile** con log **IP / Timestamp / User-Agent / Hash SHA-256**. Consumata da: Modulistica/Form (§Form §4.1), Pagelle (§Primaria §9.2), firma di registro docente (§Primaria §8), consensi e workflow GLO del PEI (§Fascicolo).
+- **Impatto PRD:** aggiornati la nota Blocco 3 e l'incongruenza **#5** (rimosso "esclusa dal Blocco 3"); annotato §Form §4.1; in `ROADMAP_TECNICA.md` Fase 4 rimossa la nota "a carico del committente".
+- **Alternative scartate:** provider terzo certificato (Aruba Firma/Namirial/InfoCert) — scartato per costo/dipendenza esterna; rinvio della scelta — scartato perché la FEA è prerequisito di più moduli.
+
+### 2026-06-25 — DL-002 — [Fase P0] Autenticazione reale invite-only su Supabase Auth
+- **Contesto:** non esiste autenticazione reale. L'identità viaggia via `?userId=`/header `x-user-id` con fallback hardcoded (`DEV_TEACHER_ID`/`DEV_PARENT_ID`); il modello identità è frammentato (`utenti` staff scollegata da `auth.users`; `parents` + `legame_genitori_alunni` coesistenti). I gate RBAC si fidano dell'identità passata dal client.
+- **Decisione:** implementare **login reale invite-only** su **Supabase Auth** (Fase P0): pagina `/auth/login` (email+password+recupero), `src/middleware.ts` di protezione route, identità risolta **server-side dalla sessione** (non da query param), unificazione identità (genitori autoritativi su `parents`+`student_parents`, `auth_user_id` su `utenti`), **nessuna auto-registrazione genitori**, legame `parent_id↔student_id` creato solo dalla Segreteria. Dettagli tecnici da fissare nello spec P0.
+- **Impatto PRD:** annotati §Anagrafica §3 (RBAC), §Comunicazione §5 (Super-Admin), §Trasversale (nuova §5 Autenticazione e Accesso).
+- **Alternative scartate:** mantenere il modello a query param (insicuro); magic-link only (preferito email+password per la pagina login da PRD).
+- **Correzione (2026-06-25, da verifica DB live):** lo **staff è già auth-backed** — `utenti.id` ha FK → `auth.users(id)` (`utenti_id_fkey`), 10/10 staff presenti in `auth.users` (9 con password/confermati). Quindi **niente colonna `auth_user_id` su `utenti`** e niente backfill staff: per lo staff vale già `utenti.id = auth.uid()`. I **genitori reali** (92) vivono su `parents`/`student_parents`, **non** su `utenti(genitore)` (5 demo): `parents.id` è un uuid random **senza** FK ad auth, quindi si auth-backano aggiungendo **`parents.auth_user_id`** (la PK non si ripunta, è referenziata da `student_parents`). Le RLS pagamenti, oggi keyed sullo spazio `legame.genitore_id = auth.uid()`, vengono estese allo spazio `parents`/`student_parents` mantenendo il ramo legacy in `OR`. Strategia di transizione = **shim incrementale** dietro flag `ALLOW_HEADER_IDENTITY` (no big-bang).
+
+### 2026-06-25 — DL-003 — [Fase P0] Attivazione RLS in produzione
+- **Contesto:** 74 tabelle hanno RLS abilitata ma tutti gli endpoint usano `service_role` che la bypassa; le policy dev (`rls_policies_dev.sql`) sono aperte `TO anon`. In produzione la RLS è inattiva.
+- **Decisione:** attivare la **RLS in produzione** (Fase P0): letture lato genitore via `createSessionClient()` (RLS applicata a DB, isolamento per figlio/sede); scritture staff via `service_role` **con audit obbligatorio** (`audit_scritture_docente`). Roll-out per famiglia-tabella su staging prima del prod; verifica con `get_advisors`.
+- **Impatto PRD:** annotata §Trasversale §4 (Audit e Tracciabilità).
+- **Alternative scartate:** RLS solo "teatro" via service_role ovunque (non conforme GDPR/multi-tenant).
+
+### 2026-06-25 — DL-004 — [Fase P5] SIDI / Piattaforma Unica incluso come fase finale
+- **Contesto:** il modulo Interoperabilità SIDI è nel PRD ma fuori dalle 5 fasi originali della roadmap (oggi ~2/12 requisiti implementati).
+- **Decisione:** **incluso nel master plan come ultima fase (P5)**, dopo i moduli core, vincolato dall'accreditamento ministeriale e dalle tempistiche d'avvio anno scolastico.
+- **Impatto PRD:** annotata §Interoperabilità SIDI (nota di pianificazione).
+- **Alternative scartate:** parcheggiarlo come progetto separato (rischio di anagrafica non allineata al SIDI); solo ganci dati (rinviato del tutto il valore amministrativo).
+
+### 2026-06-25 — DL-005 — [Fase P0] Recupero credenziali Segreteria-managed con invio automatico email
+- **Contesto:** la pagina di login (spec P0) prevedeva un "password dimenticata" self-service. Non esiste oggi alcun login/reset reale; "Rigenera credenziali" è uno stub (solo toast). Per i genitori il modello è invite-only (nessuna auto-registrazione).
+- **Decisione:** il recupero password è **gestito dalla Segreteria**, non self-service: un pulsante **"Rigenera credenziali"** dentro l'anagrafica del genitore (e del record staff) chiama un endpoint admin (`requireStaff`) che genera una nuova password random (`auth.admin.updateUserById`) e la **invia automaticamente via email** all'utente (riuso di `sendEmail`/Resend). **Niente "password dimenticata" self-service** sulla pagina di login. Coerente con l'impianto invite-only e con §Anagrafica §4.2.
+- **Impatto PRD:** aggiornata §Anagrafica §4.2 (Recupero Credenziali), §Anagrafica §3 (riga Genitore), §Trasversale §5 (Autenticazione e Accesso).
+- **Alternative scartate:** `resetPasswordForEmail` self-service di Supabase (scelta dall'utente: il recupero deve restare presidiato dalla Segreteria); reset senza invio email (più carico operativo, l'utente non riceve le credenziali).

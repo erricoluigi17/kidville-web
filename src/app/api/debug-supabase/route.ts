@@ -1,7 +1,10 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server-client';
+import { sealDangerous } from '@/lib/security/seal';
 
-export async function GET() {
+export async function GET(request: Request) {
+    const sealed = await sealDangerous(request);
+    if (sealed) return sealed;
     const supabase = await createClient();
 
     // Prova query diretta senza filtri

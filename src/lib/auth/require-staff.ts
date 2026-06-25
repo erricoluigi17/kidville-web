@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { createAdminClient } from '@/lib/supabase/server-client'
+import { createAdminClient, createClient } from '@/lib/supabase/server-client'
 
 export type StaffRole = 'admin' | 'coordinator' | 'segreteria'
 export type AppRole = 'admin' | 'coordinator' | 'educator' | 'segreteria' | 'genitore' | 'cuoca'
@@ -33,6 +33,66 @@ export function getRequestUserId(request: Request): string | null {
   } catch {
     return null
   }
+}
+
+export type IdentitySource = 'session' | 'header'
+
+/**
+ * Mappa un `auth.uid()` (Supabase Auth) all'id applicativo.
+ * - Staff: `utenti.id == auth.uid()` (la PK di `utenti` è FK → `auth.users`).
+ * - Genitori: `parents.auth_user_id == auth.uid()` (ponte aggiunto in P0/S4).
+ * Restituisce `null` se nessuno combacia (o se la colonna ponte non esiste ancora).
+ */
+async function resolveAppIdFromAuthUid(authUid: string): Promise<string | null> {
+  const supabase = await createAdminClient()
+  const { data: staff } = await supabase
+    .from('utenti')
+    .select('id')
+    .eq('id', authUid)
+    .maybeSingle()
+  if (staff?.id) return staff.id
+  const { data: parent } = await supabase
+    .from('parents')
+    .select('id')
+    .eq('auth_user_id', authUid)
+    .maybeSingle()
+  if (parent?.id) return parent.id
+  return null
+}
+
+/**
+ * Risolve l'identità della richiesta preferendo la **sessione reale** (Supabase
+ * Auth) all'identità legacy via header/query. Un `x-user-id`/`?userId=` fornito
+ * dal client che **differisce** dalla sessione viene IGNORATO (anti-spoofing).
+ *
+ * Il percorso legacy (header/query) è onorato solo quando NON esiste sessione e
+ * `ALLOW_HEADER_IDENTITY !== 'false'`. Il flag viene messo a `'false'` a fine P0
+ * (S13) per sigillare l'auth a sola-sessione. Default (flag assente) =
+ * retrocompatibile (header ancora ammesso) finché i client non sono ripuliti.
+ */
+export async function resolveIdentity(
+  request: Request
+): Promise<{ userId: string | null; source: IdentitySource | null }> {
+  // 1) Sessione reale. Avvolto in try/catch: createClient()/cookies() lancia
+  //    fuori da un contesto di richiesta (e può non essere mockato in alcuni unit test).
+  let sessionUid: string | null = null
+  try {
+    const supabase = await createClient()
+    const { data } = await supabase.auth.getUser()
+    sessionUid = data?.user?.id ?? null
+  } catch {
+    sessionUid = null
+  }
+  if (sessionUid) {
+    const appId = await resolveAppIdFromAuthUid(sessionUid).catch(() => null)
+    return { userId: appId ?? sessionUid, source: 'session' }
+  }
+  // 2) Fallback legacy (header/query), salvo disabilitazione esplicita.
+  if (process.env.ALLOW_HEADER_IDENTITY !== 'false') {
+    const headerId = getRequestUserId(request)
+    if (headerId) return { userId: headerId, source: 'header' }
+  }
+  return { userId: null, source: null }
 }
 
 /**
@@ -69,9 +129,11 @@ export async function loadAppUser(userId: string): Promise<AppUser | null> {
  * default: passano la lista esplicita `['admin','coordinator']`, così la
  * Segreteria resta esclusa (vincolo O.M. 3/2025 + FEA).
  *
- * ⚠️ NOTA DI SICUREZZA (da irrigidire in produzione): il client fornisce il
- * proprio `userId`, esattamente come nel resto della codebase. La protezione
- * forte (RLS via `auth.uid()`) richiede la migrazione a Supabase Auth.
+ * 🔒 IDENTITÀ (P0): l'id è risolto da `resolveIdentity()` che preferisce la
+ * sessione Supabase Auth (`auth.uid()`); l'header `x-user-id` è ignorato se ≠
+ * sessione (anti-spoof) e ammesso solo come fallback legacy finché
+ * `ALLOW_HEADER_IDENTITY !== 'false'` (sigillato a fine P0). Per lo staff vale
+ * `utenti.id == auth.uid()`; la RLS forte sulle letture genitore è in S8/S9.
  *
  * Uso:
  * ```ts
@@ -85,7 +147,7 @@ export async function requireStaff(
   request: Request,
   allowed: StaffRole[] = ['admin', 'coordinator', 'segreteria']
 ): Promise<AuthResult> {
-  const userId = getRequestUserId(request)
+  const { userId } = await resolveIdentity(request)
   if (!userId) {
     return {
       response: NextResponse.json(
@@ -118,7 +180,7 @@ export async function requireKitchenRead(
   request: Request,
   allowed: AppRole[] = ['admin', 'coordinator', 'cuoca', 'educator']
 ): Promise<AuthResult> {
-  const userId = getRequestUserId(request)
+  const { userId } = await resolveIdentity(request)
   if (!userId) {
     return {
       response: NextResponse.json(
@@ -145,7 +207,7 @@ export async function requireKitchenRead(
  * va poi fatto in query via `legame_genitori_alunni`.
  */
 export async function requireUser(request: Request): Promise<AuthResult> {
-  const userId = getRequestUserId(request)
+  const { userId } = await resolveIdentity(request)
   if (!userId) {
     return {
       response: NextResponse.json(
@@ -189,7 +251,7 @@ export async function requireDocente(
   request: Request,
   allowed: AppRole[] = ['educator', 'admin', 'coordinator', 'segreteria']
 ): Promise<AuthResult> {
-  const userId = getRequestUserId(request)
+  const { userId } = await resolveIdentity(request)
   if (!userId) {
     return {
       response: NextResponse.json({ error: 'Non autenticato: userId mancante' }, { status: 401 }),

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server-client';
+import { requireDocente } from '@/lib/auth/require-staff';
 
 /**
  * GET /api/attendance/daily?data=YYYY-MM-DD&sezione=Girasoli
@@ -11,6 +12,9 @@ import { createClient } from '@/lib/supabase/server-client';
  */
 
 export async function GET(request: NextRequest) {
+    const auth = await requireDocente(request);
+    if (auth.response) return auth.response;
+
     const { searchParams } = new URL(request.url);
     const data = searchParams.get('data') ?? new Date().toISOString().split('T')[0];
     const sezione = searchParams.get('sezione') ?? 'Girasoli';
@@ -48,6 +52,9 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
     try {
+        const auth = await requireDocente(request);
+        if (auth.response) return auth.response;
+
         const body = await request.json();
         const { alunno_id, data, stato, orario_entrata, orario_uscita } = body;
 

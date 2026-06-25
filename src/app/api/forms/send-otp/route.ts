@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { createHash, randomInt } from 'crypto'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { sendEmail } from '@/lib/email/send'
+import { rateLimit, clientIp } from '@/lib/security/rate-limit'
 import type { FormSubmissionData } from '@/types/database.types'
 
 // Hash deterministico: lega il codice alla submission (sale anti-rainbow-table)
@@ -21,6 +22,15 @@ async function deliverOtp(email: string, code: string): Promise<boolean> {
 // ── POST: crea la submission (pending_signature) e invia l'OTP ──
 export async function POST(request: Request) {
   try {
+    // Invio OTP è abusabile (spam email) → rate-limit per IP (8 / 10 min).
+    const rl = rateLimit(`send-otp:${clientIp(request)}`, { limit: 8, windowMs: 10 * 60 * 1000 })
+    if (!rl.ok) {
+      return NextResponse.json(
+        { error: 'Troppe richieste OTP. Riprova tra qualche minuto.' },
+        { status: 429, headers: { 'Retry-After': String(Math.ceil(rl.retryAfterMs / 1000)) } }
+      )
+    }
+
     const body = (await request.json()) as {
       modelId?: string
       userId?: string | null

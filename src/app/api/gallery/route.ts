@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient, createAdminClient } from '@/lib/supabase/server-client';
+import { requireDocente } from '@/lib/auth/require-staff';
 
 // GET /api/gallery?studentId=xxx&classe=xxx&date=YYYY-MM-DD&limit=30&offset=0
 // Lista media con filtri (studentId per genitore, classe per insegnante)
@@ -108,9 +109,11 @@ export async function GET(request: Request) {
 // Body: { uploaded_by, file_url, file_type?, caption?, tag_students?, is_broadcast?, target_classes? }
 export async function POST(request: Request) {
     try {
+        const auth = await requireDocente(request);
+        if (auth.response) return auth.response;
+
         const body = await request.json();
         const {
-            uploaded_by,
             file_url,
             file_type,
             caption,
@@ -119,12 +122,15 @@ export async function POST(request: Request) {
             target_classes,
         } = body;
 
-        if (!uploaded_by || !file_url) {
+        if (!file_url) {
             return NextResponse.json(
-                { error: 'uploaded_by e file_url sono obbligatori' },
+                { error: 'file_url è obbligatorio' },
                 { status: 400 }
             );
         }
+
+        // L'uploader è l'utente del gate (no spoofing del campo uploaded_by).
+        const uploaded_by = auth.user.id;
 
         const supabase = await createAdminClient();
 

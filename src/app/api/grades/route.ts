@@ -4,12 +4,16 @@
 // /api/primaria/valutazioni e /api/primaria/prospetto. Conservato come storico.
 
 import { NextResponse } from 'next/server';
-import { createClient, createAdminClient } from '@/lib/supabase/server-client';
+import { createAdminClient } from '@/lib/supabase/server-client';
+import { requireDocente } from '@/lib/auth/require-staff';
 
 // GET /api/grades?alunnoId=xxx&materia=Italiano
 // Recupera i voti di un alunno (opzionalmente filtrati per materia)
 export async function GET(request: Request) {
     try {
+        const auth = await requireDocente(request);
+        if (auth.response) return auth.response;
+
         const { searchParams } = new URL(request.url);
         const alunnoId = searchParams.get('alunnoId');
         const materia = searchParams.get('materia');
@@ -55,6 +59,9 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
     try {
+        const auth = await requireDocente(request);
+        if (auth.response) return auth.response;
+
         const body = await request.json();
         const { alunnoId, materia, tipo, votoNumerico, giudizioTesto } = body;
 
@@ -65,10 +72,8 @@ export async function POST(request: Request) {
         // Admin client per bypassare RLS
         const supabase = await createAdminClient();
 
-        // Recupera l'utente dalla sessione se disponibile, altrimenti usa ID fallback per dev
-        const sessionClient = await createClient();
-        const { data: { user } } = await sessionClient.auth.getUser();
-        const maestraId = user?.id ?? '00000000-0000-0000-0000-000000000001';
+        // L'autore/valutatore è l'utente del gate (identità risolta server-side).
+        const maestraId = auth.user.id;
 
         // Inseriamo il voto. 'pubblicato' è false di default (nel DB).
         // Il buffer notifica sarà gestito tramite job asincrono su Supabase

@@ -1,11 +1,16 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/server-client';
+import { sealDangerous } from '@/lib/security/seal';
 
-export async function GET() {
+export async function GET(request: Request) {
+    const sealed = await sealDangerous(request);
+    if (sealed) return sealed;
     return seed();
 }
 
-export async function POST() {
+export async function POST(request: Request) {
+    const sealed = await sealDangerous(request);
+    if (sealed) return sealed;
     return seed();
 }
 

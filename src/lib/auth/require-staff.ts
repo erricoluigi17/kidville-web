@@ -90,7 +90,18 @@ export async function resolveIdentity(
   // 2) Fallback legacy (header/query), salvo disabilitazione esplicita.
   if (process.env.ALLOW_HEADER_IDENTITY !== 'false') {
     const headerId = getRequestUserId(request)
-    if (headerId) return { userId: headerId, source: 'header' }
+    if (headerId) {
+      // Osservabilità rollout (S13): traccia quanto si usa ancora il path legacy
+      // senza sessione. Quando questi log scendono a ~0, è sicuro mettere il flag a 'false'.
+      let path = ''
+      try {
+        path = new URL(request.url).pathname
+      } catch {
+        /* no-op */
+      }
+      console.warn(`[auth][header-fallback] identità da header/query (nessuna sessione) path=${path}`)
+      return { userId: headerId, source: 'header' }
+    }
   }
   return { userId: null, source: null }
 }

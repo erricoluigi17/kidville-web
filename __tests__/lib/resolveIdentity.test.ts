@@ -91,4 +91,12 @@ describe('resolveIdentity (session-authoritative shim)', () => {
     const res = await resolveIdentity(new Request('http://localhost'));
     expect(res).toEqual({ userId: 'unknown-uid', source: 'session' });
   });
+
+  it('logga [auth][header-fallback] quando usa il path header (osservabilità S13)', async () => {
+    mocks.getUser.mockResolvedValue({ data: { user: null }, error: null });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await resolveIdentity(new Request('http://localhost/api/grades?userId=hdr-1'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('[auth][header-fallback]'));
+    warn.mockRestore();
+  });
 });

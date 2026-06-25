@@ -66,6 +66,24 @@ export async function createSessionClient() {
 }
 
 /**
+ * Client per le LETTURE lato genitore (P0/S8).
+ *
+ * Quando il rollout RLS è attivo (`PARENT_READS_USE_SESSION === 'true'`) usa il
+ * session-client (RLS applicata via `auth.uid()`, isolamento per figlio);
+ * altrimenti ricade sul service-role (comportamento attuale). **Default OFF**: il
+ * flip è uno step di ROLLOUT, da fare dopo (a) l'onboarding dei genitori (login
+ * reale → sessione) e (b) la migrazione delle letture anon dirette del frontend
+ * (`alunni`/`legame_genitori_alunni`/`utenti`/`form_*`) verso API/policy
+ * `authenticated`, prima di rimuovere le policy permissive (S9) e sigillare (S13).
+ */
+export async function createParentReadClient() {
+  if (process.env.PARENT_READS_USE_SESSION === 'true') {
+    return createSessionClient()
+  }
+  return createAdminClient()
+}
+
+/**
  * Client con privilegi di amministrazione (Service Role)
  * Da usare SOLO lato server e per operazioni critiche che devono bypassare RLS
  */

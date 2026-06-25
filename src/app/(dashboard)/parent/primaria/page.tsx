@@ -1,10 +1,11 @@
 'use client';
 
 import Link from 'next/link';
-import { GraduationCap, AlertTriangle, CheckSquare, FileText, BarChart3, BookOpen } from 'lucide-react';
+import { GraduationCap, AlertTriangle, CheckSquare, FileText, BarChart3, BookOpen, CalendarDays } from 'lucide-react';
 
 const SEZIONI = [
   { href: '/parent/lezioni', label: 'Lezioni', sub: 'Argomenti e compiti', icon: BookOpen, color: 'bg-blue-50 text-blue-600' },
+  { href: '/parent/primaria/orario', label: 'Orario', sub: 'Orario settimanale della classe', icon: CalendarDays, color: 'bg-indigo-50 text-indigo-600' },
   { href: '/parent/primaria/valutazioni', label: 'Valutazioni', sub: 'Giudizi per materia', icon: BarChart3, color: 'bg-kidville-green/10 text-kidville-green' },
   { href: '/parent/primaria/note', label: 'Note', sub: 'Note disciplinari e didattiche', icon: AlertTriangle, color: 'bg-amber-50 text-amber-600' },
   { href: '/parent/primaria/assenze', label: 'Presenze', sub: 'Assenze, ritardi e giustifiche', icon: CheckSquare, color: 'bg-purple-50 text-purple-600' },

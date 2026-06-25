@@ -20,6 +20,10 @@ function NoteGenitore() {
   const [note, setNote] = useState<Nota[]>([]);
   const [loading, setLoading] = useState(true);
   const [firmando, setFirmando] = useState<string | null>(null);
+  const [otpState, setOtpState] = useState<{ ticket: string; expiry: number; devCode?: string } | null>(null);
+  const [otpCode, setOtpCode] = useState('');
+  const [otpTarget, setOtpTarget] = useState<string | null>(null);
+  const [msg, setMsg] = useState('');
 
   const carica = async () => {
     if (!ready || !studentId) return;
@@ -34,14 +38,30 @@ function NoteGenitore() {
 
   useEffect(() => { carica(); }, [ready, studentId]);
 
-  const firma = async (notaId: string) => {
-    setFirmando(notaId);
-    await fetch(`/api/parent/primaria/note?userId=${parentId}`, {
+  // Presa visione con firma OTP/FES (DL-014): invio codice → conferma → firma.
+  const avviaFirma = async (notaId: string) => {
+    setMsg(''); setOtpTarget(notaId); setOtpCode('');
+    const r = await fetch(`/api/parent/primaria/note/firma/otp?userId=${parentId}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'x-user-id': parentId },
+    });
+    const d = await r.json();
+    if (!r.ok) { setMsg(d.error || 'Errore OTP'); setOtpTarget(null); return; }
+    setOtpState(d.data);
+  };
+
+  const confermaFirma = async () => {
+    if (!otpTarget || !otpState) return;
+    setFirmando(otpTarget);
+    const r = await fetch(`/api/parent/primaria/note/firma?userId=${parentId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-user-id': parentId },
-      body: JSON.stringify({ notaId }),
+      body: JSON.stringify({ notaId: otpTarget, code: otpCode, expiry: otpState.expiry, ticket: otpState.ticket }),
     });
+    const d = await r.json();
     setFirmando(null);
+    if (!r.ok) { setMsg(d.error || 'Firma non riuscita'); return; }
+    setOtpState(null); setOtpCode(''); setOtpTarget(null);
+    setMsg('Nota firmata ✓');
     carica();
   };
 
@@ -59,6 +79,7 @@ function NoteGenitore() {
         <p className="font-maven text-sm text-gray-400">Nessuna nota registrata.</p>
       ) : (
         <div className="space-y-3">
+          {msg && <p className={`font-maven text-sm rounded-2xl px-4 py-2 ${msg.includes('✓') ? 'bg-green-50 text-kidville-success' : 'bg-red-50 text-red-600'}`}>{msg}</p>}
           {inAttesa.length > 0 && (
             <div className="rounded-2xl bg-amber-50 border border-amber-200 px-4 py-3">
               <p className="font-maven text-sm font-semibold text-amber-700">
@@ -82,14 +103,39 @@ function NoteGenitore() {
                   )}
                 </div>
                 <p className="font-maven text-sm text-gray-700">{n.testo}</p>
-                {n.richiede_firma && !n.firmata_il && (
+                {n.richiede_firma && !n.firmata_il && otpTarget !== n.id && (
                   <button
-                    onClick={() => firma(n.id)}
-                    disabled={firmando === n.id}
+                    onClick={() => avviaFirma(n.id)}
                     className="mt-3 font-maven inline-flex items-center gap-1.5 rounded-full bg-kidville-green px-4 py-1.5 text-sm text-kidville-yellow disabled:opacity-50"
                   >
-                    <Check size={14} /> {firmando === n.id ? 'Firma…' : 'Firma presa visione'}
+                    <Check size={14} /> Firma presa visione
                   </button>
+                )}
+
+                {/* Conferma OTP/FES inline */}
+                {otpTarget === n.id && otpState && (
+                  <div className="mt-3 border-t border-gray-100 pt-3 space-y-2">
+                    <p className="font-maven text-sm text-gray-600">Inserisci il codice OTP ricevuto via email:</p>
+                    {otpState.devCode && (
+                      <p className="font-maven text-xs text-amber-600">Dev: <b>{otpState.devCode}</b></p>
+                    )}
+                    <div className="flex gap-2">
+                      <input
+                        type="text" value={otpCode} onChange={(e) => setOtpCode(e.target.value)}
+                        placeholder="000000"
+                        className="font-maven rounded-full border border-gray-200 px-3 py-1.5 text-sm w-28 text-center tracking-widest"
+                      />
+                      <button
+                        onClick={confermaFirma}
+                        disabled={firmando === n.id || !otpCode}
+                        className="font-maven rounded-full bg-kidville-green px-4 py-1.5 text-sm text-kidville-yellow disabled:opacity-50"
+                      >
+                        {firmando === n.id ? 'Firma…' : 'Conferma'}
+                      </button>
+                      <button onClick={() => { setOtpTarget(null); setOtpState(null); setOtpCode(''); }}
+                        className="font-maven text-xs text-gray-400">Annulla</button>
+                    </div>
+                  </div>
                 )}
               </div>
             );

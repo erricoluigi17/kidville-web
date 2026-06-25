@@ -9,6 +9,7 @@ import type { ScalaVoce } from '@/lib/primaria/media';
 
 interface Alunno { id: string; nome: string; cognome: string }
 interface Materia { id: string; nome: string }
+interface Obiettivo { id: string; codice: string | null; descrizione: string; livello: number }
 interface Valutazione {
   id: string; tipo: string; modalita: string; argomento: string | null; giudizio_sintetico: string | null; giudizio_testo: string | null; annotazione_numerica: number | null; creato_il: string;
 }
@@ -30,6 +31,8 @@ export default function ValutazioniPage() {
   const [materiaId, setMateriaId] = useState('');
   const [scala, setScala] = useState<string[]>([]);
   const [scalaValori, setScalaValori] = useState<ScalaVoce[]>([]);
+  const [obiettivi, setObiettivi] = useState<Obiettivo[]>([]);
+  const [obiettiviSel, setObiettiviSel] = useState<string[]>([]);
   const [recenti, setRecenti] = useState<Valutazione[]>([]);
   const [impreparati, setImpreparati] = useState<Impreparato[]>([]);
 
@@ -66,9 +69,14 @@ export default function ValutazioniPage() {
     if (d.success) {
       setScala(d.data.scala);
       setScalaValori(d.data.scalaValori ?? []);
+      setObiettivi(d.data.obiettivi ?? []);
+      setObiettiviSel([]);
       if (d.data.scala.length) setGiudizioSintetico(d.data.scala[0]);
     }
   }, [materiaId, sectionId, userId]);
+
+  const toggleObiettivo = (id: string) =>
+    setObiettiviSel((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
 
   const loadRecenti = useCallback(async () => {
     if (!alunnoId || !materiaId) { setRecenti([]); return; }
@@ -102,6 +110,8 @@ export default function ValutazioniPage() {
     setMsg('');
     if (!alunnoId || !materiaId) { setMsg('Seleziona alunno e materia'); return; }
     if (!argomento.trim()) { setMsg("Inserisci l'argomento"); return; }
+    // Collegamento obiettivo obbligatorio quando la materia/livello ne ha di configurati (DL-015).
+    if (obiettivi.length > 0 && obiettiviSel.length === 0) { setMsg('Collega almeno un obiettivo di apprendimento'); return; }
     setSaving(true);
     const r = await fetch(`/api/primaria/valutazioni?userId=${userId}`, {
       method: 'POST',
@@ -113,6 +123,7 @@ export default function ValutazioniPage() {
         giudizioTesto: giudizioTesto || undefined,
         annotazioneNumerica: annotazioneNumerica.trim() ? annotazioneNumerica.replace(',', '.') : undefined,
         argomento: argomento.trim(),
+        obiettiviIds: obiettiviSel,
       }),
     });
     const d = await r.json();
@@ -123,6 +134,7 @@ export default function ValutazioniPage() {
       setGiudizioTesto('');
       setAnnotazioneNumerica('');
       setArgomento('');
+      setObiettiviSel([]);
       loadRecenti();
     }
   };
@@ -150,6 +162,27 @@ export default function ValutazioniPage() {
             {materie.map((m) => <option key={m.id} value={m.id}>{m.nome}</option>)}
           </select>
         </div>
+
+        {obiettivi.length > 0 && (
+          <div className="mb-3 rounded-card border border-kidville-green/20 bg-kidville-cream/40 p-3">
+            <label className="mb-1.5 block font-maven text-xs font-semibold text-gray-600">
+              Obiettivi di apprendimento * <span className="font-normal text-gray-400">(collega ≥1)</span>
+            </label>
+            <div className="flex flex-col gap-1.5">
+              {obiettivi.map((o) => (
+                <label key={o.id} className="flex items-start gap-2 font-maven text-sm text-gray-700">
+                  <input
+                    type="checkbox"
+                    checked={obiettiviSel.includes(o.id)}
+                    onChange={() => toggleObiettivo(o.id)}
+                    className="mt-0.5 accent-kidville-green"
+                  />
+                  <span>{o.codice ? <span className="text-gray-400">{o.codice} · </span> : null}{o.descrizione}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="mb-3">
           <label className="block font-maven text-xs text-gray-500 mb-1">Tipo prova</label>

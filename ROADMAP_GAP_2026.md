@@ -3,6 +3,7 @@
 > Generata da audit automatico PRD↔codice (18 moduli, 36 agenti). Confronto: `PRD REGISTRO ELETTRONICO.md` (fonte di verità) + `ROADMAP_TECNICA.md` + `prompts/` contro `src/` e `supabase/migrations/`.
 > **Stato:** 518 requisiti — **299 implementati (58%)**, **125 parziali (24%)**, **94 mancanti (18%)**.
 > Le voci marcate `✓` sono state confermate da una verifica avversariale (un secondo agente ha cercato di smentire il gap trovando il codice).
+> **Avanzamento P2 — core compliance (2026-06-26):** chiusi 5 item requisito (valutazione↔obiettivo, presa-visione note FEA, orario famiglie, finalità accesso fascicolo, Panic Alert notifica) → ~**304 implementati**; 3 decisi e parzializzati (AES at-rest, Export MIUR XLSX+PDF, account sospeso→P3). Delta incrementale del sottoinsieme, non un re-audit completo dei 36 agenti.
 
 ---
 
@@ -23,24 +24,25 @@
 - **S13** — `ALLOW_HEADER_IDENTITY='false'` (sigillo sola-sessione) dopo l'onboarding.
 
 ## P1 — Conformità normativa & core didattico incompleto
+> **Nota numerazione:** questa sezione = **Fase P2** del `master_plan_full.md` (Conformità normativa & core didattico). Aggiornamento sottoinsieme "core compliance" P2 (2026-06-26): vedi DL-011..016. Le voci ✅ sotto sono chiuse in questo giro; le restanti sono sequenziate nei giri successivi della stessa fase.
 - **Accessibilità Legge Stanca (L.4/2004 / AgID)** — criterio legale: alto contrasto + toggle, ARIA/screen reader, WCAG. **✅ Baseline P1 (DL-008):** provider alto-contrasto globale persistito (cookie SSR, no-FOUC), token HC + focus-ring + reduced-motion, Modal accessibile, landmark/skip-link/aria-current, smoke `jest-axe`. WCAG-AA = definition-of-done; audit AA per-pagina incrementale.
 - *(NB — i servizi trasversali **FEA** e **Push bufferizzato** del master plan P1 sono completati: vedi PRD §6 Stato per area e DL-001/006/007/009/010.)*
 - **Presenze (Fase 1, 17/36)**:
   - Operatività **offline-first** reale (cache locale + sync al ripristino) + indicatore Offline/stato sync.
   - **Check-out**: verifica visiva delegato con **foto documento d'identità**.
-  - **Panic Alert** `✓`: notifica istantanea simultanea Segreteria + App Genitore, blocco uscita, banner genitore.
-  - **Giustifiche genitore**: PIN dispositivo per-tutore / firma OTP, "comunica assenza in anticipo".
-  - Orario check-in modificabile (correzione retroattiva); override Direzione; **Export ministeriale MIUR** (Excel/PDF).
+  - **Panic Alert**: ✅ **P2 (DL-016)** notifica istantanea simultanea Segreteria/Direzione + App Genitore via push P1 (best-effort). 🔶 Restano blocco uscita UI + banner genitore + clear-con-audit.
+  - **Giustifiche genitore**: firma OTP ✅ (P1); PIN dispositivo per-tutore → rinviato a P3 (DL-013-area). "comunica assenza in anticipo" già presente.
+  - Orario check-in modificabile (correzione retroattiva); override Direzione; **Export ministeriale MIUR** (Excel/PDF) → 🔶 **deciso P2 (DL-012)**: XLSX+PDF, impl. sequenziata.
 - **Registro Primaria — residui (Fase 1)**:
-  - **Note disciplinari: firma genitore per presa visione** (interazione obbligatoria) + finestra di modifica/blocco.
-  - Filtro alunni presenti per inserimento note massivo.
-  - **Sblocco riservato al Dirigente** con motivazione + tracciamento; **audit** inserimenti/modifiche (valore prima/dopo).
-  - Visibilità famiglie: orario settimanale + materie del figlio in app.
-  - Valutazione in itinere legata a ≥1 **obiettivo**; giudizio di scrutinio **proposto** dalle in-itinere e modificabile collegialmente; import massivo giudizi via CSV; storico pagelle per A.S.
+  - **Note disciplinari: firma genitore per presa visione**: ✅ **P2 (DL-014)** flusso FEA OTP/FES (`nota_ricezioni` + slot + audit). 🔶 Resta la finestra di modifica/blocco.
+  - Filtro alunni presenti per inserimento note massivo. 🔶 sequenziato.
+  - **Sblocco riservato al Dirigente** con motivazione + tracciamento (`sblocchi_audit`) ✅; **audit** inserimenti/modifiche (valore prima/dopo, `audit_scritture_docente`) ✅.
+  - Visibilità famiglie: orario settimanale + materie del figlio in app → ✅ **P2** (`GET /api/parent/primaria/orario` + pagina genitore).
+  - Valutazione in itinere legata a ≥1 **obiettivo** → ✅ **P2 (DL-015)** (enforcement condizionale + `valutazione_obiettivi` + UI); giudizio di scrutinio **proposto** dalle in-itinere ✅; import massivo giudizi via CSV ✅; storico pagelle per A.S. ✅. 🔶 Resta: download template CSV, banner "voti numerici disabilitati".
 - **Fascicolo Personale (Trasversale, 13/21)**:
-  - Sezione **Amministrativa** e sezione **Consensi/Privacy** come tab del fascicolo.
-  - **Workflow firma GLO del PEI** (area protetta, annota, firma accettazione, badge "Firme GLO").
-  - Crittografia applicativa **AES-256** dei file; badge "Documento sensibile" + banner "Accesso tracciato".
+  - Sezione **Amministrativa** e sezione **Consensi/Privacy** come tab del fascicolo. 🔶 sequenziato.
+  - **Workflow firma GLO del PEI** (area protetta, annota, firma accettazione, badge "Firme GLO"). 🔶 sequenziato (slot `all-required` FEA P1 pronti).
+  - Crittografia **AES-256** dei file → ✅ **deciso P2 (DL-011)**: cifratura at-rest gestita (Storage privato + signed URL + RBAC + audit), no app-crypto; **campo "finalità di accesso" cablato** ✅ (`fascicolo_accessi_audit.finalita`). 🔶 Resta badge "Documento sensibile" (banner "Accesso tracciato" già presente).
 
 ## P2 — Moduli amministrativi & finanziari
 - **Fatturazione Elettronica Aruba (Fase 5, 1/11 — quasi tutto da costruire)**:

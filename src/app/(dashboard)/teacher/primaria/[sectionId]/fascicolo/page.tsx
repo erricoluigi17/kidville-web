@@ -38,6 +38,8 @@ export default function FascicoloPage() {
   const [expiry, setExpiry] = useState('');
   const [uploading, setUploading] = useState(false);
   const [msg, setMsg] = useState('');
+  const [finalita, setFinalita] = useState('');
+  const finalitaRef = useRef('');
   const fileRef = useRef<HTMLInputElement>(null);
 
   // Pagelle
@@ -55,7 +57,8 @@ export default function FascicoloPage() {
 
   const loadDocs = useCallback(async () => {
     if (!alunnoId) { setDocs([]); setDenied(false); setAnniPagelle([]); return; }
-    const r = await fetch(`/api/primaria/fascicolo?alunnoId=${alunnoId}&userId=${userId}`);
+    const fz = finalitaRef.current ? `&finalita=${encodeURIComponent(finalitaRef.current)}` : '';
+    const r = await fetch(`/api/primaria/fascicolo?alunnoId=${alunnoId}&userId=${userId}${fz}`);
     if (r.status === 403) { setDenied(true); setDocs([]); return; }
     setDenied(false);
     const d = await r.json();
@@ -91,6 +94,7 @@ export default function FascicoloPage() {
     fd.append('documentType', documentType);
     if (descrizione) fd.append('descrizione', descrizione);
     if (expiry) fd.append('expiryDate', expiry);
+    if (finalitaRef.current) fd.append('finalita', finalitaRef.current);
     fd.append('userId', userId);
     const r = await fetch(`/api/primaria/fascicolo?userId=${userId}`, { method: 'POST', headers: { 'x-user-id': userId }, body: fd });
     const d = await r.json();
@@ -103,7 +107,8 @@ export default function FascicoloPage() {
   };
 
   const scarica = async (documentoId: string) => {
-    const r = await fetch(`/api/primaria/fascicolo/file?documentoId=${documentoId}&userId=${userId}`);
+    const fz = finalitaRef.current ? `&finalita=${encodeURIComponent(finalitaRef.current)}` : '';
+    const r = await fetch(`/api/primaria/fascicolo/file?documentoId=${documentoId}&userId=${userId}${fz}`);
     const d = await r.json();
     if (r.ok && d.data?.url) window.open(d.data.url, '_blank');
     else setMsg(d.error || 'Download non riuscito');
@@ -129,10 +134,19 @@ export default function FascicoloPage() {
           </div>
         )}
 
-        <select value={alunnoId} onChange={(e) => setAlunnoId(e.target.value)} className="font-maven rounded-pill border border-gray-200 px-3 py-2 text-sm">
-          <option value="">Alunno…</option>
-          {alunni.map((a) => <option key={a.id} value={a.id}>{a.cognome} {a.nome}</option>)}
-        </select>
+        <div className="flex flex-wrap gap-2">
+          <select value={alunnoId} onChange={(e) => setAlunnoId(e.target.value)} className="font-maven rounded-pill border border-gray-200 px-3 py-2 text-sm">
+            <option value="">Alunno…</option>
+            {alunni.map((a) => <option key={a.id} value={a.id}>{a.cognome} {a.nome}</option>)}
+          </select>
+          <input
+            value={finalita}
+            onChange={(e) => { setFinalita(e.target.value); finalitaRef.current = e.target.value; }}
+            placeholder="Finalità di accesso (es. colloquio GLO)"
+            title="La finalità di accesso viene registrata nel log immodificabile del fascicolo."
+            className="font-maven flex-1 min-w-[12rem] rounded-pill border border-gray-200 px-3 py-2 text-sm"
+          />
+        </div>
 
         {denied && (
           <div className="mt-3 flex items-center gap-2 rounded-card bg-red-50 px-3 py-2 font-maven text-sm text-red-600">

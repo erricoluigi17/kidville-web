@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { getRequestUserId } from '@/lib/auth/require-staff'
+import { obiettiviDisponibili } from '@/lib/primaria/obiettivi'
 
 // GET /api/primaria/obiettivi?materiaId=&sectionId=&userId=
 // Obiettivi disponibili per la materia (e livello dedotto dalla classe), usati
@@ -21,25 +22,10 @@ export async function GET(request: NextRequest) {
       .single()
     if (!materia) return NextResponse.json({ error: 'Materia non trovata' }, { status: 404 })
 
-    // Livello dedotto dal nome sezione (es. "3A" → 3).
-    let livello: number | null = null
-    if (sectionId) {
-      const { data: sez } = await supabase.from('sections').select('name').eq('id', sectionId).single()
-      const m = sez?.name?.match(/[1-5]/)
-      if (m) livello = Number(m[0])
-    }
-
-    let q = supabase
-      .from('obiettivi_apprendimento')
-      .select('id, codice, descrizione, livello')
-      .eq('scuola_id', materia.scuola_id)
-      .eq('materia_codice', materia.codice)
-      .eq('attivo', true)
-      .order('codice')
-    if (livello) q = q.eq('livello', livello)
-
-    const [{ data: obiettivi }, { data: scala }] = await Promise.all([
-      q,
+    // Obiettivi disponibili: stesso filtro (materia, livello) usato dall'enforcement
+    // "≥1 obiettivo" nella POST valutazioni (sorgente unica: obiettiviDisponibili).
+    const [obiettivi, { data: scala }] = await Promise.all([
+      obiettiviDisponibili(supabase, { codice: materia.codice, scuola_id: materia.scuola_id }, sectionId),
       supabase
         .from('giudizi_sintetici_scala')
         .select('etichetta, valore_numerico, ordine')

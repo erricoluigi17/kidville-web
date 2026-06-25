@@ -170,6 +170,12 @@ Riuso di `RegistriClassePanel` (deep-link `/teacher/primaria/[sectionId]/[seg]?u
 | **FEA — Servizio firma in-house (P1)** | firmatario = sessione | per-firmatario (`fea_signatures`, policy `any-one`/`all-required`) | `fea_audit_log` (immutabile) | ✅ Fatto (DL-001/006/007/009/010): `src/lib/fea/`, ricevuta PDF `GET /api/fea/receipt`, 3 consumatori ricablati; migrazioni `20260730/31/32` |
 | **Push — Servizio notifiche bufferizzate (P1)** | `x-cron-secret` su dispatch | per-utente | — | ✅ Fatto: `enqueueNotifiche` generico + cron dispatch generico (`notifiche_dispatch_tick`, ogni 5′) → il buffer 10′ ora parte (prima solo pagamenti). Migrazioni `20260733/733b` |
 | **Accessibilità — Baseline (P1, DL-008)** | — | — | — | 🔶 Baseline: provider HC globale (cookie SSR, no-FOUC), token HC + focus-ring + reduced-motion, Modal accessibile, landmark/skip-link/aria-current, smoke `jest-axe`. WCAG-AA = DoD; audit AA per-pagina incrementale |
+| **P2 — Valutazione ↔ obiettivo (DL-015)** | `requireDocente` | `assertSezioneInScope` | `logScrittura` | ✅ Fatto: enforcement condizionale ≥1 obiettivo (`obiettiviDisponibili`), righe `valutazione_obiettivi`, UI checkbox docente |
+| **P2 — Presa visione note FEA (DL-014)** | OTP/FES (sessione) | per-firmatario (`fea_signatures` `nota`) | `fea_audit_log` | ✅ Fatto: `nota_ricezioni` (migr. `20260740`), `POST /api/parent/primaria/note/firma` (+otp); vecchio POST → 410 |
+| **P2 — Orario visibile alle famiglie** | `getRequestUserId` | sezione del figlio | — (read) | ✅ Fatto: `GET /api/parent/primaria/orario` + pagina genitore |
+| **P2 — Finalità accesso Fascicolo (DL-011)** | `puoAccedereFascicolo` | alunno | `fascicolo_accessi_audit.finalita` | ✅ Fatto: `finalita` cablata in list/download/upload + campo UI |
+| **P2 — Panic Alert push (DL-016)** | sessione | plesso alunno | — | ✅ Fatto: notifica simultanea Segreteria/Direzione + genitori (push P1, best-effort). Blocco-uscita UI/banner/clear = sequenziati |
+| **P2 — AES Fascicolo (DL-011) / Export MIUR (DL-012) / Account sospeso (DL-013)** | — | — | — | 🔶 Decisi: AES = at-rest gestita (no app-crypto); Export = XLSX+PDF (impl. sequenziata); sospensione rinviata a P3 |
 
 ### 6.1 Nota — moduli 0-6 / tasks / avvisi: cablaggio auth COMPLETATO
 Prerequisito **risolto**: le UI docente di diary, armadietto, tasks e avvisi sono state
@@ -3081,3 +3087,39 @@ _Modulo PRD: Trasversale (Auth/Accessibilità)_
 - **Decisione:** **canonica = `form_submissions`**; `forms_submissions` resta **legacy**. Aggiunta colonna `signature_log JSONB` a `form_submissions` così anche il wizard registra l'evidenza FES canonica. **Nessuna migrazione dati** tra le due tabelle in P1 (consolidamento rinviato per non toccare un path di firma in produzione).
 - **Impatto PRD:** annotato §Form §4.1.
 - **Alternative scartate:** unificare/migrare i dati ora (rischio su un flusso di firma live, fuori scope P1); cambiare il meccanismo OTP del wizard (cambierebbe il contratto del client `OtpSignatureModal`).
+
+### 2026-06-26 — DL-011 — [Fase P2] Crittografia Fascicolo: cifratura at-rest gestita (no AES applicativa)
+- **Contesto:** il PRD §Fascicolo cita "crittografia AES-256" dei file sensibili (PEI/PDP/sanitari). La migrazione `20260630_fascicolo_rbac_audit.sql` aveva già scelto di demandare la cifratura a Supabase Storage (bucket privato `sensitive_documents` + signed URL TTL 60s + RBAC `puoAccedereFascicolo` + audit immutabile `fascicolo_accessi_audit`), senza crittografia applicativa.
+- **Decisione:** il controllo "AES-256" è **soddisfatto dalla cifratura at-rest gestita** (Storage cifra at-rest in AES-256) + bucket privato + signed URL a TTL breve + RBAC + audit accessi. **Nessuna crittografia applicativa** (envelope/KMS): aggiungerebbe custodia chiavi a nostro carico e romperebbe lo streaming via signed URL, per un beneficio marginale dato l'accesso già mediato da API service_role. Lato UI restano da aggiungere il badge "Documento sensibile" (banner "Accesso tracciato" già presente) — slice sequenziato.
+- **Impatto PRD:** §Fascicolo (sezione crittografia/sicurezza) + §6 Stato per area.
+- **Alternative scartate:** envelope encryption applicativa AES-256 con KMS (XL, fuori core P2; eventualmente a carico committente per livello qualificato).
+
+### 2026-06-26 — DL-012 — [Fase P2] Export ministeriale Presenze = registro mensile XLSX + PDF
+- **Contesto:** per una scuola paritaria non esiste uno schema "ministeriale MIUR" unico per il registro presenze; il requisito era ambiguo. Esiste già un export **PDF** mensile (`MonthlyAttendanceTable.tsx`, jsPDF).
+- **Decisione:** "Export ministeriale" = **registro mensile in XLSX + PDF**: griglia giorno×alunno con totali (presenze/assenze/ritardi/giustificate), layout istituzionale. XLSX via libreria **`xlsx`** (da verificare/aggiungere alla prima implementazione), PDF via jsPDF esistente. **Implementazione sequenziata** dopo il sottoinsieme "core compliance" di questa sessione.
+- **Impatto PRD:** §Presenze (Export) + checklist `ROADMAP_GAP_2026`.
+- **Alternative scartate:** tracciato XML SIDI (è P5/Interoperabilità, non Presenze); attendere un template dal committente (lo si potrà sostituire se fornito).
+
+### 2026-06-26 — DL-013 — [Fase P2] Meccanismo "account sospeso" rinviato a P3
+- **Contesto:** il requisito "persistenza visiva con account sospeso" presuppone un meccanismo di sospensione account che **non esiste** (nessun flag `sospeso` su `utenti`/`parents`, nessun gate auth) e che si sovrappone alla "sospensione account moroso" del modulo amministrativo/finanziario (P3).
+- **Decisione:** il **meccanismo di sospensione** (flag + gate auth + stato UI read-only) è **materia di P3**; il requisito esce dallo scope P2 per non costruire mezzo meccanismo qui e rifarlo in P3.
+- **Impatto PRD:** §Primaria Valutazione (nota di rinvio) + cross-ref §Pagamenti/Impostazioni P3 + §6 Stato.
+- **Alternative scartate:** introdurre `sospeso` ora in P2 (anticipa lavoro P3 con rischio di disallineamento col modello morosità).
+
+### 2026-06-26 — DL-014 — [Fase P2] Presa visione note → pattern FEA (OTP/FES) + `nota_ricezioni`
+- **Contesto:** la firma di presa visione delle note disciplinari (interazione obbligatoria, PRD §Primaria) usava un semplice timestamp `note_disciplinari.firmata_il` via `POST /api/parent/primaria/note`, **senza** evidenza FES (IP/hash/audit).
+- **Decisione:** la presa visione adotta lo **stesso pattern della pagella** (DL-006/007/009): OTP email (FES) → `buildSignatureLog` salvato in nuova tabella **`nota_ricezioni`** (`UNIQUE(nota_id, genitore_id)`, RLS service+read) + slot firmatari `fea_signatures` (`entita_tipo='nota'`) + audit immutabile `fea_audit_log`. Nuove route `POST /api/parent/primaria/note/firma` (+ `/firma/otp`); il vecchio `POST /api/parent/primaria/note` risponde **410** (deprecato). `note_disciplinari.firmata_il`/`firmata_da` restano valorizzati per retro-compat con la vista genitore.
+- **Impatto PRD:** §Primaria (Note disciplinari, presa visione) + §6 Stato.
+- **Alternative scartate:** mantenere il timestamp semplice (privo di valore probatorio FES); riusare `pagella_ricezioni` (semantica/entità diversa).
+
+### 2026-06-26 — DL-015 — [Fase P2] Valutazione in itinere legata a ≥1 obiettivo (enforcement condizionale)
+- **Contesto:** il PRD chiede la valutazione in itinere "legata a ≥1 obiettivo di apprendimento" (O.M. 172/2020). Il codice usava `argomento` (testo libero obbligatorio) **al posto** dell'obiettivo strutturato; la tabella `valutazione_obiettivi` esisteva ma quasi inutilizzata (1 riga). Su DB live **1 scuola ha 7 obiettivi** configurati (italiano/matematica/storia/geografia, livelli 1/3).
+- **Decisione:** reintrodurre il collegamento strutturato a `valutazione_obiettivi` con **enforcement CONDIZIONALE**: ≥1 obiettivo obbligatorio **solo quando la scuola ha obiettivi configurati** per quella (materia, livello) — stesso filtro del selettore docente, estratto nel helper unico `src/lib/primaria/obiettivi.ts` (`obiettiviDisponibili`). Se non ce ne sono, **fallback su `argomento`** (sempre obbligatorio): non blocca le scuole senza curricolo seminato. `POST /api/primaria/valutazioni` valida ed inserisce le righe link; la UI docente mostra i checkbox obiettivi quando disponibili.
+- **Impatto PRD:** §Primaria Valutazione + §6 Stato.
+- **Alternative scartate:** enforcement rigido sempre (bloccherebbe le scuole senza obiettivi); considerare `argomento` sufficiente (non soddisfa il vincolo normativo dove il curricolo esiste).
+
+### 2026-06-26 — DL-016 — [Fase P2] Panic Alert: notifica simultanea Segreteria/Direzione + genitore (push P1)
+- **Contesto:** `POST /api/panic-alert` registrava solo il flag `presenze.panic_alert=true`, **senza** alcuna notifica (requisito PRD §Presenze: allerta istantanea simultanea Segreteria + App Genitore).
+- **Decisione:** dopo il salvataggio, **notifica best-effort** via servizio push P1: a tutto lo **staff del plesso** dell'alunno con ruolo `segreteria`/`admin`/`coordinator` (`enqueueNotifiche`, `bufferMin:0`) **e** ai **genitori** dell'alunno (`enqueueNotifichePerAlunni`, `bufferMin:0`). Un errore di notifica **non invalida** il Panic Alert salvato. *(Il blocco-uscita UI + banner genitore + clear-con-audit restano slice sequenziati.)*
+- **Impatto PRD:** §Presenze (Panic Alert) + §6 Stato.
+- **Alternative scartate:** notifica solo Segreteria (il genitore deve essere allertato); risoluzione genitori via `student_parents` (incoerente con il resto delle notifiche primaria, che usano `legame_genitori_alunni` — allineamento rinviato a P0/rollout).

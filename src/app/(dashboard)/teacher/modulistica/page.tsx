@@ -30,7 +30,11 @@ interface MedicalCertificate {
   nome_alunno: string;
   cognome_alunno: string;
   file_path: string;
-  giorni_coperti: string[];
+  giorni_coperti?: string[];
+  data_inizio?: string | null;
+  data_fine?: string | null;
+  stato?: string;
+  nota_validazione?: string | null;
   note: string;
   creato_il: string;
 }
@@ -49,8 +53,7 @@ export default function TeacherModulisticaPage() {
 
   // Manage Covered Days state
   const [managingCert, setManagingCert] = useState<MedicalCertificate | null>(null);
-  const [coveredDaysInput, setCoveredDaysInput] = useState<string[]>([]);
-  const [newCoveredDay, setNewCoveredDay] = useState('');
+  const [notaValidazione, setNotaValidazione] = useState('');
 
   // Notifications
   const [toast, setToast] = useState('');
@@ -104,9 +107,10 @@ export default function TeacherModulisticaPage() {
 
   const fetchMedicalCertificates = async () => {
     try {
-      const res = await fetch(`/api/teacher/medical-certificates?class_name=${CLASS_NAME}`);
+      const res = await fetch(`/api/teacher/medical-certificates?class_name=${CLASS_NAME}`, { headers: { 'x-user-id': TEACHER_ID } });
       const data = await res.json();
-      if (Array.isArray(data)) setMedCerts(data);
+      const rows = Array.isArray(data) ? data : (data.data ?? []);
+      setMedCerts(rows);
     } catch (err) {
       console.error(err);
     }
@@ -144,45 +148,30 @@ export default function TeacherModulisticaPage() {
   };
 
   // Manage days logic
-  const handleOpenDaysManager = (cert: MedicalCertificate) => {
+  const handleOpenManager = (cert: MedicalCertificate) => {
     setManagingCert(cert);
-    setCoveredDaysInput(cert.giorni_coperti || []);
+    setNotaValidazione('');
   };
 
-  const handleAddCoveredDay = () => {
-    if (!newCoveredDay) return;
-    if (coveredDaysInput.includes(newCoveredDay)) {
-      showToastMsg('❌ Giorno già presente');
-      return;
-    }
-    setCoveredDaysInput([...coveredDaysInput, newCoveredDay].sort());
-    setNewCoveredDay('');
-  };
-
-  const handleRemoveCoveredDay = (day: string) => {
-    setCoveredDaysInput(coveredDaysInput.filter(d => d !== day));
-  };
-
-  const handleSaveCoveredDays = async () => {
+  const handleValidate = async (esito: 'validato' | 'rifiutato') => {
     if (!managingCert) return;
-
     try {
       const res = await fetch('/api/teacher/medical-certificates', {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-user-id': TEACHER_ID },
         body: JSON.stringify({
-          certificate_id: managingCert.id,
-          giorni_coperti: coveredDaysInput
-        })
+          id: managingCert.id,
+          esito,
+          nota_validazione: notaValidazione || undefined,
+        }),
       });
-
-      if (!res.ok) throw new Error('Errore salvataggio');
-
-      showToastMsg('✅ Giorni coperti aggiornati con successo!');
+      if (!res.ok) throw new Error('Errore validazione');
+      showToastMsg(esito === 'validato' ? '✅ Certificato validato.' : '⛔ Certificato rifiutato.');
       setManagingCert(null);
+      setNotaValidazione('');
       fetchMedicalCertificates();
-    } catch (err) {
-      showToastMsg('❌ Errore durante il salvataggio');
+    } catch {
+      showToastMsg('❌ Errore durante la validazione');
     }
   };
 
@@ -323,26 +312,29 @@ export default function TeacherModulisticaPage() {
                         </p>
                       )}
                       
-                      <div className="mt-3 flex items-center gap-1.5 flex-wrap">
-                        {cert.giorni_coperti?.length > 0 ? (
-                          cert.giorni_coperti.map((day: string) => (
-                            <span key={day} className="bg-emerald-50 text-emerald-700 border border-emerald-150 px-2.5 py-0.5 rounded-full text-[10px] font-semibold">
-                              {new Date(day).toLocaleDateString()}
-                            </span>
-                          ))
+                      <div className="mt-3 flex items-center gap-2 flex-wrap">
+                        {(cert.data_inizio || cert.data_fine) && (
+                          <span className="bg-gray-100 text-gray-600 px-2.5 py-0.5 rounded-full text-[10px] font-semibold">
+                            {cert.data_inizio ?? '—'} → {cert.data_fine ?? '—'}
+                          </span>
+                        )}
+                        {cert.stato === 'validato' ? (
+                          <span className="bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider">Validato</span>
+                        ) : cert.stato === 'rifiutato' ? (
+                          <span className="bg-red-50 text-red-600 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider">Rifiutato</span>
                         ) : (
                           <span className="text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1 font-maven uppercase tracking-wider">
-                            <AlertCircle size={10} /> Da registrare giorni coperti
+                            <AlertCircle size={10} /> In validazione
                           </span>
                         )}
                       </div>
                     </div>
 
                     <button
-                      onClick={() => handleOpenDaysManager(cert)}
+                      onClick={() => handleOpenManager(cert)}
                       className="flex items-center gap-1 px-3.5 py-2 bg-kidville-green text-kidville-yellow rounded-pill font-barlow font-black uppercase text-xs tracking-wider shadow-sm hover:opacity-90 transition-opacity"
                     >
-                      <Calendar size={14} /> Gestisci Giorni
+                      <Calendar size={14} /> Valida
                     </button>
                   </div>
                 ))
@@ -406,72 +398,57 @@ export default function TeacherModulisticaPage() {
           <div className="bg-white w-full max-w-md rounded-card p-6 shadow-2xl flex flex-col max-h-[85vh]">
             <div className="flex items-center justify-between border-b border-gray-100 pb-3 mb-4">
               <h2 className="font-barlow font-black text-xl text-kidville-green uppercase tracking-wide">
-                Gestione Giorni Certificati
+                Validazione Certificato
               </h2>
               <button onClick={() => setManagingCert(null)} className="text-gray-400 hover:text-gray-600">✕</button>
             </div>
 
             <div className="flex-1 overflow-y-auto space-y-4 pr-1">
               <p className="font-maven text-xs text-gray-500 leading-relaxed">
-                Spunta o inserisci le date di assenza dell'alunno <strong>{managingCert.cognome_alunno} {managingCert.nome_alunno}</strong> coperte da questo certificato medico per giustificarle ufficialmente.
+                Certificato per <strong>{managingCert.cognome_alunno} {managingCert.nome_alunno}</strong>.
+                Verifica il documento e il periodo dichiarato, poi valida o rifiuta.
               </p>
 
-              {/* Add Day Input */}
-              <div className="flex gap-2 items-end">
-                <div className="flex-1">
-                  <label className="block font-maven text-[10px] font-semibold text-gray-500 mb-1">Aggiungi Giorno</label>
-                  <input
-                    type="date"
-                    value={newCoveredDay}
-                    onChange={e => setNewCoveredDay(e.target.value)}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-1.5 font-maven text-xs focus:outline-none"
-                  />
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-kidville-cream/50 rounded-xl px-3 py-2">
+                  <p className="font-maven text-[10px] text-gray-500 uppercase">Coperto dal</p>
+                  <p className="font-maven text-sm font-bold text-kidville-green">{managingCert.data_inizio ?? '—'}</p>
                 </div>
-                <button
-                  onClick={handleAddCoveredDay}
-                  className="h-8.5 px-4 bg-kidville-cream text-kidville-green border border-kidville-green/10 rounded-pill font-barlow font-bold text-xs uppercase"
-                >
-                  Aggiungi
-                </button>
+                <div className="bg-kidville-cream/50 rounded-xl px-3 py-2">
+                  <p className="font-maven text-[10px] text-gray-500 uppercase">al</p>
+                  <p className="font-maven text-sm font-bold text-kidville-green">{managingCert.data_fine ?? '—'}</p>
+                </div>
               </div>
 
-              {/* Covered Days list checklist */}
-              <div className="space-y-2">
-                <h4 className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide">Giorni di Copertura Inseriti</h4>
-                {coveredDaysInput.length === 0 ? (
-                  <div className="text-center py-6 border border-dashed border-gray-250 rounded-xl font-maven text-xs text-gray-400">
-                    Nessun giorno inserito. Aggiungerne uno sopra.
-                  </div>
-                ) : (
-                  <div className="flex flex-wrap gap-2">
-                    {coveredDaysInput.map(day => (
-                      <span key={day} className="bg-emerald-50 text-emerald-700 border border-emerald-150 px-2.5 py-1 rounded-full text-xs font-semibold flex items-center gap-1.5">
-                        {new Date(day).toLocaleDateString()}
-                        <button
-                          onClick={() => handleRemoveCoveredDay(day)}
-                          className="text-gray-400 hover:text-red-500 font-bold"
-                        >
-                          ✕
-                        </button>
-                      </span>
-                    ))}
-                  </div>
-                )}
+              {managingCert.note && (
+                <p className="font-maven text-xs text-gray-600"><span className="font-semibold">Note genitore:</span> {managingCert.note}</p>
+              )}
+
+              <a href={`/api/parent/medical-certificates/file?id=${managingCert.id}&userId=${TEACHER_ID}`} target="_blank" rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-xs font-bold text-kidville-green hover:underline">
+                <FileText size={14} /> Apri documento
+              </a>
+
+              <div>
+                <label className="block font-maven text-[10px] font-semibold text-gray-500 mb-1">Nota di validazione (opzionale, obbligatoria per il rifiuto)</label>
+                <textarea value={notaValidazione} onChange={e => setNotaValidazione(e.target.value)} rows={2}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-1.5 font-maven text-xs focus:outline-none focus:border-kidville-green resize-none"
+                  placeholder="Es. Periodo corretto in 01/03–04/03" />
               </div>
             </div>
 
             <div className="flex gap-3 border-t border-gray-100 pt-4 mt-4 justify-end">
               <button
-                onClick={() => setManagingCert(null)}
-                className="px-4 py-2 font-maven rounded-pill border border-gray-200 text-gray-500 text-sm hover:bg-gray-50"
+                onClick={() => handleValidate('rifiutato')}
+                className="px-4 py-2 font-barlow font-bold uppercase tracking-wide rounded-pill border border-red-200 text-red-600 text-sm hover:bg-red-50"
               >
-                Annulla
+                Rifiuta
               </button>
               <button
-                onClick={handleSaveCoveredDays}
+                onClick={() => handleValidate('validato')}
                 className="px-5 py-2.5 bg-kidville-green text-kidville-yellow rounded-pill font-barlow font-black uppercase tracking-wider text-sm hover:opacity-90 transition-all shadow-md"
               >
-                Salva Copertura
+                Valida
               </button>
             </div>
           </div>

@@ -81,6 +81,9 @@ export default function ParentModulisticaPage() {
   // Medical Certificate form
   const [selectedChildId, setSelectedChildId] = useState('');
   const [certFileName, setCertFileName] = useState('');
+  const [certFile, setCertFile] = useState<File | null>(null);
+  const [certDal, setCertDal] = useState('');
+  const [certAl, setCertAl] = useState('');
   const [certNotes, setCertNotes] = useState('');
 
   // Notifications
@@ -427,30 +430,27 @@ export default function ParentModulisticaPage() {
   // Submit Medical Certificate
   const handleUploadMedicalCert = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!certFileName) {
-      showToastMsg('❌ Caricare un file di certificato medico.');
-      return;
-    }
+    if (!certFile) { showToastMsg('❌ Caricare un file di certificato medico.'); return; }
+    if (!selectedChildId) { showToastMsg('❌ Seleziona il figlio.'); return; }
+    if (!certDal || !certAl || certDal > certAl) { showToastMsg('❌ Indica un periodo di copertura valido (dal/al).'); return; }
 
     try {
-      const mockStoragePath = `medical_certs/${PARENT_ID}/${selectedChildId}_${Date.now()}_${certFileName}`;
+      const fd = new FormData();
+      fd.append('file', certFile);
+      fd.append('student_id', selectedChildId);
+      fd.append('data_inizio', certDal);
+      fd.append('data_fine', certAl);
+      fd.append('note', certNotes);
       const res = await fetch('/api/parent/medical-certificates', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          student_id: selectedChildId,
-          file_path: mockStoragePath,
-          notes: certNotes,
-          parent_id: PARENT_ID
-        })
+        headers: { 'x-user-id': PARENT_ID },
+        body: fd,
       });
-
       if (!res.ok) throw new Error('Errore upload');
-      showToastMsg('✅ Certificato medico caricato. Assenza giustificata!');
-      setCertFileName('');
-      setCertNotes('');
+      showToastMsg('✅ Certificato caricato. In attesa di validazione della Segreteria.');
+      setCertFile(null); setCertFileName(''); setCertDal(''); setCertAl(''); setCertNotes('');
       fetchData();
-    } catch (err) {
+    } catch {
       showToastMsg('❌ Errore caricamento certificato medico');
     }
   };
@@ -790,7 +790,7 @@ export default function ParentModulisticaPage() {
                     {certFileName ? (
                       <div className="flex items-center justify-between border-2 border-emerald-100 bg-emerald-50 text-emerald-700 px-3 py-2 rounded-xl text-xs font-semibold">
                         <span>📄 {certFileName}</span>
-                        <button type="button" onClick={() => setCertFileName('')} className="text-gray-400 hover:text-red-500">✕</button>
+                        <button type="button" onClick={() => { setCertFileName(''); setCertFile(null); }} className="text-gray-400 hover:text-red-500">✕</button>
                       </div>
                     ) : (
                       <label className="w-full h-10 border-2 border-dashed border-gray-200 hover:border-kidville-green rounded-xl flex items-center justify-center gap-1.5 cursor-pointer text-xs font-semibold text-gray-600 transition-colors">
@@ -799,10 +799,24 @@ export default function ParentModulisticaPage() {
                           type="file"
                           accept=".pdf,image/*"
                           className="hidden"
-                          onChange={e => setCertFileName(e.target.files?.[0]?.name || '')}
+                          onChange={e => { const f = e.target.files?.[0] ?? null; setCertFile(f); setCertFileName(f?.name || ''); }}
                         />
                       </label>
                     )}
+                  </div>
+                </div>
+
+                {/* Periodo di copertura (dal/al) — DL-027 */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block font-maven text-xs font-semibold text-kidville-green mb-1">Coperto dal *</label>
+                    <input type="date" value={certDal} onChange={e => setCertDal(e.target.value)}
+                      className="w-full border-2 border-gray-100 rounded-xl px-3 py-2 font-maven text-xs text-gray-600 focus:outline-none focus:border-kidville-green" />
+                  </div>
+                  <div>
+                    <label className="block font-maven text-xs font-semibold text-kidville-green mb-1">al *</label>
+                    <input type="date" value={certAl} min={certDal || undefined} onChange={e => setCertAl(e.target.value)}
+                      className="w-full border-2 border-gray-100 rounded-xl px-3 py-2 font-maven text-xs text-gray-600 focus:outline-none focus:border-kidville-green" />
                   </div>
                 </div>
 

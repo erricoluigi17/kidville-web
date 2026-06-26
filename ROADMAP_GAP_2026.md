@@ -58,7 +58,7 @@
 - **Modulistica & Form (Fase 4, builder 23/40 + modulistica 11/33)**:
   - **Form Builder Drag & Drop** completo (blocchi Bambino/Adulto/Consensi/Allegati), ~~**logica condizionale**~~ ✅ **FATTO (P3.3a, DL-024)** (motore `conditional.ts`: wizard mostra/nasconde + valida solo visibili + strip; editor nel builder), scoring/soglia graduatoria, "Pubblica modello", config accessi (registrati/link pubblico).
   - Wizard: **firma congiunta secondo firmatario**, "reinvia OTP".
-  - **ETL nativo PostgreSQL** (trigger `form_submissions→completed` che riversa in anagrafiche).
+  - ~~**ETL nativo PostgreSQL** (trigger `form_submissions→completed` che riversa in anagrafiche)~~ ✅ **FATTO (P3.3c, DL-026)**: `fn_form_submission_etl` riscritto sulle tabelle reali `parents`/`alunni`/`student_parents` (migr. `20260744`, era rotto su `adults`/`student_adults` inesistenti); verificato con dry-run live.
   - Graduatorie: ~~**delibera ammissioni** + stato ammesso/non + **export XLSX/PDF**~~ ✅ **FATTO (P3.3b, DL-025)**: scoring applicato in live (migr. `20260743`), `calcolaDelibera` (soglia+posti), esito ammesso/lista_attesa/non + override, export delibera **PDF** (XLSX graduatoria già esistente). ⚠️ ETL form→anagrafiche deferito (drift `adults`/`student_adults`).
   - **Certificato medico self-service** (upload genitore → validazione Segreteria); ricevuta PDF inattaccabile (IP/Timestamp/Hash SHA-256); proxy upload cartaceo + sollecito firme docente; merge PDF classe.
   - **RLS allegati** + **pg_cron** solleciti/promemoria scadenza.

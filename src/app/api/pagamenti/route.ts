@@ -8,7 +8,7 @@ const SELECT = `
   fattura_stato, fattura_pdf_path, fattura_aruba_id, fattura_emessa_il,
   data_incasso, ultimo_sollecito_il, creato_il, aggiornato_il,
   payment_categories ( id, nome, slug, colore, icona ),
-  alunni ( id, nome, cognome, classe_sezione )
+  alunni ( id, nome, cognome, classe_sezione, sospeso )
 `
 
 // GET /api/pagamenti

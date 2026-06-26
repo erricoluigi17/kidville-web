@@ -5,6 +5,7 @@
 > Le voci marcate `✓` sono state confermate da una verifica avversariale (un secondo agente ha cercato di smentire il gap trovando il codice).
 > **Avanzamento P2 — core compliance (2026-06-26):** chiusi 5 item requisito (valutazione↔obiettivo, presa-visione note FEA, orario famiglie, finalità accesso fascicolo, Panic Alert notifica) → ~**304 implementati**; 3 decisi e parzializzati (AES at-rest, Export MIUR XLSX+PDF, account sospeso→P3). Delta incrementale del sottoinsieme, non un re-audit completo dei 36 agenti.
 > **Avanzamento P3.1 — Fatturazione Aruba/SDI (2026-06-26, DL-017..020):** chiusi ~9 item del modulo Aruba (da **1/11 → ~10/11**): XML FatturaPA reale (IVA 0%/N4/no-bollo), client REST Aruba, numerazione interna, state machine + monitoraggio scarti SDI con notifica realtime + banner Segreteria, copia cortesia PDF genitore, backend sicuro (credenziali via vault) → ~**313 implementati**. Resta solo la verifica live SDI, gated sulle credenziali Aruba del committente. Slice "Aruba a sé" della Fase P3; restano sequenziate P3.2 (Pagamenti residui: sospensione moroso DL-013, vista categorie), P3.3 (Form Builder/Modulistica), P3.4 (Super-Admin/Multi-Sede/GDPR). Delta incrementale del sottoinsieme.
+> **Avanzamento P3.2 — Pagamenti residui (2026-06-26, DL-021..023):** chiusi 3 item (sospensione account moroso soft per-alunno + banner/badge + enforcement firme moduli; vista genitore a categorie; ricevuta PDF non fiscale) → ~**316 implementati**. Chiude anche il rinvio DL-013 (P2). Migrazione `20260742`, 24 test verdi, advisors 0 ERROR. Restano sequenziate P3.3 (Form Builder/Modulistica) e P3.4 (Super-Admin/Multi-Sede/GDPR).
 
 ---
 
@@ -51,7 +52,7 @@
   - ✅ Backend sicuro (chiavi mai esposte: password via env/vault `password_ref`); client REST reale (signin/upload/getByFilename); monitoraggio **scarti SDI** con motivo + **notifica realtime + banner Segreteria** (cron `fatture-sdi-sync`); **download copia cortesia PDF** lato genitore (bucket privato + fallback anteprima).
   - ✅ Pannello impostazioni Aruba (credenziali/ambiente, dati scuola P.IVA/CF/PEC + sede, `RegimeFiscale`).
   - 🔶 Resta (1/11): **verifica live end-to-end con lo SDI**, subordinata alle **credenziali Aruba DEMO/PROD del committente** (codice pronto, attivazione con flag + credenziali — dipendenza esterna, come SIDI in P5).
-- **Pagamenti — residui (Fase 5, 25/30)**: fattura/ricevuta manuale su saldato; vista a categorie genitore (Rette/Quote/Mensa/Gite); sospensione manuale account moroso.
+- **Pagamenti — residui (Fase 5 → master plan P3.2)** — ✅ **FATTO (P3.2, 2026-06-26, DL-021..023)**: ✅ **ricevuta** manuale (PDF non fiscale) su saldato (`GET /api/pagamenti/ricevuta`); ✅ **vista a categorie** genitore (`raggruppaPerCategoria`); ✅ **sospensione manuale account moroso** soft per-alunno (flag `alunni.sospeso`, set Direzione + audit, banner/badge, enforcement firme moduli). *(La "fattura" manuale su saldato è coperta dalla P3.1 Aruba.)*
 - **Modulistica & Form (Fase 4, builder 23/40 + modulistica 11/33)**:
   - **Form Builder Drag & Drop** completo (blocchi Bambino/Adulto/Consensi/Allegati), **logica condizionale**, scoring/soglia graduatoria, "Pubblica modello", config accessi (registrati/link pubblico).
   - Wizard: **firma congiunta secondo firmatario**, "reinvia OTP".

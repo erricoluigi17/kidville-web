@@ -1,8 +1,9 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Clock, CheckCircle2, AlertTriangle, Download, FileText } from 'lucide-react';
+import { AlertTriangle, Download, Receipt } from 'lucide-react';
 import { getSupabase } from '@/lib/supabase/browser-client';
+import { raggruppaPerCategoria } from '@/lib/pagamenti/categorie';
 import { PushOptIn } from './PushOptIn';
 
 interface Pagamento {
@@ -18,7 +19,7 @@ interface Pagamento {
     fattura_pdf_path?: string | null;
     importo_totale_famiglia?: number;
     payment_categories?: { nome?: string; colore?: string; icona?: string } | null;
-    alunni?: { nome?: string; cognome?: string };
+    alunni?: { nome?: string; cognome?: string; sospeso?: boolean };
 }
 
 interface Props { userId: string }
@@ -65,11 +66,26 @@ export function StoricoPagamenti({ userId }: Props) {
         return () => { supabase.removeChannel(channel); };
     }, [userId, load]);
 
-    const daPagare = pagamenti.filter((p) => p.stato !== 'pagato');
-    const pagati = pagamenti.filter((p) => p.stato === 'pagato');
+    // Figli sospesi per morosità (DL-021): banner informativo, lettura preservata.
+    const sospesi = [...new Set(
+        pagamenti.filter((p) => p.alunni?.sospeso).map((p) => `${p.alunni?.nome ?? ''} ${p.alunni?.cognome ?? ''}`.trim())
+    )].filter(Boolean);
+
+    // Vista a categorie (DL-022): Rette / Iscrizione / Mensa / Divisa / Materiale / Altro.
+    const gruppi = raggruppaPerCategoria(pagamenti);
 
     return (
         <div className="space-y-5">
+            {sospesi.length > 0 && (
+                <div className="flex items-start gap-2 rounded-xl border-2 border-red-200 bg-red-50 px-4 py-3 text-red-700">
+                    <AlertTriangle size={18} className="shrink-0 mt-0.5" />
+                    <p className="font-maven text-sm">
+                        <span className="font-bold">Account sospeso per morosità</span> ({sospesi.join(', ')}).
+                        Le funzioni di servizio sono temporaneamente limitate: regolarizza i pagamenti o contatta la Segreteria.
+                    </p>
+                </div>
+            )}
+
             <div className="flex justify-end"><PushOptIn userId={userId} /></div>
 
             {loading ? (
@@ -79,18 +95,12 @@ export function StoricoPagamenti({ userId }: Props) {
             ) : pagamenti.length === 0 ? (
                 <p className="font-maven text-sm text-gray-400 text-center py-8">Nessun pagamento.</p>
             ) : (
-                <>
-                    {daPagare.length > 0 && (
-                        <Section title="Da pagare" icon={<Clock size={16} className="text-amber-600" />}>
-                            {daPagare.map((p) => <PagamentoCard key={p.id} p={p} userId={userId} />)}
-                        </Section>
-                    )}
-                    {pagati.length > 0 && (
-                        <Section title="Pagamenti effettuati" icon={<CheckCircle2 size={16} className="text-green-600" />}>
-                            {pagati.map((p) => <PagamentoCard key={p.id} p={p} userId={userId} />)}
-                        </Section>
-                    )}
-                </>
+                gruppi.map((g) => (
+                    <Section key={g.categoria} title={g.categoria} icon={<span className="text-base leading-none">{g.icona ?? '📁'}</span>}>
+                        {g.daPagare.map((p) => <PagamentoCard key={p.id} p={p} userId={userId} />)}
+                        {g.pagati.map((p) => <PagamentoCard key={p.id} p={p} userId={userId} />)}
+                    </Section>
+                ))
             )}
         </div>
     );
@@ -142,7 +152,12 @@ function PagamentoCard({ p, userId }: { p: Pagamento; userId: string }) {
                         <Download size={13} /> Fattura
                     </a>
                 ) : p.stato === 'pagato' ? (
-                    <span className="flex items-center gap-1 text-gray-300 text-xs font-maven"><FileText size={13} /> —</span>
+                    <a
+                        href={`/api/pagamenti/ricevuta?pagamento_id=${p.id}&userId=${userId}`}
+                        className="flex items-center gap-1 px-3 py-1 rounded-full border border-gray-200 text-gray-500 text-xs font-bold hover:border-kidville-green hover:text-kidville-green"
+                    >
+                        <Receipt size={13} /> Ricevuta
+                    </a>
                 ) : null}
             </div>
         </div>

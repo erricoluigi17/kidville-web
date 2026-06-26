@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Search, Filter, AlertTriangle, CheckCircle2, Clock, RefreshCw, Plus, Pencil, Layers } from 'lucide-react';
 import { RegistraIncassoModal, PagamentoRow } from './RegistraIncassoModal';
 import { FatturaButton } from './FatturaButton';
+import { SospensioneToggle } from './SospensioneToggle';
 import { QuickAcquistoModal } from './QuickAcquistoModal';
 import { ModificaPagamentoModal } from './ModificaPagamentoModal';
 import { RateizzaModal } from './RateizzaModal';
@@ -164,6 +165,11 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
     const mancantiRette = isRettaView ? alunniFiltrati.filter((a) => !rettaByAlunno.has(a.id)).length : 0;
 
     const fattureScartate = pagamenti.filter((p) => p.fattura_stato === 'scartata').length;
+    // Mappa alunno → sospeso (DL-021), derivata dal payload pagamenti.
+    const sospesoByAlunno = new Map<string, boolean>();
+    for (const p of pagamenti) {
+        if (p.alunno_id) sospesoByAlunno.set(p.alunno_id, !!(p as { alunni?: { sospeso?: boolean } }).alunni?.sospeso);
+    }
 
     return (
         <div>
@@ -262,7 +268,12 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                 const isMoroso = p?.stato === 'scaduto';
                                 return (
                                     <tr key={a.id} className={`border-t border-gray-100 font-maven text-sm ${isMoroso ? 'bg-red-50/50' : ''}`}>
-                                        <td className="py-2 px-2 text-kidville-green font-semibold">{a.nome} {a.cognome}</td>
+                                        <td className="py-2 px-2 text-kidville-green font-semibold">
+                                            {a.nome} {a.cognome}
+                                            {sospesoByAlunno.get(a.id) && (
+                                                <span className="ml-1 inline-block px-1.5 py-0.5 rounded-full bg-red-100 text-red-600 text-[10px] font-bold align-middle">sospeso</span>
+                                            )}
+                                        </td>
                                         <td className="py-2 px-2 text-gray-500">{a.classe_sezione || '—'}</td>
                                         <td className="py-2 px-2 text-right text-kidville-green">{p ? `€ ${Number(p.importo).toFixed(2)}` : '—'}</td>
                                         <td className="py-2 px-2 text-right text-gray-500">{p ? `€ ${Number(p.importo_pagato).toFixed(2)}` : '—'}</td>
@@ -283,6 +294,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                                     <button onClick={() => setEditing(p)} title="Modifica"
                                                         className="text-gray-400 hover:text-kidville-green"><Pencil size={15} /></button>
                                                 )}
+                                                <SospensioneToggle alunnoId={a.id} userId={userId} sospeso={!!sospesoByAlunno.get(a.id)} onChange={load} />
                                             </div>
                                         </td>
                                     </tr>

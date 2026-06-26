@@ -177,6 +177,7 @@ Riuso di `RegistriClassePanel` (deep-link `/teacher/primaria/[sectionId]/[seg]?u
 | **P2 — Panic Alert push (DL-016)** | sessione | plesso alunno | — | ✅ Fatto: notifica simultanea Segreteria/Direzione + genitori (push P1, best-effort). Blocco-uscita UI/banner/clear = sequenziati |
 | **P2 — AES Fascicolo (DL-011) / Export MIUR (DL-012) / Account sospeso (DL-013)** | — | — | — | 🔶 Decisi: AES = at-rest gestita (no app-crypto); Export = XLSX+PDF (impl. sequenziata); sospensione rinviata a P3 |
 | **P3 — Fatturazione Elettronica Aruba/SDI (DL-017..020)** | `requireStaff` (emissione) / `x-cron-secret` (sync) | pagamento → scuola; genitore via `legame_genitori_alunni` (download PDF) | `fatture_emesse` (XML + stato SDI + numerazione) | ✅ Fatto (P3.1): client REST reale, XML FatturaPA (B2C/N4/no-bollo), numerazione interna, scarti polling + notifica Segreteria + copia cortesia PDF. Migrazione `20260741`. **Verifica live SDI gated su credenziali Aruba del committente** |
+| **P3 — Pagamenti residui: sospensione moroso + vista categorie + ricevuta (DL-021..023)** | `requireStaff(['admin','coordinator'])` (sospensione) / guard `assertGenitoreNonSospeso` (azioni) | `assertAlunnoInScope`; genitore via `legame_genitori_alunni` | `logScrittura` (sospensione) | ✅ Fatto (P3.2): flag soft per-alunno (`alunni.sospeso`, migr. `20260742`) + banner/badge + enforcement su firme moduli; vista genitore a categorie; ricevuta PDF non fiscale. Login/letture preservati |
 
 ### 6.1 Nota — moduli 0-6 / tasks / avvisi: cablaggio auth COMPLETATO
 Prerequisito **risolto**: le UI docente di diary, armadietto, tasks e avvisi sono state
@@ -821,11 +822,11 @@ La Segreteria dispone di un tool per generare qualsiasi tipologia di pagamento (
 
 ### 3.2 Cruscotto Insoluti
 • Dashboard Morosità: La Direzione ha una visuale completa sui pagamenti in sospeso. Gli utenti insoluti e i pagamenti scaduti sono evidenziati cromaticamente in rosso.
-• Sospensione Manuale: Il blocco dell'account per grave morosità (es. inibizione delle funzioni app) non è automatico, ma richiede un'azione manuale e consapevole da parte della Direzione.
+• Sospensione Manuale: Il blocco dell'account per grave morosità (es. inibizione delle funzioni app) non è automatico, ma richiede un'azione manuale e consapevole da parte della Direzione. **✅ (P3.2, DL-021)** flag soft per-alunno (`alunni.sospeso`), set dalla Direzione (`POST /api/admin/pagamenti/sospensione` + audit); il genitore legge ma le azioni di servizio (firme moduli) sono inibite; banner genitore + badge admin. *(Login e info di sicurezza sul minore preservati.)*
 
 ## 4. Esperienza Utente Genitore e Reminder
 ### 4.1 Visualizzazione a Categorie
-• L'interfaccia genitore categorizza i pagamenti per tipologia (es. "Rette", "Quote di iscrizione", "Mensa", "Gite").
+• L'interfaccia genitore categorizza i pagamenti per tipologia (es. "Rette", "Quote di iscrizione", "Mensa", "Gite"). **✅ (P3.2, DL-022)** vista raggruppata per `payment_categories` (`raggruppaPerCategoria`), storico saldati + pendenze per categoria. Ricevuta PDF non fiscale scaricabile sul saldato **✅ (DL-023)**.
 • Ogni categoria mostra chiaramente lo storico dei pagamenti saldati e le pendenze future.
 • Voci Facoltative: Per i pagamenti non obbligatori, il genitore può semplicemente ignorarli; resteranno visibili nell'elenco fino alla data di naturale scadenza.
 
@@ -3152,3 +3153,18 @@ _Modulo PRD: Trasversale (Auth/Accessibilità)_
 - **Contesto:** Aruba elabora in modo **asincrono** (entro 24h); lo stato SDI (scarto/consegna) arriva dopo l'upload. Requisito PRD §5: intercettare gli **scarti SDI** con motivo + alert Segreteria; copia di cortesia PDF per il genitore.
 - **Decisione:** endpoint **service-to-service** `POST /api/pagamenti/fattura/sync` (gate `x-cron-secret`, pattern `push/dispatch`) schedulato via **pg_cron** (`fatture-sdi-sync`, ogni 30′, `pg_net` con GUC `app.fattura_sync_url`/`app.cron_secret`). Per ogni fattura non terminale interroga Aruba e mappa gli stati 1..10 sullo stato interno (`src/lib/aruba/stato.ts`): validi-SDI (6/7/8/10) → **emessa**; scarti (2 errore, 4 NS, 9 rifiuto) → **scartata**; in volo (1/3/5) → **in_attesa**. Su scarto **accoda notifica realtime** allo staff del plesso (`enqueueNotifiche` P1, tipo `fattura_scartata`) + **banner** su `/admin/pagamenti`. Su stato valido recupera il **PDF di cortesia** (`includePdf`) e lo salva nel bucket privato `fatture` (servito al genitore da `GET /api/pagamenti/fattura` con fallback all'anteprima). Stato pagamento UI: `in_attesa` → "In attesa SDI", `emessa` → download.
 - **Impatto PRD:** §Fatturazione Elettronica §5 + §6 Stato. **Alternative scartate:** webhook Aruba (più complesso da accreditare; polling riusa l'infra cron esistente); attesa sincrona (Aruba è asincrona entro 24h).
+
+### 2026-06-26 — DL-021 — [Fase P3] Sospensione account moroso = soft per-alunno (no login block)
+- **Contesto:** la "sospensione manuale account moroso" (PRD §Pagamenti §3.2: "inibizione delle funzioni app", azione consapevole della **Direzione**) e la "persistenza visiva con account sospeso" (DL-013) richiedevano un meccanismo inesistente.
+- **Decisione:** flag **per-alunno** su `alunni` (`sospeso` + `sospeso_motivo`/`sospeso_il`/`sospeso_da`, migr. `20260742`), impostato solo dalla **Direzione** (`POST /api/admin/pagamenti/sospensione`, `requireStaff(['admin','coordinator'])` + scope tenant + audit `logScrittura`). La sospensione è **soft**: il genitore **accede e legge** (presenze/diario/comunicazioni/pagamenti restano visibili — sicurezza del minore preservata), vede un **banner** "account sospeso per morosità" (`StoricoPagamenti`) + badge admin (`PaymentsDashboard`); le **azioni di servizio** sono inibite tramite guard riusabili `src/lib/pagamenti/sospensione.ts` (`assertAlunnoNonSospeso`/`assertGenitoreNonSospeso`). *Enforcement applicato:* nuove **firme/compilazioni moduli** (`POST /api/forms/send-otp` → 403). **Giustifiche/comunicazioni/diario NON bloccati** (child-safety): raffinamento dichiarato di "inibizione funzioni app"; il guard è pronto per estendere ad altre azioni commerciali.
+- **Impatto PRD:** §Pagamenti §3.2/§4, §Primaria Valutazione (chiude il rinvio DL-013), §6 Stato. **Alternative scartate:** blocco di login (blocca info di sicurezza sul minore); flag per-genitore (la morosità è per-alunno; il guard genitore deriva comunque dai figli).
+
+### 2026-06-26 — DL-022 — [Fase P3] Vista genitore pagamenti raggruppata per categoria
+- **Contesto:** PRD §4.1 chiede la categorizzazione (Rette/Iscrizione/Mensa/Divisa/Materiale); la UI mostrava un elenco piatto Da pagare / Pagati.
+- **Decisione:** raggruppamento per `payment_categories` con helper **puro** `raggruppaPerCategoria` (`src/lib/pagamenti/categorie.ts`, golden-tested): un gruppo per categoria (icona/colore), "Altro" in coda, split da-pagare/pagati interno. `StoricoPagamenti` consuma il payload `/api/pagamenti` (già con `payment_categories`).
+- **Impatto PRD:** §Pagamenti §4.1 + §6 Stato. **Alternative scartate:** tab per categoria (più click; le sezioni in colonna sono più leggibili su mobile).
+
+### 2026-06-26 — DL-023 — [Fase P3] Ricevuta locale non fiscale, distinta dalla fattura elettronica
+- **Contesto:** PRD §3.1 cita "Invia Fattura/Ricevuta"; serviva una ricevuta scaricabile anche quando non si emette la fattura elettronica Aruba.
+- **Decisione:** `GET /api/pagamenti/ricevuta?pagamento_id=` genera una **ricevuta PDF non fiscale** (jsPDF) per qualunque pagamento **saldato**, con scoping staff/genitore; indipendente da Aruba e dallo stato `fattura_stato`. UI: pulsante "Ricevuta" sul pagamento saldato (`StoricoPagamenti`), affiancato al "Fattura" (quando emessa).
+- **Impatto PRD:** §Pagamenti §3.1/§4 + §6 Stato. **Alternative scartate:** riusare il PDF Aruba (è il documento fiscale, non sempre disponibile/voluto).

@@ -7,6 +7,7 @@ import { getUserEmail } from '@/lib/auth/otp-ticket'
 import { buildSignatureLog, extractRequestMeta } from '@/lib/fea/signature-log'
 import { recordSignerSlot } from '@/lib/fea/slots'
 import { logFeaEvent } from '@/lib/fea/audit'
+import { assertGenitoreNonSospeso } from '@/lib/pagamenti/sospensione'
 import type { FormSubmissionData } from '@/types/database.types'
 
 // Hash deterministico: lega il codice alla submission (sale anti-rainbow-table)
@@ -50,6 +51,13 @@ export async function POST(request: Request) {
     }
 
     const supabase = await createAdminClient()
+
+    // Sospensione moroso (DL-021): un genitore con un figlio sospeso non può
+    // avviare nuove firme/compilazioni di moduli (azione di servizio inibita).
+    if (userId) {
+      const sospesoErr = await assertGenitoreNonSospeso(supabase, userId)
+      if (sospesoErr) return sospesoErr
+    }
 
     // 1. Crea la submission in stato pending_signature
     const { data: submission, error: insertErr } = await supabase

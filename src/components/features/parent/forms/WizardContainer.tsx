@@ -9,7 +9,6 @@ import {
 } from 'lucide-react'
 import { StepRenderer } from './StepRenderer'
 import { OtpSignatureModal } from './OtpSignatureModal'
-import { getSupabase } from '@/lib/supabase/browser-client'
 import { campoVisibile, pulisciNascosti, type FormValues } from '@/lib/forms/conditional'
 import type { FormSchemaConfig, FormSubmissionData } from '@/types/database.types'
 
@@ -99,15 +98,16 @@ export function WizardContainer({
         if (!res.ok) throw new Error(json.error ?? 'Invio OTP fallito')
         setOtp({ submissionId: json.submissionId, devCode: json.devCode })
       } else {
-        // Nessuna firma: salva direttamente come completed
-        const supabase = getSupabase()
-        const { error } = await supabase.from('form_submissions').insert({
-          model_id: modelId,
-          user_id: userId,
-          data,
-          status: 'completed',
+        // Nessuna firma: salva via endpoint server-role (l'insert client-side è
+        // bloccato dalla RLS di form_submissions; il server registra anche lo
+        // snapshot consensi — DL-029).
+        const res = await fetch('/api/forms/submit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ modelId, userId, data }),
         })
-        if (error) throw error
+        const json = await res.json()
+        if (!res.ok) throw new Error(json.error ?? 'Invio fallito')
         setDone(true)
       }
     } catch (err) {

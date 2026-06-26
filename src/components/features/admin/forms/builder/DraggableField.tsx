@@ -6,7 +6,7 @@ import { motion } from 'framer-motion'
 import {
   GripVertical, Trash2, Type, AlignLeft, ChevronDown,
   Paperclip, PenLine, Hash, CheckSquare, Calendar, Mail, Phone,
-  Heading, AlignCenter, FileSignature,
+  Heading, AlignCenter, FileSignature, ShieldCheck,
 } from 'lucide-react'
 import type { FormField, FormFieldType } from '@/types/database.types'
 
@@ -21,6 +21,7 @@ const FIELD_ICONS: Record<FormFieldType, React.ComponentType<{ className?: strin
   radio: CheckSquare,
   checkbox: CheckSquare,
   file: Paperclip,
+  consent: ShieldCheck,
   signature: PenLine,
   section_header: Heading,
   paragraph: AlignCenter,
@@ -37,6 +38,7 @@ const FIELD_LABELS: Record<FormFieldType, string> = {
   radio: 'Scelta Singola',
   checkbox: 'Scelta Multipla',
   file: 'Allegato File',
+  consent: 'Consensi/Privacy',
   signature: 'Firma',
   section_header: 'Intestazione',
   paragraph: 'Paragrafo',

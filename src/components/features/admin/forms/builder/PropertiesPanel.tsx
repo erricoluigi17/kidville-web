@@ -139,7 +139,7 @@ export function PropertiesPanel({ field, onChange, campiDisponibili = [] }: Prop
             </section>
 
             {/* Scoring */}
-            {!HAS_OPTIONS.has(field.type) && (
+            {!HAS_OPTIONS.has(field.type) && field.type !== 'consent' && (
               <section className="space-y-1.5">
                 <div className="flex items-center gap-1.5">
                   <Star className="w-3.5 h-3.5 text-amber-400" />
@@ -207,6 +207,78 @@ export function PropertiesPanel({ field, onChange, campiDisponibili = [] }: Prop
                 <p className="text-[10px] text-slate-700 leading-relaxed">
                   Il numero in arancio è il punteggio assegnato se l&apos;utente sceglie quella voce.
                 </p>
+              </section>
+            )}
+
+            {/* Blocco Consensi (DL-029): testo + link informativa */}
+            {field.type === 'consent' && (
+              <section className="space-y-3">
+                <div className="space-y-1.5">
+                  <label className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                    Testo del consenso
+                  </label>
+                  <textarea
+                    rows={3}
+                    value={field.text ?? ''}
+                    onChange={e => patch({ text: e.target.value })}
+                    placeholder="Es: Acconsento al trattamento dei dati…"
+                    className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500/60 transition-all resize-none"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                    Link informativa (URL)
+                  </label>
+                  <input
+                    value={field.link ?? ''}
+                    onChange={e => patch({ link: e.target.value })}
+                    placeholder="https://…/informativa-privacy"
+                    className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500/60 transition-all"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                    Etichetta del link
+                  </label>
+                  <input
+                    value={field.link_label ?? ''}
+                    onChange={e => patch({ link_label: e.target.value })}
+                    placeholder="Leggi l’informativa"
+                    className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500/60 transition-all"
+                  />
+                </div>
+              </section>
+            )}
+
+            {/* Blocco Allegati (DL-029): tipi ammessi + dimensione max */}
+            {field.type === 'file' && (
+              <section className="space-y-3">
+                <div className="space-y-1.5">
+                  <label className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                    Tipi di file ammessi
+                  </label>
+                  <input
+                    value={field.accept ?? ''}
+                    onChange={e => patch({ accept: e.target.value })}
+                    placeholder=".pdf,.jpg,.png"
+                    className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500/60 transition-all"
+                  />
+                  <p className="text-[10px] text-slate-700">Estensioni separate da virgola. Vuoto = PDF e immagini.</p>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                    Dimensione massima (MB)
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={8}
+                    value={field.max_size_mb ?? ''}
+                    onChange={e => patch({ max_size_mb: e.target.value ? Number(e.target.value) : undefined })}
+                    placeholder="8"
+                    className="w-24 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white focus:outline-none focus:border-indigo-500/60 transition-all text-right tabular-nums"
+                  />
+                </div>
               </section>
             )}
 

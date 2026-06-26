@@ -34,6 +34,7 @@ export function StepRenderer({ page, modelId, register, control, errors }: Props
           register={register}
           control={control}
           error={errors[field.id]}
+          uploadEndpoint="/api/forms/upload"
         />
       ))}
     </div>

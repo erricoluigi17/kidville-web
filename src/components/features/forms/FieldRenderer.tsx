@@ -59,6 +59,58 @@ export function FieldRenderer({
     )
   }
 
+  // Blocco Consensi/Privacy (DL-029): una singola checkbox da accettare; se
+  // obbligatorio il wizard blocca finché non è spuntata. L'accettazione viene
+  // archiviata con snapshot del testo + timestamp lato server (consents_log).
+  if (field.type === 'consent') {
+    return (
+      <Controller
+        name={field.id}
+        control={control}
+        defaultValue={false}
+        rules={field.required ? { validate: (v) => v === true || 'Devi accettare per proseguire' } : undefined}
+        render={({ field: rhf }) => (
+          <div className="space-y-1.5">
+            <label className="flex items-start gap-3 px-4 py-3 rounded-xl bg-kidville-cream border border-kidville-green/15 cursor-pointer hover:border-kidville-green/30 transition-all">
+              <input
+                type="checkbox"
+                checked={rhf.value === true}
+                onChange={e => rhf.onChange(e.target.checked)}
+                className="accent-kidville-green mt-0.5 flex-shrink-0"
+              />
+              <span className="text-sm text-kidville-green/90">
+                <span className="font-medium">
+                  {field.label}
+                  {field.required && <span className="text-kidville-green"> *</span>}
+                </span>
+                {field.text && (
+                  <span className="block text-kidville-green/70 mt-1 leading-relaxed">{field.text}</span>
+                )}
+                {field.link && (
+                  <a
+                    href={field.link}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={e => e.stopPropagation()}
+                    className="inline-block mt-1 text-xs text-kidville-green underline"
+                  >
+                    {field.link_label || 'Leggi l’informativa'}
+                  </a>
+                )}
+              </span>
+            </label>
+            {errMsg && (
+              <p className="flex items-center gap-1.5 text-xs text-kidville-error">
+                <AlertCircle className="w-3.5 h-3.5" />
+                {errMsg}
+              </p>
+            )}
+          </div>
+        )}
+      />
+    )
+  }
+
   return (
     <div className="space-y-2">
       <label className="flex items-center gap-1.5 text-sm font-medium text-kidville-green/80">
@@ -162,7 +214,14 @@ export function FieldRenderer({
           rules={rules}
           defaultValue=""
           render={({ field: rhf }) => (
-            <FileField modelId={modelId} value={rhf.value} onChange={rhf.onChange} uploadEndpoint={uploadEndpoint} />
+            <FileField
+              modelId={modelId}
+              value={rhf.value}
+              onChange={rhf.onChange}
+              uploadEndpoint={uploadEndpoint}
+              accept={field.accept}
+              maxSizeMb={field.max_size_mb}
+            />
           )}
         />
       )}
@@ -183,11 +242,17 @@ export function FileField({
   value,
   onChange,
   uploadEndpoint,
+  accept,
+  maxSizeMb,
 }: {
   modelId: string
   value: string
   onChange: (path: string) => void
   uploadEndpoint?: string
+  /** Estensioni/MIME ammessi (default PDF + immagini). */
+  accept?: string
+  /** Dimensione massima in MB comunicata al server per la validazione. */
+  maxSizeMb?: number
 }) {
   const [uploading, setUploading] = useState(false)
   const [fileName, setFileName] = useState('')
@@ -207,6 +272,7 @@ export function FileField({
         const fd = new FormData()
         fd.append('file', file)
         fd.append('folder', modelId)
+        if (maxSizeMb) fd.append('max_size_mb', String(maxSizeMb))
         const res = await fetch(uploadEndpoint, { method: 'POST', body: fd })
         const json = await res.json()
         if (!res.ok) throw new Error(json.error ?? 'Upload fallito')
@@ -256,7 +322,7 @@ export function FileField({
         </span>
         <input
           type="file"
-          accept=".pdf,.jpg,.jpeg,.png"
+          accept={accept || '.pdf,.jpg,.jpeg,.png'}
           className="hidden"
           disabled={uploading}
           onChange={handleFile}

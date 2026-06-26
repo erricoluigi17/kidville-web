@@ -1,8 +1,11 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
+import { requireStaff } from '@/lib/auth/require-staff'
 
 // POST: crea un nuovo modello form (bypassa RLS via service-role)
-export async function POST(request: NextRequest) {
+export async function POST(request: Request) {
+  const auth = await requireStaff(request)
+  if (auth.response) return auth.response
   try {
     const body = await request.json()
     const { title, schema, is_active, requires_signature, description } = body
@@ -29,13 +32,18 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.json(data, { status: 201 })
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message || 'Errore interno' }, { status: 500 })
+  } catch (err) {
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : 'Errore interno' },
+      { status: 500 }
+    )
   }
 }
 
 // PATCH: aggiorna un modello form esistente
-export async function PATCH(request: NextRequest) {
+export async function PATCH(request: Request) {
+  const auth = await requireStaff(request)
+  if (auth.response) return auth.response
   try {
     const body = await request.json()
     const { id, ...updates } = body
@@ -57,7 +65,10 @@ export async function PATCH(request: NextRequest) {
     }
 
     return NextResponse.json(data)
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message || 'Errore interno' }, { status: 500 })
+  } catch (err) {
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : 'Errore interno' },
+      { status: 500 }
+    )
   }
 }

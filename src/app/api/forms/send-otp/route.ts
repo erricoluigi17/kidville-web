@@ -8,7 +8,8 @@ import { buildSignatureLog, extractRequestMeta } from '@/lib/fea/signature-log'
 import { recordSignerSlot } from '@/lib/fea/slots'
 import { logFeaEvent } from '@/lib/fea/audit'
 import { assertGenitoreNonSospeso } from '@/lib/pagamenti/sospensione'
-import type { FormSubmissionData } from '@/types/database.types'
+import { estraiConsensi, consensiObbligatoriMancanti } from '@/lib/forms/consensi'
+import type { FormSchemaConfig, FormSubmissionData } from '@/types/database.types'
 
 // Hash deterministico: lega il codice alla submission (sale anti-rainbow-table)
 function hashOtp(submissionId: string, code: string): string {
@@ -59,6 +60,23 @@ export async function POST(request: Request) {
       if (sospesoErr) return sospesoErr
     }
 
+    // Snapshot consensi (DL-029): carica lo schema, valida i consensi obbligatori
+    // e archivia l'evidenza legale insieme alla submission.
+    const { data: model } = await supabase
+      .from('form_models')
+      .select('schema')
+      .eq('id', modelId)
+      .maybeSingle()
+    const pages = ((model?.schema as FormSchemaConfig | undefined)?.pages) ?? []
+    const mancanti = consensiObbligatoriMancanti(pages, data as Record<string, unknown>)
+    if (mancanti.length > 0) {
+      return NextResponse.json(
+        { error: 'Consensi obbligatori non accettati', missing: mancanti },
+        { status: 400 }
+      )
+    }
+    const consents_log = estraiConsensi(pages, data as Record<string, unknown>, new Date().toISOString())
+
     // 1. Crea la submission in stato pending_signature
     const { data: submission, error: insertErr } = await supabase
       .from('form_submissions')
@@ -67,6 +85,7 @@ export async function POST(request: Request) {
         user_id: userId ?? null,
         data,
         status: 'pending_signature',
+        consents_log: consents_log.length > 0 ? consents_log : null,
       })
       .select('id')
       .single()

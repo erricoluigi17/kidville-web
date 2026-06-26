@@ -15,7 +15,7 @@ import { arrayMove } from '@dnd-kit/sortable'
 import {
   Save, ChevronLeft, Loader2, Check, AlertCircle, GripVertical,
   Type, AlignLeft, ChevronDown, Paperclip, PenLine, Hash,
-  Database, Baby, Heart, User, UserCheck,
+  Database, Baby, Heart, User, UserCheck, ShieldCheck,
 } from 'lucide-react'
 import { motion } from 'framer-motion'
 import Link from 'next/link'
@@ -31,11 +31,12 @@ const PALETTE_ITEMS = [
   { type: 'select' as FormFieldType, label: 'Menu a Tendina', Icon: ChevronDown },
   { type: 'number' as FormFieldType, label: 'Numero', Icon: Hash },
   { type: 'file' as FormFieldType, label: 'Allegato File', Icon: Paperclip },
+  { type: 'consent' as FormFieldType, label: 'Consensi/Privacy', Icon: ShieldCheck },
   { type: 'signature' as FormFieldType, label: 'Firma', Icon: PenLine },
 ] as const
 
 function makeField(type: FormFieldType, label: string): FormField {
-  return {
+  const base: FormField = {
     id: crypto.randomUUID(),
     type,
     label,
@@ -45,6 +46,16 @@ function makeField(type: FormFieldType, label: string): FormField {
       ? [{ label: 'Opzione 1', value: 'opt1' }]
       : undefined,
   }
+  // Il blocco Consensi nasce obbligatorio con un testo di default editabile.
+  if (type === 'consent') {
+    return {
+      ...base,
+      label: 'Consenso al trattamento dei dati',
+      required: true,
+      text: 'Dichiaro di aver letto l’informativa e acconsento al trattamento dei dati.',
+    }
+  }
+  return base
 }
 
 // ── Palette item (draggable) ─────────────────────────────────

@@ -176,6 +176,7 @@ Riuso di `RegistriClassePanel` (deep-link `/teacher/primaria/[sectionId]/[seg]?u
 | **P2 — Finalità accesso Fascicolo (DL-011)** | `puoAccedereFascicolo` | alunno | `fascicolo_accessi_audit.finalita` | ✅ Fatto: `finalita` cablata in list/download/upload + campo UI |
 | **P2 — Panic Alert push (DL-016)** | sessione | plesso alunno | — | ✅ Fatto: notifica simultanea Segreteria/Direzione + genitori (push P1, best-effort). Blocco-uscita UI/banner/clear = sequenziati |
 | **P2 — AES Fascicolo (DL-011) / Export MIUR (DL-012) / Account sospeso (DL-013)** | — | — | — | 🔶 Decisi: AES = at-rest gestita (no app-crypto); Export = XLSX+PDF (impl. sequenziata); sospensione rinviata a P3 |
+| **P3 — Fatturazione Elettronica Aruba/SDI (DL-017..020)** | `requireStaff` (emissione) / `x-cron-secret` (sync) | pagamento → scuola; genitore via `legame_genitori_alunni` (download PDF) | `fatture_emesse` (XML + stato SDI + numerazione) | ✅ Fatto (P3.1): client REST reale, XML FatturaPA (B2C/N4/no-bollo), numerazione interna, scarti polling + notifica Segreteria + copia cortesia PDF. Migrazione `20260741`. **Verifica live SDI gated su credenziali Aruba del committente** |
 
 ### 6.1 Nota — moduli 0-6 / tasks / avvisi: cablaggio auth COMPLETATO
 Prerequisito **risolto**: le UI docente di diary, armadietto, tasks e avvisi sono state
@@ -841,6 +842,13 @@ La Segreteria dispone di un tool per generare qualsiasi tipologia di pagamento (
 
 # PRD - Kidville App: Modulo Fatturazione Elettronica (Integrazione Aruba)
 
+> **✅ Implementato (P3.1, 2026-06-26 — DL-017/018/019/020):** integrazione **reale** Aruba REST (no mock).
+> Generatore XML FatturaPA in-house (B2C/FPR12, TD01, IVA 0% Natura N4, no bollo, IdTrasmittente Aruba PEC),
+> client REST `signin/upload/getByFilename`, numerazione interna per scuola/anno, state machine stati SDI,
+> monitoraggio scarti via cron `fatture-sdi-sync` con notifica realtime Segreteria + banner, copia di cortesia
+> PDF al genitore. Credenziali mai esposte (env/vault). **La verifica live end-to-end con lo SDI è subordinata
+> alle credenziali Aruba DEMO/PROD del committente** (codice pronto, attivazione con flag + credenziali).
+
 ## 1. Obiettivo del Modulo
 Il modulo di Fatturazione Elettronica estende le capacità finanziarie del sistema interfacciandosi
 nativamente con l'ecosistema Aruba. L'obiettivo è generare vere e proprie fatture elettroniche (in
@@ -908,9 +916,9 @@ garantisce che la piattaforma sia scalabile e totalmente personalizzabile per og
 • Accesso al motore di creazione template (Form Builder). Da qui la Segreteria genera i modelli per uscite didattiche e consensi privacy, impostando i campi dinamici richiesti ai genitori.
 
 ### 5.3 Fatturazione Elettronica (Integrazione Aruba)
-• Credenziali API: Sezione sicura per l'inserimento e l'aggiornamento delle chiavi API di Aruba.
-• Dati Scuola: Inserimento dei dati di fatturazione dell'istituto (Partita IVA, Codice Fiscale, PEC) necessari per la corretta generazione del tracciato XML.
-• Regime IVA: Pannello per mappare le causali di default (es. Retta = Esente IVA Art. 10).
+• Credenziali API: Sezione sicura per l'inserimento e l'aggiornamento delle chiavi API di Aruba. **✅ (P3.1)** username in `admin_settings.aruba_config`; la **password non è mai salvata in chiaro** — si memorizza solo un riferimento (`password_ref`) risolto lato server da env/vault. Ambiente DEMO/PROD selezionabile.
+• Dati Scuola: Inserimento dei dati di fatturazione dell'istituto (Partita IVA, Codice Fiscale, PEC, sede strutturata indirizzo/CAP/comune/provincia) necessari per la corretta generazione del tracciato XML. **✅ (P3.1)** consumati dal `CedentePrestatore`.
+• Regime IVA: Pannello per mappare le causali di default (es. Retta = Esente IVA Art. 10). **✅ (P3.1)** campo `RegimeFiscale` (default RF01) nei dati fiscali; le fatture applicano comunque IVA 0%/Natura N4 fissa (DL-018).
 
 ---
 
@@ -3123,3 +3131,24 @@ _Modulo PRD: Trasversale (Auth/Accessibilità)_
 - **Decisione:** dopo il salvataggio, **notifica best-effort** via servizio push P1: a tutto lo **staff del plesso** dell'alunno con ruolo `segreteria`/`admin`/`coordinator` (`enqueueNotifiche`, `bufferMin:0`) **e** ai **genitori** dell'alunno (`enqueueNotifichePerAlunni`, `bufferMin:0`). Un errore di notifica **non invalida** il Panic Alert salvato. *(Il blocco-uscita UI + banner genitore + clear-con-audit restano slice sequenziati.)*
 - **Impatto PRD:** §Presenze (Panic Alert) + §6 Stato.
 - **Alternative scartate:** notifica solo Segreteria (il genitore deve essere allertato); risoluzione genitori via `student_parents` (incoerente con il resto delle notifiche primaria, che usano `legame_genitori_alunni` — allineamento rinviato a P0/rollout).
+
+### 2026-06-26 — DL-017 — [Fase P3] Fatturazione Elettronica = integrazione REALE Aruba (REST), niente mock
+- **Contesto:** il modulo Fatturazione (Aruba/SDI) era **1/11** — `src/lib/aruba/client.ts` era uno **stub** che restituiva sempre un esito `MOCK-…` "emessa", senza alcuna chiamata di rete. La P3.1 (slice "Aruba a sé") chiude la lacuna più compliance-critica.
+- **Decisione:** sostituire lo stub con un **client REST reale** verso le API Aruba "Fatturazione Elettronica" (Bearer token: `POST /auth/signin` grant_type=password → access/refresh; `POST /services/invoice/upload` con `dataFile` base64; `GET /services/invoice/out/getByFilename` per stato/PDF). Credenziali **mai esposte al client**: username dal config, password risolta lato server da `process.env` via `password_ref` (env/vault). Ambiente DEMO/PROD da `aruba_config.ambiente`. Se Aruba non è configurato/credenziali assenti l'emissione ritorna **503 esplicito** (non più "successo finto"). Tutto il core è **TDD** mockando il boundary HTTP; la verifica live end-to-end con lo SDI resta **gated** sulle credenziali Aruba (DEMO per i test, PROD per l'esercizio) del committente — dipendenza esterna documentata (come SIDI in P5).
+- **Impatto PRD:** §Fatturazione Elettronica (Aruba) §2/§5 + §Impostazioni §5.3 + §6 Stato. File: `src/lib/aruba/{client,fatturapa-xml,stato,emissione}.ts`, `src/app/api/pagamenti/fattura/{route,sync/route}.ts`, migrazione `20260741_aruba_fatturazione.sql`.
+- **Alternative scartate:** mantenere il mock (non chiude i gap); integrazione reale "a scatola chiusa" senza confine testabile (non verificabile né TDD).
+
+### 2026-06-26 — DL-018 — [Fase P3] Profilo fiscale FatturaPA = B2C privati (FPR12, IVA 0% Natura N4, no bollo)
+- **Contesto:** gli intestatari fattura sono **persone fisiche** (genitori), non titolari di P.IVA/SDI; servizi scolastici esenti.
+- **Decisione:** tracciato `FatturaElettronicaPrivati` **FPR12**, `TipoDocumento` **TD01**, `CodiceDestinatario` **0000000** (recapito via SDI nel cassetto fiscale, nessuna PEC per il privato). Regole fisse: **IVA 0% / Natura N4** "esente art. 10 DPR 633/1972", **nessuna marca da bollo**. `IdTrasmittente` = **Aruba PEC `01879020517`** (obbligatorio sul canale API, altrimenti errore 0094). `CedentePrestatore` dai dati fiscali scuola (`aruba_config.fiscal` + `RegimeFiscale`), `CessionarioCommittente` dall'intestatario (`alunni.intestatario_fatture.adult_id` → `parents`: CF, nome/cognome, residenza). Generatore XML in-house (`src/lib/aruba/fatturapa-xml.ts`), golden-file testato.
+- **Impatto PRD:** §Fatturazione Elettronica §3/§4. **Alternative scartate:** FatturaPA PA (FPA12, ente pubblico — qui il cedente è privato); applicare IVA/bollo (contrario al regime esente scolastico).
+
+### 2026-06-26 — DL-019 — [Fase P3] Numerazione interna per (scuola, anno fiscale)
+- **Contesto:** il PRD §4 cita "numerazione delegata ad Aruba"; via **API `upload`** però il `<Numero>` deve già essere nell'XML (l'auto-numerazione è solo del pannello web Aruba).
+- **Decisione:** Kidville genera una **sequenza monotòna per (scuola, anno)** persistita in `fatture_numerazione` via funzione `prossimo_numero_fattura()` (upsert con lock riga, `SECURITY DEFINER`, EXECUTE revocato ad anon/authenticated → solo `service_role`); il numero è scritto in `fatture_emesse.numero` e nell'XML. Lo **SDI assegna l'IdentificativoSDI** lato Aruba (memorizzato come `aruba_filename`/`fattura_aruba_id`). **Riconcilia** (e supera per il canale API) la dicitura PRD "delegata ad Aruba".
+- **Impatto PRD:** §Fatturazione Elettronica §4 (annotato). **Alternative scartate:** lasciare la numerazione ad Aruba via API (non supportato dall'endpoint upload).
+
+### 2026-06-26 — DL-020 — [Fase P3] Scarti SDI via polling cron + notifica realtime Segreteria + copia cortesia PDF
+- **Contesto:** Aruba elabora in modo **asincrono** (entro 24h); lo stato SDI (scarto/consegna) arriva dopo l'upload. Requisito PRD §5: intercettare gli **scarti SDI** con motivo + alert Segreteria; copia di cortesia PDF per il genitore.
+- **Decisione:** endpoint **service-to-service** `POST /api/pagamenti/fattura/sync` (gate `x-cron-secret`, pattern `push/dispatch`) schedulato via **pg_cron** (`fatture-sdi-sync`, ogni 30′, `pg_net` con GUC `app.fattura_sync_url`/`app.cron_secret`). Per ogni fattura non terminale interroga Aruba e mappa gli stati 1..10 sullo stato interno (`src/lib/aruba/stato.ts`): validi-SDI (6/7/8/10) → **emessa**; scarti (2 errore, 4 NS, 9 rifiuto) → **scartata**; in volo (1/3/5) → **in_attesa**. Su scarto **accoda notifica realtime** allo staff del plesso (`enqueueNotifiche` P1, tipo `fattura_scartata`) + **banner** su `/admin/pagamenti`. Su stato valido recupera il **PDF di cortesia** (`includePdf`) e lo salva nel bucket privato `fatture` (servito al genitore da `GET /api/pagamenti/fattura` con fallback all'anteprima). Stato pagamento UI: `in_attesa` → "In attesa SDI", `emessa` → download.
+- **Impatto PRD:** §Fatturazione Elettronica §5 + §6 Stato. **Alternative scartate:** webhook Aruba (più complesso da accreditare; polling riusa l'infra cron esistente); attesa sincrona (Aruba è asincrona entro 24h).

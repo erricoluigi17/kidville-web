@@ -4,6 +4,7 @@
 > **Stato:** 518 requisiti — **299 implementati (58%)**, **125 parziali (24%)**, **94 mancanti (18%)**.
 > Le voci marcate `✓` sono state confermate da una verifica avversariale (un secondo agente ha cercato di smentire il gap trovando il codice).
 > **Avanzamento P2 — core compliance (2026-06-26):** chiusi 5 item requisito (valutazione↔obiettivo, presa-visione note FEA, orario famiglie, finalità accesso fascicolo, Panic Alert notifica) → ~**304 implementati**; 3 decisi e parzializzati (AES at-rest, Export MIUR XLSX+PDF, account sospeso→P3). Delta incrementale del sottoinsieme, non un re-audit completo dei 36 agenti.
+> **Avanzamento P3.1 — Fatturazione Aruba/SDI (2026-06-26, DL-017..020):** chiusi ~9 item del modulo Aruba (da **1/11 → ~10/11**): XML FatturaPA reale (IVA 0%/N4/no-bollo), client REST Aruba, numerazione interna, state machine + monitoraggio scarti SDI con notifica realtime + banner Segreteria, copia cortesia PDF genitore, backend sicuro (credenziali via vault) → ~**313 implementati**. Resta solo la verifica live SDI, gated sulle credenziali Aruba del committente. Slice "Aruba a sé" della Fase P3; restano sequenziate P3.2 (Pagamenti residui: sospensione moroso DL-013, vista categorie), P3.3 (Form Builder/Modulistica), P3.4 (Super-Admin/Multi-Sede/GDPR). Delta incrementale del sottoinsieme.
 
 ---
 
@@ -45,10 +46,11 @@
   - Crittografia **AES-256** dei file → ✅ **deciso P2 (DL-011)**: cifratura at-rest gestita (Storage privato + signed URL + RBAC + audit), no app-crypto; **campo "finalità di accesso" cablato** ✅ (`fascicolo_accessi_audit.finalita`). 🔶 Resta badge "Documento sensibile" (banner "Accesso tracciato" già presente).
 
 ## P2 — Moduli amministrativi & finanziari
-- **Fatturazione Elettronica Aruba (Fase 5, 1/11 — quasi tutto da costruire)**:
-  - Generazione **XML FatturaPA** verso SDI; regime **IVA 0% Natura N4** automatico; esclusione marca da bollo; numerazione delegata ad Aruba.
-  - Backend sicuro (chiavi mai esposte al client); monitoraggio **scarti SDI** con motivo + banner Segreteria; download copia cortesia PDF lato genitore.
-  - Pannello impostazioni Aruba (credenziali vault, dati scuola P.IVA/CF/PEC, mappatura causali).
+- **Fatturazione Elettronica Aruba (Fase 5 → master plan P3.1, ~10/11)** — ✅ **FATTO (P3.1, 2026-06-26, DL-017..020)**:
+  - ✅ Generazione **XML FatturaPA** (B2C/FPR12, TD01) verso SDI; regime **IVA 0% Natura N4** automatico; esclusione marca da bollo; `IdTrasmittente` Aruba PEC; **numerazione interna** per scuola/anno (DL-019, riconcilia "delegata ad Aruba" sul canale API).
+  - ✅ Backend sicuro (chiavi mai esposte: password via env/vault `password_ref`); client REST reale (signin/upload/getByFilename); monitoraggio **scarti SDI** con motivo + **notifica realtime + banner Segreteria** (cron `fatture-sdi-sync`); **download copia cortesia PDF** lato genitore (bucket privato + fallback anteprima).
+  - ✅ Pannello impostazioni Aruba (credenziali/ambiente, dati scuola P.IVA/CF/PEC + sede, `RegimeFiscale`).
+  - 🔶 Resta (1/11): **verifica live end-to-end con lo SDI**, subordinata alle **credenziali Aruba DEMO/PROD del committente** (codice pronto, attivazione con flag + credenziali — dipendenza esterna, come SIDI in P5).
 - **Pagamenti — residui (Fase 5, 25/30)**: fattura/ricevuta manuale su saldato; vista a categorie genitore (Rette/Quote/Mensa/Gite); sospensione manuale account moroso.
 - **Modulistica & Form (Fase 4, builder 23/40 + modulistica 11/33)**:
   - **Form Builder Drag & Drop** completo (blocchi Bambino/Adulto/Consensi/Allegati), **logica condizionale**, scoring/soglia graduatoria, "Pubblica modello", config accessi (registrati/link pubblico).

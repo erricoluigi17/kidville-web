@@ -30,7 +30,7 @@ export function FatturaButton({ pagamentoId, userId, fatturaStato, descrizione, 
                 body: JSON.stringify({ pagamento_id: pagamentoId, causale: causale.trim() || undefined }),
             });
             const j = await res.json();
-            if (res.ok) { setStato('emessa'); setOpen(false); onEmessa?.(); }
+            if (res.ok) { setStato(j.data?.fattura_stato ?? 'in_attesa'); setOpen(false); onEmessa?.(); }
             else { setStato(j.data?.fattura_stato ?? 'scartata'); alert(j.error); }
         } finally { setBusy(false); }
     };
@@ -41,6 +41,14 @@ export function FatturaButton({ pagamentoId, userId, fatturaStato, descrizione, 
                 className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-kidville-green/10 text-kidville-green text-xs font-bold hover:bg-kidville-green/20">
                 <Download size={12} /> Fattura
             </a>
+        );
+    }
+
+    if (stato === 'in_attesa') {
+        return (
+            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-amber-100 text-amber-700 text-xs font-bold" title="Trasmessa allo SDI tramite Aruba, in attesa di esito">
+                <Loader2 size={12} className="animate-spin" /> In attesa SDI
+            </span>
         );
     }
 

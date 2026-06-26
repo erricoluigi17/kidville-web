@@ -163,8 +163,20 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
 
     const mancantiRette = isRettaView ? alunniFiltrati.filter((a) => !rettaByAlunno.has(a.id)).length : 0;
 
+    const fattureScartate = pagamenti.filter((p) => p.fattura_stato === 'scartata').length;
+
     return (
         <div>
+            {/* Banner scarti SDI (DL-020): fatture rifiutate da correggere e reinviare */}
+            {fattureScartate > 0 && (
+                <div className="mb-4 flex items-center gap-2 rounded-xl border-2 border-red-200 bg-red-50 px-4 py-3 text-red-700">
+                    <AlertTriangle size={18} />
+                    <span className="font-maven text-sm font-bold">
+                        {fattureScartate} fattura{fattureScartate > 1 ? 'e' : ''} scartata{fattureScartate > 1 ? 'e' : ''} dallo SDI — verifica i dati dell’intestatario e premi “Riprova fattura”.
+                    </span>
+                </div>
+            )}
+
             {/* KPI */}
             <div className="grid grid-cols-3 gap-3 mb-5">
                 <KPI icon={<CheckCircle2 size={16} />} label="Incassato" value={totals.incassato} color="text-green-600" />

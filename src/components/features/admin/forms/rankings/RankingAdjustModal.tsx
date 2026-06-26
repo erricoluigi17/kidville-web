@@ -18,7 +18,14 @@ export interface RankingRow {
   score: number
   signed_at: string | null
   manual_adjustments: ManualAdjustment[]
+  esito_ammissione?: string | null
 }
+
+const ESITI = [
+  { v: 'ammesso', label: 'Ammesso', color: 'rgba(52,211,153,0.85)' },
+  { v: 'lista_attesa', label: "Lista d'attesa", color: 'rgba(251,191,36,0.85)' },
+  { v: 'non_ammesso', label: 'Non ammesso', color: 'rgba(244,114,128,0.85)' },
+] as const
 
 interface Props {
   submission: RankingRow | null
@@ -33,8 +40,29 @@ export function RankingAdjustModal({ submission, label, onClose, onApplied }: Pr
   const [reason, setReason] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [esitoSaving, setEsitoSaving] = useState(false)
 
   const existing = submission?.manual_adjustments ?? []
+
+  // Override esito ammissione (DL-025) — forza l'esito di un singolo candidato.
+  const setEsito = async (esito: string) => {
+    if (!submission) return
+    setEsitoSaving(true)
+    setError(null)
+    const supabase = getSupabase()
+    const { data: { user } } = await supabase.auth.getUser()
+    const res = await fetch('/api/forms/delibera', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(user?.id ? { 'x-user-id': user.id } : {}) },
+      body: JSON.stringify({ submissionId: submission.id, esito }),
+    })
+    setEsitoSaving(false)
+    if (res.ok) onApplied()
+    else {
+      const j = await res.json().catch(() => ({}))
+      setError(j.error || 'Impossibile aggiornare l’esito')
+    }
+  }
 
   const reset = () => {
     setDelta(0)
@@ -166,6 +194,33 @@ export function RankingAdjustModal({ submission, label, onClose, onApplied }: Pr
                 <span className="text-emerald-400 text-lg font-bold tabular-nums">
                   {submission.score}
                 </span>
+              </div>
+
+              {/* Esito ammissione (override DL-025) */}
+              <div className="px-6 py-3" style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                <label className="block text-[11px] font-bold text-slate-600 uppercase tracking-widest mb-2">
+                  Esito ammissione
+                </label>
+                <div className="flex gap-2">
+                  {ESITI.map(e => {
+                    const active = submission.esito_ammissione === e.v
+                    return (
+                      <button
+                        key={e.v}
+                        onClick={() => setEsito(e.v)}
+                        disabled={esitoSaving}
+                        className="flex-1 px-2 py-1.5 rounded-lg text-xs font-semibold transition-all disabled:opacity-50"
+                        style={{
+                          background: active ? e.color : 'rgba(255,255,255,0.04)',
+                          color: active ? '#0b0f1f' : 'rgba(203,213,225,0.9)',
+                          border: `1px solid ${active ? e.color : 'rgba(255,255,255,0.08)'}`,
+                        }}
+                      >
+                        {e.label}
+                      </button>
+                    )
+                  })}
+                </div>
               </div>
 
               {/* Existing adjustments */}

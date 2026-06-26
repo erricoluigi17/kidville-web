@@ -1,12 +1,19 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   Trophy, Medal, ChevronDown, Search, Loader2, Inbox, Info,
-  SlidersHorizontal,
+  SlidersHorizontal, Gavel, FileDown,
 } from 'lucide-react'
 import { getSupabase } from '@/lib/supabase/browser-client'
+
+const ESITO_BADGE: Record<string, { label: string; bg: string; color: string }> = {
+  ammesso: { label: 'Ammesso', bg: 'rgba(52,211,153,0.14)', color: 'rgb(52,211,153)' },
+  lista_attesa: { label: "Lista d'attesa", bg: 'rgba(251,191,36,0.14)', color: 'rgb(251,191,36)' },
+  non_ammesso: { label: 'Non ammesso', bg: 'rgba(244,114,128,0.14)', color: 'rgb(244,114,128)' },
+}
 import { RankingAdjustModal, type RankingRow, type ManualAdjustment } from './RankingAdjustModal'
 
 /* ── helpers ───────────────────────────────────────────────── */
@@ -115,6 +122,12 @@ export function RankingTable() {
   const [editingSub, setEditingSub] = useState<RankingRow | null>(null)
   const [editingLabel, setEditingLabel] = useState('')
 
+  // Delibera (DL-025)
+  const userId = useSearchParams().get('userId') ?? ''
+  const [posti, setPosti] = useState(0)
+  const [soglia, setSoglia] = useState(0)
+  const [deliberando, setDeliberando] = useState(false)
+
   /* ── fetch form models ── */
   useEffect(() => {
     const supabase = getSupabase()
@@ -136,7 +149,7 @@ export function RankingTable() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let query = (supabase as any)
       .from('form_submissions')
-      .select('id, model_id, user_id, data, score, signed_at, manual_adjustments, status, created_at, form_model:form_models(id, title)')
+      .select('id, model_id, user_id, data, score, signed_at, manual_adjustments, esito_ammissione, status, created_at, form_model:form_models(id, title)')
       .eq('status', 'completed')
       .order('score', { ascending: false })
       .order('signed_at', { ascending: true })
@@ -158,6 +171,28 @@ export function RankingTable() {
   useEffect(() => {
     fetchRankings()
   }, [fetchRankings])
+
+  /* ── delibera ammissioni (DL-025) ── */
+  const applicaDelibera = async () => {
+    if (!filterFormId) return
+    if (!confirm(`Deliberare con ${posti} posti e soglia ${soglia}? Gli esiti verranno (ri)assegnati.`)) return
+    setDeliberando(true)
+    try {
+      const res = await fetch('/api/forms/delibera', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(userId ? { 'x-user-id': userId } : {}) },
+        body: JSON.stringify({ modelId: filterFormId, posti, soglia }),
+      })
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}))
+        alert(j.error || 'Delibera non riuscita')
+      } else {
+        await fetchRankings()
+      }
+    } finally {
+      setDeliberando(false)
+    }
+  }
 
   /* ── filter by search ── */
   const filtered = search
@@ -242,6 +277,52 @@ export function RankingTable() {
           <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-700" />
         </div>
       </div>
+
+      {/* Delibera bar (solo con un modulo selezionato) — DL-025 */}
+      {filterFormId && (
+        <div
+          className="flex flex-wrap items-end gap-3 mb-6 rounded-2xl px-4 py-3"
+          style={{ background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.18)' }}
+        >
+          <div className="flex items-center gap-1.5 text-indigo-300 text-xs font-bold uppercase tracking-widest mr-1">
+            <Gavel className="w-3.5 h-3.5" /> Delibera
+          </div>
+          <label className="text-[11px] text-slate-500">
+            Posti
+            <input
+              type="number" min={0} value={posti}
+              onChange={e => setPosti(Math.max(0, parseInt(e.target.value || '0', 10)))}
+              className="block w-20 mt-1 px-2 py-1.5 rounded-lg text-white text-sm tabular-nums focus:outline-none"
+              style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }}
+            />
+          </label>
+          <label className="text-[11px] text-slate-500">
+            Soglia punti
+            <input
+              type="number" min={0} value={soglia}
+              onChange={e => setSoglia(Math.max(0, parseInt(e.target.value || '0', 10)))}
+              className="block w-24 mt-1 px-2 py-1.5 rounded-lg text-white text-sm tabular-nums focus:outline-none"
+              style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }}
+            />
+          </label>
+          <button
+            onClick={applicaDelibera}
+            disabled={deliberando}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl text-white text-sm font-semibold transition-all disabled:opacity-50"
+            style={{ background: 'rgba(99,102,241,0.85)', border: '1px solid rgba(129,140,248,0.3)' }}
+          >
+            {deliberando ? <Loader2 className="w-4 h-4 animate-spin" /> : <Gavel className="w-4 h-4" />}
+            Applica delibera
+          </button>
+          <a
+            href={`/api/forms/export/delibera?modelId=${filterFormId}${userId ? `&userId=${userId}` : ''}`}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl text-indigo-300 text-sm font-semibold transition-all hover:text-white"
+            style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)' }}
+          >
+            <FileDown className="w-4 h-4" /> Esporta PDF
+          </a>
+        </div>
+      )}
 
       {/* Table */}
       {loading ? (
@@ -342,9 +423,20 @@ export function RankingTable() {
                     <p className={`text-sm font-medium truncate ${rank <= 3 ? 'text-white' : 'text-slate-300'}`}>
                       {label}
                     </p>
-                    <p className="text-[11px] text-slate-700 tabular-nums mt-0.5">
-                      {sub.id.slice(0, 8)}
-                    </p>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <p className="text-[11px] text-slate-700 tabular-nums">{sub.id.slice(0, 8)}</p>
+                      {sub.esito_ammissione && ESITO_BADGE[sub.esito_ammissione] && (
+                        <span
+                          className="px-1.5 py-0.5 rounded-full text-[10px] font-bold"
+                          style={{
+                            background: ESITO_BADGE[sub.esito_ammissione].bg,
+                            color: ESITO_BADGE[sub.esito_ammissione].color,
+                          }}
+                        >
+                          {ESITO_BADGE[sub.esito_ammissione].label}
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   {/* Model */}

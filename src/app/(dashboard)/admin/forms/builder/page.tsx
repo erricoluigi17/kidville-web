@@ -220,6 +220,8 @@ export default function FormBuilderPage() {
   const [pub, setPub] = useState<{ token: string; url: string; access_mode: string } | null>(null)
   const [publishing, setPublishing] = useState(false)
   const [copied, setCopied] = useState(false)
+  // Modalità firma (DL-031): joint = firma congiunta dei due genitori.
+  const [signatureMode, setSignatureMode] = useState<'single' | 'joint'>('single')
   const [draggingPaletteId, setDraggingPaletteId] = useState<string | null>(null)
   const [draggingPresetId, setDraggingPresetId] = useState<string | null>(null)
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
@@ -232,6 +234,7 @@ export default function FormBuilderPage() {
 
   const currentPage = schema.pages[activePage]
   const selectedField = currentPage?.fields.find(f => f.id === selectedFieldId) ?? null
+  const hasSignature = schema.pages.flatMap(p => p.fields).some(f => f.type === 'signature')
   // Campi referenziabili in una condizione: tutti tranne se stesso e i decorativi.
   const campiDisponibili = schema.pages
     .flatMap(p => p.fields)
@@ -375,9 +378,8 @@ export default function FormBuilderPage() {
           title: formTitle,
           schema,
           is_active: false,
-          requires_signature: schema.pages
-            .flatMap(p => p.fields)
-            .some(f => f.type === 'signature'),
+          requires_signature: hasSignature,
+          signature_mode: hasSignature ? signatureMode : 'single',
         }),
       })
       const json = await res.json()
@@ -463,10 +465,22 @@ export default function FormBuilderPage() {
             />
           </div>
 
-          <div className="flex items-center gap-2 text-xs text-slate-600 font-mono tabular-nums">
-            <span>{schema.pages.length} {schema.pages.length === 1 ? 'pag.' : 'pag.'}</span>
-            <span className="text-slate-800">·</span>
-            <span>{totalFields} campi</span>
+          <div className="flex items-center gap-3">
+            {hasSignature && (
+              <button
+                onClick={() => setSignatureMode(m => (m === 'joint' ? 'single' : 'joint'))}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs transition-all ${signatureMode === 'joint' ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-300' : 'border-white/10 text-slate-400 hover:text-slate-200'}`}
+                title="Richiede la firma di entrambi i genitori"
+              >
+                <PenLine className="w-3.5 h-3.5" />
+                {signatureMode === 'joint' ? 'Firma congiunta' : 'Firma singola'}
+              </button>
+            )}
+            <div className="flex items-center gap-2 text-xs text-slate-600 font-mono tabular-nums">
+              <span>{schema.pages.length} {schema.pages.length === 1 ? 'pag.' : 'pag.'}</span>
+              <span className="text-slate-800">·</span>
+              <span>{totalFields} campi</span>
+            </div>
           </div>
 
           <motion.button

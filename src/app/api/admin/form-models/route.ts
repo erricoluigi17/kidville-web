@@ -8,7 +8,7 @@ export async function POST(request: Request) {
   if (auth.response) return auth.response
   try {
     const body = await request.json()
-    const { title, schema, is_active, requires_signature, description } = body
+    const { title, schema, is_active, requires_signature, description, signature_mode } = body
 
     if (!title || !schema) {
       return NextResponse.json({ error: 'title e schema sono obbligatori' }, { status: 400 })
@@ -23,6 +23,7 @@ export async function POST(request: Request) {
         schema,
         is_active: is_active ?? false,
         requires_signature: requires_signature ?? false,
+        signature_mode: signature_mode === 'joint' ? 'joint' : 'single',
       })
       .select()
       .single()

@@ -18,6 +18,8 @@ interface Props {
   description: string | null
   schema: FormSchemaConfig
   requiresSignature: boolean
+  /** Modalità firma del modello: `joint` = firma congiunta dei due genitori (DL-031). */
+  signatureMode?: 'single' | 'joint'
   userId: string | null
   parentEmail: string | null
   /** Se valorizzato: modalità PUBBLICA (modello pubblicato) — submit/upload
@@ -37,6 +39,7 @@ export function WizardContainer({
   description,
   schema,
   requiresSignature,
+  signatureMode = 'single',
   userId,
   parentEmail,
   publicToken,
@@ -258,6 +261,7 @@ export function WizardContainer({
           submissionId={otp.submissionId}
           email={parentEmail}
           devCode={otp.devCode}
+          signatureMode={signatureMode}
           onClose={() => setOtp(null)}
           onSigned={() => {
             setOtp(null)

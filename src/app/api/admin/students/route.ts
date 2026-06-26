@@ -1,15 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient as createServerClient } from '@/lib/supabase/server-client';
-import { createClient } from '@supabase/supabase-js';
+import { createAdminClient } from '@/lib/supabase/server-client';
+import { requireStaff } from '@/lib/auth/require-staff';
+import { logScrittura } from '@/lib/audit/scrittura';
+
+// ============================================================
+// Anagrafica alunni — gated Segreteria+Direzione (DL-036) + audit
+// immutabile su ogni mutazione (DL-037, `logScrittura`/`audit_scritture_docente`).
+// ============================================================
 
 // ============================================================
 // POST /api/admin/students — Creazione nuovo alunno
-// Body: { nome, cognome, sesso, data_nascita, comune_nascita, provincia_nascita, ... }
 // ============================================================
 export async function POST(request: NextRequest) {
+    const auth = await requireStaff(request);
+    if (auth.response) return auth.response;
     try {
         const body = await request.json();
-        const supabase = await createServerClient();
+        const supabase = await createAdminClient();
 
         // Campi obbligatori
         const { nome, cognome, data_nascita } = body;
@@ -17,7 +24,6 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'Nome, cognome e data di nascita sono obbligatori' }, { status: 400 });
         }
 
-        // Mappa i campi del form ai nomi effettivi delle colonne DB
         // scuola_id: usa il valore dal body se presente, altrimenti default della scuola principale
         const SCUOLA_ID_DEFAULT = '11111111-1111-1111-1111-111111111111';
 
@@ -40,8 +46,7 @@ export async function POST(request: NextRequest) {
             usa_pannolino: body.usa_pannolino ?? false,
             invoice_holder_type: body.invoice_holder_type || null,
             invoice_holder_details: body.invoice_holder_details || null,
-            // classe/sezione: il trigger DB sincronizza automaticamente section_id,
-            // così l'alunno compare subito in tutte le funzioni della sua sezione.
+            // classe/sezione: il trigger DB sincronizza automaticamente section_id.
             classe_sezione: body.classe_sezione || null,
             stato: 'iscritto',
         };
@@ -52,8 +57,7 @@ export async function POST(request: NextRequest) {
             .select()
             .single();
 
-        // Resilienza pre-migration: se la colonna usa_pannolino non esiste ancora,
-        // riprova senza, così la creazione alunno non si rompe prima della migration.
+        // Resilienza pre-migration: se la colonna usa_pannolino non esiste ancora, riprova senza.
         if (error && (error as { code?: string }).code === '42703' && /usa_pannolino/.test(error.message)) {
             delete record.usa_pannolino;
             ({ data, error } = await supabase.from('alunni').insert(record).select().single());
@@ -62,6 +66,16 @@ export async function POST(request: NextRequest) {
         if (error) {
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
+
+        await logScrittura(supabase, {
+            attore: auth.user,
+            entitaTipo: 'alunni',
+            entitaId: data?.id ?? null,
+            azione: 'insert',
+            scuolaId: (data?.scuola_id as string) ?? (record.scuola_id as string),
+            sectionId: (data?.section_id as string) ?? null,
+            valoreDopo: data,
+        });
 
         return NextResponse.json(data, { status: 201 });
     } catch (err: any) {
@@ -72,19 +86,17 @@ export async function POST(request: NextRequest) {
 
 // ============================================================
 // GET /api/admin/students — Lista alunni con filtri
-// Query: ?scuola_id=, ?classe_sezione=, ?stato=
 // ============================================================
 export async function GET(request: NextRequest) {
+    const auth = await requireStaff(request);
+    if (auth.response) return auth.response;
     try {
         const { searchParams } = new URL(request.url);
         const scuolaId = searchParams.get('scuola_id');
         const classeSezione = searchParams.get('classe_sezione');
         const stato = searchParams.get('stato');
 
-        const supabase = createClient(
-            process.env.NEXT_PUBLIC_SUPABASE_URL!,
-            process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-        );
+        const supabase = await createAdminClient();
 
         let query = supabase
             .from('alunni')
@@ -115,13 +127,13 @@ export async function GET(request: NextRequest) {
 
 // ============================================================
 // PATCH /api/admin/students — Bulk assign o aggiornamento singolo
-// Body singolo:  { id, classe_sezione?, stato?, note_mediche?, bes?, note_bes? }
-// Body bulk:     { ids: [<id>,...], classe_sezione }
 // ============================================================
 export async function PATCH(request: NextRequest) {
+    const auth = await requireStaff(request);
+    if (auth.response) return auth.response;
     try {
         const body = await request.json();
-        const supabase = await createServerClient();
+        const supabase = await createAdminClient();
 
         // Bulk assign
         if (body.ids && Array.isArray(body.ids) && body.classe_sezione) {
@@ -132,6 +144,16 @@ export async function PATCH(request: NextRequest) {
                 .select();
 
             if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+            // Audit: una riga per alunno riassegnato (DL-037).
+            for (const id of body.ids as string[]) {
+                await logScrittura(supabase, {
+                    attore: auth.user,
+                    entitaTipo: 'alunni',
+                    entitaId: id,
+                    azione: 'update',
+                    valoreDopo: { classe_sezione: body.classe_sezione },
+                });
+            }
             return NextResponse.json({ success: true, updated: data?.length ?? 0, data });
         }
 
@@ -139,9 +161,7 @@ export async function PATCH(request: NextRequest) {
         if (body.id) {
             try {
                 const updates: Record<string, unknown> = {};
-                // Raccogliamo le modifiche
                 const allowedFields = ['classe_sezione', 'stato', 'note_mediche', 'bes', 'note_bes', 'nome', 'cognome', 'data_nascita', 'codice_fiscale', 'gender', 'citizenship', 'birth_nation', 'birth_province', 'birth_city', 'residence_address', 'residence_city', 'zip_code', 'allergies', 'allergeni', 'invoice_holder_type', 'invoice_holder_details', 'is_bes_dsa', 'usa_pannolino', 'section_id',
-                    // Dati economici (modulo Pagamenti)
                     'importo_retta_mensile', 'genitori_separati', 'retta_split_config', 'intestatario_fatture'];
 
                 for (const field of allowedFields) {
@@ -152,6 +172,9 @@ export async function PATCH(request: NextRequest) {
                     return NextResponse.json({ error: 'Nessun campo da aggiornare' }, { status: 400 });
                 }
 
+                // Stato precedente per l'audit (valore prima/dopo).
+                const { data: prima } = await supabase.from('alunni').select('*').eq('id', body.id).single();
+
                 let { data, error } = await supabase
                     .from('alunni')
                     .update(updates)
@@ -159,13 +182,24 @@ export async function PATCH(request: NextRequest) {
                     .select()
                     .single();
 
-                // Resilienza pre-migration: se usa_pannolino non esiste ancora, riprova senza.
                 if (error && (error as { code?: string }).code === '42703' && /usa_pannolino/.test(error.message)) {
                     delete updates.usa_pannolino;
                     ({ data, error } = await supabase.from('alunni').update(updates).eq('id', body.id).select().single());
                 }
 
                 if (error) throw new Error(error.message);
+
+                await logScrittura(supabase, {
+                    attore: auth.user,
+                    entitaTipo: 'alunni',
+                    entitaId: body.id,
+                    azione: 'update',
+                    scuolaId: (data?.scuola_id as string) ?? null,
+                    sectionId: (data?.section_id as string) ?? null,
+                    valorePrima: prima ?? null,
+                    valoreDopo: updates,
+                });
+
                 return NextResponse.json(data);
             } catch (err: any) {
                 return NextResponse.json({ error: err.message || 'Errore durante il salvataggio alunno' }, { status: 500 });
@@ -181,9 +215,10 @@ export async function PATCH(request: NextRequest) {
 
 // ============================================================
 // DELETE /api/admin/students — Hard Delete GDPR
-// Body: { id }
 // ============================================================
 export async function DELETE(request: NextRequest) {
+    const auth = await requireStaff(request);
+    if (auth.response) return auth.response;
     try {
         const body = await request.json();
         const { id } = body;
@@ -192,9 +227,9 @@ export async function DELETE(request: NextRequest) {
             return NextResponse.json({ error: 'Campo id obbligatorio' }, { status: 400 });
         }
 
-        const supabase = await createServerClient();
+        const supabase = await createAdminClient();
 
-        // Log audit prima della cancellazione
+        // Stato prima della cancellazione (audit).
         const { data: alunno } = await supabase
             .from('alunni')
             .select('*')
@@ -205,7 +240,7 @@ export async function DELETE(request: NextRequest) {
             return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 });
         }
 
-        // Registra nel log modifiche (audit trail GDPR)
+        // Registro modifiche (audit trail GDPR storico).
         await supabase.from('registro_modifiche').insert({
             azione: 'hard_delete_gdpr',
             tabella_interessata: 'alunni',
@@ -214,13 +249,23 @@ export async function DELETE(request: NextRequest) {
             nuovo_valore: null,
         });
 
-        // Cancellazione a cascata (FK con ON DELETE CASCADE su locker_inventory, daily_routines, ecc.)
+        // Cancellazione a cascata.
         const { error } = await supabase
             .from('alunni')
             .delete()
             .eq('id', id);
 
         if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+        await logScrittura(supabase, {
+            attore: auth.user,
+            entitaTipo: 'alunni',
+            entitaId: id,
+            azione: 'delete',
+            scuolaId: (alunno.scuola_id as string) ?? null,
+            sectionId: (alunno.section_id as string) ?? null,
+            valorePrima: alunno,
+        });
 
         return NextResponse.json({ success: true, message: 'Alunno eliminato definitivamente (GDPR)' });
     } catch (err) {

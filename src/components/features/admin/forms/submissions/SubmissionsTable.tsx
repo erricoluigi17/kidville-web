@@ -1,11 +1,11 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
 import {
   FileText, Table2, Search, ChevronDown, Download, Loader2, Inbox,
 } from 'lucide-react'
-import { getSupabase } from '@/lib/supabase/browser-client'
 import type { FormSubmissionStatus } from '@/types/database.types'
 import {
   SubmissionDetailSidebar,
@@ -25,6 +25,7 @@ const STATUS_COLORS: Record<FormSubmissionStatus, string> = {
 }
 
 export function SubmissionsTable() {
+  const userId = useSearchParams().get('userId') ?? ''
   const [submissions, setSubmissions] = useState<SubmissionRow[]>([])
   const [formModels, setFormModels] = useState<{ id: string; title: string }[]>([])
   const [loading, setLoading] = useState(true)
@@ -40,43 +41,29 @@ export function SubmissionsTable() {
 
   const fetchSubmissions = useCallback(async () => {
     setLoading(true)
-    const supabase = getSupabase()
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let query = (supabase as any)
-      .from('form_submissions')
-      .select('id, model_id, user_id, data, status, signed_at, created_at, form_model:form_models(id, title, schema)')
-      .order('created_at', { ascending: false })
-
-    if (filterStatus) query = query.eq('status', filterStatus)
-    if (filterFormId) query = query.eq('model_id', filterFormId)
-    if (filterDate) {
-      const from = new Date(filterDate)
-      from.setHours(0, 0, 0, 0)
-      const to = new Date(filterDate)
-      to.setHours(23, 59, 59, 999)
-      query = query
-        .gte('created_at', from.toISOString())
-        .lte('created_at', to.toISOString())
+    try {
+      const params = new URLSearchParams()
+      if (filterStatus) params.set('status', filterStatus)
+      if (filterFormId) params.set('modelId', filterFormId)
+      if (filterDate) params.set('date', filterDate)
+      const res = await fetch(`/api/admin/forms/submissions?${params.toString()}`, {
+        headers: userId ? { 'x-user-id': userId } : {},
+      })
+      const data = res.ok ? await res.json() : []
+      if (Array.isArray(data)) setSubmissions(data as SubmissionRow[])
+    } finally {
+      setLoading(false)
     }
-
-    const { data, error } = await query
-    if (!error && data) {
-      setSubmissions(data as SubmissionRow[])
-    }
-    setLoading(false)
-  }, [filterStatus, filterFormId, filterDate])
+  }, [filterStatus, filterFormId, filterDate, userId])
 
   useEffect(() => {
-    const supabase = getSupabase()
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ;(supabase as any)
-      .from('form_models')
-      .select('id, title')
-      .then(({ data }: { data: { id: string; title: string }[] | null }) => {
-        if (data) setFormModels(data)
+    fetch('/api/admin/forms/models', { headers: userId ? { 'x-user-id': userId } : {} })
+      .then(r => (r.ok ? r.json() : []))
+      .then((data: { id: string; title: string }[]) => {
+        if (Array.isArray(data)) setFormModels(data)
       })
-  }, [])
+      .catch(() => {})
+  }, [userId])
 
   useEffect(() => {
     fetchSubmissions()

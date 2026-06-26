@@ -6,7 +6,6 @@ import {
   ArrowRight, Download, CheckCircle2, User, Key, Info, Upload, Mail
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
-import { getSupabase } from '@/lib/supabase/browser-client';
 import { OtpEmailModal } from '@/components/features/parent/forms/OtpEmailModal';
 
 const PARENT_ID = '33333333-3333-3333-3333-333333333333'; // Sarah Pagano
@@ -111,31 +110,21 @@ export default function ParentModulisticaPage() {
       const mData = await mRes.json();
       if (Array.isArray(mData)) setMedCerts(mData);
 
-      // 4. Fetch children list from Supabase directly
-      const supabase = getSupabase();
-      const { data: legami } = await supabase
-        .from('legame_genitori_alunni')
-        .select('alunno_id')
-        .eq('genitore_id', PARENT_ID);
-      
-      if (legami && legami.length > 0) {
-        const { data: studs } = await supabase
-          .from('alunni')
-          .select('id, nome, cognome')
-          .in('id', legami.map((l: any) => l.alunno_id));
-        if (studs) {
-          setChildren(studs);
-          if (studs.length > 0) setSelectedChildId(studs[0].id);
-        }
+      // 4. Fetch children list via route server gated (parent-scoped, service-role)
+      const sRes = await fetch('/api/parent/students', { headers: { 'x-user-id': PARENT_ID } });
+      const sJson = await sRes.json().catch(() => ({}));
+      const studs = Array.isArray(sJson?.data) ? sJson.data : [];
+      if (studs.length > 0) {
+        setChildren(studs);
+        setSelectedChildId(studs[0].id);
       }
 
-      // 5. Fetch Parent info (from utenti table)
-      const { data: parent } = await supabase
-        .from('utenti')
-        .select('*')
-        .eq('id', PARENT_ID)
-        .single();
-      if (parent) setParentInfo(parent);
+      // 5. Fetch Parent info via /api/me (gated, niente lettura anon di `utenti`)
+      const pRes = await fetch('/api/me', { headers: { 'x-user-id': PARENT_ID } });
+      if (pRes.ok) {
+        const parent = await pRes.json().catch(() => null);
+        if (parent) setParentInfo(parent);
+      }
 
     } catch (err) {
       console.error(err);

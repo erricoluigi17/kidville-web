@@ -12,20 +12,24 @@
 ---
 
 ## P0 — Fondamenta: Autenticazione & Sicurezza (BLOCCANTE)
-*Stato aggiornato (branch `feat/p0-auth`, slice S0-S7 + S11-S12 implementate e verificate). Restano rollout-gated S8/S9/S13 — vedi in fondo.*
+*Stato aggiornato (S0-S7 + S11-S12 merged in `feat/master-plan-registro`; chiusura ingegneristica 2026-06-27 DL-035..039). Restano gated S9b (per-famiglia + chat realtime) e S13 — vedi in fondo.*
+
+> **Avanzamento P0 — chiusura ingegneristica (2026-06-27, DL-035..039):** (1) **letture anon eliminate** — 6 siti client migrati a route server gated (`/api/me`, `/api/admin/forms/*`, riuso `/api/parent/students`+`/api/forms/upload`); `grep getSupabase` → solo auth+realtime. (2) **gate+audit anagrafica** — `/api/admin/{students,parents,sections,iscrizioni}` erano ungated/unaudited → ora `requireStaff(Segreteria+Direzione)` + `logScrittura` su ogni mutazione. (3) **RLS lockdown S9a** (migr. `20260752`): droppate 8 policy permissive su tabelle service-role-only (incl. `allow_all_valutazioni` = **voti alunni leggibili via anon key**, chiuso) + **revoca `exec_sql`** da anon/authenticated (SQL arbitrario via PostgREST, chiuso) + search_path su 12 funzioni → `get_advisors` **0 ERROR**, WARN `always_true` 18→8. **Scoperta:** molte route usano il client di sessione (non service-role) e dipendono dalle permissive → il drop delle restanti 8 tabelle è per-famiglia (migrare prima la route), documentato in `P0_ROLLOUT_CHECKLIST.md`. +31 test verdi. **Restano gated:** S9b (route session-client → service-role; chat realtime su onboarding) + S13 (sigillo `ALLOW_HEADER_IDENTITY='false'`).
 
 - **Autenticazione reale** `✅ FATTO` — `resolveIdentity()` ([require-staff.ts](src/lib/auth/require-staff.ts)) preferisce la sessione Supabase, anti-spoof header, flag `ALLOW_HEADER_IDENTITY`; `src/middleware.ts` rinnova la sessione + redirect anonimo → login. Staff già auth-backed (`utenti.id` FK `auth.users`); 89/92 genitori ora bindati ad `auth.users` (backfill S6).
 - **Pagina Login/Landing** `✅ FATTO` — `/auth/login` (email/password, mostra password, banner "solo su invito"/errore, toggle Alto contrasto). *(Selettore Sede/Tenant: risolto dal record utente, non a login.)*
 - **Recupero credenziali / reset password** `✅ FATTO (DL-005)` — `POST /api/admin/regenerate-credentials`: la Segreteria genera password random e la invia via email (no self-service).
 - **Cloud Auth rigida** `✅ FATTO (base)` — login invite-only, nessuna auto-registrazione; legame creato solo dalla Segreteria (`parents`/`student_parents`). *(Flusso invito-link `/auth/join` superato da DL-005 per il path credenziali.)*
 - **Gate auth su Galleria** `✅ FATTO` — `requireDocente` su `/api/gallery` POST + `/api/gallery/upload` (+ grades/notes/attendance). Endpoint pericolosi sigillati (seed-db/debug/wipe/seed-full); rate-limit su iscrizione + send-otp.
-- **RLS hardening** `🔶 PARZIALE` — colonna ponte `parents.auth_user_id` + policy pagamenti additive per lo spazio `parents` (S4/S7) verificate su dati reali. **Lockdown completo (rimozione policy `allow_all`/`anon`) = rollout-gated (S9).**
-- **Audit Log immutabile** `✅ FATTO (read+credenziali)` — `GET /api/admin/audit` (filtro per attore/entità su `audit_scritture_docente`); rigenerazione credenziali tracciata. *(Audit su ogni mutazione anagrafica = follow-up.)*
+- **RLS hardening** `🔶 PARZIALE→S9a FATTO` — bridge `parents.auth_user_id` + policy pagamenti additive (S4/S7) + **S9a (DL-038, migr. `20260752`)**: drop 8 permissive su tabelle service-role-only (incl. voti `valutazioni`), RLS resta abilitata (default-deny anon). **S9b** (8 tabelle con route session-client + chat realtime) gated per-famiglia/onboarding.
+- **Sicurezza DB** `✅ FATTO (DL-039)` — chiuso il buco `exec_sql` (SQL arbitrario eseguibile da anon/authenticated via PostgREST) → revoca dai ruoli pubblici, resta service-role; search_path fisso su 12 funzioni. `get_advisors` 0 ERROR.
+- **Audit Log immutabile** `✅ FATTO` — `GET /api/admin/audit` (filtro) + **audit su OGNI mutazione anagrafica (DL-037)**: `/api/admin/{students,parents,sections,iscrizioni}` ora scrivono `logScrittura` (alunni/genitori/legame/sezioni/iscrizione). *(Erano ungated+unaudited → ora gated Segreteria+Direzione DL-036.)*
 
-**Rollout-gated (NON attivati: romperebbero la prod finché i genitori non sono onboardati):**
-- **S8** — letture genitore via `createSessionClient` (helper `createParentReadClient` pronto, flag `PARENT_READS_USE_SESSION` OFF).
-- **S9** — rimozione policy permissive `allow_all_*`/`TO anon`. Prerequisito: migrare le letture anon dirette del frontend (`alunni`/`legame_genitori_alunni`/`utenti`/`form_*`) verso API/policy `authenticated`.
-- **S13** — `ALLOW_HEADER_IDENTITY='false'` (sigillo sola-sessione) dopo l'onboarding.
+**Rollout-gated residui (NON attivati: romperebbero la prod finché route session-client non migrate / genitori non onboardati):**
+- **S9b** — drop permissive su `eventi_diario`/`note_disciplinari`/`registro_orario`/`firme_docenti`/`galleria_media_v2`/`locker_config`/`schools`/`alunni`: ciascuna è letta da una route col **client di sessione** → migrare prima la route a service-role (route moduli P2/P4). Mapping route→tabella in `P0_ROLLOUT_CHECKLIST.md`.
+- **S9b-realtime** — `chat_messages`/`chat_threads` (realtime anon di `useChatRealtime`) → policy `authenticated` scoped + drop, insieme all'**onboarding** (invio credenziali). *(pagamenti/incassi realtime già coperti da S7.)*
+- **S8** (opzionale) — letture genitore via sessione (`createParentReadClient`, flag `PARENT_READS_USE_SESSION` OFF); superato da DL-035 (End-state X service-role).
+- **S13** — `ALLOW_HEADER_IDENTITY='false'` (sigillo sola-sessione) dopo l'onboarding (header-fallback≈0).
 
 ## P1 — Conformità normativa & core didattico incompleto
 > **Nota numerazione:** questa sezione = **Fase P2** del `master_plan_full.md` (Conformità normativa & core didattico). Aggiornamento sottoinsieme "core compliance" P2 (2026-06-26): vedi DL-011..016. Le voci ✅ sotto sono chiuse in questo giro; le restanti sono sequenziate nei giri successivi della stessa fase.

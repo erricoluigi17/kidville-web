@@ -1,46 +1,58 @@
-# P0 — Checklist di rollout (attivazione sicura di S8-enforce / S9 / S13)
+# P0 — Checklist di rollout (lockdown RLS + sigillo identità)
 
-> Stato: S0–S7, S11–S12 fatte (PR #2). Qui sotto i passi per attivare in sicurezza
-> ciò che è rollout-gated. **Principio:** prima aggiungi il restrittivo, verifichi,
-> poi togli il permissivo. Ogni passo è reversibile (flip env o `CREATE POLICY`).
+> Aggiornato 2026-06-27 (DL-035…DL-039). **Principio:** una policy permissiva si
+> droppa SOLO quando ogni accesso server alla tabella usa il client **service-role**
+> (che bypassa la RLS). Le route che usano il client di **sessione** (`createClient`,
+> anon per header-identity / authenticated per staff loggato) dipendono dalle policy
+> permissive: per quelle tabelle il drop richiede PRIMA la migrazione della route a
+> service-role (o policy authenticated corrette). Ogni passo è reversibile.
 
-## Step 1 — Eliminare le letture anon dirette del frontend *(prerequisito di S9)*
-Finché il client anon del browser legge direttamente queste tabelle, droppare le
-policy permissive le romperebbe. Per ogni sito: spostare la lettura su un'API route
-server (service_role, gated) **oppure** garantire una policy `authenticated` dedicata.
+## ✅ Step 1 — Letture anon dirette del frontend → route server gated  *(FATTO, DL-035)*
+Le 6 letture/scritture anon dirette sono migrate a route server gated. `grep -rE "getSupabase\(\)" src/`
+→ solo `auth/login` + i 3 file realtime (`.channel()` su chat/pagamenti). Nessun `.from()` su tabella.
 
-| File | Legge (diretto, anon) | Azione | Stato |
-|---|---|---|---|
-| `src/app/(dashboard)/parent/modulistica/page.tsx` | `legame_genitori_alunni`, `alunni`, `utenti` | → API route server (parent-scoped) | ☐ |
-| `src/app/(dashboard)/teacher/gallery/page.tsx` | `utenti` | → API route o policy `authenticated` | ☐ |
-| `src/components/features/forms/FieldRenderer.tsx` | `form_attachments` (+ `.storage`) | → signed URL / API; RLS Storage allegati | ☐ |
-| `src/components/features/admin/forms/rankings/RankingTable.tsx` | `form_models`, `form_submissions` | → API admin (requireStaff) | ☐ |
-| `src/components/features/admin/forms/submissions/SubmissionsTable.tsx` | `form_submissions`, `form_models` | → API admin | ☐ |
-| `src/components/features/admin/forms/rankings/RankingAdjustModal.tsx` | `form_submissions` | → API admin | ☐ |
-| `src/components/features/parent/forms/WizardContainer.tsx` | `form_submissions` | → API parent-scoped | ☐ |
+| Sito client | Era | Ora |
+|---|---|---|
+| `parent/modulistica/page.tsx` | anon legame/alunni/utenti | `/api/parent/students` + `/api/me` |
+| `teacher/gallery/page.tsx` | anon utenti.ruolo | `/api/me` |
+| admin `RankingTable` / `SubmissionsTable` | anon form_models/form_submissions | `/api/admin/forms/{models,rankings,submissions}` |
+| admin `RankingAdjustModal` | anon update form_submissions | `PATCH /api/admin/forms/submissions/[id]` (+audit) |
+| `FieldRenderer` | anon storage upload | `/api/forms/upload` (sempre server) |
 
-**Solo auth / realtime (nessuna azione di lettura tabellare):**
-- `src/app/auth/login/page.tsx` → `signInWithPassword` (OK).
-- `src/components/features/chat/useChatRealtime.ts` → `.channel()` realtime → richiede **realtime RLS** sulle tabelle chat (concern separato, da fare insieme alla famiglia comunicazione in S9).
-- `parent/pagamenti/PagamentiSummary.tsx`, `StoricoPagamenti.tsx` → `.channel()` realtime sui pagamenti → idem (realtime RLS), i dati veri arrivano già da API.
+## ✅ S9a — Lockdown sicuro (sottoinsieme service-role) *(FATTO, migr. `20260752`, DL-038/039)*
+Droppate le permissive su tabelle **solo service-role** (verificato: nessuna route nel set
+session-client): `avvisi`, `avvisi_risposte`, `task_interni`, **`valutazioni`** (chiudeva
+l'esposizione anon dei VOTI), `mensa_menu_config`, `mensa_class_menu_assignment`,
+`forms_submissions`, `forms_templates`. + **revoca `exec_sql`** da anon/authenticated/public
+(buco SQL arbitrario via PostgREST) + `search_path` fisso su 12 funzioni. `get_advisors` = **0 ERROR**,
+WARN `always_true` 18→8.
 
-**Gate per procedere allo Step 3:** `grep -rE "getSupabase\(\)" src/` non deve avere letture dirette di tabelle parent-facing (solo auth + realtime).
+## 🔶 S9b — Per-famiglia: migrare la route session-client → service-role, POI droppare
+Le 6 tabelle sotto restano permissive perché una route le legge col **client di sessione**
+(si romperebbe sia per anon header-identity sia per staff authenticated). Per ciascuna:
+1. Migrare la route `createClient` → `createAdminClient` mantenendo gate (`requireDocente`/`requireStaff`)
+   + scope (`assertSezioneInScope`/`assertAlunnoInScope`); verificare in transazione-rollback.
+2. `DROP POLICY` permissiva; `get_advisors(security)` → 0 ERROR; smoke app.
 
-## Step 2 — Onboarding (dare una sessione prima di richiederla) *(prereq S8-enforce/S13)*
-- Inviare le credenziali a staff + 89 genitori bindati con `POST /api/admin/regenerate-credentials` (a lotti; rispettare i limiti email). Sistemare prima i 3 genitori senza email valida (2 accentate + 1 mancante).
-- **Osservabilità:** `resolveIdentity` ora logga `[auth][header-fallback]` quando usa il path header. Misurare quando scende a ~0 → readiness per S13.
-- **Gate:** uso del path header ≈ 0 per N giorni consecutivi.
+| Tabella | Policy permissiva | Route bloccante (session-client) |
+|---|---|---|
+| `eventi_diario` | `eventi_diario_insert_anon/_select_anon/_update_anon` | `api/diary/entries/route.ts` (+ `educator-sections`) |
+| `note_disciplinari` | `allow_all_note`, `Enable read access for all users` | `api/notes/sign/route.ts` |
+| `registro_orario` | `allow_all_registro`, `Enable read…` | `api/register/lessons/route.ts` |
+| `firme_docenti` | `allow_all_firme`, `Enable read…` | `api/register/lessons/route.ts` |
+| `galleria_media_v2` | `Allow all for service role` | `api/gallery/route.ts` |
+| `locker_config` | `auth_gestisce_locker_config`, `tutti_leggono…` | `api/locker/materials/route.ts` |
+| `alunni` | `alunni_select_anon` (SELECT anon — espone gli alunni) | letture estese via session-client (attendance/diary/…): migrare prima |
+| `schools` | `schools_select_anon` | `api/register/lessons` (session) |
 
-## Step 3 — RLS additiva → lockdown, una famiglia alla volta
-Le policy restrittive `authenticated` sono già state **aggiunte additive e dormienti**
-(migrazione `20260722_parents_read_policies`, sotto le permissive — nessun effetto finché
-le permissive esistono). Per ogni famiglia, in ordine `alunni → presenze → eventi_diario
-→ valutazioni/note → galleria → comunicazione`:
-1. Verifica con transazione-rollback + impersonazione (`SET LOCAL ROLE authenticated` + jwt claims).
-2. Switch lettura su `createParentReadClient` con flag per-famiglia, prima canary poi esteso.
-3. `DROP POLICY` permissiva di quella famiglia; `get_advisors(security)` → 0 ERROR.
-Rollback: flag OFF o `CREATE POLICY` col testo catturato.
+*(Queste route appartengono ai moduli P2/P4 — il drop è naturale da fare quando si toccano in P4.)*
 
-## Step 4 — Sigillo (S13)
-Quando Step 1–3 chiusi e header-fallback ≈ 0: `ALLOW_HEADER_IDENTITY='false'`.
-Rollback: rimettere a `'true'` (1 flip).
+## 🔒 S9b-realtime + S13 — gated onboarding genitori
+**chat_messages/chat_threads** (`Allow all for service role`) servono la sottoscrizione realtime
+anon di `useChatRealtime`: dropparle rompe la chat dei genitori non onboardati. Sequenza:
+1. **Onboarding:** inviare credenziali a staff + 89 genitori (`POST /api/admin/regenerate-credentials`;
+   sistemare prima i 3 senza email valida). Monitorare `[auth][header-fallback]` → ~0.
+2. Aggiungere policy `authenticated` scoped su chat (partecipante = `teacher_id`/`parent_id` del thread —
+   **verificare la mappatura `parent_id`→`parents.auth_user_id` vs `utenti.id` prima di applicare**),
+   poi `DROP` delle permissive. *(pagamenti/incassi realtime: GIÀ coperti da policy S7, nessuna azione.)*
+3. **S13:** `ALLOW_HEADER_IDENTITY='false'` (sigillo sola-sessione). Rollback: rimettere `'true'`.

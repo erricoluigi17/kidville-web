@@ -7,8 +7,6 @@ import {
   Trophy, Medal, ChevronDown, Search, Loader2, Inbox, Info,
   SlidersHorizontal, Gavel, FileDown,
 } from 'lucide-react'
-import { getSupabase } from '@/lib/supabase/browser-client'
-
 const ESITO_BADGE: Record<string, { label: string; bg: string; color: string }> = {
   ammesso: { label: 'Ammesso', bg: 'rgba(52,211,153,0.14)', color: 'rgb(52,211,153)' },
   lista_attesa: { label: "Lista d'attesa", bg: 'rgba(251,191,36,0.14)', color: 'rgb(251,191,36)' },
@@ -128,45 +126,38 @@ export function RankingTable() {
   const [soglia, setSoglia] = useState(0)
   const [deliberando, setDeliberando] = useState(false)
 
-  /* ── fetch form models ── */
+  /* ── fetch form models (via route server gated) ── */
   useEffect(() => {
-    const supabase = getSupabase()
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ;(supabase as any)
-      .from('form_models')
-      .select('id, title')
-      .order('title')
-      .then(({ data }: { data: { id: string; title: string }[] | null }) => {
-        if (data) setFormModels(data)
+    fetch('/api/admin/forms/models', { headers: userId ? { 'x-user-id': userId } : {} })
+      .then(r => (r.ok ? r.json() : []))
+      .then((data: { id: string; title: string }[]) => {
+        if (Array.isArray(data)) setFormModels(data)
       })
-  }, [])
+      .catch(() => {})
+  }, [userId])
 
-  /* ── fetch rankings ── */
+  /* ── fetch rankings (via route server gated) ── */
   const fetchRankings = useCallback(async () => {
     setLoading(true)
-    const supabase = getSupabase()
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let query = (supabase as any)
-      .from('form_submissions')
-      .select('id, model_id, user_id, data, score, signed_at, manual_adjustments, esito_ammissione, status, created_at, form_model:form_models(id, title)')
-      .eq('status', 'completed')
-      .order('score', { ascending: false })
-      .order('signed_at', { ascending: true })
-
-    if (filterFormId) query = query.eq('model_id', filterFormId)
-
-    const { data, error } = await query
-    if (!error && data) {
-      setSubmissions(
-        (data as SubmissionWithModel[]).map(s => ({
-          ...s,
-          manual_adjustments: Array.isArray(s.manual_adjustments) ? s.manual_adjustments : [],
-        }))
-      )
+    try {
+      const params = new URLSearchParams()
+      if (filterFormId) params.set('modelId', filterFormId)
+      const res = await fetch(`/api/admin/forms/rankings?${params.toString()}`, {
+        headers: userId ? { 'x-user-id': userId } : {},
+      })
+      const data = res.ok ? await res.json() : []
+      if (Array.isArray(data)) {
+        setSubmissions(
+          (data as SubmissionWithModel[]).map(s => ({
+            ...s,
+            manual_adjustments: Array.isArray(s.manual_adjustments) ? s.manual_adjustments : [],
+          }))
+        )
+      }
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
-  }, [filterFormId])
+  }, [filterFormId, userId])
 
   useEffect(() => {
     fetchRankings()

@@ -1,9 +1,9 @@
 'use client'
 
 import { useState } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { AnimatePresence, motion } from 'framer-motion'
 import { X, Plus, Minus, Loader2, ScrollText } from 'lucide-react'
-import { getSupabase } from '@/lib/supabase/browser-client'
 
 export interface ManualAdjustment {
   delta: number
@@ -36,6 +36,7 @@ interface Props {
 }
 
 export function RankingAdjustModal({ submission, label, onClose, onApplied }: Props) {
+  const userId = useSearchParams().get('userId') ?? ''
   const [delta, setDelta] = useState(0)
   const [reason, setReason] = useState('')
   const [saving, setSaving] = useState(false)
@@ -49,11 +50,9 @@ export function RankingAdjustModal({ submission, label, onClose, onApplied }: Pr
     if (!submission) return
     setEsitoSaving(true)
     setError(null)
-    const supabase = getSupabase()
-    const { data: { user } } = await supabase.auth.getUser()
     const res = await fetch('/api/forms/delibera', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...(user?.id ? { 'x-user-id': user.id } : {}) },
+      headers: { 'Content-Type': 'application/json', ...(userId ? { 'x-user-id': userId } : {}) },
       body: JSON.stringify({ submissionId: submission.id, esito }),
     })
     setEsitoSaving(false)
@@ -89,31 +88,28 @@ export function RankingAdjustModal({ submission, label, onClose, onApplied }: Pr
     setSaving(true)
     setError(null)
 
-    const supabase = getSupabase()
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
-
     const newEntry: ManualAdjustment = {
       delta,
       reason: reason.trim(),
-      by: user?.id ?? null,
+      by: userId || null,
       at: new Date().toISOString(),
     }
 
     const updated = [...existing, newEntry]
 
-    // L'aggiornamento di manual_adjustments fa ricalcolare score dal trigger BEFORE UPDATE
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error: updateError } = await (supabase as any)
-      .from('form_submissions')
-      .update({ manual_adjustments: updated })
-      .eq('id', submission.id)
+    // L'aggiornamento di manual_adjustments fa ricalcolare score dal trigger BEFORE UPDATE.
+    // Via route server gated (requireStaff) + audit, non più dal client anon.
+    const res = await fetch(`/api/admin/forms/submissions/${submission.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...(userId ? { 'x-user-id': userId } : {}) },
+      body: JSON.stringify({ manual_adjustments: updated }),
+    })
 
     setSaving(false)
 
-    if (updateError) {
-      setError(updateError.message)
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}))
+      setError(j.error || 'Aggiornamento non riuscito')
       return
     }
 

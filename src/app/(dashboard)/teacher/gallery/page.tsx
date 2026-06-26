@@ -6,7 +6,6 @@ import { Upload, Tag, WifiOff } from 'lucide-react';
 import { MediaGrid, MediaItem } from '@/components/features/gallery/MediaGrid';
 import { MediaUploader } from '@/components/features/gallery/MediaUploader';
 import { StudentTagger } from '@/components/features/gallery/StudentTagger';
-import { getSupabase } from '@/lib/supabase/browser-client';
 import { saveLocalGalleryMedia, syncPendingGalleryMedia } from '@/lib/offline/syncEngine';
 import { processImageWithWatermark, validateVideoFile, processVideoWithWatermark } from '@/lib/media/processing';
 import { useSearchParams } from 'next/navigation';
@@ -121,17 +120,15 @@ function TeacherGalleryContent() {
         }
     }, [loadMedia]);
 
-    // Carica ruolo utente corrente
+    // Carica ruolo utente corrente (via /api/me gated, niente lettura anon di `utenti`)
     useEffect(() => {
         const fetchUserRole = async () => {
             try {
-                const supabase = getSupabase();
-                const { data: ut } = await supabase
-                    .from('utenti')
-                    .select('ruolo')
-                    .eq('id', teacherId)
-                    .maybeSingle();
-                if (ut?.ruolo) setUserRole(ut.ruolo);
+                const res = await fetch('/api/me', { headers: { 'x-user-id': teacherId } });
+                if (!res.ok) return;
+                const me = await res.json().catch(() => null);
+                const ruolo = me?.ruolo ?? me?.role;
+                if (ruolo) setUserRole(ruolo);
             } catch (err) {
                 console.error('Errore fetch ruolo:', err);
             }

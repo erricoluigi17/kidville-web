@@ -11,7 +11,6 @@ import { Controller } from 'react-hook-form'
 import {
   Upload, FileCheck2, Loader2, AlertCircle, PenLine, Info,
 } from 'lucide-react'
-import { getSupabase } from '@/lib/supabase/browser-client'
 import type { FormField } from '@/types/database.types'
 
 export const FIELD_BASE =
@@ -266,27 +265,18 @@ export function FileField({
     setFileName(file.name)
 
     try {
-      let path: string
-      if (uploadEndpoint) {
-        // Upload via endpoint server (service-role) — adatto al form pubblico senza login
-        const fd = new FormData()
-        fd.append('file', file)
-        fd.append('folder', modelId)
-        if (maxSizeMb) fd.append('max_size_mb', String(maxSizeMb))
-        const res = await fetch(uploadEndpoint, { method: 'POST', body: fd })
-        const json = await res.json()
-        if (!res.ok) throw new Error(json.error ?? 'Upload fallito')
-        path = json.path
-      } else {
-        // Upload diretto via client browser (utente autenticato)
-        const supabase = getSupabase()
-        const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_')
-        path = `${modelId}/${crypto.randomUUID()}-${safeName}`
-        const { error } = await supabase.storage
-          .from('form_attachments')
-          .upload(path, file, { cacheControl: '3600', upsert: false })
-        if (error) throw error
-      }
+      // Upload SEMPRE via endpoint server (service-role, bucket privato deny-by-default).
+      // Pubblico: token-scoped; autenticato: `/api/forms/upload` (requireUser). Niente
+      // più scrittura diretta dal client anon (P0/DL-035).
+      const endpoint = uploadEndpoint || '/api/forms/upload'
+      const fd = new FormData()
+      fd.append('file', file)
+      fd.append('folder', modelId)
+      if (maxSizeMb) fd.append('max_size_mb', String(maxSizeMb))
+      const res = await fetch(endpoint, { method: 'POST', body: fd })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error ?? 'Upload fallito')
+      const path: string = json.path
       onChange(path)
     } catch (err) {
       console.error('Upload fallito:', err)

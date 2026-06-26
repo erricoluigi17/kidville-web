@@ -69,7 +69,7 @@
   - ~~**Gestione Multi-Sede** (aggiungi/rinomina/disattiva, config isolata per sede)~~ ✅ **FATTO (P3.4b, DL-033)**: tabella registry `scuole` (migr. `20260750`, era `scuola_id` hardcoded; seed sede esistente); `GET/POST/PATCH /api/admin/schools` gate Direzione + audit; aggiungi/rinomina/disattiva (soft) + `config` jsonb isolata; UI `/admin/schools` (`SchoolsPanel`). *(No FK su scuola_id: soft-reference; hard-delete fuori scope.)*
   - **Gestione Staff RBAC** (~~onboarding~~, ruoli Docente/Segreteria/Cuoca/Direzione, associazione classi) — ✅ **FATTO (P3.4a, DL-028)**: `/admin/staff` + `GET/PATCH /api/admin/staff` gestiscono ruolo/sede/classi del personale esistente, gate Direzione + self-lockout + audit. *(Onboarding nuovi account auth = flusso invito/credenziali DL-005, separato.)*
   - Calendario chiusure (disabilita scalo ticket/appello); config ticket mensa (costo/pacchetti); accesso al Form Builder.
-  - Strumenti: audit log, reset password, export ministeriale, **diritto all'oblio / hard delete GDPR**.
+  - Strumenti: audit log, reset password, export ministeriale, ~~**diritto all'oblio / hard delete GDPR**~~ ✅ **FATTO (P3.4c, DL-034)**: lista alunni non iscritti (`/api/admin/gdpr/candidates`) → `POST /api/admin/gdpr/erase` **solo anonimizzazione** (placeholder, no DELETE; genitore solo se orfano; file PII rimossi escluso `fatture`), preserva audit+fisco, **dry-run + doppia conferma**, gate Direzione + audit; `anonimizzato_il` (migr. `20260751`); UI `/admin/gdpr` (`OblioPanel`). *(audit log, reset password, export ministeriale: già altrove / fasi successive.)*
 
 ## P3 — Esperienza famiglia & moduli 0-6
 - **Diario 0-6 (Fase 2, 21/37)**:

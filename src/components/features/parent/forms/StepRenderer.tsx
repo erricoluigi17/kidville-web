@@ -1,12 +1,14 @@
 'use client'
 
-import type {
-  UseFormRegister,
-  FieldErrors,
-  Control,
-  FieldValues,
+import {
+  useWatch,
+  type UseFormRegister,
+  type FieldErrors,
+  type Control,
+  type FieldValues,
 } from 'react-hook-form'
 import { FieldRenderer } from '@/components/features/forms/FieldRenderer'
+import { campiVisibili } from '@/lib/forms/conditional'
 import type { FormPage } from '@/types/database.types'
 
 interface Props {
@@ -18,9 +20,13 @@ interface Props {
 }
 
 export function StepRenderer({ page, modelId, register, control, errors }: Props) {
+  // Valori correnti del form → applica la logica condizionale (DL-024).
+  const values = (useWatch({ control }) as Record<string, unknown>) ?? {}
+  const visibili = campiVisibili(page.fields, values)
+
   return (
     <div className="space-y-6">
-      {page.fields.map(field => (
+      {visibili.map(field => (
         <FieldRenderer
           key={field.id}
           field={field}

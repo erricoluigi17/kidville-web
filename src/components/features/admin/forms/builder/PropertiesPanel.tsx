@@ -1,20 +1,44 @@
 'use client'
 
-import { Settings, Plus, X, Star } from 'lucide-react'
+import { Settings, Plus, X, Star, GitBranch } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
-import type { FormField, FormFieldOption } from '@/types/database.types'
+import type { FormField, FormFieldOption, FormFieldCondition } from '@/types/database.types'
 
 const HAS_OPTIONS = new Set(['select', 'radio', 'checkbox'])
+
+const OPERATORI: { value: FormFieldCondition['operator']; label: string }[] = [
+  { value: 'eq', label: 'è uguale a' },
+  { value: 'neq', label: 'è diverso da' },
+  { value: 'contains', label: 'contiene' },
+  { value: 'gt', label: 'è maggiore di' },
+  { value: 'lt', label: 'è minore di' },
+]
 
 interface Props {
   field: FormField | null
   onChange: (updated: FormField) => void
+  /** Altri campi del form referenziabili in una condizione (esclude se stesso). */
+  campiDisponibili?: { id: string; label: string }[]
 }
 
-export function PropertiesPanel({ field, onChange }: Props) {
+export function PropertiesPanel({ field, onChange, campiDisponibili = [] }: Props) {
   function patch(delta: Partial<FormField>) {
     if (!field) return
     onChange({ ...field, ...delta })
+  }
+
+  function patchCondition(delta: Partial<FormFieldCondition>) {
+    if (!field?.condition) return
+    patch({ condition: { ...field.condition, ...delta } })
+  }
+
+  function toggleCondition() {
+    if (!field) return
+    patch({
+      condition: field.condition
+        ? undefined
+        : { field_id: campiDisponibili[0]?.id ?? '', operator: 'eq', value: '' },
+    })
   }
 
   function setOptionLabel(idx: number, label: string) {
@@ -200,6 +224,65 @@ export function PropertiesPanel({ field, onChange }: Props) {
                 </p>
               </div>
             )}
+
+            {/* Logica condizionale (DL-024) */}
+            <section className="space-y-2 pt-3 border-t border-white/[0.05]">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <GitBranch className="w-3.5 h-3.5 text-indigo-400" />
+                  <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                    Logica condizionale
+                  </label>
+                </div>
+                <button
+                  onClick={toggleCondition}
+                  className={`relative rounded-full transition-all ${field.condition ? 'bg-indigo-500' : 'bg-white/10'}`}
+                  style={{ width: 40, height: 22 }}
+                  title="Mostra il campo solo se una condizione è soddisfatta"
+                >
+                  <span
+                    className={`absolute top-0.5 left-0.5 rounded-full bg-white shadow transition-transform ${field.condition ? 'translate-x-[18px]' : 'translate-x-0'}`}
+                    style={{ width: 18, height: 18 }}
+                  />
+                </button>
+              </div>
+
+              {field.condition && (
+                campiDisponibili.length === 0 ? (
+                  <p className="text-[10px] text-slate-600 leading-relaxed">
+                    Aggiungi un altro campo al modulo per poter definire una condizione.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    <p className="text-[10px] text-slate-600">Mostra questo campo se:</p>
+                    <select
+                      value={field.condition.field_id}
+                      onChange={e => patchCondition({ field_id: e.target.value })}
+                      className="w-full px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-sm text-white focus:outline-none focus:border-indigo-500/60"
+                    >
+                      {campiDisponibili.map(c => (
+                        <option key={c.id} value={c.id} className="bg-slate-900">{c.label}</option>
+                      ))}
+                    </select>
+                    <select
+                      value={field.condition.operator}
+                      onChange={e => patchCondition({ operator: e.target.value as FormFieldCondition['operator'] })}
+                      className="w-full px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-sm text-white focus:outline-none focus:border-indigo-500/60"
+                    >
+                      {OPERATORI.map(o => (
+                        <option key={o.value} value={o.value} className="bg-slate-900">{o.label}</option>
+                      ))}
+                    </select>
+                    <input
+                      value={String(field.condition.value ?? '')}
+                      onChange={e => patchCondition({ value: e.target.value })}
+                      placeholder="valore di confronto…"
+                      className="w-full px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500/60"
+                    />
+                  </div>
+                )
+              )}
+            </section>
 
             {/* Field type (read-only) */}
             <div className="pt-3 border-t border-white/[0.05]">

@@ -10,6 +10,7 @@ import {
 import { StepRenderer } from './StepRenderer'
 import { OtpSignatureModal } from './OtpSignatureModal'
 import { getSupabase } from '@/lib/supabase/browser-client'
+import { campoVisibile, pulisciNascosti, type FormValues } from '@/lib/forms/conditional'
 import type { FormSchemaConfig, FormSubmissionData } from '@/types/database.types'
 
 interface Props {
@@ -58,8 +59,12 @@ export function WizardContainer({
   const currentPage = pages[step]
 
   async function goNext() {
+    const values = getValues() as FormValues
+    // Valida solo i campi non-decorativi e attualmente VISIBILI (DL-024):
+    // un campo nascosto, anche se "obbligatorio", non blocca l'avanzamento.
     const fieldIds = currentPage.fields
       .filter(f => !['section_header', 'paragraph', 'signature'].includes(f.type))
+      .filter(f => campoVisibile(f, values))
       .map(f => f.id)
     const valid = await trigger(fieldIds)
     if (!valid) return
@@ -79,7 +84,8 @@ export function WizardContainer({
 
   async function handleSubmit() {
     setSubmitting(true)
-    const data = getValues() as FormSubmissionData
+    // Rimuove i valori dei campi nascosti dalla logica condizionale (DL-024).
+    const data = pulisciNascosti(pages, getValues() as FormValues) as FormSubmissionData
 
     try {
       if (requiresSignature) {

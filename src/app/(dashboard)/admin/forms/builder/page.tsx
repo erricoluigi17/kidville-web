@@ -214,6 +214,11 @@ export default function FormBuilderPage() {
 
   const currentPage = schema.pages[activePage]
   const selectedField = currentPage?.fields.find(f => f.id === selectedFieldId) ?? null
+  // Campi referenziabili in una condizione: tutti tranne se stesso e i decorativi.
+  const campiDisponibili = schema.pages
+    .flatMap(p => p.fields)
+    .filter(f => f.id !== selectedFieldId && !['section_header', 'paragraph', 'signature'].includes(f.type))
+    .map(f => ({ id: f.id, label: f.label }))
   const draggingPaletteItem = draggingPaletteId
     ? PALETTE_ITEMS.find(p => `palette-${p.type}` === draggingPaletteId) ?? null
     : null
@@ -507,7 +512,7 @@ export default function FormBuilderPage() {
           />
 
           {/* Right: Properties */}
-          <PropertiesPanel field={selectedField} onChange={updateField} />
+          <PropertiesPanel field={selectedField} onChange={updateField} campiDisponibili={campiDisponibili} />
         </div>
       </div>
 

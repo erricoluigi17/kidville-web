@@ -64,7 +64,7 @@
   - **RLS allegati** + **pg_cron** solleciti/promemoria scadenza.
 - **Impostazioni / Super-Admin (Fase 5, 19/35)**:
   - **Gestione Multi-Sede** (aggiungi/rinomina/disattiva, config isolata per sede).
-  - **Gestione Staff RBAC** (onboarding, ruoli Docente/Segreteria/Cuoca/Direzione, associazione classi).
+  - **Gestione Staff RBAC** (~~onboarding~~, ruoli Docente/Segreteria/Cuoca/Direzione, associazione classi) — ✅ **FATTO (P3.4a, DL-028)**: `/admin/staff` + `GET/PATCH /api/admin/staff` gestiscono ruolo/sede/classi del personale esistente, gate Direzione + self-lockout + audit. *(Onboarding nuovi account auth = flusso invito/credenziali DL-005, separato.)*
   - Calendario chiusure (disabilita scalo ticket/appello); config ticket mensa (costo/pacchetti); accesso al Form Builder.
   - Strumenti: audit log, reset password, export ministeriale, **diritto all'oblio / hard delete GDPR**.
 

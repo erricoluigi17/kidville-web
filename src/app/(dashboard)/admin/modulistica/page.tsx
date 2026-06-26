@@ -368,7 +368,12 @@ export default function AdminModulisticaPage() {
         
         if (item.signed) {
           doc.setTextColor(67, 160, 71); // Success Green
-          doc.text('STATO: AUTORIZZATO (FES FIRMATA DIGITALMENTE)', 20, yOffset + 6);
+          doc.text(
+            item.origine === 'cartaceo'
+              ? 'STATO: AUTORIZZATO (MODULO CARTACEO ACQUISITO DALLO STAFF)'
+              : 'STATO: AUTORIZZATO (FES FIRMATA DIGITALMENTE)',
+            20, yOffset + 6
+          );
           
           doc.setTextColor(80, 80, 80);
           doc.text(`Timestamp: ${new Date(item.created_at).toLocaleString('it-IT', { timeZone: 'UTC' })}`, 20, yOffset + 12);

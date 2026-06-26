@@ -60,6 +60,7 @@ export async function GET(request: NextRequest) {
           is_signed: submission.is_signed,
           signature_log: submission.signature_log,
           pdf_path: submission.pdf_path,
+          origine: submission.origine ?? 'online',
           created_at: submission.created_at
         };
       } else {
@@ -83,8 +84,11 @@ export async function GET(request: NextRequest) {
       class_name: className,
       results: mergedData
     });
-  } catch (err: any) {
+  } catch (err) {
     console.error('Errore GET /api/admin/documents-merge:', err);
-    return NextResponse.json({ error: err.message || 'Errore interno' }, { status: 500 });
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : 'Errore interno' },
+      { status: 500 }
+    );
   }
 }

@@ -50,6 +50,8 @@ export default function TeacherModulisticaPage() {
   // Proxy Upload state
   const [showProxyModal, setShowProxyModal] = useState<StudentSemaforo | null>(null);
   const [proxyFileName, setProxyFileName] = useState('');
+  const [proxyFile, setProxyFile] = useState<File | null>(null);
+  const [proxyUploading, setProxyUploading] = useState(false);
 
   // Manage Covered Days state
   const [managingCert, setManagingCert] = useState<MedicalCertificate | null>(null);
@@ -122,18 +124,18 @@ export default function TeacherModulisticaPage() {
   };
 
   const handleProxyUploadSubmit = async () => {
-    if (!showProxyModal || !proxyFileName) return;
-    
+    if (!showProxyModal || !proxyFile) return;
+    setProxyUploading(true);
     try {
+      // Upload reale della scansione (multipart) — DL-032.
+      const fd = new FormData();
+      fd.append('file', proxyFile);
+      fd.append('form_id', selectedFormId);
+      fd.append('student_id', showProxyModal.student_id);
       const res = await fetch('/api/teacher/modulistica', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          form_id: selectedFormId,
-          student_id: showProxyModal.student_id,
-          file_path: `proxy_uploads/${selectedFormId}/${showProxyModal.student_id}_${proxyFileName}`,
-          teacher_id: TEACHER_ID
-        })
+        headers: { 'x-user-id': TEACHER_ID },
+        body: fd,
       });
 
       if (!res.ok) throw new Error('Errore proxy upload');
@@ -141,9 +143,12 @@ export default function TeacherModulisticaPage() {
       showToastMsg(`✅ Autorizzazione cartacea registrata per ${showProxyModal.nome}!`);
       setShowProxyModal(null);
       setProxyFileName('');
+      setProxyFile(null);
       fetchSemaforo();
     } catch (err) {
       showToastMsg('❌ Errore durante l\'inserimento');
+    } finally {
+      setProxyUploading(false);
     }
   };
 
@@ -355,10 +360,10 @@ export default function TeacherModulisticaPage() {
             </p>
 
             <div className="space-y-4">
-              {proxyFileName ? (
+              {proxyFile ? (
                 <div className="flex items-center justify-between border-2 border-emerald-100 bg-emerald-50 text-emerald-700 px-3 py-2 rounded-xl text-xs font-semibold select-none">
                   <span>📄 {proxyFileName}</span>
-                  <button onClick={() => setProxyFileName('')} className="text-gray-400 hover:text-red-500">✕</button>
+                  <button onClick={() => { setProxyFileName(''); setProxyFile(null); }} className="text-gray-400 hover:text-red-500">✕</button>
                 </div>
               ) : (
                 <label className="w-full h-12 border-2 border-dashed border-gray-200 hover:border-kidville-green rounded-xl flex items-center justify-center gap-1.5 cursor-pointer text-xs font-semibold text-gray-600 transition-colors">
@@ -367,7 +372,11 @@ export default function TeacherModulisticaPage() {
                     type="file"
                     accept="image/*,.pdf"
                     className="hidden"
-                    onChange={e => setProxyFileName(e.target.files?.[0]?.name || '')}
+                    onChange={e => {
+                      const f = e.target.files?.[0] ?? null;
+                      setProxyFile(f);
+                      setProxyFileName(f?.name ?? '');
+                    }}
                   />
                 </label>
               )}
@@ -375,17 +384,17 @@ export default function TeacherModulisticaPage() {
 
             <div className="flex gap-3 mt-6">
               <button
-                onClick={() => { setShowProxyModal(null); setProxyFileName(''); }}
+                onClick={() => { setShowProxyModal(null); setProxyFileName(''); setProxyFile(null); }}
                 className="flex-1 h-11 font-maven text-sm rounded-pill border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors"
               >
                 Annulla
               </button>
               <button
-                disabled={!proxyFileName}
+                disabled={!proxyFile || proxyUploading}
                 onClick={handleProxyUploadSubmit}
                 className="flex-1 h-11 font-barlow font-black uppercase tracking-wider rounded-pill bg-kidville-green text-kidville-yellow hover:opacity-90 disabled:opacity-50 transition-all"
               >
-                Registra Firma
+                {proxyUploading ? 'Caricamento…' : 'Registra Firma'}
               </button>
             </div>
           </div>

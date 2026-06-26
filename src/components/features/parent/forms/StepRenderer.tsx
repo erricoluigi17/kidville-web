@@ -17,9 +17,11 @@ interface Props {
   register: UseFormRegister<FieldValues>
   control: Control<FieldValues>
   errors: FieldErrors
+  /** Endpoint per l'upload allegati (autenticato o pubblico token-scoped). */
+  uploadEndpoint?: string
 }
 
-export function StepRenderer({ page, modelId, register, control, errors }: Props) {
+export function StepRenderer({ page, modelId, register, control, errors, uploadEndpoint = '/api/forms/upload' }: Props) {
   // Valori correnti del form → applica la logica condizionale (DL-024).
   const values = (useWatch({ control }) as Record<string, unknown>) ?? {}
   const visibili = campiVisibili(page.fields, values)
@@ -34,7 +36,7 @@ export function StepRenderer({ page, modelId, register, control, errors }: Props
           register={register}
           control={control}
           error={errors[field.id]}
-          uploadEndpoint="/api/forms/upload"
+          uploadEndpoint={uploadEndpoint}
         />
       ))}
     </div>

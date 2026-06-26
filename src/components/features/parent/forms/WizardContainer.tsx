@@ -20,6 +20,9 @@ interface Props {
   requiresSignature: boolean
   userId: string | null
   parentEmail: string | null
+  /** Se valorizzato: modalità PUBBLICA (modello pubblicato) — submit/upload
+   *  token-scoped e anonimi, firma OTP disattivata (DL-030). */
+  publicToken?: string
 }
 
 const slide = {
@@ -36,9 +39,15 @@ export function WizardContainer({
   requiresSignature,
   userId,
   parentEmail,
+  publicToken,
 }: Props) {
   const router = useRouter()
   const pages = schema.pages ?? []
+  // In modalità pubblica la firma OTP è disattivata (nessuna identità/email).
+  const useSignature = requiresSignature && !publicToken
+  const uploadEndpoint = publicToken
+    ? `/api/public/forms/${publicToken}/upload`
+    : '/api/forms/upload'
   const [step, setStep] = useState(0)
   const [direction, setDirection] = useState(1)
   const [submitting, setSubmitting] = useState(false)
@@ -87,7 +96,7 @@ export function WizardContainer({
     const data = pulisciNascosti(pages, getValues() as FormValues) as FormSubmissionData
 
     try {
-      if (requiresSignature) {
+      if (useSignature) {
         // Crea submission (pending_signature) + invia OTP via API server-side
         const res = await fetch('/api/forms/send-otp', {
           method: 'POST',
@@ -100,11 +109,16 @@ export function WizardContainer({
       } else {
         // Nessuna firma: salva via endpoint server-role (l'insert client-side è
         // bloccato dalla RLS di form_submissions; il server registra anche lo
-        // snapshot consensi — DL-029).
-        const res = await fetch('/api/forms/submit', {
+        // snapshot consensi — DL-029). In modalità pubblica → endpoint token-scoped
+        // anonimo (DL-030).
+        const endpoint = publicToken
+          ? `/api/public/forms/${publicToken}/submit`
+          : '/api/forms/submit'
+        const body = publicToken ? { data } : { modelId, userId, data }
+        const res = await fetch(endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ modelId, userId, data }),
+          body: JSON.stringify(body),
         })
         const json = await res.json()
         if (!res.ok) throw new Error(json.error ?? 'Invio fallito')
@@ -199,6 +213,7 @@ export function WizardContainer({
                     register={register}
                     control={control}
                     errors={errors}
+                    uploadEndpoint={uploadEndpoint}
                   />
                 </motion.div>
               </AnimatePresence>
@@ -228,7 +243,7 @@ export function WizardContainer({
                   <ArrowRight className="w-4 h-4 order-2" />
                 )}
                 <span className={isLast || submitting ? '' : 'order-1'}>
-                  {submitting ? 'Invio…' : isLast ? (requiresSignature ? 'Firma il modulo' : 'Invia') : 'Avanti'}
+                  {submitting ? 'Invio…' : isLast ? (useSignature ? 'Firma il modulo' : 'Invia') : 'Avanti'}
                 </span>
               </button>
             </div>

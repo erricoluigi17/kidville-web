@@ -16,6 +16,7 @@ import {
   Save, ChevronLeft, Loader2, Check, AlertCircle, GripVertical,
   Type, AlignLeft, ChevronDown, Paperclip, PenLine, Hash,
   Database, Baby, Heart, User, UserCheck, ShieldCheck,
+  Globe, Lock, Copy, Link2, EyeOff,
 } from 'lucide-react'
 import { motion } from 'framer-motion'
 import Link from 'next/link'
@@ -213,6 +214,12 @@ export default function FormBuilderPage() {
   const [selectedFieldId, setSelectedFieldId] = useState<string | null>(null)
   const [formTitle, setFormTitle] = useState('Nuovo Modello')
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  // Pubblicazione (DL-030): id del modello salvato + stato link pubblico.
+  const [savedModelId, setSavedModelId] = useState<string | null>(null)
+  const [accessMode, setAccessMode] = useState<'public' | 'authenticated'>('public')
+  const [pub, setPub] = useState<{ token: string; url: string; access_mode: string } | null>(null)
+  const [publishing, setPublishing] = useState(false)
+  const [copied, setCopied] = useState(false)
   const [draggingPaletteId, setDraggingPaletteId] = useState<string | null>(null)
   const [draggingPresetId, setDraggingPresetId] = useState<string | null>(null)
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
@@ -349,12 +356,21 @@ export default function FormBuilderPage() {
     })
   }
 
+  // Identità staff (modello app-level): da ?userId= o admin dev di default.
+  function getUserId(): string {
+    if (typeof window !== 'undefined') {
+      const u = new URLSearchParams(window.location.search).get('userId')
+      if (u) return u
+    }
+    return '22222222-2222-2222-2222-555555555555'
+  }
+
   async function handleSave() {
     setSaveState('saving')
     try {
       const res = await fetch('/api/admin/form-models', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-user-id': getUserId() },
         body: JSON.stringify({
           title: formTitle,
           schema,
@@ -366,12 +382,44 @@ export default function FormBuilderPage() {
       })
       const json = await res.json()
       if (!res.ok) throw new Error(json.error ?? 'Salvataggio fallito')
+      setSavedModelId(json.id ?? null)
       setSaveState('saved')
     } catch (err) {
       console.error('Errore salvataggio form_models:', err)
       setSaveState('error')
     } finally {
       setTimeout(() => setSaveState('idle'), 3000)
+    }
+  }
+
+  // Pubblica / ritira il modello salvato (DL-030).
+  async function handlePublish(action: 'publish' | 'unpublish') {
+    if (!savedModelId) return
+    setPublishing(true)
+    try {
+      const res = await fetch('/api/admin/form-models/publish', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-user-id': getUserId() },
+        body: JSON.stringify({ id: savedModelId, action, access_mode: accessMode }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error ?? 'Errore pubblicazione')
+      setPub(action === 'publish' ? { token: json.public_token, url: json.url, access_mode: json.access_mode } : null)
+    } catch (err) {
+      console.error('Errore pubblicazione:', err)
+    } finally {
+      setPublishing(false)
+    }
+  }
+
+  async function copyLink() {
+    if (!pub || typeof window === 'undefined') return
+    try {
+      await navigator.clipboard.writeText(`${window.location.origin}${pub.url}`)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      /* clipboard non disponibile */
     }
   }
 
@@ -448,6 +496,64 @@ export default function FormBuilderPage() {
             </span>
           </motion.button>
         </header>
+
+        {/* ── Barra Pubblicazione (DL-030) ── */}
+        {savedModelId && (
+          <div
+            className="flex items-center gap-3 px-6 py-2.5 flex-shrink-0 flex-wrap"
+            style={{ background: 'rgba(16,185,129,0.06)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}
+          >
+            <span className="flex items-center gap-1.5 text-xs font-semibold text-emerald-400 uppercase tracking-wider">
+              <Globe className="w-3.5 h-3.5" /> Pubblicazione
+            </span>
+
+            <div className="flex items-center gap-1.5 text-xs">
+              <button
+                onClick={() => setAccessMode('public')}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-lg border transition-all ${accessMode === 'public' ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-300' : 'border-white/10 text-slate-400'}`}
+              >
+                <Globe className="w-3 h-3" /> Link pubblico
+              </button>
+              <button
+                onClick={() => setAccessMode('authenticated')}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-lg border transition-all ${accessMode === 'authenticated' ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-300' : 'border-white/10 text-slate-400'}`}
+              >
+                <Lock className="w-3 h-3" /> Solo registrati
+              </button>
+            </div>
+
+            {!pub ? (
+              <button
+                onClick={() => handlePublish('publish')}
+                disabled={publishing}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-all disabled:opacity-50"
+              >
+                {publishing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Link2 className="w-3.5 h-3.5" />}
+                Pubblica
+              </button>
+            ) : (
+              <div className="flex items-center gap-2 flex-wrap">
+                <code className="text-xs text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded-lg">
+                  {pub.url}
+                </code>
+                <button
+                  onClick={copyLink}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-white/10 text-slate-300 hover:bg-white/5 text-xs transition-all"
+                >
+                  {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                  {copied ? 'Copiato' : 'Copia link'}
+                </button>
+                <button
+                  onClick={() => handlePublish('unpublish')}
+                  disabled={publishing}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-white/10 text-slate-400 hover:text-rose-300 hover:border-rose-400/30 text-xs transition-all disabled:opacity-50"
+                >
+                  <EyeOff className="w-3.5 h-3.5" /> Ritira
+                </button>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* ── 3-column body ── */}
         <div className="flex flex-1 min-h-0">

@@ -18,6 +18,8 @@ const PUBLIC_PREFIXES = [
   '/api/forms',
   '/api/panic-alert',
   '/forms',
+  '/m', // link pubblico dei modelli pubblicati (DL-030)
+  '/api/public', // API token-scoped per i form pubblicati (DL-030)
   '/onboarding',
 ];
 

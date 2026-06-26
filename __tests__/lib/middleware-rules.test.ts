@@ -17,6 +17,9 @@ describe('middleware-rules', () => {
         '/api/panic-alert',
         '/forms/abc',
         '/onboarding',
+        '/m/abc-token',
+        '/api/public/forms/xyz',
+        '/api/public/forms/xyz/submit',
       ]) {
         expect(isPublicPath(p), p).toBe(true);
       }
@@ -31,6 +34,8 @@ describe('middleware-rules', () => {
     it('does not let a lookalike prefix leak (/iscrizionefoo is not public)', () => {
       expect(isPublicPath('/iscrizionefoo')).toBe(false);
       expect(isPublicPath('/authentication')).toBe(false);
+      expect(isPublicPath('/mx')).toBe(false);
+      expect(isPublicPath('/models')).toBe(false);
     });
   });
 

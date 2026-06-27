@@ -36,7 +36,7 @@ Le 6 tabelle sotto restano permissive perché una route le legge col **client di
 
 | Tabella | Policy permissiva | Route bloccante (session-client) |
 |---|---|---|
-| `eventi_diario` | `eventi_diario_insert_anon/_select_anon/_update_anon` | `api/diary/entries/route.ts` (+ `educator-sections`) |
+| ~~`eventi_diario`~~ ✅ | ~~`eventi_diario_*_anon`~~ **droppate (migr. `20260753`, DL-040)** | ~~`api/diary/entries`~~ migrato a service-role |
 | `note_disciplinari` | `allow_all_note`, `Enable read access for all users` | `api/notes/sign/route.ts` |
 | `registro_orario` | `allow_all_registro`, `Enable read…` | `api/register/lessons/route.ts` |
 | `firme_docenti` | `allow_all_firme`, `Enable read…` | `api/register/lessons/route.ts` |

@@ -96,10 +96,12 @@ function TeacherDiaryInner() {
     const [savedStudentIds, setSavedStudentIds] = useState<Set<string>>(new Set());
     const [showSavedToast, setShowSavedToast] = useState(false);
     const [activities, setActivities] = useState<ActivityItem[]>([]);
+    const [notaLibera, setNotaLibera] = useState('');
+    // Filtro presenze (incongruenza #7): default = solo presenti; toggle per mostrare tutti.
+    const [showAll, setShowAll] = useState(false);
 
-    // Carica studenti da Supabase all'avvio
+    // Listener connettività (una volta).
     useEffect(() => {
-        fetchStudents();
         const onOnline = () => setIsOffline(false);
         const onOffline = () => setIsOffline(true);
         window.addEventListener('online', onOnline);
@@ -108,10 +110,16 @@ function TeacherDiaryInner() {
         return () => { window.removeEventListener('online', onOnline); window.removeEventListener('offline', onOffline); };
     }, []);
 
+    // Carica studenti: di default solo i presenti; rifa il fetch al toggle.
+    useEffect(() => {
+        fetchStudents();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [showAll]);
+
     const fetchStudents = async () => {
         setIsLoading(true);
         try {
-            const res = await fetch(`/api/diary/students?sezione=${SEZIONE}&onlyPresent=true&userId=${userId}`);
+            const res = await fetch(`/api/diary/students?sezione=${SEZIONE}&onlyPresent=${showAll ? 'false' : 'true'}&userId=${userId}`);
             const data = await res.json();
             if (Array.isArray(data)) {
                 const mapped: Student[] = data.map((a: { id: string; nome: string; cognome: string; note_mediche: string | null }) => ({
@@ -201,6 +209,7 @@ function TeacherDiaryInner() {
         // Prima imposta il tipo e lo stato pulito
         setSelectedEvent(type);
         setSavedStudentIds(new Set());
+        setNotaLibera('');
         // Inizializza con una attività vuota, con partecipazione null per ogni studente
         const initPart: Record<string, string | null> = {};
         students.forEach(s => { initPart[s.id] = null; });
@@ -224,6 +233,17 @@ function TeacherDiaryInner() {
     const counter = (id: string, field: 'pipi' | 'cacca' | 'vasino', delta: number) => {
         const cur = (studentStates[id]?.[field] as number) ?? 0;
         updateStudent(id, { [field]: Math.max(0, cur + delta) });
+    };
+
+    // Bulk "Nanna per tutti": imposta l'orario di inizio nanna = ora per ogni bambino in elenco.
+    const bulkNannaOra = () => {
+        const t = now();
+        setStudentStates(prev => {
+            const next = { ...prev };
+            students.forEach(s => { next[s.id] = { ...next[s.id], orario_inizio: t }; });
+            return next;
+        });
+        setSavedStudentIds(new Set());
     };
 
     const handleSave = async () => {
@@ -253,6 +273,7 @@ function TeacherDiaryInner() {
                     tipo_evento: selectedEvent,
                     orario_inizio: nowIso,
                     dettagli,
+                    nota_libera: notaLibera.trim() || null,
                 };
             });
 
@@ -311,11 +332,24 @@ function TeacherDiaryInner() {
                         Sezione Girasoli • {new Date().toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' })}
                     </p>
                 </div>
-                {isOffline && (
-                    <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 text-amber-600 px-3 py-1.5 rounded-full text-xs font-maven">
-                        <WifiOff size={12} strokeWidth={1.5} /> Offline
-                    </div>
-                )}
+                <div className="flex items-center gap-2">
+                    <button
+                        onClick={() => setShowAll(v => !v)}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-maven font-semibold border transition-colors ${
+                            showAll
+                                ? 'bg-gray-50 border-gray-200 text-gray-500'
+                                : 'bg-kidville-green-light border-kidville-green/20 text-kidville-green'
+                        }`}
+                        title={showAll ? 'Sto mostrando tutti i bambini' : 'Sto mostrando solo i presenti'}
+                    >
+                        <Users size={12} strokeWidth={1.5} /> {showAll ? 'Tutti' : 'Solo presenti'}
+                    </button>
+                    {isOffline && (
+                        <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 text-amber-600 px-3 py-1.5 rounded-full text-xs font-maven">
+                            <WifiOff size={12} strokeWidth={1.5} /> Offline
+                        </div>
+                    )}
+                </div>
             </div>
 
             {/* ── Griglia eventi ── */}
@@ -392,6 +426,16 @@ function TeacherDiaryInner() {
                                         savedStudentIds={savedStudentIds}
                                         isMerenda={selectedEvent === 'merenda'}
                                     />
+                                )}
+
+                                {/* ── Bulk "Nanna per tutti": un tap imposta l'orario inizio = ora per tutti ── */}
+                                {selectedEvent === 'nanna_inizio' && students.length > 0 && (
+                                    <button
+                                        onClick={bulkNannaOra}
+                                        className="w-full mb-1 py-2.5 rounded-2xl bg-blue-50 border border-blue-200 text-blue-600 font-maven font-semibold text-sm flex items-center justify-center gap-2 hover:bg-blue-100 transition-colors"
+                                    >
+                                        <Moon size={14} strokeWidth={1.5} /> Tutti a nanna ora ({now()})
+                                    </button>
                                 )}
 
                                 {/* ── NANNA (inizio) / SVEGLIA (fine) — due eventi distinti (PRD §3.1.1) ── */}
@@ -518,6 +562,17 @@ function TeacherDiaryInner() {
                                         </motion.div>
                                     );
                                 })}
+                            </div>
+
+                            {/* ── Nota libera (visibile ai genitori) ── */}
+                            <div className="px-4 pt-1 pb-2">
+                                <textarea
+                                    value={notaLibera}
+                                    onChange={e => setNotaLibera(e.target.value)}
+                                    rows={2}
+                                    placeholder="Nota libera per i genitori (opzionale)…"
+                                    className="w-full border-2 border-gray-200/60 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white/60 focus:outline-none focus:ring-2 focus:ring-kidville-green/30 resize-none"
+                                />
                             </div>
 
                             {/* ── Footer salva ── */}

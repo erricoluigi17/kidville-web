@@ -49,6 +49,40 @@ export async function enqueueNotifichePerAlunni(
 }
 
 /**
+ * Notifica il genitore di un aggiornamento del Diario 0-6 (P4/DL-040).
+ * Buffer 10' = anche **finestra di modifica**: con DEBOUNCE, ogni salvataggio
+ * successivo entro i 10' rimuove la notifica diario ancora non inviata per quel
+ * figlio e ne ri-accoda una sola → il genitore riceve un'unica notifica con lo
+ * stato finale. Best-effort: non blocca il salvataggio del diario.
+ */
+export async function enqueueDiarioGenitori(
+  supabase: SupabaseClient,
+  { alunnoId, nome, bufferMin = 10 }: { alunnoId: string; nome?: string | null; bufferMin?: number },
+): Promise<void> {
+  if (!alunnoId) return
+  // Debounce: elimina le notifiche diario pending (non inviate) di questo figlio.
+  try {
+    await supabase
+      .from('notifiche')
+      .delete()
+      .eq('entita_tipo', 'diario')
+      .eq('entita_id', alunnoId)
+      .is('push_inviata_il', null)
+  } catch (e) {
+    console.error('[enqueueDiarioGenitori] debounce fallito (non bloccante):', e)
+  }
+  await enqueueNotifichePerAlunni(supabase, {
+    alunnoIds: [alunnoId],
+    tipo: 'diario',
+    titolo: 'Diario aggiornato',
+    corpo: `Nuovo aggiornamento nel diario di ${nome ?? 'tuo figlio'}`,
+    entitaTipo: 'diario',
+    entitaId: alunnoId,
+    bufferMin,
+  })
+}
+
+/**
  * Notifica i docenti TITOLARI di una sezione quando una scrittura è stata
  * effettuata da Segreteria/Direzione (non dal titolare stesso). Trasparenza
  * PRD §12. Configurabile per scuola via admin_settings.segreteria_config

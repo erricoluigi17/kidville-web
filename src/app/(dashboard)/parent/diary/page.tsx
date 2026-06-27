@@ -305,6 +305,8 @@ function ParentDiaryContent() {
     const [loading, setLoading] = useState(true);
     const [direction, setDirection] = useState<1 | -1>(1);
     const [studentName, setStudentName] = useState<string | null>(null);
+    // "Entrata" letta dal modulo Presenze (read-only, DL-040).
+    const [checkIn, setCheckIn] = useState<string | null>(null);
 
     const goDay = (delta: number) => {
         setDirection(delta as 1 | -1);
@@ -328,6 +330,12 @@ function ParentDiaryContent() {
             } else {
                 setEntries([]);
             }
+
+            // "Entrata" dal modulo Presenze (orario di check-in del giorno)
+            try {
+                const ciRes = await fetch(`/api/diary/checkin?alunno_id=${alunnoId}&date=${dk}`);
+                setCheckIn(ciRes.ok ? ((await ciRes.json()).orario_entrata ?? null) : null);
+            } catch { setCheckIn(null); }
 
             // Carica foto reali associate a questo alunno per il giorno selezionato
             let photosUrl = `/api/gallery?studentId=${alunnoId}&date=${dk}`;
@@ -451,8 +459,8 @@ function ParentDiaryContent() {
                         </div>
                     )}
 
-                    {/* Stato vuoto */}
-                    {!loading && entries.length === 0 && (
+                    {/* Stato vuoto (nessuna voce e nessuna entrata registrata) */}
+                    {!loading && entries.length === 0 && !checkIn && (
                         <div className="flex flex-col items-center justify-center py-20 text-center">
                             <div className="w-20 h-20 bg-kidville-cream rounded-full flex items-center justify-center mb-4 text-4xl">
                                 📖
@@ -466,11 +474,33 @@ function ParentDiaryContent() {
                         </div>
                     )}
 
-                    {/* Timeline eventi */}
-                    {!loading && entries.length > 0 && (
+                    {/* Timeline eventi (con "Entrata" in cima, letta dalle Presenze) */}
+                    {!loading && (checkIn || entries.length > 0) && (
                         <div className="space-y-3">
+                            {checkIn && (
+                                <motion.div
+                                    initial={{ opacity: 0, y: 14 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    transition={{ duration: 0.3, ease: 'easeOut' }}
+                                    className="bg-white/80 backdrop-blur-xl rounded-3xl border-l-4 border-emerald-200 border border-white/40 shadow-sm px-5 py-4"
+                                >
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-10 h-10 rounded-2xl flex items-center justify-center text-xl flex-shrink-0 bg-emerald-50">
+                                            🚪
+                                        </div>
+                                        <div className="flex-1">
+                                            <p className="font-barlow font-black text-sm uppercase tracking-wide text-emerald-600">Entrata</p>
+                                            <p className="font-maven text-[11px] text-gray-400">{checkIn}</p>
+                                        </div>
+                                        <span className="text-2xl">👋</span>
+                                    </div>
+                                    <p className="font-maven text-sm text-gray-700 leading-relaxed pl-1 mt-2">
+                                        Sono arrivato/a a scuola alle {checkIn}!
+                                    </p>
+                                </motion.div>
+                            )}
                             {entries.map((entry, i) => (
-                                <EventCard key={entry.id} entry={entry} index={i} />
+                                <EventCard key={entry.id} entry={entry} index={i + (checkIn ? 1 : 0)} />
                             ))}
                             {/* Foto reali della giornata */}
                             <PhotosSection photos={photos} />

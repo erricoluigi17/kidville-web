@@ -76,11 +76,12 @@
   - Strumenti: audit log, reset password, export ministeriale, ~~**diritto all'oblio / hard delete GDPR**~~ ✅ **FATTO (P3.4c, DL-034)**: lista alunni non iscritti (`/api/admin/gdpr/candidates`) → `POST /api/admin/gdpr/erase` **solo anonimizzazione** (placeholder, no DELETE; genitore solo se orfano; file PII rimossi escluso `fatture`), preserva audit+fisco, **dry-run + doppia conferma**, gate Direzione + audit; `anonimizzato_il` (migr. `20260751`); UI `/admin/gdpr` (`OblioPanel`). *(audit log, reset password, export ministeriale: già altrove / fasi successive.)*
 
 ## P3 — Esperienza famiglia & moduli 0-6
-- **Diario 0-6 (Fase 2, 21/37)**:
-  - **Notifiche push** al genitore per ogni evento (dopo buffer 10 min) — il buffer/push è parziale/mancante.
-  - Pulsante evento **"Entrata"** + orario precompilato (incongruenza ancora aperta nel codice).
-  - **Filtro presenze** (mostra solo "Presenti") — incongruenza #7 dichiarata "da implementare".
-  - Compilazione automatica portate dal menu del giorno; bulk "Nanna per tutti"; archivio 14 giorni (enforcement lato genitore); traduzione voci routine; dashboard monitoraggio Segreteria.
+> **Avanzamento P4 — Diario 0-6 D1 (2026-06-27, DL-040):** chiusi ~5 item (push genitore buffer 10'+debounce; "Entrata" read-only da Presenze; filtro solo-presenti+toggle; bulk "Nanna per tutti"; nota libera docente) + **lockdown S9b `eventi_diario`** (route `/api/diary/entries`→service-role, DROP policy anon, migr. `20260753`, advisors 0 ERROR). +5 test (375 verdi). 🔶 D2: traduzione voci routine (i18n), dashboard Segreteria, riconciliazione `eventi_diario`/`daily_routines`, auto-fill quantità portate.
+- **Diario 0-6 (Fase 2, 21/37 → ~26/37)**:
+  - ~~**Notifiche push** al genitore per ogni evento (dopo buffer 10 min)~~ ✅ **D1**: 1 push/figlio, buffer 10' + debounce (`enqueueDiarioGenitori`).
+  - ~~Pulsante evento **"Entrata"** + orario precompilato~~ ✅ **D1**: read-only dalle Presenze (`/api/diary/checkin`), niente evento duplicato.
+  - ~~**Filtro presenze** (mostra solo "Presenti") — incongruenza #7~~ ✅ **D1**: default solo-presenti + toggle "Tutti".
+  - ~~bulk "Nanna per tutti"~~ ✅ **D1**. 🔶 D2: compilazione automatica portate dal menu del giorno; archivio 14 giorni (già lato genitore); traduzione voci routine; dashboard monitoraggio Segreteria.
 - **Armadietto (Fase 2, 5/22 — molto incompleto)**:
   - **Flusso "Richiesta materiale al genitore"** (creazione lato docente) + **chiusura ciclo** alla ricezione fisica.
   - Notifica immediata al genitore; bulk multi-bambino; indipendenza dalle presenze; isolamento multi-figlio.

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient, createAdminClient } from '@/lib/supabase/server-client';
+import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { assertAlunnoInScope, scuoleDiUtente } from '@/lib/auth/scope';
 import { logScrittura } from '@/lib/audit/scrittura';
@@ -31,7 +31,7 @@ export async function GET(request: NextRequest) {
         const matFilter     = searchParams.get('material_filter');
         const mode          = searchParams.get('mode'); // 'stock' | 'carico' | null
 
-        const supabase = await createClient();
+        const supabase = await createAdminClient();
 
         // Ramo docente/staff (per classe): gate ruolo + isolamento per plesso.
         // Il ramo genitore (?alunno_id) resta aperto.
@@ -145,7 +145,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
     try {
         const body = await request.json();
-        const supabase = await createClient();
+        const supabase = await createAdminClient();
         const { alunno_id, materiale, quantita, date } = body;
 
         if (!alunno_id || !materiale || !quantita) {
@@ -213,7 +213,7 @@ export async function PATCH(request: NextRequest) {
         if (auth.response) return auth.response;
 
         const body = await request.json();
-        const supabase = await createClient();
+        const supabase = await createAdminClient();
         const admin = await createAdminClient();
         const { alunno_id, materiale, quantita_usata } = body;
 

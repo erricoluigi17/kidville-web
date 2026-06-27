@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient, createAdminClient } from '@/lib/supabase/server-client';
+import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { scuoleDiUtente } from '@/lib/auth/scope';
 
@@ -8,7 +8,7 @@ import { scuoleDiUtente } from '@/lib/auth/scope';
 // GET /api/diary/students?classeSezione=3A&onlyPresent=true&date=2026-05-17
 // GET /api/diary/students?id=uuid                             → singolo alunno
 export async function GET(request: NextRequest) {
-    const supabase = await createClient();
+    const supabase = await createAdminClient();
     const params = request.nextUrl.searchParams;
 
     const id = params.get('id');

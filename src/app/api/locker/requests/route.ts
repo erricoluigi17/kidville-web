@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient, createAdminClient } from '@/lib/supabase/server-client';
+import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { scuoleDiUtente } from '@/lib/auth/scope';
 
@@ -17,7 +17,7 @@ export async function GET(request: NextRequest) {
         const classeSezione = searchParams.get('classe_sezione');
         const stato = searchParams.get('stato');
 
-        const supabase = await createClient();
+        const supabase = await createAdminClient();
 
         if (alunnoId) {
             let query = supabase
@@ -106,7 +106,7 @@ export async function PATCH(request: NextRequest) {
             );
         }
 
-        const supabase = await createClient();
+        const supabase = await createAdminClient();
 
         const updates: Record<string, unknown> = { stato };
         if (stato === 'acknowledged') {

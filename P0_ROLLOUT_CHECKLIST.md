@@ -37,13 +37,13 @@ Le 6 tabelle sotto restano permissive perché una route le legge col **client di
 | Tabella | Policy permissiva | Route bloccante (session-client) |
 |---|---|---|
 | ~~`eventi_diario`~~ ✅ | ~~`eventi_diario_*_anon`~~ **droppate (migr. `20260753`, DL-040)** | ~~`api/diary/entries`~~ migrato a service-role |
-| `note_disciplinari` | `allow_all_note`, `Enable read access for all users` | `api/notes/sign/route.ts` |
-| `registro_orario` | `allow_all_registro`, `Enable read…` | `api/register/lessons/route.ts` |
-| `firme_docenti` | `allow_all_firme`, `Enable read…` | `api/register/lessons/route.ts` |
+| ~~`note_disciplinari`~~ ✅ | **droppata (migr. `20260757`, DL-046)** | già service-role (falso positivo import) |
+| ~~`registro_orario`~~ ✅ | **droppata (migr. `20260757`, DL-046)** | già service-role (falso positivo import) |
+| ~~`firme_docenti`~~ ✅ | **droppata (migr. `20260757`, DL-046)** | già service-role (falso positivo import) |
 | ~~`galleria_media_v2`~~ ✅ | ~~`Allow all for service role`~~ **droppata (migr. `20260754`, DL-041)** | accessi già service-role (no migrazione) |
 | ~~`locker_config`~~ ✅ | ~~permissive~~ **droppate (migr. `20260755`, DL-044)** | `api/locker/materials` migrato a service-role |
-| `alunni` | `alunni_select_anon` (SELECT anon — espone gli alunni) | letture estese via session-client (attendance/diary/…): migrare prima |
-| `schools` | `schools_select_anon` | `api/register/lessons` (session) |
+| ~~`alunni`~~ ✅ | **`alunni_select_anon` droppata (migr. `20260758`, DL-046)** | 4 route session→service-role |
+| ~~`schools`~~ ✅ | **droppata (migr. `20260757`, DL-046)** | già service-role |
 
 *(Queste route appartengono ai moduli P2/P4 — il drop è naturale da fare quando si toccano in P4.)*
 

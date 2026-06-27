@@ -91,9 +91,9 @@
   - **Isolamento interfaccia Cuoca** (vede SOLO mensa); dashboard real-time per tipologia (Standard/Bianco/Speciali); cut-off.
   - **Allergeni per piatto** (14 UE) obbligatori + alert incrociato anagrafica + icona pericolo personalizzata genitore.
   - Semaforo scorte ticket; diete in bianco entro cut-off; esclusioni classe (gita); storni/riaccrediti Segreteria; report fine mese catering.
-- **Comunicazione (Fase 3, 24/32)**:
-  - **Traduzione automatica** messaggi chat (insegnante↔famiglie straniere) — requisito chiave mancante.
-  - Note vocali; condivisione file/PDF/foto; super-admin Direzione lettura di tutte le chat; bacheca compiti genitore.
+- **Comunicazione (Fase 3, 24/32 → ~26/32)** — ✅ **C1 (2026-06-27, DL-042)**:
+  - ~~**Traduzione automatica** messaggi chat (insegnante↔famiglie straniere)~~ ✅ **C1**: on-demand via Claude `claude-haiku-4-5`, gated su `ANTHROPIC_API_KEY` (dipendenza esterna come Aruba); servizio `src/lib/translate/`, `POST /api/chat/translate` (requireUser+rate-limit), pulsante "Traduci" sui messaggi in arrivo. +8 test.
+  - 🔶 Resta: Note vocali; condivisione file/PDF/foto; super-admin Direzione lettura di tutte le chat; bacheca compiti genitore; **S9b chat realtime RLS** (`chat_messages`/`chat_threads`, gated onboarding).
 - **Galleria Foto/Video (Fase 3, 17/24 → ~22/24)** — ✅ **G1 (2026-06-27, DL-041)**:
   - ~~**Privacy Lock** che inibisce fisicamente tagging di alunni senza liberatoria~~ ✅ **enforced server-side**: tag senza `consenso_privacy` → 422 (POST+PATCH, bypass broadcast); + **S9b** DROP `galleria_media_v2` permissive (migr. `20260754`, accessi già service-role), advisors 0 ERROR.
   - ~~Comunicazioni istituzionali (bypass tagging broadcast); cancellazione globale admin; interconnessione con Diario 0-6~~ ✅ già presenti (verificato). 🔶 Resta: cancellazione globale UI admin dedicata (l'API c'è).

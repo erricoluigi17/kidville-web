@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Check, CheckCheck } from 'lucide-react';
+import { Check, CheckCheck, Languages, Loader2 } from 'lucide-react';
 
 export interface ChatMessage {
     id: string;
@@ -73,6 +73,91 @@ function UnreadSeparator() {
             </span>
             <div className="flex-1 h-px bg-emerald-400/40" />
         </motion.div>
+    );
+}
+
+/** Bolla messaggio + traduzione automatica (DL-042) per i messaggi in arrivo. */
+function MessageBubble({ msg, isMine, currentUserId }: { msg: ChatMessage; isMine: boolean; currentUserId: string }) {
+    const [translated, setTranslated] = useState<string | null>(null);
+    const [translating, setTranslating] = useState(false);
+    const [unavailable, setUnavailable] = useState(false);
+
+    const handleTranslate = async () => {
+        if (translated) { setTranslated(null); return; } // toggle: nascondi
+        setTranslating(true);
+        try {
+            const targetLang = (typeof navigator !== 'undefined' ? navigator.language : 'it').split('-')[0] || 'it';
+            const res = await fetch('/api/chat/translate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'x-user-id': currentUserId },
+                body: JSON.stringify({ text: msg.content, targetLang }),
+            });
+            if (res.status === 503) { setUnavailable(true); return; }
+            if (res.ok) { const j = await res.json(); setTranslated(j.translated ?? null); }
+        } catch { /* best-effort */ } finally {
+            setTranslating(false);
+        }
+    };
+
+    return (
+        <div className={`max-w-[75%] rounded-2xl px-4 py-2.5 shadow-sm ${
+            isMine
+                ? 'bg-kidville-green text-white rounded-br-md'
+                : 'bg-white/90 backdrop-blur-sm border border-white/40 text-gray-800 rounded-bl-md'
+        }`}>
+            {/* Attachment preview */}
+            {msg.attachment_url && msg.attachment_type === 'image' && (
+                <div className="mb-2 rounded-xl overflow-hidden">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={msg.attachment_url} alt="Allegato" className="w-full h-auto max-h-48 object-cover" />
+                </div>
+            )}
+            {msg.attachment_url && msg.attachment_type === 'document' && (
+                <div className={`mb-2 px-3 py-2 rounded-xl text-xs font-maven flex items-center gap-2 ${isMine ? 'bg-white/20' : 'bg-gray-100'}`}>
+                    📎 Documento allegato
+                </div>
+            )}
+
+            {/* Text */}
+            <p className={`font-maven text-sm leading-relaxed ${isMine ? 'text-white' : 'text-gray-800'}`}>
+                {msg.content}
+            </p>
+
+            {/* Traduzione (solo messaggi in arrivo) */}
+            {!isMine && msg.content?.trim() && !unavailable && (
+                <>
+                    {translated && (
+                        <p className="font-maven text-sm leading-relaxed text-kidville-green mt-1.5 pt-1.5 border-t border-gray-100 italic">
+                            🌐 {translated}
+                        </p>
+                    )}
+                    <button
+                        onClick={handleTranslate}
+                        disabled={translating}
+                        className="mt-1 inline-flex items-center gap-1 text-[11px] font-maven text-gray-400 hover:text-kidville-green transition-colors disabled:opacity-50"
+                    >
+                        {translating
+                            ? <Loader2 size={11} className="animate-spin" />
+                            : <Languages size={11} strokeWidth={1.5} />}
+                        {translated ? 'Mostra originale' : 'Traduci'}
+                    </button>
+                </>
+            )}
+
+            {/* Time + read status */}
+            <div className={`flex items-center gap-1 mt-1 ${isMine ? 'justify-end' : 'justify-start'}`}>
+                <span className={`font-maven text-[10px] ${isMine ? 'text-white/60' : 'text-gray-400'}`}>
+                    {formatMessageTime(msg.created_at)}
+                </span>
+                {isMine && (
+                    <span className="transition-all duration-300">
+                        {msg.read_at
+                            ? <CheckCheck size={12} className="text-blue-300" strokeWidth={1.5} />
+                            : <Check size={12} className="text-white/40" strokeWidth={1.5} />}
+                    </span>
+                )}
+            </div>
+        </div>
     );
 }
 
@@ -242,56 +327,7 @@ export function ChatMessageArea({
                                         data-message-id={isUnread ? msg.id : undefined}
                                         data-unread={isUnread ? 'true' : undefined}
                                     >
-                                        <div className={`max-w-[75%] rounded-2xl px-4 py-2.5 shadow-sm ${
-                                            isMine
-                                                ? 'bg-kidville-green text-white rounded-br-md'
-                                                : 'bg-white/90 backdrop-blur-sm border border-white/40 text-gray-800 rounded-bl-md'
-                                        }`}>
-                                            {/* Attachment preview */}
-                                            {msg.attachment_url && msg.attachment_type === 'image' && (
-                                                <div className="mb-2 rounded-xl overflow-hidden">
-                                                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                                                    <img
-                                                        src={msg.attachment_url}
-                                                        alt="Allegato"
-                                                        className="w-full h-auto max-h-48 object-cover"
-                                                    />
-                                                </div>
-                                            )}
-                                            {msg.attachment_url && msg.attachment_type === 'document' && (
-                                                <div className={`mb-2 px-3 py-2 rounded-xl text-xs font-maven flex items-center gap-2 ${
-                                                    isMine ? 'bg-white/20' : 'bg-gray-100'
-                                                }`}>
-                                                    📎 Documento allegato
-                                                </div>
-                                            )}
-
-                                            {/* Text */}
-                                            <p className={`font-maven text-sm leading-relaxed ${
-                                                isMine ? 'text-white' : 'text-gray-800'
-                                            }`}>
-                                                {msg.content}
-                                            </p>
-
-                                            {/* Time + read status */}
-                                            <div className={`flex items-center gap-1 mt-1 ${
-                                                isMine ? 'justify-end' : 'justify-start'
-                                            }`}>
-                                                <span className={`font-maven text-[10px] ${
-                                                    isMine ? 'text-white/60' : 'text-gray-400'
-                                                }`}>
-                                                    {formatMessageTime(msg.created_at)}
-                                                </span>
-                                                {isMine && (
-                                                    <span className="transition-all duration-300">
-                                                        {msg.read_at
-                                                            ? <CheckCheck size={12} className="text-blue-300" strokeWidth={1.5} />
-                                                            : <Check size={12} className="text-white/40" strokeWidth={1.5} />
-                                                        }
-                                                    </span>
-                                                )}
-                                            </div>
-                                        </div>
+                                        <MessageBubble msg={msg} isMine={isMine} currentUserId={currentUserId} />
                                     </motion.div>
                                 </div>
                             );

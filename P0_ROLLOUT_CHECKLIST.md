@@ -40,7 +40,7 @@ Le 6 tabelle sotto restano permissive perché una route le legge col **client di
 | `note_disciplinari` | `allow_all_note`, `Enable read access for all users` | `api/notes/sign/route.ts` |
 | `registro_orario` | `allow_all_registro`, `Enable read…` | `api/register/lessons/route.ts` |
 | `firme_docenti` | `allow_all_firme`, `Enable read…` | `api/register/lessons/route.ts` |
-| `galleria_media_v2` | `Allow all for service role` | `api/gallery/route.ts` |
+| ~~`galleria_media_v2`~~ ✅ | ~~`Allow all for service role`~~ **droppata (migr. `20260754`, DL-041)** | accessi già service-role (no migrazione) |
 | `locker_config` | `auth_gestisce_locker_config`, `tutti_leggono…` | `api/locker/materials/route.ts` |
 | `alunni` | `alunni_select_anon` (SELECT anon — espone gli alunni) | letture estese via session-client (attendance/diary/…): migrare prima |
 | `schools` | `schools_select_anon` | `api/register/lessons` (session) |

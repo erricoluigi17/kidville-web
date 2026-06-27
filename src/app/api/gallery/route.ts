@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient, createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
+import { alunniSenzaConsenso } from '@/lib/gallery/privacy';
 
 // GET /api/gallery?studentId=xxx&classe=xxx&date=YYYY-MM-DD&limit=30&offset=0
 // Lista media con filtri (studentId per genitore, classe per insegnante)
@@ -133,6 +134,20 @@ export async function POST(request: Request) {
         const uploaded_by = auth.user.id;
 
         const supabase = await createAdminClient();
+
+        // Privacy Lock (DL-041): inibisce il tagging di alunni senza consenso privacy
+        // (liberatoria foto), tranne nelle foto broadcast (istituzionali).
+        const senza = await alunniSenzaConsenso(supabase, tag_students, is_broadcast ?? false);
+        if (senza.length > 0) {
+            return NextResponse.json(
+                {
+                    error: 'Consenso privacy mancante: questi bambini non possono essere taggati nelle foto.',
+                    nomi: senza.map((s) => s.nome),
+                    ids: senza.map((s) => s.id),
+                },
+                { status: 422 }
+            );
+        }
 
         const { data, error } = await supabase
             .from('galleria_media_v2')
@@ -419,6 +434,23 @@ export async function PATCH(request: Request) {
         }
 
         // 3. Esegui l'aggiornamento
+        // Privacy Lock (DL-041): valida i tag EFFETTIVI quando si modificano tag/broadcast.
+        if (tag_students !== undefined || is_broadcast !== undefined) {
+            const effBroadcast = is_broadcast !== undefined ? is_broadcast : media.is_broadcast;
+            const effTags = tag_students !== undefined ? tag_students : media.tag_students;
+            const senza = await alunniSenzaConsenso(supabase, effTags, effBroadcast ?? false);
+            if (senza.length > 0) {
+                return NextResponse.json(
+                    {
+                        error: 'Consenso privacy mancante: questi bambini non possono essere taggati nelle foto.',
+                        nomi: senza.map((s) => s.nome),
+                        ids: senza.map((s) => s.id),
+                    },
+                    { status: 422 }
+                );
+            }
+        }
+
         const updateData: Record<string, any> = {};
         if (tag_students !== undefined) updateData.tag_students = tag_students;
         if (is_broadcast !== undefined) updateData.is_broadcast = is_broadcast;

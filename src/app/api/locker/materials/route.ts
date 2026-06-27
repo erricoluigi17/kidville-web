@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient, createAdminClient } from '@/lib/supabase/server-client';
+import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { assertClasseNomeInScope } from '@/lib/auth/scope';
 import { logScrittura } from '@/lib/audit/scrittura';
@@ -14,8 +14,8 @@ export async function GET(request: NextRequest) {
     const classeSezione = searchParams.get('classe_sezione') ?? null;
 
     try {
-        const supabase = await createClient();
-        let q = supabase
+        const admin = await createAdminClient();
+        let q = admin
             .from('locker_config')
             .select('*')
             .eq('attivo', true)
@@ -47,7 +47,6 @@ export async function POST(request: NextRequest) {
         const auth = await requireDocente(request);
         if (auth.response) return auth.response;
         const body = await request.json();
-        const supabase = await createClient();
         const admin = await createAdminClient();
 
         // Scope per plesso (classe risolta per nome dentro i propri plessi).
@@ -69,12 +68,12 @@ export async function POST(request: NextRequest) {
 
         let result;
         if (body.id) {
-            const { data, error } = await supabase
+            const { data, error } = await admin
                 .from('locker_config').update(payload).eq('id', body.id).select().single();
             if (error) throw error;
             result = data;
         } else {
-            const { data, error } = await supabase
+            const { data, error } = await admin
                 .from('locker_config').insert(payload).select().single();
             if (error) throw error;
             result = data;
@@ -100,7 +99,6 @@ export async function PATCH(request: NextRequest) {
         const auth = await requireDocente(request);
         if (auth.response) return auth.response;
         const body = await request.json();
-        const supabase = await createClient();
         const admin = await createAdminClient();
         const { id, ...updates } = body;
 
@@ -111,7 +109,7 @@ export async function PATCH(request: NextRequest) {
             if (scopeErr) return scopeErr;
         }
 
-        const { data, error } = await supabase
+        const { data, error } = await admin
             .from('locker_config').update(updates).eq('id', id).select().single();
         if (error) throw error;
         await logScrittura(admin, {
@@ -134,7 +132,6 @@ export async function DELETE(request: NextRequest) {
         const id = searchParams.get('id');
         if (!id) return NextResponse.json({ error: 'id mancante' }, { status: 400 });
 
-        const supabase = await createClient();
         const admin = await createAdminClient();
 
         const { data: row } = await admin.from('locker_config').select('classe_sezione').eq('id', id).maybeSingle();
@@ -143,7 +140,7 @@ export async function DELETE(request: NextRequest) {
             if (scopeErr) return scopeErr;
         }
 
-        const { error } = await supabase.from('locker_config').delete().eq('id', id);
+        const { error } = await admin.from('locker_config').delete().eq('id', id);
         if (error) throw error;
         await logScrittura(admin, {
             attore: auth.user, entitaTipo: 'armadietto_config', entitaId: id, azione: 'delete',

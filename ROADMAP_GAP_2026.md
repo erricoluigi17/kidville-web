@@ -82,7 +82,7 @@
   - ~~Pulsante evento **"Entrata"** + orario precompilato~~ ✅ **D1**: read-only dalle Presenze (`/api/diary/checkin`), niente evento duplicato.
   - ~~**Filtro presenze** (mostra solo "Presenti") — incongruenza #7~~ ✅ **D1**: default solo-presenti + toggle "Tutti".
   - ~~bulk "Nanna per tutti"~~ ✅ **D1**. 🔶 D2: compilazione automatica portate dal menu del giorno; archivio 14 giorni (già lato genitore); traduzione voci routine; dashboard monitoraggio Segreteria.
-- **Armadietto (Fase 2, 5/22 — molto incompleto)**:
+- **Armadietto (Fase 2, 5/22)** — 🔶 **S9b (2026-06-27, DL-044)** `locker_config` migrato a service-role + drop permissive (migr. `20260755`); flusso richiesta→chiusura ciclo già presente. Restano (molto incompleto):
   - **Flusso "Richiesta materiale al genitore"** (creazione lato docente) + **chiusura ciclo** alla ricezione fisica.
   - Notifica immediata al genitore; bulk multi-bambino; indipendenza dalle presenze; isolamento multi-figlio.
   - **Carico merci** (ingresso fisico con marca/taglia/quantità) + log ingressi; UI genitore "Lista della Spesa"; reminder 07:00; ack "Preso in carico".

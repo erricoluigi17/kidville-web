@@ -87,8 +87,8 @@
   - Notifica immediata al genitore; bulk multi-bambino; indipendenza dalle presenze; isolamento multi-figlio.
   - **Carico merci** (ingresso fisico con marca/taglia/quantità) + log ingressi; UI genitore "Lista della Spesa"; reminder 07:00; ack "Preso in carico".
   - **Dashboard Inadempienze (Direzione)** + solleciti; on/off widget per classe.
-- **Menu e Mensa (Fase 4, 19/33)**:
-  - **Isolamento interfaccia Cuoca** (vede SOLO mensa); dashboard real-time per tipologia (Standard/Bianco/Speciali); cut-off.
+- **Menu e Mensa (Fase 4, 19/33 → ~20/33)** — ✅ **M1 (2026-06-27, DL-043)** icona pericolo allergeni genitore (cross menù↔allergeni figlio via `/api/parent/mensa/allergie`, banner rosso); infra allergeni 14 UE cuoca/segreteria + cron già presenti:
+  - 🔶 Resta: **Isolamento interfaccia Cuoca** (vede SOLO mensa); dashboard real-time per tipologia (Standard/Bianco/Speciali); cut-off.
   - **Allergeni per piatto** (14 UE) obbligatori + alert incrociato anagrafica + icona pericolo personalizzata genitore.
   - Semaforo scorte ticket; diete in bianco entro cut-off; esclusioni classe (gita); storni/riaccrediti Segreteria; report fine mese catering.
 - **Comunicazione (Fase 3, 24/32 → ~26/32)** — ✅ **C1 (2026-06-27, DL-042)**:

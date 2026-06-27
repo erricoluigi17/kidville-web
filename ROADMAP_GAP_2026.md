@@ -97,7 +97,7 @@
 - **Galleria Foto/Video (Fase 3, 17/24 → ~22/24)** — ✅ **G1 (2026-06-27, DL-041)**:
   - ~~**Privacy Lock** che inibisce fisicamente tagging di alunni senza liberatoria~~ ✅ **enforced server-side**: tag senza `consenso_privacy` → 422 (POST+PATCH, bypass broadcast); + **S9b** DROP `galleria_media_v2` permissive (migr. `20260754`, accessi già service-role), advisors 0 ERROR.
   - ~~Comunicazioni istituzionali (bypass tagging broadcast); cancellazione globale admin; interconnessione con Diario 0-6~~ ✅ già presenti (verificato). 🔶 Resta: cancellazione globale UI admin dedicata (l'API c'è).
-- **Anagrafica (Fase 2, 17/36)**:
+- **Anagrafica (Fase 2, 17/36 → ~18/36)** — ✅ **onboarding (2026-06-27, DL-045)**: pagina `/parent/onboarding` (password + consensi GDPR), `POST /api/parent/onboarding` (set password Supabase Auth + `parents.onboarded_at`/`consensi_gdpr`, migr. `20260756`) = **prerequisito S13**. Restano:
   - **Upload documenti** (identità delegato, BES/PEI/Diagnosi) nei form dashboard (oggi solo nel form pubblico).
   - Gestione delegati editabile (aggiungi/upload); **onboarding genitore** (`/onboarding`: primo accesso, password/PIN, consensi GDPR).
   - Stato "Non iscritto"; trasferimento alunno tra sedi; bulk gruppo mensa; importa pre-iscrizioni dalla pagina anagrafica; dati finanziari (retta/scadenza/sconti) nel form.

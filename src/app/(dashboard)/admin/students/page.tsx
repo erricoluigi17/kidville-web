@@ -46,10 +46,14 @@ export default function AdminStudentsPage() {
   const [showToast, setShowToast] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
   const [availableSections, setAvailableSections] = useState<{id: string, name: string, school_type: string}[]>([]);
+  // P5.4 (DL-050): gruppi mensa per la bulk assign
+  const [mensaGroups, setMensaGroups] = useState<{ id: string; nome: string }[]>([]);
+  const [targetMensa, setTargetMensa] = useState('');
 
   // Carica sezioni disponibili
   useEffect(() => {
     fetch('/api/admin/sections').then(r => r.json()).then(d => { if (Array.isArray(d)) setAvailableSections(d); }).catch(() => {});
+    fetch('/api/admin/gruppi-mensa').then(r => r.json()).then(d => { if (d?.success) setMensaGroups(d.data ?? []); }).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -233,6 +237,29 @@ export default function AdminStudentsPage() {
     }
   };
 
+  const handleBulkAssignMensa = async () => {
+    if (!targetMensa || selectedIds.size === 0) return;
+    setIsAssigning(true);
+    try {
+      const res = await fetch('/api/admin/students', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: Array.from(selectedIds), gruppo_mensa_id: targetMensa }),
+      });
+      if (!res.ok) throw new Error('Errore bulk mensa');
+      const grp = mensaGroups.find(g => g.id === targetMensa);
+      showToastMsg(`✅ ${selectedIds.size} alunni assegnati al gruppo mensa ${grp?.nome ?? ''}`);
+      fetchStudents();
+      setSelectedIds(new Set());
+      setTargetMensa('');
+    } catch (err) {
+      console.error('Errore bulk mensa:', err);
+      showToastMsg('❌ Errore nell\'assegnazione gruppo mensa');
+    } finally {
+      setIsAssigning(false);
+    }
+  };
+
   const showToastMsg = (msg: string) => {
     setToastMessage(msg);
     setShowToast(true);
@@ -397,6 +424,10 @@ export default function AdminStudentsPage() {
             onAssign={handleBulkAssign}
             onClear={() => setSelectedIds(new Set())}
             isAssigning={isAssigning}
+            mensaGroups={mensaGroups}
+            targetMensa={targetMensa}
+            onTargetMensaChange={setTargetMensa}
+            onAssignMensa={handleBulkAssignMensa}
           />
 
         </>

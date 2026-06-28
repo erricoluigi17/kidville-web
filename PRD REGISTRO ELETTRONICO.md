@@ -49,7 +49,7 @@
 > | **Scrutinio + Pagella online** | ❌ Da implementare | Fase 2 | 6 giudizi sintetici, Ed. Civica, comportamento; PDF statico (firma qualificata rimandata) |
 > | **Fascicolo Personale + PEI/PDP** | 🔶 Parziale | Fase 2 | Oggi solo flag BES/DSA + delegati; serve fascicolo completo, RBAC ristretto, audit accessi |
 > | **Libretto web giustificazioni** | 🔶 Parziale | Fase 2 | Esiste preavviso assenza; manca giustificazione online con PIN dispositivo |
-> | **Interoperabilità SIDI / Piattaforma Unica** | ❌ Da implementare | Fase 3 | Import ZIP, Fase A, frequentanti, genitori-alunni, certificati competenze D.M. 14/2024 |
+> | **Interoperabilità SIDI / Piattaforma Unica** | ✅ Implementato (P5, DL-047..050) · 🔶 egress gated | Fase P5 | Import ZIP (parser pluggable), Fase A, frequentanti, genitori-alunni, certificati competenze D.M. 14/2024 + indicatore sync. **Trasmissione reale subordinata all'accreditamento ministeriale** |
 > | **Accessibilità AgID / Legge Stanca** | 🔶 Baseline (P1, DL-008) | Trasversale | Fatto: alto contrasto globale persistito, focus-ring, reduced-motion, Modal accessibile, landmark/skip-link/aria-current, smoke jest-axe. WCAG-AA = definition-of-done; audit AA per-pagina incrementale |
 
 # PRD - Kidville App: Modulo Anagrafica e Account Famiglia
@@ -198,6 +198,10 @@ Riuso di `RegistriClassePanel` (deep-link `/teacher/primaria/[sectionId]/[seg]?u
 | **P4 — Mensa · M1 (DL-043)** | `requireUser` (`/api/parent/mensa/allergie`) | service-role; alunno per id | — | ✅ **Icona pericolo allergeni genitore**: cross menù-del-giorno↔allergeni figlio (riuso helper puri 14 UE), banner rosso nella pagina mensa genitore. *(Infra allergeni cuoca/segreteria + cron già presenti.)* 🔶 Resta: isolamento UI Cuoca, dashboard real-time tipologia, semaforo scorte, esclusioni classe |
 | **P4 — Armadietto · S9b (DL-044)** | `requireDocente` + scope (`/api/locker/materials`) | service-role | `logScrittura` (`armadietto_config`) | ✅ Migrata a service-role + **DROP** `locker_config` permissive (migr. `20260755`), advisors 0 ERROR. *(Flusso richiesta→chiusura ciclo già presente in `locker/requests`.)* 🔶 Resta: carico merci, lista spesa genitore, dashboard inadempienze, reminder 07:00 |
 | **P4 — Anagrafica · onboarding (DL-045)** | `requireUser` (`/api/parent/onboarding`) | service-role; genitore self | — | ✅ **Onboarding genitore** `/parent/onboarding`: consensi GDPR obbligatori (422 se mancanti) + set password Supabase Auth (se bindato) + `parents.onboarded_at`/`consensi_gdpr` (migr. `20260756`). **Prerequisito S13** (sessione reale). 🔶 Resta: PIN dispositivo, stato Non-iscritto, trasferimento sedi, dati finanziari; **flip S13 = operativo** (onboarding di massa) |
+| **P5 — Certificato Competenze (DL-047)** | `requireStaff` (read/seed) / `['admin','coordinator']` (genera+firma) | alunno; genitore via `student_parents`/`legame` | slot FEA `certificato_competenze` + `fea_audit_log` (`logFeaEvent`) | ✅ Fatto: tabelle `certificati_competenze`+`_livelli` (migr. `20260760`, RLS default-deny), modello D.M.14/2024 (8 competenze × 4 livelli A/B/C/D), PDF (riuso pagella) + firma applicativa dirigente, seed da scrutinio finale classe-quinta (guard 422/409), download admin+genitore. UI `/admin/competenze` + card pagelle genitore |
+| **P5 — Numero domanda + Import ZIP SIDI (DL-048)** | `requireStaff` (upload/preview) / `['admin','coordinator']` (apply) | service-role | `logScrittura` (`alunni`/`genitori`/`legame`) | ✅ Fatto: `alunni.numero_domanda_sidi` + staging `sidi_import_batches` (migr. `20260762`); parser **jszip pluggable** (`normalizeSidiRow` sostituibile), matching numero domanda→CF-fallback→crea, genitori dedup CF, **idempotente**. Route `/api/admin/sidi/import`. UI in `SidiPanel` |
+| **P5 — Client SIDI + flussi + sync (DL-049)** | `['admin','coordinator']` (trasmissioni) / `requireStaff` (legami/sync-state) | service-role; legami validati Segreteria | `logScrittura` (`legame_sidi`) | ✅ Fatto (**egress gated**): `src/lib/sidi/client.ts` (503 `non_configurato`/`non_accreditato`), builder neutri + serializer sostituibili, guardie sequenza (Fase A→freq→PU, 409), `sidi_config` + `sidi_sync_state` + `student_parents.validato_*` (migr. `20260763`). Route `/api/admin/sidi/{fase-a,frequentanti,piattaforma-unica,legami,sync-state}` + `settings/sidi` (password mascherata). UI `/admin/sidi` indicatore a cascata. **Invio reale subordinato all'accreditamento ministeriale** |
+| **P5 — Bulk gruppi mensa (DL-050)** | `requireStaff` | service-role | `logScrittura` (`alunni`/`gruppo_mensa`) | ✅ Fatto: `gruppi_mensa` + `alunni.gruppo_mensa_id` (migr. `20260761`), `PATCH /api/admin/students` ramo `gruppo_mensa_id` + CRUD `/api/admin/gruppi-mensa`, `BulkAssignBar` esteso |
 
 ### 6.1 Nota — moduli 0-6 / tasks / avvisi: cablaggio auth COMPLETATO
 Prerequisito **risolto**: le UI docente di diary, armadietto, tasks e avvisi sono state
@@ -1029,6 +1033,8 @@ adempimenti di legge. Il registro non opera come sistema isolato.
 >
 > **Pianificazione (DL-004, 2026-06-25):** modulo incluso nel master plan come **Fase P5 (finale)**,
 > dopo i moduli core. Oggi ~2/12 requisiti implementati.
+>
+> **Implementato (Fase P5, 2026-06-27, DL-047..050):** ✅ **§2** import `.zip` (parser jszip pluggable) + matching su **Numero domanda** (campo `alunni.numero_domanda_sidi`) + sync genitori per CF (DL-048); ✅ **§3** builder Fase A (sezioni+tempo scuola) + frequentanti (alunni iscritti per classe), con indicatore stato `Fase A → frequentanti → Piattaforma Unica` e guardie di sequenza (DL-049); ✅ **§4** builder associazioni Genitori-Alunni sui **legami validati dalla Segreteria** (DL-049); ✅ **§5** **Certificato delle Competenze** classe quinta (D.M. 14/2024) generato dallo scrutinio finale, PDF + firma FEA + download genitore (DL-047). 🔶 **La trasmissione telematica reale resta GATED** (`sidiTransmit` → 503) finché non si ottiene l'**accreditamento ministeriale** del software (credenziali/canali di cooperazione applicativa) — dipendenza esterna, come la verifica live Aruba/SDI. I serializer del tracciato XML sono **adapter sostituibili** al tracciato ufficiale.
 
 ---
 
@@ -1516,7 +1522,7 @@ _Modulo PRD: Primaria §9 + Fascicolo_
 - Indicatore 'Dev OTP code' (ambiente sviluppo)
 - Banner 'Nessuna pagella disponibile' (stato vuoto)
 - Lista pagelle anni precedenti (storico)
-- Pulsante 'Scarica certificato delle competenze'
+- ✅ Pulsante 'Scarica certificato delle competenze' _(P5/DL-047, card pagelle genitore + `/api/parent/competenze`)_
 - Filtro 'Anno scolastico'
 
 ### `/parent/primaria/valutazioni` — Valutazioni / Andamento
@@ -2249,7 +2255,7 @@ _Modulo PRD: Fascicolo Personale_
 - Lista 'Pagelle per anno scolastico' (accordion)
 - Toggle anno scolastico (espandi/chiudi)
 - Indicatore 'Pubblicata il' (data pagella)
-- Pulsante 'Apri/Scarica certificato delle competenze'
+- ✅ Pulsante 'Apri/Scarica certificato delle competenze' _(P5/DL-047, admin `/admin/competenze` + genitore)_
 - Indicatore 'Audit log accessi' (chi/quando/finalità)
 - Campo 'Finalità di accesso' (motivazione consultazione)
 - Sezione/Area 'Workflow firma GLO' (PEI)
@@ -2444,16 +2450,16 @@ _Modulo PRD: Anagrafica §4.1 + SIDI_
 - Lista 'Avvisi' import (warnings)
 - Banner 'Nessuna richiesta ricevuta' (empty state)
 - Indicatore 'Caricamento' (spinner)
-- Pulsante 'Upload ZIP ministeriale SIDI'
-- Azione 'Matching su Numero di domanda SIDI'
-- Azione 'Sincronizzazione dati genitori (chiave CF)'
-- Campo 'Numero domanda iscrizione SIDI'
-- Azione 'Fase A - Allineamento struttura (sedi/sezioni/classi/tempo scuola)'
-- Pulsante 'Invia flusso frequentanti al SIDI'
-- Azione 'Trasmissione associazione Genitori-Alunni (Piattaforma Unica)'
-- Indicatore stato sincronizzazione SIDI (Fase A → frequentanti → Piattaforma Unica)
+- ✅ Pulsante 'Upload ZIP ministeriale SIDI' _(P5/DL-048, in `SidiPanel` → `/admin/sidi`)_
+- ✅ Azione 'Matching su Numero di domanda SIDI' _(P5/DL-048, `applySidiRecords`)_
+- ✅ Azione 'Sincronizzazione dati genitori (chiave CF)' _(P5/DL-048)_
+- ✅ Campo 'Numero domanda iscrizione SIDI' _(P5/DL-048, `alunni.numero_domanda_sidi`)_
+- ✅ Azione 'Fase A - Allineamento struttura (sedi/sezioni/classi/tempo scuola)' _(P5/DL-049, `buildFaseAReconcile`; egress gated)_
+- ✅ Pulsante 'Invia flusso frequentanti al SIDI' _(P5/DL-049; egress gated 503 fino ad accreditamento)_
+- ✅ Azione 'Trasmissione associazione Genitori-Alunni (Piattaforma Unica)' _(P5/DL-049, solo legami validati Segreteria; egress gated)_
+- ✅ Indicatore stato sincronizzazione SIDI (Fase A → frequentanti → Piattaforma Unica) _(P5/DL-049, `sidi_sync_state` + 3 pill a cascata)_
 - Pulsante 'Genera link sicuro pre-iscrizione'
-- Azione 'Assegnazione massiva (bulk) a classi/sezioni/gruppi mensa'
+- ✅ Azione 'Assegnazione massiva (bulk) a classi/sezioni/gruppi mensa' _(P5/DL-050, `BulkAssignBar` + `gruppi_mensa`)_
 
 ### `/admin/forms/builder` — Form Builder
 _Modulo PRD: Form §4.1_
@@ -3312,3 +3318,28 @@ _Modulo PRD: Trasversale (Auth/Accessibilità)_
 - **Decisione (autonoma):** **Wave 1** (migr. `20260757`) drop `note_disciplinari`/`registro_orario`/`firme_docenti`/`schools` (già service-role). **Wave 2** (migr. `20260758`): migrate a service-role gli ultimi lettori session-client di `alunni` (`attendance/monthly`, `diary/students`, `locker/requests`, `locker/inventory`) → drop `alunni_select_anon` (resta la policy genitore additiva). **Wave 3** (migr. `20260759`): **realtime RLS chat** — policy `authenticated` partecipante su `chat_messages`/`chat_threads` (`teacher_id`/`parent_id = auth.uid()` o genitore via `parents.auth_user_id`) + drop permissive. **Risultato:** `pg_policies` con `qual='true'` su anon/public/authenticated-ALL = **0** → **lockdown RLS S9b COMPLETO**. `get_advisors` 0 ERROR; restano solo advisory standard Supabase (pg_net in public, SECURITY DEFINER `is_staff_or_admin`/`current_parent_student_ids` necessarie alla RLS, leaked-password = toggle dashboard).
 - **Nota realtime:** la chat **live** ora richiede sessione (authenticated); l'anon header-identity non onboardato non riceve più il push live (la cronologia resta via `/api/chat/messages` service-role). Reversibile (`CREATE POLICY`).
 - **Restano OPERATIVI (non codice):** **S13** `ALLOW_HEADER_IDENTITY='false'` (env, da flippare dopo l'onboarding di massa) + invio credenziali genitori. **Test:** full suite **406 verdi**; tsc 0 errori. **Alternative scartate:** migrare anche `is_staff_or_admin`/`current_parent_student_ids` (servono alla valutazione RLS per authenticated → lasciate); toccare le funzioni cron (`notifiche_dispatch_tick`/`mensa_check_allergie_giornaliero`) (rischio rottura cron per WARN minore).
+
+### 2026-06-27 — DL-047 — [Fase P5] Certificato delle Competenze (D.M. 14/2024, classe quinta)
+- **Contesto:** il Certificato delle Competenze di fine primaria (PRD §Interoperabilità §5) era **totalmente assente** (nessuna tabella, generatore PDF o UI), pur essendo un adempimento di legge (D.M. 14 del 30/1/2024) e un documento di valore reale per le famiglie **indipendente dall'accreditamento SIDI**.
+- **Decisione:** build **completo incl. firma FEA**. Tabelle `certificati_competenze` + `certificato_competenza_livelli` (migr. `20260760`, RLS default-deny). Modello statutario puro `src/lib/competenze/modello.ts` (8 **competenze chiave europee** + scala a **4 livelli A/B/C/D** — NB il 4° del certificato è «Iniziale», distinto dalla scala pagella O.M.172/2020 «In via di prima acquisizione»). Precompilazione euristica dei livelli dai giudizi di scrutinio (`livello-mapping.ts`, sovrascrivibile). Generatore PDF `certificato-pdf.ts` (riusa lo stile `buildPagellaPdf`, legenda 4 livelli + firma applicativa). Store `certificato-store.ts`: `validaScrutinioFinaleClasseQuinta` (gate livello-5 primaria + scrutinio chiuso → 422/409), `seedCertificato` (bozza idempotente su `(alunno, anno)`), `generaCertificato` → PDF su bucket privato + `stato='firmato'` + **slot FEA dirigente** (`recordSignerSlot` policy `any-one`, DL-007) + `logFeaEvent`. Route: `GET/POST/PATCH /api/admin/competenze` (seed/edit, gate Direzione), `POST /api/admin/competenze/genera` (genera+firma, **dirigenza** `['admin','coordinator']`), `GET /api/admin/competenze/download`, `GET /api/parent/competenze` (scope figlio, solo generato/firmato). UI `/admin/competenze` (editor livelli + genera/scarica) + card download nella pagina pagelle genitore.
+- **Impatto PRD:** §Interoperabilità §5 → implementato; §6 Stato nuova riga; checklist pulsanti «Scarica certificato delle competenze». **TDD:** 17 test (modello/mapping/PDF/store/route/scope).
+- **Alternative scartate:** auto-derivare i livelli dai voti senza intervento docente (l'attribuzione è un atto del team docente → solo suggerimento); firma OTP genitore (il certificato è atto del dirigente → firma applicativa dirigente come la pagella).
+
+### 2026-06-27 — DL-048 — [Fase P5] Numero domanda iscrizione SIDI + import ZIP ministeriale
+- **Contesto:** PRD §Interoperabilità §2: ricezione `.zip` SIDI senza rinomina, matching/dedup su **Numero di domanda**, sync genitori per CF. Non esisteva alcun campo `numero_domanda` né parser ZIP (jszip assente).
+- **Decisione:** parser **pluggable su schema assunto** (deciso col committente: nessun campione SIDI reale disponibile). Campo `alunni.numero_domanda_sidi` + indice unico parziale per scuola + staging `sidi_import_batches` (migr. `20260762`, RLS default-deny). `src/lib/sidi/zip-parser.ts` (jszip; manifest `domande.csv`/`domande.json`; `normalizeSidiRow` = **unico punto sostituibile** al tracciato vero). `import-apply.ts` `applySidiRecords`: matching ① numero domanda → ② fallback CF (stampa il numero domanda) → ③ creazione, genitori dedup su `parents.fiscal_code`, link `student_parents`, **idempotente**, riusa la logica di upsert di `/api/admin/iscrizioni` + `logScrittura`. Route `POST/PATCH/GET /api/admin/sidi/import` (upload+preview gate staff; **apply** gate Direzione). UI in `SidiPanel` (link da `/admin/iscrizioni`).
+- **Impatto PRD:** §Interoperabilità §2 → implementato; checklist `/admin/iscrizioni` (Upload ZIP / Matching numero domanda / Sync genitori CF / campo Numero domanda). **TDD:** 14 test (parser/normalize/apply/route).
+- **Alternative scartate:** rinviare lo ZIP e usare solo un campo manuale (perde il flusso ministeriale); targettizzare un tracciato XML reale ora (ignoto → rischio rilavoro: isolato in `normalizeSidiRow`).
+
+### 2026-06-27 — DL-049 — [Fase P5] Client SIDI gated + Fase A + frequentanti + Piattaforma Unica + indicatore sync
+- **Contesto:** PRD §Interoperabilità §3/§4: allineamento strutturale Fase A, invio frequentanti, flusso associazioni Genitori-Alunni in cooperazione applicativa. La **trasmissione reale richiede l'accreditamento ministeriale** del software (credenziali/canali), oggi non disponibile — stessa dipendenza esterna della verifica live Aruba/SDI (DL-004/DL-017).
+- **Decisione:** **fondamenta + boundary gated** (specchio Aruba). `src/lib/sidi/client.ts` (`SidiConfig`, `resolveSidiCredentials` via `password_ref`→env, `sidiBaseUrls` DEMO/PROD, `sidiTransmit` → **503** `non_configurato`/`non_accreditato`, mai successo finto). Builder **neutri** `payload.ts` (Fase A reconcile, frequentanti solo `stato='iscritto'` per sezione, genitori-alunni solo legami **validati Segreteria**); serializer XML **sottili e sostituibili** `serializer.ts`; guardie `sequenza.ts` (Fase A→frequentanti→Piattaforma Unica, 409 fuori ordine). Config `admin_settings.sidi_config` + route `settings/sidi` (clone Aruba, password mascherata). Validazione legami `student_parents.validato_sidi/_il/_da`. Stato `sidi_sync_state` (migr. `20260763`) + indicatore. Route gated `POST /api/admin/sidi/{fase-a,frequentanti,piattaforma-unica}` (dirigenza), `GET/PATCH /api/admin/sidi/legami`, `GET /api/admin/sidi/sync-state`. UI `SidiPanel`/`/admin/sidi`: indicatore 3 pill a cascata + banner «accreditamento in corso».
+- **Impatto PRD:** §Interoperabilità §3/§4 → implementato (egress gated); checklist `/admin/iscrizioni` (Fase A / Invia frequentanti / Trasmissione Genitori-Alunni / Indicatore stato sync). **TDD:** 18 test (client/payload/sequenza/serializer/route gate/sequenza-guard/settings-mask).
+- **Resta gated/follow-up:** invio telematico reale (accreditamento); tracciato XML reale (serializer sostituibili); inbound cooperazione applicativa + auto-apply struttura Fase A nel DB locale (no scritture distruttive da boundary non accreditato).
+- **Alternative scartate:** serializzare subito i tracciati reali su specifiche assunte (rilavoro); rinviare del tutto i builder finché non accreditati (si perde il valore interno di prep-dati e l'indicatore).
+
+### 2026-06-27 — DL-050 — [Fase P5] Assegnazione massiva a gruppi mensa
+- **Contesto:** PRD checklist `/admin/iscrizioni`: «Assegnazione massiva (bulk) a classi/sezioni/gruppi mensa». La bulk classe/sezione esisteva; **nessun modello gruppi mensa**.
+- **Decisione:** modello minimale `gruppi_mensa` (per scuola, unique nome) + `alunni.gruppo_mensa_id` (migr. `20260761`, RLS default-deny). Esteso `PATCH /api/admin/students` con ramo `{ids[], gruppo_mensa_id}` (`gruppo_mensa_id` null = rimozione) + audit per alunno; CRUD `GET/POST /api/admin/gruppi-mensa`. UI: `BulkAssignBar` esteso (controllo gruppo mensa retro-compatibile) + wiring `/admin/students`.
+- **Impatto PRD:** checklist `/admin/iscrizioni` (Assegnazione massiva). **TDD:** 5 test (bulk mensa + regressione classe + gate CRUD).
+- **Alternative scartate:** gruppo mensa come tabella ponte molti-a-molti (un alunno → un turno mensa, FK singola sufficiente, YAGNI).

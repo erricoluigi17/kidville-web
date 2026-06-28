@@ -102,11 +102,14 @@
   - Gestione delegati editabile (aggiungi/upload); **onboarding genitore** (`/onboarding`: primo accesso, password/PIN, consensi GDPR).
   - Stato "Non iscritto"; trasferimento alunno tra sedi; bulk gruppo mensa; importa pre-iscrizioni dalla pagina anagrafica; dati finanziari (retta/scadenza/sconti) nel form.
 
-## P4 — Interoperabilità ministeriale (fuori roadmap originale, 2/12)
-*Modulo "Interoperabilità SIDI / Piattaforma Unica": presente nel PRD ma non nelle 5 fasi originali. Quasi interamente da costruire.*
-- Import file `.zip` SIDI; matching/dedup su Numero domanda iscrizione.
-- Allineamento strutturale Fase A (sedi/sezioni/classi/tempo scuola) + **invio flusso frequentanti al SIDI**.
-- Flusso Genitori-Alunni Piattaforma Unica; **export Certificati delle Competenze** (classe quinta, D.M. 14/2024); indicatore stato sync.
+## P5 — Interoperabilità ministeriale SIDI / Piattaforma Unica — ✅ **FATTO (P5, 2026-06-27, DL-047..050)** (11/12, egress gated)
+*Modulo "Interoperabilità SIDI / Piattaforma Unica": era ~2/12, ora costruito a livello di prodotto. Resta gated solo l'invio telematico reale (accreditamento ministeriale).*
+- ✅ Import file `.zip` SIDI (parser **jszip pluggable** su schema assunto, `normalizeSidiRow` sostituibile); matching/dedup su **Numero domanda** (`alunni.numero_domanda_sidi`) → fallback CF; sync genitori per CF. *(DL-048, migr. `20260762`)*
+- ✅ Allineamento strutturale **Fase A** (builder sezioni+tempo scuola) + builder **frequentanti** (iscritti per classe) + guardie di sequenza + indicatore stato `sidi_sync_state`. *(DL-049, migr. `20260763`)*
+- ✅ Flusso **Genitori-Alunni** Piattaforma Unica (solo legami **validati dalla Segreteria**); ✅ **export Certificati delle Competenze** classe quinta (D.M. 14/2024) dallo scrutinio finale, PDF + firma FEA + download genitore *(DL-047, migr. `20260760`)*; ✅ indicatore stato sync.
+- ✅ Bonus checklist: **assegnazione massiva gruppi mensa** (`gruppi_mensa`, DL-050, migr. `20260761`).
+- 🔶 Resta (1/12): **trasmissione telematica reale al SIDI** (`sidiTransmit` → 503 `non_accreditato`), subordinata all'**accreditamento ministeriale** del software (credenziali/canali di cooperazione applicativa) — dipendenza esterna, come la verifica live Aruba/SDI. Serializer XML = adapter sostituibili al tracciato ufficiale. Follow-up: inbound cooperazione applicativa + auto-apply struttura Fase A nel DB locale.
+- **TDD:** 65 test P5 verdi (modello/PDF/store/parser/apply/payload/sequenza/client/route gate). Migrazioni `20260760-763` applicate; `get_advisors` **0 ERROR**.
 
 ## Escluso by-design (a carico del committente)
 - ~~**FEA — Firma Elettronica Avanzata**: esclusa dal Blocco 3, a carico del committente.~~ **[SUPERATO — DL-001/Fase P1]** La FEA è **in scope e realizzata in-house** (servizio `src/lib/fea/`: OTP email + identità da sessione + slot firmatari + ricevuta PDF inattaccabile + audit immutabile). ✅ Implementata in P1. *(Nota: una FEA qualificata/eIDAS resterebbe eventualmente lato committente; il livello in-house è una firma elettronica rafforzata — informativa da validare.)*

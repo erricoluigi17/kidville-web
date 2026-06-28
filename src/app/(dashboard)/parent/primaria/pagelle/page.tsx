@@ -2,9 +2,10 @@
 
 import { Suspense, useCallback, useEffect, useState } from 'react';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
-import { FileText, Download, Check } from 'lucide-react';
+import { FileText, Download, Check, Award } from 'lucide-react';
 
 interface PagellaItem { scrutinioId: string; periodo: string; anno: string; chiusoIl: string | null; firmato: boolean }
+interface CertItem { id: string; anno: string; stato: string; downloadUrl: string | null }
 interface ScrutinioView {
   materie: { nome: string; giudizio: string | null }[];
   comportamento: string | null;
@@ -14,6 +15,7 @@ interface ScrutinioView {
 function PagelleGenitore() {
   const { parentId, studentId, ready } = useParentIdentity();
   const [pagelle, setPagelle] = useState<PagellaItem[]>([]);
+  const [certificati, setCertificati] = useState<CertItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [dettaglio, setDettaglio] = useState<Record<string, ScrutinioView | null>>({});
   const [firmando, setFirmando] = useState<string | null>(null);
@@ -30,6 +32,11 @@ function PagelleGenitore() {
     });
     const d = await r.json();
     if (d.success) setPagelle(d.data);
+    try {
+      const rc = await fetch(`/api/parent/competenze?studentId=${studentId}&userId=${parentId}`, { headers: { 'x-user-id': parentId } });
+      const dc = await rc.json();
+      if (dc.success) setCertificati(dc.data ?? []);
+    } catch { /* no-op */ }
     setLoading(false);
   }, [ready, studentId, parentId]);
 
@@ -172,6 +179,31 @@ function PagelleGenitore() {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {certificati.length > 0 && (
+        <div className="mt-6">
+          <h2 className="font-barlow text-lg font-black text-kidville-green uppercase tracking-wide mb-3 flex items-center gap-2">
+            <Award size={18} /> Certificato delle Competenze
+          </h2>
+          <div className="space-y-2">
+            {certificati.map((c) => (
+              <div key={c.id} className="rounded-2xl bg-white shadow-sm px-4 py-3.5 flex items-center justify-between">
+                <div>
+                  <p className="font-barlow text-base font-bold text-gray-800">Classe quinta</p>
+                  <p className="font-maven text-xs text-gray-400">A.S. {c.anno}</p>
+                </div>
+                {c.downloadUrl ? (
+                  <a href={c.downloadUrl} target="_blank" rel="noreferrer" className="font-maven inline-flex items-center gap-1 rounded-full bg-kidville-green/10 px-3 py-1.5 text-xs text-kidville-green">
+                    <Download size={12} /> Scarica
+                  </a>
+                ) : (
+                  <span className="font-maven text-xs text-gray-400">In preparazione</span>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>

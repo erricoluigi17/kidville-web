@@ -157,6 +157,27 @@ export async function PATCH(request: NextRequest) {
             return NextResponse.json({ success: true, updated: data?.length ?? 0, data });
         }
 
+        // Bulk assign gruppo mensa (P5.4, DL-050). `gruppo_mensa_id` può essere
+        // null per rimuovere gli alunni dal gruppo.
+        if (body.ids && Array.isArray(body.ids) && body.gruppo_mensa_id !== undefined) {
+            const { data, error } = await supabase
+                .from('alunni')
+                .update({ gruppo_mensa_id: body.gruppo_mensa_id })
+                .in('id', body.ids)
+                .select();
+            if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+            for (const id of body.ids as string[]) {
+                await logScrittura(supabase, {
+                    attore: auth.user,
+                    entitaTipo: 'alunni',
+                    entitaId: id,
+                    azione: 'update',
+                    valoreDopo: { gruppo_mensa_id: body.gruppo_mensa_id },
+                });
+            }
+            return NextResponse.json({ success: true, updated: data?.length ?? 0, data });
+        }
+
         // Aggiornamento singolo
         if (body.id) {
             try {

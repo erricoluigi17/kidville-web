@@ -110,9 +110,15 @@ export default function IscrizioniPage() {
         <UserPlus className="text-kidville-green" size={22} />
         <h1 className="font-barlow font-bold text-2xl uppercase tracking-wide">Iscrizioni Nuovi Alunni</h1>
       </div>
-      <p className="font-maven text-gray-500 mb-6">
+      <p className="font-maven text-gray-500 mb-3">
         Richieste ricevute dal form pubblico. Assegna la classe e importa nelle anagrafiche.
       </p>
+      <a
+        href="/admin/sidi"
+        className="inline-flex items-center gap-2 mb-6 rounded-pill bg-kidville-green/10 px-4 py-2 font-maven text-sm text-kidville-green hover:bg-kidville-green/20"
+      >
+        <ExternalLink size={15} /> Interoperabilità SIDI — import ZIP ministeriale, Fase A, frequentanti, Piattaforma Unica
+      </a>
 
       {loading ? (
         <div className="flex items-center justify-center min-h-[40vh] gap-3">

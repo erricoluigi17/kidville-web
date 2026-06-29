@@ -48,8 +48,11 @@ function CompitiInner() {
     <div className="min-h-screen bg-kidville-cream/40 p-4 md:p-6">
       <div className="max-w-4xl mx-auto">
         <header className="mb-5">
-          <h1 className="font-barlow text-3xl font-bold text-kidville-green uppercase tracking-wide">Compiti</h1>
-          {data?.child && <p className="font-maven text-gray-500 text-sm">{data.child.nome} {data.child.cognome}</p>}
+          <p className="font-barlow font-bold text-[11px] uppercase tracking-[0.14em] text-kidville-yellow-dark">
+            Didattica · Primaria
+          </p>
+          <h1 className="font-barlow text-3xl font-black text-kidville-green uppercase tracking-wide leading-none">Compiti</h1>
+          {data?.child && <p className="font-maven text-kidville-muted text-sm mt-1">{data.child.nome} {data.child.cognome}</p>}
         </header>
         {data && <CompitiList lezioni={data.lezioni} />}
       </div>

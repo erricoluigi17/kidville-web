@@ -1,23 +1,27 @@
 'use client';
 
 import Link from 'next/link';
-import { GraduationCap, AlertTriangle, CheckSquare, FileText, BarChart3, BookOpen, CalendarDays } from 'lucide-react';
+import { AlertTriangle, CheckSquare, FileText, BarChart3, BookOpen, CalendarDays, ChevronRight } from 'lucide-react';
 
 const SEZIONI = [
-  { href: '/parent/lezioni', label: 'Lezioni', sub: 'Argomenti e compiti', icon: BookOpen, color: 'bg-blue-50 text-blue-600' },
-  { href: '/parent/primaria/orario', label: 'Orario', sub: 'Orario settimanale della classe', icon: CalendarDays, color: 'bg-indigo-50 text-indigo-600' },
-  { href: '/parent/primaria/valutazioni', label: 'Valutazioni', sub: 'Giudizi per materia', icon: BarChart3, color: 'bg-kidville-green/10 text-kidville-green' },
-  { href: '/parent/primaria/note', label: 'Note', sub: 'Note disciplinari e didattiche', icon: AlertTriangle, color: 'bg-amber-50 text-amber-600' },
-  { href: '/parent/primaria/assenze', label: 'Presenze', sub: 'Assenze, ritardi e giustifiche', icon: CheckSquare, color: 'bg-purple-50 text-purple-600' },
-  { href: '/parent/primaria/pagelle', label: 'Pagelle', sub: 'Scarica e firma le pagelle', icon: FileText, color: 'bg-emerald-50 text-emerald-600' },
+  { href: '/parent/lezioni', label: 'Lezioni', sub: 'Argomenti e compiti', icon: BookOpen, bg: 'bg-kidville-info-soft', fg: 'text-kidville-info' },
+  { href: '/parent/primaria/orario', label: 'Orario', sub: 'Orario settimanale della classe', icon: CalendarDays, bg: 'bg-kidville-green-soft', fg: 'text-kidville-green' },
+  { href: '/parent/primaria/valutazioni', label: 'Valutazioni', sub: 'Giudizi per materia', icon: BarChart3, bg: 'bg-kidville-green-soft', fg: 'text-kidville-green' },
+  { href: '/parent/primaria/note', label: 'Note', sub: 'Note disciplinari e didattiche', icon: AlertTriangle, bg: 'bg-kidville-warn-soft', fg: 'text-kidville-warn' },
+  { href: '/parent/primaria/assenze', label: 'Presenze', sub: 'Assenze, ritardi e giustifiche', icon: CheckSquare, bg: 'bg-kidville-yellow-soft', fg: 'text-kidville-yellow-dark' },
+  { href: '/parent/primaria/pagelle', label: 'Pagelle', sub: 'Scarica e firma le pagelle', icon: FileText, bg: 'bg-kidville-success-soft', fg: 'text-kidville-success' },
 ] as const;
 
 export default function PrimariahubPage() {
   return (
     <div className="px-4 pt-6 pb-24">
-      <div className="mb-5 flex items-center gap-2">
-        <GraduationCap className="text-kidville-green" size={22} />
-        <h1 className="font-barlow text-xl font-black text-kidville-green uppercase tracking-wide">Scuola Primaria</h1>
+      <div className="mb-5">
+        <p className="font-barlow font-bold text-[11px] uppercase tracking-[0.14em] text-kidville-yellow-dark">
+          Didattica · Primaria
+        </p>
+        <h1 className="font-barlow text-2xl font-black text-kidville-green uppercase tracking-wide leading-none">
+          Scuola Primaria
+        </h1>
       </div>
 
       <div className="space-y-3">
@@ -25,14 +29,15 @@ export default function PrimariahubPage() {
           const Icon = s.icon;
           return (
             <Link key={s.href} href={s.href}>
-              <div className="flex items-center gap-4 rounded-2xl bg-white p-4 shadow-sm active:scale-[0.98] transition-transform">
-                <div className={`flex h-12 w-12 items-center justify-center rounded-xl ${s.color}`}>
+              <div className="flex items-center gap-4 rounded-card border border-kidville-line bg-white p-4 shadow-sm active:scale-[0.98] transition-transform">
+                <div className={`flex h-12 w-12 items-center justify-center rounded-xl ${s.bg} ${s.fg}`}>
                   <Icon size={22} />
                 </div>
-                <div>
-                  <p className="font-barlow text-base font-bold text-gray-800">{s.label}</p>
-                  <p className="font-maven text-xs text-gray-400">{s.sub}</p>
+                <div className="min-w-0 flex-1">
+                  <p className="font-barlow text-base font-extrabold uppercase tracking-wide text-kidville-green">{s.label}</p>
+                  <p className="font-maven text-xs text-kidville-muted">{s.sub}</p>
                 </div>
+                <ChevronRight size={18} className="text-kidville-muted/60 flex-shrink-0" />
               </div>
             </Link>
           );

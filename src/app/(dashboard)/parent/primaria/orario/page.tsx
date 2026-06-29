@@ -2,7 +2,6 @@
 
 import { Suspense, useEffect, useState } from 'react';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
-import { CalendarDays } from 'lucide-react';
 
 interface Campanella { id: string; giorno_settimana: number; ordine: number; ora_inizio: string | null; ora_fine: string | null; tipo: string | null }
 interface OrarioVoce {
@@ -35,9 +34,14 @@ function OrarioGenitore() {
 
   return (
     <div className="px-4 pt-6 pb-24">
-      <h1 className="font-barlow text-xl font-black text-kidville-green uppercase tracking-wide mb-4 flex items-center gap-2">
-        <CalendarDays size={20} /> Orario settimanale
-      </h1>
+      <div className="mb-4">
+        <p className="font-barlow font-bold text-[11px] uppercase tracking-[0.14em] text-kidville-yellow-dark">
+          Didattica · Primaria
+        </p>
+        <h1 className="font-barlow text-2xl font-black text-kidville-green uppercase tracking-wide leading-none">
+          Orario settimanale
+        </h1>
+      </div>
 
       {loading ? (
         <p className="font-maven text-sm text-gray-400">Caricamento…</p>
@@ -48,9 +52,9 @@ function OrarioGenitore() {
           {giorniAttivi.map((g) => {
             const slot = campanelle.filter((c) => c.giorno_settimana === g).sort((a, b) => a.ordine - b.ordine);
             return (
-              <div key={g} className="rounded-2xl bg-white p-4 shadow-sm">
-                <p className="font-barlow text-base font-bold text-gray-800 mb-2">{GIORNI[g] ?? `Giorno ${g}`}</p>
-                <ul className="divide-y divide-gray-100">
+              <div key={g} className="rounded-card border border-kidville-line bg-white p-4 shadow-sm">
+                <p className="font-barlow text-base font-extrabold uppercase tracking-wide text-kidville-green mb-2">{GIORNI[g] ?? `Giorno ${g}`}</p>
+                <ul className="divide-y divide-kidville-line">
                   {slot.map((c) => {
                     const v = voce(g, c.id);
                     return (

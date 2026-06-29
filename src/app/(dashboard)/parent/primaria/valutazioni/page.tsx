@@ -2,7 +2,6 @@
 
 import { Suspense, useEffect, useState } from 'react';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
-import { BarChart3 } from 'lucide-react';
 
 interface ValBreve {
   id: string; tipo: string; modalita: string;
@@ -32,32 +31,37 @@ function ValutazioniGenitore() {
 
   return (
     <div className="px-4 pt-6 pb-24">
-      <h1 className="font-barlow text-xl font-black text-kidville-green uppercase tracking-wide mb-4 flex items-center gap-2">
-        <BarChart3 size={20} /> Valutazioni
-      </h1>
+      <div className="mb-4">
+        <p className="font-barlow font-bold text-[11px] uppercase tracking-[0.14em] text-kidville-yellow-dark">
+          Didattica · Primaria
+        </p>
+        <h1 className="font-barlow text-2xl font-black text-kidville-green uppercase tracking-wide leading-none">
+          Valutazioni
+        </h1>
+      </div>
 
       {loading ? (
-        <p className="font-maven text-sm text-gray-400">Caricamento…</p>
+        <p className="font-maven text-sm text-kidville-muted">Caricamento…</p>
       ) : materie.length === 0 ? (
-        <p className="font-maven text-sm text-gray-400">Nessuna valutazione disponibile.</p>
+        <p className="font-maven text-sm text-kidville-muted">Nessuna valutazione disponibile.</p>
       ) : (
         <div className="space-y-3">
           {materie.map((m) => (
-            <div key={m.materiaId} className="rounded-2xl bg-white shadow-sm overflow-hidden">
+            <div key={m.materiaId} className="rounded-card border border-kidville-line bg-white shadow-sm overflow-hidden">
               <button
                 onClick={() => setAperta(aperta === m.materiaId ? null : m.materiaId)}
                 className="flex w-full items-center justify-between px-4 py-3.5"
               >
                 <div className="flex items-center gap-3">
                   <div className="text-left">
-                    <p className="font-barlow text-base font-bold text-gray-800">{m.nome}</p>
-                    <p className="font-maven text-xs text-gray-400">{m.valutazioni.length} valutazion{m.valutazioni.length === 1 ? 'e' : 'i'}</p>
+                    <p className="font-barlow text-base font-extrabold uppercase tracking-wide text-kidville-green">{m.nome}</p>
+                    <p className="font-maven text-xs text-kidville-muted">{m.valutazioni.length} valutazion{m.valutazioni.length === 1 ? 'e' : 'i'}</p>
                   </div>
                 </div>
               </button>
 
               {aperta === m.materiaId && (
-                <div className="border-t border-gray-100 divide-y divide-gray-50">
+                <div className="border-t border-kidville-line divide-y divide-kidville-line">
                   {m.valutazioni.map((v) => (
                     <div key={v.id} className="px-4 py-3">
                       <div className="flex items-center gap-2 mb-1">

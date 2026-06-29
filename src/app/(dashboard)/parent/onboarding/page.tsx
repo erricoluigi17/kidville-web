@@ -71,7 +71,7 @@ function Inner() {
           </span>
         </label>
 
-        {error && <p className="font-maven text-xs text-rose-600">{error}</p>}
+        {error && <p className="font-maven text-xs text-kidville-error">{error}</p>}
 
         <button
           type="submit"

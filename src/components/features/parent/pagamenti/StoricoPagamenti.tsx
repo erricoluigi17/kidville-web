@@ -25,10 +25,10 @@ interface Pagamento {
 interface Props { userId: string }
 
 const STATI: Record<string, { label: string; cls: string }> = {
-    da_pagare: { label: 'Da pagare', cls: 'bg-gray-100 text-gray-600' },
-    parziale: { label: 'Parziale', cls: 'bg-amber-100 text-amber-700' },
-    pagato: { label: 'Pagato', cls: 'bg-green-100 text-green-700' },
-    scaduto: { label: 'Scaduto', cls: 'bg-red-100 text-red-700' },
+    da_pagare: { label: 'Da pagare', cls: 'bg-kidville-neutral-soft text-kidville-neutral' },
+    parziale: { label: 'Parziale', cls: 'bg-kidville-warn-soft text-kidville-warn' },
+    pagato: { label: 'Pagato', cls: 'bg-kidville-success-soft text-kidville-success' },
+    scaduto: { label: 'Scaduto', cls: 'bg-kidville-error-soft text-kidville-error' },
 };
 
 export function StoricoPagamenti({ userId }: Props) {
@@ -74,14 +74,33 @@ export function StoricoPagamenti({ userId }: Props) {
     // Vista a categorie (DL-022): Rette / Iscrizione / Mensa / Divisa / Materiale / Altro.
     const gruppi = raggruppaPerCategoria(pagamenti);
 
+    // Totale ancora dovuto (DR banner "Totale da saldare"): somma del residuo sulle voci non saldate.
+    const totaleDovuto = pagamenti.reduce(
+        (s, p) => (p.stato !== 'pagato' ? s + (Number(p.importo) - Number(p.importo_pagato)) : s),
+        0,
+    );
+    const vociAperte = pagamenti.filter((p) => p.stato !== 'pagato').length;
+
     return (
         <div className="space-y-5">
             {sospesi.length > 0 && (
-                <div className="flex items-start gap-2 rounded-xl border-2 border-red-200 bg-red-50 px-4 py-3 text-red-700">
+                <div className="flex items-start gap-2 rounded-card border border-kidville-error/30 bg-kidville-error-soft px-4 py-3 text-kidville-error">
                     <AlertTriangle size={18} className="shrink-0 mt-0.5" />
                     <p className="font-maven text-sm">
                         <span className="font-bold">Account sospeso per morosità</span> ({sospesi.join(', ')}).
                         Le funzioni di servizio sono temporaneamente limitate: regolarizza i pagamenti o contatta la Segreteria.
+                    </p>
+                </div>
+            )}
+
+            {!loading && !error && totaleDovuto > 0 && (
+                <div className="rounded-[22px] p-[18px]" style={{ background: 'linear-gradient(135deg, #006A5F, #00544B)' }}>
+                    <p className="font-maven text-[12.5px] text-white/75">Totale da saldare</p>
+                    <p className="font-barlow font-black text-[40px] leading-none text-kidville-yellow">
+                        € {totaleDovuto.toFixed(2)}
+                    </p>
+                    <p className="font-maven text-xs text-white/70 mt-1">
+                        {vociAperte} voc{vociAperte === 1 ? 'e' : 'i'} da saldare
                     </p>
                 </div>
             )}
@@ -124,7 +143,7 @@ function PagamentoCard({ p, userId }: { p: Pagamento; userId: string }) {
     const fatturaPronta = p.fattura_stato === 'emessa';
 
     return (
-        <div className={`bg-white rounded-xl border p-3 ${p.stato === 'scaduto' ? 'border-red-200' : 'border-gray-100'}`}>
+        <div className={`bg-white rounded-card border p-3 ${p.stato === 'scaduto' ? 'border-kidville-error/40' : 'border-kidville-line'}`}>
             <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                     <p className="font-maven font-bold text-sm text-kidville-green flex items-center gap-1">
@@ -133,7 +152,7 @@ function PagamentoCard({ p, userId }: { p: Pagamento; userId: string }) {
                     </p>
                     <p className="font-maven text-xs text-gray-400">
                         {p.alunni?.nome} {p.alunni?.cognome} · scad. {p.scadenza}
-                        {isSplit && <span className="ml-1 text-amber-600">· tua quota</span>}
+                        {isSplit && <span className="ml-1 text-kidville-warn">· tua quota</span>}
                     </p>
                 </div>
                 <span className={`shrink-0 px-2 py-0.5 rounded-full text-[11px] font-bold ${st.cls}`}>{st.label}</span>

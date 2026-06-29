@@ -80,15 +80,15 @@ export function DraggableField({ field, isSelected, onClick, onDelete }: Props) 
         onClick={onClick}
         className={`group flex items-center gap-3 px-3 py-3 rounded-xl border cursor-pointer transition-all ${
           isSelected
-            ? 'border-indigo-500/60 bg-indigo-500/10 shadow-lg shadow-indigo-500/10'
-            : 'border-white/[0.07] bg-white/[0.03] hover:border-white/20 hover:bg-white/[0.06]'
+            ? 'border-kidville-green/60 bg-kidville-success-soft shadow-lg shadow-kidville-green/10'
+            : 'border-kidville-line bg-white hover:border-white/20 hover:bg-white/[0.06]'
         }`}
       >
         {/* Drag handle */}
         <div
           {...attributes}
           {...listeners}
-          className="flex-shrink-0 cursor-grab active:cursor-grabbing text-slate-600 hover:text-slate-400 transition-colors touch-none"
+          className="flex-shrink-0 cursor-grab active:cursor-grabbing text-kidville-muted hover:text-kidville-muted transition-colors touch-none"
           onClick={e => e.stopPropagation()}
         >
           <GripVertical className="w-4 h-4" />
@@ -97,27 +97,27 @@ export function DraggableField({ field, isSelected, onClick, onDelete }: Props) 
         {/* Field icon */}
         <div
           className={`flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center ${
-            isSelected ? 'bg-indigo-500/20' : 'bg-white/5'
+            isSelected ? 'bg-kidville-green/20' : 'bg-kidville-cream'
           }`}
         >
-          <Icon className={`w-3.5 h-3.5 ${isSelected ? 'text-indigo-400' : 'text-slate-500'}`} />
+          <Icon className={`w-3.5 h-3.5 ${isSelected ? 'text-kidville-green' : 'text-kidville-muted'}`} />
         </div>
 
         {/* Field info */}
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-slate-200 truncate">{field.label}</p>
+          <p className="text-sm font-medium text-kidville-ink truncate">{field.label}</p>
           <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-            <span className="text-[10px] text-slate-600 uppercase tracking-wide">
+            <span className="text-[10px] text-kidville-muted uppercase tracking-wide">
               {FIELD_LABELS[field.type] ?? field.type}
             </span>
             {field.required && (
-              <span className="text-[10px] text-rose-400/80">● Obbligatorio</span>
+              <span className="text-[10px] text-kidville-error/80">● Obbligatorio</span>
             )}
             {(field.points ?? 0) > 0 && (
-              <span className="text-[10px] text-amber-400/80">+{field.points}pt</span>
+              <span className="text-[10px] text-kidville-warn/80">+{field.points}pt</span>
             )}
             {field.db_mapping && (
-              <span className="text-[10px] text-emerald-400/70 font-mono">⇢ {field.db_mapping}</span>
+              <span className="text-[10px] text-kidville-success/70 font-mono">⇢ {field.db_mapping}</span>
             )}
           </div>
         </div>
@@ -125,7 +125,7 @@ export function DraggableField({ field, isSelected, onClick, onDelete }: Props) 
         {/* Delete */}
         <button
           onClick={e => { e.stopPropagation(); onDelete() }}
-          className="flex-shrink-0 opacity-0 group-hover:opacity-100 p-1.5 rounded-lg text-slate-600 hover:text-rose-400 hover:bg-rose-400/10 transition-all"
+          className="flex-shrink-0 opacity-0 group-hover:opacity-100 p-1.5 rounded-lg text-kidville-muted hover:text-kidville-error hover:bg-kidville-error/10 transition-all"
           title="Elimina campo"
         >
           <Trash2 className="w-3.5 h-3.5" />
@@ -133,7 +133,7 @@ export function DraggableField({ field, isSelected, onClick, onDelete }: Props) 
 
         {/* Selected indicator */}
         {isSelected && (
-          <div className="flex-shrink-0 w-1 h-6 rounded-full bg-indigo-400 self-center" />
+          <div className="flex-shrink-0 w-1 h-6 rounded-full bg-kidville-green self-center" />
         )}
       </motion.div>
     </div>

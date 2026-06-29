@@ -80,13 +80,13 @@ function PaletteItem({
       {...attributes}
       className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl border transition-all select-none cursor-grab active:cursor-grabbing ${
         isDragging
-          ? 'opacity-40 border-indigo-500/40 bg-indigo-500/10'
-          : 'border-white/[0.07] bg-white/[0.03] hover:border-indigo-400/30 hover:bg-indigo-500/[0.07]'
+          ? 'opacity-40 border-kidville-green/30 bg-kidville-success-soft'
+          : 'border-kidville-line bg-white hover:border-kidville-green/30 hover:bg-kidville-green-dark/[0.07]'
       }`}
     >
-      <Icon className="w-4 h-4 text-indigo-400 flex-shrink-0" />
-      <span className="text-sm text-slate-300 flex-1">{label}</span>
-      <GripVertical className="w-3.5 h-3.5 text-slate-700 flex-shrink-0" />
+      <Icon className="w-4 h-4 text-kidville-green flex-shrink-0" />
+      <span className="text-sm text-kidville-ink flex-1">{label}</span>
+      <GripVertical className="w-3.5 h-3.5 text-kidville-muted flex-shrink-0" />
     </div>
   )
 }
@@ -100,10 +100,10 @@ const ACCENT_ICON: Record<AnagraficaGroup['groupId'], React.ComponentType<{ clas
 }
 
 const ACCENT_COLORS: Record<AnagraficaGroup['accent'], { border: string; bg: string; text: string; dot: string }> = {
-  sky:    { border: 'rgba(56,189,248,0.25)', bg: 'rgba(56,189,248,0.06)', text: 'text-sky-400', dot: 'bg-sky-400' },
-  rose:   { border: 'rgba(251,113,133,0.25)', bg: 'rgba(251,113,133,0.06)', text: 'text-rose-400', dot: 'bg-rose-400' },
-  indigo: { border: 'rgba(129,140,248,0.25)', bg: 'rgba(129,140,248,0.06)', text: 'text-indigo-400', dot: 'bg-indigo-400' },
-  amber:  { border: 'rgba(251,191,36,0.25)', bg: 'rgba(251,191,36,0.06)', text: 'text-amber-400', dot: 'bg-amber-400' },
+  sky:    { border: 'rgba(42,111,219,0.25)', bg: 'rgba(42,111,219,0.06)', text: 'text-kidville-info', dot: 'bg-kidville-info' },
+  rose:   { border: 'rgba(229,57,53,0.25)', bg: 'rgba(229,57,53,0.06)', text: 'text-kidville-error', dot: 'bg-kidville-error' },
+  indigo: { border: 'rgba(0,106,95,0.25)', bg: 'rgba(0,106,95,0.06)', text: 'text-kidville-green', dot: 'bg-kidville-green' },
+  amber:  { border: 'rgba(230,114,10,0.25)', bg: 'rgba(230,114,10,0.06)', text: 'text-kidville-warn', dot: 'bg-kidville-warn' },
 }
 
 // ── Palette item anagrafica (draggable) ──────────────────────
@@ -129,8 +129,8 @@ function AnagraficaPaletteItem({
         isDragging ? 'opacity-40' : 'hover:brightness-125'
       }`}
       style={{
-        borderColor: isDragging ? colors.border : 'rgba(255,255,255,0.05)',
-        background: isDragging ? colors.bg : 'rgba(255,255,255,0.02)',
+        borderColor: isDragging ? colors.border : '#EFE7DC',
+        background: isDragging ? colors.bg : '#EFE7DC',
       }}
       onMouseEnter={e => {
         if (!isDragging) {
@@ -140,19 +140,19 @@ function AnagraficaPaletteItem({
       }}
       onMouseLeave={e => {
         if (!isDragging) {
-          ;(e.currentTarget as HTMLElement).style.borderColor = 'rgba(255,255,255,0.05)'
-          ;(e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.02)'
+          ;(e.currentTarget as HTMLElement).style.borderColor = '#EFE7DC'
+          ;(e.currentTarget as HTMLElement).style.background = '#EFE7DC'
         }
       }}
     >
       <Database className={`w-3 h-3 ${colors.text} flex-shrink-0`} />
       <div className="flex-1 min-w-0">
-        <p className="text-xs text-slate-300 truncate leading-tight">{field.label}</p>
+        <p className="text-xs text-kidville-ink truncate leading-tight">{field.label}</p>
         <p className={`text-[9px] font-mono ${colors.text} opacity-60 truncate leading-tight`}>
           {field.db_mapping}
         </p>
       </div>
-      <GripVertical className="w-3 h-3 text-slate-700 flex-shrink-0" />
+      <GripVertical className="w-3 h-3 text-kidville-muted flex-shrink-0" />
     </div>
   )
 }
@@ -174,7 +174,7 @@ function AnagraficaGroupSection({
     <div>
       <button
         onClick={onToggle}
-        className="w-full flex items-center gap-2 px-1 py-1.5 rounded-lg hover:bg-white/5 transition-all text-left"
+        className="w-full flex items-center gap-2 px-1 py-1.5 rounded-lg hover:bg-kidville-cream transition-all text-left"
       >
         <div className={`w-4 h-4 rounded flex items-center justify-center flex-shrink-0`}
           style={{ background: colors.bg }}>
@@ -182,7 +182,7 @@ function AnagraficaGroupSection({
         </div>
         <span className={`text-[11px] font-semibold ${colors.text} flex-1`}>{group.label}</span>
         <ChevronDown
-          className={`w-3 h-3 text-slate-600 transition-transform ${collapsed ? '' : 'rotate-180'}`}
+          className={`w-3 h-3 text-kidville-muted transition-transform ${collapsed ? '' : 'rotate-180'}`}
         />
       </button>
       {!collapsed && (
@@ -437,14 +437,14 @@ export default function FormBuilderPage() {
       {/* Full-screen dark canvas overriding the cream body */}
       <div
         className="flex flex-col overflow-hidden"
-        style={{ height: '100vh', background: '#0b0f1f', color: '#f1f5f9' }}
+        style={{ height: '100vh', background: '#FEF1E4', color: '#1F3D38' }}
       >
         {/* ── Header ── */}
         <header
           className="flex items-center justify-between px-6 py-3 flex-shrink-0"
           style={{
             background: 'rgba(11,15,31,0.92)',
-            borderBottom: '1px solid rgba(255,255,255,0.07)',
+            borderBottom: '1px solid #EFE7DC',
             backdropFilter: 'blur(16px)',
             zIndex: 30,
           }}
@@ -452,15 +452,15 @@ export default function FormBuilderPage() {
           <div className="flex items-center gap-3">
             <Link
               href="/admin/modulistica"
-              className="p-1.5 rounded-lg text-slate-500 hover:text-white hover:bg-white/10 transition-all"
+              className="p-1.5 rounded-lg text-kidville-muted hover:text-kidville-green hover:bg-kidville-cream-dark transition-all"
             >
               <ChevronLeft className="w-5 h-5" />
             </Link>
-            <div className="w-px h-5 bg-white/10" />
+            <div className="w-px h-5 bg-kidville-cream-dark" />
             <input
               value={formTitle}
               onChange={e => setFormTitle(e.target.value)}
-              className="bg-transparent text-base font-semibold text-white focus:outline-none border-b border-transparent focus:border-indigo-400/50 transition-colors w-64 pb-0.5 placeholder-slate-700"
+              className="bg-transparent text-base font-semibold text-kidville-green focus:outline-none border-b border-transparent focus:border-kidville-green/50 transition-colors w-64 pb-0.5 placeholder-kidville-muted"
               placeholder="Nome del modello…"
             />
           </div>
@@ -469,16 +469,16 @@ export default function FormBuilderPage() {
             {hasSignature && (
               <button
                 onClick={() => setSignatureMode(m => (m === 'joint' ? 'single' : 'joint'))}
-                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs transition-all ${signatureMode === 'joint' ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-300' : 'border-white/10 text-slate-400 hover:text-slate-200'}`}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs transition-all ${signatureMode === 'joint' ? 'border-kidville-success/50 bg-kidville-success-soft text-kidville-success' : 'border-kidville-line text-kidville-muted hover:text-kidville-ink'}`}
                 title="Richiede la firma di entrambi i genitori"
               >
                 <PenLine className="w-3.5 h-3.5" />
                 {signatureMode === 'joint' ? 'Firma congiunta' : 'Firma singola'}
               </button>
             )}
-            <div className="flex items-center gap-2 text-xs text-slate-600 font-mono tabular-nums">
+            <div className="flex items-center gap-2 text-xs text-kidville-muted font-mono tabular-nums">
               <span>{schema.pages.length} {schema.pages.length === 1 ? 'pag.' : 'pag.'}</span>
-              <span className="text-slate-800">·</span>
+              <span className="text-kidville-muted">·</span>
               <span>{totalFields} campi</span>
             </div>
           </div>
@@ -489,10 +489,10 @@ export default function FormBuilderPage() {
             whileTap={{ scale: 0.95 }}
             className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all disabled:opacity-50 ${
               saveState === 'saved'
-                ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                ? 'bg-kidville-green hover:bg-kidville-green-dark text-kidville-yellow'
                 : saveState === 'error'
-                ? 'bg-red-600 text-white'
-                : 'bg-indigo-600 hover:bg-indigo-500 text-white'
+                ? 'bg-red-600 text-kidville-green'
+                : 'bg-kidville-green hover:bg-kidville-green-dark text-kidville-yellow'
             }`}
           >
             {saveState === 'saving' && <Loader2 className="w-4 h-4 animate-spin" />}
@@ -515,22 +515,22 @@ export default function FormBuilderPage() {
         {savedModelId && (
           <div
             className="flex items-center gap-3 px-6 py-2.5 flex-shrink-0 flex-wrap"
-            style={{ background: 'rgba(16,185,129,0.06)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}
+            style={{ background: 'rgba(67,160,71,0.06)', borderBottom: '1px solid #EFE7DC' }}
           >
-            <span className="flex items-center gap-1.5 text-xs font-semibold text-emerald-400 uppercase tracking-wider">
+            <span className="flex items-center gap-1.5 text-xs font-semibold text-kidville-success uppercase tracking-wider">
               <Globe className="w-3.5 h-3.5" /> Pubblicazione
             </span>
 
             <div className="flex items-center gap-1.5 text-xs">
               <button
                 onClick={() => setAccessMode('public')}
-                className={`flex items-center gap-1 px-2.5 py-1 rounded-lg border transition-all ${accessMode === 'public' ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-300' : 'border-white/10 text-slate-400'}`}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-lg border transition-all ${accessMode === 'public' ? 'border-kidville-success/50 bg-kidville-success-soft text-kidville-success' : 'border-kidville-line text-kidville-muted'}`}
               >
                 <Globe className="w-3 h-3" /> Link pubblico
               </button>
               <button
                 onClick={() => setAccessMode('authenticated')}
-                className={`flex items-center gap-1 px-2.5 py-1 rounded-lg border transition-all ${accessMode === 'authenticated' ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-300' : 'border-white/10 text-slate-400'}`}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-lg border transition-all ${accessMode === 'authenticated' ? 'border-kidville-success/50 bg-kidville-success-soft text-kidville-success' : 'border-kidville-line text-kidville-muted'}`}
               >
                 <Lock className="w-3 h-3" /> Solo registrati
               </button>
@@ -540,27 +540,27 @@ export default function FormBuilderPage() {
               <button
                 onClick={() => handlePublish('publish')}
                 disabled={publishing}
-                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-all disabled:opacity-50"
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-kidville-green hover:bg-kidville-green-dark text-kidville-yellow text-xs font-semibold transition-all disabled:opacity-50"
               >
                 {publishing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Link2 className="w-3.5 h-3.5" />}
                 Pubblica
               </button>
             ) : (
               <div className="flex items-center gap-2 flex-wrap">
-                <code className="text-xs text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded-lg">
+                <code className="text-xs text-kidville-success bg-kidville-success-soft border border-kidville-success/20 px-2.5 py-1 rounded-lg">
                   {pub.url}
                 </code>
                 <button
                   onClick={copyLink}
-                  className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-white/10 text-slate-300 hover:bg-white/5 text-xs transition-all"
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-kidville-line text-kidville-ink hover:bg-kidville-cream text-xs transition-all"
                 >
-                  {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                  {copied ? <Check className="w-3.5 h-3.5 text-kidville-success" /> : <Copy className="w-3.5 h-3.5" />}
                   {copied ? 'Copiato' : 'Copia link'}
                 </button>
                 <button
                   onClick={() => handlePublish('unpublish')}
                   disabled={publishing}
-                  className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-white/10 text-slate-400 hover:text-rose-300 hover:border-rose-400/30 text-xs transition-all disabled:opacity-50"
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-kidville-line text-kidville-muted hover:text-kidville-error hover:border-kidville-green/30 text-xs transition-all disabled:opacity-50"
                 >
                   <EyeOff className="w-3.5 h-3.5" /> Ritira
                 </button>
@@ -576,13 +576,13 @@ export default function FormBuilderPage() {
             className="w-60 flex-shrink-0 overflow-y-auto"
             style={{
               background: 'rgba(11,15,31,0.8)',
-              borderRight: '1px solid rgba(255,255,255,0.06)',
+              borderRight: '1px solid #EFE7DC',
             }}
           >
             <div className="p-4 space-y-4">
               {/* Campi generici */}
               <div>
-                <p className="text-[10px] font-bold text-slate-700 uppercase tracking-widest mb-3">
+                <p className="text-[10px] font-bold text-kidville-muted uppercase tracking-widest mb-3">
                   Libreria Campi
                 </p>
                 <div className="space-y-1.5">
@@ -598,11 +598,11 @@ export default function FormBuilderPage() {
               </div>
 
               {/* Divisore */}
-              <div style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }} />
+              <div style={{ borderTop: '1px solid #EFE7DC' }} />
 
               {/* Campi anagrafica */}
               <div>
-                <p className="text-[10px] font-bold text-slate-700 uppercase tracking-widest mb-3">
+                <p className="text-[10px] font-bold text-kidville-muted uppercase tracking-widest mb-3">
                   Campi Anagrafica
                 </p>
                 <div className="space-y-1">
@@ -621,7 +621,7 @@ export default function FormBuilderPage() {
                     />
                   ))}
                 </div>
-                <p className="mt-3 text-[10px] text-slate-800 leading-relaxed">
+                <p className="mt-3 text-[10px] text-kidville-muted leading-relaxed">
                   I campi anagrafica si collegano automaticamente al database alla compilazione.
                 </p>
               </div>
@@ -653,14 +653,14 @@ export default function FormBuilderPage() {
           <div
             className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl border pointer-events-none w-48"
             style={{
-              background: 'rgba(99,102,241,0.85)',
-              borderColor: 'rgba(129,140,248,0.5)',
-              boxShadow: '0 20px 40px rgba(99,102,241,0.35)',
+              background: 'rgba(0,106,95,0.85)',
+              borderColor: 'rgba(0,106,95,0.5)',
+              boxShadow: '0 20px 40px rgba(0,106,95,0.35)',
               backdropFilter: 'blur(8px)',
             }}
           >
-            <draggingPaletteItem.Icon className="w-4 h-4 text-white flex-shrink-0" />
-            <span className="text-sm font-medium text-white">{draggingPaletteItem.label}</span>
+            <draggingPaletteItem.Icon className="w-4 h-4 text-kidville-green flex-shrink-0" />
+            <span className="text-sm font-medium text-kidville-green">{draggingPaletteItem.label}</span>
           </div>
         )}
         {draggingPreset && (() => {
@@ -678,7 +678,7 @@ export default function FormBuilderPage() {
             >
               <Database className={`w-4 h-4 ${colors.text} flex-shrink-0`} />
               <div className="min-w-0">
-                <p className="text-sm font-medium text-white truncate">{field.label}</p>
+                <p className="text-sm font-medium text-kidville-green truncate">{field.label}</p>
                 <p className={`text-[10px] font-mono ${colors.text} opacity-70 truncate`}>
                   {field.db_mapping}
                 </p>

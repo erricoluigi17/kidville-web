@@ -27,9 +27,9 @@ interface Props {
 }
 
 const STATUS_MAP: Record<FormSubmissionStatus, { label: string; cls: string }> = {
-  draft: { label: 'Bozza', cls: 'bg-amber-500/15 text-amber-300 border-amber-500/20' },
-  pending_signature: { label: 'In attesa firma', cls: 'bg-indigo-500/15 text-indigo-300 border-indigo-500/20' },
-  completed: { label: 'Completato', cls: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/20' },
+  draft: { label: 'Bozza', cls: 'bg-kidville-warn-soft text-kidville-warn border-kidville-warn/30' },
+  pending_signature: { label: 'In attesa firma', cls: 'bg-kidville-info-soft text-kidville-info border-kidville-info/30' },
+  completed: { label: 'Completato', cls: 'bg-kidville-success-soft text-kidville-success border-kidville-success/30' },
 }
 
 function renderValue(value: unknown): string {
@@ -103,27 +103,27 @@ export function SubmissionDetailSidebar({ submission, onClose }: Props) {
             className="fixed right-0 top-0 bottom-0 z-50 flex flex-col w-full max-w-[460px]"
             style={{
               background: 'rgba(8, 11, 26, 0.97)',
-              borderLeft: '1px solid rgba(255,255,255,0.06)',
+              borderLeft: '1px solid #EFE7DC',
               backdropFilter: 'blur(28px)',
             }}
           >
             {/* Header */}
             <div
               className="flex items-start justify-between px-6 py-5"
-              style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}
+              style={{ borderBottom: '1px solid #EFE7DC' }}
             >
               <div className="flex-1 min-w-0 pr-4">
-                <h2 className="text-white font-semibold text-base leading-snug truncate">
+                <h2 className="text-kidville-green font-semibold text-base leading-snug truncate">
                   {submission.form_model?.title ?? 'Compilazione'}
                 </h2>
-                <p className="text-slate-600 text-[11px] mt-0.5 font-mono flex items-center gap-1">
+                <p className="text-kidville-muted text-[11px] mt-0.5 font-mono flex items-center gap-1">
                   <Hash className="w-3 h-3" />
                   {submission.id.slice(0, 8).toUpperCase()}
                 </p>
               </div>
               <button
                 onClick={onClose}
-                className="p-1.5 rounded-lg text-slate-600 hover:text-white hover:bg-white/[0.08] transition-all flex-shrink-0"
+                className="p-1.5 rounded-lg text-kidville-muted hover:text-kidville-green hover:bg-white/[0.08] transition-all flex-shrink-0"
               >
                 <X className="w-4.5 h-4.5" />
               </button>
@@ -132,7 +132,7 @@ export function SubmissionDetailSidebar({ submission, onClose }: Props) {
             {/* Meta strip */}
             <div
               className="px-6 py-3 flex flex-wrap items-center gap-2.5"
-              style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}
+              style={{ borderBottom: '1px solid #FFFFFF' }}
             >
               <span
                 className={`inline-flex px-2.5 py-0.5 rounded-full text-[11px] font-medium border ${STATUS_MAP[submission.status].cls}`}
@@ -140,7 +140,7 @@ export function SubmissionDetailSidebar({ submission, onClose }: Props) {
                 {STATUS_MAP[submission.status].label}
               </span>
 
-              <span className="text-slate-600 text-[11px] flex items-center gap-1">
+              <span className="text-kidville-muted text-[11px] flex items-center gap-1">
                 <Clock className="w-3 h-3" />
                 {new Date(submission.created_at).toLocaleString('it-IT', {
                   day: '2-digit', month: 'short', year: 'numeric',
@@ -149,7 +149,7 @@ export function SubmissionDetailSidebar({ submission, onClose }: Props) {
               </span>
 
               {submission.signed_at && (
-                <span className="text-emerald-400 text-[11px] flex items-center gap-1">
+                <span className="text-kidville-success text-[11px] flex items-center gap-1">
                   <CheckCircle2 className="w-3 h-3" />
                   Firmato {new Date(submission.signed_at).toLocaleDateString('it-IT', {
                     day: '2-digit', month: 'short', year: 'numeric',
@@ -162,8 +162,8 @@ export function SubmissionDetailSidebar({ submission, onClose }: Props) {
             <div className="flex-1 overflow-y-auto px-6 py-5 space-y-2.5">
               {visibleEntries.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-16 gap-3">
-                  <FileText className="w-10 h-10 text-slate-800" />
-                  <p className="text-slate-700 text-sm">Nessun dato da visualizzare</p>
+                  <FileText className="w-10 h-10 text-kidville-muted" />
+                  <p className="text-kidville-muted text-sm">Nessun dato da visualizzare</p>
                 </div>
               ) : (
                 visibleEntries.map(([fieldId, value]) => {
@@ -173,14 +173,14 @@ export function SubmissionDetailSidebar({ submission, onClose }: Props) {
                       key={fieldId}
                       className="rounded-xl px-4 py-3"
                       style={{
-                        background: 'rgba(255,255,255,0.027)',
-                        border: '1px solid rgba(255,255,255,0.05)',
+                        background: '#EFE7DC',
+                        border: '1px solid #EFE7DC',
                       }}
                     >
-                      <p className="text-[10px] font-bold text-slate-600 uppercase tracking-widest mb-1.5">
+                      <p className="text-[10px] font-bold text-kidville-muted uppercase tracking-widest mb-1.5">
                         {meta?.label ?? fieldId}
                       </p>
-                      <p className="text-slate-200 text-sm leading-relaxed break-words">
+                      <p className="text-kidville-ink text-sm leading-relaxed break-words">
                         {renderValue(value)}
                       </p>
                     </div>
@@ -192,18 +192,18 @@ export function SubmissionDetailSidebar({ submission, onClose }: Props) {
             {/* Footer */}
             <div
               className="px-6 py-4 flex gap-3"
-              style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}
+              style={{ borderTop: '1px solid #EFE7DC' }}
             >
               <button
                 onClick={handleDownloadPDF}
-                className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium text-white transition-all"
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium text-kidville-green transition-all"
                 style={{
-                  background: 'rgba(99,102,241,0.75)',
-                  border: '1px solid rgba(129,140,248,0.2)',
+                  background: 'rgba(0,106,95,0.75)',
+                  border: '1px solid rgba(0,106,95,0.2)',
                 }}
                 onMouseEnter={e => {
                   ;(e.currentTarget as HTMLButtonElement).style.boxShadow =
-                    '0 0 22px rgba(99,102,241,0.35)'
+                    '0 0 22px rgba(0,106,95,0.35)'
                 }}
                 onMouseLeave={e => {
                   ;(e.currentTarget as HTMLButtonElement).style.boxShadow = 'none'
@@ -215,18 +215,18 @@ export function SubmissionDetailSidebar({ submission, onClose }: Props) {
 
               <button
                 onClick={handleDownloadXLSX}
-                className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium text-slate-300 transition-all"
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium text-kidville-ink transition-all"
                 style={{
-                  background: 'rgba(255,255,255,0.04)',
-                  border: '1px solid rgba(255,255,255,0.08)',
+                  background: '#FFFFFF',
+                  border: '1px solid #EFE7DC',
                 }}
                 onMouseEnter={e => {
                   ;(e.currentTarget as HTMLButtonElement).style.background =
-                    'rgba(255,255,255,0.07)'
+                    '#EFE7DC'
                 }}
                 onMouseLeave={e => {
                   ;(e.currentTarget as HTMLButtonElement).style.background =
-                    'rgba(255,255,255,0.04)'
+                    '#FFFFFF'
                 }}
               >
                 <Download className="w-4 h-4" />

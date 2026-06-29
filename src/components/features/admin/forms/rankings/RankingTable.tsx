@@ -9,7 +9,7 @@ import {
 } from 'lucide-react'
 const ESITO_BADGE: Record<string, { label: string; bg: string; color: string }> = {
   ammesso: { label: 'Ammesso', bg: 'rgba(52,211,153,0.14)', color: 'rgb(52,211,153)' },
-  lista_attesa: { label: "Lista d'attesa", bg: 'rgba(251,191,36,0.14)', color: 'rgb(251,191,36)' },
+  lista_attesa: { label: "Lista d'attesa", bg: 'rgba(230,114,10,0.14)', color: 'rgb(251,191,36)' },
   non_ammesso: { label: 'Non ammesso', bg: 'rgba(244,114,128,0.14)', color: 'rgb(244,114,128)' },
 }
 import { RankingAdjustModal, type RankingRow, type ManualAdjustment } from './RankingAdjustModal'
@@ -36,7 +36,7 @@ function candidateLabel(data: Record<string, unknown>): string {
 }
 
 const MEDAL_STYLES: Record<number, { icon: typeof Trophy; color: string; glow: string; bg: string }> = {
-  1: { icon: Trophy, color: '#fbbf24', glow: 'rgba(251,191,36,0.35)', bg: 'rgba(251,191,36,0.08)' },
+  1: { icon: Trophy, color: '#fbbf24', glow: 'rgba(230,114,10,0.35)', bg: 'rgba(230,114,10,0.08)' },
   2: { icon: Medal, color: '#94a3b8', glow: 'rgba(148,163,184,0.25)', bg: 'rgba(148,163,184,0.06)' },
   3: { icon: Medal, color: '#d97706', glow: 'rgba(217,119,6,0.25)', bg: 'rgba(217,119,6,0.06)' },
 }
@@ -56,9 +56,9 @@ function AdjustmentTooltip({ adjustments }: { adjustments: ManualAdjustment[] })
         onMouseLeave={() => setOpen(false)}
         onClick={(e) => { e.stopPropagation(); setOpen(v => !v) }}
         className="p-1 rounded-md transition-all"
-        style={{ color: 'rgba(99,102,241,0.7)' }}
+        style={{ color: 'rgba(0,106,95,0.7)' }}
         onMouseOver={e => { (e.currentTarget as HTMLButtonElement).style.color = 'rgb(129,140,248)' }}
-        onMouseOut={e => { (e.currentTarget as HTMLButtonElement).style.color = 'rgba(99,102,241,0.7)' }}
+        onMouseOut={e => { (e.currentTarget as HTMLButtonElement).style.color = 'rgba(0,106,95,0.7)' }}
       >
         <Info className="w-3.5 h-3.5" />
       </button>
@@ -73,25 +73,25 @@ function AdjustmentTooltip({ adjustments }: { adjustments: ManualAdjustment[] })
             className="absolute right-0 bottom-full mb-2 z-50 w-64 p-3 rounded-xl space-y-2 pointer-events-auto"
             style={{
               background: 'rgba(15, 18, 36, 0.97)',
-              border: '1px solid rgba(255,255,255,0.08)',
+              border: '1px solid #EFE7DC',
               backdropFilter: 'blur(24px)',
               boxShadow: '0 16px 48px rgba(0,0,0,0.5)',
             }}
           >
-            <p className="text-[10px] font-bold text-slate-600 uppercase tracking-widest mb-1.5">
+            <p className="text-[10px] font-bold text-kidville-muted uppercase tracking-widest mb-1.5">
               Modifiche manuali
             </p>
             {adjustments.map((adj, i) => (
               <div key={i} className="flex items-start gap-2 text-xs">
                 <span
                   className={`font-mono font-bold tabular-nums shrink-0 ${
-                    adj.delta >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                    adj.delta >= 0 ? 'text-kidville-success' : 'text-kidville-error'
                   }`}
                 >
                   {adj.delta >= 0 ? `+${adj.delta}` : adj.delta}
                 </span>
-                <span className="text-slate-500 leading-snug flex-1">{adj.reason}</span>
-                <span className="text-slate-700 tabular-nums shrink-0">
+                <span className="text-kidville-muted leading-snug flex-1">{adj.reason}</span>
+                <span className="text-kidville-muted tabular-nums shrink-0">
                   {adj.at ? new Date(adj.at).toLocaleDateString('it-IT', { day: '2-digit', month: 'short' }) : ''}
                 </span>
               </div>
@@ -209,20 +209,20 @@ export function RankingTable() {
       {/* Stat cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
         {[
-          { label: 'Candidati', value: filtered.length, accent: 'rgba(99,102,241,0.8)' },
+          { label: 'Candidati', value: filtered.length, accent: 'rgba(0,106,95,0.8)' },
           { label: 'Punteggio medio', value: avgScore, accent: 'rgba(52,211,153,0.8)' },
-          { label: 'Punteggio massimo', value: maxScore, accent: 'rgba(251,191,36,0.8)' },
+          { label: 'Punteggio massimo', value: maxScore, accent: 'rgba(230,114,10,0.8)' },
         ].map(card => (
           <div
             key={card.label}
             className="rounded-2xl px-5 py-4"
             style={{
-              background: 'rgba(255,255,255,0.03)',
-              border: '1px solid rgba(255,255,255,0.06)',
+              background: '#EFE7DC',
+              border: '1px solid #EFE7DC',
               backdropFilter: 'blur(12px)',
             }}
           >
-            <p className="text-[10px] font-bold text-slate-700 uppercase tracking-widest mb-1">{card.label}</p>
+            <p className="text-[10px] font-bold text-kidville-muted uppercase tracking-widest mb-1">{card.label}</p>
             <p className="text-2xl font-bold tabular-nums" style={{ color: card.accent }}>
               {card.value}
             </p>
@@ -234,18 +234,18 @@ export function RankingTable() {
       <div className="flex flex-wrap gap-3 mb-6 items-center">
         {/* Search */}
         <div className="relative flex-1 min-w-[200px]">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-700 pointer-events-none" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-kidville-muted pointer-events-none" />
           <input
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder="Cerca candidato…"
-            className="w-full pl-9 pr-4 py-2.5 rounded-xl text-slate-300 placeholder-slate-700 text-sm focus:outline-none transition-colors"
+            className="w-full pl-9 pr-4 py-2.5 rounded-xl text-kidville-ink placeholder-kidville-muted text-sm focus:outline-none transition-colors"
             style={{
-              background: 'rgba(255,255,255,0.04)',
-              border: '1px solid rgba(255,255,255,0.07)',
+              background: '#FFFFFF',
+              border: '1px solid #EFE7DC',
             }}
-            onFocus={e => { e.currentTarget.style.border = '1px solid rgba(99,102,241,0.45)' }}
-            onBlur={e => { e.currentTarget.style.border = '1px solid rgba(255,255,255,0.07)' }}
+            onFocus={e => { e.currentTarget.style.border = '1px solid rgba(0,106,95,0.45)' }}
+            onBlur={e => { e.currentTarget.style.border = '1px solid #EFE7DC' }}
           />
         </div>
 
@@ -254,10 +254,10 @@ export function RankingTable() {
           <select
             value={filterFormId}
             onChange={e => setFilterFormId(e.target.value)}
-            className="appearance-none pl-4 pr-8 py-2.5 rounded-xl text-slate-400 text-sm focus:outline-none transition-colors cursor-pointer w-full"
+            className="appearance-none pl-4 pr-8 py-2.5 rounded-xl text-kidville-muted text-sm focus:outline-none transition-colors cursor-pointer w-full"
             style={{
-              background: 'rgba(255,255,255,0.04)',
-              border: '1px solid rgba(255,255,255,0.07)',
+              background: '#FFFFFF',
+              border: '1px solid #EFE7DC',
             }}
           >
             <option value="">Tutti i moduli</option>
@@ -265,7 +265,7 @@ export function RankingTable() {
               <option key={m.id} value={m.id}>{m.title}</option>
             ))}
           </select>
-          <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-700" />
+          <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-kidville-muted" />
         </div>
       </div>
 
@@ -273,42 +273,42 @@ export function RankingTable() {
       {filterFormId && (
         <div
           className="flex flex-wrap items-end gap-3 mb-6 rounded-2xl px-4 py-3"
-          style={{ background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.18)' }}
+          style={{ background: 'rgba(0,106,95,0.06)', border: '1px solid rgba(0,106,95,0.18)' }}
         >
-          <div className="flex items-center gap-1.5 text-indigo-300 text-xs font-bold uppercase tracking-widest mr-1">
+          <div className="flex items-center gap-1.5 text-kidville-info text-xs font-bold uppercase tracking-widest mr-1">
             <Gavel className="w-3.5 h-3.5" /> Delibera
           </div>
-          <label className="text-[11px] text-slate-500">
+          <label className="text-[11px] text-kidville-muted">
             Posti
             <input
               type="number" min={0} value={posti}
               onChange={e => setPosti(Math.max(0, parseInt(e.target.value || '0', 10)))}
-              className="block w-20 mt-1 px-2 py-1.5 rounded-lg text-white text-sm tabular-nums focus:outline-none"
-              style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }}
+              className="block w-20 mt-1 px-2 py-1.5 rounded-lg text-kidville-green text-sm tabular-nums focus:outline-none"
+              style={{ background: '#EFE7DC', border: '1px solid #EFE7DC' }}
             />
           </label>
-          <label className="text-[11px] text-slate-500">
+          <label className="text-[11px] text-kidville-muted">
             Soglia punti
             <input
               type="number" min={0} value={soglia}
               onChange={e => setSoglia(Math.max(0, parseInt(e.target.value || '0', 10)))}
-              className="block w-24 mt-1 px-2 py-1.5 rounded-lg text-white text-sm tabular-nums focus:outline-none"
-              style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }}
+              className="block w-24 mt-1 px-2 py-1.5 rounded-lg text-kidville-green text-sm tabular-nums focus:outline-none"
+              style={{ background: '#EFE7DC', border: '1px solid #EFE7DC' }}
             />
           </label>
           <button
             onClick={applicaDelibera}
             disabled={deliberando}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl text-white text-sm font-semibold transition-all disabled:opacity-50"
-            style={{ background: 'rgba(99,102,241,0.85)', border: '1px solid rgba(129,140,248,0.3)' }}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl text-kidville-green text-sm font-semibold transition-all disabled:opacity-50"
+            style={{ background: 'rgba(0,106,95,0.85)', border: '1px solid rgba(0,106,95,0.3)' }}
           >
             {deliberando ? <Loader2 className="w-4 h-4 animate-spin" /> : <Gavel className="w-4 h-4" />}
             Applica delibera
           </button>
           <a
             href={`/api/forms/export/delibera?modelId=${filterFormId}${userId ? `&userId=${userId}` : ''}`}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl text-indigo-300 text-sm font-semibold transition-all hover:text-white"
-            style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)' }}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl text-kidville-info text-sm font-semibold transition-all hover:text-kidville-green"
+            style={{ background: '#FFFFFF', border: '1px solid #EFE7DC' }}
           >
             <FileDown className="w-4 h-4" /> Esporta PDF
           </a>
@@ -318,16 +318,16 @@ export function RankingTable() {
       {/* Table */}
       {loading ? (
         <div className="flex items-center justify-center py-28">
-          <Loader2 className="w-5 h-5 text-indigo-400 animate-spin" />
+          <Loader2 className="w-5 h-5 text-kidville-green animate-spin" />
         </div>
       ) : filtered.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-28 gap-3">
-          <Inbox className="w-12 h-12 text-slate-800" />
-          <p className="text-slate-700 text-sm">Nessuna compilazione completata trovata</p>
+          <Inbox className="w-12 h-12 text-kidville-muted" />
+          <p className="text-kidville-muted text-sm">Nessuna compilazione completata trovata</p>
           {(filterFormId || search) && (
             <button
               onClick={() => { setFilterFormId(''); setSearch('') }}
-              className="text-indigo-400 text-xs hover:underline"
+              className="text-kidville-green text-xs hover:underline"
             >
               Rimuovi filtri
             </button>
@@ -336,19 +336,19 @@ export function RankingTable() {
       ) : (
         <div
           className="rounded-2xl overflow-hidden"
-          style={{ border: '1px solid rgba(255,255,255,0.06)' }}
+          style={{ border: '1px solid #EFE7DC' }}
         >
           {/* Header row */}
           <div
             className="grid items-center"
             style={{
               gridTemplateColumns: '56px 1fr 200px 120px 90px 48px',
-              borderBottom: '1px solid rgba(255,255,255,0.05)',
-              background: 'rgba(255,255,255,0.02)',
+              borderBottom: '1px solid #EFE7DC',
+              background: '#EFE7DC',
             }}
           >
             {['#', 'Candidato', 'Modulo', 'Firma', 'Punti', ''].map(col => (
-              <div key={col} className="px-4 py-3 text-[10px] font-bold text-slate-700 uppercase tracking-widest">
+              <div key={col} className="px-4 py-3 text-[10px] font-bold text-kidville-muted uppercase tracking-widest">
                 {col}
               </div>
             ))}
@@ -381,12 +381,12 @@ export function RankingTable() {
                   className="grid items-center cursor-pointer transition-colors"
                   style={{
                     gridTemplateColumns: '56px 1fr 200px 120px 90px 48px',
-                    borderBottom: '1px solid rgba(255,255,255,0.03)',
+                    borderBottom: '1px solid #EFE7DC',
                     background: medal?.bg ?? 'transparent',
                   }}
                   onMouseEnter={e => {
                     (e.currentTarget as HTMLDivElement).style.background =
-                      medal ? `${medal.bg.replace(')', ', 0.14)')}` : 'rgba(255,255,255,0.025)'
+                      medal ? `${medal.bg.replace(')', ', 0.14)')}` : '#EFE7DC'
                   }}
                   onMouseLeave={e => {
                     (e.currentTarget as HTMLDivElement).style.background = medal?.bg ?? 'transparent'
@@ -405,17 +405,17 @@ export function RankingTable() {
                         <medal.icon className="w-4 h-4" style={{ color: medal.color }} />
                       </div>
                     ) : (
-                      <span className="text-slate-600 text-sm font-medium tabular-nums">{rank}</span>
+                      <span className="text-kidville-muted text-sm font-medium tabular-nums">{rank}</span>
                     )}
                   </div>
 
                   {/* Candidate name */}
                   <div className="px-4 py-4">
-                    <p className={`text-sm font-medium truncate ${rank <= 3 ? 'text-white' : 'text-slate-300'}`}>
+                    <p className={`text-sm font-medium truncate ${rank <= 3 ? 'text-kidville-green' : 'text-kidville-ink'}`}>
                       {label}
                     </p>
                     <div className="flex items-center gap-2 mt-0.5">
-                      <p className="text-[11px] text-slate-700 tabular-nums">{sub.id.slice(0, 8)}</p>
+                      <p className="text-[11px] text-kidville-muted tabular-nums">{sub.id.slice(0, 8)}</p>
                       {sub.esito_ammissione && ESITO_BADGE[sub.esito_ammissione] && (
                         <span
                           className="px-1.5 py-0.5 rounded-full text-[10px] font-bold"
@@ -431,20 +431,20 @@ export function RankingTable() {
                   </div>
 
                   {/* Model */}
-                  <div className="px-4 py-4 text-slate-500 text-sm truncate">
+                  <div className="px-4 py-4 text-kidville-muted text-sm truncate">
                     {sub.form_model?.title ?? '—'}
                   </div>
 
                   {/* Signed at */}
                   <div className="px-4 py-4 text-xs">
                     {sub.signed_at ? (
-                      <span className="text-slate-500 tabular-nums">
+                      <span className="text-kidville-muted tabular-nums">
                         {new Date(sub.signed_at).toLocaleDateString('it-IT', {
                           day: '2-digit', month: 'short', year: '2-digit',
                         })}
                       </span>
                     ) : (
-                      <span className="text-slate-800">—</span>
+                      <span className="text-kidville-muted">—</span>
                     )}
                   </div>
 
@@ -452,7 +452,7 @@ export function RankingTable() {
                   <div className="px-4 py-4 flex items-center gap-1">
                     <span
                       className={`text-lg font-bold tabular-nums ${
-                        rank === 1 ? 'text-amber-400' : 'text-emerald-400'
+                        rank === 1 ? 'text-kidville-warn' : 'text-kidville-success'
                       }`}
                     >
                       {sub.score}
@@ -460,7 +460,7 @@ export function RankingTable() {
                     {manualTotal !== 0 && (
                       <span
                         className={`text-[10px] font-mono tabular-nums ${
-                          manualTotal > 0 ? 'text-emerald-500/60' : 'text-rose-500/60'
+                          manualTotal > 0 ? 'text-kidville-success/60' : 'text-kidville-error/60'
                         }`}
                       >
                         {manualTotal > 0 ? `+${manualTotal}` : manualTotal}
@@ -472,7 +472,7 @@ export function RankingTable() {
                   <div className="px-2 py-4 flex items-center justify-center" onClick={e => e.stopPropagation()}>
                     <AdjustmentTooltip adjustments={sub.manual_adjustments ?? []} />
                     {!(sub.manual_adjustments ?? []).length && (
-                      <SlidersHorizontal className="w-3.5 h-3.5 text-slate-800" />
+                      <SlidersHorizontal className="w-3.5 h-3.5 text-kidville-muted" />
                     )}
                   </div>
                 </motion.div>

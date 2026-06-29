@@ -38,10 +38,13 @@ export default function ParentAttendancePage() {
     return (
         <div className="max-w-md mx-auto p-4 sm:p-6">
             <div className="mb-6">
-                <h1 className="font-barlow font-bold text-3xl text-kidville-green uppercase tracking-wide">
+                <p className="font-barlow font-bold text-[11px] uppercase tracking-[0.14em] text-kidville-yellow-dark">
+                    La giornata
+                </p>
+                <h1 className="font-barlow font-black text-3xl text-kidville-green uppercase tracking-wide leading-none">
                     Avviso Assenza
                 </h1>
-                <p className="font-maven text-gray-500 mt-1">Giulia Bianchi</p>
+                <p className="font-maven text-kidville-muted mt-1">Comunica un&apos;assenza alla scuola</p>
             </div>
 
             <form onSubmit={handleSubmit} className="bg-kidville-white p-6 rounded-card shadow-sm">

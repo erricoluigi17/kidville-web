@@ -276,7 +276,7 @@ export default function TeacherModulisticaPage() {
                             </button>
                           </>
                         ) : (
-                          <span className="text-[10px] text-kidville-success bg-emerald-50 px-2.5 py-1 rounded-full font-bold uppercase tracking-wider flex items-center gap-1">
+                          <span className="text-[10px] text-kidville-success bg-kidville-success-soft px-2.5 py-1 rounded-full font-bold uppercase tracking-wider flex items-center gap-1">
                             <Check size={12} /> FES OK
                           </span>
                         )}
@@ -304,7 +304,7 @@ export default function TeacherModulisticaPage() {
                         <h3 className="font-barlow font-bold text-lg text-kidville-green uppercase">
                           {cert.cognome_alunno} {cert.nome_alunno}
                         </h3>
-                        <span className="bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider">
+                        <span className="bg-kidville-success-soft text-kidville-success px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider">
                           Certificato Medico
                         </span>
                       </div>
@@ -324,7 +324,7 @@ export default function TeacherModulisticaPage() {
                           </span>
                         )}
                         {cert.stato === 'validato' ? (
-                          <span className="bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider">Validato</span>
+                          <span className="bg-kidville-success-soft text-kidville-success px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider">Validato</span>
                         ) : cert.stato === 'rifiutato' ? (
                           <span className="bg-red-50 text-red-600 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider">Rifiutato</span>
                         ) : (
@@ -361,7 +361,7 @@ export default function TeacherModulisticaPage() {
 
             <div className="space-y-4">
               {proxyFile ? (
-                <div className="flex items-center justify-between border-2 border-emerald-100 bg-emerald-50 text-emerald-700 px-3 py-2 rounded-xl text-xs font-semibold select-none">
+                <div className="flex items-center justify-between border-2 border-kidville-success/30 bg-kidville-success-soft text-kidville-success px-3 py-2 rounded-xl text-xs font-semibold select-none">
                   <span>📄 {proxyFileName}</span>
                   <button onClick={() => { setProxyFileName(''); setProxyFile(null); }} className="text-gray-400 hover:text-kidville-error">✕</button>
                 </div>

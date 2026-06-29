@@ -144,12 +144,12 @@ export function MealDetailInline({
                 <motion.div
                     initial={{ opacity: 0, y: -6 }}
                     animate={{ opacity: 1, y: 0 }}
-                    className="px-4 py-2.5 rounded-2xl bg-emerald-50/60 backdrop-blur-sm border border-emerald-200/40 flex items-center gap-2.5"
+                    className="px-4 py-2.5 rounded-2xl bg-kidville-success-soft/60 backdrop-blur-sm border border-kidville-success/40 flex items-center gap-2.5"
                 >
-                    <UtensilsCrossed size={14} className="text-emerald-600 flex-shrink-0" strokeWidth={1.5} />
+                    <UtensilsCrossed size={14} className="text-kidville-success flex-shrink-0" strokeWidth={1.5} />
                     <div className="flex-1">
-                        <p className="font-barlow font-bold text-emerald-700 uppercase text-[10px] tracking-wider">Menu del giorno</p>
-                        <p className="font-maven text-xs text-emerald-600 mt-0.5">
+                        <p className="font-barlow font-bold text-kidville-success uppercase text-[10px] tracking-wider">Menu del giorno</p>
+                        <p className="font-maven text-xs text-kidville-success mt-0.5">
                             {courses.filter(c => c.nome.trim().length > 0).map(c => `${c.icon} ${c.nome}`).join('  •  ')}
                         </p>
                     </div>
@@ -179,7 +179,7 @@ export function MealDetailInline({
                             <span className={`font-maven font-medium text-sm flex-1 ${hasAllergie ? 'text-red-600' : 'text-kidville-green'}`}>
                                 {student.firstName} {student.lastName}
                                 {hasAllergie && <span className="ml-1">⚠️</span>}
-                                {isSaved && <span className="ml-1.5 text-emerald-500">✅</span>}
+                                {isSaved && <span className="ml-1.5 text-kidville-success">✅</span>}
                             </span>
                         </div>
 

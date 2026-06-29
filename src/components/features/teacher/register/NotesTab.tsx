@@ -24,8 +24,8 @@ interface Nota {
 
 const CATEGORIA_LABELS: Record<string, { label: string; color: string }> = {
     disciplinare: { label: 'Disciplinare', color: 'bg-red-100 text-red-700 border-red-200' },
-    didattica: { label: 'Didattica', color: 'bg-blue-100 text-blue-700 border-blue-200' },
-    compiti_non_svolti: { label: 'Compiti non svolti', color: 'bg-orange-100 text-orange-700 border-orange-200' },
+    didattica: { label: 'Didattica', color: 'bg-kidville-info-soft text-kidville-info border-kidville-info/30' },
+    compiti_non_svolti: { label: 'Compiti non svolti', color: 'bg-kidville-warn-soft text-orange-700 border-kidville-warn/30' },
 };
 
 export default function NotesTab() {
@@ -267,7 +267,7 @@ export default function NotesTab() {
                                                 <CheckCircle size={12} /> Firmata
                                             </span>
                                         ) : n.richiede_firma ? (
-                                            <span className="text-xs text-orange-500 font-maven">In attesa</span>
+                                            <span className="text-xs text-kidville-warn font-maven">In attesa</span>
                                         ) : null}
                                         <span className="text-xs text-gray-400 font-maven ml-2">
                                             {new Date(n.creato_il).toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit' })}

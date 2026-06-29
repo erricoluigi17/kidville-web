@@ -155,7 +155,7 @@ export function GeneratoreRette({ userId, scuolaId }: Props) {
                                             <td className="py-2 px-3 text-kidville-green font-semibold">{c.nome} {c.cognome}</td>
                                             <td className="py-2 px-3 text-gray-500">{c.classe_sezione ?? '—'}</td>
                                             <td className="py-2 px-3 text-right text-kidville-green">€ {Number(c.importo_previsto ?? c.importo_retta_mensile ?? 0).toFixed(2)}</td>
-                                            <td className="py-2 px-3 text-xs">{c.genitori_separati ? <span className="text-amber-600">split</span> : 'singolo'}</td>
+                                            <td className="py-2 px-3 text-xs">{c.genitori_separati ? <span className="text-kidville-warn">split</span> : 'singolo'}</td>
                                         </tr>
                                     ))}
                                 </tbody>

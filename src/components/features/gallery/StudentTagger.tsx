@@ -147,7 +147,7 @@ export function StudentTagger({ students, selectedIds, onToggle, onSelectAll, on
                                     isSelected
                                         ? 'bg-white/20 text-white'
                                         : !hasPrivacy
-                                            ? 'bg-amber-100 text-amber-600'
+                                            ? 'bg-kidville-warn-soft text-kidville-warn'
                                             : 'bg-kidville-cream text-kidville-green'
                                  }`}>
                                     {!hasPrivacy && !isSelected ? (
@@ -176,7 +176,7 @@ export function StudentTagger({ students, selectedIds, onToggle, onSelectAll, on
                                         <p className="font-maven text-[9px] text-gray-300 italic">Genitore non collegato</p>
                                     )}
                                     {!hasPrivacy && (
-                                        <p className="font-maven text-[9px] text-amber-600 font-semibold mt-0.5">Solo genitori</p>
+                                        <p className="font-maven text-[9px] text-kidville-warn font-semibold mt-0.5">Solo genitori</p>
                                     )}
                                 </div>
                             </motion.button>
@@ -188,12 +188,12 @@ export function StudentTagger({ students, selectedIds, onToggle, onSelectAll, on
             {/* Privacy info */}
             <div className={`flex items-start gap-2 px-3 py-2.5 rounded-2xl border text-xs leading-relaxed ${
                 hasNoPrivacySelected 
-                    ? 'bg-amber-50 border-amber-200 text-amber-700' 
+                    ? 'bg-kidville-warn-soft border-kidville-warn/30 text-kidville-warn' 
                     : 'bg-kidville-cream/50 border-kidville-green/10 text-kidville-green'
             }`}>
                 {hasNoPrivacySelected ? (
                     <>
-                        <EyeOff size={14} className="text-amber-500 flex-shrink-0 mt-0.5" strokeWidth={2} />
+                        <EyeOff size={14} className="text-kidville-warn flex-shrink-0 mt-0.5" strokeWidth={2} />
                         <p className="font-maven">
                             <strong>Foto Privata:</strong> Hai selezionato un bambino senza liberatoria generale. Questa foto sarà visibile <strong>esclusivamente</strong> ai suoi genitori e nessun altro potrà essere taggato.
                         </p>

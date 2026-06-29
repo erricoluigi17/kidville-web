@@ -251,7 +251,7 @@ export function ScrollableAdultForm({ tabId, defaultRole, updateTabLabel, studen
 
                 {/* Nascita e Cittadinanza */}
                 <section>
-                    <h3 className="text-lg font-bold text-kidville-green mb-4 flex items-center gap-2 border-l-4 border-amber-500 pl-3">
+                    <h3 className="text-lg font-bold text-kidville-green mb-4 flex items-center gap-2 border-l-4 border-kidville-warn pl-3">
                         Nascita e Cittadinanza
                     </h3>
                     <div className="grid grid-cols-2 gap-6">
@@ -290,7 +290,7 @@ export function ScrollableAdultForm({ tabId, defaultRole, updateTabLabel, studen
                 {/* Residenza */}
                 <section>
                     <h3 className="text-lg font-bold text-kidville-green mb-4 flex items-center gap-2 border-l-4 border-blue-500 pl-3">
-                        <MapPin size={20} className="text-blue-500"/> Residenza
+                        <MapPin size={20} className="text-kidville-info"/> Residenza
                     </h3>
                     <div className="grid grid-cols-2 gap-6">
                         <div className="col-span-2">

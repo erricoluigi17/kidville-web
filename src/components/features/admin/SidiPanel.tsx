@@ -26,7 +26,7 @@ const STATO_LABEL: Record<string, string> = {
 function statoColor(s: string): string {
   if (s === 'inviato') return 'bg-green-100 text-green-700'
   if (s === 'errore') return 'bg-red-100 text-red-700'
-  if (s === 'in_corso') return 'bg-amber-100 text-amber-700'
+  if (s === 'in_corso') return 'bg-kidville-warn-soft text-kidville-warn'
   return 'bg-gray-100 text-gray-500'
 }
 
@@ -107,7 +107,7 @@ export function SidiPanel({ userId }: { userId: string }) {
           <div className="mt-4 rounded-xl bg-kidville-cream/50 p-4">
             <p className="font-maven text-sm text-gray-700">Anteprima: <strong>{preview.totale}</strong> domande riconosciute.</p>
             {preview.warnings.length > 0 && (
-              <ul className="mt-2 text-xs text-amber-700 list-disc pl-5">
+              <ul className="mt-2 text-xs text-kidville-warn list-disc pl-5">
                 {preview.warnings.slice(0, 5).map((w, i) => <li key={i}>{w}</li>)}
               </ul>
             )}
@@ -149,7 +149,7 @@ export function SidiPanel({ userId }: { userId: string }) {
       </section>
 
       {msg && (
-        <div className={`rounded-xl p-4 flex items-start gap-2 font-maven text-sm ${msg.kind === 'ok' ? 'bg-green-50 text-green-800' : msg.kind === 'gated' ? 'bg-amber-50 text-amber-800' : 'bg-red-50 text-red-800'}`}>
+        <div className={`rounded-xl p-4 flex items-start gap-2 font-maven text-sm ${msg.kind === 'ok' ? 'bg-green-50 text-green-800' : msg.kind === 'gated' ? 'bg-kidville-warn-soft text-kidville-warn' : 'bg-red-50 text-red-800'}`}>
           {msg.kind === 'ok' ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}
           <span>{msg.text}</span>
         </div>

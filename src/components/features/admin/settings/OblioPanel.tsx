@@ -135,7 +135,7 @@ export function OblioPanel({ userId }: { userId: string }) {
               <div className="bg-gray-50 rounded-xl p-3 text-xs font-maven text-gray-600 space-y-1 mb-4">
                 <div>Anagrafica alunno anonimizzata: <strong>{dry.alunno}</strong></div>
                 <div>Genitori anonimizzati (orfani): <strong>{dry.parents}</strong></div>
-                {dry.parents_non_anonimizzati > 0 && <div className="text-amber-600">Genitori con altri figli iscritti (mantenuti): {dry.parents_non_anonimizzati}</div>}
+                {dry.parents_non_anonimizzati > 0 && <div className="text-kidville-warn">Genitori con altri figli iscritti (mantenuti): {dry.parents_non_anonimizzati}</div>}
                 <div>File personali rimossi: <strong>{dry.file_da_rimuovere}</strong></div>
               </div>
             ) : null}

@@ -164,8 +164,8 @@ export function MaterieManager({ sectionId, sezione, userId, scuolaId }: Props) 
               <div className="flex items-center justify-between">
                 <div>
                   <span className="font-maven text-gray-800">{m.nome}</span>
-                  {m.e_civica && <span className="ml-2 rounded-pill bg-blue-100 text-blue-700 px-2 py-0.5 text-[11px]">Ed. Civica</span>}
-                  {m.turno_mensa && <span className="ml-2 rounded-pill bg-amber-100 text-amber-700 px-2 py-0.5 text-[11px]">Mensa</span>}
+                  {m.e_civica && <span className="ml-2 rounded-pill bg-kidville-info-soft text-kidville-info px-2 py-0.5 text-[11px]">Ed. Civica</span>}
+                  {m.turno_mensa && <span className="ml-2 rounded-pill bg-kidville-warn-soft text-kidville-warn px-2 py-0.5 text-[11px]">Mensa</span>}
                   <span className="ml-2 text-xs text-gray-400">{m.codice}</span>
                 </div>
                 <div className="flex items-center gap-3">

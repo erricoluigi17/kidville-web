@@ -94,7 +94,7 @@ export function ImportExportClient() {
 
                 {/* Import Card */}
                 <div className="bg-kidville-cream border border-kidville-green/15 p-6 rounded-2xl flex flex-col items-center justify-center text-center gap-4">
-                    <div className="p-4 bg-blue-500/20 rounded-full text-blue-400">
+                    <div className="p-4 bg-kidville-info-soft0/20 rounded-full text-kidville-info">
                         <Upload size={32} />
                     </div>
                     <div>
@@ -102,7 +102,7 @@ export function ImportExportClient() {
                         <p className="text-sm text-gray-500 mt-1">Carica un file Excel per aggiornare o inserire record.</p>
                     </div>
                     
-                    <label className={`mt-4 px-6 py-2 bg-blue-600 hover:bg-blue-500 rounded-full font-medium transition-all cursor-pointer flex items-center gap-2 ${isImporting ? 'opacity-50 pointer-events-none' : ''}`}>
+                    <label className={`mt-4 px-6 py-2 bg-kidville-info hover:bg-kidville-info-soft0 rounded-full font-medium transition-all cursor-pointer flex items-center gap-2 ${isImporting ? 'opacity-50 pointer-events-none' : ''}`}>
                         {isImporting ? <Loader2 size={18} className="animate-spin" /> : "Scegli File .xlsx"}
                         <input type="file" accept=".xlsx, .xls, .csv" onChange={handleImport} className="hidden" />
                     </label>

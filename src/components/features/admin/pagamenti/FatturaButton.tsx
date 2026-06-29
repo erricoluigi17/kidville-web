@@ -46,7 +46,7 @@ export function FatturaButton({ pagamentoId, userId, fatturaStato, descrizione, 
 
     if (stato === 'in_attesa') {
         return (
-            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-amber-100 text-amber-700 text-xs font-bold" title="Trasmessa allo SDI tramite Aruba, in attesa di esito">
+            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-kidville-warn-soft text-kidville-warn text-xs font-bold" title="Trasmessa allo SDI tramite Aruba, in attesa di esito">
                 <Loader2 size={12} className="animate-spin" /> In attesa SDI
             </span>
         );

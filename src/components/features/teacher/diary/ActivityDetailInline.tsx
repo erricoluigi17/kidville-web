@@ -35,9 +35,9 @@ const ACTIVITY_TYPES = [
 
 const PARTICIPATION_LEVELS = [
     { value: 'non_fatta',  label: 'Non fatta',      bg: 'bg-red-100/80',     text: 'text-red-700',     border: 'border-red-200/60' },
-    { value: 'difficolta', label: 'Con difficoltà',  bg: 'bg-orange-100/80',  text: 'text-orange-700',  border: 'border-orange-200/60' },
+    { value: 'difficolta', label: 'Con difficoltà',  bg: 'bg-kidville-warn-soft/80',  text: 'text-orange-700',  border: 'border-kidville-warn/60' },
     { value: 'aiuto',      label: 'Con aiuto',       bg: 'bg-yellow-100/80',  text: 'text-yellow-700',  border: 'border-yellow-200/60' },
-    { value: 'autonomia',  label: 'In autonomia',    bg: 'bg-emerald-100/80', text: 'text-emerald-700', border: 'border-emerald-200/60' },
+    { value: 'autonomia',  label: 'In autonomia',    bg: 'bg-kidville-success-soft/80', text: 'text-kidville-success', border: 'border-kidville-success/60' },
 ] as const;
 
 function getActivityMeta(tipo: string) {
@@ -105,7 +105,7 @@ function ActivityAccordion({
                     </p>
                 </div>
                 {isComplete && (
-                    <CheckCircle size={16} className="text-emerald-500 flex-shrink-0" strokeWidth={1.5} />
+                    <CheckCircle size={16} className="text-kidville-success flex-shrink-0" strokeWidth={1.5} />
                 )}
                 <motion.div
                     animate={{ rotate: open ? 180 : 0 }}
@@ -184,7 +184,7 @@ function ActivityAccordion({
                                                     </div>
                                                     <span className="font-maven text-xs text-kidville-green font-medium flex-1">
                                                         {student.firstName} {student.lastName}
-                                                        {isSaved && <span className="ml-1 text-emerald-500">✅</span>}
+                                                        {isSaved && <span className="ml-1 text-kidville-success">✅</span>}
                                                     </span>
                                                 </div>
                                                 <div className="grid grid-cols-2 gap-1">
@@ -263,7 +263,7 @@ export function ActivityDetailInline({ students, activities, onActivitiesChange,
             {/* Aggiungi attività */}
             <button
                 onClick={addActivity}
-                className="w-full flex items-center justify-center gap-2 py-3 rounded-2xl border-2 border-dashed border-purple-200 hover:border-purple-400 hover:bg-purple-50/40 text-purple-400 hover:text-purple-600 transition-all duration-200 font-maven text-sm font-semibold"
+                className="w-full flex items-center justify-center gap-2 py-3 rounded-2xl border-2 border-dashed border-kidville-info/30 hover:border-purple-400 hover:bg-kidville-info-soft/40 text-kidville-info hover:text-kidville-info transition-all duration-200 font-maven text-sm font-semibold"
             >
                 <Plus size={15} strokeWidth={1.5} />
                 Aggiungi attività

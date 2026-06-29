@@ -347,7 +347,7 @@ function LockerSettingsInner() {
             )}
 
             {/* Info */}
-            <div className="mt-6 bg-blue-50 rounded-2xl p-4 text-xs text-kidville-info font-maven">
+            <div className="mt-6 bg-kidville-info-soft rounded-2xl p-4 text-xs text-kidville-info font-maven">
                 <strong>ℹ️ Come funziona:</strong>
                 <ul className="mt-1 space-y-1 list-disc list-inside opacity-80">
                     <li>I materiali configurati qui appaiono nel form "Carico Genitore" e nel portale genitore</li>

@@ -111,10 +111,10 @@ export function RegistraIncassoModal({ pagamento, userId, onClose, onDone }: Pro
                             className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
                         />
                         {importo > 0 && importo < mancante && (
-                            <p className="font-maven text-[11px] text-amber-600 mt-1">Pagamento parziale: resterà € {(mancante - importo).toFixed(2)}.</p>
+                            <p className="font-maven text-[11px] text-kidville-warn mt-1">Pagamento parziale: resterà € {(mancante - importo).toFixed(2)}.</p>
                         )}
                         {eccedenza > 0 && (
-                            <p className="font-maven text-[11px] text-amber-600 mt-1">
+                            <p className="font-maven text-[11px] text-kidville-warn mt-1">
                                 Eccedenza € {eccedenza.toFixed(2)}{isRata && spill ? ' → riportata sulla rata successiva.' : '.'}
                             </p>
                         )}

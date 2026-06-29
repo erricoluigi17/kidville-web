@@ -85,16 +85,16 @@ interface TaskCardProps {
 
 const priorityConfig = {
     low: { label: 'Bassa', style: 'bg-teal-100 text-teal-800 dark:bg-teal-900/30 dark:text-teal-400', dot: 'bg-teal-400' },
-    medium: { label: 'Media', style: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400', dot: 'bg-blue-400' },
-    high: { label: 'Alta', style: 'bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-400', dot: 'bg-orange-400' },
+    medium: { label: 'Media', style: 'bg-kidville-info-soft text-blue-800 dark:bg-blue-900/30 dark:text-kidville-info', dot: 'bg-blue-400' },
+    high: { label: 'Alta', style: 'bg-kidville-warn-soft text-orange-800 dark:bg-orange-900/30 dark:text-kidville-warn', dot: 'bg-kidville-warn' },
     urgent: { label: 'Urgente', style: 'bg-red-500 text-white font-bold animate-pulse shadow-md shadow-red-500/20', dot: 'bg-red-500' }
 };
 
 const statusConfig = {
     todo: { label: 'Da Fare', dot: 'bg-zinc-300', bar: 'bg-zinc-100 text-zinc-500' },
-    in_progress: { label: 'In Corso', dot: 'bg-amber-400', bar: 'bg-amber-55 text-amber-700 border-amber-200' },
-    completed: { label: 'Da Controllare', dot: 'bg-blue-400', bar: 'bg-blue-50 text-blue-700 border-blue-200' },
-    approved: { label: 'Completato', dot: 'bg-emerald-400', bar: 'bg-emerald-50 text-emerald-700 border-emerald-200' }
+    in_progress: { label: 'In Corso', dot: 'bg-kidville-warn', bar: 'bg-amber-55 text-kidville-warn border-kidville-warn/30' },
+    completed: { label: 'Da Controllare', dot: 'bg-blue-400', bar: 'bg-kidville-info-soft text-kidville-info border-kidville-info/30' },
+    approved: { label: 'Completato', dot: 'bg-kidville-success', bar: 'bg-kidville-success-soft text-kidville-success border-kidville-success/30' }
 };
 
 export function TaskCard({
@@ -251,17 +251,17 @@ export function TaskCard({
             className={`w-full backdrop-blur-xl rounded-3xl border shadow-sm transition-all duration-200 overflow-hidden relative
                 ${task.status === 'approved' ? 'opacity-80' : ''}
                 ${isUpdated 
-                    ? 'bg-orange-50/70 dark:bg-orange-955/35 border-orange-500 dark:border-orange-400 ring-4 ring-orange-500/30 dark:ring-orange-400/30 shadow-lg shadow-orange-500/20' 
+                    ? 'bg-kidville-warn-soft/70 dark:bg-orange-955/35 border-orange-500 dark:border-orange-400 ring-4 ring-orange-500/30 dark:ring-orange-400/30 shadow-lg shadow-orange-500/20' 
                     : task.status === 'approved' 
                         ? 'bg-white/90 dark:bg-zinc-950/90 border-zinc-100 dark:border-zinc-900' 
                         : 'bg-white/90 dark:bg-zinc-950/90 border-white/60 dark:border-zinc-800'}
                 ${task.priority === 'urgent' && task.status !== 'approved' && !isUpdated ? 'ring-1 ring-red-400 dark:ring-red-900' : ''}`}
         >
             {/* Top bar: status color */}
-            <div className={`h-0.5 w-full ${task.status === 'todo' ? 'bg-zinc-200' : task.status === 'in_progress' ? 'bg-amber-400' : task.status === 'completed' ? 'bg-blue-400' : 'bg-emerald-400'}`} />
+            <div className={`h-0.5 w-full ${task.status === 'todo' ? 'bg-zinc-200' : task.status === 'in_progress' ? 'bg-kidville-warn' : task.status === 'completed' ? 'bg-blue-400' : 'bg-kidville-success'}`} />
 
             {isUpdated && (
-                <div className="absolute left-0 top-0 bottom-0 w-2.5 bg-gradient-to-b from-orange-400 via-orange-500 to-amber-500 animate-pulse z-10" />
+                <div className="absolute left-0 top-0 bottom-0 w-2.5 bg-gradient-to-b from-orange-400 via-orange-500 to-kidville-warn animate-pulse z-10" />
             )}
 
             <div className={`p-5 ${isUpdated ? 'pl-7' : ''}`}>
@@ -269,7 +269,7 @@ export function TaskCard({
                 <div className="flex items-start justify-between gap-3 mb-3">
                     <div className="flex items-center gap-2 flex-wrap">
                         {isUpdated && (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-orange-500 text-white rounded-full text-[10px] font-bold uppercase tracking-wider font-barlow animate-pulse">
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-kidville-warn-soft0 text-white rounded-full text-[10px] font-bold uppercase tracking-wider font-barlow animate-pulse">
                                 ⚡ Aggiornato
                             </span>
                         )}
@@ -543,16 +543,16 @@ export function TaskCard({
                                                     key={compito.id}
                                                     className={`p-3.5 rounded-2xl border transition-all space-y-2
                                                         ${isCompitoApproved
-                                                            ? 'bg-emerald-50/20 dark:bg-emerald-950/5 border-emerald-150 dark:border-emerald-900/20'
+                                                            ? 'bg-kidville-success-soft/20 dark:bg-emerald-950/5 border-emerald-150 dark:border-emerald-900/20'
                                                             : isCompitoPending
-                                                            ? 'bg-blue-50/10 dark:bg-blue-950/5 border-blue-200/50 dark:border-blue-900/20'
+                                                            ? 'bg-kidville-info-soft/10 dark:bg-blue-950/5 border-kidville-info/50 dark:border-blue-900/20'
                                                             : isAssignedToMe
-                                                                ? 'bg-amber-50/30 dark:bg-amber-955/10 border-amber-200/50 dark:border-amber-900/20 shadow-sm'
+                                                                ? 'bg-kidville-warn-soft/30 dark:bg-amber-955/10 border-kidville-warn/50 dark:border-amber-900/20 shadow-sm'
                                                                 : 'bg-white dark:bg-zinc-950 border-gray-100 dark:border-zinc-900'}`}
                                                 >
                                                     <div className="flex items-start justify-between gap-2">
                                                         <div className="flex items-start gap-2 min-w-0">
-                                                            <span className={`mt-0.5 flex-shrink-0 ${isCompitoApproved ? 'text-emerald-500' : isCompitoPending ? 'text-blue-500' : isAssignedToMe ? 'text-amber-500' : 'text-zinc-300'}`}>
+                                                            <span className={`mt-0.5 flex-shrink-0 ${isCompitoApproved ? 'text-kidville-success' : isCompitoPending ? 'text-kidville-info' : isAssignedToMe ? 'text-kidville-warn' : 'text-zinc-300'}`}>
                                                                 {isCompitoApproved ? <CheckCircle size={14} /> : <CheckSquare size={14} />}
                                                             </span>
                                                             <div className="min-w-0">
@@ -562,7 +562,7 @@ export function TaskCard({
                                                                 <p className="font-maven text-[10px] text-zinc-400 mt-0.5">
                                                                     👤 {compito.assignee_name || 'Non specificato'}
                                                                     {isAssignedToMe && !isCompitoCompleted && (
-                                                                        <span className="ml-1 text-amber-600 font-bold">(tu)</span>
+                                                                        <span className="ml-1 text-kidville-warn font-bold">(tu)</span>
                                                                     )}
                                                                 </p>
                                                             </div>
@@ -582,7 +582,7 @@ export function TaskCard({
                                                                         setSubtaskNotes(''); 
                                                                         setSelectedFiles([]);
                                                                     }}
-                                                                    className="px-2.5 py-1 bg-amber-400 hover:bg-amber-500 active:scale-[0.98] text-zinc-900 font-barlow font-bold text-[10px] uppercase rounded-lg tracking-wider transition-all shadow-sm cursor-pointer"
+                                                                    className="px-2.5 py-1 bg-kidville-warn hover:bg-kidville-warn-soft0 active:scale-[0.98] text-zinc-900 font-barlow font-bold text-[10px] uppercase rounded-lg tracking-wider transition-all shadow-sm cursor-pointer"
                                                                 >
                                                                     Completa Compito ✓
                                                                 </button>
@@ -614,7 +614,7 @@ export function TaskCard({
                                                                 placeholder="Come hai completato questo compito? Spiega cosa hai fatto... *"
                                                                 value={subtaskNotes}
                                                                 onChange={e => setSubtaskNotes(e.target.value)}
-                                                                className="w-full border border-gray-200 dark:border-zinc-800 rounded-xl p-2 font-maven text-xs text-kidville-green dark:text-zinc-200 bg-zinc-50/50 dark:bg-zinc-900/50 focus:outline-none focus:ring-1 focus:ring-amber-400"
+                                                                className="w-full border border-gray-200 dark:border-zinc-800 rounded-xl p-2 font-maven text-xs text-kidville-green dark:text-zinc-200 bg-zinc-50/50 dark:bg-zinc-900/50 focus:outline-none focus:ring-1 focus:ring-kidville-warn"
                                                                 autoFocus
                                                             />
                                                             
@@ -683,9 +683,9 @@ export function TaskCard({
 
                                                     {/* Resolution notes & files */}
                                                     {isCompitoCompleted && compito.resolution_notes && (
-                                                        <div className="mt-1.5 p-2.5 bg-emerald-50/30 dark:bg-emerald-950/10 border border-emerald-100/50 dark:border-emerald-900/30 rounded-xl text-[10px] space-y-1">
+                                                        <div className="mt-1.5 p-2.5 bg-kidville-success-soft/30 dark:bg-emerald-950/10 border border-kidville-success/50 dark:border-emerald-900/30 rounded-xl text-[10px] space-y-1">
                                                             <div className="flex items-center justify-between">
-                                                                <span className={`font-bold font-barlow uppercase text-[9px] ${isCompitoApproved ? 'text-emerald-700 dark:text-emerald-400' : 'text-blue-600 dark:text-blue-400'}`}>
+                                                                <span className={`font-bold font-barlow uppercase text-[9px] ${isCompitoApproved ? 'text-kidville-success dark:text-kidville-success' : 'text-kidville-info dark:text-kidville-info'}`}>
                                                                     {isCompitoApproved ? '✅ Approvato' : '⏳ In Attesa Di Approvazione'}
                                                                 </span>
                                                                 {compito.resolved_at && (
@@ -728,7 +728,7 @@ export function TaskCard({
                                                                                 await onUpdateSubtasks(task.id, updatedCompiti, "Compito approvato! ✓");
                                                                             }
                                                                         }}
-                                                                        className="px-2.5 py-1 bg-emerald-500 hover:bg-emerald-600 text-white text-[9px] font-bold uppercase rounded-lg tracking-wider transition-colors"
+                                                                        className="px-2.5 py-1 bg-kidville-success-soft0 hover:bg-kidville-success text-white text-[9px] font-bold uppercase rounded-lg tracking-wider transition-colors"
                                                                     >
                                                                         Approva Compito
                                                                     </button>
@@ -906,8 +906,8 @@ export function TaskCard({
 
                             {/* Main Task Completion Details */}
                             {(task.status === 'completed' || task.status === 'approved') && (
-                                <div className="p-4 bg-emerald-50/20 dark:bg-emerald-950/10 border border-emerald-100 dark:border-emerald-900/20 rounded-2xl text-left">
-                                    <p className="font-maven font-bold text-xs text-emerald-800 dark:text-emerald-400 flex items-center gap-1.5">
+                                <div className="p-4 bg-kidville-success-soft/20 dark:bg-emerald-950/10 border border-kidville-success/30 dark:border-emerald-900/20 rounded-2xl text-left">
+                                    <p className="font-maven font-bold text-xs text-kidville-success dark:text-kidville-success flex items-center gap-1.5">
                                         <CheckCircle size={12} /> {task.status === 'approved' ? 'Risolto e Approvato da:' : 'Risolto da (in attesa di verifica):'} {task.resolver ? `${task.resolver.first_name} ${task.resolver.last_name}` : 'Staff'}
                                     </p>
                                     {task.resolved_at && (
@@ -923,7 +923,7 @@ export function TaskCard({
                                     
                                     {/* Task Level Attachments */}
                                     {task.attachments && task.attachments.length > 0 && (
-                                        <div className="mt-3 border-t border-dashed border-emerald-100/50 dark:border-zinc-800 pt-3">
+                                        <div className="mt-3 border-t border-dashed border-kidville-success/50 dark:border-zinc-800 pt-3">
                                             <p className="font-barlow font-bold text-[9px] text-kidville-green uppercase tracking-wider mb-1">📁 Documenti Allegati</p>
                                             {renderAttachments(task.attachments)}
                                         </div>
@@ -951,7 +951,7 @@ export function TaskCard({
                     {/* Status Badge left side */}
                     <div>
                         {task.status === 'completed' && (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider bg-blue-50 text-blue-700 border border-blue-200">
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider bg-kidville-info-soft text-kidville-info border border-kidville-info/30">
                                 ⏳ In Attesa di Approvazione
                             </span>
                         )}
@@ -962,7 +962,7 @@ export function TaskCard({
                         {task.status === 'todo' && isDirectAssignee && (
                             <button
                                 onClick={() => onTakeCharge(task.id)}
-                                className="flex items-center gap-1 px-3 py-2 border-2 border-amber-300 hover:bg-amber-50 dark:hover:bg-amber-955/15 text-amber-700 dark:text-amber-500 font-barlow font-bold text-[10px] uppercase rounded-xl active:scale-[0.98] transition-all"
+                                className="flex items-center gap-1 px-3 py-2 border-2 border-kidville-warn/30 hover:bg-kidville-warn-soft dark:hover:bg-amber-955/15 text-kidville-warn dark:text-kidville-warn font-barlow font-bold text-[10px] uppercase rounded-xl active:scale-[0.98] transition-all"
                             >
                                 <Play size={11} /> Prendo in carico
                             </button>
@@ -999,7 +999,7 @@ export function TaskCard({
                                                         await onUpdateTaskFields(task.id, { status: 'approved' }, "Task approvato e archiviato! 🎉");
                                                     }
                                                 }}
-                                                className="flex items-center gap-1 px-3 py-2 bg-emerald-500 text-white hover:bg-emerald-600 font-barlow font-bold text-[10px] uppercase rounded-xl transition-all shadow"
+                                                className="flex items-center gap-1 px-3 py-2 bg-kidville-success-soft0 text-white hover:bg-kidville-success font-barlow font-bold text-[10px] uppercase rounded-xl transition-all shadow"
                                             >
                                                 Approva Task
                                             </button>

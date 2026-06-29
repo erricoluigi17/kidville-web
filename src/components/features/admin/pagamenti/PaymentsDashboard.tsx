@@ -26,7 +26,7 @@ interface Alunno {
 
 const STATI: Record<string, { label: string; cls: string }> = {
     da_pagare: { label: 'Da pagare', cls: 'bg-gray-100 text-gray-600' },
-    parziale: { label: 'Parziale', cls: 'bg-amber-100 text-amber-700' },
+    parziale: { label: 'Parziale', cls: 'bg-kidville-warn-soft text-kidville-warn' },
     pagato: { label: 'Pagato', cls: 'bg-green-100 text-green-700' },
     scaduto: { label: 'Scaduto', cls: 'bg-red-100 text-red-700' },
 };
@@ -186,7 +186,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
             {/* KPI */}
             <div className="grid grid-cols-3 gap-3 mb-5">
                 <KPI icon={<CheckCircle2 size={16} />} label="Incassato" value={totals.incassato} color="text-green-600" />
-                <KPI icon={<Clock size={16} />} label="Da incassare" value={totals.daIncassare} color="text-amber-600" />
+                <KPI icon={<Clock size={16} />} label="Da incassare" value={totals.daIncassare} color="text-kidville-warn" />
                 <KPI icon={<AlertTriangle size={16} />} label="Scaduto (morosità)" value={totals.scaduto} color="text-red-600" />
             </div>
 
@@ -231,8 +231,8 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
 
             {/* CTA generazione rette mancanti */}
             {isRettaView && !loading && mancantiRette > 0 && (
-                <div className="flex items-center justify-between gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 mb-3">
-                    <span className="font-maven text-xs text-amber-700">
+                <div className="flex items-center justify-between gap-2 bg-kidville-warn-soft border border-kidville-warn/30 rounded-xl px-3 py-2 mb-3">
+                    <span className="font-maven text-xs text-kidville-warn">
                         {mancantiRette} alunni senza retta generata per {periodi.find((p) => p.periodo === mese)?.label}.
                     </span>
                     <button onClick={generaMese} disabled={generando}

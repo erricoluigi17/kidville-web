@@ -46,7 +46,7 @@ export function LezioniList({ lezioni }: { lezioni: Lezione[] }) {
                       {l.argomento && <span className="text-gray-600"> — {l.argomento}</span>}
                     </div>
                     {l.individualizzate.filter((i) => i.argomento).map((i, idx) => (
-                      <p key={idx} className="mt-1 rounded bg-purple-50 px-2 py-1 font-maven text-xs text-purple-700">Attività: {i.argomento}</p>
+                      <p key={idx} className="mt-1 rounded bg-kidville-info-soft px-2 py-1 font-maven text-xs text-purple-700">Attività: {i.argomento}</p>
                     ))}
                     {l.allegati.length > 0 && (
                       <div className="mt-1 flex flex-wrap gap-2">
@@ -91,7 +91,7 @@ export function CompitiList({ lezioni }: { lezioni: Lezione[] }) {
                     <div className="font-maven text-xs text-gray-500">{l.materia || 'Lezione'}</div>
                     {l.compiti && <p className="mt-1 rounded bg-kidville-yellow/20 px-2 py-1 font-maven text-sm text-gray-700">{l.compiti}</p>}
                     {l.individualizzate.filter((i) => i.compiti).map((i, idx) => (
-                      <p key={idx} className="mt-1 rounded bg-purple-50 px-2 py-1 font-maven text-xs text-purple-700">Compiti: {i.compiti}</p>
+                      <p key={idx} className="mt-1 rounded bg-kidville-info-soft px-2 py-1 font-maven text-xs text-purple-700">Compiti: {i.compiti}</p>
                     ))}
                     {l.data_consegna_compiti && (
                       <p className="mt-1 font-maven text-[11px] text-kidville-error">Consegna: {new Date(l.data_consegna_compiti).toLocaleDateString('it-IT')}</p>

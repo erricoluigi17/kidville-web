@@ -100,8 +100,8 @@ export function TaskEditModal({ task, open, onClose, onSave, staffMembers, curre
 
     const statusOptions = [
         { value: 'todo', label: 'Da Fare', color: 'text-zinc-600' },
-        { value: 'in_progress', label: 'In Corso', color: 'text-amber-600' },
-        { value: 'completed', label: 'Completato', color: 'text-emerald-600' },
+        { value: 'in_progress', label: 'In Corso', color: 'text-kidville-warn' },
+        { value: 'completed', label: 'Completato', color: 'text-kidville-success' },
     ];
 
     return (
@@ -150,8 +150,8 @@ export function TaskEditModal({ task, open, onClose, onSave, staffMembers, curre
                                     className={`flex-1 py-2.5 rounded-2xl text-xs font-bold font-barlow uppercase tracking-wider border-2 transition-all
                                         ${status === opt.value
                                             ? opt.value === 'todo' ? 'border-zinc-400 bg-zinc-50 text-zinc-700'
-                                            : opt.value === 'in_progress' ? 'border-amber-400 bg-amber-50 text-amber-700'
-                                            : 'border-emerald-400 bg-emerald-50 text-emerald-700'
+                                            : opt.value === 'in_progress' ? 'border-kidville-warn bg-kidville-warn-soft text-kidville-warn'
+                                            : 'border-emerald-400 bg-kidville-success-soft text-kidville-success'
                                         : 'border-gray-100 dark:border-zinc-800 text-zinc-400 hover:border-gray-300'}`}
                                 >
                                     {opt.label}
@@ -246,8 +246,8 @@ export function TaskEditModal({ task, open, onClose, onSave, staffMembers, curre
 
                     {/* Resolution notes when marking completed */}
                     {status === 'completed' && (
-                        <div className="p-4 bg-emerald-50/30 dark:bg-emerald-950/10 rounded-2xl border border-emerald-100 dark:border-emerald-900/20">
-                            <label className="block text-xs font-bold text-emerald-700 uppercase tracking-wider mb-2">
+                        <div className="p-4 bg-kidville-success-soft/30 dark:bg-emerald-950/10 rounded-2xl border border-kidville-success/30 dark:border-emerald-900/20">
+                            <label className="block text-xs font-bold text-kidville-success uppercase tracking-wider mb-2">
                                 ✅ Note di Verifica / Completamento
                             </label>
                             <textarea
@@ -255,7 +255,7 @@ export function TaskEditModal({ task, open, onClose, onSave, staffMembers, curre
                                 placeholder="Indica come è stato risolto il task o le note di verifica..."
                                 value={resolutionNotes}
                                 onChange={e => setResolutionNotes(e.target.value)}
-                                className="w-full border border-emerald-200 dark:border-emerald-900/50 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green dark:text-zinc-200 bg-white dark:bg-zinc-900 focus:outline-none focus:ring-2 focus:ring-emerald-400 transition-all"
+                                className="w-full border border-kidville-success/30 dark:border-emerald-900/50 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green dark:text-zinc-200 bg-white dark:bg-zinc-900 focus:outline-none focus:ring-2 focus:ring-emerald-400 transition-all"
                             />
                         </div>
                     )}

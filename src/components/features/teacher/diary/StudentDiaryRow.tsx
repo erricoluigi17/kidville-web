@@ -42,9 +42,9 @@ interface StudentDiaryRowProps {
 
 const PARTICIPATION_LEVELS = [
     { value: 'non_fatta',  label: 'Non fatta',    bg: 'bg-red-100',    text: 'text-red-700',    border: 'border-red-200' },
-    { value: 'difficolta', label: 'Con difficoltà', bg: 'bg-orange-100', text: 'text-orange-700', border: 'border-orange-200' },
+    { value: 'difficolta', label: 'Con difficoltà', bg: 'bg-kidville-warn-soft', text: 'text-orange-700', border: 'border-kidville-warn/30' },
     { value: 'aiuto',      label: 'Con aiuto',     bg: 'bg-yellow-100', text: 'text-yellow-700', border: 'border-yellow-200' },
-    { value: 'autonomia',  label: 'In autonomia',  bg: 'bg-emerald-100',text: 'text-emerald-700',border: 'border-emerald-200' },
+    { value: 'autonomia',  label: 'In autonomia',  bg: 'bg-kidville-success-soft',text: 'text-kidville-success',border: 'border-kidville-success/30' },
 ] as const;
 
 const MOCK_MEAL_COURSES = [
@@ -208,8 +208,8 @@ function BagnoSectionContent({
 
     return (
         <motion.div variants={itemVariants} className="flex gap-3 px-4 py-3">
-            <Counter field="pipi" emoji="💧" bg="bg-sky-50" color="border-sky-400 text-sky-700 bg-sky-500" />
-            <Counter field="cacca" emoji="💩" bg="bg-amber-50" color="border-amber-400 text-amber-700 bg-amber-500" />
+            <Counter field="pipi" emoji="💧" bg="bg-kidville-info-soft" color="border-sky-400 text-sky-700 bg-kidville-info-soft0" />
+            <Counter field="cacca" emoji="💩" bg="bg-kidville-warn-soft" color="border-kidville-warn text-kidville-warn bg-kidville-warn-soft0" />
         </motion.div>
     );
 }
@@ -353,7 +353,7 @@ export function StudentDiaryRow({
                             {student.firstName} {student.lastName}
                         </span>
                         {showAllergyWarning && <AlertTriangle size={14} className="flex-shrink-0 text-kidville-error" />}
-                        {isSaved && <span className="text-emerald-500 text-xs">✅</span>}
+                        {isSaved && <span className="text-kidville-success text-xs">✅</span>}
                     </div>
                     {showAllergyWarning && (
                         <p className="font-maven text-xs text-kidville-error truncate">⚠️ {student.allergie!.join(', ')}</p>

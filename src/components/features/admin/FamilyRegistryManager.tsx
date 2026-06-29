@@ -81,7 +81,7 @@ export function FamilyRegistryManager() {
                     <div className={`flex items-center gap-2 px-4 py-2 rounded-xl mb-3 text-sm font-maven font-bold ${
                         createdStudentId
                             ? 'bg-green-50 text-green-700 border border-green-200'
-                            : 'bg-amber-50 text-amber-700 border border-amber-200'
+                            : 'bg-kidville-warn-soft text-kidville-warn border border-kidville-warn/30'
                     }`}>
                         {createdStudentId
                             ? <><CheckCircle2 size={15} /> Alunno salvato — il genitore verrà collegato automaticamente</>  

@@ -179,7 +179,7 @@ function ArubaSettings({ userId }: Props) {
     const f = cfg.fiscal || {};
     return (
         <section className={card}>
-            <h3 className={h3}><FileText size={16} /> Fatturazione Aruba <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">Scaffold</span></h3>
+            <h3 className={h3}><FileText size={16} /> Fatturazione Aruba <span className="text-[10px] bg-kidville-warn-soft text-kidville-warn px-2 py-0.5 rounded-full">Scaffold</span></h3>
             <p className="font-maven text-xs text-gray-400 mb-3">Predisposizione. La chiamata reale ad Aruba sarà attivata in produzione. Le credenziali non vengono salvate in chiaro (solo riferimento a vault/env).</p>
             <div className="grid grid-cols-2 gap-3">
                 <div><label className={label}>Username Aruba</label><input value={cfg.username} onChange={e => setCfg({ ...cfg, username: e.target.value })} className={`${input} w-full`} /></div>

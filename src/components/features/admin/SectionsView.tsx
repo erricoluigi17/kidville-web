@@ -25,7 +25,7 @@ const SCUOLA_ID = '11111111-1111-1111-1111-111111111111';
 const schoolTypeConfig = {
     nido: { label: 'Nido', icon: Baby, color: 'text-pink-500', bg: 'bg-pink-500/10', border: 'border-pink-500/30' },
     infanzia: { label: 'Infanzia', icon: GraduationCap, color: 'text-kidville-green', bg: 'bg-kidville-green/10', border: 'border-kidville-green/30' },
-    primaria: { label: 'Primaria', icon: BookOpen, color: 'text-blue-500', bg: 'bg-blue-500/10', border: 'border-blue-500/30' },
+    primaria: { label: 'Primaria', icon: BookOpen, color: 'text-kidville-info', bg: 'bg-kidville-info-soft0/10', border: 'border-blue-500/30' },
 };
 
 interface SectionsViewProps {

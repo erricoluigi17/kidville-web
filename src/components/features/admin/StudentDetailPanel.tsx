@@ -445,8 +445,8 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete }: Props
                                                 </span>
                                                 <span className={`text-[8px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-md flex-shrink-0 ${
                                                     isCompleted
-                                                        ? 'bg-emerald-100/50 text-emerald-700 dark:bg-emerald-950/20 dark:text-emerald-400' 
-                                                        : 'bg-amber-100/50 text-amber-700 dark:bg-amber-955/20 dark:text-amber-400'
+                                                        ? 'bg-kidville-success-soft/50 text-kidville-success dark:bg-emerald-950/20 dark:text-kidville-success' 
+                                                        : 'bg-kidville-warn-soft/50 text-kidville-warn dark:bg-amber-955/20 dark:text-kidville-warn'
                                                 }`}>
                                                     {isCompleted ? 'Risolto' : 'Attivo'}
                                                 </span>
@@ -459,7 +459,7 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete }: Props
                                             )}
                                             
                                             {isCompleted && task.resolution_notes && (
-                                                <div className="p-2 bg-emerald-50/20 border border-emerald-100/30 rounded-lg italic text-[9px] text-emerald-800 dark:text-emerald-400 font-maven">
+                                                <div className="p-2 bg-kidville-success-soft/20 border border-kidville-success/30 rounded-lg italic text-[9px] text-kidville-success dark:text-kidville-success font-maven">
                                                     &ldquo;{task.resolution_notes}&rdquo;
                                                 </div>
                                             )}

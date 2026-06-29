@@ -34,9 +34,9 @@ type SortField = 'cognome' | 'nome' | 'classe_sezione' | 'stato' | 'data_nascita
 
 function getStatoBadge(stato: string) {
     switch (stato) {
-        case 'iscritto': return 'bg-emerald-100 text-emerald-700 border-emerald-200';
+        case 'iscritto': return 'bg-kidville-success-soft text-kidville-success border-kidville-success/30';
         case 'ritirato': return 'bg-gray-100 text-gray-500 border-gray-200';
-        case 'sospeso': return 'bg-orange-100 text-orange-700 border-orange-200';
+        case 'sospeso': return 'bg-kidville-warn-soft text-orange-700 border-kidville-warn/30';
         default: return 'bg-gray-100 text-gray-500 border-gray-200';
     }
 }
@@ -190,7 +190,7 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                                                                 </span>
                                                             )}
                                                             {hasBes && (
-                                                                <span className="text-amber-600 text-xs font-maven font-bold bg-amber-50 px-1.5 py-0.5 rounded">
+                                                                <span className="text-kidville-warn text-xs font-maven font-bold bg-kidville-warn-soft px-1.5 py-0.5 rounded">
                                                                     BES
                                                                 </span>
                                                             )}

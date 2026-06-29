@@ -88,7 +88,7 @@ export function SchoolsPanel({ userId }: { userId: string }) {
                 <p className="font-barlow font-bold text-kidville-green truncate">
                   {s.nome}
                   {!s.attiva && <span className="ml-2 text-[10px] uppercase bg-gray-100 text-gray-400 px-2 py-0.5 rounded-full">Disattivata</span>}
-                  {s.attiva && <span className="ml-2 text-[10px] uppercase bg-emerald-50 text-emerald-600 px-2 py-0.5 rounded-full">Attiva</span>}
+                  {s.attiva && <span className="ml-2 text-[10px] uppercase bg-kidville-success-soft text-kidville-success px-2 py-0.5 rounded-full">Attiva</span>}
                 </p>
                 <p className="font-maven text-xs text-gray-400 truncate">{[s.citta, s.indirizzo].filter(Boolean).join(' · ') || '—'}</p>
               </div>
@@ -97,7 +97,7 @@ export function SchoolsPanel({ userId }: { userId: string }) {
             <div className="flex items-center gap-1.5 flex-shrink-0">
               {editId === s.id ? (
                 <>
-                  <button disabled={saving} onClick={() => patch(s.id, { nome: draftNome })} className="p-2 rounded-lg text-emerald-600 hover:bg-emerald-50" title="Salva">
+                  <button disabled={saving} onClick={() => patch(s.id, { nome: draftNome })} className="p-2 rounded-lg text-kidville-success hover:bg-kidville-success-soft" title="Salva">
                     <Check size={16} />
                   </button>
                   <button onClick={() => setEditId(null)} className="p-2 rounded-lg text-gray-400 hover:bg-gray-50" title="Annulla">
@@ -112,7 +112,7 @@ export function SchoolsPanel({ userId }: { userId: string }) {
                   <button
                     disabled={saving}
                     onClick={() => patch(s.id, { attiva: !s.attiva })}
-                    className={`p-2 rounded-lg hover:bg-gray-50 ${s.attiva ? 'text-emerald-600' : 'text-gray-300'}`}
+                    className={`p-2 rounded-lg hover:bg-gray-50 ${s.attiva ? 'text-kidville-success' : 'text-gray-300'}`}
                     title={s.attiva ? 'Disattiva' : 'Riattiva'}
                   >
                     <Power size={16} />

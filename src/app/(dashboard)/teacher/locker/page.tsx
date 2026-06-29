@@ -371,35 +371,35 @@ function TeacherLockerInner() {
                                                                 }}
                                                                 className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border-2 transition-all
                                                                     ${isFormOpen
-                                                                        ? 'border-orange-300 bg-orange-50'
+                                                                        ? 'border-orange-300 bg-kidville-warn-soft'
                                                                         : item.stock === 0
                                                                             ? 'border-red-100 bg-red-50 opacity-60'
-                                                                            : 'border-gray-100 bg-white hover:border-orange-200 hover:bg-orange-50/50'}`}
+                                                                            : 'border-gray-100 bg-white hover:border-kidville-warn/30 hover:bg-kidville-warn-soft/50'}`}
                                                             >
                                                                 <span className="font-maven font-semibold text-sm text-kidville-green">{item.materiale}</span>
                                                                 <div className="flex items-center gap-2">
                                                                     <span className={`font-barlow font-black text-lg ${item.stock === 0 ? 'text-kidville-error' : 'text-kidville-green'}`}>
                                                                         {item.stock} pz
                                                                     </span>
-                                                                    <MinusCircle size={18} className={item.stock > 0 ? 'text-orange-400' : 'text-gray-300'} />
+                                                                    <MinusCircle size={18} className={item.stock > 0 ? 'text-kidville-warn' : 'text-gray-300'} />
                                                                 </div>
                                                             </button>
 
                                                             {/* Form consumo inline */}
                                                             {isFormOpen && (
-                                                                <div className="mt-1 px-4 py-3 bg-orange-50 border border-orange-200 rounded-xl space-y-3">
+                                                                <div className="mt-1 px-4 py-3 bg-kidville-warn-soft border border-kidville-warn/30 rounded-xl space-y-3">
                                                                     <p className="text-xs text-orange-700 font-maven">
                                                                         Quante unità di <strong>{item.materiale}</strong> hai utilizzato?
                                                                     </p>
                                                                     <div className="flex items-center gap-3">
                                                                         <button
                                                                             onClick={() => setConsumoQty(q => Math.max(1, q - 1))}
-                                                                            className="w-9 h-9 rounded-xl bg-white border border-orange-200 flex items-center justify-center text-orange-500 font-black hover:bg-orange-100"
+                                                                            className="w-9 h-9 rounded-xl bg-white border border-kidville-warn/30 flex items-center justify-center text-kidville-warn font-black hover:bg-kidville-warn-soft"
                                                                         >-</button>
                                                                         <span className="font-barlow font-black text-2xl text-kidville-green w-8 text-center">{consumoQty}</span>
                                                                         <button
                                                                             onClick={() => setConsumoQty(q => Math.min(item.stock, q + 1))}
-                                                                            className="w-9 h-9 rounded-xl bg-white border border-orange-200 flex items-center justify-center text-orange-500 font-black hover:bg-orange-100"
+                                                                            className="w-9 h-9 rounded-xl bg-white border border-kidville-warn/30 flex items-center justify-center text-kidville-warn font-black hover:bg-kidville-warn-soft"
                                                                         >+</button>
                                                                         <button
                                                                             onClick={handleConsumo}

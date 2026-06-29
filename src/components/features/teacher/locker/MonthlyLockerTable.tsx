@@ -107,7 +107,7 @@ export function MonthlyLockerTable({
             {/* ── Header + filtro materiale ── */}
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
                 <div className="flex items-center gap-2">
-                    <CalendarDays className="w-5 h-5 text-violet-400" />
+                    <CalendarDays className="w-5 h-5 text-kidville-info" />
                     <h2 className="text-lg font-semibold text-kidville-green capitalize">
                         {formatMonthLabel(month)}
                     </h2>
@@ -148,7 +148,7 @@ export function MonthlyLockerTable({
                                     className={`w-full text-left px-4 py-2.5 text-sm
                                                 transition-all duration-200
                                                 ${selectedMaterial === mat
-                                                    ? 'bg-violet-600/30 text-violet-300 font-semibold'
+                                                    ? 'bg-kidville-info/30 text-kidville-info font-semibold'
                                                     : 'text-kidville-green/80 hover:bg-kidville-cream'
                                                 }`}
                                 >
@@ -207,9 +207,9 @@ export function MonthlyLockerTable({
                                                            px-4 py-3 whitespace-nowrap">
                                                 {mIdx === 0 ? (
                                                     <div className="flex items-center gap-2">
-                                                        <div className="w-7 h-7 rounded-full bg-violet-600/20
-                                                                        border border-violet-500/30 flex items-center
-                                                                        justify-center text-xs font-bold text-violet-300">
+                                                        <div className="w-7 h-7 rounded-full bg-kidville-info/20
+                                                                        border border-kidville-info flex items-center
+                                                                        justify-center text-xs font-bold text-kidville-info">
                                                             {student.nome[0]}{student.cognome[0]}
                                                         </div>
                                                         <span className="font-medium text-kidville-green text-xs">
@@ -239,12 +239,12 @@ export function MonthlyLockerTable({
                                                     {record ? (
                                                         record.portato ? (
                                                             <CheckCircle2
-                                                                className="w-5 h-5 text-emerald-400/90 mx-auto
+                                                                className="w-5 h-5 text-kidville-success/90 mx-auto
                                                                            drop-shadow-[0_0_8px_rgba(52,211,153,0.5)]"
                                                             />
                                                         ) : (
                                                             <XCircle
-                                                                className="w-5 h-5 text-rose-500/90 mx-auto
+                                                                className="w-5 h-5 text-kidville-error/90 mx-auto
                                                                            drop-shadow-[0_0_8px_rgba(244,63,94,0.5)]"
                                                             />
                                                         )
@@ -264,11 +264,11 @@ export function MonthlyLockerTable({
                 {/* Legenda */}
                 <div className="flex items-center gap-6 px-4 py-3 border-t border-white/5">
                     <div className="flex items-center gap-1.5">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-400/90 drop-shadow-[0_0_6px_rgba(52,211,153,0.5)]" />
+                        <CheckCircle2 className="w-4 h-4 text-kidville-success/90 drop-shadow-[0_0_6px_rgba(52,211,153,0.5)]" />
                         <span className="text-xs text-gray-500">Portato</span>
                     </div>
                     <div className="flex items-center gap-1.5">
-                        <XCircle className="w-4 h-4 text-rose-500/90 drop-shadow-[0_0_6px_rgba(244,63,94,0.5)]" />
+                        <XCircle className="w-4 h-4 text-kidville-error/90 drop-shadow-[0_0_6px_rgba(244,63,94,0.5)]" />
                         <span className="text-xs text-gray-500">Non portato</span>
                     </div>
                     <div className="flex items-center gap-1.5">

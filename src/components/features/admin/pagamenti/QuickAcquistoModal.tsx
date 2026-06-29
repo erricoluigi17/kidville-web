@@ -123,7 +123,7 @@ export function QuickAcquistoModal({ alunno, categoria, userId, scuolaId, onClos
                         <p className="font-maven text-sm text-kidville-green font-bold mb-1">
                             Acquisto registrato{giaPagato ? ' e saldato' : ''}.
                         </p>
-                        {error && <p className="font-maven text-xs text-amber-600 mb-3">{error}</p>}
+                        {error && <p className="font-maven text-xs text-kidville-warn mb-3">{error}</p>}
                         {giaPagato && (
                             <div className="flex justify-center my-3">
                                 <FatturaButton pagamentoId={creato.id} userId={userId} fatturaStato={creato.fattura_stato} descrizione={descrizione} />

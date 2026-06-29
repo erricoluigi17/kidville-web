@@ -28,10 +28,10 @@ const KV = {
 };
 
 const STATUS_CONFIG: Record<AttendanceStatus, { short: string; bg: string; text: string; dot: string }> = {
-    presente:          { short: '✓', bg: 'bg-emerald-100', text: 'text-emerald-700', dot: 'bg-emerald-500' },
+    presente:          { short: '✓', bg: 'bg-kidville-success-soft', text: 'text-kidville-success', dot: 'bg-kidville-success-soft0' },
     assente:           { short: '✗', bg: 'bg-red-100',     text: 'text-red-600',     dot: 'bg-red-400' },
-    ritardo:           { short: 'R', bg: 'bg-amber-100',   text: 'text-amber-700',   dot: 'bg-amber-400' },
-    uscita_anticipata: { short: 'U', bg: 'bg-blue-100',    text: 'text-blue-700',    dot: 'bg-blue-400' },
+    ritardo:           { short: 'R', bg: 'bg-kidville-warn-soft',   text: 'text-kidville-warn',   dot: 'bg-kidville-warn' },
+    uscita_anticipata: { short: 'U', bg: 'bg-kidville-info-soft',    text: 'text-kidville-info',    dot: 'bg-blue-400' },
     nessun_dato:       { short: '·', bg: '',               text: 'text-gray-300',    dot: 'bg-gray-200' },
 };
 
@@ -312,9 +312,9 @@ export function MonthlyAttendanceTable({ sezione = 'Girasoli' }: { sezione?: str
 
                 <div className="flex items-center gap-2">
                     {isCurrentMonth && !isLoading && students.length > 0 && (
-                        <div className="flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-1.5">
-                            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                            <span className="font-maven text-xs text-emerald-700 font-medium">{todayPresenti}/{students.length} oggi</span>
+                        <div className="flex items-center gap-1.5 bg-kidville-success-soft border border-kidville-success/30 rounded-xl px-3 py-1.5">
+                            <span className="w-2 h-2 rounded-full bg-kidville-success-soft0 animate-pulse" />
+                            <span className="font-maven text-xs text-kidville-success font-medium">{todayPresenti}/{students.length} oggi</span>
                         </div>
                     )}
                     <button onClick={fetchData} disabled={isLoading} className="w-9 h-9 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 flex items-center justify-center text-gray-400 hover:text-kidville-green transition-all shadow-sm disabled:opacity-40">
@@ -420,7 +420,7 @@ export function MonthlyAttendanceTable({ sezione = 'Girasoli' }: { sezione?: str
                                             className="border-b border-l border-gray-100 group-hover:bg-green-50/60 transition-colors">
                                             <div className="flex items-center justify-around px-2 py-1.5">
                                                 <div className="flex flex-col items-center">
-                                                    <span className="font-barlow font-black text-sm text-emerald-600">{s.presenze}</span>
+                                                    <span className="font-barlow font-black text-sm text-kidville-success">{s.presenze}</span>
                                                     <span className="font-maven text-[8px] text-gray-300">P</span>
                                                 </div>
                                                 <div className="w-px h-5 bg-gray-100"/>
@@ -430,12 +430,12 @@ export function MonthlyAttendanceTable({ sezione = 'Girasoli' }: { sezione?: str
                                                 </div>
                                                 <div className="w-px h-5 bg-gray-100"/>
                                                 <div className="flex flex-col items-center">
-                                                    <span className="font-barlow font-black text-sm text-amber-500">{s.ritardi}</span>
+                                                    <span className="font-barlow font-black text-sm text-kidville-warn">{s.ritardi}</span>
                                                     <span className="font-maven text-[8px] text-gray-300">R</span>
                                                 </div>
                                                 <div className="w-px h-5 bg-gray-100"/>
                                                 <div className="flex flex-col items-center">
-                                                    <span className="font-barlow font-black text-sm text-blue-500">{s.uscite}</span>
+                                                    <span className="font-barlow font-black text-sm text-kidville-info">{s.uscite}</span>
                                                     <span className="font-maven text-[8px] text-gray-300">U</span>
                                                 </div>
                                                 <div className="w-px h-5 bg-gray-100"/>
@@ -470,9 +470,9 @@ export function MonthlyAttendanceTable({ sezione = 'Girasoli' }: { sezione?: str
                 {!isLoading && students.length > 0 && (
                     <div className="flex gap-5">
                         {[
-                            { label: 'Presenze', key: 'presenze', color: 'text-emerald-600' },
+                            { label: 'Presenze', key: 'presenze', color: 'text-kidville-success' },
                             { label: 'Assenze',  key: 'assenze',  color: 'text-red-500' },
-                            { label: 'Ritardi',  key: 'ritardi',  color: 'text-amber-500' },
+                            { label: 'Ritardi',  key: 'ritardi',  color: 'text-kidville-warn' },
                         ].map(({ label, key, color }) => {
                             const count = students.reduce((acc, st) => acc + (calcSummary(st) as unknown as Record<string,number>)[key], 0);
                             return (

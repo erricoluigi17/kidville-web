@@ -311,7 +311,7 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
 
                 {/* Sezione 1b: Sede e Sezione */}
                 <section>
-                    <h3 className="text-lg font-bold text-kidville-green mb-4 flex items-center gap-2 border-l-4 border-purple-500 pl-3">
+                    <h3 className="text-lg font-bold text-kidville-green mb-4 flex items-center gap-2 border-l-4 border-kidville-info pl-3">
                         Sede e Sezione
                     </h3>
                     <div className="grid grid-cols-2 gap-6">
@@ -382,10 +382,10 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
                             <AllergeniSelect value={formData.allergeni} onChange={next => setFormData(prev => ({ ...prev, allergeni: next }))} />
                         </div>
 
-                        <div className="p-4 bg-amber-500/10 rounded-2xl border border-amber-500/30">
+                        <div className="p-4 bg-kidville-warn-soft0/10 rounded-2xl border border-kidville-warn">
                             <label className="flex items-center gap-3 cursor-pointer">
-                                <input type="checkbox" name="is_bes_dsa" checked={formData.is_bes_dsa} onChange={handleInputChange} className="w-5 h-5 rounded border-amber-300/50 bg-white text-amber-500 focus:ring-amber-500" />
-                                <span className="font-bold text-amber-500 flex items-center gap-2">
+                                <input type="checkbox" name="is_bes_dsa" checked={formData.is_bes_dsa} onChange={handleInputChange} className="w-5 h-5 rounded border-kidville-warn/50 bg-white text-kidville-warn focus:ring-kidville-warn" />
+                                <span className="font-bold text-kidville-warn flex items-center gap-2">
                                     <FileWarning size={18} /> Studente BES / DSA
                                 </span>
                             </label>
@@ -398,29 +398,29 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
                                         exit={{ opacity: 0, height: 0 }}
                                         className="mt-4 overflow-hidden"
                                     >
-                                        <label className="block text-sm font-bold text-amber-700 mb-1">Note BES / DSA</label>
-                                        <textarea name="note_bes" value={formData.note_bes} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-amber-500/30 bg-white text-kidville-green focus:ring-2 focus:ring-amber-400 outline-none" rows={2} placeholder="Dettagli aggiuntivi..." />
-                                        <div className="mt-3 text-sm text-amber-600/80">I documenti (PEI, Diagnosi) potranno essere caricati nella scheda Documenti dopo il salvataggio.</div>
+                                        <label className="block text-sm font-bold text-kidville-warn mb-1">Note BES / DSA</label>
+                                        <textarea name="note_bes" value={formData.note_bes} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-warn bg-white text-kidville-green focus:ring-2 focus:ring-kidville-warn outline-none" rows={2} placeholder="Dettagli aggiuntivi..." />
+                                        <div className="mt-3 text-sm text-kidville-warn/80">I documenti (PEI, Diagnosi) potranno essere caricati nella scheda Documenti dopo il salvataggio.</div>
                                     </motion.div>
                                 )}
                             </AnimatePresence>
                         </div>
 
-                        <div className="p-4 bg-sky-500/10 rounded-2xl border border-sky-500/30">
+                        <div className="p-4 bg-kidville-info-soft0/10 rounded-2xl border border-sky-500/30">
                             <label className="flex items-center gap-3 cursor-pointer">
-                                <input type="checkbox" name="usa_pannolino" checked={formData.usa_pannolino} onChange={handleInputChange} className="w-5 h-5 rounded border-sky-300/50 bg-white text-sky-500 focus:ring-sky-500" />
-                                <span className="font-bold text-sky-600 flex items-center gap-2">
+                                <input type="checkbox" name="usa_pannolino" checked={formData.usa_pannolino} onChange={handleInputChange} className="w-5 h-5 rounded border-sky-300/50 bg-white text-kidville-info focus:ring-sky-500" />
+                                <span className="font-bold text-kidville-info flex items-center gap-2">
                                     🧷 Usa pannolino
                                 </span>
                             </label>
-                            <p className="mt-2 text-sm text-sky-600/80">Se attivo, ogni evento &quot;Bagno&quot; nel Diario 0-6 scala automaticamente 1 pannolino dall&apos;armadietto del bambino.</p>
+                            <p className="mt-2 text-sm text-kidville-info/80">Se attivo, ogni evento &quot;Bagno&quot; nel Diario 0-6 scala automaticamente 1 pannolino dall&apos;armadietto del bambino.</p>
                         </div>
                     </div>
                 </section>
 
                 {/* Sezione 4: Amministrazione */}
                 <section>
-                    <h3 className="text-lg font-bold text-kidville-green mb-4 flex items-center gap-2 border-l-4 border-purple-500 pl-3">
+                    <h3 className="text-lg font-bold text-kidville-green mb-4 flex items-center gap-2 border-l-4 border-kidville-info pl-3">
                         Amministrazione & Fatturazione
                     </h3>
                     <div className="space-y-6">
@@ -442,10 +442,10 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
                                     initial={{ opacity: 0, height: 0 }}
                                     animate={{ opacity: 1, height: 'auto' }}
                                     exit={{ opacity: 0, height: 0 }}
-                                    className="p-6 border border-blue-500/30 bg-blue-500/5 rounded-2xl overflow-hidden mt-2"
+                                    className="p-6 border border-blue-500/30 bg-kidville-info-soft0/5 rounded-2xl overflow-hidden mt-2"
                                 >
                                     <div className="flex items-center justify-between mb-4">
-                                        <h4 className="font-bold text-blue-400">Dettagli Intestatario Fattura Alternativo</h4>
+                                        <h4 className="font-bold text-kidville-info">Dettagli Intestatario Fattura Alternativo</h4>
                                     </div>
                                     
                                     <div className="grid grid-cols-2 gap-4">

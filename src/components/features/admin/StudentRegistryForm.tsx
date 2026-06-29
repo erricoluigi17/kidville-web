@@ -278,10 +278,10 @@ export function StudentRegistryForm() {
                             <AllergeniSelect value={formData.allergeni} onChange={next => setFormData(prev => ({ ...prev, allergeni: next }))} />
                         </div>
 
-                        <div className="p-4 bg-amber-50 rounded-2xl border border-amber-100">
+                        <div className="p-4 bg-kidville-warn-soft rounded-2xl border border-kidville-warn/30">
                             <label className="flex items-center gap-3 cursor-pointer">
-                                <input type="checkbox" name="is_bes_dsa" checked={formData.is_bes_dsa} onChange={handleInputChange} className="w-5 h-5 rounded border-amber-300 text-amber-600 focus:ring-amber-500" />
-                                <span className="font-bold text-amber-800 flex items-center gap-2">
+                                <input type="checkbox" name="is_bes_dsa" checked={formData.is_bes_dsa} onChange={handleInputChange} className="w-5 h-5 rounded border-kidville-warn/30 text-kidville-warn focus:ring-kidville-warn" />
+                                <span className="font-bold text-kidville-warn flex items-center gap-2">
                                     <FileWarning size={18} /> Studente BES / DSA
                                 </span>
                             </label>
@@ -294,9 +294,9 @@ export function StudentRegistryForm() {
                                         exit={{ opacity: 0, height: 0 }}
                                         className="mt-4 overflow-hidden"
                                     >
-                                        <label className="block text-sm font-bold text-amber-900 mb-1">Note BES / DSA</label>
-                                        <textarea name="note_bes" value={formData.note_bes} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-amber-200 bg-white focus:ring-2 focus:ring-amber-400 outline-none" rows={2} placeholder="Dettagli aggiuntivi..." />
-                                        <div className="mt-3 text-sm text-amber-700">I documenti (PEI, Diagnosi) potranno essere caricati nella scheda Documenti dopo il salvataggio.</div>
+                                        <label className="block text-sm font-bold text-kidville-warn mb-1">Note BES / DSA</label>
+                                        <textarea name="note_bes" value={formData.note_bes} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-warn/30 bg-white focus:ring-2 focus:ring-kidville-warn outline-none" rows={2} placeholder="Dettagli aggiuntivi..." />
+                                        <div className="mt-3 text-sm text-kidville-warn">I documenti (PEI, Diagnosi) potranno essere caricati nella scheda Documenti dopo il salvataggio.</div>
                                     </motion.div>
                                 )}
                             </AnimatePresence>
@@ -324,11 +324,11 @@ export function StudentRegistryForm() {
                                     initial={{ opacity: 0, height: 0 }}
                                     animate={{ opacity: 1, height: 'auto' }}
                                     exit={{ opacity: 0, height: 0 }}
-                                    className="p-4 border border-blue-200 bg-blue-50/50 rounded-2xl overflow-hidden mt-2"
+                                    className="p-4 border border-kidville-info/30 bg-kidville-info-soft/50 rounded-2xl overflow-hidden mt-2"
                                 >
                                     <div className="flex items-center justify-between mb-4">
                                         <h4 className="font-bold text-blue-900">Seleziona o Crea Adulto</h4>
-                                        <button className="text-sm px-3 py-1 bg-white border border-blue-200 rounded-full text-blue-700 font-medium hover:bg-blue-50">
+                                        <button className="text-sm px-3 py-1 bg-white border border-kidville-info/30 rounded-full text-kidville-info font-medium hover:bg-kidville-info-soft">
                                             + Nuovo Adulto
                                         </button>
                                     </div>

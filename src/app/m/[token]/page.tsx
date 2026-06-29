@@ -47,7 +47,7 @@ export default async function PublicFormPage({
           </p>
           <Link
             href={`/auth/login?next=/m/${token}`}
-            className="inline-block mt-6 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold transition-all"
+            className="inline-block mt-6 px-5 py-2.5 rounded-xl bg-kidville-success hover:bg-kidville-success-soft0 text-white text-sm font-semibold transition-all"
           >
             Accedi
           </Link>

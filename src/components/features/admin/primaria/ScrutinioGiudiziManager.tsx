@@ -102,11 +102,11 @@ export function ScrutinioGiudiziManager({ scuolaId, userId }: { scuolaId: string
       </div>
 
       {periodi.length === 0 ? (
-        <p className="font-maven text-sm text-amber-600">Configura prima un periodo di scrutinio (tab Scrutinio).</p>
+        <p className="font-maven text-sm text-kidville-warn">Configura prima un periodo di scrutinio (tab Scrutinio).</p>
       ) : scala.length === 0 ? (
-        <p className="font-maven text-sm text-amber-600">Configura prima la scala dei giudizi (tab Giudizi).</p>
+        <p className="font-maven text-sm text-kidville-warn">Configura prima la scala dei giudizi (tab Giudizi).</p>
       ) : materie.length === 0 ? (
-        <p className="font-maven text-sm text-amber-600">Nessuna materia con codice per il livello {livello}ª. Configura le materie (tab Materie).</p>
+        <p className="font-maven text-sm text-kidville-warn">Nessuna materia con codice per il livello {livello}ª. Configura le materie (tab Materie).</p>
       ) : (
         <div className="space-y-5">
           {materie.map((m) => (

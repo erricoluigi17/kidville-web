@@ -15,8 +15,8 @@ interface AuditRow {
 
 const AZIONE: Record<string, { l: string; cls: string }> = {
   list: { l: 'Elenco', cls: 'bg-gray-100 text-gray-600' },
-  view: { l: 'Visualizzazione', cls: 'bg-blue-100 text-blue-700' },
-  download: { l: 'Download', cls: 'bg-amber-100 text-amber-700' },
+  view: { l: 'Visualizzazione', cls: 'bg-kidville-info-soft text-kidville-info' },
+  download: { l: 'Download', cls: 'bg-kidville-warn-soft text-kidville-warn' },
   upload: { l: 'Caricamento', cls: 'bg-green-100 text-green-700' },
   delete: { l: 'Eliminazione', cls: 'bg-red-100 text-red-700' },
 };

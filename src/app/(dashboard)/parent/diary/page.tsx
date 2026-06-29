@@ -487,14 +487,14 @@ function ParentDiaryContent() {
                                     initial={{ opacity: 0, y: 14 }}
                                     animate={{ opacity: 1, y: 0 }}
                                     transition={{ duration: 0.3, ease: 'easeOut' }}
-                                    className="bg-white rounded-3xl border-l-4 border-emerald-200 border border-kidville-line shadow-sm px-5 py-4"
+                                    className="bg-white rounded-3xl border-l-4 border-kidville-success/30 border border-kidville-line shadow-sm px-5 py-4"
                                 >
                                     <div className="flex items-center gap-3">
-                                        <div className="w-10 h-10 rounded-2xl flex items-center justify-center text-xl flex-shrink-0 bg-emerald-50">
+                                        <div className="w-10 h-10 rounded-2xl flex items-center justify-center text-xl flex-shrink-0 bg-kidville-success-soft">
                                             🚪
                                         </div>
                                         <div className="flex-1">
-                                            <p className="font-barlow font-black text-sm uppercase tracking-wide text-emerald-600">Entrata</p>
+                                            <p className="font-barlow font-black text-sm uppercase tracking-wide text-kidville-success">Entrata</p>
                                             <p className="font-maven text-[11px] text-gray-400">{checkIn}</p>
                                         </div>
                                         <span className="text-2xl">👋</span>

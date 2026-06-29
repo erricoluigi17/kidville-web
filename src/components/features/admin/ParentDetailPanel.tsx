@@ -272,7 +272,7 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave }: Props) {
                                                                         <div className="space-y-2">
                                                                             {otherParents.map((sp: any) => (
                                                                                 <div key={sp.parents.id} className="flex items-center gap-3 p-3 bg-white border border-gray-100 rounded-lg shadow-sm">
-                                                                                    <div className="w-8 h-8 rounded-full bg-blue-50 text-blue-500 flex items-center justify-center">
+                                                                                    <div className="w-8 h-8 rounded-full bg-kidville-info-soft text-kidville-info flex items-center justify-center">
                                                                                         <User size={14} />
                                                                                     </div>
                                                                                     <div>

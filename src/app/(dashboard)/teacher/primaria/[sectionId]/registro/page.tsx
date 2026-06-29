@@ -127,7 +127,7 @@ export default function RegistroPage() {
                     {riga?.firme_docenti?.map((f) => (
                       <div key={f.id} className="mt-1 text-[11px] text-gray-400">
                         ✍ {f.utenti ? `${f.utenti.nome} ${f.utenti.cognome}` : '—'} ({f.tipo_compresenza})
-                        {f.argomento_proprio && <span className="ml-1 text-purple-500">· attività individualizzata</span>}
+                        {f.argomento_proprio && <span className="ml-1 text-kidville-info">· attività individualizzata</span>}
                       </div>
                     ))}
                     {(riga?.allegati_registro?.length ?? 0) > 0 && (
@@ -298,7 +298,7 @@ function FirmaModal({
           ) : null}
 
           {tipo === 'sostegno' && (
-            <div className="rounded-card bg-purple-50 p-3">
+            <div className="rounded-card bg-kidville-info-soft p-3">
               <p className="mb-2 font-maven text-xs text-purple-700">
                 Attività individualizzata: argomento/compiti visibili solo alle famiglie degli alunni selezionati.
               </p>

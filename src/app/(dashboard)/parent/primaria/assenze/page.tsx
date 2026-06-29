@@ -13,7 +13,7 @@ interface Presenza {
 
 const STATO_LABEL: Record<string, { label: string; cls: string }> = {
   assente: { label: 'Assente', cls: 'bg-red-100 text-red-700' },
-  ritardo: { label: 'Ritardo', cls: 'bg-amber-100 text-amber-700' },
+  ritardo: { label: 'Ritardo', cls: 'bg-kidville-warn-soft text-kidville-warn' },
   uscita_anticipata: { label: 'Uscita anticipata', cls: 'bg-purple-100 text-purple-700' },
 };
 
@@ -54,9 +54,9 @@ function AssenzeGenitore() {
       ) : (
         <div className="space-y-3">
           {nonGiustificate.length > 0 && (
-            <div className="rounded-2xl bg-amber-50 border border-amber-200 px-4 py-3 flex items-center gap-2">
-              <AlertCircle size={16} className="text-amber-600 shrink-0" />
-              <p className="font-maven text-sm text-amber-700">
+            <div className="rounded-2xl bg-kidville-warn-soft border border-kidville-warn/30 px-4 py-3 flex items-center gap-2">
+              <AlertCircle size={16} className="text-kidville-warn shrink-0" />
+              <p className="font-maven text-sm text-kidville-warn">
                 {nonGiustificate.length} assenza{nonGiustificate.length > 1 ? '/e non ancora giustificate' : ' non ancora giustificata'}
               </p>
             </div>
@@ -73,7 +73,7 @@ function AssenzeGenitore() {
                       {new Date(p.data).toLocaleDateString('it-IT', { weekday: 'short', day: 'numeric', month: 'short' })}
                     </span>
                   </div>
-                  <span className={`font-maven text-xs ${p.giustificata ? 'text-kidville-success' : 'text-amber-600'}`}>
+                  <span className={`font-maven text-xs ${p.giustificata ? 'text-kidville-success' : 'text-kidville-warn'}`}>
                     {p.giustificata ? '✓ Giustificata' : 'Da giustificare'}
                   </span>
                 </div>

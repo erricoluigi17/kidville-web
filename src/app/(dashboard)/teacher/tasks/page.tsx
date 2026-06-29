@@ -504,7 +504,7 @@ function TeacherTasksContent() {
                             📌 Task Staff
                         </h1>
                         {pendingCount > 0 && activeTab !== 'archive' && (
-                            <span className="inline-flex items-center justify-center min-w-[24px] h-6 px-2 rounded-full bg-orange-500 text-white font-barlow font-bold text-xs shadow-lg shadow-orange-500/20">
+                            <span className="inline-flex items-center justify-center min-w-[24px] h-6 px-2 rounded-full bg-kidville-warn text-white font-barlow font-bold text-xs shadow-lg shadow-orange-500/20">
                                 {pendingCount}
                             </span>
                         )}
@@ -550,7 +550,7 @@ function TeacherTasksContent() {
                         {icon} 
                         <span>{label}</span>
                         {key === 'to_review' && toReviewCount > 0 && (
-                            <span className="ml-1.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white font-barlow font-bold text-[9px] animate-pulse">
+                            <span className="ml-1.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-kidville-error text-white font-barlow font-bold text-[9px] animate-pulse">
                                 {toReviewCount}
                             </span>
                         )}
@@ -655,7 +655,7 @@ function TeacherTasksContent() {
                         >
                             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 dark:border-zinc-900">
                                 <div className="flex items-center gap-2">
-                                    <CheckCircle className="text-emerald-500" size={20} />
+                                    <CheckCircle className="text-kidville-success" size={20} />
                                     <h2 className="font-barlow font-black text-lg text-kidville-green dark:text-zinc-50 uppercase tracking-wide">
                                         Risolvi Task
                                     </h2>
@@ -718,7 +718,7 @@ function TeacherTasksContent() {
                                                 <button 
                                                     type="button" 
                                                     onClick={() => setResolvingFiles(prev => prev.filter((_, i) => i !== fIdx))}
-                                                    className="text-red-500 hover:text-red-700 font-bold ml-1"
+                                                    className="text-kidville-error hover:text-red-700 font-bold ml-1"
                                                 >
                                                     ✕
                                                 </button>
@@ -738,7 +738,7 @@ function TeacherTasksContent() {
                                     <button
                                         type="submit"
                                         disabled={isSavingResolution}
-                                        className="flex-1 py-3 bg-emerald-500 text-white hover:bg-emerald-600 rounded-2xl font-barlow font-black uppercase text-sm tracking-wider transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                                        className="flex-1 py-3 bg-kidville-success text-white hover:opacity-90 rounded-2xl font-barlow font-black uppercase text-sm tracking-wider transition-all disabled:opacity-50 flex items-center justify-center gap-2"
                                     >
                                         {isSavingResolution ? 'Salvataggio...' : 'Conferma Risolto'}
                                     </button>
@@ -756,7 +756,7 @@ function TeacherTasksContent() {
                         initial={{ opacity: 0, y: -20, scale: 0.95 }}
                         animate={{ opacity: 1, y: 0, scale: 1 }}
                         exit={{ opacity: 0, y: -10, scale: 0.95 }}
-                        className={`fixed top-6 left-1/2 -translate-x-1/2 z-[60] font-maven font-semibold px-6 py-3 rounded-2xl shadow-xl flex items-center gap-2 ${toastType === 'error' ? 'bg-red-500 text-white' : 'bg-zinc-900 text-white'}`}
+                        className={`fixed top-6 left-1/2 -translate-x-1/2 z-[60] font-maven font-semibold px-6 py-3 rounded-2xl shadow-xl flex items-center gap-2 ${toastType === 'error' ? 'bg-kidville-error text-white' : 'bg-kidville-green text-white'}`}
                     >
                         {showToast}
                     </motion.div>

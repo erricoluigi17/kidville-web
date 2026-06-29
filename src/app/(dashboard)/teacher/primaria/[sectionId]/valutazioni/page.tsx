@@ -194,9 +194,9 @@ export default function ValutazioniPage() {
         </div>
 
         {/* Annotazione numerica privata (facoltativa) — strumento di lavoro del docente */}
-        <div className="mb-3 rounded-card border border-amber-100 bg-amber-50/60 p-3">
+        <div className="mb-3 rounded-card border border-kidville-warn/20 bg-kidville-warn-soft/60 p-3">
           <label className="mb-1 flex items-center gap-1.5 font-maven text-xs text-gray-600">
-            <Lock size={12} className="text-amber-500" /> Annotazione numerica (privata, /10)
+            <Lock size={12} className="text-kidville-warn" /> Annotazione numerica (privata, /10)
           </label>
           <div className="flex flex-wrap items-center gap-2">
             <input
@@ -212,7 +212,7 @@ export default function ValutazioniPage() {
             {giudizioSuggerito && (
               <div className="flex items-center gap-1.5">
                 <span className="font-maven text-xs text-gray-500">Suggerito:</span>
-                <span className="font-maven rounded-pill border border-amber-200 bg-white px-2.5 py-1 text-xs font-semibold text-amber-700">{giudizioSuggerito}</span>
+                <span className="font-maven rounded-pill border border-kidville-warn/30 bg-white px-2.5 py-1 text-xs font-semibold text-kidville-warn">{giudizioSuggerito}</span>
                 <button
                   type="button"
                   onClick={() => { setModalita('sintetico'); setGiudizioSintetico(giudizioSuggerito); }}
@@ -289,7 +289,7 @@ export default function ValutazioniPage() {
                   {v.annotazione_numerica !== null && v.annotazione_numerica !== undefined && (
                     <span
                       title="Annotazione privata del docente — non visibile al genitore"
-                      className="font-maven rounded-pill border border-amber-100 bg-amber-50 px-2 py-0.5 text-[11px] text-amber-700"
+                      className="font-maven rounded-pill border border-kidville-warn/20 bg-kidville-warn-soft px-2 py-0.5 text-[11px] text-kidville-warn"
                     >
                       ✎ {String(v.annotazione_numerica).replace('.', ',')}
                     </span>
@@ -309,7 +309,7 @@ export default function ValutazioniPage() {
       <div className="rounded-card bg-white p-5 shadow-sm md:col-span-2">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h3 className="font-barlow text-base font-bold text-gray-800">Impreparati giustificati — oggi</h3>
-          <button onClick={segnaImpreparato} className="font-maven rounded-pill bg-amber-100 px-3 py-1.5 text-xs text-amber-700">
+          <button onClick={segnaImpreparato} className="font-maven rounded-pill bg-kidville-warn-soft px-3 py-1.5 text-xs text-kidville-warn">
             Segna impreparato (alunno selezionato)
           </button>
         </div>
@@ -320,7 +320,7 @@ export default function ValutazioniPage() {
             {impreparati.map((g) => (
               <li key={g.id} className="flex items-center gap-2 py-2 font-maven text-sm">
                 <span className="text-gray-800">{g.alunni?.cognome} {g.alunni?.nome}</span>
-                <span className={`rounded-pill px-2 py-0.5 text-[11px] ${g.origine === 'genitore' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'}`}>
+                <span className={`rounded-pill px-2 py-0.5 text-[11px] ${g.origine === 'genitore' ? 'bg-kidville-info-soft text-kidville-info' : 'bg-kidville-warn-soft text-kidville-warn'}`}>
                   {g.origine === 'genitore' ? 'dal genitore' : 'dal docente'}
                 </span>
                 {g.motivo && <span className="text-xs text-gray-500">— {g.motivo}</span>}

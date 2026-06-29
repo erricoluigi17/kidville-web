@@ -276,7 +276,7 @@ function TeacherChatContent() {
                                     animate={{ scale: 1, opacity: 1 }}
                                     exit={{ scale: 0, opacity: 0 }}
                                     transition={{ type: 'spring', stiffness: 500, damping: 25 }}
-                                    className="inline-flex items-center justify-center min-w-[24px] h-6 px-2 rounded-full bg-emerald-500 text-white font-barlow font-bold text-xs shadow-lg shadow-emerald-500/30"
+                                    className="inline-flex items-center justify-center min-w-[24px] h-6 px-2 rounded-full bg-kidville-success text-white font-barlow font-bold text-xs shadow-lg shadow-sm"
                                 >
                                     {unreadCount > 99 ? '99+' : unreadCount}
                                 </motion.span>
@@ -311,7 +311,7 @@ function TeacherChatContent() {
                     {selectedThread ? (
                         <>
                             <div className="flex items-center gap-3 px-5 py-3.5 border-b border-gray-100/60">
-                                <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center font-barlow font-bold text-sm text-amber-700">
+                                <div className="w-10 h-10 rounded-full bg-kidville-warn-soft flex items-center justify-center font-barlow font-bold text-sm text-kidville-warn">
                                     {selectedThread.other_user.first_name[0]}{selectedThread.other_user.last_name[0]}
                                 </div>
                                 <div>
@@ -367,7 +367,7 @@ function TeacherChatContent() {
                                 className="w-8 h-8 rounded-xl bg-gray-50 hover:bg-gray-100 flex items-center justify-center text-gray-500 transition-colors">
                                 <ArrowLeft size={16} strokeWidth={1.5} />
                             </button>
-                            <div className="w-9 h-9 rounded-full bg-amber-100 flex items-center justify-center font-barlow font-bold text-xs text-amber-700">
+                            <div className="w-9 h-9 rounded-full bg-kidville-warn-soft flex items-center justify-center font-barlow font-bold text-xs text-kidville-warn">
                                 {selectedThread.other_user.first_name[0]}{selectedThread.other_user.last_name[0]}
                             </div>
                             <div>
@@ -440,7 +440,7 @@ function TeacherChatContent() {
                                                     onClick={() => handleNewChat(contact)}
                                                     className="w-full flex items-center gap-3 px-4 py-3 rounded-2xl bg-kidville-cream/30 hover:bg-kidville-cream/60 transition-all text-left"
                                                 >
-                                                    <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center font-barlow font-bold text-sm text-amber-700">
+                                                    <div className="w-10 h-10 rounded-full bg-kidville-warn-soft flex items-center justify-center font-barlow font-bold text-sm text-kidville-warn">
                                                         {initials}
                                                     </div>
                                                     <div className="flex-1 min-w-0">

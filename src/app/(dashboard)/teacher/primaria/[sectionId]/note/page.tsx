@@ -13,8 +13,8 @@ interface Nota {
 
 const CATEGORIE: { key: string; label: string; cls: string }[] = [
   { key: 'disciplinare', label: 'Disciplinare', cls: 'bg-kidville-error/10 text-kidville-error' },
-  { key: 'didattica', label: 'Didattica', cls: 'bg-blue-100 text-blue-700' },
-  { key: 'compiti_non_svolti', label: 'Compiti non svolti', cls: 'bg-amber-100 text-amber-700' },
+  { key: 'didattica', label: 'Didattica', cls: 'bg-kidville-info-soft text-kidville-info' },
+  { key: 'compiti_non_svolti', label: 'Compiti non svolti', cls: 'bg-kidville-warn-soft text-kidville-warn' },
 ];
 
 export default function NotePage() {
@@ -72,7 +72,7 @@ export default function NotePage() {
     <div className="grid gap-4 md:grid-cols-2">
       <div className="rounded-card bg-white p-5 shadow-sm">
         <h2 className="font-barlow text-lg font-bold text-gray-800 mb-3 flex items-center gap-2">
-          <AlertTriangle size={18} className="text-amber-500" /> Nuova nota
+          <AlertTriangle size={18} className="text-kidville-warn" /> Nuova nota
         </h2>
 
         {apiError && (
@@ -123,7 +123,7 @@ export default function NotePage() {
                   <span className={`rounded-pill px-2 py-0.5 text-[11px] font-maven ${cat?.cls}`}>{cat?.label}</span>
                   <span className="font-maven text-sm text-gray-700">{n.alunni?.cognome} {n.alunni?.nome}</span>
                   {n.richiede_firma && (
-                    <span className={`text-[11px] font-maven ${n.firmata_il ? 'text-kidville-success' : 'text-amber-500'}`}>
+                    <span className={`text-[11px] font-maven ${n.firmata_il ? 'text-kidville-success' : 'text-kidville-warn'}`}>
                       {n.firmata_il ? '✓ firmata' : 'attesa firma'}
                     </span>
                   )}

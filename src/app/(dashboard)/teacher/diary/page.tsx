@@ -345,7 +345,7 @@ function TeacherDiaryInner() {
                         <Users size={12} strokeWidth={1.5} /> {showAll ? 'Tutti' : 'Solo presenti'}
                     </button>
                     {isOffline && (
-                        <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 text-amber-600 px-3 py-1.5 rounded-full text-xs font-maven">
+                        <div className="flex items-center gap-1.5 bg-kidville-warn-soft border border-kidville-warn/30 text-kidville-warn px-3 py-1.5 rounded-full text-xs font-maven">
                             <WifiOff size={12} strokeWidth={1.5} /> Offline
                         </div>
                     )}
@@ -432,7 +432,7 @@ function TeacherDiaryInner() {
                                 {selectedEvent === 'nanna_inizio' && students.length > 0 && (
                                     <button
                                         onClick={bulkNannaOra}
-                                        className="w-full mb-1 py-2.5 rounded-2xl bg-blue-50 border border-blue-200 text-blue-600 font-maven font-semibold text-sm flex items-center justify-center gap-2 hover:bg-blue-100 transition-colors"
+                                        className="w-full mb-1 py-2.5 rounded-2xl bg-kidville-info-soft border border-kidville-info/30 text-kidville-info font-maven font-semibold text-sm flex items-center justify-center gap-2 hover:bg-kidville-info-soft transition-colors"
                                     >
                                         <Moon size={14} strokeWidth={1.5} /> Tutti a nanna ora ({now()})
                                     </button>
@@ -458,12 +458,12 @@ function TeacherDiaryInner() {
                                                 </div>
                                                 <span className="font-maven font-medium text-sm text-kidville-green flex-1">
                                                     {student.firstName} {student.lastName}
-                                                    {isSaved && <span className="ml-1.5 text-emerald-500">✅</span>}
+                                                    {isSaved && <span className="ml-1.5 text-kidville-success">✅</span>}
                                                 </span>
                                             </div>
                                             <div className="flex items-center gap-1.5 mb-1.5">
                                                 {isInizio
-                                                    ? <Moon size={12} className="text-blue-400" strokeWidth={1.5} />
+                                                    ? <Moon size={12} className="text-kidville-info" strokeWidth={1.5} />
                                                     : <Sun size={12} className="text-yellow-500" strokeWidth={1.5} />}
                                                 <p className="font-maven text-xs text-gray-500">
                                                     {isInizio ? 'Si addormenta (inizio nanna)' : 'Si sveglia (fine nanna)'}
@@ -502,58 +502,58 @@ function TeacherDiaryInner() {
                                                 </div>
                                                 <span className="font-maven font-medium text-sm text-kidville-green flex-1">
                                                     {student.firstName} {student.lastName}
-                                                    {isSaved && <span className="ml-1.5 text-emerald-500">✅</span>}
+                                                    {isSaved && <span className="ml-1.5 text-kidville-success">✅</span>}
                                                 </span>
                                             </div>
                                             {/* Contatori in griglia */}
                                             <div className="grid grid-cols-3 gap-2">
                                                 {/* Pipì */}
-                                                <div className="flex items-center gap-2 bg-sky-50/80 backdrop-blur-sm rounded-xl px-3 py-2 border border-sky-100/40">
+                                                <div className="flex items-center gap-2 bg-kidville-info-soft/80 backdrop-blur-sm rounded-xl px-3 py-2 border border-kidville-info/20">
                                                     <span className="text-lg leading-none">💧</span>
                                                     <button
                                                         onClick={() => counter(student.id, 'pipi', -1)}
-                                                        className="w-7 h-7 rounded-full bg-white border border-sky-200 text-sky-600 flex items-center justify-center hover:bg-sky-50 transition-colors"
+                                                        className="w-7 h-7 rounded-full bg-white border border-kidville-info/30 text-kidville-info flex items-center justify-center hover:bg-kidville-info-soft transition-colors"
                                                     >
                                                         <Minus size={10} strokeWidth={1.5} />
                                                     </button>
-                                                    <span className="font-barlow font-black text-xl text-sky-700 w-6 text-center">{pipi}</span>
+                                                    <span className="font-barlow font-black text-xl text-kidville-info w-6 text-center">{pipi}</span>
                                                     <button
                                                         onClick={() => counter(student.id, 'pipi', 1)}
-                                                        className="w-7 h-7 rounded-full bg-sky-500 text-white flex items-center justify-center hover:bg-sky-600 transition-colors"
+                                                        className="w-7 h-7 rounded-full bg-kidville-info text-white flex items-center justify-center hover:opacity-90 transition-colors"
                                                     >
                                                         <Plus size={10} strokeWidth={1.5} />
                                                     </button>
                                                 </div>
                                                 {/* Cacca */}
-                                                <div className="flex items-center gap-2 bg-amber-50/80 backdrop-blur-sm rounded-xl px-3 py-2 border border-amber-100/40">
+                                                <div className="flex items-center gap-2 bg-kidville-warn-soft/80 backdrop-blur-sm rounded-xl px-3 py-2 border border-kidville-warn/20">
                                                     <span className="text-lg leading-none">💩</span>
                                                     <button
                                                         onClick={() => counter(student.id, 'cacca', -1)}
-                                                        className="w-7 h-7 rounded-full bg-white border border-amber-200 text-amber-600 flex items-center justify-center hover:bg-amber-50 transition-colors"
+                                                        className="w-7 h-7 rounded-full bg-white border border-kidville-warn/30 text-kidville-warn flex items-center justify-center hover:bg-kidville-warn-soft transition-colors"
                                                     >
                                                         <Minus size={10} strokeWidth={1.5} />
                                                     </button>
-                                                    <span className="font-barlow font-black text-xl text-amber-700 w-6 text-center">{cacca}</span>
+                                                    <span className="font-barlow font-black text-xl text-kidville-warn w-6 text-center">{cacca}</span>
                                                     <button
                                                         onClick={() => counter(student.id, 'cacca', 1)}
-                                                        className="w-7 h-7 rounded-full bg-amber-500 text-white flex items-center justify-center hover:bg-amber-600 transition-colors"
+                                                        className="w-7 h-7 rounded-full bg-kidville-warn text-white flex items-center justify-center hover:opacity-90 transition-colors"
                                                     >
                                                         <Plus size={10} strokeWidth={1.5} />
                                                     </button>
                                                 </div>
                                                 {/* Vasino (potty training) */}
-                                                <div className="flex items-center gap-2 bg-emerald-50/80 backdrop-blur-sm rounded-xl px-3 py-2 border border-emerald-100/40">
+                                                <div className="flex items-center gap-2 bg-kidville-success-soft/80 backdrop-blur-sm rounded-xl px-3 py-2 border border-kidville-success/20">
                                                     <span className="text-lg leading-none">🪣</span>
                                                     <button
                                                         onClick={() => counter(student.id, 'vasino', -1)}
-                                                        className="w-7 h-7 rounded-full bg-white border border-emerald-200 text-emerald-600 flex items-center justify-center hover:bg-emerald-50 transition-colors"
+                                                        className="w-7 h-7 rounded-full bg-white border border-kidville-success/30 text-kidville-success flex items-center justify-center hover:bg-kidville-success-soft transition-colors"
                                                     >
                                                         <Minus size={10} strokeWidth={1.5} />
                                                     </button>
-                                                    <span className="font-barlow font-black text-xl text-emerald-700 w-6 text-center">{vasino}</span>
+                                                    <span className="font-barlow font-black text-xl text-kidville-success w-6 text-center">{vasino}</span>
                                                     <button
                                                         onClick={() => counter(student.id, 'vasino', 1)}
-                                                        className="w-7 h-7 rounded-full bg-emerald-500 text-white flex items-center justify-center hover:bg-emerald-600 transition-colors"
+                                                        className="w-7 h-7 rounded-full bg-kidville-success text-white flex items-center justify-center hover:opacity-90 transition-colors"
                                                     >
                                                         <Plus size={10} strokeWidth={1.5} />
                                                     </button>
@@ -614,7 +614,7 @@ function TeacherDiaryInner() {
                         initial={{ opacity: 0, y: -20, scale: 0.95 }}
                         animate={{ opacity: 1, y: 0, scale: 1 }}
                         exit={{ opacity: 0, y: -10, scale: 0.95 }}
-                        className="fixed top-6 left-1/2 -translate-x-1/2 z-[60] bg-emerald-600 text-white font-maven font-semibold px-6 py-3 rounded-2xl shadow-xl flex items-center gap-2"
+                        className="fixed top-6 left-1/2 -translate-x-1/2 z-[60] bg-kidville-green text-white font-maven font-semibold px-6 py-3 rounded-2xl shadow-xl flex items-center gap-2"
                     >
                         ✅ Salvato con successo!
                     </motion.div>

@@ -249,7 +249,7 @@ export default function ScrutinioPage() {
         </div>
 
         {periodi.length === 0 && (
-          <p className="font-maven text-sm text-amber-600">Nessun periodo di scrutinio configurato. Chiedi alla segreteria di crearne uno.</p>
+          <p className="font-maven text-sm text-kidville-warn">Nessun periodo di scrutinio configurato. Chiedi alla segreteria di crearne uno.</p>
         )}
 
         {scrutinio && (
@@ -360,7 +360,7 @@ export default function ScrutinioPage() {
                 <Check size={15} /> Salva comportamento
               </button>
               {isDirigente && (
-                <button onClick={chiudiScrutinio} disabled={saving} className="font-maven inline-flex items-center gap-1.5 rounded-pill bg-amber-500 px-5 py-2 text-sm text-white disabled:opacity-50">
+                <button onClick={chiudiScrutinio} disabled={saving} className="font-maven inline-flex items-center gap-1.5 rounded-pill bg-kidville-warn-soft0 px-5 py-2 text-sm text-white disabled:opacity-50">
                   <Lock size={15} /> Chiudi scrutinio
                 </button>
               )}
@@ -378,7 +378,7 @@ export default function ScrutinioPage() {
                 <button onClick={generaTutte} disabled={saving} className="font-maven inline-flex items-center gap-1.5 rounded-pill bg-kidville-green px-5 py-2 text-sm text-kidville-yellow disabled:opacity-50">
                   <FileText size={15} /> Genera pagelle (tutte)
                 </button>
-                <button onClick={togglePubblica} disabled={saving} className={`font-maven inline-flex items-center gap-1.5 rounded-pill px-5 py-2 text-sm text-white disabled:opacity-50 ${pubblicato ? 'bg-gray-500' : 'bg-blue-600'}`}>
+                <button onClick={togglePubblica} disabled={saving} className={`font-maven inline-flex items-center gap-1.5 rounded-pill px-5 py-2 text-sm text-white disabled:opacity-50 ${pubblicato ? 'bg-gray-500' : 'bg-kidville-green'}`}>
                   <Send size={15} /> {pubblicato ? 'Revoca pubblicazione' : 'Pubblica ai genitori'}
                 </button>
               </div>

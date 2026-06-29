@@ -243,7 +243,7 @@ function TeacherLockerInner() {
                                                 </p>
                                             </div>
                                             {todayCount > 0 && (
-                                                <span className="bg-emerald-100 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                                                <span className="bg-kidville-success-soft text-kidville-success text-[10px] font-bold px-2 py-0.5 rounded-full">
                                                     ✓ {todayCount}
                                                 </span>
                                             )}
@@ -273,16 +273,16 @@ function TeacherLockerInner() {
                                                     {/* Consegne di oggi */}
                                                     {todayCount > 0 ? (
                                                         <div className="space-y-1.5">
-                                                            <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wide">✅ Consegnato oggi</p>
+                                                            <p className="text-[10px] font-bold text-kidville-success uppercase tracking-wide">✅ Consegnato oggi</p>
                                                             {student.inventario.map((item: any, idx: number) => {
                                                                 const matStock = studentStocks.find((s: any) => s.materiale === (item.materiale ?? item.nome_oggetto))?.stock ?? 0;
                                                                 return (
-                                                                    <div key={idx} className="flex items-center justify-between bg-white rounded-xl px-4 py-2 border border-emerald-100">
+                                                                    <div key={idx} className="flex items-center justify-between bg-white rounded-xl px-4 py-2 border border-kidville-success/20">
                                                                         <span className="font-maven font-semibold text-kidville-green text-sm">
                                                                             {item.materiale ?? item.nome_oggetto}
                                                                         </span>
                                                                         <div className="text-right">
-                                                                            <span className="font-barlow font-black text-emerald-600 block">+{item.quantita} pz</span>
+                                                                            <span className="font-barlow font-black text-kidville-success block">+{item.quantita} pz</span>
                                                                             <span className="text-[10px] text-gray-400">Totale: {matStock} pz</span>
                                                                         </div>
                                                                     </div>
@@ -324,7 +324,7 @@ function TeacherLockerInner() {
             {/* ══════════════════════ CONSUMO ══════════════════════════════════ */}
             {view === 'consumo' && (
                 <>
-                    <div className="mb-4 bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 text-xs text-amber-700 font-maven">
+                    <div className="mb-4 bg-kidville-warn-soft border border-kidville-warn/30 rounded-2xl px-4 py-3 text-xs text-kidville-warn font-maven">
                         <strong>👆 Tocca un materiale</strong> per registrare che l'hai utilizzato. Lo stock si aggiorna in tempo reale.
                     </div>
 
@@ -349,7 +349,7 @@ function TeacherLockerInner() {
                                                 <p className="text-xs text-gray-400">{student.stocks.length} materiali in stock</p>
                                             </div>
                                             {!hasStock && (
-                                                <span className="bg-red-100 text-red-500 text-[10px] font-bold px-2 py-0.5 rounded-full">ESAURITO</span>
+                                                <span className="bg-red-100 text-kidville-error text-[10px] font-bold px-2 py-0.5 rounded-full">ESAURITO</span>
                                             )}
                                             {isOpen ? <ChevronDown size={18} className="text-gray-300" /> : <ChevronRight size={18} className="text-gray-300" />}
                                         </button>
@@ -378,7 +378,7 @@ function TeacherLockerInner() {
                                                             >
                                                                 <span className="font-maven font-semibold text-sm text-kidville-green">{item.materiale}</span>
                                                                 <div className="flex items-center gap-2">
-                                                                    <span className={`font-barlow font-black text-lg ${item.stock === 0 ? 'text-red-500' : 'text-kidville-green'}`}>
+                                                                    <span className={`font-barlow font-black text-lg ${item.stock === 0 ? 'text-kidville-error' : 'text-kidville-green'}`}>
                                                                         {item.stock} pz
                                                                     </span>
                                                                     <MinusCircle size={18} className={item.stock > 0 ? 'text-orange-400' : 'text-gray-300'} />
@@ -404,7 +404,7 @@ function TeacherLockerInner() {
                                                                         <button
                                                                             onClick={handleConsumo}
                                                                             disabled={consumoSaving || consumoQty > item.stock}
-                                                                            className="flex-1 h-9 bg-orange-500 text-white rounded-xl font-barlow font-black text-sm disabled:opacity-50 hover:bg-orange-600 active:scale-95 transition-all"
+                                                                            className="flex-1 h-9 bg-kidville-warn text-white rounded-xl font-barlow font-black text-sm disabled:opacity-50 hover:bg-orange-600 active:scale-95 transition-all"
                                                                         >
                                                                             {consumoSaving ? '...' : '✓ Conferma'}
                                                                         </button>
@@ -441,7 +441,7 @@ function TeacherLockerInner() {
                     </div>
                     {mensileLoading ? (
                         <div className="flex items-center justify-center py-16 gap-3">
-                            <div className="w-5 h-5 border-2 border-violet-500/30 border-t-violet-500 rounded-full animate-spin" />
+                            <div className="w-5 h-5 border-2 border-kidville-green/30 border-t-kidville-green rounded-full animate-spin" />
                             <span className="text-gray-500 text-sm">Caricamento...</span>
                         </div>
                     ) : (

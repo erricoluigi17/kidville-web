@@ -42,8 +42,8 @@ function oraCorrente(): string {
 const STATI: { key: Stato; label: string; icon: React.ReactNode; cls: string }[] = [
   { key: 'presente', label: 'Presente', icon: <Check size={14} />, cls: 'bg-kidville-success text-white' },
   { key: 'assente', label: 'Assente', icon: <X size={14} />, cls: 'bg-kidville-error text-white' },
-  { key: 'ritardo', label: 'Ritardo', icon: <Clock size={14} />, cls: 'bg-amber-500 text-white' },
-  { key: 'uscita_anticipata', label: 'Uscita', icon: <LogOut size={14} />, cls: 'bg-purple-500 text-white' },
+  { key: 'ritardo', label: 'Ritardo', icon: <Clock size={14} />, cls: 'bg-kidville-warn-soft0 text-white' },
+  { key: 'uscita_anticipata', label: 'Uscita', icon: <LogOut size={14} />, cls: 'bg-kidville-info text-white' },
 ];
 
 function oggiIso() {
@@ -239,7 +239,7 @@ export default function AppelloPage() {
                     <button
                       onClick={() => r.presenza_id && presaVisione(r.presenza_id)}
                       title={r.giustificazione_testo ?? 'Giustificata dal genitore'}
-                      className="font-maven rounded-pill bg-amber-100 px-2.5 py-1 text-[11px] text-amber-700"
+                      className="font-maven rounded-pill bg-kidville-warn-soft px-2.5 py-1 text-[11px] text-kidville-warn"
                     >
                       Giustificata · presa visione
                     </button>

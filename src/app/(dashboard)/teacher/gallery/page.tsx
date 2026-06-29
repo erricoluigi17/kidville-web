@@ -364,8 +364,8 @@ function TeacherGalleryContent() {
         <div className="max-w-3xl mx-auto p-4 sm:p-6 pb-32">
             {/* Offline Alert Bar */}
             {!isOnline && (
-                <div className="flex items-center gap-2 mb-4 p-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-2xl text-xs font-medium">
-                    <WifiOff size={14} className="text-amber-500 flex-shrink-0" />
+                <div className="flex items-center gap-2 mb-4 p-3 bg-kidville-warn-soft border border-kidville-warn/30 text-kidville-warn rounded-2xl text-xs font-medium">
+                    <WifiOff size={14} className="text-kidville-warn flex-shrink-0" />
                     <span>Sei offline. Puoi comunque caricare foto: verranno salvate in locale e caricate appena tornerai online.</span>
                 </div>
             )}
@@ -479,7 +479,7 @@ function TeacherGalleryContent() {
                                                     {f.tag_students.length}
                                                 </span>
                                             ) : (
-                                                <span className="bg-red-500 text-white text-[8px] sm:text-[9px] font-bold px-1 rounded uppercase">!</span>
+                                                <span className="bg-kidville-error text-white text-[8px] sm:text-[9px] font-bold px-1 rounded uppercase">!</span>
                                             )}
                                         </div>
                                     </div>

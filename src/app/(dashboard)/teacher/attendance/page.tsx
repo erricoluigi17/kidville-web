@@ -302,7 +302,7 @@ function TodayView() {
     if (error) {
         return (
             <div className="flex flex-col items-center justify-center py-20 gap-4">
-                <p className="font-maven text-red-500 text-sm">⚠️ {error}</p>
+                <p className="font-maven text-kidville-error text-sm">⚠️ {error}</p>
                 <button
                     onClick={loadAll}
                     className="px-4 py-2 bg-kidville-green text-white font-maven text-sm rounded-xl hover:opacity-90 flex items-center gap-2"
@@ -340,7 +340,7 @@ function TodayView() {
                     </div>
                     <div className="flex items-center gap-2">
                         {isOffline && (
-                            <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 text-amber-600 px-3 py-1.5 rounded-full text-xs font-maven">
+                            <div className="flex items-center gap-1.5 bg-kidville-warn-soft border border-kidville-warn/30 text-kidville-warn px-3 py-1.5 rounded-full text-xs font-maven">
                                 <WifiOff size={12} /> Offline
                             </div>
                         )}
@@ -366,7 +366,7 @@ function TodayView() {
             {/* Legenda stati */}
             <div className="flex items-center gap-4 px-1 text-xs font-maven text-gray-400">
                 <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-kidville-success inline-block" />Presente</span>
-                <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-amber-400 inline-block" />Ritardo</span>
+                <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-kidville-warn inline-block" />Ritardo</span>
                 <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-blue-400 inline-block" />Uscita Ant.</span>
                 <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-gray-300 inline-block" />Assente</span>
             </div>

@@ -241,7 +241,7 @@ export default function TeacherModulisticaPage() {
                     Stato Approvazioni Classe
                   </h3>
                   <div className="flex items-center gap-3 text-xs font-maven font-semibold text-gray-500">
-                    <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 bg-emerald-500 rounded-full" /> {students.filter(s => s.status === 'green').length} Firmati</span>
+                    <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 bg-kidville-success rounded-full" /> {students.filter(s => s.status === 'green').length} Firmati</span>
                     <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 bg-red-500 rounded-full" /> {students.filter(s => s.status === 'red').length} Mancanti</span>
                   </div>
                 </div>
@@ -250,7 +250,7 @@ export default function TeacherModulisticaPage() {
                   {students.map(student => (
                     <div key={student.student_id} className="p-4 flex items-center justify-between gap-4 hover:bg-gray-50/50 transition-colors">
                       <div className="flex items-center gap-3">
-                        <span className={`w-3.5 h-3.5 rounded-full shadow-inner ${student.status === 'green' ? 'bg-emerald-500' : 'bg-red-500 animate-pulse'}`} />
+                        <span className={`w-3.5 h-3.5 rounded-full shadow-inner ${student.status === 'green' ? 'bg-kidville-success' : 'bg-red-500 animate-pulse'}`} />
                         <span className="font-maven font-semibold text-sm text-gray-800">
                           {student.cognome} {student.nome}
                         </span>
@@ -276,7 +276,7 @@ export default function TeacherModulisticaPage() {
                             </button>
                           </>
                         ) : (
-                          <span className="text-[10px] text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full font-bold uppercase tracking-wider flex items-center gap-1">
+                          <span className="text-[10px] text-kidville-success bg-emerald-50 px-2.5 py-1 rounded-full font-bold uppercase tracking-wider flex items-center gap-1">
                             <Check size={12} /> FES OK
                           </span>
                         )}
@@ -328,7 +328,7 @@ export default function TeacherModulisticaPage() {
                         ) : cert.stato === 'rifiutato' ? (
                           <span className="bg-red-50 text-red-600 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider">Rifiutato</span>
                         ) : (
-                          <span className="text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1 font-maven uppercase tracking-wider">
+                          <span className="text-kidville-warn bg-kidville-warn-soft px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1 font-maven uppercase tracking-wider">
                             <AlertCircle size={10} /> In validazione
                           </span>
                         )}
@@ -363,7 +363,7 @@ export default function TeacherModulisticaPage() {
               {proxyFile ? (
                 <div className="flex items-center justify-between border-2 border-emerald-100 bg-emerald-50 text-emerald-700 px-3 py-2 rounded-xl text-xs font-semibold select-none">
                   <span>📄 {proxyFileName}</span>
-                  <button onClick={() => { setProxyFileName(''); setProxyFile(null); }} className="text-gray-400 hover:text-red-500">✕</button>
+                  <button onClick={() => { setProxyFileName(''); setProxyFile(null); }} className="text-gray-400 hover:text-kidville-error">✕</button>
                 </div>
               ) : (
                 <label className="w-full h-12 border-2 border-dashed border-gray-200 hover:border-kidville-green rounded-xl flex items-center justify-center gap-1.5 cursor-pointer text-xs font-semibold text-gray-600 transition-colors">

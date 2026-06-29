@@ -211,10 +211,10 @@ function LockerSettingsInner() {
                                         <span className="text-xs text-gray-400">{mat.unita}</span>
                                     </div>
                                     <div className="flex items-center gap-3 mt-1">
-                                        <span className="text-xs text-amber-500">
+                                        <span className="text-xs text-kidville-warn">
                                             🟡 Allerta: <strong>{mat.livello_allerta}</strong>
                                         </span>
-                                        <span className="text-xs text-red-500">
+                                        <span className="text-xs text-kidville-error">
                                             🔴 Urgente: <strong>{mat.livello_emergenza}</strong>
                                         </span>
                                     </div>
@@ -247,14 +247,14 @@ function LockerSettingsInner() {
                             {mat.attivo && (
                                 <div className="flex gap-4 mt-3 pt-3 border-t border-gray-50">
                                     <div className="flex-1">
-                                        <label className="text-[10px] text-amber-500 font-bold block mb-1">Soglia Allerta (🟡)</label>
+                                        <label className="text-[10px] text-kidville-warn font-bold block mb-1">Soglia Allerta (🟡)</label>
                                         <input type="number" min={1} max={50}
                                             value={mat.livello_allerta}
                                             onChange={e => updateSoglie(mat, 'livello_allerta', parseInt(e.target.value) || 1)}
                                             className="w-full border border-gray-100 rounded-lg px-2 py-1 text-sm text-center" />
                                     </div>
                                     <div className="flex-1">
-                                        <label className="text-[10px] text-red-500 font-bold block mb-1">Soglia Urgente (🔴)</label>
+                                        <label className="text-[10px] text-kidville-error font-bold block mb-1">Soglia Urgente (🔴)</label>
                                         <input type="number" min={0} max={20}
                                             value={mat.livello_emergenza}
                                             onChange={e => updateSoglie(mat, 'livello_emergenza', parseInt(e.target.value) || 0)}
@@ -311,20 +311,20 @@ function LockerSettingsInner() {
                                 className="w-full border border-gray-100 rounded-lg px-2 py-1.5 text-sm" />
                         </div>
                         <div>
-                            <label className="text-xs text-amber-500 block mb-1">🟡 Allerta</label>
+                            <label className="text-xs text-kidville-warn block mb-1">🟡 Allerta</label>
                             <input type="number" value={newMat.livello_allerta}
                                 onChange={e => setNewMat(n => ({ ...n, livello_allerta: parseInt(e.target.value) || 1 }))}
                                 className="w-full border border-gray-100 rounded-lg px-2 py-1.5 text-sm text-center" />
                         </div>
                         <div>
-                            <label className="text-xs text-red-500 block mb-1">🔴 Urgente</label>
+                            <label className="text-xs text-kidville-error block mb-1">🔴 Urgente</label>
                             <input type="number" value={newMat.livello_emergenza}
                                 onChange={e => setNewMat(n => ({ ...n, livello_emergenza: parseInt(e.target.value) || 0 }))}
                                 className="w-full border border-gray-100 rounded-lg px-2 py-1.5 text-sm text-center" />
                         </div>
                     </div>
 
-                    {addError && <p className="text-red-500 text-xs mb-3">{addError}</p>}
+                    {addError && <p className="text-kidville-error text-xs mb-3">{addError}</p>}
 
                     <div className="flex gap-2">
                         <button onClick={addMateriale} disabled={saving === 'new'}
@@ -347,7 +347,7 @@ function LockerSettingsInner() {
             )}
 
             {/* Info */}
-            <div className="mt-6 bg-blue-50 rounded-2xl p-4 text-xs text-blue-700 font-maven">
+            <div className="mt-6 bg-blue-50 rounded-2xl p-4 text-xs text-kidville-info font-maven">
                 <strong>ℹ️ Come funziona:</strong>
                 <ul className="mt-1 space-y-1 list-disc list-inside opacity-80">
                     <li>I materiali configurati qui appaiono nel form "Carico Genitore" e nel portale genitore</li>

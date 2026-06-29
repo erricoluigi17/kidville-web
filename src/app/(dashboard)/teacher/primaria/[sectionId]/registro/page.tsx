@@ -260,7 +260,7 @@ function FirmaModal({
               <select value={targetSectionId} onChange={(e) => setTargetSectionId(e.target.value)} className="font-maven w-full rounded-pill border border-gray-200 px-3 py-2 text-sm">
                 {sezioni.map((s) => <option key={s.id} value={s.id}>{s.name}{s.id === sectionId ? ' (questa classe)' : ''}</option>)}
               </select>
-              {altraClasse && <p className="mt-1 font-maven text-[11px] text-amber-600">Stai firmando in un&apos;altra classe (supplenza).</p>}
+              {altraClasse && <p className="mt-1 font-maven text-[11px] text-kidville-warn">Stai firmando in un&apos;altra classe (supplenza).</p>}
             </div>
           )}
 

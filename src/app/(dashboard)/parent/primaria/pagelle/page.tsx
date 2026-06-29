@@ -2,7 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useState } from 'react';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
-import { FileText, Download, Check, Award } from 'lucide-react';
+import { Download, Check, Award } from 'lucide-react';
 
 interface PagellaItem { scrutinioId: string; periodo: string; anno: string; chiusoIl: string | null; firmato: boolean }
 interface CertItem { id: string; anno: string; stato: string; downloadUrl: string | null }
@@ -84,9 +84,14 @@ function PagelleGenitore() {
 
   return (
     <div className="px-4 pt-6 pb-24">
-      <h1 className="font-barlow text-xl font-black text-kidville-green uppercase tracking-wide mb-4 flex items-center gap-2">
-        <FileText size={20} /> Pagelle
-      </h1>
+      <div className="mb-4">
+        <p className="font-barlow font-bold text-[11px] uppercase tracking-[0.14em] text-kidville-yellow-dark">
+          Didattica · Primaria
+        </p>
+        <h1 className="font-barlow text-2xl font-black text-kidville-green uppercase tracking-wide leading-none">
+          Pagelle
+        </h1>
+      </div>
 
       {loading ? (
         <p className="font-maven text-sm text-gray-400">Caricamento…</p>
@@ -94,15 +99,15 @@ function PagelleGenitore() {
         <p className="font-maven text-sm text-gray-400">Nessuna pagella disponibile.</p>
       ) : (
         <div className="space-y-3">
-          {msg && <p className={`font-maven text-sm rounded-2xl px-4 py-2 ${msg.includes('✓') ? 'bg-green-50 text-kidville-success' : 'bg-red-50 text-red-600'}`}>{msg}</p>}
+          {msg && <p className={`font-maven text-sm rounded-2xl px-4 py-2 ${msg.includes('✓') ? 'bg-kidville-success-soft text-kidville-success' : 'bg-kidville-error-soft text-kidville-error'}`}>{msg}</p>}
 
           {pagelle.map((p) => {
             const det = dettaglio[p.scrutinioId];
             return (
-              <div key={p.scrutinioId} className="rounded-2xl bg-white shadow-sm overflow-hidden">
+              <div key={p.scrutinioId} className="rounded-card border border-kidville-line bg-white shadow-sm overflow-hidden">
                 <div className="flex items-center justify-between gap-2 px-4 py-3.5">
                   <div>
-                    <p className="font-barlow text-base font-bold text-gray-800">{p.periodo}</p>
+                    <p className="font-barlow text-base font-extrabold uppercase tracking-wide text-kidville-green">{p.periodo}</p>
                     <p className="font-maven text-xs text-gray-400">A.S. {p.anno}</p>
                   </div>
                   <div className="flex items-center gap-2">
@@ -135,7 +140,7 @@ function PagelleGenitore() {
 
                 {/* Dettaglio giudizi (solo dopo firma) */}
                 {p.firmato && det && (
-                  <div className="border-t border-gray-100 px-4 py-3 space-y-1.5">
+                  <div className="border-t border-kidville-line px-4 py-3 space-y-1.5">
                     {det.materie.map((m, i) => (
                       <div key={i} className="flex items-center justify-between gap-2">
                         <span className="font-maven text-sm text-gray-700">{m.nome}</span>
@@ -153,10 +158,10 @@ function PagelleGenitore() {
 
                 {/* OTP firma inline */}
                 {otpTarget === p.scrutinioId && otpState && (
-                  <div className="border-t border-gray-100 px-4 py-3 space-y-2">
+                  <div className="border-t border-kidville-line px-4 py-3 space-y-2">
                     <p className="font-maven text-sm text-gray-600">Inserisci il codice OTP ricevuto via email:</p>
                     {otpState.devCode && (
-                      <p className="font-maven text-xs text-amber-600">Dev: <b>{otpState.devCode}</b></p>
+                      <p className="font-maven text-xs text-kidville-warn">Dev: <b>{otpState.devCode}</b></p>
                     )}
                     <div className="flex gap-2">
                       <input
@@ -189,9 +194,9 @@ function PagelleGenitore() {
           </h2>
           <div className="space-y-2">
             {certificati.map((c) => (
-              <div key={c.id} className="rounded-2xl bg-white shadow-sm px-4 py-3.5 flex items-center justify-between">
+              <div key={c.id} className="rounded-card border border-kidville-line bg-white shadow-sm px-4 py-3.5 flex items-center justify-between">
                 <div>
-                  <p className="font-barlow text-base font-bold text-gray-800">Classe quinta</p>
+                  <p className="font-barlow text-base font-extrabold uppercase tracking-wide text-kidville-green">Classe quinta</p>
                   <p className="font-maven text-xs text-gray-400">A.S. {c.anno}</p>
                 </div>
                 {c.downloadUrl ? (

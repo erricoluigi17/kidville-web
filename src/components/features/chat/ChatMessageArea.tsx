@@ -65,13 +65,13 @@ function UnreadSeparator() {
             transition={{ duration: 0.3, ease: 'easeOut' }}
             className="flex items-center gap-3 my-5 px-2"
         >
-            <div className="flex-1 h-px bg-emerald-400/40" />
-            <span className="flex items-center gap-2 text-emerald-600 text-xs font-bold font-barlow uppercase tracking-widest px-4 py-1.5 rounded-full bg-emerald-50 border border-emerald-300/60 shadow-sm whitespace-nowrap">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            <div className="flex-1 h-px bg-kidville-success/40" />
+            <span className="flex items-center gap-2 text-kidville-success text-xs font-bold font-barlow uppercase tracking-widest px-4 py-1.5 rounded-full bg-kidville-success-soft border border-kidville-success/40 shadow-sm whitespace-nowrap">
+                <span className="w-2 h-2 rounded-full bg-kidville-success animate-pulse" />
                 Nuovi Messaggi
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                <span className="w-2 h-2 rounded-full bg-kidville-success animate-pulse" />
             </span>
-            <div className="flex-1 h-px bg-emerald-400/40" />
+            <div className="flex-1 h-px bg-kidville-success/40" />
         </motion.div>
     );
 }
@@ -152,7 +152,7 @@ function MessageBubble({ msg, isMine, currentUserId }: { msg: ChatMessage; isMin
                 {isMine && (
                     <span className="transition-all duration-300">
                         {msg.read_at
-                            ? <CheckCheck size={12} className="text-blue-300" strokeWidth={1.5} />
+                            ? <CheckCheck size={12} className="text-kidville-yellow" strokeWidth={1.5} />
                             : <Check size={12} className="text-white/40" strokeWidth={1.5} />}
                     </span>
                 )}

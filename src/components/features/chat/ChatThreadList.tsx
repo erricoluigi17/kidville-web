@@ -70,14 +70,14 @@ export function ChatThreadList({ threads, selectedId, currentUserId, onSelect }:
                             transition-all duration-200
                             hover:bg-kidville-cream/40
                             ${isSelected ? 'bg-kidville-cream/60' : ''}
-                            ${hasUnread && !isSelected ? 'bg-emerald-50/60 border-l-2 border-emerald-400/50' : 'border-l-2 border-transparent'}
+                            ${hasUnread && !isSelected ? 'bg-kidville-success-soft/60 border-l-2 border-kidville-success/40' : 'border-l-2 border-transparent'}
                         `}
                     >
                         {/* Avatar con indicatore puntino se non letto */}
                         <div className="relative flex-shrink-0">
                             <div className={`w-11 h-11 rounded-full flex items-center justify-center font-barlow font-bold text-sm ${
                                 thread.other_user.role === 'parent'
-                                    ? 'bg-amber-100 text-amber-700'
+                                    ? 'bg-kidville-warn-soft text-kidville-warn'
                                     : 'bg-kidville-green text-kidville-yellow'
                             }`}>
                                 {initials}
@@ -90,7 +90,7 @@ export function ChatThreadList({ threads, selectedId, currentUserId, onSelect }:
                                         animate={{ scale: 1 }}
                                         exit={{ scale: 0 }}
                                         transition={{ type: 'spring', stiffness: 400, damping: 20 }}
-                                        className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-emerald-400 border-2 border-white"
+                                        className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-kidville-success border-2 border-white"
                                     />
                                 )}
                             </AnimatePresence>
@@ -108,7 +108,7 @@ export function ChatThreadList({ threads, selectedId, currentUserId, onSelect }:
                                 </p>
                                 {thread.last_message && (
                                     <span className={`font-maven text-[10px] flex-shrink-0 transition-all duration-300 ${
-                                        hasUnread ? 'text-emerald-500 font-semibold' : 'text-gray-400'
+                                        hasUnread ? 'text-kidville-success font-semibold' : 'text-gray-400'
                                     }`}>
                                         {timeAgo(thread.last_message.created_at)}
                                     </span>
@@ -133,7 +133,7 @@ export function ChatThreadList({ threads, selectedId, currentUserId, onSelect }:
                                             animate={{ scale: 1, opacity: 1 }}
                                             exit={{ scale: 0, opacity: 0 }}
                                             transition={{ type: 'spring', stiffness: 500, damping: 25 }}
-                                            className="min-w-[20px] h-5 px-1.5 rounded-full bg-emerald-500 text-white font-barlow font-bold text-[10px] flex items-center justify-center flex-shrink-0 shadow-sm shadow-emerald-500/30"
+                                            className="min-w-[20px] h-5 px-1.5 rounded-full bg-kidville-success text-white font-barlow font-bold text-[10px] flex items-center justify-center flex-shrink-0 shadow-sm shadow-sm"
                                         >
                                             {thread.unread_count > 9 ? '9+' : thread.unread_count}
                                         </motion.span>

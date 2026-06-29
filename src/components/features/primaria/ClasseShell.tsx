@@ -76,7 +76,7 @@ export function ClasseShell({ basePrefix, children }: { basePrefix: string; chil
               Primaria
             </span>
             {isStaff && (
-              <span className="rounded-pill bg-amber-100 px-2.5 py-0.5 text-[11px] font-maven text-amber-700">
+              <span className="rounded-pill bg-kidville-warn-soft px-2.5 py-0.5 text-[11px] font-maven text-kidville-warn">
                 Modalità segreteria
               </span>
             )}
@@ -106,7 +106,7 @@ export function ClasseShell({ basePrefix, children }: { basePrefix: string; chil
           e il selettore docente arrivano in Fase 4 (context { ruolo, docenteSelezionato }). */}
       {isStaff && (
         <div className="max-w-5xl mx-auto px-4 pt-3">
-          <p className="font-maven flex items-start gap-2 rounded-card bg-amber-50 px-3 py-2 text-xs text-amber-700">
+          <p className="font-maven flex items-start gap-2 rounded-card bg-kidville-warn-soft px-3 py-2 text-xs text-kidville-warn">
             <Info size={14} className="mt-0.5 shrink-0" />
             Modalità operativa Segreteria/Direzione: per registrare, seleziona il docente per cui stai operando — in arrivo. Le scritture restano attribuite al docente titolare.
           </p>

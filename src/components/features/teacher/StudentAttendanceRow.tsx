@@ -44,13 +44,13 @@ const STATO_CONFIG: Record<AttendanceStato, { label: string; color: string; bg: 
     ritardo: {
         label: 'Ritardo',
         color: 'text-white',
-        bg: 'bg-amber-500',
-        border: 'border-amber-500',
+        bg: 'bg-kidville-warn',
+        border: 'border-kidville-warn',
     },
     uscita_anticipata: {
         label: 'Uscita Ant.',
         color: 'text-white',
-        bg: 'bg-blue-500',
+        bg: 'bg-kidville-info',
         border: 'border-blue-500',
     },
 };
@@ -132,7 +132,7 @@ export function StudentAttendanceRow({ student, record, onSetStato, onCheckoutCl
                         <button
                             id={`btn-ritardo-${student.id}`}
                             onClick={() => onSetStato(student.id, 'ritardo')}
-                            className="h-9 px-3 font-maven font-medium text-sm rounded-xl bg-amber-50 text-amber-600 border border-amber-200 hover:bg-amber-500 hover:text-white transition-all flex items-center gap-1.5"
+                            className="h-9 px-3 font-maven font-medium text-sm rounded-xl bg-kidville-warn-soft text-kidville-warn border border-kidville-warn/30 hover:bg-kidville-warn hover:text-white transition-all flex items-center gap-1.5"
                         >
                             <Timer size={15} /> Ritardo
                         </button>
@@ -163,7 +163,7 @@ export function StudentAttendanceRow({ student, record, onSetStato, onCheckoutCl
                             <button
                                 id={`btn-uscita-${student.id}`}
                                 onClick={() => onSetStato(student.id, 'uscita_anticipata')}
-                                className="h-9 px-3 font-maven font-medium text-sm rounded-xl bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-500 hover:text-white transition-all flex items-center gap-1.5"
+                                className="h-9 px-3 font-maven font-medium text-sm rounded-xl bg-kidville-info-soft text-kidville-info border border-kidville-info/30 hover:bg-kidville-info hover:text-white transition-all flex items-center gap-1.5"
                             >
                                 <LogOut size={15} /> Uscita Ant.
                             </button>

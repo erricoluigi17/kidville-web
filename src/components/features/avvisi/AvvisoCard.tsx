@@ -92,8 +92,8 @@ export function AvvisoCard({ avviso, index, isTeacher, onReadReceipt, onAdesione
                 {/* Icon */}
                 <div className={`w-10 h-10 rounded-2xl flex items-center justify-center flex-shrink-0 text-lg ${
                     isAdesione
-                        ? 'bg-purple-50 border border-purple-100'
-                        : 'bg-blue-50 border border-blue-100'
+                        ? 'bg-kidville-yellow-soft border border-kidville-yellow/30'
+                        : 'bg-kidville-info-soft border border-kidville-info/20'
                 }`}>
                     {isAdesione ? '📋' : '📢'}
                 </div>
@@ -145,7 +145,7 @@ export function AvvisoCard({ avviso, index, isTeacher, onReadReceipt, onAdesione
                             <div className={`mt-3 flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-maven ${
                                 isExpired
                                     ? 'bg-red-50 text-red-600 border border-red-100'
-                                    : 'bg-amber-50 text-amber-600 border border-amber-100'
+                                    : 'bg-kidville-warn-soft text-kidville-warn border border-kidville-warn/20'
                             }`}>
                                 <Clock size={12} strokeWidth={1.5} />
                                 {isExpired ? 'Scaduto il' : 'Scadenza:'}{' '}
@@ -173,7 +173,7 @@ export function AvvisoCard({ avviso, index, isTeacher, onReadReceipt, onAdesione
                                         href={linkUrl.startsWith('http') ? linkUrl : `https://${linkUrl}`}
                                         target="_blank"
                                         rel="noopener noreferrer"
-                                        className="inline-flex items-center gap-1.5 px-3 py-2 bg-gray-50 hover:bg-gray-100 rounded-xl text-xs font-maven font-semibold text-blue-600 border border-gray-150 transition-colors"
+                                        className="inline-flex items-center gap-1.5 px-3 py-2 bg-gray-50 hover:bg-gray-100 rounded-xl text-xs font-maven font-semibold text-kidville-info border border-gray-150 transition-colors"
                                     >
                                         🔗 Link Esterno
                                     </a>
@@ -187,7 +187,7 @@ export function AvvisoCard({ avviso, index, isTeacher, onReadReceipt, onAdesione
                         <div className="px-5 pb-4 flex gap-2">
                             <button
                                 onClick={() => onAdesione?.(avviso.id, 'si')}
-                                className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-emerald-500 text-white font-maven font-semibold text-sm rounded-2xl hover:bg-emerald-600 active:scale-[0.98] transition-all"
+                                className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-kidville-success text-white font-maven font-semibold text-sm rounded-2xl hover:bg-kidville-success active:scale-[0.98] transition-all"
                             >
                                 <ThumbsUp size={14} strokeWidth={1.5} /> Sì, aderisco
                             </button>
@@ -205,7 +205,7 @@ export function AvvisoCard({ avviso, index, isTeacher, onReadReceipt, onAdesione
                         <div className="px-5 pb-4">
                             <div className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-maven ${
                                 myAnswer === 'si'
-                                    ? 'bg-emerald-50 text-emerald-600 border border-emerald-100'
+                                    ? 'bg-kidville-success-soft text-kidville-success border border-kidville-success/20'
                                     : 'bg-gray-100 text-gray-500 border border-gray-200'
                             }`}>
                                 {myAnswer === 'si' ? <ThumbsUp size={12} strokeWidth={1.5} /> : <ThumbsDown size={12} strokeWidth={1.5} />}
@@ -223,7 +223,7 @@ export function AvvisoCard({ avviso, index, isTeacher, onReadReceipt, onAdesione
                             </div>
                             {isAdesione && (
                                 <>
-                                    <div className="flex items-center gap-1.5 text-xs font-maven text-emerald-600">
+                                    <div className="flex items-center gap-1.5 text-xs font-maven text-kidville-success">
                                         <ThumbsUp size={12} strokeWidth={1.5} />
                                         <span>{avviso.stats.adesioni_si}</span>
                                     </div>
@@ -242,7 +242,7 @@ export function AvvisoCard({ avviso, index, isTeacher, onReadReceipt, onAdesione
                                 </button>
                                 <button
                                     onClick={() => onEdit?.(avviso)}
-                                    className="flex items-center gap-1 text-xs font-maven font-bold text-blue-600 hover:underline"
+                                    className="flex items-center gap-1 text-xs font-maven font-bold text-kidville-info hover:underline"
                                 >
                                     <Pencil size={12} strokeWidth={1.5} /> Modifica
                                 </button>

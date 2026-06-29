@@ -182,8 +182,8 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
                             <div>
                                 <label className="font-maven font-medium text-xs text-gray-500 uppercase tracking-wide mb-1.5 block">Tipo</label>
                                 <div className="flex gap-2">
-                                    <button onClick={() => setTipo('presa_visione')} className={`flex-1 py-2.5 rounded-2xl font-maven font-semibold text-sm transition-all ${tipo === 'presa_visione' ? 'bg-blue-500 text-white shadow-sm shadow-blue-500/20' : 'bg-gray-50 text-gray-500 border border-gray-100 hover:bg-gray-100'}`}>📖 Presa visione</button>
-                                    <button onClick={() => setTipo('adesione')} className={`flex-1 py-2.5 rounded-2xl font-maven font-semibold text-sm transition-all ${tipo === 'adesione' ? 'bg-purple-500 text-white shadow-sm shadow-purple-500/20' : 'bg-gray-50 text-gray-500 border border-gray-100 hover:bg-gray-100'}`}>📋 Adesione</button>
+                                    <button onClick={() => setTipo('presa_visione')} className={`flex-1 py-2.5 rounded-2xl font-maven font-semibold text-sm transition-all ${tipo === 'presa_visione' ? 'bg-kidville-green text-kidville-yellow shadow-sm' : 'bg-gray-50 text-gray-500 border border-gray-100 hover:bg-gray-100'}`}>📖 Presa visione</button>
+                                    <button onClick={() => setTipo('adesione')} className={`flex-1 py-2.5 rounded-2xl font-maven font-semibold text-sm transition-all ${tipo === 'adesione' ? 'bg-kidville-green text-kidville-yellow shadow-sm' : 'bg-gray-50 text-gray-500 border border-gray-100 hover:bg-gray-100'}`}>📋 Adesione</button>
                                 </div>
                             </div>
                             <div>

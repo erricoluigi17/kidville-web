@@ -80,15 +80,18 @@ function ParentAvvisiContent() {
             {/* Header */}
             <div className="flex items-start justify-between mb-6">
                 <div>
-                    <h1 className="font-barlow font-black text-3xl text-kidville-green uppercase tracking-wide">
-                        📋 Avvisi
+                    <p className="font-barlow font-bold text-[11px] uppercase tracking-[0.14em] text-kidville-yellow-dark">
+                        Comunicazioni
+                    </p>
+                    <h1 className="font-barlow font-black text-3xl text-kidville-green uppercase tracking-wide leading-none">
+                        Avvisi
                     </h1>
-                    <p className="font-maven text-gray-400 mt-1 text-sm">
+                    <p className="font-maven text-kidville-muted mt-1 text-sm">
                         Comunicazioni dalla scuola
                     </p>
                 </div>
                 {studentName && (
-                    <div className="flex items-center gap-2 bg-white/80 backdrop-blur-xl rounded-2xl border border-white/40 shadow-sm px-3 py-2 ml-3 flex-shrink-0">
+                    <div className="flex items-center gap-2 bg-white rounded-2xl border border-kidville-line shadow-sm px-3 py-2 ml-3 flex-shrink-0">
                         <div className="w-8 h-8 rounded-full bg-kidville-green flex items-center justify-center font-barlow font-black text-xs text-kidville-yellow flex-shrink-0">
                             {studentName.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase()}
                         </div>
@@ -133,7 +136,7 @@ function ParentAvvisiContent() {
             )}
 
             {/* Footer */}
-            <div className="mt-8 p-4 bg-white/50 backdrop-blur-sm rounded-2xl border border-white/30 text-center">
+            <div className="mt-8 p-4 bg-white rounded-2xl border border-kidville-line text-center">
                 <p className="font-maven text-xs text-gray-400">
                     📋 Gli avvisi restano visibili fino alla loro scadenza.<br />
                     Le prese visione vengono registrate automaticamente.

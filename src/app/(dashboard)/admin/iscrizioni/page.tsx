@@ -196,9 +196,9 @@ export default function IscrizioniPage() {
 
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, { label: string; cls: string }> = {
-    pending: { label: 'In attesa', cls: 'bg-amber-100 text-amber-700' },
-    approved: { label: 'Importata', cls: 'bg-emerald-100 text-emerald-700' },
-    rejected: { label: 'Rifiutata', cls: 'bg-rose-100 text-rose-700' },
+    pending: { label: 'In attesa', cls: 'bg-kidville-warn-soft text-kidville-warn' },
+    approved: { label: 'Importata', cls: 'bg-kidville-success-soft text-kidville-success' },
+    rejected: { label: 'Rifiutata', cls: 'bg-kidville-error-soft text-kidville-error' },
   }
   const m = map[status] ?? map.pending
   return <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${m.cls}`}>{m.label}</span>
@@ -262,7 +262,7 @@ function DetailPanel({
                 </div>
               )}
               {done && assignments[String(i)] && (
-                <p className="text-xs text-emerald-600 mt-1">Classe: {assignments[String(i)]}</p>
+                <p className="text-xs text-kidville-success mt-1">Classe: {assignments[String(i)]}</p>
               )}
             </div>
           ))}
@@ -301,7 +301,7 @@ function DetailPanel({
                     onChange={() => setReferenteIndex(i)}
                     className="accent-kidville-green"
                   />
-                  <Star size={12} className={referenteIndex === i ? 'text-amber-500' : 'text-gray-300'} />
+                  <Star size={12} className={referenteIndex === i ? 'text-kidville-warn' : 'text-gray-300'} />
                   Referente / intestatario (riceve l'account di accesso)
                 </label>
               )}
@@ -312,12 +312,12 @@ function DetailPanel({
 
       {/* Risultato import */}
       {result && (
-        <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 space-y-2">
-          <p className="text-sm font-semibold text-emerald-800 flex items-center gap-1.5">
+        <div className="rounded-xl border border-kidville-success/30 bg-kidville-success-soft p-3 space-y-2">
+          <p className="text-sm font-semibold text-kidville-success flex items-center gap-1.5">
             <CheckCircle2 size={16} /> Iscrizione importata
           </p>
           {result.credentials && (
-            <div className="text-xs text-emerald-800 flex items-center gap-2">
+            <div className="text-xs text-kidville-success flex items-center gap-2">
               <KeyRound size={13} />
               <span>Credenziali: <strong>{result.credentials.email}</strong> / <code>{result.credentials.password}</code></span>
             </div>
@@ -325,12 +325,12 @@ function DetailPanel({
           {result.credentials && (
             <p className="text-xs flex items-center gap-1.5">
               {result.credentialsEmailSent
-                ? <><CheckCircle2 size={12} className="text-emerald-700" /> <span className="text-emerald-700">Credenziali inviate via email al referente.</span></>
-                : <><AlertTriangle size={12} className="text-amber-700" /> <span className="text-amber-700">Email non inviata: comunicare le credenziali manualmente.</span></>}
+                ? <><CheckCircle2 size={12} className="text-kidville-success" /> <span className="text-kidville-success">Credenziali inviate via email al referente.</span></>
+                : <><AlertTriangle size={12} className="text-kidville-warn" /> <span className="text-kidville-warn">Email non inviata: comunicare le credenziali manualmente.</span></>}
             </p>
           )}
           {result.warnings && result.warnings.length > 0 && (
-            <div className="text-xs text-amber-700">
+            <div className="text-xs text-kidville-warn">
               <p className="flex items-center gap-1 font-semibold"><AlertTriangle size={12} /> Avvisi:</p>
               <ul className="list-disc ml-5">{result.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
             </div>
@@ -352,7 +352,7 @@ function DetailPanel({
           <button
             onClick={onReject}
             disabled={working}
-            className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-rose-200 text-rose-600 font-semibold text-sm hover:bg-rose-50 disabled:opacity-50 transition-all"
+            className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-kidville-error/30 text-kidville-error font-semibold text-sm hover:bg-kidville-error-soft disabled:opacity-50 transition-all"
           >
             <XCircle size={16} /> Rifiuta
           </button>

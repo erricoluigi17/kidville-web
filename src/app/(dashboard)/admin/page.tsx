@@ -87,7 +87,7 @@ function AdminDashboardInner() {
         sub: `${data.pagamenti.scadutoCount} posizioni`,
         icon: AlertTriangle,
         accent: 'border-red-500',
-        iconBg: 'bg-red-50 text-red-500',
+        iconBg: 'bg-red-50 text-kidville-error',
         href: '/admin/pagamenti',
       },
       {
@@ -96,8 +96,8 @@ function AdminDashboardInner() {
         value: data.pagamenti.incassatoMese,
         format: 'euro' as const,
         icon: TrendingUp,
-        accent: 'border-emerald-500',
-        iconBg: 'bg-emerald-50 text-emerald-600',
+        accent: 'border-kidville-success',
+        iconBg: 'bg-kidville-success-soft text-kidville-success',
         href: '/admin/pagamenti',
       },
       {
@@ -106,8 +106,8 @@ function AdminDashboardInner() {
         value: data.iscrizioni.pending,
         format: 'int' as const,
         icon: ClipboardList,
-        accent: 'border-amber-500',
-        iconBg: 'bg-amber-50 text-amber-600',
+        accent: 'border-kidville-warn',
+        iconBg: 'bg-kidville-warn-soft text-kidville-warn',
         href: '/admin/iscrizioni',
       },
       {
@@ -126,8 +126,8 @@ function AdminDashboardInner() {
         value: data.pagamenti.fattureInAttesa,
         format: 'int' as const,
         icon: ReceiptText,
-        accent: 'border-indigo-400',
-        iconBg: 'bg-indigo-50 text-indigo-500',
+        accent: 'border-kidville-info',
+        iconBg: 'bg-kidville-info-soft text-kidville-info',
         href: '/admin/pagamenti',
       },
     ];
@@ -230,7 +230,7 @@ function AdminDashboardInner() {
               <h2 className="font-barlow font-black uppercase tracking-wide text-kidville-green">
                 Incassi · ultimi 6 mesi
               </h2>
-              <TrendingUp size={18} className="text-emerald-500" />
+              <TrendingUp size={18} className="text-kidville-success" />
             </div>
             <TrendIncassiChart data={data.trend} />
           </motion.div>
@@ -342,12 +342,12 @@ function AlertPanel({
   rows: AlertRow[];
   empty: string;
 }) {
-  const toneCls = tone === 'red' ? 'bg-red-500' : 'bg-amber-500';
+  const toneCls = tone === 'red' ? 'bg-kidville-error' : 'bg-kidville-warn-soft0';
   return (
     <div className="rounded-2xl bg-white p-5 shadow-sm border border-gray-100">
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
-          <Icon size={18} className={tone === 'red' ? 'text-red-500' : 'text-amber-500'} />
+          <Icon size={18} className={tone === 'red' ? 'text-kidville-error' : 'text-kidville-warn'} />
           <h2 className="font-barlow font-black uppercase tracking-wide text-kidville-green">{title}</h2>
           {count > 0 && (
             <motion.span

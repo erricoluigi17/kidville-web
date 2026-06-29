@@ -390,13 +390,13 @@ export default function AdminStudentsPage() {
                 <p className="font-maven text-xs text-gray-400 uppercase font-bold tracking-wider">Totale Alunni</p>
                 <p className="font-barlow font-black text-2xl text-kidville-green">{students.length}</p>
               </div>
-              <div className="bg-white p-4 rounded-2xl shadow-sm border-l-4 border-emerald-500">
+              <div className="bg-white p-4 rounded-2xl shadow-sm border-l-4 border-kidville-success">
                 <p className="font-maven text-xs text-gray-400 uppercase font-bold tracking-wider">Iscritti</p>
-                <p className="font-barlow font-black text-2xl text-emerald-600">{students.filter(s => s.stato === 'iscritto').length}</p>
+                <p className="font-barlow font-black text-2xl text-kidville-success">{students.filter(s => s.stato === 'iscritto').length}</p>
               </div>
-              <div className="bg-white p-4 rounded-2xl shadow-sm border-l-4 border-amber-500">
+              <div className="bg-white p-4 rounded-2xl shadow-sm border-l-4 border-kidville-warn">
                 <p className="font-maven text-xs text-gray-400 uppercase font-bold tracking-wider">Con BES</p>
-                <p className="font-barlow font-black text-2xl text-amber-600">{students.filter(s => s.bes).length}</p>
+                <p className="font-barlow font-black text-2xl text-kidville-warn">{students.filter(s => s.bes).length}</p>
               </div>
               <div className="bg-white p-4 rounded-2xl shadow-sm border-l-4 border-red-500">
                 <p className="font-maven text-xs text-gray-400 uppercase font-bold tracking-wider">Con Allergie</p>

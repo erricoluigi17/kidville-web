@@ -504,7 +504,7 @@ export default function AdminModulisticaPage() {
                         </span>
                         
                         {form.expiration_date && (
-                          <span className={`px-2.5 py-1 rounded-full text-xs font-semibold flex items-center gap-1 ${new Date(form.expiration_date) < new Date() ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-600'}`}>
+                          <span className={`px-2.5 py-1 rounded-full text-xs font-semibold flex items-center gap-1 ${new Date(form.expiration_date) < new Date() ? 'bg-kidville-error-soft text-kidville-error' : 'bg-kidville-warn-soft text-kidville-warn'}`}>
                             <Calendar size={12} />
                             Scadenza: {new Date(form.expiration_date).toLocaleDateString()}
                           </span>
@@ -534,7 +534,7 @@ export default function AdminModulisticaPage() {
 
                       <button
                         onClick={() => handleDeleteForm(form.id)}
-                        className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
+                        className="p-2 text-gray-400 hover:text-kidville-error hover:bg-red-50 rounded-lg transition-all"
                         title="Elimina Modulo"
                       >
                         <Trash2 size={18} />
@@ -562,7 +562,7 @@ export default function AdminModulisticaPage() {
                         <h3 className="font-barlow font-bold text-xl text-kidville-green uppercase tracking-wide">
                           Famiglia {pre.parent_last_name}
                         </h3>
-                        <span className="bg-amber-50 text-amber-600 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider">
+                        <span className="bg-kidville-warn-soft text-kidville-warn px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider">
                           Nuovo
                         </span>
                       </div>
@@ -606,7 +606,7 @@ export default function AdminModulisticaPage() {
                 </p>
                 
                 {odtLetterhead ? (
-                  <div className="bg-emerald-50 text-emerald-700 p-3 rounded-xl text-xs font-semibold mb-4 border border-emerald-200">
+                  <div className="bg-kidville-success-soft text-kidville-success p-3 rounded-xl text-xs font-semibold mb-4 border border-kidville-success/30">
                     📄 {odtLetterhead} caricato
                   </div>
                 ) : (
@@ -633,7 +633,7 @@ export default function AdminModulisticaPage() {
                 </p>
                 
                 {odtFrequenza ? (
-                  <div className="bg-emerald-50 text-emerald-700 p-3 rounded-xl text-xs font-semibold mb-4 border border-emerald-200">
+                  <div className="bg-kidville-success-soft text-kidville-success p-3 rounded-xl text-xs font-semibold mb-4 border border-kidville-success/30">
                     📄 {odtFrequenza} caricato
                   </div>
                 ) : (
@@ -660,7 +660,7 @@ export default function AdminModulisticaPage() {
                 </p>
                 
                 {odtIscrizione ? (
-                  <div className="bg-emerald-50 text-emerald-700 p-3 rounded-xl text-xs font-semibold mb-4 border border-emerald-200">
+                  <div className="bg-kidville-success-soft text-kidville-success p-3 rounded-xl text-xs font-semibold mb-4 border border-kidville-success/30">
                     📄 {odtIscrizione} caricato
                   </div>
                 ) : (
@@ -858,7 +858,7 @@ export default function AdminModulisticaPage() {
                       {formFields.length > 1 && (
                         <button
                           onClick={() => handleRemoveField(idx)}
-                          className="text-gray-400 hover:text-red-500 transition-colors mb-2"
+                          className="text-gray-400 hover:text-kidville-error transition-colors mb-2"
                         >
                           <Trash2 size={16} />
                         </button>
@@ -955,7 +955,7 @@ export default function AdminModulisticaPage() {
             <div className="flex justify-between gap-3 border-t border-gray-100 pt-4 mt-4">
               <button
                 onClick={() => handleRejectPreInscription(selectedPre.id)}
-                className="px-4 py-2 font-barlow font-bold text-xs uppercase tracking-wider rounded-pill border border-red-200 text-red-500 hover:bg-red-50"
+                className="px-4 py-2 font-barlow font-bold text-xs uppercase tracking-wider rounded-pill border border-red-200 text-kidville-error hover:bg-red-50"
               >
                 Rifiuta Iscrizione
               </button>

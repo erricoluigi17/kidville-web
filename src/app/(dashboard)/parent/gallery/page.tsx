@@ -87,10 +87,13 @@ function ParentGalleryContent() {
                 className="flex items-start justify-between mb-6"
             >
                 <div>
-                    <h1 className="font-barlow font-black text-3xl text-kidville-green uppercase tracking-wide">
-                        📸 Le mie foto
+                    <p className="font-barlow font-bold text-[11px] uppercase tracking-[0.14em] text-kidville-yellow-dark">
+                        Galleria
+                    </p>
+                    <h1 className="font-barlow font-black text-3xl text-kidville-green uppercase tracking-wide leading-none">
+                        Le mie foto
                     </h1>
-                    <p className="font-maven text-gray-400 mt-1 text-sm">
+                    <p className="font-maven text-kidville-muted mt-1 text-sm">
                         {studentName ? `Le foto di ${studentName} a scuola` : 'Foto dalla scuola'} 🌈
                     </p>
                     {totalCount > 0 && (

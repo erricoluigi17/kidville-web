@@ -24,9 +24,9 @@ export default function OrarioPage() {
 
   return (
     <div className="rounded-card bg-white p-5 shadow-sm">
-      <h2 className="font-barlow text-lg font-bold text-gray-800 mb-4">Orario settimanale</h2>
+      <h2 className="font-barlow text-lg font-bold text-kidville-ink mb-4">Orario settimanale</h2>
       {loading ? (
-        <p className="font-maven text-gray-400 text-sm">Caricamento…</p>
+        <p className="font-maven text-kidville-muted text-sm">Caricamento…</p>
       ) : (
         <OrarioGrid campanelle={data.campanelle} orario={data.orario} />
       )}

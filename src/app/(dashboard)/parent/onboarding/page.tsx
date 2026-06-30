@@ -43,31 +43,31 @@ function Inner() {
 
   return (
     <div className="min-h-[80vh] flex items-center justify-center p-4">
-      <form onSubmit={submit} className="w-full max-w-md bg-white rounded-card shadow-sm border border-gray-100 p-6 space-y-5">
+      <form onSubmit={submit} className="w-full max-w-md bg-white rounded-card shadow-sm border border-kidville-line p-6 space-y-5">
         <div className="text-center">
           <ShieldCheck className="mx-auto text-kidville-green mb-2" size={36} />
           <h1 className="font-barlow font-black text-2xl text-kidville-green uppercase tracking-wide">Benvenuto/a</h1>
-          <p className="font-maven text-sm text-gray-500 mt-1">Completa il primo accesso: imposta la password e accetta i consensi.</p>
+          <p className="font-maven text-sm text-kidville-muted mt-1">Completa il primo accesso: imposta la password e accetta i consensi.</p>
         </div>
 
         <div>
           <label className="block font-maven text-xs font-semibold text-kidville-green mb-1">Nuova password (opzionale)</label>
           <div className="relative">
-            <KeyRound size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <KeyRound size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-kidville-muted" />
             <input
               type="password"
               value={password}
               onChange={e => setPassword(e.target.value)}
               placeholder="Almeno 8 caratteri"
-              className="w-full pl-9 pr-3 py-2.5 border-2 border-gray-100 rounded-xl font-maven text-sm focus:outline-none focus:border-kidville-green"
+              className="w-full pl-9 pr-3 py-2.5 border-2 border-kidville-line rounded-xl font-maven text-sm focus:outline-none focus:border-kidville-green"
             />
           </div>
         </div>
 
         <label className="flex items-start gap-2.5 cursor-pointer">
           <input type="checkbox" checked={privacy} onChange={e => setPrivacy(e.target.checked)} className="mt-1 h-4 w-4 rounded text-kidville-green focus:ring-kidville-green" />
-          <span className="font-maven text-sm text-gray-700 leading-snug">
-            Ho letto e accetto l’<strong>informativa sulla privacy</strong> (GDPR, Reg. UE 2016/679) e il trattamento dei dati per le finalità scolastiche. <span className="text-red-500">*</span>
+          <span className="font-maven text-sm text-kidville-ink leading-snug">
+            Ho letto e accetto l’<strong>informativa sulla privacy</strong> (GDPR, Reg. UE 2016/679) e il trattamento dei dati per le finalità scolastiche. <span className="text-kidville-error">*</span>
           </span>
         </label>
 
@@ -88,7 +88,7 @@ function Inner() {
 
 export default function ParentOnboardingPage() {
   return (
-    <Suspense fallback={<div className="p-8 font-maven text-gray-400">Caricamento…</div>}>
+    <Suspense fallback={<div className="p-8 font-maven text-kidville-muted">Caricamento…</div>}>
       <Inner />
     </Suspense>
   );

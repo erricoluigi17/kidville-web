@@ -2,7 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useState } from 'react';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
-import { Download, Check, Award } from 'lucide-react';
+import { Download, Check, Award, ShieldCheck } from 'lucide-react';
 
 interface PagellaItem { scrutinioId: string; periodo: string; anno: string; chiusoIl: string | null; firmato: boolean }
 interface CertItem { id: string; anno: string; stato: string; downloadUrl: string | null }
@@ -93,10 +93,18 @@ function PagelleGenitore() {
         </h1>
       </div>
 
+      {/* Banner conformità O.M. 3/2025 (DR PagelleScreen) */}
+      <div className="mb-4 flex items-start gap-2.5 rounded-[16px] bg-kidville-green-soft px-4 py-3">
+        <ShieldCheck size={18} className="mt-0.5 flex-shrink-0 text-kidville-green" />
+        <p className="font-maven text-[12.5px] leading-snug text-kidville-green/80">
+          Documento ufficiale di valutazione in <strong>giudizi sintetici</strong> (O.M. 3/2025): nessun voto numerico.
+        </p>
+      </div>
+
       {loading ? (
-        <p className="font-maven text-sm text-gray-400">Caricamento…</p>
+        <p className="font-maven text-sm text-kidville-muted">Caricamento…</p>
       ) : pagelle.length === 0 ? (
-        <p className="font-maven text-sm text-gray-400">Nessuna pagella disponibile.</p>
+        <p className="font-maven text-sm text-kidville-muted">Nessuna pagella disponibile.</p>
       ) : (
         <div className="space-y-3">
           {msg && <p className={`font-maven text-sm rounded-2xl px-4 py-2 ${msg.includes('✓') ? 'bg-kidville-success-soft text-kidville-success' : 'bg-kidville-error-soft text-kidville-error'}`}>{msg}</p>}
@@ -108,7 +116,7 @@ function PagelleGenitore() {
                 <div className="flex items-center justify-between gap-2 px-4 py-3.5">
                   <div>
                     <p className="font-barlow text-base font-extrabold uppercase tracking-wide text-kidville-green">{p.periodo}</p>
-                    <p className="font-maven text-xs text-gray-400">A.S. {p.anno}</p>
+                    <p className="font-maven text-xs text-kidville-muted">A.S. {p.anno}</p>
                   </div>
                   <div className="flex items-center gap-2">
                     {p.firmato
@@ -130,7 +138,7 @@ function PagelleGenitore() {
                     {p.firmato && (
                       <button
                         onClick={() => caricaDettaglio(p.scrutinioId)}
-                        className="font-maven text-xs text-gray-400 underline"
+                        className="font-maven text-xs text-kidville-muted underline"
                       >
                         {det !== undefined ? 'Nascondi' : 'Dettaglio'}
                       </button>
@@ -143,15 +151,15 @@ function PagelleGenitore() {
                   <div className="border-t border-kidville-line px-4 py-3 space-y-1.5">
                     {det.materie.map((m, i) => (
                       <div key={i} className="flex items-center justify-between gap-2">
-                        <span className="font-maven text-sm text-gray-700">{m.nome}</span>
+                        <span className="font-maven text-sm text-kidville-ink">{m.nome}</span>
                         <span className="font-maven text-sm font-semibold text-kidville-green">{m.giudizio ?? '—'}</span>
                       </div>
                     ))}
                     {det.comportamento && (
-                      <p className="font-maven text-xs text-gray-500 mt-2">Comportamento: {det.comportamento}</p>
+                      <p className="font-maven text-xs text-kidville-muted mt-2">Comportamento: {det.comportamento}</p>
                     )}
                     {det.giudizioGlobale && (
-                      <p className="font-maven text-xs text-gray-500 italic mt-1">{det.giudizioGlobale}</p>
+                      <p className="font-maven text-xs text-kidville-muted italic mt-1">{det.giudizioGlobale}</p>
                     )}
                   </div>
                 )}
@@ -159,7 +167,7 @@ function PagelleGenitore() {
                 {/* OTP firma inline */}
                 {otpTarget === p.scrutinioId && otpState && (
                   <div className="border-t border-kidville-line px-4 py-3 space-y-2">
-                    <p className="font-maven text-sm text-gray-600">Inserisci il codice OTP ricevuto via email:</p>
+                    <p className="font-maven text-sm text-kidville-muted">Inserisci il codice OTP ricevuto via email:</p>
                     {otpState.devCode && (
                       <p className="font-maven text-xs text-kidville-warn">Dev: <b>{otpState.devCode}</b></p>
                     )}
@@ -167,7 +175,7 @@ function PagelleGenitore() {
                       <input
                         type="text" value={otpCode} onChange={(e) => setOtpCode(e.target.value)}
                         placeholder="000000"
-                        className="font-maven rounded-full border border-gray-200 px-3 py-1.5 text-sm w-28 text-center tracking-widest"
+                        className="font-maven rounded-full border border-kidville-line px-3 py-1.5 text-sm w-28 text-center tracking-widest"
                       />
                       <button
                         onClick={confermaFirma}
@@ -177,7 +185,7 @@ function PagelleGenitore() {
                         {firmando === p.scrutinioId ? 'Firma…' : 'Conferma'}
                       </button>
                       <button onClick={() => { setOtpTarget(null); setOtpState(null); setOtpCode(''); }}
-                        className="font-maven text-xs text-gray-400">Annulla</button>
+                        className="font-maven text-xs text-kidville-muted">Annulla</button>
                     </div>
                   </div>
                 )}
@@ -197,14 +205,14 @@ function PagelleGenitore() {
               <div key={c.id} className="rounded-card border border-kidville-line bg-white shadow-sm px-4 py-3.5 flex items-center justify-between">
                 <div>
                   <p className="font-barlow text-base font-extrabold uppercase tracking-wide text-kidville-green">Classe quinta</p>
-                  <p className="font-maven text-xs text-gray-400">A.S. {c.anno}</p>
+                  <p className="font-maven text-xs text-kidville-muted">A.S. {c.anno}</p>
                 </div>
                 {c.downloadUrl ? (
                   <a href={c.downloadUrl} target="_blank" rel="noreferrer" className="font-maven inline-flex items-center gap-1 rounded-full bg-kidville-green/10 px-3 py-1.5 text-xs text-kidville-green">
                     <Download size={12} /> Scarica
                   </a>
                 ) : (
-                  <span className="font-maven text-xs text-gray-400">In preparazione</span>
+                  <span className="font-maven text-xs text-kidville-muted">In preparazione</span>
                 )}
               </div>
             ))}
@@ -217,7 +225,7 @@ function PagelleGenitore() {
 
 export default function PagelleGenitorePage() {
   return (
-    <Suspense fallback={<div className="p-8 font-maven text-gray-400">Caricamento…</div>}>
+    <Suspense fallback={<div className="p-8 font-maven text-kidville-muted">Caricamento…</div>}>
       <PagelleGenitore />
     </Suspense>
   );

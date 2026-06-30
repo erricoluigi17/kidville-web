@@ -147,17 +147,25 @@ export default function ValutazioniPage() {
 
   return (
     <div className="grid gap-4 md:grid-cols-2">
+      {/* Banner conformità O.M. 3/2025 (DR) */}
+      <div className="flex items-start gap-2.5 rounded-xl border border-kidville-warn/25 bg-kidville-warn-soft px-3.5 py-3 md:col-span-2">
+        <Lock size={16} className="mt-0.5 shrink-0 text-kidville-warn" />
+        <span className="font-maven text-[12px] leading-snug text-kidville-warn">
+          <strong>Voti numerici disabilitati alla primaria.</strong> La valutazione è espressa con giudizi descrittivi e sintetici (O.M. 3/2025). L&apos;eventuale annotazione numerica è un promemoria privato del docente.
+        </span>
+      </div>
+
       <div className="rounded-card bg-white p-5 shadow-sm">
-        <h2 className="font-barlow text-lg font-bold text-gray-800 mb-3 flex items-center gap-2">
+        <h2 className="font-barlow text-lg font-bold text-kidville-ink mb-3 flex items-center gap-2">
           <Star size={18} className="text-kidville-yellow" /> Valutazione in itinere
         </h2>
 
         <div className="grid grid-cols-2 gap-2 mb-3">
-          <select value={alunnoId} onChange={(e) => setAlunnoId(e.target.value)} className="font-maven rounded-pill border border-gray-200 px-3 py-2 text-sm">
+          <select value={alunnoId} onChange={(e) => setAlunnoId(e.target.value)} className="font-maven rounded-pill border border-kidville-line px-3 py-2 text-sm">
             <option value="">Alunno…</option>
             {alunni.map((a) => <option key={a.id} value={a.id}>{a.cognome} {a.nome}</option>)}
           </select>
-          <select value={materiaId} onChange={(e) => setMateriaId(e.target.value)} className="font-maven rounded-pill border border-gray-200 px-3 py-2 text-sm">
+          <select value={materiaId} onChange={(e) => setMateriaId(e.target.value)} className="font-maven rounded-pill border border-kidville-line px-3 py-2 text-sm">
             <option value="">Materia…</option>
             {materie.map((m) => <option key={m.id} value={m.id}>{m.nome}</option>)}
           </select>
@@ -165,19 +173,19 @@ export default function ValutazioniPage() {
 
         {obiettivi.length > 0 && (
           <div className="mb-3 rounded-card border border-kidville-green/20 bg-kidville-cream/40 p-3">
-            <label className="mb-1.5 block font-maven text-xs font-semibold text-gray-600">
-              Obiettivi di apprendimento * <span className="font-normal text-gray-400">(collega ≥1)</span>
+            <label className="mb-1.5 block font-maven text-xs font-semibold text-kidville-ink">
+              Obiettivi di apprendimento * <span className="font-normal text-kidville-muted">(collega ≥1)</span>
             </label>
             <div className="flex flex-col gap-1.5">
               {obiettivi.map((o) => (
-                <label key={o.id} className="flex items-start gap-2 font-maven text-sm text-gray-700">
+                <label key={o.id} className="flex items-start gap-2 font-maven text-sm text-kidville-ink">
                   <input
                     type="checkbox"
                     checked={obiettiviSel.includes(o.id)}
                     onChange={() => toggleObiettivo(o.id)}
                     className="mt-0.5 accent-kidville-green"
                   />
-                  <span>{o.codice ? <span className="text-gray-400">{o.codice} · </span> : null}{o.descrizione}</span>
+                  <span>{o.codice ? <span className="text-kidville-muted">{o.codice} · </span> : null}{o.descrizione}</span>
                 </label>
               ))}
             </div>
@@ -185,17 +193,17 @@ export default function ValutazioniPage() {
         )}
 
         <div className="mb-3">
-          <label className="block font-maven text-xs text-gray-500 mb-1">Tipo prova</label>
+          <label className="block font-maven text-xs text-kidville-muted mb-1">Tipo prova</label>
           <div className="flex gap-1.5">
             {['orale', 'scritto', 'pratico'].map((t) => (
-              <button key={t} onClick={() => setTipoProva(t)} className={`font-maven rounded-pill px-3 py-1 text-xs capitalize ${tipoProva === t ? 'bg-kidville-green text-kidville-yellow' : 'bg-gray-100 text-gray-500'}`}>{t}</button>
+              <button key={t} onClick={() => setTipoProva(t)} className={`font-maven rounded-pill px-3 py-1 text-xs capitalize ${tipoProva === t ? 'bg-kidville-green text-kidville-yellow' : 'bg-kidville-cream text-kidville-muted'}`}>{t}</button>
             ))}
           </div>
         </div>
 
         {/* Annotazione numerica privata (facoltativa) — strumento di lavoro del docente */}
         <div className="mb-3 rounded-card border border-kidville-warn/20 bg-kidville-warn-soft/60 p-3">
-          <label className="mb-1 flex items-center gap-1.5 font-maven text-xs text-gray-600">
+          <label className="mb-1 flex items-center gap-1.5 font-maven text-xs text-kidville-ink">
             <Lock size={12} className="text-kidville-warn" /> Annotazione numerica (privata, /10)
           </label>
           <div className="flex flex-wrap items-center gap-2">
@@ -207,11 +215,11 @@ export default function ValutazioniPage() {
               value={annotazioneNumerica}
               onChange={(e) => setAnnotazioneNumerica(e.target.value)}
               placeholder="Es. 7.5"
-              className="font-maven w-24 rounded-pill border border-gray-200 px-3 py-2 text-sm"
+              className="font-maven w-24 rounded-pill border border-kidville-line px-3 py-2 text-sm"
             />
             {giudizioSuggerito && (
               <div className="flex items-center gap-1.5">
-                <span className="font-maven text-xs text-gray-500">Suggerito:</span>
+                <span className="font-maven text-xs text-kidville-muted">Suggerito:</span>
                 <span className="font-maven rounded-pill border border-kidville-warn/30 bg-white px-2.5 py-1 text-xs font-semibold text-kidville-warn">{giudizioSuggerito}</span>
                 <button
                   type="button"
@@ -223,14 +231,14 @@ export default function ValutazioniPage() {
               </div>
             )}
           </div>
-          <p className="mt-1 font-maven text-[11px] text-gray-400">
+          <p className="mt-1 font-maven text-[11px] text-kidville-muted">
             Solo per te: non visibile al genitore, non sul documento di valutazione. Suggerisce un giudizio, non lo genera.
           </p>
         </div>
 
         <div className="mb-3 flex gap-1.5">
-          <button onClick={() => setModalita('dimensioni')} className={`font-maven rounded-pill px-3 py-1.5 text-xs ${modalita === 'dimensioni' ? 'bg-kidville-green text-kidville-yellow' : 'bg-gray-100 text-gray-500'}`}>Per dimensioni</button>
-          <button onClick={() => setModalita('sintetico')} className={`font-maven rounded-pill px-3 py-1.5 text-xs ${modalita === 'sintetico' ? 'bg-kidville-green text-kidville-yellow' : 'bg-gray-100 text-gray-500'}`}>Giudizio sintetico</button>
+          <button onClick={() => setModalita('dimensioni')} className={`font-maven rounded-pill px-3 py-1.5 text-xs ${modalita === 'dimensioni' ? 'bg-kidville-green text-kidville-yellow' : 'bg-kidville-cream text-kidville-muted'}`}>Per dimensioni</button>
+          <button onClick={() => setModalita('sintetico')} className={`font-maven rounded-pill px-3 py-1.5 text-xs ${modalita === 'sintetico' ? 'bg-kidville-green text-kidville-yellow' : 'bg-kidville-cream text-kidville-muted'}`}>Giudizio sintetico</button>
         </div>
 
         {modalita === 'dimensioni' ? (
@@ -244,26 +252,26 @@ export default function ValutazioniPage() {
               onChange={(e) => setGiudizioTesto(e.target.value)}
               rows={2}
               placeholder="Giudizio descrittivo (lascia vuoto per generarlo automaticamente)"
-              className="font-maven w-full rounded-card border border-gray-200 px-3 py-2 text-sm"
+              className="font-maven w-full rounded-card border border-kidville-line px-3 py-2 text-sm"
             />
           </div>
         ) : (
           <div className="mb-3">
-            <label className="block font-maven text-xs text-gray-500 mb-1">Giudizio sintetico</label>
-            <select value={giudizioSintetico} onChange={(e) => setGiudizioSintetico(e.target.value)} className="font-maven w-full rounded-pill border border-gray-200 px-3 py-2 text-sm">
+            <label className="block font-maven text-xs text-kidville-muted mb-1">Giudizio sintetico</label>
+            <select value={giudizioSintetico} onChange={(e) => setGiudizioSintetico(e.target.value)} className="font-maven w-full rounded-pill border border-kidville-line px-3 py-2 text-sm">
               {scala.map((g) => <option key={g} value={g}>{g}</option>)}
             </select>
           </div>
         )}
 
         <div className="mb-3">
-          <label className="block font-maven text-xs text-gray-500 mb-1">Argomento *</label>
+          <label className="block font-maven text-xs text-kidville-muted mb-1">Argomento *</label>
           <input
             type="text"
             value={argomento}
             onChange={(e) => setArgomento(e.target.value)}
             placeholder="Es. Le tabelline del 7, La comprensione del testo…"
-            className="font-maven w-full rounded-pill border border-gray-200 px-3 py-2 text-sm"
+            className="font-maven w-full rounded-pill border border-kidville-line px-3 py-2 text-sm"
           />
         </div>
 
@@ -274,18 +282,18 @@ export default function ValutazioniPage() {
       </div>
 
       <div className="rounded-card bg-white p-5 shadow-sm">
-        <h3 className="font-barlow text-base font-bold text-gray-800 mb-3">Valutazioni recenti</h3>
+        <h3 className="font-barlow text-base font-bold text-kidville-ink mb-3">Valutazioni recenti</h3>
         {!alunnoId || !materiaId ? (
-          <p className="font-maven text-sm text-gray-400">Seleziona alunno e materia.</p>
+          <p className="font-maven text-sm text-kidville-muted">Seleziona alunno e materia.</p>
         ) : (
-          <ul className="divide-y divide-gray-100">
+          <ul className="divide-y divide-kidville-line">
             {recenti.map((v) => (
               <li key={v.id} className="py-2.5">
                 <div className="flex items-center gap-2">
                   <span className="font-maven text-sm font-semibold text-kidville-green">
                     {v.giudizio_sintetico || (v.modalita === 'dimensioni' ? 'Per dimensioni' : '—')}
                   </span>
-                  <span className="text-xs text-gray-400 capitalize">{v.tipo}</span>
+                  <span className="text-xs text-kidville-muted capitalize">{v.tipo}</span>
                   {v.annotazione_numerica !== null && v.annotazione_numerica !== undefined && (
                     <span
                       title="Annotazione privata del docente — non visibile al genitore"
@@ -294,13 +302,13 @@ export default function ValutazioniPage() {
                       ✎ {String(v.annotazione_numerica).replace('.', ',')}
                     </span>
                   )}
-                  <span className="text-xs text-gray-300">{new Date(v.creato_il).toLocaleDateString('it-IT')}</span>
+                  <span className="text-xs text-kidville-muted">{new Date(v.creato_il).toLocaleDateString('it-IT')}</span>
                 </div>
-                {v.argomento && <p className="font-maven text-xs text-gray-600 mt-0.5"><span className="text-gray-400">Argomento:</span> {v.argomento}</p>}
-                {v.giudizio_testo && <p className="font-maven text-xs text-gray-500 mt-0.5">{v.giudizio_testo}</p>}
+                {v.argomento && <p className="font-maven text-xs text-kidville-ink mt-0.5"><span className="text-kidville-muted">Argomento:</span> {v.argomento}</p>}
+                {v.giudizio_testo && <p className="font-maven text-xs text-kidville-muted mt-0.5">{v.giudizio_testo}</p>}
               </li>
             ))}
-            {recenti.length === 0 && <li className="py-2 font-maven text-sm text-gray-400">Nessuna valutazione.</li>}
+            {recenti.length === 0 && <li className="py-2 font-maven text-sm text-kidville-muted">Nessuna valutazione.</li>}
           </ul>
         )}
       </div>
@@ -308,22 +316,22 @@ export default function ValutazioniPage() {
       {/* Giustifiche didattiche (impreparato) di oggi */}
       <div className="rounded-card bg-white p-5 shadow-sm md:col-span-2">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <h3 className="font-barlow text-base font-bold text-gray-800">Impreparati giustificati — oggi</h3>
+          <h3 className="font-barlow text-base font-bold text-kidville-ink">Impreparati giustificati — oggi</h3>
           <button onClick={segnaImpreparato} className="font-maven rounded-pill bg-kidville-warn-soft px-3 py-1.5 text-xs text-kidville-warn">
             Segna impreparato (alunno selezionato)
           </button>
         </div>
         {impreparati.length === 0 ? (
-          <p className="font-maven text-sm text-gray-400">Nessuna giustifica didattica per oggi.</p>
+          <p className="font-maven text-sm text-kidville-muted">Nessuna giustifica didattica per oggi.</p>
         ) : (
-          <ul className="divide-y divide-gray-100">
+          <ul className="divide-y divide-kidville-line">
             {impreparati.map((g) => (
               <li key={g.id} className="flex items-center gap-2 py-2 font-maven text-sm">
-                <span className="text-gray-800">{g.alunni?.cognome} {g.alunni?.nome}</span>
+                <span className="text-kidville-ink">{g.alunni?.cognome} {g.alunni?.nome}</span>
                 <span className={`rounded-pill px-2 py-0.5 text-[11px] ${g.origine === 'genitore' ? 'bg-kidville-info-soft text-kidville-info' : 'bg-kidville-warn-soft text-kidville-warn'}`}>
                   {g.origine === 'genitore' ? 'dal genitore' : 'dal docente'}
                 </span>
-                {g.motivo && <span className="text-xs text-gray-500">— {g.motivo}</span>}
+                {g.motivo && <span className="text-xs text-kidville-muted">— {g.motivo}</span>}
               </li>
             ))}
           </ul>
@@ -338,12 +346,12 @@ function DimToggle({ label, value, options, onChange }: {
 }) {
   return (
     <div className="flex items-center justify-between">
-      <span className="font-maven text-sm text-gray-600">{label}</span>
+      <span className="font-maven text-sm text-kidville-ink">{label}</span>
       <div className="flex gap-1">
         {options.map(([lbl, val]) => {
           const active = String(val) === String(value) || lbl === value;
           return (
-            <button key={lbl} onClick={() => onChange(val)} className={`font-maven rounded-pill px-2.5 py-1 text-xs ${active ? 'bg-kidville-green text-kidville-yellow' : 'bg-white text-gray-500 border border-gray-200'}`}>{lbl}</button>
+            <button key={lbl} onClick={() => onChange(val)} className={`font-maven rounded-pill px-2.5 py-1 text-xs ${active ? 'bg-kidville-green text-kidville-yellow' : 'bg-white text-kidville-muted border border-kidville-line'}`}>{lbl}</button>
           );
         })}
       </div>

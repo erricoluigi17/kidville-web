@@ -55,7 +55,18 @@ export function DiaryTodayCard({ studentId, href }: Props) {
     }
   }, [studentId])
 
-  if (!loaded || entries.length === 0) return null
+  if (!loaded) return null
+
+  if (entries.length === 0) {
+    return (
+      <Card className="flex items-center gap-3 p-4">
+        <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-[13px] bg-kidville-green-soft text-kidville-green">
+          <BookOpen size={20} strokeWidth={1.8} />
+        </span>
+        <p className="font-maven text-[13px] text-kidville-muted">Ancora nessun aggiornamento del diario per oggi.</p>
+      </Card>
+    )
+  }
 
   const items = entries.slice(0, 3)
   const updated = fmtTime(entries[0].timestamp_evento)

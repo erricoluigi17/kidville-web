@@ -12,6 +12,8 @@ import { SectionHeader } from '@/components/features/parent/home/SectionHeader';
 import { DiaryTodayCard } from '@/components/features/parent/home/DiaryTodayCard';
 import { AvvisiPreview } from '@/components/features/parent/home/AvvisiPreview';
 import { GalleryTodayCard } from '@/components/features/parent/home/GalleryTodayCard';
+import { LockerTodayCard } from '@/components/features/parent/home/LockerTodayCard';
+import { AgendaTodayCard } from '@/components/features/parent/home/AgendaTodayCard';
 
 function greetingByHour() {
   const h = new Date().getHours();
@@ -190,6 +192,20 @@ function ParentHomeContent() {
           <GalleryTodayCard studentId={studentId} parentId={parentId} href={wi('/parent/gallery')} />
         </div>
       )}
+
+      {/* ── ARMADIETTO · SCORTE (teaser DR) ───────── */}
+      {studentId && (
+        <div className="px-4 pt-5">
+          <SectionHeader eyebrow="Armadietto" title="Scorte" actionLabel="Gestisci" actionHref={wi('/parent/locker')} />
+          <LockerTodayCard studentId={studentId} />
+        </div>
+      )}
+
+      {/* ── CALENDARIO · AGENDA (placeholder DR) ──── */}
+      <div className="px-4 pt-5">
+        <SectionHeader eyebrow="Calendario" title="Prossimi appuntamenti" />
+        <AgendaTodayCard />
+      </div>
 
       {/* ── NOTA / FOOTER ─────────────────────────── */}
       <p className="px-4 pt-6 text-center font-maven text-[11px] text-kidville-muted">

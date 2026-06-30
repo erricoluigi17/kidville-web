@@ -39,7 +39,18 @@ export function GalleryTodayCard({ studentId, parentId, href }: Props) {
     }
   }, [studentId, parentId])
 
-  if (!loaded || total === 0) return null
+  if (!loaded) return null
+
+  if (total === 0) {
+    return (
+      <Card className="flex items-center gap-3 p-4">
+        <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-[14px] bg-kidville-green-soft text-kidville-green">
+          <ImageIcon size={20} strokeWidth={1.8} />
+        </span>
+        <p className="font-maven text-[13px] text-kidville-muted">Nessuna foto di oggi, per ora.</p>
+      </Card>
+    )
+  }
 
   return (
     <Link href={href} className="block">

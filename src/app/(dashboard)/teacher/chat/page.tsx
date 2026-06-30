@@ -255,7 +255,7 @@ function TeacherChatContent() {
         return (
             <div className="max-w-5xl mx-auto p-4 sm:p-6 flex flex-col items-center justify-center min-h-[60vh] gap-4">
                 <div className="w-10 h-10 border-4 border-kidville-green/30 border-t-kidville-green rounded-full animate-spin" />
-                <p className="font-maven text-gray-500">Caricamento chat...</p>
+                <p className="font-maven text-kidville-muted">Caricamento chat...</p>
             </div>
         );
     }
@@ -283,7 +283,7 @@ function TeacherChatContent() {
                             )}
                         </AnimatePresence>
                     </div>
-                    <p className="font-maven text-gray-500 mt-1">Messaggi con le famiglie</p>
+                    <p className="font-maven text-kidville-muted mt-1">Messaggi con le famiglie</p>
                 </div>
                 <button
                     onClick={() => { setShowNewChat(true); loadContacts(); }}
@@ -296,8 +296,8 @@ function TeacherChatContent() {
             {/* Desktop Layout: sidebar + chat area */}
             <div className="hidden md:flex gap-4 h-[calc(100vh-200px)] min-h-[500px]">
                 {/* Thread list */}
-                <div className="w-80 flex-shrink-0 bg-white/80 backdrop-blur-xl rounded-3xl border border-white/40 shadow-sm overflow-hidden flex flex-col">
-                    <div className="px-4 py-3 border-b border-gray-100/60">
+                <div className="w-80 flex-shrink-0 bg-white rounded-3xl border border-kidville-line shadow-sm overflow-hidden flex flex-col">
+                    <div className="px-4 py-3 border-b border-kidville-line">
                         <p className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide">Conversazioni</p>
                     </div>
                     <div className="flex-1 overflow-y-auto">
@@ -307,10 +307,10 @@ function TeacherChatContent() {
                 </div>
 
                 {/* Chat area */}
-                <div className="flex-1 bg-white/80 backdrop-blur-xl rounded-3xl border border-white/40 shadow-sm overflow-hidden flex flex-col">
+                <div className="flex-1 bg-white rounded-3xl border border-kidville-line shadow-sm overflow-hidden flex flex-col">
                     {selectedThread ? (
                         <>
-                            <div className="flex items-center gap-3 px-5 py-3.5 border-b border-gray-100/60">
+                            <div className="flex items-center gap-3 px-5 py-3.5 border-b border-kidville-line">
                                 <div className="w-10 h-10 rounded-full bg-kidville-warn-soft flex items-center justify-center font-barlow font-bold text-sm text-kidville-warn">
                                     {selectedThread.other_user.first_name[0]}{selectedThread.other_user.last_name[0]}
                                 </div>
@@ -318,7 +318,7 @@ function TeacherChatContent() {
                                     <p className="font-maven font-semibold text-sm text-kidville-green">
                                         {selectedThread.other_user.first_name} {selectedThread.other_user.last_name}
                                     </p>
-                                    <p className="font-maven text-[11px] text-gray-400">
+                                    <p className="font-maven text-[11px] text-kidville-muted">
                                         Genitore di {selectedThread.student.nome} {selectedThread.student.cognome}
                                     </p>
                                 </div>
@@ -342,7 +342,7 @@ function TeacherChatContent() {
                                 <p className="font-barlow font-bold text-lg text-kidville-green uppercase mb-1">
                                     Seleziona una conversazione
                                 </p>
-                                <p className="font-maven text-sm text-gray-400">
+                                <p className="font-maven text-sm text-kidville-muted">
                                     Scegli un genitore dalla lista o premi &quot;Nuova Chat&quot;
                                 </p>
                             </div>
@@ -355,16 +355,16 @@ function TeacherChatContent() {
             <div className="md:hidden">
                 {showMobile === 'list' ? (
                     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-                        className="bg-white/80 backdrop-blur-xl rounded-3xl border border-white/40 shadow-sm overflow-hidden">
+                        className="bg-white rounded-3xl border border-kidville-line shadow-sm overflow-hidden">
                         <ChatThreadList threads={threads} selectedId={null}
                             currentUserId={teacherId} onSelect={handleSelectThread} />
                     </motion.div>
                 ) : selectedThread && (
                     <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }}
-                        className="bg-white/80 backdrop-blur-xl rounded-3xl border border-white/40 shadow-sm overflow-hidden flex flex-col h-[calc(100vh-180px)]">
-                        <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-100/60">
+                        className="bg-white rounded-3xl border border-kidville-line shadow-sm overflow-hidden flex flex-col h-[calc(100vh-180px)]">
+                        <div className="flex items-center gap-3 px-4 py-3 border-b border-kidville-line">
                             <button onClick={() => setShowMobile('list')}
-                                className="w-8 h-8 rounded-xl bg-gray-50 hover:bg-gray-100 flex items-center justify-center text-gray-500 transition-colors">
+                                className="w-8 h-8 rounded-xl bg-kidville-cream hover:bg-kidville-cream-dark flex items-center justify-center text-kidville-green transition-colors">
                                 <ArrowLeft size={16} strokeWidth={1.5} />
                             </button>
                             <div className="w-9 h-9 rounded-full bg-kidville-warn-soft flex items-center justify-center font-barlow font-bold text-xs text-kidville-warn">
@@ -374,7 +374,7 @@ function TeacherChatContent() {
                                 <p className="font-maven font-semibold text-sm text-kidville-green">
                                     {selectedThread.other_user.first_name} {selectedThread.other_user.last_name}
                                 </p>
-                                <p className="font-maven text-[10px] text-gray-400">{selectedThread.student.nome}</p>
+                                <p className="font-maven text-[10px] text-kidville-muted">{selectedThread.student.nome}</p>
                             </div>
                         </div>
                         <ChatMessageArea
@@ -402,13 +402,13 @@ function TeacherChatContent() {
                             exit={{ opacity: 0, y: 20, scale: 0.97 }}
                             className="fixed inset-4 sm:inset-auto sm:top-1/2 sm:left-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 sm:w-full sm:max-w-md bg-white rounded-3xl shadow-2xl z-50 flex flex-col max-h-[80vh] overflow-hidden"
                         >
-                            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+                            <div className="flex items-center justify-between px-6 py-4 border-b border-kidville-line">
                                 <div className="flex items-center gap-2">
                                     <UserPlus size={18} className="text-kidville-green" strokeWidth={1.5} />
                                     <h2 className="font-barlow font-black text-lg text-kidville-green uppercase tracking-wide">Nuova Chat</h2>
                                 </div>
                                 <button onClick={() => setShowNewChat(false)}
-                                    className="w-8 h-8 rounded-xl bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-400">
+                                    className="w-8 h-8 rounded-xl bg-kidville-cream hover:bg-kidville-cream-dark flex items-center justify-center text-kidville-green">
                                     <X size={14} strokeWidth={1.5} />
                                 </button>
                             </div>
@@ -416,17 +416,17 @@ function TeacherChatContent() {
                                 {loadingContacts ? (
                                     <div className="flex flex-col items-center py-8 gap-3">
                                         <div className="w-7 h-7 border-[3px] border-kidville-green/20 border-t-kidville-green rounded-full animate-spin" />
-                                        <p className="font-maven text-sm text-gray-400">Caricamento contatti...</p>
+                                        <p className="font-maven text-sm text-kidville-muted">Caricamento contatti...</p>
                                     </div>
                                 ) : contacts.length === 0 ? (
                                     <div className="flex flex-col items-center py-8 text-center">
-                                        <p className="font-maven text-sm text-gray-400">
+                                        <p className="font-maven text-sm text-kidville-muted">
                                             Hai già una conversazione con tutti i genitori disponibili! 🎉
                                         </p>
                                     </div>
                                 ) : (
                                     <div className="space-y-2">
-                                        <p className="font-maven text-xs text-gray-400 mb-3">
+                                        <p className="font-maven text-xs text-kidville-muted mb-3">
                                             Seleziona un genitore per iniziare una conversazione
                                         </p>
                                         {contacts.map((contact, idx) => {
@@ -447,7 +447,7 @@ function TeacherChatContent() {
                                                         <p className="font-maven font-semibold text-sm text-kidville-green truncate">
                                                             {contact.user_name}
                                                         </p>
-                                                        <p className="font-maven text-xs text-gray-400 truncate">
+                                                        <p className="font-maven text-xs text-kidville-muted truncate">
                                                             Genitore di {contact.student_name} • {contact.sezione}
                                                         </p>
                                                     </div>

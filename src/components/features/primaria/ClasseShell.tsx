@@ -10,10 +10,12 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams, usePathname, useSearchParams } from 'next/navigation';
-import { ArrowLeft, ClipboardList, CheckSquare, Star, AlertTriangle, CalendarDays, BarChart3, GraduationCap, FolderLock, Info } from 'lucide-react';
+import { ArrowLeft, LayoutGrid, ClipboardList, CheckSquare, Star, AlertTriangle, CalendarDays, BarChart3, GraduationCap, FolderLock, Info } from 'lucide-react';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 
+// seg '' = indice sezione (Panoramica).
 const NAV = [
+  { seg: '', label: 'Panoramica', icon: LayoutGrid },
   { seg: 'registro', label: 'Registro', icon: ClipboardList },
   { seg: 'appello', label: 'Appello', icon: CheckSquare },
   { seg: 'valutazioni', label: 'Valutazioni', icon: Star },
@@ -63,34 +65,34 @@ export function ClasseShell({ basePrefix, children }: { basePrefix: string; chil
 
   return (
     <div className={inCockpit ? '' : 'min-h-screen bg-kidville-cream/40'}>
-      <header className={`${inCockpit ? 'lg:sticky lg:top-0' : 'sticky top-0'} z-20 border-b border-gray-100 bg-white/95 backdrop-blur`}>
-        <div className="max-w-5xl mx-auto px-4 py-3">
-          <div className="flex items-center gap-3">
-            <Link href={`${basePrefix}${suffix}`} className="text-gray-400 hover:text-kidville-green">
-              <ArrowLeft size={20} />
+      <header className={`${inCockpit ? 'lg:sticky lg:top-0' : 'sticky top-0'} z-20 bg-kidville-green`}>
+        <div className="max-w-5xl mx-auto px-4 pt-3">
+          <div className="flex items-center gap-3 pb-3">
+            <Link href={`${basePrefix}${suffix}`} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/15 text-white transition-colors hover:bg-white/25">
+              <ArrowLeft size={18} />
             </Link>
-            <h1 className="font-barlow text-2xl font-bold text-kidville-green uppercase tracking-wide">
-              {nomeClasse || 'Classe'}
+            <h1 className="font-barlow text-2xl font-black uppercase tracking-wide text-white">
+              {nomeClasse ? `Classe ${nomeClasse}` : 'Classe'}
             </h1>
-            <span className="rounded-pill bg-kidville-green/10 px-2.5 py-0.5 text-[11px] font-maven text-kidville-green">
+            <span className="rounded-pill bg-white/15 px-2.5 py-0.5 text-[11px] font-barlow font-bold uppercase tracking-wide text-white">
               Primaria
             </span>
             {isStaff && (
-              <span className="rounded-pill bg-kidville-warn-soft px-2.5 py-0.5 text-[11px] font-maven text-kidville-warn">
+              <span className="rounded-pill bg-kidville-yellow px-2.5 py-0.5 text-[11px] font-barlow font-bold uppercase tracking-wide text-kidville-green">
                 Modalità segreteria
               </span>
             )}
           </div>
-          <nav className="mt-3 flex gap-1 overflow-x-auto pb-1">
+          <nav className="flex gap-1.5 overflow-x-auto pb-3">
             {NAV.map(({ seg, label, icon: Icon }) => {
-              const href = `${base}/${seg}${suffix}`;
-              const active = pathname === `${base}/${seg}`;
+              const href = seg ? `${base}/${seg}${suffix}` : `${base}${suffix}`;
+              const active = seg ? pathname === `${base}/${seg}` : pathname === base;
               return (
                 <Link
-                  key={seg}
+                  key={seg || 'panoramica'}
                   href={href}
-                  className={`font-maven inline-flex shrink-0 items-center gap-1.5 rounded-pill px-3.5 py-1.5 text-sm transition ${
-                    active ? 'bg-kidville-green text-kidville-yellow' : 'text-gray-500 hover:bg-kidville-green/10'
+                  className={`font-barlow inline-flex shrink-0 items-center gap-1.5 rounded-pill px-3.5 py-1.5 text-[12.5px] font-bold uppercase tracking-wide transition ${
+                    active ? 'bg-white text-kidville-green' : 'bg-white/14 text-white hover:bg-white/25'
                   }`}
                 >
                   <Icon size={14} />

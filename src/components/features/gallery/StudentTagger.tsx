@@ -67,7 +67,7 @@ export function StudentTagger({ students, selectedIds, onToggle, onSelectAll, on
     return (
         <div className="space-y-3">
             {/* Header with bulk actions */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-gray-100 pb-2">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-kidville-line pb-2">
                 <p className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide">
                     Tagga i bambini presenti nella foto
                 </p>
@@ -83,7 +83,7 @@ export function StudentTagger({ students, selectedIds, onToggle, onSelectAll, on
 
             {/* Search Bar */}
             <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-kidville-muted">
                     <Search size={14} />
                 </div>
                 <input
@@ -91,12 +91,12 @@ export function StudentTagger({ students, selectedIds, onToggle, onSelectAll, on
                     placeholder="Cerca alunno o genitore (es. Sarah Pagano)..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
-                    className="w-full pl-9 pr-8 py-2 bg-gray-50 border border-gray-200 focus:outline-none focus:ring-1 focus:ring-kidville-green rounded-xl font-maven text-xs text-gray-700 transition-all placeholder:text-gray-400"
+                    className="w-full pl-9 pr-8 py-2 bg-kidville-cream border border-kidville-line focus:outline-none focus:ring-1 focus:ring-kidville-green rounded-xl font-maven text-xs text-kidville-ink transition-all placeholder:text-kidville-muted"
                 />
                 {searchTerm && (
                     <button
                         onClick={() => setSearchTerm('')}
-                        className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600"
+                        className="absolute inset-y-0 right-0 pr-3 flex items-center text-kidville-muted hover:text-kidville-green"
                     >
                         <X size={14} />
                     </button>
@@ -105,7 +105,7 @@ export function StudentTagger({ students, selectedIds, onToggle, onSelectAll, on
 
             {/* Student list */}
             {filteredStudents.length === 0 ? (
-                <div className="text-center py-4 text-xs font-maven text-gray-400">
+                <div className="text-center py-4 text-xs font-maven text-kidville-muted">
                     Nessun alunno o genitore corrisponde alla ricerca.
                 </div>
             ) : (
@@ -136,10 +136,10 @@ export function StudentTagger({ students, selectedIds, onToggle, onSelectAll, on
                                 disabled={isDisabled}
                                 className={`flex items-center gap-2.5 px-3 py-2.5 rounded-2xl text-left transition-all ${
                                     isDisabled
-                                        ? 'bg-gray-50 opacity-40 cursor-not-allowed border-transparent'
+                                        ? 'bg-kidville-cream opacity-40 cursor-not-allowed border-transparent'
                                         : isSelected
                                             ? 'bg-kidville-green text-white shadow-md shadow-kidville-green/20'
-                                            : 'bg-white/80 hover:bg-kidville-cream/40 border border-gray-100'
+                                            : 'bg-white hover:bg-kidville-cream border border-kidville-line'
                                 }`}
                             >
                                 {/* Avatar / Check / EyeOff */}
@@ -168,12 +168,12 @@ export function StudentTagger({ students, selectedIds, onToggle, onSelectAll, on
                                     </p>
                                     {parentNames ? (
                                         <p className={`font-maven text-[9px] truncate ${
-                                            isSelected ? 'text-white/70' : 'text-gray-400'
+                                            isSelected ? 'text-white/70' : 'text-kidville-muted'
                                         }`}>
                                             Genitore: {parentNames}
                                         </p>
                                     ) : (
-                                        <p className="font-maven text-[9px] text-gray-300 italic">Genitore non collegato</p>
+                                        <p className="font-maven text-[9px] text-kidville-muted italic">Genitore non collegato</p>
                                     )}
                                     {!hasPrivacy && (
                                         <p className="font-maven text-[9px] text-kidville-warn font-semibold mt-0.5">Solo genitori</p>

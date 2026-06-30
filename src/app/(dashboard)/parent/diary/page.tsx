@@ -482,6 +482,20 @@ function ParentDiaryContent() {
                     {/* Timeline eventi (con "Entrata" in cima, letta dalle Presenze) */}
                     {!loading && (checkIn || entries.length > 0) && (
                         <div className="space-y-3">
+                            {/* Banner umore (DR mood banner). Nessun backend "umore" disponibile
+                                (è solo un'opzione in DiarioSettings, non catturata): reso come
+                                placeholder onesto. Vedi LISTA 1 del piano. */}
+                            <div className="flex items-center gap-3 rounded-[20px] bg-kidville-yellow px-4 py-3.5">
+                                <span className="text-[26px] leading-none">🙂</span>
+                                <div className="min-w-0">
+                                    <p className="font-barlow text-[15px] font-black uppercase leading-none tracking-wide text-kidville-green">
+                                        Umore della giornata
+                                    </p>
+                                    <p className="mt-1 font-maven text-[12px] text-kidville-green/75">
+                                        Presto la maestra potrà segnalare come è andata{studentName ? ` per ${studentName.split(' ')[0]}` : ''}.
+                                    </p>
+                                </div>
+                            </div>
                             {checkIn && (
                                 <motion.div
                                     initial={{ opacity: 0, y: 14 }}

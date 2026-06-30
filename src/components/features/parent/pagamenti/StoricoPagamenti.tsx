@@ -94,7 +94,7 @@ export function StoricoPagamenti({ userId }: Props) {
             )}
 
             {!loading && !error && totaleDovuto > 0 && (
-                <div className="rounded-[22px] p-[18px]" style={{ background: 'linear-gradient(135deg, #006A5F, #00544B)' }}>
+                <div className="rounded-[22px] p-[18px]" style={{ background: 'linear-gradient(135deg, var(--color-kidville-green), var(--color-kidville-green-dark))' }}>
                     <p className="font-maven text-[12.5px] text-white/75">Totale da saldare</p>
                     <p className="font-barlow font-black text-[40px] leading-none text-kidville-yellow">
                         € {totaleDovuto.toFixed(2)}
@@ -108,11 +108,11 @@ export function StoricoPagamenti({ userId }: Props) {
             <div className="flex justify-end"><PushOptIn userId={userId} /></div>
 
             {loading ? (
-                <p className="font-maven text-sm text-gray-400 text-center py-8">Caricamento…</p>
+                <p className="font-maven text-sm text-kidville-muted text-center py-8">Caricamento…</p>
             ) : error ? (
-                <p className="font-maven text-sm text-red-500 text-center py-8">{error}</p>
+                <p className="font-maven text-sm text-kidville-error text-center py-8">{error}</p>
             ) : pagamenti.length === 0 ? (
-                <p className="font-maven text-sm text-gray-400 text-center py-8">Nessun pagamento.</p>
+                <p className="font-maven text-sm text-kidville-muted text-center py-8">Nessun pagamento.</p>
             ) : (
                 gruppi.map((g) => (
                     <Section key={g.categoria} title={g.categoria} icon={<span className="text-base leading-none">{g.icona ?? '📁'}</span>}>
@@ -148,9 +148,9 @@ function PagamentoCard({ p, userId }: { p: Pagamento; userId: string }) {
                 <div className="min-w-0">
                     <p className="font-maven font-bold text-sm text-kidville-green flex items-center gap-1">
                         {p.payment_categories?.icona} {p.descrizione}
-                        {p.obbligatorio && <span className="text-[10px] text-red-500">•obbl.</span>}
+                        {p.obbligatorio && <span className="text-[10px] text-kidville-error">•obbl.</span>}
                     </p>
-                    <p className="font-maven text-xs text-gray-400">
+                    <p className="font-maven text-xs text-kidville-muted">
                         {p.alunni?.nome} {p.alunni?.cognome} · scad. {p.scadenza}
                         {isSplit && <span className="ml-1 text-kidville-warn">· tua quota</span>}
                     </p>
@@ -161,7 +161,7 @@ function PagamentoCard({ p, userId }: { p: Pagamento; userId: string }) {
             <div className="flex items-center justify-between mt-2">
                 <div className="font-maven text-sm">
                     <span className="text-kidville-green font-bold">€ {Number(p.importo).toFixed(2)}</span>
-                    {p.stato === 'parziale' && <span className="text-gray-400 text-xs ml-2">(resta € {resto.toFixed(2)})</span>}
+                    {p.stato === 'parziale' && <span className="text-kidville-muted text-xs ml-2">(resta € {resto.toFixed(2)})</span>}
                 </div>
                 {fatturaPronta ? (
                     <a
@@ -173,7 +173,7 @@ function PagamentoCard({ p, userId }: { p: Pagamento; userId: string }) {
                 ) : p.stato === 'pagato' ? (
                     <a
                         href={`/api/pagamenti/ricevuta?pagamento_id=${p.id}&userId=${userId}`}
-                        className="flex items-center gap-1 px-3 py-1 rounded-full border border-gray-200 text-gray-500 text-xs font-bold hover:border-kidville-green hover:text-kidville-green"
+                        className="flex items-center gap-1 px-3 py-1 rounded-full border border-kidville-line text-kidville-muted text-xs font-bold hover:border-kidville-green hover:text-kidville-green"
                     >
                         <Receipt size={13} /> Ricevuta
                     </a>

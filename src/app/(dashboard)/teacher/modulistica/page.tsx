@@ -181,27 +181,26 @@ export default function TeacherModulisticaPage() {
   };
 
   return (
-    <div className="flex-1 flex flex-col p-4 sm:p-6 max-w-4xl mx-auto w-full">
-      {/* Header */}
-      <div className="flex items-center justify-between border-b border-gray-100 pb-4 mb-6">
-        <div>
-          <h1 className="font-barlow font-black text-3xl text-kidville-green uppercase tracking-wide flex items-center gap-2">
-            <FileText size={28} className="text-kidville-yellow" /> Registro Documentale
-          </h1>
-          <p className="font-maven text-gray-500 mt-1">Sezione Girasoli</p>
-        </div>
+    <div className="mx-auto flex w-full max-w-[460px] flex-1 flex-col px-4 pt-5">
+      {/* Header verde (DR) */}
+      <div className="rounded-3xl bg-kidville-green px-5 py-5" style={{ boxShadow: '0 16px 34px -18px rgba(0,60,52,.6)' }}>
+        <p className="font-barlow text-[11px] font-bold uppercase tracking-[0.14em] text-kidville-yellow">Documenti</p>
+        <h1 className="flex items-center gap-2 font-barlow text-3xl font-black uppercase tracking-wide text-white">
+          <FileText size={26} className="text-kidville-yellow" /> Modulistica
+        </h1>
+        <p className="mt-1.5 font-maven text-xs text-white/80">Consensi e certificati · Sezione Girasoli</p>
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-4 mb-6 border-b border-gray-200">
+      <div className="mt-5 mb-6 flex gap-4 border-b border-kidville-line">
         <button
-          className={`pb-3 px-2 font-barlow font-bold uppercase tracking-wide transition-colors flex items-center gap-1.5 ${activeTab === 'semaforo' ? 'text-kidville-green border-b-2 border-kidville-green' : 'text-gray-400 hover:text-gray-600'}`}
+          className={`pb-3 px-2 font-barlow font-bold uppercase tracking-wide transition-colors flex items-center gap-1.5 ${activeTab === 'semaforo' ? 'text-kidville-green border-b-2 border-kidville-green' : 'text-kidville-muted hover:text-kidville-ink'}`}
           onClick={() => setActiveTab('semaforo')}
         >
           <Users size={16} /> Semaforo Consensi
         </button>
         <button
-          className={`pb-3 px-2 font-barlow font-bold uppercase tracking-wide transition-colors flex items-center gap-1.5 ${activeTab === 'medici' ? 'text-kidville-green border-b-2 border-kidville-green' : 'text-gray-400 hover:text-gray-600'}`}
+          className={`pb-3 px-2 font-barlow font-bold uppercase tracking-wide transition-colors flex items-center gap-1.5 ${activeTab === 'medici' ? 'text-kidville-green border-b-2 border-kidville-green' : 'text-kidville-muted hover:text-kidville-ink'}`}
           onClick={() => setActiveTab('medici')}
         >
           <HeartPulse size={16} /> Certificati Medici
@@ -211,7 +210,7 @@ export default function TeacherModulisticaPage() {
       {isLoading ? (
         <div className="flex-1 flex flex-col items-center justify-center min-h-[40vh] gap-3">
           <div className="w-10 h-10 border-4 border-kidville-green/30 border-t-kidville-green rounded-full animate-spin" />
-          <p className="font-maven text-gray-500">Caricamento in corso...</p>
+          <p className="font-maven text-kidville-muted">Caricamento in corso...</p>
         </div>
       ) : (
         <>
@@ -219,14 +218,14 @@ export default function TeacherModulisticaPage() {
           {activeTab === 'semaforo' && (
             <div className="space-y-6">
               {/* Form Selector */}
-              <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="bg-white p-4 rounded-xl shadow-sm border border-kidville-line flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <label className="font-maven font-semibold text-sm text-kidville-green">
                   Seleziona Modulo di Autorizzazione
                 </label>
                 <select
                   value={selectedFormId}
                   onChange={e => setSelectedFormId(e.target.value)}
-                  className="border-2 border-gray-100 rounded-xl px-3 py-2 font-maven text-sm text-gray-600 focus:outline-none bg-white max-w-sm"
+                  className="border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-ink focus:outline-none bg-white max-w-sm"
                 >
                   {forms.map(form => (
                     <option key={form.id} value={form.id}>{form.title}</option>
@@ -235,23 +234,23 @@ export default function TeacherModulisticaPage() {
               </div>
 
               {/* Semaforo Table */}
-              <div className="bg-white rounded-card shadow-sm border border-gray-100 overflow-hidden">
-                <div className="p-4 bg-gray-50 border-b border-gray-150 flex items-center justify-between">
+              <div className="bg-white rounded-card shadow-sm border border-kidville-line overflow-hidden">
+                <div className="p-4 bg-kidville-cream border-b border-kidville-line flex items-center justify-between">
                   <h3 className="font-barlow font-bold text-base text-kidville-green uppercase tracking-wide">
                     Stato Approvazioni Classe
                   </h3>
-                  <div className="flex items-center gap-3 text-xs font-maven font-semibold text-gray-500">
+                  <div className="flex items-center gap-3 text-xs font-maven font-semibold text-kidville-muted">
                     <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 bg-kidville-success rounded-full" /> {students.filter(s => s.status === 'green').length} Firmati</span>
-                    <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 bg-red-500 rounded-full" /> {students.filter(s => s.status === 'red').length} Mancanti</span>
+                    <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 bg-kidville-error rounded-full" /> {students.filter(s => s.status === 'red').length} Mancanti</span>
                   </div>
                 </div>
 
-                <div className="divide-y divide-gray-100">
+                <div className="divide-y divide-kidville-line">
                   {students.map(student => (
-                    <div key={student.student_id} className="p-4 flex items-center justify-between gap-4 hover:bg-gray-50/50 transition-colors">
+                    <div key={student.student_id} className="p-4 flex items-center justify-between gap-4 hover:bg-kidville-cream/50 transition-colors">
                       <div className="flex items-center gap-3">
-                        <span className={`w-3.5 h-3.5 rounded-full shadow-inner ${student.status === 'green' ? 'bg-kidville-success' : 'bg-red-500 animate-pulse'}`} />
-                        <span className="font-maven font-semibold text-sm text-gray-800">
+                        <span className={`w-3.5 h-3.5 rounded-full shadow-inner ${student.status === 'green' ? 'bg-kidville-success' : 'bg-kidville-error animate-pulse'}`} />
+                        <span className="font-maven font-semibold text-sm text-kidville-ink">
                           {student.cognome} {student.nome}
                         </span>
                       </div>
@@ -261,7 +260,7 @@ export default function TeacherModulisticaPage() {
                           <>
                             <button
                               onClick={() => handleSendReminder(student.nome)}
-                              className="p-2 text-gray-400 hover:text-[#0066cc] hover:bg-gray-100 rounded-lg transition-colors"
+                              className="p-2 text-kidville-muted hover:text-kidville-info hover:bg-kidville-cream-dark rounded-lg transition-colors"
                               title="Invia Sollecito"
                             >
                               <Bell size={18} />
@@ -292,13 +291,13 @@ export default function TeacherModulisticaPage() {
           {activeTab === 'medici' && (
             <div className="space-y-4">
               {medCerts.length === 0 ? (
-                <div className="bg-white rounded-card p-10 text-center border border-gray-100">
-                  <HeartPulse className="mx-auto text-gray-300 mb-3" size={48} />
-                  <p className="font-maven text-gray-500">Nessun certificato medico caricato in classe.</p>
+                <div className="bg-white rounded-card p-10 text-center border border-kidville-line">
+                  <HeartPulse className="mx-auto text-kidville-muted mb-3" size={48} />
+                  <p className="font-maven text-kidville-muted">Nessun certificato medico caricato in classe.</p>
                 </div>
               ) : (
                 medCerts.map(cert => (
-                  <div key={cert.id} className="bg-white rounded-card p-5 border border-gray-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div key={cert.id} className="bg-white rounded-card p-5 border border-kidville-line flex flex-col md:flex-row md:items-center justify-between gap-4">
                     <div>
                       <div className="flex items-center gap-2">
                         <h3 className="font-barlow font-bold text-lg text-kidville-green uppercase">
@@ -308,25 +307,25 @@ export default function TeacherModulisticaPage() {
                           Certificato Medico
                         </span>
                       </div>
-                      <p className="font-maven text-xs text-gray-400 mt-1">
+                      <p className="font-maven text-xs text-kidville-muted mt-1">
                         Caricato il: {new Date(cert.creato_il).toLocaleDateString()}
                       </p>
                       {cert.note && (
-                        <p className="font-maven text-xs text-gray-600 mt-2 bg-gray-50 p-2 rounded-lg italic">
+                        <p className="font-maven text-xs text-kidville-ink mt-2 bg-kidville-cream p-2 rounded-lg italic">
                           "{cert.note}"
                         </p>
                       )}
                       
                       <div className="mt-3 flex items-center gap-2 flex-wrap">
                         {(cert.data_inizio || cert.data_fine) && (
-                          <span className="bg-gray-100 text-gray-600 px-2.5 py-0.5 rounded-full text-[10px] font-semibold">
+                          <span className="bg-kidville-cream text-kidville-ink px-2.5 py-0.5 rounded-full text-[10px] font-semibold">
                             {cert.data_inizio ?? '—'} → {cert.data_fine ?? '—'}
                           </span>
                         )}
                         {cert.stato === 'validato' ? (
                           <span className="bg-kidville-success-soft text-kidville-success px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider">Validato</span>
                         ) : cert.stato === 'rifiutato' ? (
-                          <span className="bg-red-50 text-red-600 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider">Rifiutato</span>
+                          <span className="bg-kidville-error-soft text-kidville-error px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider">Rifiutato</span>
                         ) : (
                           <span className="text-kidville-warn bg-kidville-warn-soft px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1 font-maven uppercase tracking-wider">
                             <AlertCircle size={10} /> In validazione
@@ -355,7 +354,7 @@ export default function TeacherModulisticaPage() {
           <div className="bg-white w-full max-w-sm rounded-card p-6 shadow-2xl text-center">
             <Upload className="text-kidville-green mx-auto mb-3" size={40} />
             <h3 className="font-barlow font-black text-xl text-kidville-green uppercase tracking-wide mb-1">Proxy Upload Cartaceo</h3>
-            <p className="font-maven text-xs text-gray-500 mb-6">
+            <p className="font-maven text-xs text-kidville-muted mb-6">
               Carica la scansione o la foto del modulo firmato a penna consegnato a mano dal genitore di <strong>{showProxyModal.nome}</strong>.
             </p>
 
@@ -363,10 +362,10 @@ export default function TeacherModulisticaPage() {
               {proxyFile ? (
                 <div className="flex items-center justify-between border-2 border-kidville-success/30 bg-kidville-success-soft text-kidville-success px-3 py-2 rounded-xl text-xs font-semibold select-none">
                   <span>📄 {proxyFileName}</span>
-                  <button onClick={() => { setProxyFileName(''); setProxyFile(null); }} className="text-gray-400 hover:text-kidville-error">✕</button>
+                  <button onClick={() => { setProxyFileName(''); setProxyFile(null); }} className="text-kidville-muted hover:text-kidville-error">✕</button>
                 </div>
               ) : (
-                <label className="w-full h-12 border-2 border-dashed border-gray-200 hover:border-kidville-green rounded-xl flex items-center justify-center gap-1.5 cursor-pointer text-xs font-semibold text-gray-600 transition-colors">
+                <label className="w-full h-12 border-2 border-dashed border-kidville-line hover:border-kidville-green rounded-xl flex items-center justify-center gap-1.5 cursor-pointer text-xs font-semibold text-kidville-ink transition-colors">
                   <Upload size={14} /> Carica File
                   <input
                     type="file"
@@ -385,7 +384,7 @@ export default function TeacherModulisticaPage() {
             <div className="flex gap-3 mt-6">
               <button
                 onClick={() => { setShowProxyModal(null); setProxyFileName(''); setProxyFile(null); }}
-                className="flex-1 h-11 font-maven text-sm rounded-pill border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors"
+                className="flex-1 h-11 font-maven text-sm rounded-pill border border-kidville-line text-kidville-muted hover:bg-kidville-cream transition-colors"
               >
                 Annulla
               </button>
@@ -405,32 +404,32 @@ export default function TeacherModulisticaPage() {
       {managingCert && (
         <div className="fixed inset-0 bg-kidville-green/30 z-50 flex items-center justify-center p-4 animate-fadeIn">
           <div className="bg-white w-full max-w-md rounded-card p-6 shadow-2xl flex flex-col max-h-[85vh]">
-            <div className="flex items-center justify-between border-b border-gray-100 pb-3 mb-4">
+            <div className="flex items-center justify-between border-b border-kidville-line pb-3 mb-4">
               <h2 className="font-barlow font-black text-xl text-kidville-green uppercase tracking-wide">
                 Validazione Certificato
               </h2>
-              <button onClick={() => setManagingCert(null)} className="text-gray-400 hover:text-gray-600">✕</button>
+              <button onClick={() => setManagingCert(null)} className="text-kidville-muted hover:text-kidville-ink">✕</button>
             </div>
 
             <div className="flex-1 overflow-y-auto space-y-4 pr-1">
-              <p className="font-maven text-xs text-gray-500 leading-relaxed">
+              <p className="font-maven text-xs text-kidville-muted leading-relaxed">
                 Certificato per <strong>{managingCert.cognome_alunno} {managingCert.nome_alunno}</strong>.
                 Verifica il documento e il periodo dichiarato, poi valida o rifiuta.
               </p>
 
               <div className="grid grid-cols-2 gap-3">
                 <div className="bg-kidville-cream/50 rounded-xl px-3 py-2">
-                  <p className="font-maven text-[10px] text-gray-500 uppercase">Coperto dal</p>
+                  <p className="font-maven text-[10px] text-kidville-muted uppercase">Coperto dal</p>
                   <p className="font-maven text-sm font-bold text-kidville-green">{managingCert.data_inizio ?? '—'}</p>
                 </div>
                 <div className="bg-kidville-cream/50 rounded-xl px-3 py-2">
-                  <p className="font-maven text-[10px] text-gray-500 uppercase">al</p>
+                  <p className="font-maven text-[10px] text-kidville-muted uppercase">al</p>
                   <p className="font-maven text-sm font-bold text-kidville-green">{managingCert.data_fine ?? '—'}</p>
                 </div>
               </div>
 
               {managingCert.note && (
-                <p className="font-maven text-xs text-gray-600"><span className="font-semibold">Note genitore:</span> {managingCert.note}</p>
+                <p className="font-maven text-xs text-kidville-ink"><span className="font-semibold">Note genitore:</span> {managingCert.note}</p>
               )}
 
               <a href={`/api/parent/medical-certificates/file?id=${managingCert.id}&userId=${TEACHER_ID}`} target="_blank" rel="noopener noreferrer"
@@ -439,17 +438,17 @@ export default function TeacherModulisticaPage() {
               </a>
 
               <div>
-                <label className="block font-maven text-[10px] font-semibold text-gray-500 mb-1">Nota di validazione (opzionale, obbligatoria per il rifiuto)</label>
+                <label className="block font-maven text-[10px] font-semibold text-kidville-muted mb-1">Nota di validazione (opzionale, obbligatoria per il rifiuto)</label>
                 <textarea value={notaValidazione} onChange={e => setNotaValidazione(e.target.value)} rows={2}
-                  className="w-full border border-gray-200 rounded-lg px-3 py-1.5 font-maven text-xs focus:outline-none focus:border-kidville-green resize-none"
+                  className="w-full border border-kidville-line rounded-lg px-3 py-1.5 font-maven text-xs focus:outline-none focus:border-kidville-green resize-none"
                   placeholder="Es. Periodo corretto in 01/03–04/03" />
               </div>
             </div>
 
-            <div className="flex gap-3 border-t border-gray-100 pt-4 mt-4 justify-end">
+            <div className="flex gap-3 border-t border-kidville-line pt-4 mt-4 justify-end">
               <button
                 onClick={() => handleValidate('rifiutato')}
-                className="px-4 py-2 font-barlow font-bold uppercase tracking-wide rounded-pill border border-red-200 text-red-600 text-sm hover:bg-red-50"
+                className="px-4 py-2 font-barlow font-bold uppercase tracking-wide rounded-pill border border-kidville-error/20 text-kidville-error text-sm hover:bg-kidville-error-soft"
               >
                 Rifiuta
               </button>

@@ -146,29 +146,32 @@ function LockerSettingsInner() {
 
     // ─────────────────────────────────────────────────────────────────────────
     return (
-        <div className="max-w-2xl mx-auto p-4 sm:p-6">
-            {/* Header */}
-            <div className="flex items-center gap-3 mb-6">
-                <Link href="/teacher/locker"
-                    className="p-2 rounded-xl text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors">
-                    <ArrowLeft size={18} />
-                </Link>
-                <div>
-                    <h1 className="font-barlow font-black text-2xl text-kidville-green uppercase flex items-center gap-2">
-                        <Settings size={22} /> Impostazioni Materiali
-                    </h1>
-                    <p className="text-xs text-gray-400 font-maven mt-0.5">
-                        Configura i materiali che i genitori consegnano quotidianamente
-                    </p>
+        <div className="mx-auto max-w-[460px] px-4 pt-5">
+            {/* Header verde (DR) */}
+            <div className="rounded-3xl bg-kidville-green px-5 py-5" style={{ boxShadow: '0 16px 34px -18px rgba(0,60,52,.6)' }}>
+                <div className="flex items-center gap-3">
+                    <Link href="/teacher/locker"
+                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/15 text-white transition-colors hover:bg-white/25">
+                        <ArrowLeft size={18} />
+                    </Link>
+                    <div>
+                        <p className="font-barlow text-[11px] font-bold uppercase tracking-[0.14em] text-kidville-yellow">Armadietto</p>
+                        <h1 className="flex items-center gap-2 font-barlow text-2xl font-black uppercase tracking-wide text-white">
+                            <Settings size={20} className="text-kidville-yellow" /> Materiali
+                        </h1>
+                    </div>
                 </div>
+                <p className="mt-2 font-maven text-xs text-white/80">
+                    Configura i materiali che i genitori consegnano quotidianamente
+                </p>
             </div>
 
             {/* Filtro classe */}
-            <div className="flex gap-2 mb-6 overflow-x-auto pb-1">
+            <div className="mt-5 mb-6 flex gap-2 overflow-x-auto pb-1">
                 {CLASSI.map(c => (
                     <button key={c} onClick={() => setClasseFilter(c)}
                         className={`px-4 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition-all
-                            ${classeFilter === c ? 'bg-kidville-green text-kidville-yellow shadow' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>
+                            ${classeFilter === c ? 'bg-kidville-green text-kidville-yellow shadow' : 'bg-white text-kidville-muted hover:bg-kidville-cream-dark border border-kidville-line'}`}>
                         {c}
                     </button>
                 ))}
@@ -176,8 +179,8 @@ function LockerSettingsInner() {
 
             {/* Lista materiali */}
             {loading ? (
-                <div className="flex items-center justify-center py-12 gap-2 text-gray-400">
-                    <div className="w-4 h-4 border-2 border-gray-300 border-t-kidville-green rounded-full animate-spin" />
+                <div className="flex items-center justify-center py-12 gap-2 text-kidville-muted">
+                    <div className="w-4 h-4 border-2 border-kidville-line border-t-kidville-green rounded-full animate-spin" />
                     Caricamento...
                 </div>
             ) : (
@@ -185,22 +188,22 @@ function LockerSettingsInner() {
                     {materiali.map((mat, idx) => (
                         <div key={mat.id}
                             className={`bg-white rounded-2xl border-2 p-4 transition-all
-                                ${mat.attivo ? 'border-gray-100' : 'border-dashed border-gray-200 opacity-60'}`}>
+                                ${mat.attivo ? 'border-kidville-line' : 'border-dashed border-kidville-line opacity-60'}`}>
                             <div className="flex items-center gap-3">
                                 {/* Ordine */}
                                 <div className="flex flex-col gap-0.5">
                                     <button onClick={() => moveOrdine(mat, 'up')} disabled={idx === 0}
-                                        className="text-gray-300 hover:text-gray-500 disabled:opacity-20 transition-colors">
+                                        className="text-kidville-muted hover:text-kidville-muted disabled:opacity-20 transition-colors">
                                         <ChevronUp size={14} />
                                     </button>
                                     <button onClick={() => moveOrdine(mat, 'down')} disabled={idx === materiali.length - 1}
-                                        className="text-gray-300 hover:text-gray-500 disabled:opacity-20 transition-colors">
+                                        className="text-kidville-muted hover:text-kidville-muted disabled:opacity-20 transition-colors">
                                         <ChevronDown size={14} />
                                     </button>
                                 </div>
 
                                 {/* Icona */}
-                                <div className="w-10 h-10 bg-gray-50 rounded-xl flex items-center justify-center text-xl flex-shrink-0">
+                                <div className="w-10 h-10 bg-kidville-cream rounded-xl flex items-center justify-center text-xl flex-shrink-0">
                                     {mat.icona}
                                 </div>
 
@@ -208,7 +211,7 @@ function LockerSettingsInner() {
                                 <div className="flex-1 min-w-0">
                                     <div className="flex items-center gap-2">
                                         <p className="font-maven font-bold text-kidville-green">{mat.nome}</p>
-                                        <span className="text-xs text-gray-400">{mat.unita}</span>
+                                        <span className="text-xs text-kidville-muted">{mat.unita}</span>
                                     </div>
                                     <div className="flex items-center gap-3 mt-1">
                                         <span className="text-xs text-kidville-warn">
@@ -223,18 +226,18 @@ function LockerSettingsInner() {
                                 {/* Azioni */}
                                 <div className="flex items-center gap-2">
                                     {saving === mat.id ? (
-                                        <div className="w-4 h-4 border-2 border-gray-200 border-t-kidville-green rounded-full animate-spin" />
+                                        <div className="w-4 h-4 border-2 border-kidville-line border-t-kidville-green rounded-full animate-spin" />
                                     ) : (
                                         <>
                                             <button onClick={() => toggleAttivo(mat)} title={mat.attivo ? 'Disattiva' : 'Attiva'}
-                                                className="text-gray-300 hover:text-kidville-green transition-colors">
+                                                className="text-kidville-muted hover:text-kidville-green transition-colors">
                                                 {mat.attivo
                                                     ? <ToggleRight size={24} className="text-kidville-green" />
                                                     : <ToggleLeft size={24} />}
                                             </button>
                                             {!mat.id.startsWith('default') && (
                                                 <button onClick={() => deleteMat(mat)} title="Elimina"
-                                                    className="text-gray-300 hover:text-red-400 transition-colors">
+                                                    className="text-kidville-muted hover:text-kidville-error transition-colors">
                                                     <Trash2 size={16} />
                                                 </button>
                                             )}
@@ -245,20 +248,20 @@ function LockerSettingsInner() {
 
                             {/* Soglie inline edit */}
                             {mat.attivo && (
-                                <div className="flex gap-4 mt-3 pt-3 border-t border-gray-50">
+                                <div className="flex gap-4 mt-3 pt-3 border-t border-kidville-line">
                                     <div className="flex-1">
                                         <label className="text-[10px] text-kidville-warn font-bold block mb-1">Soglia Allerta (🟡)</label>
                                         <input type="number" min={1} max={50}
                                             value={mat.livello_allerta}
                                             onChange={e => updateSoglie(mat, 'livello_allerta', parseInt(e.target.value) || 1)}
-                                            className="w-full border border-gray-100 rounded-lg px-2 py-1 text-sm text-center" />
+                                            className="w-full border border-kidville-line rounded-lg px-2 py-1 text-sm text-center" />
                                     </div>
                                     <div className="flex-1">
                                         <label className="text-[10px] text-kidville-error font-bold block mb-1">Soglia Urgente (🔴)</label>
                                         <input type="number" min={0} max={20}
                                             value={mat.livello_emergenza}
                                             onChange={e => updateSoglie(mat, 'livello_emergenza', parseInt(e.target.value) || 0)}
-                                            className="w-full border border-gray-100 rounded-lg px-2 py-1 text-sm text-center" />
+                                            className="w-full border border-kidville-line rounded-lg px-2 py-1 text-sm text-center" />
                                     </div>
                                 </div>
                             )}
@@ -266,7 +269,7 @@ function LockerSettingsInner() {
                     ))}
 
                     {materiali.length === 0 && (
-                        <div className="text-center py-10 text-gray-400">
+                        <div className="text-center py-10 text-kidville-muted">
                             <Package size={40} className="mx-auto mb-2 opacity-30" />
                             <p className="text-sm">Nessun materiale configurato per {classeFilter}</p>
                         </div>
@@ -281,12 +284,12 @@ function LockerSettingsInner() {
 
                     {/* Icona */}
                     <div className="mb-4">
-                        <label className="text-xs font-bold text-gray-500 mb-2 block">Icona</label>
+                        <label className="text-xs font-bold text-kidville-muted mb-2 block">Icona</label>
                         <div className="flex gap-2 flex-wrap">
                             {ICONE_SUGGERITE.map(ic => (
                                 <button key={ic} onClick={() => setNewMat(n => ({ ...n, icona: ic }))}
                                     className={`w-10 h-10 text-xl rounded-xl border-2 transition-all
-                                        ${newMat.icona === ic ? 'border-kidville-green bg-kidville-green/5' : 'border-gray-100 hover:border-gray-200'}`}>
+                                        ${newMat.icona === ic ? 'border-kidville-green bg-kidville-green/5' : 'border-kidville-line hover:border-kidville-line'}`}>
                                     {ic}
                                 </button>
                             ))}
@@ -295,32 +298,32 @@ function LockerSettingsInner() {
 
                     {/* Nome */}
                     <div className="mb-3">
-                        <label className="text-xs font-bold text-gray-500 mb-1 block">Nome materiale</label>
+                        <label className="text-xs font-bold text-kidville-muted mb-1 block">Nome materiale</label>
                         <input
                             value={newMat.nome}
                             onChange={e => setNewMat(n => ({ ...n, nome: e.target.value }))}
                             placeholder="es. Bavaglini"
-                            className="w-full border-2 border-gray-100 rounded-xl px-3 py-2 text-sm focus:border-kidville-green outline-none" />
+                            className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 text-sm focus:border-kidville-green outline-none" />
                     </div>
 
                     {/* Unità + Soglie */}
                     <div className="grid grid-cols-3 gap-2 mb-4">
                         <div>
-                            <label className="text-xs text-gray-400 block mb-1">Unità</label>
+                            <label className="text-xs text-kidville-muted block mb-1">Unità</label>
                             <input value={newMat.unita} onChange={e => setNewMat(n => ({ ...n, unita: e.target.value }))}
-                                className="w-full border border-gray-100 rounded-lg px-2 py-1.5 text-sm" />
+                                className="w-full border border-kidville-line rounded-lg px-2 py-1.5 text-sm" />
                         </div>
                         <div>
                             <label className="text-xs text-kidville-warn block mb-1">🟡 Allerta</label>
                             <input type="number" value={newMat.livello_allerta}
                                 onChange={e => setNewMat(n => ({ ...n, livello_allerta: parseInt(e.target.value) || 1 }))}
-                                className="w-full border border-gray-100 rounded-lg px-2 py-1.5 text-sm text-center" />
+                                className="w-full border border-kidville-line rounded-lg px-2 py-1.5 text-sm text-center" />
                         </div>
                         <div>
                             <label className="text-xs text-kidville-error block mb-1">🔴 Urgente</label>
                             <input type="number" value={newMat.livello_emergenza}
                                 onChange={e => setNewMat(n => ({ ...n, livello_emergenza: parseInt(e.target.value) || 0 }))}
-                                className="w-full border border-gray-100 rounded-lg px-2 py-1.5 text-sm text-center" />
+                                className="w-full border border-kidville-line rounded-lg px-2 py-1.5 text-sm text-center" />
                         </div>
                     </div>
 
@@ -332,7 +335,7 @@ function LockerSettingsInner() {
                             <Save size={14} /> {saving === 'new' ? 'Salvataggio...' : 'Salva Materiale'}
                         </button>
                         <button onClick={() => { setShowAddForm(false); setAddError(''); }}
-                            className="px-4 py-2.5 rounded-xl border text-gray-500 text-sm">
+                            className="px-4 py-2.5 rounded-xl border text-kidville-muted text-sm">
                             Annulla
                         </button>
                     </div>

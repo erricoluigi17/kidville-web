@@ -150,7 +150,7 @@ export function OtpSignatureModal({
         <button
           onClick={onClose}
           aria-label="Chiudi"
-          className="absolute top-4 right-4 p-1.5 rounded-lg text-gray-400 hover:text-kidville-green hover:bg-kidville-cream transition-all"
+          className="absolute top-4 right-4 p-1.5 rounded-lg text-kidville-muted hover:text-kidville-green hover:bg-kidville-cream transition-all"
         >
           <X className="w-4 h-4" />
         </button>
@@ -173,7 +173,7 @@ export function OtpSignatureModal({
               <CheckCircle2 className="w-8 h-8 text-kidville-green" />
             </motion.div>
             <h3 className="text-lg font-semibold text-kidville-green">Modulo firmato!</h3>
-            <p className="text-sm text-gray-500 mt-1">
+            <p className="text-sm text-kidville-muted mt-1">
               La firma elettronica è stata registrata con successo.
             </p>
           </motion.div>
@@ -183,7 +183,7 @@ export function OtpSignatureModal({
               <Users className="w-6 h-6 text-kidville-green" />
             </div>
             <h3 className="text-lg font-semibold text-kidville-green">Firma congiunta</h3>
-            <p className="text-sm text-gray-500 mt-1.5">
+            <p className="text-sm text-kidville-muted mt-1.5">
               La prima firma è stata registrata. Inserisci l’email del <strong>secondo genitore</strong>:
               riceverà un codice per completare la firma.
             </p>
@@ -222,7 +222,7 @@ export function OtpSignatureModal({
                 </span>
               )}
             </h3>
-            <p className="flex items-center gap-1.5 text-sm text-gray-500 mt-1.5">
+            <p className="flex items-center gap-1.5 text-sm text-kidville-muted mt-1.5">
               <Mail className="w-3.5 h-3.5 flex-shrink-0" />
               Codice inviato a{' '}
               <span className="text-kidville-green/80">{signerEmail ?? 'la tua email'}</span>

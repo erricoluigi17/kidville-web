@@ -53,25 +53,33 @@ export default function ProspettoPage() {
 
   return (
     <div className="rounded-card bg-white p-5 shadow-sm">
-      <h2 className="font-barlow text-lg font-bold text-gray-800 mb-1 flex items-center gap-2">
+      <h2 className="font-barlow text-lg font-bold text-kidville-ink mb-1 flex items-center gap-2">
         <BarChart3 size={18} className="text-kidville-green" /> Prospetto valutazioni
       </h2>
-      <p className="font-maven text-xs text-gray-400 mb-4">
+      <p className="font-maven text-xs text-kidville-muted mb-3">
         Seleziona solo l&apos;alunno per vedere la panoramica di tutte le materie. Seleziona anche la materia per il dettaglio per obiettivo.
       </p>
 
+      {/* Banner conformità: la media è uno strumento docente, non ufficiale (DR) */}
+      <div className="mb-4 flex items-start gap-2.5 rounded-xl border border-kidville-info/20 bg-kidville-info-soft px-3.5 py-3">
+        <BarChart3 size={15} className="mt-0.5 shrink-0 text-kidville-info" />
+        <span className="font-maven text-[11.5px] leading-snug text-kidville-info">
+          <strong>Strumento di lavoro del docente.</strong> La media è indicativa e non ufficiale: non compare in pagella né nelle viste delle famiglie (O.M. 3/2025).
+        </span>
+      </div>
+
       {apiError && (
-        <div className="mb-3 flex items-center gap-2 rounded-card bg-red-50 px-3 py-2 font-maven text-sm text-red-600">
+        <div className="mb-3 flex items-center gap-2 rounded-card bg-kidville-error-soft px-3 py-2 font-maven text-sm text-kidville-error">
           <AlertTriangle size={14} /> {apiError}
         </div>
       )}
 
       <div className="grid grid-cols-2 gap-2 mb-4">
-        <select value={alunnoId} onChange={(e) => { setAlunnoId(e.target.value); setMateriaId(''); }} className="font-maven rounded-pill border border-gray-200 px-3 py-2 text-sm">
+        <select value={alunnoId} onChange={(e) => { setAlunnoId(e.target.value); setMateriaId(''); }} className="font-maven rounded-pill border border-kidville-line px-3 py-2 text-sm">
           <option value="">Alunno…</option>
           {alunni.map((a) => <option key={a.id} value={a.id}>{a.cognome} {a.nome}</option>)}
         </select>
-        <select value={materiaId} onChange={(e) => setMateriaId(e.target.value)} className="font-maven rounded-pill border border-gray-200 px-3 py-2 text-sm" disabled={!alunnoId}>
+        <select value={materiaId} onChange={(e) => setMateriaId(e.target.value)} className="font-maven rounded-pill border border-kidville-line px-3 py-2 text-sm" disabled={!alunnoId}>
           <option value="">Tutte le materie</option>
           {materie.map((m) => <option key={m.id} value={m.id}>{m.nome}</option>)}
         </select>
@@ -80,34 +88,34 @@ export default function ProspettoPage() {
       {/* ── Panoramica medie per tutte le materie ───────────── */}
       {alunnoId && !materiaId && panoramica && (
         panoramica.length === 0 ? (
-          <p className="font-maven text-sm text-gray-400">Nessuna valutazione registrata.</p>
+          <p className="font-maven text-sm text-kidville-muted">Nessuna valutazione registrata.</p>
         ) : (
           <div>
-            <p className="font-maven text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wide">Media per materia</p>
+            <p className="font-maven text-xs font-semibold text-kidville-muted mb-2 uppercase tracking-wide">Media per materia</p>
             <table className="w-full font-maven text-sm">
               <thead>
-                <tr className="border-b border-gray-100">
-                  <th className="text-left py-1.5 text-xs font-semibold text-gray-500">Materia</th>
-                  <th className="text-center py-1.5 text-xs font-semibold text-gray-500">Media</th>
-                  <th className="text-right py-1.5 text-xs font-semibold text-gray-500">Valutazioni</th>
+                <tr className="border-b border-kidville-line">
+                  <th className="text-left py-1.5 text-xs font-semibold text-kidville-muted">Materia</th>
+                  <th className="text-center py-1.5 text-xs font-semibold text-kidville-muted">Media</th>
+                  <th className="text-right py-1.5 text-xs font-semibold text-kidville-muted">Valutazioni</th>
                 </tr>
               </thead>
               <tbody>
                 {panoramica.map((v) => (
-                  <tr key={v.materiaId} className="border-b border-gray-50 hover:bg-gray-50 cursor-pointer"
+                  <tr key={v.materiaId} className="border-b border-kidville-line hover:bg-kidville-cream cursor-pointer"
                     onClick={() => setMateriaId(v.materiaId)}>
-                    <td className="py-2 text-gray-700">{v.nome}</td>
+                    <td className="py-2 text-kidville-ink">{v.nome}</td>
                     <td className="py-2 text-center">
                       {v.media !== null
                         ? <span className="font-bold text-kidville-green">{v.media.toFixed(2)}</span>
-                        : <span className="text-gray-300">—</span>}
+                        : <span className="text-kidville-muted">—</span>}
                     </td>
-                    <td className="py-2 text-right text-gray-500">{v.nValutazioni}</td>
+                    <td className="py-2 text-right text-kidville-muted">{v.nValutazioni}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-            <p className="font-maven text-[10px] text-gray-400 mt-2">Tocca una riga per vedere il dettaglio per obiettivo.</p>
+            <p className="font-maven text-[10px] text-kidville-muted mt-2">Tocca una riga per vedere il dettaglio per obiettivo.</p>
           </div>
         )
       )}
@@ -115,29 +123,29 @@ export default function ProspettoPage() {
       {/* ── Dettaglio singola materia ────────────────────────── */}
       {alunnoId && materiaId && (
         gruppi.length === 0 ? (
-          <p className="font-maven text-sm text-gray-400">Nessuna valutazione registrata per questa materia.</p>
+          <p className="font-maven text-sm text-kidville-muted">Nessuna valutazione registrata per questa materia.</p>
         ) : (
           <div className="space-y-4">
             {media !== null && (
               <div className="flex items-center justify-between rounded-card bg-kidville-green/5 border border-kidville-green/20 px-4 py-3">
-                <span className="font-maven text-sm text-gray-600">Media matematica (giudizi sintetici)</span>
+                <span className="font-maven text-sm text-kidville-ink">Media matematica (giudizi sintetici)</span>
                 <span className="font-barlow text-2xl font-bold text-kidville-green">{media.toFixed(2)}</span>
               </div>
             )}
             {gruppi.map((g) => (
-              <div key={g.obiettivo.id} className="rounded-card border border-gray-100 p-3">
-                <p className="font-maven text-sm font-semibold text-gray-800">
+              <div key={g.obiettivo.id} className="rounded-card border border-kidville-line p-3">
+                <p className="font-maven text-sm font-semibold text-kidville-ink">
                   {g.obiettivo.codice && <b className="text-kidville-green mr-1">{g.obiettivo.codice}</b>}
                   {g.obiettivo.descrizione}
                 </p>
                 <ul className="mt-2 space-y-1">
                   {g.valutazioni.map((v) => (
-                    <li key={v.id} className="flex items-center gap-2 font-maven text-xs text-gray-500">
+                    <li key={v.id} className="flex items-center gap-2 font-maven text-xs text-kidville-muted">
                       <span className="rounded-pill bg-kidville-green/10 px-2 py-0.5 text-kidville-green">
                         {v.giudizio_sintetico || 'descrittivo'}
                       </span>
                       <span className="capitalize">{v.tipo}</span>
-                      <span className="text-gray-300">{new Date(v.creato_il).toLocaleDateString('it-IT')}</span>
+                      <span className="text-kidville-muted">{new Date(v.creato_il).toLocaleDateString('it-IT')}</span>
                       {v.giudizio_testo && <span className="truncate">— {v.giudizio_testo}</span>}
                     </li>
                   ))}
@@ -148,7 +156,7 @@ export default function ProspettoPage() {
         )
       )}
 
-      {!alunnoId && <p className="font-maven text-sm text-gray-400">Seleziona un alunno.</p>}
+      {!alunnoId && <p className="font-maven text-sm text-kidville-muted">Seleziona un alunno.</p>}
     </div>
   );
 }

@@ -321,39 +321,39 @@ function TeacherDiaryInner() {
     }
 
     return (
-        <div className="w-full max-w-2xl mx-auto p-4 sm:p-6 pb-32">
+        <div className="mx-auto max-w-[460px] px-4 pt-5">
 
-            {/* Header */}
-            <div className="flex items-start justify-between mb-6">
-                <div>
-                    <h1 className="font-barlow font-black text-3xl text-kidville-green uppercase tracking-wide">Diario del Giorno</h1>
-                    <p className="font-maven text-gray-500 mt-1 flex items-center gap-2">
-                        <Users size={15} strokeWidth={1.5} />
-                        Sezione Girasoli • {new Date().toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' })}
-                    </p>
-                </div>
-                <div className="flex items-center gap-2">
-                    <button
-                        onClick={() => setShowAll(v => !v)}
-                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-maven font-semibold border transition-colors ${
-                            showAll
-                                ? 'bg-gray-50 border-gray-200 text-gray-500'
-                                : 'bg-kidville-green-light border-kidville-green/20 text-kidville-green'
-                        }`}
-                        title={showAll ? 'Sto mostrando tutti i bambini' : 'Sto mostrando solo i presenti'}
-                    >
-                        <Users size={12} strokeWidth={1.5} /> {showAll ? 'Tutti' : 'Solo presenti'}
-                    </button>
-                    {isOffline && (
-                        <div className="flex items-center gap-1.5 bg-kidville-warn-soft border border-kidville-warn/30 text-kidville-warn px-3 py-1.5 rounded-full text-xs font-maven">
-                            <WifiOff size={12} strokeWidth={1.5} /> Offline
-                        </div>
-                    )}
-                </div>
+            {/* Header verde (DR) */}
+            <div className="rounded-3xl bg-kidville-green px-5 py-5" style={{ boxShadow: '0 16px 34px -18px rgba(0,60,52,.6)' }}>
+                <p className="font-barlow text-[11px] font-bold uppercase tracking-[0.14em] text-kidville-yellow">In sezione</p>
+                <h1 className="font-barlow text-3xl font-black uppercase tracking-wide text-white">Diario del giorno</h1>
+                <p className="mt-1.5 font-maven text-xs capitalize text-white/80">
+                    Sezione Girasoli • {new Date().toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' })}
+                </p>
             </div>
 
-            {/* ── Griglia eventi ── */}
-            <div className="w-full bg-white/80 backdrop-blur-xl rounded-3xl p-4 shadow-sm border border-white/40">
+            {/* Controlli (filtro presenze + offline) */}
+            <div className="mt-3 flex items-center gap-2">
+                <button
+                    onClick={() => setShowAll(v => !v)}
+                    className={`flex items-center gap-1.5 rounded-pill border px-3 py-1.5 font-maven text-xs font-semibold transition-colors ${
+                        showAll
+                            ? 'border-kidville-line bg-white text-gray-500'
+                            : 'border-kidville-green/20 bg-kidville-green-soft text-kidville-green'
+                    }`}
+                    title={showAll ? 'Sto mostrando tutti i bambini' : 'Sto mostrando solo i presenti'}
+                >
+                    <Users size={12} strokeWidth={1.5} /> {showAll ? 'Tutti' : 'Solo presenti'}
+                </button>
+                {isOffline && (
+                    <div className="flex items-center gap-1.5 rounded-pill border border-kidville-warn/30 bg-kidville-warn-soft px-3 py-1.5 font-maven text-xs text-kidville-warn">
+                        <WifiOff size={12} strokeWidth={1.5} /> Offline
+                    </div>
+                )}
+            </div>
+
+            {/* ── Griglia eventi (6 routine) ── */}
+            <div className="mt-4 w-full rounded-3xl border border-kidville-line bg-white p-4 shadow-sm">
                 <p className="font-barlow font-bold text-kidville-green uppercase text-xs tracking-wide mb-3">Cosa vuoi registrare?</p>
                 <div className="grid grid-cols-3 gap-2">
                     {ALL_EVENT_TYPES.map(type => (
@@ -382,22 +382,22 @@ function TeacherDiaryInner() {
                         exit="exit"
                         className="w-full mt-4"
                     >
-                        {/* Header sezione con glassmorphism */}
-                        <div className="w-full bg-white/70 backdrop-blur-2xl rounded-3xl border border-white/30 shadow-xl overflow-hidden">
+                        {/* Header sezione (DR) */}
+                        <div className="w-full overflow-hidden rounded-3xl border border-kidville-line bg-white shadow-lg">
                             {/* Title bar */}
-                            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100/60">
+                            <div className="flex items-center justify-between px-5 py-4 border-b border-kidville-line">
                                 <div className="flex items-center gap-3">
                                     <div className={`w-10 h-10 rounded-2xl flex items-center justify-center text-xl ${cfg.color} border ${cfg.accentColor.split(' ').find(c => c.startsWith('border-')) ?? ''}`}>
                                         {cfg.emoji}
                                     </div>
                                     <div>
                                         <h2 className="font-barlow font-black text-lg text-kidville-green uppercase tracking-wide">{cfg.label}</h2>
-                                        <p className="font-maven text-[11px] text-gray-400">{students.length} bambini • {todayISO()}</p>
+                                        <p className="font-maven text-[11px] text-kidville-muted">{students.length} bambini • {todayISO()}</p>
                                     </div>
                                 </div>
                                 <button
                                     onClick={() => setSelectedEvent(null)}
-                                    className="w-8 h-8 rounded-xl bg-gray-100/80 hover:bg-gray-200/80 flex items-center justify-center text-gray-400 hover:text-gray-600 transition-colors"
+                                    className="w-8 h-8 rounded-xl bg-kidville-cream-dark hover:bg-kidville-cream flex items-center justify-center text-kidville-green transition-colors"
                                 >
                                     <X size={14} strokeWidth={1.5} />
                                 </button>
@@ -450,7 +450,7 @@ function TeacherDiaryInner() {
                                             variants={itemVariants}
                                             initial="hidden"
                                             animate="visible"
-                                            className="bg-white/80 backdrop-blur-xl rounded-2xl border border-white/40 shadow-sm px-4 py-3"
+                                            className="rounded-2xl border border-kidville-line bg-white shadow-sm px-4 py-3"
                                         >
                                             <div className="flex items-center gap-3 mb-3">
                                                 <div className="w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center font-barlow font-bold text-xs bg-kidville-cream text-kidville-green">
@@ -464,7 +464,7 @@ function TeacherDiaryInner() {
                                             <div className="flex items-center gap-1.5 mb-1.5">
                                                 {isInizio
                                                     ? <Moon size={12} className="text-kidville-info" strokeWidth={1.5} />
-                                                    : <Sun size={12} className="text-yellow-500" strokeWidth={1.5} />}
+                                                    : <Sun size={12} className="text-kidville-yellow-dark" strokeWidth={1.5} />}
                                                 <p className="font-maven text-xs text-gray-500">
                                                     {isInizio ? 'Si addormenta (inizio nanna)' : 'Si sveglia (fine nanna)'}
                                                 </p>
@@ -473,7 +473,7 @@ function TeacherDiaryInner() {
                                                 type="time"
                                                 value={(isInizio ? (state.orario_inizio as string) : (state.orario_fine as string)) ?? ''}
                                                 onChange={e => updateStudent(student.id, isInizio ? { orario_inizio: e.target.value } : { orario_fine: e.target.value })}
-                                                className={`w-full border-2 border-gray-200/60 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white/60 focus:outline-none focus:ring-2 transition-all ${isInizio ? 'focus:ring-blue-300/40 focus:border-blue-300/60' : 'focus:ring-yellow-300/40 focus:border-yellow-300/60'}`}
+                                                className={`w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:ring-2 transition-all ${isInizio ? 'focus:ring-kidville-info/40 focus:border-kidville-info/60' : 'focus:ring-kidville-yellow-dark/40 focus:border-kidville-yellow-dark/60'}`}
                                             />
                                         </motion.div>
                                     );
@@ -493,7 +493,7 @@ function TeacherDiaryInner() {
                                             variants={itemVariants}
                                             initial="hidden"
                                             animate="visible"
-                                            className="bg-white/80 backdrop-blur-xl rounded-2xl border border-white/40 shadow-sm px-4 py-3"
+                                            className="rounded-2xl border border-kidville-line bg-white shadow-sm px-4 py-3"
                                         >
                                             {/* Avatar + Nome */}
                                             <div className="flex items-center gap-3 mb-3">
@@ -571,12 +571,12 @@ function TeacherDiaryInner() {
                                     onChange={e => setNotaLibera(e.target.value)}
                                     rows={2}
                                     placeholder="Nota libera per i genitori (opzionale)…"
-                                    className="w-full border-2 border-gray-200/60 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white/60 focus:outline-none focus:ring-2 focus:ring-kidville-green/30 resize-none"
+                                    className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:ring-2 focus:ring-kidville-green/30 resize-none"
                                 />
                             </div>
 
                             {/* ── Footer salva ── */}
-                            <div className="px-4 py-3 border-t border-gray-100/60">
+                            <div className="px-4 py-3 border-t border-kidville-line">
                                 <button
                                     onClick={handleSave}
                                     disabled={isSaving}

@@ -95,7 +95,7 @@ export function MonthlyLockerTable({
 
     if (students.length === 0) {
         return (
-            <div className="flex flex-col items-center justify-center py-16 text-gray-500">
+            <div className="flex flex-col items-center justify-center py-16 text-kidville-muted">
                 <CalendarDays className="w-12 h-12 mb-3 opacity-30" />
                 <p className="text-sm">Nessun dato disponibile per {formatMonthLabel(month)}</p>
             </div>
@@ -127,7 +127,7 @@ export function MonthlyLockerTable({
                             {selectedMaterial === 'Tutti' ? 'Tutti i materiali' : selectedMaterial}
                         </span>
                         <ChevronDown
-                            className={`w-4 h-4 text-gray-500 transition-transform duration-300 ${dropdownOpen ? 'rotate-180' : ''}`}
+                            className={`w-4 h-4 text-kidville-muted transition-transform duration-300 ${dropdownOpen ? 'rotate-180' : ''}`}
                         />
                     </button>
 
@@ -172,19 +172,19 @@ export function MonthlyLockerTable({
                                 {!hideStudentColumn && (
                                     <th className="sticky left-0 z-10 bg-white/80 backdrop-blur-sm
                                                    text-left px-4 py-3 text-xs font-semibold
-                                                   text-gray-500 uppercase tracking-wider whitespace-nowrap">
+                                                   text-kidville-muted uppercase tracking-wider whitespace-nowrap">
                                         Studente
                                     </th>
                                 )}
                                 <th className="px-4 py-3 text-left text-xs font-semibold
-                                               text-gray-500 uppercase tracking-wider whitespace-nowrap">
+                                               text-kidville-muted uppercase tracking-wider whitespace-nowrap">
                                     Materiale
                                 </th>
                                 {days.map(d => (
                                     <th
                                         key={d}
                                         className="px-2 py-3 text-center text-xs font-semibold
-                                                   text-gray-500 uppercase tracking-wider w-8"
+                                                   text-kidville-muted uppercase tracking-wider w-8"
                                     >
                                         {d}
                                     </th>
@@ -222,7 +222,7 @@ export function MonthlyLockerTable({
 
                                         {/* Colonna materiale */}
                                         <td className="px-4 py-3 whitespace-nowrap">
-                                            <span className="text-xs font-medium text-gray-500 bg-kidville-cream
+                                            <span className="text-xs font-medium text-kidville-muted bg-kidville-cream
                                                             border border-white/10 rounded-full px-2.5 py-1">
                                                 {mat}
                                             </span>
@@ -249,7 +249,7 @@ export function MonthlyLockerTable({
                                                             />
                                                         )
                                                     ) : (
-                                                        <span className="text-gray-400 text-xs select-none">—</span>
+                                                        <span className="text-kidville-muted text-xs select-none">—</span>
                                                     )}
                                                 </td>
                                             );
@@ -265,15 +265,15 @@ export function MonthlyLockerTable({
                 <div className="flex items-center gap-6 px-4 py-3 border-t border-white/5">
                     <div className="flex items-center gap-1.5">
                         <CheckCircle2 className="w-4 h-4 text-kidville-success/90 drop-shadow-[0_0_6px_rgba(52,211,153,0.5)]" />
-                        <span className="text-xs text-gray-500">Portato</span>
+                        <span className="text-xs text-kidville-muted">Portato</span>
                     </div>
                     <div className="flex items-center gap-1.5">
                         <XCircle className="w-4 h-4 text-kidville-error/90 drop-shadow-[0_0_6px_rgba(244,63,94,0.5)]" />
-                        <span className="text-xs text-gray-500">Non portato</span>
+                        <span className="text-xs text-kidville-muted">Non portato</span>
                     </div>
                     <div className="flex items-center gap-1.5">
-                        <span className="text-gray-400 text-xs font-mono">—</span>
-                        <span className="text-xs text-gray-500">Nessun dato</span>
+                        <span className="text-kidville-muted text-xs font-mono">—</span>
+                        <span className="text-xs text-kidville-muted">Nessun dato</span>
                     </div>
                 </div>
             </div>

@@ -168,30 +168,36 @@ function TeacherLockerInner() {
 
     // ── Render ────────────────────────────────────────────────────────────────
     return (
-        <div className="max-w-2xl mx-auto p-4 sm:p-6">
-            {/* Header */}
-            <div className="flex items-center justify-between mb-5">
-                <h1 className="font-barlow font-black text-3xl text-kidville-green uppercase flex items-center gap-2">
-                    <Package size={28} /> Armadietto
-                </h1>
-                <div className="flex items-center gap-2">
-                    <Link href={settingsHref}
-                        className="p-2 rounded-xl text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
-                        title="Impostazioni materiali">
-                        <Settings size={18} />
-                    </Link>
-                    <button
-                        id="refresh-btn"
-                        onClick={() => { fetchCarico(); if (view === 'consumo') fetchConsumo(); if (view === 'mensile') fetchMensile(month); }}
-                        className="p-2 border rounded-xl text-gray-400 hover:text-gray-600"
-                    >
-                        <RefreshCw size={18} />
-                    </button>
+        <div className="mx-auto max-w-[460px] px-4 pt-5">
+            {/* Header verde (DR) */}
+            <div className="rounded-3xl bg-kidville-green px-5 py-5" style={{ boxShadow: '0 16px 34px -18px rgba(0,60,52,.6)' }}>
+                <div className="flex items-start justify-between gap-3">
+                    <div>
+                        <p className="font-barlow text-[11px] font-bold uppercase tracking-[0.14em] text-kidville-yellow">Strumenti</p>
+                        <h1 className="flex items-center gap-2 font-barlow text-3xl font-black uppercase tracking-wide text-white">
+                            <Package size={26} className="text-kidville-yellow" /> Armadietto
+                        </h1>
+                        <p className="mt-1.5 font-maven text-xs text-white/80">Scorte e consegne · Sezione Girasoli</p>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                        <Link href={settingsHref}
+                            className="flex h-9 w-9 items-center justify-center rounded-full bg-white/15 text-white transition-colors hover:bg-white/25"
+                            title="Impostazioni materiali">
+                            <Settings size={17} />
+                        </Link>
+                        <button
+                            id="refresh-btn"
+                            onClick={() => { fetchCarico(); if (view === 'consumo') fetchConsumo(); if (view === 'mensile') fetchMensile(month); }}
+                            className="flex h-9 w-9 items-center justify-center rounded-full bg-white/15 text-white transition-colors hover:bg-white/25"
+                        >
+                            <RefreshCw size={17} />
+                        </button>
+                    </div>
                 </div>
             </div>
 
             {/* Toggle 3 viste */}
-            <div className="flex bg-zinc-100 rounded-2xl p-1 gap-1 mb-6">
+            <div className="mt-5 mb-6 flex gap-1 rounded-2xl bg-white p-1 shadow-sm">
                 {([
                     { key: 'carico',  icon: <Truck size={14} />,    label: 'Carico Genitore' },
                     { key: 'consumo', icon: <MinusCircle size={14} />, label: 'Consumo' },
@@ -202,7 +208,7 @@ function TeacherLockerInner() {
                         id={`view-${key}-btn`}
                         onClick={() => setView(key)}
                         className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-xs font-semibold transition-all
-                            ${view === key ? 'bg-white shadow text-kidville-green' : 'text-gray-500 hover:text-kidville-green'}`}
+                            ${view === key ? 'bg-white shadow text-kidville-green' : 'text-kidville-muted hover:text-kidville-green'}`}
                     >
                         {icon} {label}
                     </button>
@@ -221,24 +227,24 @@ function TeacherLockerInner() {
                     </button>
 
                     {caricoLoading ? (
-                        <div className="text-center py-10 text-gray-400">Caricamento...</div>
+                        <div className="text-center py-10 text-kidville-muted">Caricamento...</div>
                     ) : (
                         <div className="space-y-3">
                             {caricoStudents.map(student => {
                                 const isOpen = expandedCarico === student.id;
                                 const todayCount = student.inventario.length;
                                 return (
-                                    <div key={student.id} className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                                    <div key={student.id} className="bg-white rounded-2xl shadow-sm border border-kidville-line overflow-hidden">
                                         <button
                                             onClick={() => setExpandedCarico(isOpen ? null : student.id)}
-                                            className="w-full flex items-center gap-3 p-4 hover:bg-gray-50"
+                                            className="w-full flex items-center gap-3 p-4 hover:bg-kidville-cream"
                                         >
                                             <div className="w-10 h-10 rounded-full bg-kidville-cream text-kidville-green flex items-center justify-center font-black text-sm">
                                                 {student.nome[0]}{student.cognome[0]}
                                             </div>
                                             <div className="flex-1 text-left">
                                                 <p className="font-maven font-bold text-kidville-green">{student.nome} {student.cognome}</p>
-                                                <p className="text-xs text-gray-400">
+                                                <p className="text-xs text-kidville-muted">
                                                     {todayCount > 0 ? `${todayCount} consegne oggi` : 'Nessuna consegna oggi'}
                                                 </p>
                                             </div>
@@ -247,14 +253,14 @@ function TeacherLockerInner() {
                                                     ✓ {todayCount}
                                                 </span>
                                             )}
-                                            {isOpen ? <ChevronDown size={18} className="text-gray-300" /> : <ChevronRight size={18} className="text-gray-300" />}
+                                            {isOpen ? <ChevronDown size={18} className="text-kidville-muted" /> : <ChevronRight size={18} className="text-kidville-muted" />}
                                         </button>
 
                                         {isOpen && (() => {
                                             // Recupera lo stock totale per questo alunno dal tab Consumo (già caricato)
                                             const studentStocks = consumoStudents.find(s => s.id === student.id)?.stocks ?? [];
                                             return (
-                                                <div className="p-4 bg-gray-50/50 border-t border-gray-100 space-y-3">
+                                                <div className="p-4 bg-kidville-cream/50 border-t border-kidville-line space-y-3">
 
                                                     {/* Stock totale attuale */}
                                                     {studentStocks.length > 0 && (
@@ -262,7 +268,7 @@ function TeacherLockerInner() {
                                                             <p className="text-[10px] font-bold text-kidville-green uppercase tracking-wide mb-1.5">📦 Stock Totale Attuale</p>
                                                             <div className="flex gap-3 flex-wrap">
                                                                 {studentStocks.map((s: any) => (
-                                                                    <span key={s.materiale} className="text-xs font-maven font-semibold text-gray-700">
+                                                                    <span key={s.materiale} className="text-xs font-maven font-semibold text-kidville-ink">
                                                                         {s.materiale}: <strong className="text-kidville-green">{s.stock} pz</strong>
                                                                     </span>
                                                                 ))}
@@ -283,14 +289,14 @@ function TeacherLockerInner() {
                                                                         </span>
                                                                         <div className="text-right">
                                                                             <span className="font-barlow font-black text-kidville-success block">+{item.quantita} pz</span>
-                                                                            <span className="text-[10px] text-gray-400">Totale: {matStock} pz</span>
+                                                                            <span className="text-[10px] text-kidville-muted">Totale: {matStock} pz</span>
                                                                         </div>
                                                                     </div>
                                                                 );
                                                             })}
                                                         </div>
                                                     ) : (
-                                                        <p className="text-center text-gray-400 text-sm py-2">Nessuna consegna registrata oggi</p>
+                                                        <p className="text-center text-kidville-muted text-sm py-2">Nessuna consegna registrata oggi</p>
                                                     )}
 
                                                     <button
@@ -329,35 +335,35 @@ function TeacherLockerInner() {
                     </div>
 
                     {consumoLoading ? (
-                        <div className="text-center py-10 text-gray-400">Caricamento stock...</div>
+                        <div className="text-center py-10 text-kidville-muted">Caricamento stock...</div>
                     ) : (
                         <div className="space-y-3">
                             {consumoStudents.map(student => {
                                 const isOpen = expandedConsumo === student.id;
                                 const hasStock = student.stocks.some(s => s.stock > 0);
                                 return (
-                                    <div key={student.id} className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                                    <div key={student.id} className="bg-white rounded-2xl shadow-sm border border-kidville-line overflow-hidden">
                                         <button
                                             onClick={() => setExpandedConsumo(isOpen ? null : student.id)}
-                                            className="w-full flex items-center gap-3 p-4 hover:bg-gray-50"
+                                            className="w-full flex items-center gap-3 p-4 hover:bg-kidville-cream"
                                         >
                                             <div className="w-10 h-10 rounded-full bg-kidville-cream text-kidville-green flex items-center justify-center font-black text-sm">
                                                 {student.nome[0]}{student.cognome[0]}
                                             </div>
                                             <div className="flex-1 text-left">
                                                 <p className="font-maven font-bold text-kidville-green">{student.nome} {student.cognome}</p>
-                                                <p className="text-xs text-gray-400">{student.stocks.length} materiali in stock</p>
+                                                <p className="text-xs text-kidville-muted">{student.stocks.length} materiali in stock</p>
                                             </div>
                                             {!hasStock && (
-                                                <span className="bg-red-100 text-kidville-error text-[10px] font-bold px-2 py-0.5 rounded-full">ESAURITO</span>
+                                                <span className="bg-kidville-error-soft text-kidville-error text-[10px] font-bold px-2 py-0.5 rounded-full">ESAURITO</span>
                                             )}
-                                            {isOpen ? <ChevronDown size={18} className="text-gray-300" /> : <ChevronRight size={18} className="text-gray-300" />}
+                                            {isOpen ? <ChevronDown size={18} className="text-kidville-muted" /> : <ChevronRight size={18} className="text-kidville-muted" />}
                                         </button>
 
                                         {isOpen && (
-                                            <div className="p-4 bg-gray-50/50 border-t border-gray-100 space-y-2">
+                                            <div className="p-4 bg-kidville-cream/50 border-t border-kidville-line space-y-2">
                                                 {student.stocks.length === 0 ? (
-                                                    <p className="text-center text-gray-400 text-sm py-3">Nessun materiale in stock</p>
+                                                    <p className="text-center text-kidville-muted text-sm py-3">Nessun materiale in stock</p>
                                                 ) : student.stocks.map(item => {
                                                     const isFormOpen = consumoForm?.sid === student.id && consumoForm?.mat === item.materiale;
                                                     return (
@@ -371,24 +377,24 @@ function TeacherLockerInner() {
                                                                 }}
                                                                 className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border-2 transition-all
                                                                     ${isFormOpen
-                                                                        ? 'border-orange-300 bg-kidville-warn-soft'
+                                                                        ? 'border-kidville-warn bg-kidville-warn-soft'
                                                                         : item.stock === 0
-                                                                            ? 'border-red-100 bg-red-50 opacity-60'
-                                                                            : 'border-gray-100 bg-white hover:border-kidville-warn/30 hover:bg-kidville-warn-soft/50'}`}
+                                                                            ? 'border-kidville-error/20 bg-kidville-error-soft opacity-60'
+                                                                            : 'border-kidville-line bg-white hover:border-kidville-warn/30 hover:bg-kidville-warn-soft/50'}`}
                                                             >
                                                                 <span className="font-maven font-semibold text-sm text-kidville-green">{item.materiale}</span>
                                                                 <div className="flex items-center gap-2">
                                                                     <span className={`font-barlow font-black text-lg ${item.stock === 0 ? 'text-kidville-error' : 'text-kidville-green'}`}>
                                                                         {item.stock} pz
                                                                     </span>
-                                                                    <MinusCircle size={18} className={item.stock > 0 ? 'text-kidville-warn' : 'text-gray-300'} />
+                                                                    <MinusCircle size={18} className={item.stock > 0 ? 'text-kidville-warn' : 'text-kidville-muted'} />
                                                                 </div>
                                                             </button>
 
                                                             {/* Form consumo inline */}
                                                             {isFormOpen && (
                                                                 <div className="mt-1 px-4 py-3 bg-kidville-warn-soft border border-kidville-warn/30 rounded-xl space-y-3">
-                                                                    <p className="text-xs text-orange-700 font-maven">
+                                                                    <p className="text-xs text-kidville-warn font-maven">
                                                                         Quante unità di <strong>{item.materiale}</strong> hai utilizzato?
                                                                     </p>
                                                                     <div className="flex items-center gap-3">
@@ -404,11 +410,11 @@ function TeacherLockerInner() {
                                                                         <button
                                                                             onClick={handleConsumo}
                                                                             disabled={consumoSaving || consumoQty > item.stock}
-                                                                            className="flex-1 h-9 bg-kidville-warn text-white rounded-xl font-barlow font-black text-sm disabled:opacity-50 hover:bg-orange-600 active:scale-95 transition-all"
+                                                                            className="flex-1 h-9 bg-kidville-warn text-white rounded-xl font-barlow font-black text-sm disabled:opacity-50 hover:bg-kidville-warn-dark active:scale-95 transition-all"
                                                                         >
                                                                             {consumoSaving ? '...' : '✓ Conferma'}
                                                                         </button>
-                                                                        <button onClick={() => setConsumoForm(null)} className="text-gray-400 text-xs">Annulla</button>
+                                                                        <button onClick={() => setConsumoForm(null)} className="text-kidville-muted text-xs">Annulla</button>
                                                                     </div>
                                                                 </div>
                                                             )}
@@ -430,19 +436,19 @@ function TeacherLockerInner() {
                 <div className="bg-white rounded-3xl p-5">
                     <div className="flex items-center justify-between mb-5">
                         <button id="prev-month-btn" onClick={() => setMonth(m => shiftMonth(m, -1))}
-                            className="p-2 rounded-xl text-gray-500 hover:text-kidville-green hover:bg-kidville-cream transition-all">
+                            className="p-2 rounded-xl text-kidville-muted hover:text-kidville-green hover:bg-kidville-cream transition-all">
                             <ChevronLeft size={18} />
                         </button>
                         <span className="text-sm font-semibold text-kidville-green/70">Consegne mensili</span>
                         <button id="next-month-btn" onClick={() => setMonth(m => shiftMonth(m, 1))}
-                            className="p-2 rounded-xl text-gray-500 hover:text-kidville-green hover:bg-kidville-cream transition-all">
+                            className="p-2 rounded-xl text-kidville-muted hover:text-kidville-green hover:bg-kidville-cream transition-all">
                             <ChevronRightIcon size={18} />
                         </button>
                     </div>
                     {mensileLoading ? (
                         <div className="flex items-center justify-center py-16 gap-3">
                             <div className="w-5 h-5 border-2 border-kidville-green/30 border-t-kidville-green rounded-full animate-spin" />
-                            <span className="text-gray-500 text-sm">Caricamento...</span>
+                            <span className="text-kidville-muted text-sm">Caricamento...</span>
                         </div>
                     ) : (
                         <MonthlyLockerTable students={mensileStudents} month={month} hideStudentColumn={false} />

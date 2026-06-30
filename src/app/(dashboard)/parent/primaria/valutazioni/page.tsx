@@ -12,6 +12,23 @@ interface MateriaVoce {
   materiaId: string; nome: string; valutazioni: ValBreve[];
 }
 
+// Colore per giudizio sintetico (DR VotiTab GIUDIZIO_STYLE). Copre la scala a 6
+// livelli e quella O.M. 3/2025 a 4 livelli. Solo giudizi, mai numeri.
+const GIUDIZIO_TINT: Record<string, string> = {
+  'Ottimo': 'bg-kidville-success-soft text-kidville-success',
+  'Distinto': 'bg-kidville-green-soft text-kidville-green',
+  'Buono': 'bg-kidville-info-soft text-kidville-info',
+  'Discreto': 'bg-kidville-warn-soft text-kidville-warn',
+  'Sufficiente': 'bg-kidville-yellow-soft text-kidville-yellow-dark',
+  'Non sufficiente': 'bg-kidville-error-soft text-kidville-error',
+  'Avanzato': 'bg-kidville-success-soft text-kidville-success',
+  'Intermedio': 'bg-kidville-info-soft text-kidville-info',
+  'Base': 'bg-kidville-warn-soft text-kidville-warn',
+  'In via di prima acquisizione': 'bg-kidville-error-soft text-kidville-error',
+};
+const giudizioCls = (g: string | null) =>
+  (g && GIUDIZIO_TINT[g]) || 'bg-kidville-green/10 text-kidville-green';
+
 function ValutazioniGenitore() {
   const { parentId, studentId, ready } = useParentIdentity();
   const [materie, setMaterie] = useState<MateriaVoce[]>([]);
@@ -66,17 +83,17 @@ function ValutazioniGenitore() {
                     <div key={v.id} className="px-4 py-3">
                       <div className="flex items-center gap-2 mb-1">
                         {v.giudizio_sintetico && (
-                          <span className="rounded-full bg-kidville-green/10 px-2.5 py-0.5 font-maven text-xs font-semibold text-kidville-green">
+                          <span className={`rounded-full px-2.5 py-0.5 font-maven text-xs font-semibold ${giudizioCls(v.giudizio_sintetico)}`}>
                             {v.giudizio_sintetico}
                           </span>
                         )}
-                        <span className="font-maven text-xs capitalize text-gray-500">{v.tipo}</span>
-                        <span className="font-maven text-xs text-gray-300 ml-auto">
+                        <span className="font-maven text-xs capitalize text-kidville-muted">{v.tipo}</span>
+                        <span className="font-maven text-xs text-kidville-muted ml-auto">
                           {new Date(v.creato_il).toLocaleDateString('it-IT')}
                         </span>
                       </div>
-                      {v.argomento && <p className="font-maven text-xs text-gray-500">{v.argomento}</p>}
-                      {v.giudizio_testo && <p className="font-maven text-xs text-gray-600 mt-1 italic">{v.giudizio_testo}</p>}
+                      {v.argomento && <p className="font-maven text-xs text-kidville-muted">{v.argomento}</p>}
+                      {v.giudizio_testo && <p className="font-maven text-xs text-kidville-muted mt-1 italic">{v.giudizio_testo}</p>}
                     </div>
                   ))}
                 </div>
@@ -91,7 +108,7 @@ function ValutazioniGenitore() {
 
 export default function ValutazioniGenitorePage() {
   return (
-    <Suspense fallback={<div className="p-8 font-maven text-gray-400">Caricamento…</div>}>
+    <Suspense fallback={<div className="p-8 font-maven text-kidville-muted">Caricamento…</div>}>
       <ValutazioniGenitore />
     </Suspense>
   );

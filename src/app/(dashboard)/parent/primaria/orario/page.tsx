@@ -44,9 +44,9 @@ function OrarioGenitore() {
       </div>
 
       {loading ? (
-        <p className="font-maven text-sm text-gray-400">Caricamento…</p>
+        <p className="font-maven text-sm text-kidville-muted">Caricamento…</p>
       ) : campanelle.length === 0 ? (
-        <p className="font-maven text-sm text-gray-400">Orario non ancora pubblicato.</p>
+        <p className="font-maven text-sm text-kidville-muted">Orario non ancora pubblicato.</p>
       ) : (
         <div className="space-y-4">
           {giorniAttivi.map((g) => {
@@ -59,10 +59,10 @@ function OrarioGenitore() {
                     const v = voce(g, c.id);
                     return (
                       <li key={c.id} className="flex items-center justify-between gap-3 py-2">
-                        <span className="font-maven text-xs text-gray-400 w-24 shrink-0">
+                        <span className="font-maven text-xs text-kidville-muted w-24 shrink-0">
                           {c.ora_inizio?.slice(0, 5) ?? '—'}{c.ora_fine ? `–${c.ora_fine.slice(0, 5)}` : ''}
                         </span>
-                        <span className="font-maven text-sm text-gray-700 flex-1">
+                        <span className="font-maven text-sm text-kidville-ink flex-1">
                           {v?.materie?.nome ?? (c.tipo && c.tipo !== 'lezione' ? c.tipo : '—')}
                         </span>
                       </li>
@@ -80,7 +80,7 @@ function OrarioGenitore() {
 
 export default function OrarioGenitorePage() {
   return (
-    <Suspense fallback={<div className="p-8 font-maven text-gray-400">Caricamento…</div>}>
+    <Suspense fallback={<div className="p-8 font-maven text-kidville-muted">Caricamento…</div>}>
       <OrarioGenitore />
     </Suspense>
   );

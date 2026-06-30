@@ -92,7 +92,7 @@ const priorityConfig = {
 
 const statusConfig = {
     todo: { label: 'Da Fare', dot: 'bg-kidville-muted', bar: 'bg-kidville-cream text-kidville-muted' },
-    in_progress: { label: 'In Corso', dot: 'bg-kidville-warn', bar: 'bg-amber-55 text-kidville-warn border-kidville-warn/30' },
+    in_progress: { label: 'In Corso', dot: 'bg-kidville-warn', bar: 'bg-kidville-warn-soft text-kidville-warn border-kidville-warn/30' },
     completed: { label: 'Da Controllare', dot: 'bg-kidville-info', bar: 'bg-kidville-info-soft text-kidville-info border-kidville-info/30' },
     approved: { label: 'Completato', dot: 'bg-kidville-success', bar: 'bg-kidville-success-soft text-kidville-success border-kidville-success/30' }
 };

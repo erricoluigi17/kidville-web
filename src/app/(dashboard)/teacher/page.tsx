@@ -181,7 +181,7 @@ function TeacherDashboardInner() {
                 <span className={`flex h-7 w-7 items-center justify-center rounded-full ${on ? 'bg-kidville-green text-kidville-yellow' : 'bg-kidville-cream-dark text-kidville-green'}`}>
                   <Users size={15} />
                 </span>
-                <span className={`font-barlow text-sm font-extrabold uppercase ${on ? 'text-kidville-green' : 'text-gray-500'}`}>{s}</span>
+                <span className={`font-barlow text-sm font-extrabold uppercase ${on ? 'text-kidville-green' : 'text-kidville-muted'}`}>{s}</span>
               </button>
             );
           })}
@@ -189,8 +189,8 @@ function TeacherDashboardInner() {
       )}
 
       {isPrimariaOnly && (
-        <div className="mt-5 rounded-2xl border border-dashed border-gray-300 bg-white/60 p-5 text-center">
-          <p className="font-maven text-sm text-gray-500">
+        <div className="mt-5 rounded-2xl border border-dashed border-kidville-line bg-white/60 p-5 text-center">
+          <p className="font-maven text-sm text-kidville-muted">
             Nessuna attività infanzia/nido per il tuo profilo.{' '}
             <Link href={withUser('/teacher/primaria')} className="font-semibold text-kidville-green underline">Vai alla Primaria</Link>
           </p>
@@ -234,7 +234,7 @@ function TeacherDashboardInner() {
                         </span>
                       </div>
                       <h3 className="mb-0.5 truncate font-barlow text-base font-extrabold uppercase leading-tight text-kidville-green">{a.titolo}</h3>
-                      <p className="line-clamp-2 font-maven text-xs leading-snug text-gray-600">{a.contenuto}</p>
+                      <p className="line-clamp-2 font-maven text-xs leading-snug text-kidville-ink">{a.contenuto}</p>
                       {a.stats && (
                         <div className="mt-2 flex flex-wrap items-center gap-1.5">
                           <span className="inline-flex items-center gap-1 rounded-pill bg-kidville-success-soft px-2 py-0.5 font-barlow text-[10px] font-extrabold uppercase text-kidville-success">
@@ -311,7 +311,7 @@ function TeacherDashboardInner() {
             </span>
             <div className="min-w-0 flex-1">
               <div className={`font-barlow text-lg font-black uppercase leading-none ${appelloFatto ? 'text-kidville-green' : 'text-white'}`}>Appello del giorno</div>
-              <div className={`mt-1 font-maven text-xs ${appelloFatto ? 'text-gray-600' : 'text-white/80'}`}>
+              <div className={`mt-1 font-maven text-xs ${appelloFatto ? 'text-kidville-ink' : 'text-white/80'}`}>
                 {appelloFatto ? `${presenti} presenti · ${assenti} assenti` : `Non ancora registrato · ${studentCount || ''} bambini`}
               </div>
             </div>
@@ -335,7 +335,7 @@ function TeacherDashboardInner() {
         {loading ? (
           <div className="grid grid-cols-2 gap-3">
             {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="h-28 animate-pulse rounded-2xl border border-gray-100 bg-white/60" />
+              <div key={i} className="h-28 animate-pulse rounded-2xl border border-kidville-line bg-white/60" />
             ))}
           </div>
         ) : (
@@ -364,7 +364,7 @@ function TeacherDashboardInner() {
                   </span>
                   <span className="font-barlow text-[10px] font-bold uppercase tracking-[0.08em]" style={{ color: s.tint }}>{s.eyebrow}</span>
                   <span className="font-barlow text-[15px] font-extrabold uppercase leading-tight text-kidville-green">{s.title}</span>
-                  <span className="mt-0.5 font-maven text-[11.5px] leading-snug text-gray-600">{detail}</span>
+                  <span className="mt-0.5 font-maven text-[11.5px] leading-snug text-kidville-ink">{detail}</span>
                 </Link>
               );
             })}
@@ -384,7 +384,7 @@ function TeacherDashboardInner() {
             <CalendarDays size={22} />
           </span>
           <div className="font-barlow text-base font-extrabold uppercase text-kidville-green">Agenda della giornata</div>
-          <p className="mx-auto mt-1 max-w-[260px] font-maven text-[12.5px] leading-snug text-gray-500">
+          <p className="mx-auto mt-1 max-w-[260px] font-maven text-[12.5px] leading-snug text-kidville-muted">
             Calendario eventi e impegni della sezione · <span className="font-semibold text-kidville-yellow-dark">in arrivo</span>.
           </p>
         </div>
@@ -400,7 +400,7 @@ function TeacherDashboardInner() {
 
 export default function TeacherDashboardPage() {
   return (
-    <Suspense fallback={<div className="p-8 font-maven text-gray-400">Caricamento…</div>}>
+    <Suspense fallback={<div className="p-8 font-maven text-kidville-muted">Caricamento…</div>}>
       <TeacherDashboardInner />
     </Suspense>
   );

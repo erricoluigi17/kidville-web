@@ -21,7 +21,7 @@ function getSemaforoColor(qty: number, gialla: any, rossa: any) {
     const sogliaGialla = parseInt(gialla) || 5;
     const sogliaRossa = parseInt(rossa) || 2;
 
-    if (qty <= sogliaRossa) return { bg: 'bg-red-50', border: 'border-red-200', text: 'text-red-700', bar: 'bg-red-500', label: '🔴 Esaurito' };
+    if (qty <= sogliaRossa) return { bg: 'bg-kidville-error-soft', border: 'border-kidville-error/25', text: 'text-kidville-error', bar: 'bg-kidville-error-soft0', label: '🔴 Esaurito' };
     if (qty <= sogliaGialla) return { bg: 'bg-kidville-warn-soft', border: 'border-kidville-warn/30', text: 'text-kidville-warn', bar: 'bg-kidville-warn', label: '🟡 In esaurimento' };
     return { bg: 'bg-kidville-success-soft', border: 'border-kidville-success/30', text: 'text-kidville-success', bar: 'bg-kidville-success-soft0', label: '🟢 Ok' };
 }

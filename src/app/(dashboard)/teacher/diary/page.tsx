@@ -315,7 +315,7 @@ function TeacherDiaryInner() {
         return (
             <div className="max-w-2xl mx-auto p-4 sm:p-6 flex flex-col items-center justify-center min-h-[60vh] gap-4">
                 <div className="w-10 h-10 border-4 border-kidville-green/30 border-t-kidville-green rounded-full animate-spin" />
-                <p className="font-maven text-gray-500">Caricamento alunni da Supabase...</p>
+                <p className="font-maven text-kidville-muted">Caricamento alunni da Supabase...</p>
             </div>
         );
     }
@@ -338,7 +338,7 @@ function TeacherDiaryInner() {
                     onClick={() => setShowAll(v => !v)}
                     className={`flex items-center gap-1.5 rounded-pill border px-3 py-1.5 font-maven text-xs font-semibold transition-colors ${
                         showAll
-                            ? 'border-kidville-line bg-white text-gray-500'
+                            ? 'border-kidville-line bg-white text-kidville-muted'
                             : 'border-kidville-green/20 bg-kidville-green-soft text-kidville-green'
                     }`}
                     title={showAll ? 'Sto mostrando tutti i bambini' : 'Sto mostrando solo i presenti'}
@@ -465,7 +465,7 @@ function TeacherDiaryInner() {
                                                 {isInizio
                                                     ? <Moon size={12} className="text-kidville-info" strokeWidth={1.5} />
                                                     : <Sun size={12} className="text-kidville-yellow-dark" strokeWidth={1.5} />}
-                                                <p className="font-maven text-xs text-gray-500">
+                                                <p className="font-maven text-xs text-kidville-muted">
                                                     {isInizio ? 'Si addormenta (inizio nanna)' : 'Si sveglia (fine nanna)'}
                                                 </p>
                                             </div>
@@ -601,7 +601,7 @@ function TeacherDiaryInner() {
                     transition={{ delay: 0.1, duration: 0.3 }}
                     className="mt-6 text-center py-12"
                 >
-                    <p className="font-maven text-gray-400 text-sm">
+                    <p className="font-maven text-kidville-muted text-sm">
                         👆 Seleziona un evento per iniziare a compilare il diario
                     </p>
                 </motion.div>

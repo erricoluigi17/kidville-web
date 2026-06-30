@@ -29,10 +29,10 @@ const KV = {
 
 const STATUS_CONFIG: Record<AttendanceStatus, { short: string; bg: string; text: string; dot: string }> = {
     presente:          { short: '✓', bg: 'bg-kidville-success-soft', text: 'text-kidville-success', dot: 'bg-kidville-success-soft0' },
-    assente:           { short: '✗', bg: 'bg-red-100',     text: 'text-red-600',     dot: 'bg-red-400' },
+    assente:           { short: '✗', bg: 'bg-kidville-error-soft',     text: 'text-kidville-error',     dot: 'bg-kidville-error' },
     ritardo:           { short: 'R', bg: 'bg-kidville-warn-soft',   text: 'text-kidville-warn',   dot: 'bg-kidville-warn' },
     uscita_anticipata: { short: 'U', bg: 'bg-kidville-info-soft',    text: 'text-kidville-info',    dot: 'bg-blue-400' },
-    nessun_dato:       { short: '·', bg: '',               text: 'text-gray-300',    dot: 'bg-gray-200' },
+    nessun_dato:       { short: '·', bg: '',               text: 'text-kidville-muted',    dot: 'bg-kidville-cream-dark' },
 };
 
 const GIORNI = ['Dom','Lun','Mar','Mer','Gio','Ven','Sab'];
@@ -103,12 +103,12 @@ function Cell({ record, isWeekend }: { record?: MonthlyAttendanceRecord; isWeeke
     const ora = s === 'ritardo' ? hhmm(record?.orario_entrata) : s === 'uscita_anticipata' ? hhmm(record?.orario_uscita) : '';
     const title = ora ? `${s === 'ritardo' ? 'Entrata' : 'Uscita'} ${ora}` : undefined;
     return (
-        <td className={`p-0 border-b border-gray-100 ${isWeekend ? 'bg-gray-50/60' : ''}`} style={{ width: 38 }} title={title}>
+        <td className={`p-0 border-b border-kidville-line ${isWeekend ? 'bg-kidville-cream' : ''}`} style={{ width: 38 }} title={title}>
             <div className="flex flex-col items-center justify-center" style={{ height: 40 }}>
                 <span className={`text-[11px] font-black w-6 h-6 rounded-full flex items-center justify-center ${s !== 'nessun_dato' ? `${cfg.bg} ${cfg.text}` : cfg.text}`}>
                     {cfg.short}
                 </span>
-                {ora && <span className="text-[8px] leading-none text-gray-500 mt-0.5">{ora}</span>}
+                {ora && <span className="text-[8px] leading-none text-kidville-muted mt-0.5">{ora}</span>}
             </div>
         </td>
     );
@@ -296,16 +296,16 @@ export function MonthlyAttendanceTable({ sezione = 'Girasoli' }: { sezione?: str
             {/* ── Header ── */}
             <div className="flex items-center justify-between flex-wrap gap-3">
                 <div className="flex items-center gap-2">
-                    <button onClick={prevMonth} className="w-9 h-9 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 flex items-center justify-center text-gray-500 hover:text-kidville-green transition-all shadow-sm">
+                    <button onClick={prevMonth} className="w-9 h-9 rounded-xl border border-kidville-line bg-white hover:bg-kidville-cream flex items-center justify-center text-kidville-muted hover:text-kidville-green transition-all shadow-sm">
                         <ChevronLeft size={16} />
                     </button>
                     <div className="px-2">
                         <h2 className="font-barlow font-black text-2xl uppercase tracking-wide" style={{ color: KV.green }}>
                             {MESI[month - 1]}
                         </h2>
-                        <p className="font-maven text-xs text-gray-400">{year}</p>
+                        <p className="font-maven text-xs text-kidville-muted">{year}</p>
                     </div>
-                    <button onClick={nextMonth} className="w-9 h-9 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 flex items-center justify-center text-gray-500 hover:text-kidville-green transition-all shadow-sm">
+                    <button onClick={nextMonth} className="w-9 h-9 rounded-xl border border-kidville-line bg-white hover:bg-kidville-cream flex items-center justify-center text-kidville-muted hover:text-kidville-green transition-all shadow-sm">
                         <ChevronRight size={16} />
                     </button>
                 </div>
@@ -317,7 +317,7 @@ export function MonthlyAttendanceTable({ sezione = 'Girasoli' }: { sezione?: str
                             <span className="font-maven text-xs text-kidville-success font-medium">{todayPresenti}/{students.length} oggi</span>
                         </div>
                     )}
-                    <button onClick={fetchData} disabled={isLoading} className="w-9 h-9 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 flex items-center justify-center text-gray-400 hover:text-kidville-green transition-all shadow-sm disabled:opacity-40">
+                    <button onClick={fetchData} disabled={isLoading} className="w-9 h-9 rounded-xl border border-kidville-line bg-white hover:bg-kidville-cream flex items-center justify-center text-kidville-muted hover:text-kidville-green transition-all shadow-sm disabled:opacity-40">
                         <RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} />
                     </button>
                     <button
@@ -336,16 +336,16 @@ export function MonthlyAttendanceTable({ sezione = 'Girasoli' }: { sezione?: str
             <AnimatePresence>
                 {error && (
                     <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-                        className="flex items-center gap-3 bg-red-50 border border-red-200 rounded-2xl px-4 py-3">
-                        <AlertCircle size={16} className="text-red-500 flex-shrink-0" />
-                        <p className="font-maven text-sm text-red-600">{error}</p>
-                        <button onClick={fetchData} className="ml-auto font-maven text-xs text-red-500 hover:text-red-700 underline">Riprova</button>
+                        className="flex items-center gap-3 bg-kidville-error-soft border border-kidville-error/25 rounded-2xl px-4 py-3">
+                        <AlertCircle size={16} className="text-kidville-error flex-shrink-0" />
+                        <p className="font-maven text-sm text-kidville-error">{error}</p>
+                        <button onClick={fetchData} className="ml-auto font-maven text-xs text-kidville-error hover:text-kidville-error underline">Riprova</button>
                     </motion.div>
                 )}
             </AnimatePresence>
 
             {/* ── Tabella ── */}
-            <div className="w-full rounded-2xl overflow-hidden border border-gray-200 shadow-sm bg-white">
+            <div className="w-full rounded-2xl overflow-hidden border border-kidville-line shadow-sm bg-white">
                 <div className="overflow-x-auto" style={{ maxHeight: 'calc(100vh - 320px)' }}>
                     <table className="border-collapse w-full" style={{ minWidth: tableMinWidth }}>
                         <thead>
@@ -361,8 +361,8 @@ export function MonthlyAttendanceTable({ sezione = 'Girasoli' }: { sezione?: str
                                     const isToday = toISO(day) === todayISO;
                                     return (
                                         <th key={toISO(day)} style={{ position: 'sticky', top: 0, zIndex: 20, width: 38, background: isToday ? KV.green : isWeekend ? '#F5F5F5' : 'white' }}
-                                            className="border-b border-gray-200 text-center font-barlow font-bold">
-                                            <div className={`flex flex-col items-center py-2 gap-0.5 ${isToday ? 'text-white' : isWeekend ? 'text-gray-400' : 'text-gray-500'}`}>
+                                            className="border-b border-kidville-line text-center font-barlow font-bold">
+                                            <div className={`flex flex-col items-center py-2 gap-0.5 ${isToday ? 'text-white' : isWeekend ? 'text-kidville-muted' : 'text-kidville-muted'}`}>
                                                 <span className="text-[8px] uppercase tracking-wider font-maven">{GIORNI[dow]}</span>
                                                 <span className={`text-xs font-black ${isToday ? 'bg-white/20 w-5 h-5 rounded-full flex items-center justify-center' : ''}`}>{day.getDate()}</span>
                                             </div>
@@ -389,17 +389,17 @@ export function MonthlyAttendanceTable({ sezione = 'Girasoli' }: { sezione?: str
                                 <tr><td colSpan={days.length + 2}>
                                     <div className="flex flex-col items-center justify-center py-20 gap-3">
                                         <span className="text-5xl opacity-20">👶</span>
-                                        <p className="font-maven text-sm text-gray-400">Nessun alunno nella sezione <strong>{sezione}</strong></p>
+                                        <p className="font-maven text-sm text-kidville-muted">Nessun alunno nella sezione <strong>{sezione}</strong></p>
                                     </div>
                                 </td></tr>
                             ) : students.map((student, idx) => {
                                 const s = calcSummary(student);
                                 const rowBg = idx % 2 !== 0 ? '#FAFAF9' : 'white';
                                 return (
-                                    <tr key={student.student_id} className="group hover:bg-green-50/40 transition-colors">
+                                    <tr key={student.student_id} className="group hover:bg-kidville-success-soft/40 transition-colors">
                                         {/* Sticky left — nome */}
                                         <td style={{ position: 'sticky', left: 0, zIndex: 10, width: 200, background: rowBg }}
-                                            className="border-r border-gray-100 px-4 group-hover:bg-green-50/60 transition-colors border-b border-gray-100">
+                                            className="border-r border-kidville-line px-4 group-hover:bg-kidville-success-soft/60 transition-colors border-b border-kidville-line">
                                             <div className="flex items-center gap-2.5 py-1.5">
                                                 <div className="w-7 h-7 rounded-full flex-shrink-0 flex items-center justify-center font-barlow font-black text-xs text-white"
                                                     style={{ background: KV.green }}>
@@ -407,7 +407,7 @@ export function MonthlyAttendanceTable({ sezione = 'Girasoli' }: { sezione?: str
                                                 </div>
                                                 <div className="min-w-0">
                                                     <p className="font-maven font-bold text-xs truncate" style={{ color: KV.green }}>{student.student_cognome}</p>
-                                                    <p className="font-maven text-[10px] text-gray-400 truncate">{student.student_nome}</p>
+                                                    <p className="font-maven text-[10px] text-kidville-muted truncate">{student.student_nome}</p>
                                                 </div>
                                             </div>
                                         </td>
@@ -417,31 +417,31 @@ export function MonthlyAttendanceTable({ sezione = 'Girasoli' }: { sezione?: str
                                         ))}
                                         {/* Summary — sticky right */}
                                         <td style={{ position: 'sticky', right: 0, zIndex: 10, width: 150, background: rowBg }}
-                                            className="border-b border-l border-gray-100 group-hover:bg-green-50/60 transition-colors">
+                                            className="border-b border-l border-kidville-line group-hover:bg-kidville-success-soft/60 transition-colors">
                                             <div className="flex items-center justify-around px-2 py-1.5">
                                                 <div className="flex flex-col items-center">
                                                     <span className="font-barlow font-black text-sm text-kidville-success">{s.presenze}</span>
-                                                    <span className="font-maven text-[8px] text-gray-300">P</span>
+                                                    <span className="font-maven text-[8px] text-kidville-muted">P</span>
                                                 </div>
-                                                <div className="w-px h-5 bg-gray-100"/>
+                                                <div className="w-px h-5 bg-kidville-cream"/>
                                                 <div className="flex flex-col items-center">
-                                                    <span className="font-barlow font-black text-sm text-red-500">{s.assenze}</span>
-                                                    <span className="font-maven text-[8px] text-gray-300">A</span>
+                                                    <span className="font-barlow font-black text-sm text-kidville-error">{s.assenze}</span>
+                                                    <span className="font-maven text-[8px] text-kidville-muted">A</span>
                                                 </div>
-                                                <div className="w-px h-5 bg-gray-100"/>
+                                                <div className="w-px h-5 bg-kidville-cream"/>
                                                 <div className="flex flex-col items-center">
                                                     <span className="font-barlow font-black text-sm text-kidville-warn">{s.ritardi}</span>
-                                                    <span className="font-maven text-[8px] text-gray-300">R</span>
+                                                    <span className="font-maven text-[8px] text-kidville-muted">R</span>
                                                 </div>
-                                                <div className="w-px h-5 bg-gray-100"/>
+                                                <div className="w-px h-5 bg-kidville-cream"/>
                                                 <div className="flex flex-col items-center">
                                                     <span className="font-barlow font-black text-sm text-kidville-info">{s.uscite}</span>
-                                                    <span className="font-maven text-[8px] text-gray-300">U</span>
+                                                    <span className="font-maven text-[8px] text-kidville-muted">U</span>
                                                 </div>
-                                                <div className="w-px h-5 bg-gray-100"/>
+                                                <div className="w-px h-5 bg-kidville-cream"/>
                                                 <div className="flex flex-col items-center">
-                                                    <span className="font-barlow font-black text-sm text-gray-700">{s.oreAssenza}</span>
-                                                    <span className="font-maven text-[8px] text-gray-300">ORE</span>
+                                                    <span className="font-barlow font-black text-sm text-kidville-ink">{s.oreAssenza}</span>
+                                                    <span className="font-maven text-[8px] text-kidville-muted">ORE</span>
                                                 </div>
                                             </div>
                                         </td>
@@ -462,7 +462,7 @@ export function MonthlyAttendanceTable({ sezione = 'Girasoli' }: { sezione?: str
                         return (
                             <div key={s} className="flex items-center gap-1.5">
                                 <span className={`w-4 h-4 rounded-full ${cfg.dot}`} />
-                                <span className="font-maven text-xs text-gray-500">{label}</span>
+                                <span className="font-maven text-xs text-kidville-muted">{label}</span>
                             </div>
                         );
                     })}
@@ -471,14 +471,14 @@ export function MonthlyAttendanceTable({ sezione = 'Girasoli' }: { sezione?: str
                     <div className="flex gap-5">
                         {[
                             { label: 'Presenze', key: 'presenze', color: 'text-kidville-success' },
-                            { label: 'Assenze',  key: 'assenze',  color: 'text-red-500' },
+                            { label: 'Assenze',  key: 'assenze',  color: 'text-kidville-error' },
                             { label: 'Ritardi',  key: 'ritardi',  color: 'text-kidville-warn' },
                         ].map(({ label, key, color }) => {
                             const count = students.reduce((acc, st) => acc + (calcSummary(st) as unknown as Record<string,number>)[key], 0);
                             return (
                                 <div key={key} className="text-center">
                                     <p className={`font-barlow font-black text-2xl ${color}`}>{count}</p>
-                                    <p className="font-maven text-[10px] text-gray-400 uppercase tracking-wide">{label}</p>
+                                    <p className="font-maven text-[10px] text-kidville-muted uppercase tracking-wide">{label}</p>
                                 </div>
                             );
                         })}

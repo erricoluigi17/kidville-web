@@ -41,8 +41,8 @@ interface StudentDiaryRowProps {
 // ─── Costanti livelli attività ────────────────────────────────────────────────
 
 const PARTICIPATION_LEVELS = [
-    { value: 'non_fatta',  label: 'Non fatta',    bg: 'bg-red-100',    text: 'text-red-700',    border: 'border-red-200' },
-    { value: 'difficolta', label: 'Con difficoltà', bg: 'bg-kidville-warn-soft', text: 'text-orange-700', border: 'border-kidville-warn/30' },
+    { value: 'non_fatta',  label: 'Non fatta',    bg: 'bg-kidville-error-soft',    text: 'text-kidville-error',    border: 'border-kidville-error/25' },
+    { value: 'difficolta', label: 'Con difficoltà', bg: 'bg-kidville-warn-soft', text: 'text-kidville-warn', border: 'border-kidville-warn/30' },
     { value: 'aiuto',      label: 'Con aiuto',     bg: 'bg-yellow-100', text: 'text-yellow-700', border: 'border-yellow-200' },
     { value: 'autonomia',  label: 'In autonomia',  bg: 'bg-kidville-success-soft',text: 'text-kidville-success',border: 'border-kidville-success/30' },
 ] as const;
@@ -114,7 +114,7 @@ function PranzoSectionContent({
                 const selQ = corsi[corso.id] ?? null;
                 return (
                     <motion.div key={corso.id} variants={itemVariants} className="py-2 px-4">
-                        <p className="font-maven text-xs text-gray-400 mb-1.5">
+                        <p className="font-maven text-xs text-kidville-muted mb-1.5">
                             {corso.icon} {corso.nome || corso.portata}
                         </p>
                         <div className="flex gap-1.5">
@@ -125,7 +125,7 @@ function PranzoSectionContent({
                                     className={`flex-1 py-2 rounded-xl text-xs font-bold border-2 transition-all active:scale-95 ${
                                         selQ === q.value
                                             ? 'bg-kidville-green text-kidville-yellow border-kidville-green shadow-sm'
-                                            : 'bg-gray-50 text-gray-400 border-gray-100 hover:border-gray-300'
+                                            : 'bg-kidville-cream text-kidville-muted border-kidville-line hover:border-kidville-line'
                                     }`}
                                 >
                                     {q.icon}
@@ -151,21 +151,21 @@ function NannaSectionContent({
     return (
         <motion.div variants={itemVariants} className="grid grid-cols-2 gap-3 px-4 py-3">
             <div>
-                <p className="font-maven text-xs text-gray-500 mb-1">😴 Si addormenta</p>
+                <p className="font-maven text-xs text-kidville-muted mb-1">😴 Si addormenta</p>
                 <input
                     type="time"
                     value={(studentState?.orario_inizio as string) ?? ''}
                     onChange={e => onTimeChange(student.id, 'orario_inizio', e.target.value)}
-                    className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
+                    className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
                 />
             </div>
             <div>
-                <p className="font-maven text-xs text-gray-500 mb-1">☀️ Si sveglia</p>
+                <p className="font-maven text-xs text-kidville-muted mb-1">☀️ Si sveglia</p>
                 <input
                     type="time"
                     value={(studentState?.orario_fine as string) ?? ''}
                     onChange={e => onTimeChange(student.id, 'orario_fine', e.target.value)}
-                    className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
+                    className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
                 />
             </div>
         </motion.div>
@@ -208,7 +208,7 @@ function BagnoSectionContent({
 
     return (
         <motion.div variants={itemVariants} className="flex gap-3 px-4 py-3">
-            <Counter field="pipi" emoji="💧" bg="bg-kidville-info-soft" color="border-sky-400 text-sky-700 bg-kidville-info-soft0" />
+            <Counter field="pipi" emoji="💧" bg="bg-kidville-info-soft" color="border-kidville-info text-kidville-info bg-kidville-info-soft0" />
             <Counter field="cacca" emoji="💩" bg="bg-kidville-warn-soft" color="border-kidville-warn text-kidville-warn bg-kidville-warn-soft0" />
         </motion.div>
     );
@@ -231,7 +231,7 @@ function AttivitaSectionContent({
                     key={lv.value}
                     onClick={() => onActivitySelect(student.id, sel === lv.value ? null : lv.value)}
                     className={`py-2.5 rounded-xl border-2 text-xs font-maven font-semibold transition-all active:scale-95 ${
-                        sel === lv.value ? `${lv.bg} ${lv.text} ${lv.border}` : 'bg-gray-50 text-gray-400 border-gray-100 hover:border-gray-200'
+                        sel === lv.value ? `${lv.bg} ${lv.text} ${lv.border}` : 'bg-kidville-cream text-kidville-muted border-kidville-line hover:border-kidville-line'
                     }`}
                 >
                     {lv.label}
@@ -314,7 +314,7 @@ export function StudentDiaryRow({
                     ? 'border-kidville-green bg-kidville-green/5 shadow-md'
                     : showAllergyWarning
                         ? 'border-kidville-error bg-kidville-error/5'
-                        : 'border-gray-100 bg-white hover:border-gray-200 hover:shadow-sm'
+                        : 'border-kidville-line bg-white hover:border-kidville-line hover:shadow-sm'
                 }
             `}
         >
@@ -329,7 +329,7 @@ export function StudentDiaryRow({
                 {/* Checkbox visuale */}
                 <div className={`
                     w-6 h-6 flex-shrink-0 rounded-md border-2 flex items-center justify-center transition-colors
-                    ${isSelected ? 'bg-kidville-green border-kidville-green' : 'border-gray-300 bg-white'}
+                    ${isSelected ? 'bg-kidville-green border-kidville-green' : 'border-kidville-line bg-white'}
                 `}>
                     {isSelected && (
                         <svg className="w-4 h-4 text-kidville-yellow" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
@@ -359,7 +359,7 @@ export function StudentDiaryRow({
                         <p className="font-maven text-xs text-kidville-error truncate">⚠️ {student.allergie!.join(', ')}</p>
                     )}
                     {!showAllergyWarning && lastEventConfig && (
-                        <p className="font-maven text-xs text-gray-400 truncate">
+                        <p className="font-maven text-xs text-kidville-muted truncate">
                             Ultimo: {lastEventConfig.emoji} {lastEventConfig.label}
                         </p>
                     )}
@@ -381,7 +381,7 @@ export function StudentDiaryRow({
                         }}
                         className={`
                             w-8 h-8 rounded-xl flex items-center justify-center transition-all flex-shrink-0
-                            ${currentSection ? 'bg-kidville-green/10 text-kidville-green' : 'bg-gray-50 text-gray-400 hover:bg-gray-100'}
+                            ${currentSection ? 'bg-kidville-green/10 text-kidville-green' : 'bg-kidville-cream text-kidville-muted hover:bg-kidville-cream'}
                         `}
                         aria-label={currentSection ? 'Chiudi dettagli' : 'Apri dettagli'}
                     >
@@ -401,7 +401,7 @@ export function StudentDiaryRow({
                         initial="hidden"
                         animate="visible"
                         exit="exit"
-                        className="overflow-hidden border-t border-gray-100"
+                        className="overflow-hidden border-t border-kidville-line"
                         onClick={e => e.stopPropagation()}
                     >
                         <motion.div

@@ -86,7 +86,7 @@ function DateNavigator({ date, onChange }: { date: string; onChange: (d: string)
                     value={date}
                     max={todayISO}
                     onChange={(e) => e.target.value && onChange(e.target.value)}
-                    className="w-full cursor-pointer bg-transparent font-maven text-sm font-medium text-gray-700 outline-none"
+                    className="w-full cursor-pointer bg-transparent font-maven text-sm font-medium text-kidville-ink outline-none"
                 />
             </div>
 
@@ -141,7 +141,7 @@ function Summary({
                         <div className="mt-0.5 flex items-baseline gap-1.5">
                             <span className="font-barlow text-[34px] font-black leading-none text-kidville-green">{reg}</span>
                             <span className="font-barlow text-lg font-extrabold text-kidville-muted">/ {total}</span>
-                            <span className="ml-0.5 font-maven text-xs text-gray-600">registrati</span>
+                            <span className="ml-0.5 font-maven text-xs text-kidville-ink">registrati</span>
                         </div>
                     </div>
                     {reg === total && total > 0 ? (
@@ -368,7 +368,7 @@ function TodayView() {
         return (
             <div className="flex flex-col items-center justify-center gap-4 py-20">
                 <Loader2 size={32} className="animate-spin text-kidville-green" />
-                <p className="font-maven text-sm text-gray-500">Caricamento alunni da anagrafica…</p>
+                <p className="font-maven text-sm text-kidville-muted">Caricamento alunni da anagrafica…</p>
             </div>
         );
     }
@@ -391,7 +391,7 @@ function TodayView() {
         return (
             <div className="flex flex-col items-center justify-center gap-4 py-20">
                 <span className="text-5xl opacity-30">👶</span>
-                <p className="text-center font-maven text-sm text-gray-400">
+                <p className="text-center font-maven text-sm text-kidville-muted">
                     Nessun alunno nella sezione <strong>{SEZIONE}</strong>.<br />
                     Verifica che gli alunni abbiano la sezione corretta in anagrafica.
                 </p>
@@ -404,7 +404,7 @@ function TodayView() {
             {/* Navigatore data + intestazione */}
             <div className="flex flex-col gap-3 rounded-2xl border border-kidville-line bg-white p-4 shadow-sm">
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                    <p className="font-maven text-sm capitalize text-gray-500">{formatDateIT(selectedDate)}</p>
+                    <p className="font-maven text-sm capitalize text-kidville-muted">{formatDateIT(selectedDate)}</p>
                     <div className="flex items-center gap-2">
                         {isOffline && (
                             <div className="flex items-center gap-1.5 rounded-pill border border-kidville-warn/30 bg-kidville-warn-soft px-3 py-1.5 font-maven text-xs text-kidville-warn">
@@ -414,7 +414,7 @@ function TodayView() {
                         <button
                             onClick={fetchTodayRecords}
                             title="Aggiorna presenze"
-                            className="flex h-8 w-8 items-center justify-center rounded-xl bg-kidville-cream text-gray-400 transition-colors hover:text-kidville-green"
+                            className="flex h-8 w-8 items-center justify-center rounded-xl bg-kidville-cream text-kidville-muted transition-colors hover:text-kidville-green"
                         >
                             <RefreshCw size={14} />
                         </button>
@@ -439,7 +439,7 @@ function TodayView() {
                     />
                 ))}
                 {visibleStudents.length === 0 && (
-                    <div className="rounded-2xl border border-dashed border-kidville-line bg-white/60 p-6 text-center font-maven text-sm text-gray-400">
+                    <div className="rounded-2xl border border-dashed border-kidville-line bg-white/60 p-6 text-center font-maven text-sm text-kidville-muted">
                         Nessun alunno per questo filtro.
                     </div>
                 )}
@@ -494,7 +494,7 @@ export default function TeacherAttendancePage() {
                             key={tab.id}
                             id={`tab-attendance-${tab.id}`}
                             onClick={() => handleTabChange(tab.id)}
-                            className={`relative flex items-center gap-2 rounded-pill px-4 py-2 font-maven text-sm font-semibold transition-all duration-200 ${isActive ? 'text-kidville-yellow' : 'text-gray-500 hover:text-kidville-green'}`}
+                            className={`relative flex items-center gap-2 rounded-pill px-4 py-2 font-maven text-sm font-semibold transition-all duration-200 ${isActive ? 'text-kidville-yellow' : 'text-kidville-muted hover:text-kidville-green'}`}
                         >
                             {isActive && (
                                 <motion.div

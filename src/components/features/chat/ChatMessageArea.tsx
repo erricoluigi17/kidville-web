@@ -103,7 +103,7 @@ function MessageBubble({ msg, isMine, currentUserId }: { msg: ChatMessage; isMin
         <div className={`max-w-[75%] rounded-2xl px-4 py-2.5 shadow-sm ${
             isMine
                 ? 'bg-kidville-green text-white rounded-br-md'
-                : 'bg-white/90 backdrop-blur-sm border border-white/40 text-gray-800 rounded-bl-md'
+                : 'bg-kidville-white border border-kidville-line text-kidville-ink rounded-bl-md'
         }`}>
             {/* Attachment preview */}
             {msg.attachment_url && msg.attachment_type === 'image' && (
@@ -113,13 +113,13 @@ function MessageBubble({ msg, isMine, currentUserId }: { msg: ChatMessage; isMin
                 </div>
             )}
             {msg.attachment_url && msg.attachment_type === 'document' && (
-                <div className={`mb-2 px-3 py-2 rounded-xl text-xs font-maven flex items-center gap-2 ${isMine ? 'bg-white/20' : 'bg-gray-100'}`}>
+                <div className={`mb-2 px-3 py-2 rounded-xl text-xs font-maven flex items-center gap-2 ${isMine ? 'bg-white/20' : 'bg-kidville-neutral-soft'}`}>
                     📎 Documento allegato
                 </div>
             )}
 
             {/* Text */}
-            <p className={`font-maven text-sm leading-relaxed ${isMine ? 'text-white' : 'text-gray-800'}`}>
+            <p className={`font-maven text-sm leading-relaxed ${isMine ? 'text-white' : 'text-kidville-ink'}`}>
                 {msg.content}
             </p>
 
@@ -127,14 +127,14 @@ function MessageBubble({ msg, isMine, currentUserId }: { msg: ChatMessage; isMin
             {!isMine && msg.content?.trim() && !unavailable && (
                 <>
                     {translated && (
-                        <p className="font-maven text-sm leading-relaxed text-kidville-green mt-1.5 pt-1.5 border-t border-gray-100 italic">
+                        <p className="font-maven text-sm leading-relaxed text-kidville-green mt-1.5 pt-1.5 border-t border-kidville-line italic">
                             🌐 {translated}
                         </p>
                     )}
                     <button
                         onClick={handleTranslate}
                         disabled={translating}
-                        className="mt-1 inline-flex items-center gap-1 text-[11px] font-maven text-gray-400 hover:text-kidville-green transition-colors disabled:opacity-50"
+                        className="mt-1 inline-flex items-center gap-1 text-[11px] font-maven text-kidville-muted hover:text-kidville-green transition-colors disabled:opacity-50"
                     >
                         {translating
                             ? <Loader2 size={11} className="animate-spin" />
@@ -146,7 +146,7 @@ function MessageBubble({ msg, isMine, currentUserId }: { msg: ChatMessage; isMin
 
             {/* Time + read status */}
             <div className={`flex items-center gap-1 mt-1 ${isMine ? 'justify-end' : 'justify-start'}`}>
-                <span className={`font-maven text-[10px] ${isMine ? 'text-white/60' : 'text-gray-400'}`}>
+                <span className={`font-maven text-[10px] ${isMine ? 'text-white/60' : 'text-kidville-muted'}`}>
                     {formatMessageTime(msg.created_at)}
                 </span>
                 {isMine && (
@@ -259,7 +259,7 @@ export function ChatMessageArea({
             <div className="flex-1 flex items-center justify-center">
                 <div className="flex flex-col items-center gap-3">
                     <div className="w-7 h-7 border-[3px] border-kidville-green/20 border-t-kidville-green rounded-full animate-spin" />
-                    <p className="font-maven text-sm text-gray-400">Caricamento messaggi...</p>
+                    <p className="font-maven text-sm text-kidville-muted">Caricamento messaggi...</p>
                 </div>
             </div>
         );
@@ -275,7 +275,7 @@ export function ChatMessageArea({
                     <p className="font-barlow font-bold text-lg text-kidville-green uppercase mb-1">
                         Inizia la conversazione
                     </p>
-                    <p className="font-maven text-sm text-gray-400 max-w-xs">
+                    <p className="font-maven text-sm text-kidville-muted max-w-xs">
                         Scrivi un messaggio a {otherUserName}
                     </p>
                 </div>
@@ -292,9 +292,9 @@ export function ChatMessageArea({
                 <div key={group.date}>
                     {/* Date separator */}
                     <div className="flex items-center gap-3 my-4">
-                        <div className="flex-1 h-px bg-gray-200/60" />
-                        <span className="font-maven text-[11px] text-gray-400 px-2">{group.date}</span>
-                        <div className="flex-1 h-px bg-gray-200/60" />
+                        <div className="flex-1 h-px bg-kidville-line" />
+                        <span className="font-maven text-[11px] text-kidville-muted px-2">{group.date}</span>
+                        <div className="flex-1 h-px bg-kidville-line" />
                     </div>
 
                     {/* Messages */}

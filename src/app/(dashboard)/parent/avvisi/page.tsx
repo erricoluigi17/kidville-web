@@ -75,6 +75,11 @@ function ParentAvvisiContent() {
         }
     };
 
+    // "Da gestire" (DR): non letti (presa visione) + adesioni senza risposta.
+    const daGestire = avvisi.filter(a =>
+        a.tipo === 'adesione' ? !a.my_response?.risposta : !a.my_response?.letto_il
+    ).length;
+
     return (
         <div className="max-w-lg mx-auto p-4 sm:p-6 pb-16">
             {/* Header */}
@@ -87,7 +92,7 @@ function ParentAvvisiContent() {
                         Avvisi
                     </h1>
                     <p className="font-maven text-kidville-muted mt-1 text-sm">
-                        Comunicazioni dalla scuola
+                        {loading ? 'Comunicazioni dalla scuola' : daGestire > 0 ? `${daGestire} da gestire` : 'Tutto in regola ✓'}
                     </p>
                 </div>
                 {studentName && (

@@ -109,69 +109,69 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
         <div className="space-y-4">
             <div className="grid sm:grid-cols-2 gap-3">
                 <div>
-                    <label className="font-maven text-xs text-gray-500 mb-1 block">Categoria</label>
+                    <label className="font-maven text-xs text-kidville-muted mb-1 block">Categoria</label>
                     <select value={categoriaId} onChange={(e) => applyCategoria(categorie.find((c) => c.id === e.target.value))}
-                        className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:border-kidville-green">
+                        className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:border-kidville-green">
                         {categorie.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
                     </select>
                 </div>
                 <div>
-                    <label className="font-maven text-xs text-gray-500 mb-1 block">Classe (vuoto = tutti gli iscritti)</label>
+                    <label className="font-maven text-xs text-kidville-muted mb-1 block">Classe (vuoto = tutti gli iscritti)</label>
                     <select value={classe} onChange={(e) => setClasse(e.target.value)}
-                        className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:border-kidville-green">
+                        className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:border-kidville-green">
                         <option value="">Tutti ({alunni.length})</option>
                         {classi.map((c) => <option key={c} value={c}>{c}</option>)}
                     </select>
                 </div>
                 <div>
-                    <label className="font-maven text-xs text-gray-500 mb-1 block">Causale / descrizione</label>
+                    <label className="font-maven text-xs text-kidville-muted mb-1 block">Causale / descrizione</label>
                     <input type="text" value={descrizione} onChange={(e) => setDescrizione(e.target.value)}
-                        className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
+                        className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                     <div>
-                        <label className="font-maven text-xs text-gray-500 mb-1 block">Importo (€)</label>
+                        <label className="font-maven text-xs text-kidville-muted mb-1 block">Importo (€)</label>
                         <input type="number" min={0} step="0.01" value={importo || ''}
                             onChange={(e) => setImporto(e.target.value === '' ? 0 : Number(e.target.value))}
-                            className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
+                            className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
                     </div>
                     <div>
-                        <label className="font-maven text-xs text-gray-500 mb-1 block">{acconti ? '1ª scadenza' : 'Scadenza'}</label>
+                        <label className="font-maven text-xs text-kidville-muted mb-1 block">{acconti ? '1ª scadenza' : 'Scadenza'}</label>
                         <input type="date" value={scadenza} onChange={(e) => setScadenza(e.target.value)}
-                            className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
+                            className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
                     </div>
                 </div>
                 <div>
-                    <label className="font-maven text-xs text-gray-500 mb-1 block">Gruppo (evita duplicati)</label>
+                    <label className="font-maven text-xs text-kidville-muted mb-1 block">Gruppo (evita duplicati)</label>
                     <input type="text" value={gruppo} onChange={(e) => setGruppo(e.target.value)}
-                        className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
+                        className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
                 </div>
             </div>
 
             <div className="flex flex-wrap items-center gap-4">
                 <label className="flex items-center gap-2 cursor-pointer">
                     <input type="checkbox" checked={obbligatorio} onChange={(e) => setObbligatorio(e.target.checked)}
-                        className="w-4 h-4 rounded border-gray-300 text-kidville-green focus:ring-kidville-green" />
+                        className="w-4 h-4 rounded border-kidville-muted text-kidville-green focus:ring-kidville-green" />
                     <span className="font-maven text-xs text-kidville-green">Obbligatorio</span>
                 </label>
                 <label className="flex items-center gap-2 cursor-pointer">
                     <input type="checkbox" checked={acconti} onChange={(e) => setAcconti(e.target.checked)}
-                        className="w-4 h-4 rounded border-gray-300 text-kidville-green focus:ring-kidville-green" />
+                        className="w-4 h-4 rounded border-kidville-muted text-kidville-green focus:ring-kidville-green" />
                     <span className="font-maven text-xs text-kidville-green">Dividi in acconti</span>
                 </label>
                 {acconti && (
                     <div className="flex items-center gap-2">
-                        <span className="font-maven text-xs text-gray-500">N° rate</span>
+                        <span className="font-maven text-xs text-kidville-muted">N° rate</span>
                         <input type="number" min={2} max={24} value={nRate}
                             onChange={(e) => setNRate(Math.max(2, Number(e.target.value) || 2))}
-                            className="w-16 border-2 border-gray-200 rounded-lg px-2 py-1 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
-                        <span className="font-maven text-[11px] text-gray-400">mensili, ~€ {importo ? (importo / nRate).toFixed(2) : '0'} cad.</span>
+                            className="w-16 border-2 border-kidville-line rounded-lg px-2 py-1 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
+                        <span className="font-maven text-[11px] text-kidville-muted">mensili, ~€ {importo ? (importo / nRate).toFixed(2) : '0'} cad.</span>
                     </div>
                 )}
             </div>
 
             {done && (
-                <div className="bg-green-50 text-green-700 rounded-xl p-4 font-maven text-sm flex items-center gap-2">
+                <div className="bg-kidville-success-soft text-kidville-success rounded-xl p-4 font-maven text-sm flex items-center gap-2">
                     <CheckCircle2 size={18} /> {done}
                 </div>
             )}

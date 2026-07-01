@@ -53,7 +53,7 @@ export function SospensioneToggle({
             onClick={toggle}
             disabled={busy}
             title={sospeso ? 'Riattiva account' : 'Sospendi per morosità'}
-            className={`${sospeso ? 'text-red-500 hover:text-green-600' : 'text-gray-400 hover:text-red-600'} disabled:opacity-50`}
+            className={`${sospeso ? 'text-kidville-error hover:text-kidville-success' : 'text-kidville-muted hover:text-kidville-error'} disabled:opacity-50`}
         >
             {busy ? <Loader2 size={15} className="animate-spin" /> : sospeso ? <RotateCcw size={15} /> : <Ban size={15} />}
         </button>

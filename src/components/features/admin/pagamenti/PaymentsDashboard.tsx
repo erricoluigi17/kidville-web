@@ -25,10 +25,10 @@ interface Alunno {
 }
 
 const STATI: Record<string, { label: string; cls: string }> = {
-    da_pagare: { label: 'Da pagare', cls: 'bg-gray-100 text-gray-600' },
+    da_pagare: { label: 'Da pagare', cls: 'bg-kidville-line text-kidville-ink' },
     parziale: { label: 'Parziale', cls: 'bg-kidville-warn-soft text-kidville-warn' },
-    pagato: { label: 'Pagato', cls: 'bg-green-100 text-green-700' },
-    scaduto: { label: 'Scaduto', cls: 'bg-red-100 text-red-700' },
+    pagato: { label: 'Pagato', cls: 'bg-kidville-success-soft text-kidville-success' },
+    scaduto: { label: 'Scaduto', cls: 'bg-kidville-error-soft text-kidville-error' },
 };
 
 const MESI_IT = ['', 'Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic'];
@@ -175,7 +175,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
         <div>
             {/* Banner scarti SDI (DL-020): fatture rifiutate da correggere e reinviare */}
             {fattureScartate > 0 && (
-                <div className="mb-4 flex items-center gap-2 rounded-xl border-2 border-red-200 bg-red-50 px-4 py-3 text-red-700">
+                <div className="mb-4 flex items-center gap-2 rounded-xl border-2 border-kidville-error-soft bg-kidville-error-soft px-4 py-3 text-kidville-error">
                     <AlertTriangle size={18} />
                     <span className="font-maven text-sm font-bold">
                         {fattureScartate} fattura{fattureScartate > 1 ? 'e' : ''} scartata{fattureScartate > 1 ? 'e' : ''} dallo SDI — verifica i dati dell’intestatario e premi “Riprova fattura”.
@@ -185,22 +185,22 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
 
             {/* KPI */}
             <div className="grid grid-cols-3 gap-3 mb-5">
-                <KPI icon={<CheckCircle2 size={16} />} label="Incassato" value={totals.incassato} color="text-green-600" />
+                <KPI icon={<CheckCircle2 size={16} />} label="Incassato" value={totals.incassato} color="text-kidville-success" />
                 <KPI icon={<Clock size={16} />} label="Da incassare" value={totals.daIncassare} color="text-kidville-warn" />
-                <KPI icon={<AlertTriangle size={16} />} label="Scaduto (morosità)" value={totals.scaduto} color="text-red-600" />
+                <KPI icon={<AlertTriangle size={16} />} label="Scaduto (morosità)" value={totals.scaduto} color="text-kidville-error" />
             </div>
 
             {/* Filtri */}
             <div className="flex flex-wrap items-center gap-2 mb-4">
                 <div className="relative flex-1 min-w-[200px]">
-                    <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                    <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-kidville-muted" />
                     <input
                         value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cerca alunno o sezione…"
-                        className="w-full pl-9 pr-3 py-2 border-2 border-gray-200 rounded-full font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
+                        className="w-full pl-9 pr-3 py-2 border-2 border-kidville-line rounded-full font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
                     />
                 </div>
                 <select value={fCategoria} onChange={(e) => setFCategoria(e.target.value)}
-                    className="py-2 px-3 border-2 border-gray-200 rounded-full font-maven text-sm text-kidville-green bg-white">
+                    className="py-2 px-3 border-2 border-kidville-line rounded-full font-maven text-sm text-kidville-green bg-white">
                     {categorie.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
                 </select>
 
@@ -208,23 +208,23 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                 {isRettaView && (
                     <>
                         <select value={annoScolastico} onChange={(e) => setAnnoScolastico(Number(e.target.value))}
-                            className="py-2 px-3 border-2 border-gray-200 rounded-full font-maven text-sm text-kidville-green bg-white">
+                            className="py-2 px-3 border-2 border-kidville-line rounded-full font-maven text-sm text-kidville-green bg-white">
                             {[annoScolasticoCorrente - 1, annoScolasticoCorrente, annoScolasticoCorrente + 1].map((y) => (
                                 <option key={y} value={y}>A.S. {y}/{y + 1}</option>
                             ))}
                         </select>
                         <select value={periodi.some((p) => p.periodo === mese) ? mese : periodi[0].periodo}
                             onChange={(e) => setMese(e.target.value)}
-                            className="py-2 px-3 border-2 border-gray-200 rounded-full font-maven text-sm text-kidville-green bg-white">
+                            className="py-2 px-3 border-2 border-kidville-line rounded-full font-maven text-sm text-kidville-green bg-white">
                             {periodi.map((p) => <option key={p.periodo} value={p.periodo}>{p.label}</option>)}
                         </select>
                         <button onClick={() => setOnlyMorosi((v) => !v)}
-                            className={`py-2 px-3 rounded-full font-maven text-sm font-bold flex items-center gap-1 ${onlyMorosi ? 'bg-red-100 text-red-700' : 'border-2 border-gray-200 text-gray-500'}`}>
+                            className={`py-2 px-3 rounded-full font-maven text-sm font-bold flex items-center gap-1 ${onlyMorosi ? 'bg-kidville-error-soft text-kidville-error' : 'border-2 border-kidville-line text-kidville-muted'}`}>
                             <Filter size={14} /> Morosi
                         </button>
                     </>
                 )}
-                <button onClick={load} className="py-2 px-3 rounded-full border-2 border-gray-200 text-gray-500 hover:text-kidville-green">
+                <button onClick={load} className="py-2 px-3 rounded-full border-2 border-kidville-line text-kidville-muted hover:text-kidville-green">
                     <RefreshCw size={14} />
                 </button>
             </div>
@@ -244,15 +244,15 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
 
             {/* Corpo */}
             {loading ? (
-                <p className="font-maven text-sm text-gray-400 py-8 text-center">Caricamento…</p>
+                <p className="font-maven text-sm text-kidville-muted py-8 text-center">Caricamento…</p>
             ) : alunniFiltrati.length === 0 ? (
-                <p className="font-maven text-sm text-gray-400 py-8 text-center">Nessun alunno attivo trovato.</p>
+                <p className="font-maven text-sm text-kidville-muted py-8 text-center">Nessun alunno attivo trovato.</p>
             ) : isRettaView ? (
                 /* ---- Vista RETTE: una riga per alunno con la retta del mese ---- */
                 <div className="overflow-x-auto">
                     <table className="w-full text-left">
                         <thead>
-                            <tr className="font-maven text-xs text-gray-400 uppercase">
+                            <tr className="font-maven text-xs text-kidville-muted uppercase">
                                 <th className="py-2 px-2">Alunno</th>
                                 <th className="py-2 px-2">Sezione</th>
                                 <th className="py-2 px-2 text-right">Importo</th>
@@ -267,20 +267,20 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                 const st = p ? (STATI[p.stato] ?? STATI.da_pagare) : null;
                                 const isMoroso = p?.stato === 'scaduto';
                                 return (
-                                    <tr key={a.id} className={`border-t border-gray-100 font-maven text-sm ${isMoroso ? 'bg-red-50/50' : ''}`}>
+                                    <tr key={a.id} className={`border-t border-kidville-line font-maven text-sm ${isMoroso ? 'bg-kidville-error-soft/50' : ''}`}>
                                         <td className="py-2 px-2 text-kidville-green font-semibold">
                                             {a.nome} {a.cognome}
                                             {sospesoByAlunno.get(a.id) && (
-                                                <span className="ml-1 inline-block px-1.5 py-0.5 rounded-full bg-red-100 text-red-600 text-[10px] font-bold align-middle">sospeso</span>
+                                                <span className="ml-1 inline-block px-1.5 py-0.5 rounded-full bg-kidville-error-soft text-kidville-error text-[10px] font-bold align-middle">sospeso</span>
                                             )}
                                         </td>
-                                        <td className="py-2 px-2 text-gray-500">{a.classe_sezione || '—'}</td>
+                                        <td className="py-2 px-2 text-kidville-muted">{a.classe_sezione || '—'}</td>
                                         <td className="py-2 px-2 text-right text-kidville-green">{p ? `€ ${Number(p.importo).toFixed(2)}` : '—'}</td>
-                                        <td className="py-2 px-2 text-right text-gray-500">{p ? `€ ${Number(p.importo_pagato).toFixed(2)}` : '—'}</td>
+                                        <td className="py-2 px-2 text-right text-kidville-muted">{p ? `€ ${Number(p.importo_pagato).toFixed(2)}` : '—'}</td>
                                         <td className="py-2 px-2">
                                             {st
                                                 ? <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold ${st.cls}`}>{st.label}</span>
-                                                : <span className="inline-block px-2 py-0.5 rounded-full text-xs font-bold bg-gray-50 text-gray-400">Non generata</span>}
+                                                : <span className="inline-block px-2 py-0.5 rounded-full text-xs font-bold bg-kidville-cream text-kidville-muted">Non generata</span>}
                                         </td>
                                         <td className="py-2 px-2 text-right">
                                             <div className="flex items-center justify-end gap-2">
@@ -292,7 +292,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                                 ) : null}
                                                 {p && (
                                                     <button onClick={() => setEditing(p)} title="Modifica"
-                                                        className="text-gray-400 hover:text-kidville-green"><Pencil size={15} /></button>
+                                                        className="text-kidville-muted hover:text-kidville-green"><Pencil size={15} /></button>
                                                 )}
                                                 <SospensioneToggle alunnoId={a.id} userId={userId} sospeso={!!sospesoByAlunno.get(a.id)} onChange={load} />
                                             </div>
@@ -309,11 +309,11 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                     {alunniFiltrati.map((a) => {
                         const acquisti = pagByAlunnoCat.get(a.id) || [];
                         return (
-                            <div key={a.id} className="text-left bg-white border-2 border-gray-100 rounded-xl p-3">
+                            <div key={a.id} className="text-left bg-white border-2 border-kidville-line rounded-xl p-3">
                                 <div className="flex items-center justify-between">
                                     <div>
                                         <p className="font-maven text-sm text-kidville-green font-bold">{a.nome} {a.cognome}</p>
-                                        <p className="font-maven text-xs text-gray-400">{a.classe_sezione || '—'}</p>
+                                        <p className="font-maven text-xs text-kidville-muted">{a.classe_sezione || '—'}</p>
                                     </div>
                                     <button onClick={() => categoriaSel && setQuick({ alunno: a, categoria: categoriaSel })}
                                         title="Nuovo acquisto"
@@ -325,16 +325,16 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                     <div className="mt-2 space-y-1">
                                         {acquisti.map((p) => (
                                             <div key={p.id} className="flex items-center justify-between gap-2 bg-kidville-cream/40 rounded-lg px-2 py-1">
-                                                <span className="font-maven text-[11px] text-gray-600 truncate">
+                                                <span className="font-maven text-[11px] text-kidville-ink truncate">
                                                     {p.descrizione} · € {Number(p.importo).toFixed(2)}
                                                 </span>
                                                 <div className="flex items-center gap-1.5 shrink-0">
                                                     {p.tipo === 'singolo' && p.stato !== 'pagato' && (
                                                         <button onClick={() => setRateizza({ alunno: a, pagamento: p })} title="Dividi in acconti"
-                                                            className="text-gray-400 hover:text-kidville-green"><Layers size={13} /></button>
+                                                            className="text-kidville-muted hover:text-kidville-green"><Layers size={13} /></button>
                                                     )}
                                                     <button onClick={() => setEditing(p)} title="Modifica"
-                                                        className="text-gray-400 hover:text-kidville-green"><Pencil size={13} /></button>
+                                                        className="text-kidville-muted hover:text-kidville-green"><Pencil size={13} /></button>
                                                 </div>
                                             </div>
                                         ))}
@@ -396,7 +396,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
 
 function KPI({ icon, label, value, color }: { icon: React.ReactNode; label: string; value: number; color: string }) {
     return (
-        <div className="bg-white rounded-xl border border-gray-100 p-3">
+        <div className="bg-white rounded-xl border border-kidville-line p-3">
             <div className={`flex items-center gap-1 ${color} mb-1`}>{icon}<span className="font-maven text-xs uppercase">{label}</span></div>
             <p className="font-barlow font-black text-xl text-kidville-green">€ {value.toFixed(2)}</p>
         </div>

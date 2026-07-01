@@ -110,37 +110,37 @@ export function RateizzaModal({
                     <h3 className="font-barlow font-black text-lg text-kidville-green uppercase flex items-center gap-2">
                         <Layers size={18} /> Dividi in acconti
                     </h3>
-                    <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={20} /></button>
+                    <button onClick={onClose} className="text-kidville-muted hover:text-kidville-ink"><X size={20} /></button>
                 </div>
 
                 <div className="bg-kidville-cream/60 rounded-xl p-3 mb-4">
                     <p className="font-maven text-sm text-kidville-green font-bold">{alunno.nome} {alunno.cognome}</p>
-                    <p className="font-maven text-xs text-gray-500">{alunno.classe_sezione || '—'}</p>
+                    <p className="font-maven text-xs text-kidville-muted">{alunno.classe_sezione || '—'}</p>
                 </div>
 
                 <div className="space-y-3">
                     <div>
-                        <label className="font-maven text-xs text-gray-500 mb-1 block">Descrizione</label>
+                        <label className="font-maven text-xs text-kidville-muted mb-1 block">Descrizione</label>
                         <input type="text" value={desc} onChange={(e) => setDesc(e.target.value)}
-                            className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
+                            className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
                     </div>
                     <div className="grid grid-cols-3 gap-2">
                         <div>
-                            <label className="font-maven text-xs text-gray-500 mb-1 block">Totale (€)</label>
+                            <label className="font-maven text-xs text-kidville-muted mb-1 block">Totale (€)</label>
                             <input type="number" min={0} step="0.01" value={totale || ''}
                                 onChange={(e) => setTotale(e.target.value === '' ? 0 : Number(e.target.value))}
-                                className="w-full border-2 border-gray-200 rounded-xl px-2 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
+                                className="w-full border-2 border-kidville-line rounded-xl px-2 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
                         </div>
                         <div>
-                            <label className="font-maven text-xs text-gray-500 mb-1 block">N° rate</label>
+                            <label className="font-maven text-xs text-kidville-muted mb-1 block">N° rate</label>
                             <input type="number" min={2} max={24} value={nRate}
                                 onChange={(e) => setNRate(Math.max(2, Number(e.target.value) || 2))}
-                                className="w-full border-2 border-gray-200 rounded-xl px-2 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
+                                className="w-full border-2 border-kidville-line rounded-xl px-2 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
                         </div>
                         <div>
-                            <label className="font-maven text-xs text-gray-500 mb-1 block">1ª scadenza</label>
+                            <label className="font-maven text-xs text-kidville-muted mb-1 block">1ª scadenza</label>
                             <input type="date" value={dataBase} onChange={(e) => setDataBase(e.target.value)}
-                                className="w-full border-2 border-gray-200 rounded-xl px-2 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
+                                className="w-full border-2 border-kidville-line rounded-xl px-2 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
                         </div>
                     </div>
                     <button onClick={genera}
@@ -149,24 +149,24 @@ export function RateizzaModal({
                     </button>
 
                     {rate && (
-                        <div className="border border-gray-100 rounded-xl p-2 space-y-2">
+                        <div className="border border-kidville-line rounded-xl p-2 space-y-2">
                             {rate.map((r, i) => (
                                 <div key={i} className="flex items-center gap-2">
-                                    <span className="font-maven text-xs text-gray-400 w-6">{i + 1}.</span>
+                                    <span className="font-maven text-xs text-kidville-muted w-6">{i + 1}.</span>
                                     <input type="number" min={0} step="0.01" value={r.importo || ''}
                                         onChange={(e) => updateRata(i, { importo: e.target.value === '' ? 0 : Number(e.target.value) })}
-                                        className="w-24 border-2 border-gray-200 rounded-lg px-2 py-1.5 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
+                                        className="w-24 border-2 border-kidville-line rounded-lg px-2 py-1.5 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
                                     <input type="date" value={r.scadenza}
                                         onChange={(e) => updateRata(i, { scadenza: e.target.value })}
-                                        className="flex-1 border-2 border-gray-200 rounded-lg px-2 py-1.5 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
+                                        className="flex-1 border-2 border-kidville-line rounded-lg px-2 py-1.5 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
                                     <button onClick={() => removeRata(i)} disabled={rate.length <= 2}
-                                        className="text-gray-300 hover:text-red-500 disabled:opacity-30"><Trash2 size={15} /></button>
+                                        className="text-kidville-muted hover:text-kidville-error disabled:opacity-30"><Trash2 size={15} /></button>
                                 </div>
                             ))}
                             <button onClick={addRata} className="flex items-center gap-1 text-kidville-green font-maven text-xs font-bold">
                                 <Plus size={13} /> Aggiungi rata
                             </button>
-                            <p className={`font-maven text-xs font-bold text-right ${sommaOk ? 'text-green-600' : 'text-red-500'}`}>
+                            <p className={`font-maven text-xs font-bold text-right ${sommaOk ? 'text-kidville-success' : 'text-kidville-error'}`}>
                                 Somma: € {somma.toFixed(2)} / € {Number(totale).toFixed(2)}
                             </p>
                         </div>
@@ -176,7 +176,7 @@ export function RateizzaModal({
                 </div>
 
                 <div className="flex gap-2 mt-5">
-                    <button onClick={onClose} className="flex-1 py-2.5 rounded-full border-2 border-gray-200 font-maven font-bold text-sm text-gray-500 hover:bg-gray-50">
+                    <button onClick={onClose} className="flex-1 py-2.5 rounded-full border-2 border-kidville-line font-maven font-bold text-sm text-kidville-muted hover:bg-kidville-cream">
                         Annulla
                     </button>
                     <button onClick={submit} disabled={saving || !rate || !sommaOk}

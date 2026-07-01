@@ -7,6 +7,8 @@ import {
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
+import { PageHeader } from '@/components/ui/cockpit';
+import { btnClass } from '@/components/ui/Btn';
 
 const SCUOLA_ID = '11111111-1111-1111-1111-111111111111';
 
@@ -413,48 +415,41 @@ export default function AdminModulisticaPage() {
   return (
     <div className="flex-1 flex flex-col p-4 sm:p-6 max-w-6xl mx-auto w-full">
       {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
-        <div>
-          <h1 className="font-barlow font-black text-3xl text-kidville-green uppercase tracking-wide flex items-center gap-2">
-            <FileText size={28} className="text-kidville-yellow" /> Modulistica & Onboarding
-          </h1>
-          <p className="font-maven text-gray-500 mt-1">
-            Gestione moduli di consenso, sala d'attesa pre-iscrizioni e carta intestata.
-          </p>
-        </div>
-
-        {(activeTab === 'moduli-genitori' || activeTab === 'moduli-esterni') && (
-          <button
-            onClick={() => openBuilder(activeTab === 'moduli-esterni' ? 'external' : 'class')}
-            className="flex items-center gap-2 px-5 py-2.5 bg-kidville-green text-kidville-yellow rounded-pill font-barlow font-black uppercase tracking-wider text-sm hover:opacity-90 transition-all shadow-md self-start md:self-auto"
-          >
-            <Plus size={18} /> {activeTab === 'moduli-esterni' ? 'Nuovo Modulo Esterni' : 'Nuovo Modulo Genitori'}
-          </button>
-        )}
-      </div>
+      <PageHeader
+        icon={FileText}
+        title="Modulistica & Onboarding"
+        subtitle="Gestione moduli di consenso, sala d'attesa pre-iscrizioni e carta intestata."
+        actions={
+          activeTab === 'moduli-genitori' || activeTab === 'moduli-esterni' ? (
+            <button onClick={() => openBuilder(activeTab === 'moduli-esterni' ? 'external' : 'class')} className={btnClass('primary', 'md')}>
+              <Plus size={18} /> {activeTab === 'moduli-esterni' ? 'Nuovo Modulo Esterni' : 'Nuovo Modulo Genitori'}
+            </button>
+          ) : undefined
+        }
+      />
 
       {/* Tabs */}
-      <div className="flex gap-4 mb-6 border-b border-gray-200">
+      <div className="flex gap-4 mb-6 border-b border-kidville-line">
         <button
-          className={`pb-3 px-2 font-barlow font-bold uppercase tracking-wide transition-colors flex items-center gap-1.5 ${activeTab === 'moduli-genitori' ? 'text-kidville-green border-b-2 border-kidville-green' : 'text-gray-400 hover:text-gray-600'}`}
+          className={`pb-3 px-2 font-barlow font-bold uppercase tracking-wide transition-colors flex items-center gap-1.5 ${activeTab === 'moduli-genitori' ? 'text-kidville-green border-b-2 border-kidville-green' : 'text-kidville-muted hover:text-kidville-ink'}`}
           onClick={() => setActiveTab('moduli-genitori')}
         >
           <Users size={16} /> Moduli Genitori
         </button>
         <button
-          className={`pb-3 px-2 font-barlow font-bold uppercase tracking-wide transition-colors flex items-center gap-1.5 ${activeTab === 'moduli-esterni' ? 'text-kidville-green border-b-2 border-kidville-green' : 'text-gray-400 hover:text-gray-600'}`}
+          className={`pb-3 px-2 font-barlow font-bold uppercase tracking-wide transition-colors flex items-center gap-1.5 ${activeTab === 'moduli-esterni' ? 'text-kidville-green border-b-2 border-kidville-green' : 'text-kidville-muted hover:text-kidville-ink'}`}
           onClick={() => setActiveTab('moduli-esterni')}
         >
           <FileText size={16} /> Moduli Esterni
         </button>
         <a
           href="/admin/iscrizioni"
-          className="pb-3 px-2 font-barlow font-bold uppercase tracking-wide transition-colors flex items-center gap-1.5 text-gray-400 hover:text-kidville-green"
+          className="pb-3 px-2 font-barlow font-bold uppercase tracking-wide transition-colors flex items-center gap-1.5 text-kidville-muted hover:text-kidville-green"
         >
           <UserCheck size={16} /> Iscrizioni Nuovi Alunni
         </a>
         <button
-          className={`pb-3 px-2 font-barlow font-bold uppercase tracking-wide transition-colors flex items-center gap-1.5 ${activeTab === 'odt' ? 'text-kidville-green border-b-2 border-kidville-green' : 'text-gray-400 hover:text-gray-600'}`}
+          className={`pb-3 px-2 font-barlow font-bold uppercase tracking-wide transition-colors flex items-center gap-1.5 ${activeTab === 'odt' ? 'text-kidville-green border-b-2 border-kidville-green' : 'text-kidville-muted hover:text-kidville-ink'}`}
           onClick={() => setActiveTab('odt')}
         >
           <Settings size={16} /> Template Certificati ODT
@@ -465,7 +460,7 @@ export default function AdminModulisticaPage() {
       {isLoading ? (
         <div className="flex-1 flex flex-col items-center justify-center min-h-[40vh] gap-3">
           <div className="w-10 h-10 border-4 border-kidville-green/30 border-t-kidville-green rounded-full animate-spin" />
-          <p className="font-maven text-gray-500">Caricamento in corso...</p>
+          <p className="font-maven text-kidville-muted">Caricamento in corso...</p>
         </div>
       ) : (
         <>
@@ -473,9 +468,9 @@ export default function AdminModulisticaPage() {
           {(activeTab === 'moduli-genitori' || activeTab === 'moduli-esterni') && (
             <div className="space-y-4">
               {scopedForms.length === 0 ? (
-                <div className="bg-white rounded-card p-10 text-center border border-gray-100">
-                  <FileText className="mx-auto text-gray-300 mb-3" size={48} />
-                  <p className="font-maven text-gray-500">
+                <div className="bg-white rounded-card p-10 text-center border border-kidville-line">
+                  <FileText className="mx-auto text-kidville-muted mb-3" size={48} />
+                  <p className="font-maven text-kidville-muted">
                     {activeTab === 'moduli-esterni'
                       ? 'Nessun modulo per gli esterni (pre-iscrizione) creato finora.'
                       : 'Nessun modulo per i genitori iscritti creato finora.'}
@@ -483,12 +478,12 @@ export default function AdminModulisticaPage() {
                 </div>
               ) : (
                 scopedForms.map(form => (
-                  <div key={form.id} className="bg-white rounded-card p-5 shadow-sm border border-gray-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div key={form.id} className="bg-white rounded-card p-5 shadow-sm border border-kidville-line flex flex-col md:flex-row md:items-center justify-between gap-4">
                     <div>
                       <h3 className="font-barlow font-bold text-xl text-kidville-green uppercase tracking-wide">
                         {form.title}
                       </h3>
-                      <p className="font-maven text-xs text-gray-500 line-clamp-2 max-w-xl mt-1">
+                      <p className="font-maven text-xs text-kidville-muted line-clamp-2 max-w-xl mt-1">
                         {form.description || 'Nessuna descrizione.'}
                       </p>
                       
@@ -526,7 +521,7 @@ export default function AdminModulisticaPage() {
 
                       <button
                         onClick={() => handleExtendScadenza(form)}
-                        className="p-2 text-gray-400 hover:text-kidville-green hover:bg-gray-50 rounded-lg transition-all"
+                        className="p-2 text-kidville-muted hover:text-kidville-green hover:bg-kidville-cream rounded-lg transition-all"
                         title="Modifica Scadenza"
                       >
                         <Calendar size={18} />
@@ -534,7 +529,7 @@ export default function AdminModulisticaPage() {
 
                       <button
                         onClick={() => handleDeleteForm(form.id)}
-                        className="p-2 text-gray-400 hover:text-kidville-error hover:bg-red-50 rounded-lg transition-all"
+                        className="p-2 text-kidville-muted hover:text-kidville-error hover:bg-kidville-error-soft rounded-lg transition-all"
                         title="Elimina Modulo"
                       >
                         <Trash2 size={18} />
@@ -550,13 +545,13 @@ export default function AdminModulisticaPage() {
           {activeTab === 'attesa' && (
             <div className="space-y-4">
               {preInscriptions.filter(p => p.status === 'pending').length === 0 ? (
-                <div className="bg-white rounded-card p-10 text-center border border-gray-100">
-                  <UserCheck className="mx-auto text-gray-300 mb-3" size={48} />
-                  <p className="font-maven text-gray-500">Nessuna pre-iscrizione in attesa di approvazione.</p>
+                <div className="bg-white rounded-card p-10 text-center border border-kidville-line">
+                  <UserCheck className="mx-auto text-kidville-muted mb-3" size={48} />
+                  <p className="font-maven text-kidville-muted">Nessuna pre-iscrizione in attesa di approvazione.</p>
                 </div>
               ) : (
                 preInscriptions.filter(p => p.status === 'pending').map(pre => (
-                  <div key={pre.id} className="bg-white rounded-card p-5 shadow-sm border border-gray-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div key={pre.id} className="bg-white rounded-card p-5 shadow-sm border border-kidville-line flex flex-col md:flex-row md:items-center justify-between gap-4">
                     <div>
                       <div className="flex items-center gap-2">
                         <h3 className="font-barlow font-bold text-xl text-kidville-green uppercase tracking-wide">
@@ -567,7 +562,7 @@ export default function AdminModulisticaPage() {
                         </span>
                       </div>
                       
-                      <p className="font-maven text-xs text-gray-500 mt-1">
+                      <p className="font-maven text-xs text-kidville-muted mt-1">
                         Genitore: {pre.parent_first_name} {pre.parent_last_name} ({pre.parent_email} - {pre.parent_phone || 'N.D.'})
                       </p>
                       
@@ -596,12 +591,12 @@ export default function AdminModulisticaPage() {
           {activeTab === 'odt' && (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               {/* Carta Intestata */}
-              <div className="bg-white rounded-card p-6 border border-gray-100 shadow-sm text-center">
+              <div className="bg-white rounded-card p-6 border border-kidville-line shadow-sm text-center">
                 <Settings className="mx-auto text-kidville-green/20 mb-4" size={48} />
                 <h3 className="font-barlow font-bold text-lg text-kidville-green uppercase mb-2">
                   Carta Intestata Scuola
                 </h3>
-                <p className="font-maven text-xs text-gray-500 mb-6 leading-relaxed">
+                <p className="font-maven text-xs text-kidville-muted mb-6 leading-relaxed">
                   Trascina il file ODT della carta intestata contenente i loghi istituzionali e l'intestazione personalizzata.
                 </p>
                 
@@ -610,7 +605,7 @@ export default function AdminModulisticaPage() {
                     📄 {odtLetterhead} caricato
                   </div>
                 ) : (
-                  <label className="w-full h-11 border-2 border-dashed border-gray-200 hover:border-kidville-green rounded-xl flex items-center justify-center gap-2 cursor-pointer text-sm font-semibold text-gray-600 transition-colors mb-4">
+                  <label className="w-full h-11 border-2 border-dashed border-kidville-line hover:border-kidville-green rounded-xl flex items-center justify-center gap-2 cursor-pointer text-sm font-semibold text-kidville-ink transition-colors mb-4">
                     <Upload size={16} /> Carica .ODT
                     <input
                       type="file"
@@ -623,12 +618,12 @@ export default function AdminModulisticaPage() {
               </div>
 
               {/* Certificato di Frequenza */}
-              <div className="bg-white rounded-card p-6 border border-gray-100 shadow-sm text-center">
+              <div className="bg-white rounded-card p-6 border border-kidville-line shadow-sm text-center">
                 <FileText className="mx-auto text-kidville-green/20 mb-4" size={48} />
                 <h3 className="font-barlow font-bold text-lg text-kidville-green uppercase mb-2">
                   Prestampato Certificato Frequenza
                 </h3>
-                <p className="font-maven text-xs text-gray-500 mb-6 leading-relaxed">
+                <p className="font-maven text-xs text-kidville-muted mb-6 leading-relaxed">
                   Carica il modello ODT con i tag per autocompilazione: `{"{nome}"}`, `{"{cognome}"}`, `{"{data_nascita}"}`.
                 </p>
                 
@@ -637,7 +632,7 @@ export default function AdminModulisticaPage() {
                     📄 {odtFrequenza} caricato
                   </div>
                 ) : (
-                  <label className="w-full h-11 border-2 border-dashed border-gray-200 hover:border-kidville-green rounded-xl flex items-center justify-center gap-2 cursor-pointer text-sm font-semibold text-gray-600 transition-colors mb-4">
+                  <label className="w-full h-11 border-2 border-dashed border-kidville-line hover:border-kidville-green rounded-xl flex items-center justify-center gap-2 cursor-pointer text-sm font-semibold text-kidville-ink transition-colors mb-4">
                     <Upload size={16} /> Carica .ODT
                     <input
                       type="file"
@@ -650,12 +645,12 @@ export default function AdminModulisticaPage() {
               </div>
 
               {/* Certificato di Iscrizione */}
-              <div className="bg-white rounded-card p-6 border border-gray-100 shadow-sm text-center">
+              <div className="bg-white rounded-card p-6 border border-kidville-line shadow-sm text-center">
                 <FileText className="mx-auto text-kidville-green/20 mb-4" size={48} />
                 <h3 className="font-barlow font-bold text-lg text-kidville-green uppercase mb-2">
                   Prestampato Certificato Iscrizione
                 </h3>
-                <p className="font-maven text-xs text-gray-500 mb-6 leading-relaxed">
+                <p className="font-maven text-xs text-kidville-muted mb-6 leading-relaxed">
                   Modello predefinito ODT da far scaricare in autonomia alle famiglie per bonus INPS.
                 </p>
                 
@@ -664,7 +659,7 @@ export default function AdminModulisticaPage() {
                     📄 {odtIscrizione} caricato
                   </div>
                 ) : (
-                  <label className="w-full h-11 border-2 border-dashed border-gray-200 hover:border-kidville-green rounded-xl flex items-center justify-center gap-2 cursor-pointer text-sm font-semibold text-gray-600 transition-colors mb-4">
+                  <label className="w-full h-11 border-2 border-dashed border-kidville-line hover:border-kidville-green rounded-xl flex items-center justify-center gap-2 cursor-pointer text-sm font-semibold text-kidville-ink transition-colors mb-4">
                     <Upload size={16} /> Carica .ODT
                     <input
                       type="file"
@@ -703,14 +698,14 @@ export default function AdminModulisticaPage() {
                           key={t}
                           type="button"
                           onClick={() => selectFormType(t)}
-                          className={`text-left p-3 rounded-xl border-2 transition-all ${active ? 'border-kidville-green bg-kidville-green-light' : 'border-gray-100 hover:border-gray-300'}`}
+                          className={`text-left p-3 rounded-xl border-2 transition-all ${active ? 'border-kidville-green bg-kidville-green-light' : 'border-kidville-line hover:border-kidville-muted'}`}
                         >
                           <span className="flex items-center gap-1.5 font-barlow font-bold text-sm uppercase text-kidville-green">
                             {t === 'autorizzazione' && <Shield size={14} className="text-kidville-yellow" />}
                             {meta.label}
                             {meta.otp && <span className="ml-auto text-[9px] bg-kidville-green text-kidville-yellow px-1.5 py-0.5 rounded-full tracking-wider">OTP</span>}
                           </span>
-                          <span className="block font-maven text-[11px] text-gray-500 mt-1 leading-snug">{meta.desc}</span>
+                          <span className="block font-maven text-[11px] text-kidville-muted mt-1 leading-snug">{meta.desc}</span>
                         </button>
                       );
                     })}
@@ -727,7 +722,7 @@ export default function AdminModulisticaPage() {
                   required
                   value={formTitle}
                   onChange={e => setFormTitle(e.target.value)}
-                  className="w-full border-2 border-gray-100 rounded-xl px-4 py-2.5 font-maven text-sm focus:outline-none focus:border-kidville-green"
+                  className="w-full border-2 border-kidville-line rounded-xl px-4 py-2.5 font-maven text-sm focus:outline-none focus:border-kidville-green"
                   placeholder="Es. Consenso Uscita Didattica Museo Scienza"
                 />
               </div>
@@ -739,7 +734,7 @@ export default function AdminModulisticaPage() {
                 <textarea
                   value={formDesc}
                   onChange={e => setFormDesc(e.target.value)}
-                  className="w-full border-2 border-gray-100 rounded-xl p-3 font-maven text-sm focus:outline-none focus:border-kidville-green resize-none h-20"
+                  className="w-full border-2 border-kidville-line rounded-xl p-3 font-maven text-sm focus:outline-none focus:border-kidville-green resize-none h-20"
                   placeholder="Specificare le note informative per il genitore..."
                 />
               </div>
@@ -764,7 +759,7 @@ export default function AdminModulisticaPage() {
                     type="date"
                     value={formExpiration}
                     onChange={e => setFormExpiration(e.target.value)}
-                    className="w-full border-2 border-gray-100 rounded-xl px-3 py-2 font-maven text-sm text-gray-600 focus:outline-none"
+                    className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-ink focus:outline-none"
                   />
                 </div>
               </div>
@@ -780,7 +775,7 @@ export default function AdminModulisticaPage() {
                         key={sec.id}
                         type="button"
                         onClick={() => handleToggleClass(sec.name)}
-                        className={`px-3 py-1.5 rounded-full text-xs font-semibold border-2 transition-colors ${formClasses.includes(sec.name) ? 'bg-kidville-green text-kidville-yellow border-kidville-green' : 'border-gray-100 text-gray-500 hover:border-gray-300'}`}
+                        className={`px-3 py-1.5 rounded-full text-xs font-semibold border-2 transition-colors ${formClasses.includes(sec.name) ? 'bg-kidville-green text-kidville-yellow border-kidville-green' : 'border-kidville-line text-kidville-muted hover:border-kidville-muted'}`}
                       >
                         {sec.name}
                       </button>
@@ -791,7 +786,7 @@ export default function AdminModulisticaPage() {
 
               {/* Dynamic Fields Editor */}
               <div className="space-y-4">
-                <div className="flex items-center justify-between border-t border-gray-100 pt-4">
+                <div className="flex items-center justify-between border-t border-kidville-line pt-4">
                   <h4 className="font-barlow font-bold text-lg text-kidville-green uppercase">Campi Dinamici Richiesti</h4>
                   <button
                     onClick={handleAddField}
@@ -802,27 +797,27 @@ export default function AdminModulisticaPage() {
                 </div>
 
                 {formFields.map((field, idx) => (
-                  <div key={field.id} className="bg-gray-50 p-4 rounded-xl border border-gray-100 flex flex-col md:flex-row gap-4 items-end">
+                  <div key={field.id} className="bg-kidville-cream p-4 rounded-xl border border-kidville-line flex flex-col md:flex-row gap-4 items-end">
                     <div className="flex-1 w-full grid grid-cols-1 md:grid-cols-2 gap-3">
                       <div>
-                        <label className="block font-maven text-xs font-semibold text-gray-500 mb-1">
+                        <label className="block font-maven text-xs font-semibold text-kidville-muted mb-1">
                           {formType === 'autorizzazione' ? 'Testo del consenso / domanda' : 'Domanda'}
                         </label>
                         <input
                           type="text"
                           value={field.label}
                           onChange={e => handleFieldChange(idx, 'label', e.target.value)}
-                          className="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 font-maven text-xs bg-white focus:outline-none focus:border-kidville-green"
+                          className="w-full border border-kidville-line rounded-lg px-2.5 py-1.5 font-maven text-xs bg-white focus:outline-none focus:border-kidville-green"
                           placeholder={formType === 'autorizzazione' ? 'Es. Autorizzo l\'uscita didattica' : formType === 'gradimento' ? 'Es. Come valuti il servizio mensa?' : 'Es. Quali attività preferite?'}
                         />
                       </div>
 
                       <div>
-                        <label className="block font-maven text-xs font-semibold text-gray-500 mb-1">Tipo Input</label>
+                        <label className="block font-maven text-xs font-semibold text-kidville-muted mb-1">Tipo Input</label>
                         <select
                           value={field.type}
                           onChange={e => handleFieldChange(idx, 'type', e.target.value as FormField['type'])}
-                          className="w-full border border-gray-200 rounded-lg px-2 py-1.5 font-maven text-xs bg-white text-kidville-green focus:outline-none focus:border-kidville-green"
+                          className="w-full border border-kidville-line rounded-lg px-2 py-1.5 font-maven text-xs bg-white text-kidville-green focus:outline-none focus:border-kidville-green"
                         >
                           {INPUT_TYPES_BY_FORM[formType].map(([val, lbl]) => (
                             <option key={val} value={val}>{lbl}</option>
@@ -832,12 +827,12 @@ export default function AdminModulisticaPage() {
 
                       {field.type === 'radio' && (
                         <div className="md:col-span-2">
-                          <label className="block font-maven text-xs font-semibold text-gray-500 mb-1">Opzioni di scelta (separate da virgola)</label>
+                          <label className="block font-maven text-xs font-semibold text-kidville-muted mb-1">Opzioni di scelta (separate da virgola)</label>
                           <input
                             type="text"
                             value={(field.options ?? []).map(o => o.label).join(', ')}
                             onChange={e => handleFieldOptions(idx, e.target.value)}
-                            className="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 font-maven text-xs bg-white focus:outline-none focus:border-kidville-green"
+                            className="w-full border border-kidville-line rounded-lg px-2.5 py-1.5 font-maven text-xs bg-white focus:outline-none focus:border-kidville-green"
                             placeholder="Es. Sì, No, Forse"
                           />
                         </div>
@@ -845,7 +840,7 @@ export default function AdminModulisticaPage() {
                     </div>
 
                     <div className="flex items-center gap-3">
-                      <label className="flex items-center gap-1 text-xs text-gray-500 mb-2.5 cursor-pointer">
+                      <label className="flex items-center gap-1 text-xs text-kidville-muted mb-2.5 cursor-pointer">
                         <input
                           type="checkbox"
                           checked={field.required}
@@ -858,7 +853,7 @@ export default function AdminModulisticaPage() {
                       {formFields.length > 1 && (
                         <button
                           onClick={() => handleRemoveField(idx)}
-                          className="text-gray-400 hover:text-kidville-error transition-colors mb-2"
+                          className="text-kidville-muted hover:text-kidville-error transition-colors mb-2"
                         >
                           <Trash2 size={16} />
                         </button>
@@ -869,10 +864,10 @@ export default function AdminModulisticaPage() {
               </div>
             </div>
 
-            <div className="flex justify-end gap-3 border-t border-gray-100 pt-4 mt-4">
+            <div className="flex justify-end gap-3 border-t border-kidville-line pt-4 mt-4">
               <button
                 onClick={() => setShowBuilder(false)}
-                className="px-4 py-2 font-maven rounded-pill border border-gray-200 text-gray-500 text-sm hover:bg-gray-50 transition-colors"
+                className="px-4 py-2 font-maven rounded-pill border border-kidville-line text-kidville-muted text-sm hover:bg-kidville-cream transition-colors"
               >
                 Annulla
               </button>
@@ -891,13 +886,13 @@ export default function AdminModulisticaPage() {
       {selectedPre && (
         <div className="fixed inset-0 bg-kidville-green/30 z-50 flex items-center justify-center p-4 animate-fadeIn">
           <div className="bg-white w-full max-w-xl rounded-card p-6 shadow-2xl flex flex-col max-h-[90vh]">
-            <div className="flex items-center justify-between border-b border-gray-100 pb-3 mb-4">
+            <div className="flex items-center justify-between border-b border-kidville-line pb-3 mb-4">
               <h2 className="font-barlow font-black text-2xl text-kidville-green uppercase tracking-wide">
                 Scheda Onboarding Famiglia
               </h2>
               <button 
                 onClick={() => setSelectedPre(null)}
-                className="text-gray-400 hover:text-gray-600 font-maven text-lg p-1"
+                className="text-kidville-muted hover:text-kidville-ink font-maven text-lg p-1"
               >
                 ✕
               </button>
@@ -907,7 +902,7 @@ export default function AdminModulisticaPage() {
               {/* Genitore info */}
               <div className="bg-kidville-cream/30 p-4 rounded-xl border border-kidville-green/5">
                 <h4 className="font-barlow font-bold text-sm text-kidville-green uppercase tracking-wide mb-2">Contatti Genitore</h4>
-                <div className="grid grid-cols-2 gap-y-2 text-xs font-maven text-gray-600">
+                <div className="grid grid-cols-2 gap-y-2 text-xs font-maven text-kidville-ink">
                   <div><strong>Nome:</strong> {selectedPre.parent_first_name} {selectedPre.parent_last_name}</div>
                   <div><strong>Email:</strong> {selectedPre.parent_email}</div>
                   <div><strong>Telefono:</strong> {selectedPre.parent_phone || 'N.D.'}</div>
@@ -921,11 +916,11 @@ export default function AdminModulisticaPage() {
                 <h4 className="font-barlow font-bold text-sm text-kidville-green uppercase tracking-wide mb-3">Figli da Registrare</h4>
                 <div className="space-y-3">
                   {selectedPre.students?.map((s: any, idx: number) => (
-                    <div key={idx} className="p-3 bg-gray-50 border border-gray-100 rounded-xl text-xs font-maven">
-                      <div className="font-semibold text-gray-800 text-sm">{s.cognome} {s.nome}</div>
-                      <div className="text-gray-500 mt-1">Data Nascita: {new Date(s.data_nascita).toLocaleDateString()} | CF: {s.codice_fiscale || 'N.D.'}</div>
+                    <div key={idx} className="p-3 bg-kidville-cream border border-kidville-line rounded-xl text-xs font-maven">
+                      <div className="font-semibold text-kidville-ink text-sm">{s.cognome} {s.nome}</div>
+                      <div className="text-kidville-muted mt-1">Data Nascita: {new Date(s.data_nascita).toLocaleDateString()} | CF: {s.codice_fiscale || 'N.D.'}</div>
                       {s.note_mediche && (
-                        <div className="mt-2 text-red-600 bg-red-50 p-1.5 rounded-lg font-semibold flex items-start gap-1">
+                        <div className="mt-2 text-kidville-error bg-kidville-error-soft p-1.5 rounded-lg font-semibold flex items-start gap-1">
                           ⚠️ Allergie/Note: {s.note_mediche}
                         </div>
                       )}
@@ -935,14 +930,14 @@ export default function AdminModulisticaPage() {
               </div>
 
               {/* Assegnazione Classe */}
-              <div className="border-t border-gray-100 pt-4">
+              <div className="border-t border-kidville-line pt-4">
                 <label className="block font-maven text-sm font-semibold text-kidville-green mb-1.5">
                   Assegna Sezione Didattica *
                 </label>
                 <select
                   value={assignedClass}
                   onChange={e => setAssignedClass(e.target.value)}
-                  className="w-full border-2 border-gray-100 rounded-xl px-3 py-2.5 font-maven text-sm text-gray-600 focus:outline-none bg-white"
+                  className="w-full border-2 border-kidville-line rounded-xl px-3 py-2.5 font-maven text-sm text-kidville-ink focus:outline-none bg-white"
                 >
                   <option value="">Seleziona Sezione...</option>
                   {sections.map(sec => (
@@ -952,10 +947,10 @@ export default function AdminModulisticaPage() {
               </div>
             </div>
 
-            <div className="flex justify-between gap-3 border-t border-gray-100 pt-4 mt-4">
+            <div className="flex justify-between gap-3 border-t border-kidville-line pt-4 mt-4">
               <button
                 onClick={() => handleRejectPreInscription(selectedPre.id)}
-                className="px-4 py-2 font-barlow font-bold text-xs uppercase tracking-wider rounded-pill border border-red-200 text-kidville-error hover:bg-red-50"
+                className="px-4 py-2 font-barlow font-bold text-xs uppercase tracking-wider rounded-pill border border-kidville-error-soft text-kidville-error hover:bg-kidville-error-soft"
               >
                 Rifiuta Iscrizione
               </button>
@@ -963,7 +958,7 @@ export default function AdminModulisticaPage() {
               <div className="flex gap-3">
                 <button
                   onClick={() => setSelectedPre(null)}
-                  className="px-4 py-2 font-maven rounded-pill border border-gray-200 text-gray-500 text-sm hover:bg-gray-50"
+                  className="px-4 py-2 font-maven rounded-pill border border-kidville-line text-kidville-muted text-sm hover:bg-kidville-cream"
                 >
                   Annulla
                 </button>
@@ -985,14 +980,14 @@ export default function AdminModulisticaPage() {
         <div className="fixed inset-0 bg-kidville-green/30 z-[60] flex items-center justify-center p-4 animate-fadeIn">
           <div className="bg-white w-full max-w-sm rounded-card p-6 shadow-2xl text-center">
             <h3 className="font-barlow font-black text-xl text-kidville-green uppercase tracking-wide mb-3">Conferma Approvazione</h3>
-            <p className="font-maven text-sm text-gray-500 mb-6">
+            <p className="font-maven text-sm text-kidville-muted mb-6">
               Stai per approvare l'onboarding di <strong>Famiglia {selectedPre.parent_last_name}</strong> e importare <strong>{selectedPre.students?.length}</strong> alunni nella sezione <strong>{assignedClass}</strong>. 
               Questo creerà automaticamente gli account utente. Vuoi procedere?
             </p>
             <div className="flex gap-3 justify-center">
               <button
                 onClick={() => setShowConfirmApproval(false)}
-                className="px-4 py-2 font-maven rounded-pill border border-gray-200 text-gray-500 text-sm hover:bg-gray-50"
+                className="px-4 py-2 font-maven rounded-pill border border-kidville-line text-kidville-muted text-sm hover:bg-kidville-cream"
               >
                 Indietro
               </button>
@@ -1013,10 +1008,10 @@ export default function AdminModulisticaPage() {
           <div className="bg-white w-full max-w-sm rounded-card p-6 shadow-2xl text-center border-t-4 border-kidville-green">
             <CheckCircle className="text-kidville-success mx-auto mb-3" size={48} />
             <h3 className="font-barlow font-black text-xl text-kidville-green uppercase tracking-wide mb-1">Account Creato!</h3>
-            <p className="font-maven text-xs text-gray-500 mb-6">
+            <p className="font-maven text-xs text-kidville-muted mb-6">
               Invia queste credenziali di accesso provvisorie alla famiglia:
             </p>
-            <div className="bg-gray-50 p-4 rounded-xl text-left font-maven text-sm border border-gray-150 mb-6 space-y-2 select-all">
+            <div className="bg-kidville-cream p-4 rounded-xl text-left font-maven text-sm border border-kidville-line mb-6 space-y-2 select-all">
               <div><strong>Email:</strong> {showCredentials.email}</div>
               <div><strong>Password:</strong> {showCredentials.pass}</div>
             </div>

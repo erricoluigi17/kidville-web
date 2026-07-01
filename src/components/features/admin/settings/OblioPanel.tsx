@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { ShieldAlert, Loader2, Trash2, AlertTriangle, X } from 'lucide-react';
+import { ShieldAlert, Loader2, Trash2, AlertTriangle, UserX } from 'lucide-react';
+import { cx } from '@/lib/ui/cx';
 
 interface Candidato {
   id: string;
@@ -21,6 +22,9 @@ interface DryRun {
 }
 
 // Pannello Diritto all'oblio (DL-034) — riservato alla Direzione (gate server).
+// Layout DR: 2 colonne (lista candidati | dettaglio con dry-run + doppia conferma).
+// Compliance: la cancellazione ANONIMIZZA (irreversibile), NON elimina fisicamente;
+// audit e registri fiscali (fatture) sono preservati per obbligo di legge.
 export function OblioPanel({ userId }: { userId: string }) {
   const [list, setList] = useState<Candidato[]>([]);
   const [loading, setLoading] = useState(true);
@@ -72,95 +76,101 @@ export function OblioPanel({ userId }: { userId: string }) {
     }
   };
 
-  if (loading) return <div className="flex items-center gap-2 text-gray-400 p-6"><Loader2 className="animate-spin" size={16} /> Caricamento…</div>;
+  if (loading) return <div className="flex items-center gap-2 p-6 font-maven text-sm text-kidville-muted"><Loader2 className="animate-spin" size={16} /> Caricamento…</div>;
+
+  const nomeConferma = dry?.nominativo_conferma ?? (target ? `${target.cognome} ${target.nome}`.toUpperCase() : '');
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center gap-2 text-kidville-green">
-        <ShieldAlert size={18} />
-        <h3 className="font-barlow font-black uppercase tracking-wide">Diritto all&apos;Oblio (GDPR)</h3>
+    <div className="space-y-4">
+      {/* banner compliance: anonimizza ≠ cancella */}
+      <div className="flex items-start gap-3 rounded-2xl border border-kidville-warn/30 bg-kidville-warn-soft p-4">
+        <ShieldAlert size={20} className="mt-0.5 shrink-0 text-kidville-warn" />
+        <p className="font-maven text-[13px] leading-relaxed text-kidville-ink/80">
+          Solo alunni <strong>non iscritti</strong> e relativi genitori. La cancellazione definitiva
+          <strong> anonimizza</strong> i dati personali (irreversibile): i registri di audit e i documenti
+          fiscali (fatture) restano conservati per obbligo di legge.
+        </p>
       </div>
-      <p className="font-maven text-xs text-gray-500">
-        Alunni <strong>non iscritti</strong> e relativi genitori. La cancellazione definitiva
-        <strong> anonimizza</strong> i dati personali (irreversibile); audit e registri fiscali restano per obbligo di legge.
-      </p>
 
       {list.length === 0 ? (
-        <div className="bg-white rounded-card border border-gray-100 p-8 text-center font-maven text-sm text-gray-400">
-          Nessun alunno non iscritto da cancellare.
+        <div className="rounded-2xl border border-dashed border-kidville-line bg-kidville-white/60 p-10 text-center">
+          <UserX size={26} className="mx-auto text-kidville-muted" />
+          <p className="mt-2 font-maven text-sm text-kidville-muted">Nessun alunno non iscritto da anonimizzare.</p>
         </div>
       ) : (
-        <div className="space-y-2">
-          {list.map((c) => (
-            <div key={c.id} className="bg-white rounded-card border border-gray-100 p-4 flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <p className="font-barlow font-bold text-kidville-green truncate">
-                  {c.cognome} {c.nome}
-                  <span className="ml-2 text-[10px] uppercase bg-gray-100 text-gray-400 px-2 py-0.5 rounded-full">{c.stato ?? 'non iscritto'}</span>
-                </p>
-                <p className="font-maven text-xs text-gray-400 truncate">
-                  {c.classe_sezione ? `Classe ${c.classe_sezione} · ` : ''}
-                  Genitori: {c.genitori.map((g) => g.nome).join(', ') || '—'}
-                </p>
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[320px_1fr] lg:items-start">
+          {/* colonna sinistra: candidati */}
+          <aside className="rounded-2xl border border-kidville-line bg-kidville-white p-2">
+            {list.map((c) => {
+              const on = target?.id === c.id;
+              return (
+                <button
+                  key={c.id}
+                  onClick={() => apri(c)}
+                  className={cx('flex w-full flex-col gap-0.5 rounded-xl px-3 py-2.5 text-left transition-colors', on ? 'bg-kidville-error-soft' : 'hover:bg-kidville-cream')}
+                >
+                  <span className="flex items-center gap-2 font-barlow text-sm font-extrabold uppercase text-kidville-green">
+                    {c.cognome} {c.nome}
+                    <span className="rounded-pill bg-kidville-neutral-soft px-2 py-0.5 font-maven text-[10px] font-semibold uppercase text-kidville-muted">{c.stato ?? 'non iscritto'}</span>
+                  </span>
+                  <span className="truncate font-maven text-[11.5px] text-kidville-muted">
+                    {c.classe_sezione ? `Classe ${c.classe_sezione} · ` : ''}Genitori: {c.genitori.map((g) => g.nome).join(', ') || '—'}
+                  </span>
+                </button>
+              );
+            })}
+          </aside>
+
+          {/* colonna destra: dettaglio + dry-run + doppia conferma */}
+          <section className="rounded-2xl border-t-4 border-kidville-error bg-kidville-white p-5 shadow-sm" style={{ boxShadow: '0 1px 3px rgba(0,84,75,.04), 0 8px 24px -18px rgba(0,84,75,.28)' }}>
+            {!target ? (
+              <div className="flex flex-col items-center justify-center py-10 text-center">
+                <Trash2 size={24} className="text-kidville-muted" />
+                <p className="mt-2 font-maven text-sm text-kidville-muted">Seleziona un alunno per analizzare e anonimizzare i dati.</p>
               </div>
-              <button
-                onClick={() => apri(c)}
-                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-pill border border-red-200 text-red-500 hover:bg-red-50 font-barlow font-bold text-xs uppercase tracking-wider flex-shrink-0"
-              >
-                <Trash2 size={14} /> Cancella
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
+            ) : (
+              <>
+                <h3 className="flex items-center gap-2 font-barlow text-xl font-black uppercase tracking-wide text-kidville-error">
+                  <AlertTriangle size={20} /> Cancellazione definitiva
+                </h3>
+                <p className="mb-4 mt-2 font-maven text-sm text-kidville-ink/80">
+                  Stai per <strong>anonimizzare irreversibilmente</strong> i dati di <strong>{target.cognome} {target.nome}</strong>.
+                </p>
 
-      {/* Modale doppia conferma */}
-      {target && (
-        <div className="fixed inset-0 bg-kidville-green/30 z-50 flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-md rounded-card p-6 shadow-2xl border-t-4 border-red-400">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="font-barlow font-black text-xl text-red-500 uppercase tracking-wide flex items-center gap-2">
-                <AlertTriangle size={20} /> Cancellazione definitiva
-              </h3>
-              <button onClick={() => setTarget(null)} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
-            </div>
+                {busy && !dry ? (
+                  <div className="flex items-center gap-2 py-3 font-maven text-sm text-kidville-muted"><Loader2 className="animate-spin" size={14} /> Analisi (dry-run)…</div>
+                ) : dry ? (
+                  <div className="mb-4 space-y-1 rounded-xl bg-kidville-cream p-3.5 font-maven text-xs text-kidville-ink/80">
+                    <div>Anagrafica alunno anonimizzata: <strong>{dry.alunno}</strong></div>
+                    <div>Genitori anonimizzati (orfani): <strong>{dry.parents}</strong></div>
+                    {dry.parents_non_anonimizzati > 0 && <div className="text-kidville-warn">Genitori con altri figli iscritti (mantenuti): {dry.parents_non_anonimizzati}</div>}
+                    <div>File personali rimossi: <strong>{dry.file_da_rimuovere}</strong></div>
+                  </div>
+                ) : null}
 
-            <p className="font-maven text-sm text-gray-600 mb-3">
-              Stai per <strong>anonimizzare irreversibilmente</strong> i dati di <strong>{target.cognome} {target.nome}</strong>.
-            </p>
+                <label className="mb-1.5 block font-maven text-xs font-semibold text-kidville-muted">
+                  Per confermare, digita <span className="font-mono text-kidville-error">{nomeConferma}</span>
+                </label>
+                <input
+                  value={confirm}
+                  onChange={(e) => setConfirm(e.target.value)}
+                  placeholder="Cognome Nome"
+                  className="mb-4 w-full rounded-xl border-2 border-kidville-line px-3 py-2 text-sm outline-none focus:border-kidville-error"
+                />
 
-            {busy && !dry ? (
-              <div className="flex items-center gap-2 text-gray-400 text-sm py-3"><Loader2 className="animate-spin" size={14} /> Analisi…</div>
-            ) : dry ? (
-              <div className="bg-gray-50 rounded-xl p-3 text-xs font-maven text-gray-600 space-y-1 mb-4">
-                <div>Anagrafica alunno anonimizzata: <strong>{dry.alunno}</strong></div>
-                <div>Genitori anonimizzati (orfani): <strong>{dry.parents}</strong></div>
-                {dry.parents_non_anonimizzati > 0 && <div className="text-kidville-warn">Genitori con altri figli iscritti (mantenuti): {dry.parents_non_anonimizzati}</div>}
-                <div>File personali rimossi: <strong>{dry.file_da_rimuovere}</strong></div>
-              </div>
-            ) : null}
-
-            <label className="block font-maven text-xs font-semibold text-gray-500 mb-1.5">
-              Per confermare, digita <span className="font-mono text-red-500">{dry?.nominativo_conferma ?? `${target.cognome} ${target.nome}`.toUpperCase()}</span>
-            </label>
-            <input
-              value={confirm}
-              onChange={(e) => setConfirm(e.target.value)}
-              placeholder="Cognome Nome"
-              className="w-full border-2 border-gray-100 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-red-400 mb-4"
-            />
-
-            <div className="flex gap-3 justify-end">
-              <button onClick={() => setTarget(null)} className="px-4 py-2 text-sm rounded-pill border border-gray-200 text-gray-500 hover:bg-gray-50">Annulla</button>
-              <button
-                disabled={busy || !confirm.trim()}
-                onClick={esegui}
-                className="px-5 py-2 text-sm font-barlow font-black uppercase tracking-wider rounded-pill bg-red-500 text-white hover:bg-red-600 disabled:opacity-50"
-              >
-                {busy ? 'Cancellazione…' : 'Cancella definitivamente'}
-              </button>
-            </div>
-          </div>
+                <div className="flex justify-end gap-3">
+                  <button onClick={() => setTarget(null)} className="rounded-pill border border-kidville-line px-4 py-2 font-maven text-sm text-kidville-muted hover:bg-kidville-cream">Annulla</button>
+                  <button
+                    disabled={busy || !confirm.trim()}
+                    onClick={esegui}
+                    className="rounded-pill bg-kidville-error px-5 py-2 font-barlow text-sm font-black uppercase tracking-wider text-kidville-white hover:opacity-90 disabled:opacity-50"
+                  >
+                    {busy ? 'Anonimizzazione…' : 'Anonimizza definitivamente'}
+                  </button>
+                </div>
+              </>
+            )}
+          </section>
         </div>
       )}
     </div>

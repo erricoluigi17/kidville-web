@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import { ADULT_ROLE_LABELS } from '@/lib/forms/enrollment-template'
 import type { EnrollmentSubmissionData, EnrollmentChild, EnrollmentAdult } from '@/types/database.types'
+import { CockpitPage, PageHeader, StatCard } from '@/components/ui/cockpit'
 
 const SCUOLA_ID = '11111111-1111-1111-1111-111111111111'
 
@@ -105,36 +106,45 @@ export default function IscrizioniPage() {
   const pending = rows.filter(r => r.status === 'pending')
 
   return (
-    <div className="p-6 max-w-6xl mx-auto">
-      <div className="flex items-center gap-2 mb-1">
-        <UserPlus className="text-kidville-green" size={22} />
-        <h1 className="font-barlow font-bold text-2xl uppercase tracking-wide">Iscrizioni Nuovi Alunni</h1>
-      </div>
-      <p className="font-maven text-gray-500 mb-3">
-        Richieste ricevute dal form pubblico. Assegna la classe e importa nelle anagrafiche.
-      </p>
-      <a
-        href="/admin/sidi"
-        className="inline-flex items-center gap-2 mb-6 rounded-pill bg-kidville-green/10 px-4 py-2 font-maven text-sm text-kidville-green hover:bg-kidville-green/20"
-      >
-        <ExternalLink size={15} /> Interoperabilità SIDI — import ZIP ministeriale, Fase A, frequentanti, Piattaforma Unica
-      </a>
+    <CockpitPage max={1152}>
+      <PageHeader
+        icon={UserPlus}
+        title="Iscrizioni Nuovi Alunni"
+        subtitle="Richieste ricevute dal form pubblico. Assegna la classe e importa nelle anagrafiche."
+        actions={
+          <a
+            href="/admin/sidi"
+            className="inline-flex h-[46px] items-center gap-2 rounded-pill bg-kidville-green-soft px-5 font-barlow text-sm font-extrabold uppercase tracking-[0.03em] text-kidville-green hover:bg-kidville-green/20"
+          >
+            <ExternalLink size={16} /> Interoperabilità SIDI
+          </a>
+        }
+      />
+
+      {!loading && rows.length > 0 && (
+        <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <StatCard icon={Users} label="Totale richieste" value={rows.length} tone="green" />
+          <StatCard icon={Clock} label="In attesa" value={pending.length} tone="warn" />
+          <StatCard icon={CheckCircle2} label="Importate" value={rows.filter((r) => r.status === 'approved').length} tone="success" />
+          <StatCard icon={XCircle} label="Rifiutate" value={rows.filter((r) => r.status === 'rejected').length} tone="error" />
+        </div>
+      )}
 
       {loading ? (
         <div className="flex items-center justify-center min-h-[40vh] gap-3">
           <Loader2 className="w-6 h-6 animate-spin text-kidville-green" />
-          <span className="font-maven text-gray-500">Caricamento…</span>
+          <span className="font-maven text-kidville-muted">Caricamento…</span>
         </div>
       ) : rows.length === 0 ? (
-        <div className="bg-white rounded-card p-10 text-center border border-gray-100">
-          <Clock className="w-10 h-10 text-gray-300 mx-auto mb-3" />
-          <p className="font-maven text-gray-500">Nessuna richiesta di iscrizione ricevuta.</p>
+        <div className="bg-kidville-white rounded-card p-10 text-center border border-kidville-line">
+          <Clock className="w-10 h-10 text-kidville-neutral/50 mx-auto mb-3" />
+          <p className="font-maven text-kidville-muted">Nessuna richiesta di iscrizione ricevuta.</p>
         </div>
       ) : (
         <div className="grid md:grid-cols-2 gap-5">
           {/* Lista */}
           <div className="space-y-3">
-            <p className="text-xs font-bold uppercase tracking-wider text-gray-400">
+            <p className="text-xs font-bold uppercase tracking-wider text-kidville-muted">
               In attesa ({pending.length}) · Totale {rows.length}
             </p>
             {rows.map(row => {
@@ -145,17 +155,17 @@ export default function IscrizioniPage() {
                 <button
                   key={row.id}
                   onClick={() => openDetail(row)}
-                  className={`w-full text-left bg-white rounded-card p-4 border transition-all ${
-                    selected?.id === row.id ? 'border-kidville-green ring-1 ring-kidville-green/30' : 'border-gray-100 hover:border-gray-200'
+                  className={`w-full text-left bg-kidville-white rounded-card p-4 border transition-all ${
+                    selected?.id === row.id ? 'border-kidville-green ring-1 ring-kidville-green/30' : 'border-kidville-line hover:border-kidville-line'
                   }`}
                 >
                   <div className="flex items-center justify-between mb-1.5">
-                    <span className="font-barlow font-bold text-gray-800">
+                    <span className="font-barlow font-bold text-kidville-ink">
                       {firstChild ? `${firstChild.nome ?? ''} ${firstChild.cognome ?? ''}` : 'Iscrizione'}
                     </span>
                     <StatusBadge status={row.status} />
                   </div>
-                  <div className="flex items-center gap-3 text-xs text-gray-500 font-maven">
+                  <div className="flex items-center gap-3 text-xs text-kidville-muted font-maven">
                     <span className="flex items-center gap-1"><Baby size={13} /> {nChildren}</span>
                     <span className="flex items-center gap-1"><Users size={13} /> {nAdults}</span>
                     <span>{new Date(row.created_at).toLocaleDateString('it-IT')}</span>
@@ -168,7 +178,7 @@ export default function IscrizioniPage() {
           {/* Dettaglio */}
           <div>
             {!selected ? (
-              <div className="bg-white rounded-card p-10 text-center border border-gray-100 text-gray-400 font-maven">
+              <div className="bg-kidville-white rounded-card p-10 text-center border border-kidville-line text-kidville-muted font-maven">
                 Seleziona una richiesta per i dettagli.
               </div>
             ) : (
@@ -190,7 +200,7 @@ export default function IscrizioniPage() {
           </div>
         </div>
       )}
-    </div>
+    </CockpitPage>
   )
 }
 
@@ -226,35 +236,35 @@ function DetailPanel({
   const done = row.status !== 'pending'
 
   return (
-    <div className="bg-white rounded-card border border-gray-100 p-5 space-y-5">
-      <button onClick={onBack} className="md:hidden flex items-center gap-1 text-sm text-gray-500">
+    <div className="bg-kidville-white rounded-card border border-kidville-line p-5 space-y-5">
+      <button onClick={onBack} className="md:hidden flex items-center gap-1 text-sm text-kidville-muted">
         <ChevronLeft size={16} /> Indietro
       </button>
 
       {/* Bambini */}
       <section>
-        <p className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-2 flex items-center gap-1.5">
+        <p className="text-xs font-bold uppercase tracking-wider text-kidville-muted mb-2 flex items-center gap-1.5">
           <Baby size={14} /> Bambini ({children.length})
         </p>
         <div className="space-y-3">
           {children.map((c: EnrollmentChild, i: number) => (
-            <div key={i} className="rounded-xl border border-gray-100 p-3 bg-gray-50/50">
+            <div key={i} className="rounded-xl border border-kidville-line p-3 bg-kidville-cream/50">
               <div className="flex items-center justify-between">
-                <span className="font-barlow font-bold text-gray-800">{c.nome} {c.cognome}</span>
+                <span className="font-barlow font-bold text-kidville-ink">{c.nome} {c.cognome}</span>
                 {c.documento_path && (
                   <button onClick={() => onViewDoc(c.documento_path)} className="text-xs text-kidville-green flex items-center gap-1 hover:underline">
                     <FileText size={13} /> Documento <ExternalLink size={11} />
                   </button>
                 )}
               </div>
-              <p className="text-xs text-gray-500 font-mono mt-0.5">{c.codice_fiscale} · {c.data_nascita}</p>
+              <p className="text-xs text-kidville-muted font-mono mt-0.5">{c.codice_fiscale} · {c.data_nascita}</p>
               {!done && (
                 <div className="mt-2">
-                  <label className="text-[11px] font-semibold text-gray-500 uppercase">Classe / Sezione *</label>
+                  <label className="text-[11px] font-semibold text-kidville-muted uppercase">Classe / Sezione *</label>
                   <select
                     value={assignments[String(i)] ?? ''}
                     onChange={e => setAssignments({ ...assignments, [String(i)]: e.target.value })}
-                    className="w-full mt-1 px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white focus:outline-none focus:border-kidville-green"
+                    className="w-full mt-1 px-3 py-2 rounded-lg border border-kidville-line text-sm bg-white focus:outline-none focus:border-kidville-green"
                   >
                     <option value="">Seleziona sezione…</option>
                     {sections.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
@@ -271,16 +281,16 @@ function DetailPanel({
 
       {/* Adulti */}
       <section>
-        <p className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-2 flex items-center gap-1.5">
+        <p className="text-xs font-bold uppercase tracking-wider text-kidville-muted mb-2 flex items-center gap-1.5">
           <Users size={14} /> Adulti ({adults.length})
         </p>
         <div className="space-y-3">
           {adults.map((a: EnrollmentAdult, i: number) => (
-            <div key={i} className="rounded-xl border border-gray-100 p-3 bg-gray-50/50">
+            <div key={i} className="rounded-xl border border-kidville-line p-3 bg-kidville-cream/50">
               <div className="flex items-center justify-between">
-                <span className="font-barlow font-bold text-gray-800">
+                <span className="font-barlow font-bold text-kidville-ink">
                   {a.first_name} {a.last_name}
-                  <span className="ml-2 text-[10px] font-semibold uppercase text-gray-400">
+                  <span className="ml-2 text-[10px] font-semibold uppercase text-kidville-muted">
                     {ADULT_ROLE_LABELS[a.ruolo] ?? a.ruolo}
                   </span>
                 </span>
@@ -290,10 +300,10 @@ function DetailPanel({
                   </button>
                 )}
               </div>
-              <p className="text-xs text-gray-500 font-mono mt-0.5">{a.fiscal_code}</p>
-              <p className="text-xs text-gray-500 mt-0.5">{a.email || 'Nessuna email'} · {a.phone || 'Nessun telefono'}</p>
+              <p className="text-xs text-kidville-muted font-mono mt-0.5">{a.fiscal_code}</p>
+              <p className="text-xs text-kidville-muted mt-0.5">{a.email || 'Nessuna email'} · {a.phone || 'Nessun telefono'}</p>
               {!done && (
-                <label className="flex items-center gap-2 mt-2 text-xs text-gray-600 cursor-pointer">
+                <label className="flex items-center gap-2 mt-2 text-xs text-kidville-ink/70 cursor-pointer">
                   <input
                     type="radio"
                     name="referente"
@@ -301,8 +311,8 @@ function DetailPanel({
                     onChange={() => setReferenteIndex(i)}
                     className="accent-kidville-green"
                   />
-                  <Star size={12} className={referenteIndex === i ? 'text-kidville-warn' : 'text-gray-300'} />
-                  Referente / intestatario (riceve l'account di accesso)
+                  <Star size={12} className={referenteIndex === i ? 'text-kidville-warn' : 'text-kidville-neutral/50'} />
+                  Referente / intestatario (riceve l&apos;account di accesso)
                 </label>
               )}
             </div>
@@ -340,11 +350,11 @@ function DetailPanel({
 
       {/* Azioni */}
       {!done && (
-        <div className="flex items-center gap-3 pt-2 border-t border-gray-100">
+        <div className="flex items-center gap-3 pt-2 border-t border-kidville-line">
           <button
             onClick={onImport}
             disabled={working}
-            className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-kidville-green text-white font-semibold text-sm hover:opacity-90 disabled:opacity-50 transition-all"
+            className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-kidville-green text-kidville-yellow font-semibold text-sm hover:opacity-90 disabled:opacity-50 transition-all"
           >
             {working ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
             Importa nelle anagrafiche

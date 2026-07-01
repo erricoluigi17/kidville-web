@@ -24,6 +24,8 @@ import { TiltCard } from '@/components/features/admin/motion/TiltCard';
 import { RevealGroup, RevealItem } from '@/components/features/admin/motion/reveal';
 import { AuroraHeader } from '@/components/features/admin/motion/AuroraHeader';
 import { TrendIncassiChart, StudentiPerClasseChart } from '@/components/features/admin/DashboardCharts';
+import { Donut, SectionTitle } from '@/components/ui/cockpit';
+import { Badge } from '@/components/ui/Badge';
 
 const DEMO_ADMIN_ID = '22222222-2222-2222-2222-555555555555';
 
@@ -86,8 +88,8 @@ function AdminDashboardInner() {
         format: 'euro' as const,
         sub: `${data.pagamenti.scadutoCount} posizioni`,
         icon: AlertTriangle,
-        accent: 'border-red-500',
-        iconBg: 'bg-red-50 text-kidville-error',
+        accent: 'border-kidville-error',
+        iconBg: 'bg-kidville-error-soft text-kidville-error',
         href: '/admin/pagamenti',
       },
       {
@@ -176,7 +178,7 @@ function AdminDashboardInner() {
       </AuroraHeader>
 
       {error && (
-        <div className="mt-6 rounded-2xl border border-red-200 bg-red-50 p-4 font-maven text-sm text-red-600">
+        <div className="mt-6 rounded-2xl border border-kidville-error/30 bg-kidville-error-soft p-4 font-maven text-sm text-kidville-error">
           {error}. Verifica di essere autenticato come staff (parametro <code>userId</code>).
         </div>
       )}
@@ -185,7 +187,7 @@ function AdminDashboardInner() {
       {loading ? (
         <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="h-32 rounded-2xl bg-white/60 animate-pulse border border-gray-100" />
+            <div key={i} className="h-32 rounded-2xl bg-kidville-white/60 animate-pulse border border-kidville-line" />
           ))}
         </div>
       ) : (
@@ -196,18 +198,18 @@ function AdminDashboardInner() {
               return (
                 <RevealItem key={kpi.key}>
                   <Link href={withUser(kpi.href)} className="block group h-full">
-                    <TiltCard className={`h-full rounded-2xl bg-white p-5 shadow-sm border-l-4 ${kpi.accent} border-y border-r border-gray-100`}>
+                    <TiltCard className={`h-full rounded-2xl bg-kidville-white p-5 shadow-sm border-l-4 ${kpi.accent} border-y border-r border-kidville-line`}>
                       <div className="flex items-start justify-between">
                         <div className={`flex h-11 w-11 items-center justify-center rounded-xl ${kpi.iconBg}`}>
                           <Icon size={22} strokeWidth={2.2} />
                         </div>
-                        <ArrowRight size={18} className="text-gray-300 group-hover:text-kidville-green group-hover:translate-x-1 transition-all" />
+                        <ArrowRight size={18} className="text-kidville-neutral/50 group-hover:text-kidville-green group-hover:translate-x-1 transition-all" />
                       </div>
                       <p className="font-barlow font-black text-3xl text-kidville-green mt-4">
                         <AnimatedNumber value={kpi.value} format={kpi.format} />
                       </p>
-                      <p className="font-maven text-sm text-gray-500 font-semibold">{kpi.label}</p>
-                      {kpi.sub && <p className="font-maven text-xs text-gray-400 mt-0.5">{kpi.sub}</p>}
+                      <p className="font-maven text-sm text-kidville-ink/70 font-semibold">{kpi.label}</p>
+                      {kpi.sub && <p className="font-maven text-xs text-kidville-muted mt-0.5">{kpi.sub}</p>}
                     </TiltCard>
                   </Link>
                 </RevealItem>
@@ -224,7 +226,7 @@ function AdminDashboardInner() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.2, type: 'spring', stiffness: 200, damping: 24 }}
-            className="rounded-2xl bg-white p-5 shadow-sm border border-gray-100"
+            className="rounded-2xl bg-kidville-white p-5 shadow-sm border border-kidville-line"
           >
             <div className="flex items-center justify-between mb-3">
               <h2 className="font-barlow font-black uppercase tracking-wide text-kidville-green">
@@ -239,7 +241,7 @@ function AdminDashboardInner() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.3, type: 'spring', stiffness: 200, damping: 24 }}
-            className="rounded-2xl bg-white p-5 shadow-sm border border-gray-100"
+            className="rounded-2xl bg-kidville-white p-5 shadow-sm border border-kidville-line"
           >
             <div className="flex items-center justify-between mb-3">
               <h2 className="font-barlow font-black uppercase tracking-wide text-kidville-green">
@@ -250,11 +252,36 @@ function AdminDashboardInner() {
             {data.studenti.perClasse.length ? (
               <StudentiPerClasseChart data={data.studenti.perClasse} />
             ) : (
-              <p className="font-maven text-sm text-gray-400 py-12 text-center">Nessun alunno iscritto</p>
+              <p className="font-maven text-sm text-kidville-muted py-12 text-center">Nessun alunno iscritto</p>
             )}
           </motion.div>
         </div>
       )}
+
+      {/* Presenze in tempo reale — struttura DR, ma nessun endpoint aggregato
+          multi-sede/classe (vedi LISTA 1): placeholder onesto "in arrivo". */}
+      <div className="mt-6 rounded-2xl bg-kidville-white p-5 shadow-sm border border-kidville-line">
+        <SectionTitle
+          icon={Users}
+          title="Presenze in tempo reale"
+          sub="Monitoraggio multi-sede · per sede e per classe"
+          action={<Badge tone="warn">In arrivo</Badge>}
+        />
+        <div className="flex flex-col items-center gap-6 sm:flex-row">
+          <Donut value={0} max={1} tone="neutral" label="—" sub="in arrivo" />
+          <div className="grid flex-1 grid-cols-2 gap-3 sm:grid-cols-4">
+            {['Presenti oggi', 'Iscritti', 'Assenti', 'Appelli mancanti'].map((l) => (
+              <div key={l} className="rounded-xl bg-kidville-cream px-3 py-4 text-center">
+                <div className="font-barlow text-2xl font-black text-kidville-neutral">—</div>
+                <div className="mt-1 font-barlow text-[10.5px] font-bold uppercase tracking-[0.03em] text-kidville-muted">{l}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+        <p className="mt-3 font-maven text-xs text-kidville-muted">
+          Il monitoraggio presenze aggregato multi-sede sarà disponibile a breve.
+        </p>
+      </div>
 
       {/* Alert / attività */}
       {data && (
@@ -302,12 +329,12 @@ function AdminDashboardInner() {
               <RevealItem key={m.href}>
                 <Link
                   href={withUser(m.href)}
-                  className="flex flex-col items-center gap-2 rounded-2xl bg-white p-4 shadow-sm border border-gray-100 hover:border-kidville-green hover:shadow-md transition-all text-center"
+                  className="flex flex-col items-center gap-2 rounded-2xl bg-kidville-white p-4 shadow-sm border border-kidville-line hover:border-kidville-green hover:shadow-md transition-all text-center"
                 >
                   <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-kidville-green/10 text-kidville-green">
                     <Icon size={24} strokeWidth={2} />
                   </div>
-                  <span className="font-maven text-sm font-semibold text-gray-700">{m.label}</span>
+                  <span className="font-maven text-sm font-semibold text-kidville-ink/80">{m.label}</span>
                 </Link>
               </RevealItem>
             );
@@ -342,9 +369,9 @@ function AlertPanel({
   rows: AlertRow[];
   empty: string;
 }) {
-  const toneCls = tone === 'red' ? 'bg-kidville-error' : 'bg-kidville-warn-soft0';
+  const toneCls = tone === 'red' ? 'bg-kidville-error' : 'bg-kidville-warn';
   return (
-    <div className="rounded-2xl bg-white p-5 shadow-sm border border-gray-100">
+    <div className="rounded-2xl bg-kidville-white p-5 shadow-sm border border-kidville-line">
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <Icon size={18} className={tone === 'red' ? 'text-kidville-error' : 'text-kidville-warn'} />
@@ -364,13 +391,13 @@ function AlertPanel({
         </Link>
       </div>
       {rows.length === 0 ? (
-        <p className="font-maven text-sm text-gray-400 py-6 text-center">{empty}</p>
+        <p className="font-maven text-sm text-kidville-muted py-6 text-center">{empty}</p>
       ) : (
         <motion.ul
           initial="hidden"
           animate="show"
           variants={{ show: { transition: { staggerChildren: 0.07 } } }}
-          className="divide-y divide-gray-50"
+          className="divide-y divide-kidville-line"
         >
           {rows.map((row) => (
             <motion.li
@@ -379,10 +406,10 @@ function AlertPanel({
               className="flex items-center justify-between py-2.5"
             >
               <div className="min-w-0">
-                <p className="font-maven text-sm font-semibold text-gray-700 truncate">{row.left}</p>
-                {row.meta && <p className="font-maven text-xs text-gray-400">{row.meta}</p>}
+                <p className="font-maven text-sm font-semibold text-kidville-ink/80 truncate">{row.left}</p>
+                {row.meta && <p className="font-maven text-xs text-kidville-muted">{row.meta}</p>}
               </div>
-              <span className="font-barlow font-black text-sm text-gray-600 shrink-0">{row.right}</span>
+              <span className="font-barlow font-black text-sm text-kidville-ink/80 shrink-0">{row.right}</span>
             </motion.li>
           ))}
         </motion.ul>
@@ -393,7 +420,7 @@ function AlertPanel({
 
 export default function AdminDashboardPage() {
   return (
-    <Suspense fallback={<div className="p-8 font-maven text-gray-400">Caricamento…</div>}>
+    <Suspense fallback={<div className="p-8 font-maven text-kidville-muted">Caricamento…</div>}>
       <AdminDashboardInner />
     </Suspense>
   );

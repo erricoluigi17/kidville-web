@@ -443,7 +443,7 @@ export default function FormBuilderPage() {
         <header
           className="flex items-center justify-between px-6 py-3 flex-shrink-0"
           style={{
-            background: 'rgba(11,15,31,0.92)',
+            background: 'rgba(255,255,255,0.85)',
             borderBottom: '1px solid #EFE7DC',
             backdropFilter: 'blur(16px)',
             zIndex: 30,
@@ -491,7 +491,7 @@ export default function FormBuilderPage() {
               saveState === 'saved'
                 ? 'bg-kidville-green hover:bg-kidville-green-dark text-kidville-yellow'
                 : saveState === 'error'
-                ? 'bg-red-600 text-kidville-green'
+                ? 'bg-kidville-error text-kidville-green'
                 : 'bg-kidville-green hover:bg-kidville-green-dark text-kidville-yellow'
             }`}
           >
@@ -575,7 +575,7 @@ export default function FormBuilderPage() {
           <aside
             className="w-60 flex-shrink-0 overflow-y-auto"
             style={{
-              background: 'rgba(11,15,31,0.8)',
+              background: '#FFFFFF',
               borderRight: '1px solid #EFE7DC',
             }}
           >
@@ -670,9 +670,9 @@ export default function FormBuilderPage() {
             <div
               className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl border pointer-events-none w-52"
               style={{
-                background: 'rgba(11,15,31,0.92)',
+                background: 'rgba(255,255,255,0.96)',
                 borderColor: colors.border,
-                boxShadow: '0 20px 40px rgba(0,0,0,0.5)',
+                boxShadow: '0 20px 40px rgba(0,60,52,0.28)',
                 backdropFilter: 'blur(8px)',
               }}
             >

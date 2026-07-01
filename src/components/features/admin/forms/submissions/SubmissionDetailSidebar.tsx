@@ -2,7 +2,7 @@
 
 import { AnimatePresence, motion } from 'framer-motion'
 import {
-  X, FileText, Download, Clock, CheckCircle2, Hash,
+  X, FileText, Download, Clock, CheckCircle2, Hash, CheckCheck,
 } from 'lucide-react'
 import type { FormSchemaConfig, FormSubmissionStatus } from '@/types/database.types'
 
@@ -191,9 +191,22 @@ export function SubmissionDetailSidebar({ submission, onClose }: Props) {
 
             {/* Footer */}
             <div
-              className="px-6 py-4 flex gap-3"
+              className="px-6 py-4 flex flex-col gap-3"
               style={{ borderTop: '1px solid #EFE7DC' }}
             >
+              {/* "Segna gestita": nessuno stato "gestita" nel backend (il PATCH
+                  submissions/[id] regola solo il punteggio) → placeholder in arrivo. */}
+              <button
+                type="button"
+                title="Funzione in arrivo"
+                onClick={() => alert('“Segna gestita” — funzione in arrivo.')}
+                className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-kidville-yellow font-barlow text-sm font-extrabold uppercase tracking-[0.03em] text-kidville-green"
+              >
+                <CheckCheck className="w-4 h-4" /> Segna gestita
+                <span className="rounded-pill bg-kidville-green/[0.12] px-2 py-0.5 font-maven text-[10px] font-semibold normal-case tracking-normal text-kidville-green">in arrivo</span>
+              </button>
+
+              <div className="flex gap-3">
               <button
                 onClick={handleDownloadPDF}
                 className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium text-kidville-green transition-all"
@@ -232,6 +245,7 @@ export function SubmissionDetailSidebar({ submission, onClose }: Props) {
                 <Download className="w-4 h-4" />
                 Esporta XLSX
               </button>
+              </div>
             </div>
           </motion.aside>
         </>

@@ -70,7 +70,7 @@ export function PropertiesPanel({ field, onChange, campiDisponibili = [] }: Prop
   return (
     <aside
       className="w-72 flex-shrink-0 overflow-y-auto"
-      style={{ background: 'rgba(15,20,40,0.7)', borderLeft: '1px solid #EFE7DC' }}
+      style={{ background: '#FFFFFF', borderLeft: '1px solid #EFE7DC' }}
     >
       <AnimatePresence mode="wait">
         {field ? (

@@ -18,6 +18,9 @@ import {
   ListTodo,
   Package,
   BookOpen,
+  Award,
+  ShieldCheck,
+  ChefHat,
   Menu,
   X,
 } from 'lucide-react';
@@ -37,43 +40,73 @@ interface NavGroup {
 // Sidebar UNICA del cockpit Direzione/Segreteria, guidata da config a gruppi.
 // Il ruolo determina (a) lo scope dati (a livello API) e (b) — via `roles` —
 // l'eventuale visibilità delle voci. Oggi tutte le voci sono visibili a entrambi.
+// Gruppi come nel design cockpit (DR segreteria-direzione): raggruppo per area.
+// Mappo SOLO rotte reali; aggiungo Competenze e GDPR (rotte reali oggi non in
+// sidebar). Le voci DR senza backend (monitor Presenze globale, editor Registro/
+// Palinsesto, Fatturazione dedicata) NON entrano qui: sarebbero nav morte → LISTA 1.
 const NAV_GROUPS: NavGroup[] = [
   {
     title: null,
     items: [{ href: '/admin', label: 'Dashboard', icon: LayoutDashboard }],
   },
   {
+    title: 'Anagrafica & Iscrizioni',
+    items: [
+      { href: '/admin/students', label: 'Anagrafica', icon: Users },
+      { href: '/admin/iscrizioni', label: 'Iscrizioni', icon: ClipboardList },
+    ],
+  },
+  {
     title: 'Didattica',
     items: [
       { href: '/admin/primaria', label: 'Primaria', icon: GraduationCap },
       { href: '/admin/diary', label: 'Diario 0–6', icon: BookOpen },
-      { href: '/admin/armadietto', label: 'Armadietto', icon: Package },
+      { href: '/admin/competenze', label: 'Competenze', icon: Award },
     ],
   },
   {
-    title: 'Comunicazioni',
+    title: 'Operativo',
+    items: [
+      { href: '/admin/armadietto', label: 'Armadietto', icon: Package },
+      { href: '/admin/mensa', label: 'Mensa', icon: UtensilsCrossed },
+      { href: '/admin/mensa/cucina', label: 'Report Cucina', icon: ChefHat },
+    ],
+  },
+  {
+    title: 'Amministrazione',
+    items: [
+      { href: '/admin/pagamenti', label: 'Pagamenti', icon: Euro },
+      { href: '/admin/modulistica', label: 'Modulistica', icon: FileText },
+      { href: '/admin/gdpr', label: 'Privacy & GDPR', icon: ShieldCheck },
+    ],
+  },
+  {
+    title: 'Comunicazione',
     items: [
       { href: '/admin/avvisi', label: 'Avvisi', icon: Bell },
       { href: '/admin/compiti', label: 'Compiti', icon: ListTodo },
     ],
   },
   {
-    title: 'Gestione',
+    title: 'Sistema',
     items: [
-      { href: '/admin/students', label: 'Anagrafica', icon: Users },
-      { href: '/admin/iscrizioni', label: 'Iscrizioni', icon: ClipboardList },
-      { href: '/admin/pagamenti', label: 'Pagamenti', icon: Euro },
-      { href: '/admin/mensa', label: 'Mensa', icon: UtensilsCrossed },
-      { href: '/admin/modulistica', label: 'Modulistica', icon: FileText },
       { href: '/admin/impostazioni', label: 'Impostazioni', icon: Settings },
       { href: '/admin/tools', label: 'Strumenti', icon: Wrench },
     ],
   },
 ];
 
-function isActive(pathname: string, href: string) {
-  if (href === '/admin') return pathname === '/admin';
-  return pathname === href || pathname.startsWith(href + '/');
+const ALL_HREFS = NAV_GROUPS.flatMap((g) => g.items.map((i) => i.href));
+
+// href attivo = il match più SPECIFICO (più lungo), così su /admin/mensa/cucina
+// si evidenzia "Report Cucina" e non anche "Mensa". '/admin' resta esatto.
+function activeHref(pathname: string) {
+  let best = '';
+  for (const href of ALL_HREFS) {
+    const match = href === '/admin' ? pathname === '/admin' : pathname === href || pathname.startsWith(href + '/');
+    if (match && href.length > best.length) best = href;
+  }
+  return best;
 }
 
 export function AdminSidebar() {
@@ -101,7 +134,9 @@ export function AdminSidebar() {
 
   const visible = (item: NavItem) => !item.roles || (!!ruolo && item.roles.includes(ruolo));
 
-  const NavList = ({ onNavigate }: { onNavigate?: () => void }) => (
+  const NavList = ({ onNavigate }: { onNavigate?: () => void }) => {
+    const current = activeHref(pathname);
+    return (
     <nav className="flex flex-col gap-4 px-3 pb-6">
       {NAV_GROUPS.map((group, gi) => {
         const items = group.items.filter(visible);
@@ -109,12 +144,12 @@ export function AdminSidebar() {
         return (
           <div key={gi} className="flex flex-col gap-1">
             {group.title && (
-              <p className="px-4 pb-1 pt-1 font-maven text-[10px] font-semibold uppercase tracking-wider text-gray-300">
+              <p className="px-4 pb-1 pt-1 font-maven text-[10px] font-semibold uppercase tracking-wider text-kidville-muted">
                 {group.title}
               </p>
             )}
             {items.map((item) => {
-              const active = isActive(pathname, item.href);
+              const active = item.href === current;
               const Icon = item.icon;
               return (
                 <Link
@@ -122,7 +157,7 @@ export function AdminSidebar() {
                   href={withUser(item.href)}
                   onClick={onNavigate}
                   className={`relative flex items-center gap-3 rounded-xl px-4 py-3 font-maven text-sm transition-colors ${
-                    active ? 'text-kidville-green' : 'text-gray-500 hover:text-kidville-green'
+                    active ? 'text-kidville-green' : 'text-kidville-ink/70 hover:text-kidville-green'
                   }`}
                 >
                   {active && (
@@ -141,7 +176,8 @@ export function AdminSidebar() {
         );
       })}
     </nav>
-  );
+    );
+  };
 
   const Brand = () => (
     <div className="flex items-center gap-2 px-6 py-6">
@@ -152,7 +188,7 @@ export function AdminSidebar() {
         <p className="font-barlow font-black uppercase tracking-wide text-kidville-green text-lg">
           Kidville
         </p>
-        <p className="font-maven text-[11px] text-gray-400">Direzione &amp; Segreteria</p>
+        <p className="font-maven text-[11px] text-kidville-muted">Direzione &amp; Segreteria</p>
       </div>
     </div>
   );
@@ -161,7 +197,7 @@ export function AdminSidebar() {
     <>
       {/* Topbar mobile — z sopra agli overlay dei modali (max contenuto z-[100]):
           la cornice persistente non deve mai essere coperta a tutto schermo. */}
-      <div className="lg:hidden sticky top-0 z-[105] flex items-center justify-between bg-white/90 backdrop-blur border-b border-gray-100 px-4 py-3">
+      <div className="lg:hidden sticky top-0 z-[105] flex items-center justify-between bg-kidville-white/90 backdrop-blur border-b border-kidville-line px-4 py-3">
         <div className="flex items-center gap-2">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-kidville-green text-kidville-yellow font-barlow font-black">
             K
@@ -173,17 +209,17 @@ export function AdminSidebar() {
         <button
           onClick={() => setMobileOpen(true)}
           aria-label="Apri menu"
-          className="flex h-10 w-10 items-center justify-center rounded-xl border border-gray-200 text-kidville-green"
+          className="flex h-10 w-10 items-center justify-center rounded-xl border border-kidville-line text-kidville-green"
         >
           <Menu size={20} />
         </button>
       </div>
 
-      {/* Sidebar desktop — z-[105] sopra ai modali (z-50/[60]/[100]): resta
-          sempre visibile e cliccabile anche con un modal aperto. */}
-      <aside className="hidden lg:flex lg:flex-col lg:w-64 lg:shrink-0 lg:sticky lg:top-0 lg:h-screen z-[105] border-r border-gray-100 bg-white overflow-y-auto">
-        <Brand />
-        <NavList />
+      {/* Sidebar desktop — sotto la TopBar (top-16, h calc), z-[105] sopra ai modali
+          (z-50/[60]/[100]): resta sempre visibile e cliccabile anche con un modal aperto.
+          Il brand vive nella TopBar → qui si parte dal menu. */}
+      <aside className="hidden lg:flex lg:flex-col lg:w-64 lg:shrink-0 lg:sticky lg:top-16 lg:h-[calc(100vh-4rem)] z-[105] border-r border-kidville-line bg-kidville-white overflow-y-auto pt-4">
+        {NavList({})}
       </aside>
 
       {/* Drawer mobile */}
@@ -191,30 +227,30 @@ export function AdminSidebar() {
         {mobileOpen && (
           <>
             <motion.div
-              className="lg:hidden fixed inset-0 z-[110] bg-black/40 backdrop-blur-sm"
+              className="lg:hidden fixed inset-0 z-[110] bg-kidville-ink/40 backdrop-blur-sm"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setMobileOpen(false)}
             />
             <motion.aside
-              className="lg:hidden fixed inset-y-0 left-0 z-[120] w-72 bg-white shadow-2xl flex flex-col overflow-y-auto"
+              className="lg:hidden fixed inset-y-0 left-0 z-[120] w-72 bg-kidville-white shadow-2xl flex flex-col overflow-y-auto"
               initial={{ x: '-100%' }}
               animate={{ x: 0 }}
               exit={{ x: '-100%' }}
               transition={{ type: 'spring', stiffness: 320, damping: 34 }}
             >
               <div className="flex items-center justify-between">
-                <Brand />
+                {Brand()}
                 <button
                   onClick={() => setMobileOpen(false)}
                   aria-label="Chiudi menu"
-                  className="mr-4 flex h-9 w-9 items-center justify-center rounded-xl border border-gray-200 text-gray-500"
+                  className="mr-4 flex h-9 w-9 items-center justify-center rounded-xl border border-kidville-line text-kidville-neutral"
                 >
                   <X size={18} />
                 </button>
               </div>
-              <NavList onNavigate={() => setMobileOpen(false)} />
+              {NavList({ onNavigate: () => setMobileOpen(false) })}
             </motion.aside>
           </>
         )}

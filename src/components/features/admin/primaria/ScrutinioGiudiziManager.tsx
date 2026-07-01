@@ -80,21 +80,21 @@ export function ScrutinioGiudiziManager({ scuolaId, userId }: { scuolaId: string
 
   return (
     <div>
-      <h3 className="font-barlow text-base font-bold text-gray-800 mb-1 flex items-center gap-2">
+      <h3 className="font-barlow text-base font-bold text-kidville-ink mb-1 flex items-center gap-2">
         <GraduationCap size={16} className="text-kidville-green" /> Giudizi di scrutinio per voto
       </h3>
-      <p className="font-maven text-xs text-gray-400 mb-4">
+      <p className="font-maven text-xs text-kidville-muted mb-4">
         Per ogni livello di classe, materia e periodo, definisci il testo associato a ciascun voto. In pagella
         viene applicato in automatico al voto assegnato. Compilare un livello (es. 1ª) vale per tutte le sezioni di quel livello.
       </p>
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <label className="font-maven text-sm text-gray-600">Livello:</label>
-        <select value={livello} onChange={(e) => setLivello(Number(e.target.value))} className="font-maven rounded-pill border border-gray-200 bg-white px-4 py-2 text-sm">
+        <label className="font-maven text-sm text-kidville-ink">Livello:</label>
+        <select value={livello} onChange={(e) => setLivello(Number(e.target.value))} className="font-maven rounded-pill border border-kidville-line bg-white px-4 py-2 text-sm">
           {LIVELLI.map((l) => <option key={l} value={l}>{l}ª</option>)}
         </select>
-        <label className="font-maven text-sm text-gray-600">Periodo:</label>
-        <select value={periodoId} onChange={(e) => setPeriodoId(e.target.value)} className="font-maven rounded-pill border border-gray-200 bg-white px-4 py-2 text-sm">
+        <label className="font-maven text-sm text-kidville-ink">Periodo:</label>
+        <select value={periodoId} onChange={(e) => setPeriodoId(e.target.value)} className="font-maven rounded-pill border border-kidville-line bg-white px-4 py-2 text-sm">
           {periodi.length === 0 && <option value="">Nessun periodo</option>}
           {periodi.map((p) => <option key={p.id} value={p.id}>{p.nome} ({p.anno_scolastico})</option>)}
         </select>
@@ -110,12 +110,12 @@ export function ScrutinioGiudiziManager({ scuolaId, userId }: { scuolaId: string
       ) : (
         <div className="space-y-5">
           {materie.map((m) => (
-            <div key={m.id} className="rounded-card border border-gray-100 p-3">
-              <p className="font-maven text-sm font-semibold text-gray-800 mb-2">{m.nome}</p>
+            <div key={m.id} className="rounded-card border border-kidville-line p-3">
+              <p className="font-maven text-sm font-semibold text-kidville-ink mb-2">{m.nome}</p>
               <div className="space-y-2">
                 {scala.map((s) => (
                   <div key={s.etichetta} className="flex items-start gap-2">
-                    <span className="font-maven text-xs text-gray-500 w-28 shrink-0 pt-2">{s.etichetta}</span>
+                    <span className="font-maven text-xs text-kidville-muted w-28 shrink-0 pt-2">{s.etichetta}</span>
                     <textarea
                       defaultValue={testi[m.codice]?.[s.etichetta] ?? ''}
                       key={`${m.codice}-${s.etichetta}-${livello}-${periodoId}`}
@@ -125,7 +125,7 @@ export function ScrutinioGiudiziManager({ scuolaId, userId }: { scuolaId: string
                         const v = e.target.value;
                         if (v !== (testi[m.codice]?.[s.etichetta] ?? '')) salva(m.codice, s.etichetta, v);
                       }}
-                      className="font-maven flex-1 rounded border border-gray-200 px-2 py-1.5 text-xs"
+                      className="font-maven flex-1 rounded border border-kidville-line px-2 py-1.5 text-xs"
                     />
                   </div>
                 ))}

@@ -41,7 +41,7 @@ export function FamilyRegistryManager() {
                     <button
                         key={tab.id}
                         onClick={() => setActiveTab(tab.id)}
-                        className={`relative px-5 py-3 rounded-xl font-bold text-sm transition-colors flex items-center gap-2 ${activeTab === tab.id ? 'text-white' : 'text-gray-500 hover:text-kidville-green'}`}
+                        className={`relative px-5 py-3 rounded-xl font-bold text-sm transition-colors flex items-center gap-2 ${activeTab === tab.id ? 'text-white' : 'text-kidville-muted hover:text-kidville-green'}`}
                     >
                         {activeTab === tab.id && (
                             <motion.div 
@@ -57,7 +57,7 @@ export function FamilyRegistryManager() {
                             {tab.removable && (
                                 <span
                                     onClick={(e) => { e.stopPropagation(); removeTab(tab.id); }}
-                                    className="ml-1 p-0.5 rounded-full hover:bg-red-500/30 text-gray-400 hover:text-red-400 transition-colors"
+                                    className="ml-1 p-0.5 rounded-full hover:bg-kidville-error/30 text-kidville-muted hover:text-kidville-error transition-colors"
                                 >
                                     <Trash2 size={12} />
                                 </span>
@@ -68,7 +68,7 @@ export function FamilyRegistryManager() {
                 
                 <button
                     onClick={addAdultTab}
-                    className="relative px-4 py-3 rounded-xl font-bold text-sm text-gray-500 hover:text-kidville-green hover:bg-kidville-cream transition-colors flex items-center gap-2 border border-dashed border-kidville-green/30"
+                    className="relative px-4 py-3 rounded-xl font-bold text-sm text-kidville-muted hover:text-kidville-green hover:bg-kidville-cream transition-colors flex items-center gap-2 border border-dashed border-kidville-green/30"
                 >
                     <Plus size={16} /> Aggiungi Componente
                 </button>
@@ -80,7 +80,7 @@ export function FamilyRegistryManager() {
                 {activeTab !== 'alunno' && (
                     <div className={`flex items-center gap-2 px-4 py-2 rounded-xl mb-3 text-sm font-maven font-bold ${
                         createdStudentId
-                            ? 'bg-green-50 text-green-700 border border-green-200'
+                            ? 'bg-kidville-success-soft text-kidville-success border border-kidville-success-soft'
                             : 'bg-kidville-warn-soft text-kidville-warn border border-kidville-warn/30'
                     }`}>
                         {createdStudentId

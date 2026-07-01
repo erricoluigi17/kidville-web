@@ -24,7 +24,7 @@ export function GalleriaSettings({ userId }: { userId: string }) {
     const [draft, setDraft] = useState<GalleriaConfig | null>(null);
     const [msg, setMsg] = useState('');
 
-    if (!settings) return <p className="font-maven text-sm text-gray-400">Caricamento…</p>;
+    if (!settings) return <p className="font-maven text-sm text-kidville-muted">Caricamento…</p>;
     const cfg = draft ?? ((settings.galleria_config ?? {}) as GalleriaConfig);
     const set = (patch: Partial<GalleriaConfig>) => { setMsg(''); setDraft({ ...cfg, ...patch }); };
 

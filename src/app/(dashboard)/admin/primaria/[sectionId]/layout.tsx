@@ -8,7 +8,7 @@ import { ClasseShell } from '@/components/features/primaria/ClasseShell';
 export default function AdminPrimariaClasseLayout({ children }: { children: React.ReactNode }) {
   return (
     <ClasseShell basePrefix="/admin/primaria">
-      <Suspense fallback={<div className="font-maven text-sm text-gray-400">Caricamento…</div>}>
+      <Suspense fallback={<div className="font-maven text-sm text-kidville-muted">Caricamento…</div>}>
         {children}
       </Suspense>
     </ClasseShell>

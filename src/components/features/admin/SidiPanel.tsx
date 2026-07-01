@@ -24,10 +24,10 @@ const STATO_LABEL: Record<string, string> = {
   errore: 'Errore',
 }
 function statoColor(s: string): string {
-  if (s === 'inviato') return 'bg-green-100 text-green-700'
-  if (s === 'errore') return 'bg-red-100 text-red-700'
+  if (s === 'inviato') return 'bg-kidville-success-soft text-kidville-success'
+  if (s === 'errore') return 'bg-kidville-error-soft text-kidville-error'
   if (s === 'in_corso') return 'bg-kidville-warn-soft text-kidville-warn'
-  return 'bg-gray-100 text-gray-500'
+  return 'bg-kidville-line text-kidville-muted'
 }
 
 export function SidiPanel({ userId }: { userId: string }) {
@@ -92,11 +92,11 @@ export function SidiPanel({ userId }: { userId: string }) {
   return (
     <div className="space-y-6">
       {/* Import ZIP */}
-      <section className="bg-white rounded-2xl border border-gray-100 p-5">
+      <section className="bg-white rounded-2xl border border-kidville-line p-5">
         <h2 className="font-barlow font-black text-kidville-green uppercase text-sm mb-3 flex items-center gap-2">
           <UploadCloud size={18} /> Importazione nuovi iscritti (flusso SIDI)
         </h2>
-        <p className="font-maven text-xs text-gray-500 mb-3">Carica il file <code>.zip</code> ministeriale senza rinominarlo. Il matching avviene sul <strong>Numero di domanda</strong> (fallback codice fiscale); i genitori sono sincronizzati per CF.</p>
+        <p className="font-maven text-xs text-kidville-muted mb-3">Carica il file <code>.zip</code> ministeriale senza rinominarlo. Il matching avviene sul <strong>Numero di domanda</strong> (fallback codice fiscale); i genitori sono sincronizzati per CF.</p>
         <div className="flex items-center gap-3 flex-wrap">
           <input type="file" accept=".zip" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="font-maven text-sm" />
           <button onClick={upload} disabled={!file || busy === 'upload'} className="h-9 px-4 rounded-pill bg-kidville-green text-white font-barlow font-black uppercase text-xs disabled:opacity-50">
@@ -105,7 +105,7 @@ export function SidiPanel({ userId }: { userId: string }) {
         </div>
         {preview && (
           <div className="mt-4 rounded-xl bg-kidville-cream/50 p-4">
-            <p className="font-maven text-sm text-gray-700">Anteprima: <strong>{preview.totale}</strong> domande riconosciute.</p>
+            <p className="font-maven text-sm text-kidville-ink">Anteprima: <strong>{preview.totale}</strong> domande riconosciute.</p>
             {preview.warnings.length > 0 && (
               <ul className="mt-2 text-xs text-kidville-warn list-disc pl-5">
                 {preview.warnings.slice(0, 5).map((w, i) => <li key={i}>{w}</li>)}
@@ -119,10 +119,10 @@ export function SidiPanel({ userId }: { userId: string }) {
       </section>
 
       {/* Indicatore stato sincronizzazione */}
-      <section className="bg-white rounded-2xl border border-gray-100 p-5">
+      <section className="bg-white rounded-2xl border border-kidville-line p-5">
         <div className="flex items-center justify-between mb-3">
           <h2 className="font-barlow font-black text-kidville-green uppercase text-sm">Stato sincronizzazione SIDI</h2>
-          <button onClick={loadSync} className="text-gray-400 hover:text-kidville-green" aria-label="Aggiorna"><RefreshCw size={16} /></button>
+          <button onClick={loadSync} className="text-kidville-muted hover:text-kidville-green" aria-label="Aggiorna"><RefreshCw size={16} /></button>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {[
@@ -131,9 +131,9 @@ export function SidiPanel({ userId }: { userId: string }) {
             { key: 'piattaforma-unica' as const, label: 'Piattaforma Unica', stato: pu, disabled: freq !== 'inviato' },
           ].map((step, i) => (
             <div key={step.key} className="flex items-center gap-2">
-              {i > 0 && <ArrowRight size={14} className="text-gray-300" />}
-              <div className="rounded-xl border border-gray-100 p-3 min-w-[150px]">
-                <div className="font-maven text-xs text-gray-600 mb-1">{step.label}</div>
+              {i > 0 && <ArrowRight size={14} className="text-kidville-muted" />}
+              <div className="rounded-xl border border-kidville-line p-3 min-w-[150px]">
+                <div className="font-maven text-xs text-kidville-ink mb-1">{step.label}</div>
                 <span className={`inline-block rounded-full px-2 py-0.5 text-[11px] font-bold ${statoColor(step.stato)}`}>{STATO_LABEL[step.stato] ?? step.stato}</span>
                 <button
                   onClick={() => transmit(step.key)}
@@ -149,7 +149,7 @@ export function SidiPanel({ userId }: { userId: string }) {
       </section>
 
       {msg && (
-        <div className={`rounded-xl p-4 flex items-start gap-2 font-maven text-sm ${msg.kind === 'ok' ? 'bg-green-50 text-green-800' : msg.kind === 'gated' ? 'bg-kidville-warn-soft text-kidville-warn' : 'bg-red-50 text-red-800'}`}>
+        <div className={`rounded-xl p-4 flex items-start gap-2 font-maven text-sm ${msg.kind === 'ok' ? 'bg-kidville-success-soft text-kidville-success' : msg.kind === 'gated' ? 'bg-kidville-warn-soft text-kidville-warn' : 'bg-kidville-error-soft text-kidville-error'}`}>
           {msg.kind === 'ok' ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}
           <span>{msg.text}</span>
         </div>

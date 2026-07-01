@@ -60,14 +60,14 @@ export function StaffPanel({ userId }: { userId: string }) {
     setDraft((d) => ({ ...d, section_ids: d.section_ids.includes(sid) ? d.section_ids.filter((x) => x !== sid) : [...d.section_ids, sid] }));
   };
 
-  if (loading) return <div className="flex items-center gap-2 text-gray-400 p-6"><Loader2 className="animate-spin" size={16} /> Caricamento staff…</div>;
+  if (loading) return <div className="flex items-center gap-2 text-kidville-muted p-6"><Loader2 className="animate-spin" size={16} /> Caricamento staff…</div>;
 
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2 text-kidville-green">
         <Users size={18} />
         <h3 className="font-barlow font-black uppercase tracking-wide">Gestione Staff (RBAC)</h3>
-        <span className="ml-2 inline-flex items-center gap-1 text-[11px] text-gray-400"><ShieldCheck size={12} /> solo Direzione</span>
+        <span className="ml-2 inline-flex items-center gap-1 text-[11px] text-kidville-muted"><ShieldCheck size={12} /> solo Direzione</span>
       </div>
 
       <div className="space-y-2">
@@ -75,23 +75,23 @@ export function StaffPanel({ userId }: { userId: string }) {
           const isEditing = editId === u.id;
           const sezioniUtente = sections.filter((s) => !draft.scuola_id || s.scuola_id === draft.scuola_id);
           return (
-            <div key={u.id} className="bg-white border border-gray-100 rounded-xl p-3">
+            <div key={u.id} className="bg-white border border-kidville-line rounded-xl p-3">
               <div className="flex items-center justify-between gap-2">
                 <div className="min-w-0">
                   <p className="font-maven font-bold text-sm text-kidville-green truncate">{u.cognome} {u.nome}</p>
-                  <p className="font-maven text-xs text-gray-400 truncate">{u.email}</p>
+                  <p className="font-maven text-xs text-kidville-muted truncate">{u.email}</p>
                 </div>
                 {!isEditing ? (
                   <div className="flex items-center gap-2 shrink-0">
                     <span className="px-2 py-0.5 rounded-full bg-kidville-cream text-kidville-green text-[11px] font-bold">{labelRuolo(u.ruolo)}</span>
-                    <button onClick={() => apri(u)} className="text-gray-400 hover:text-kidville-green" title="Modifica"><Pencil size={15} /></button>
+                    <button onClick={() => apri(u)} className="text-kidville-muted hover:text-kidville-green" title="Modifica"><Pencil size={15} /></button>
                   </div>
                 ) : (
                   <div className="flex items-center gap-1.5 shrink-0">
-                    <button onClick={() => salva(u.id)} disabled={saving} className="text-green-600 hover:text-green-700" title="Salva">
+                    <button onClick={() => salva(u.id)} disabled={saving} className="text-kidville-success hover:text-kidville-success" title="Salva">
                       {saving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
                     </button>
-                    <button onClick={() => setEditId(null)} className="text-gray-400 hover:text-red-500" title="Annulla"><X size={16} /></button>
+                    <button onClick={() => setEditId(null)} className="text-kidville-muted hover:text-kidville-error" title="Annulla"><X size={16} /></button>
                   </div>
                 )}
               </div>
@@ -99,29 +99,29 @@ export function StaffPanel({ userId }: { userId: string }) {
               {isEditing && (
                 <div className="mt-3 grid sm:grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-[11px] font-semibold text-gray-500 mb-1">Ruolo</label>
+                    <label className="block text-[11px] font-semibold text-kidville-muted mb-1">Ruolo</label>
                     <select value={draft.ruolo} onChange={(e) => setDraft({ ...draft, ruolo: e.target.value })}
-                      className="w-full border-2 border-gray-100 rounded-lg px-2 py-1.5 text-sm text-kidville-green focus:outline-none focus:border-kidville-green">
+                      className="w-full border-2 border-kidville-line rounded-lg px-2 py-1.5 text-sm text-kidville-green focus:outline-none focus:border-kidville-green">
                       {RUOLI_ASSEGNABILI.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
                     </select>
                   </div>
                   <div>
-                    <label className="block text-[11px] font-semibold text-gray-500 mb-1">Sede</label>
+                    <label className="block text-[11px] font-semibold text-kidville-muted mb-1">Sede</label>
                     <select value={draft.scuola_id} onChange={(e) => setDraft({ ...draft, scuola_id: e.target.value })}
-                      className="w-full border-2 border-gray-100 rounded-lg px-2 py-1.5 text-sm text-kidville-green focus:outline-none focus:border-kidville-green">
+                      className="w-full border-2 border-kidville-line rounded-lg px-2 py-1.5 text-sm text-kidville-green focus:outline-none focus:border-kidville-green">
                       <option value="">—</option>
                       {schools.map((s) => <option key={s.id} value={s.id}>{s.nome}</option>)}
                     </select>
                   </div>
                   <div className="sm:col-span-2">
-                    <label className="block text-[11px] font-semibold text-gray-500 mb-1">Classi assegnate</label>
+                    <label className="block text-[11px] font-semibold text-kidville-muted mb-1">Classi assegnate</label>
                     <div className="flex flex-wrap gap-1.5">
-                      {sezioniUtente.length === 0 && <span className="text-xs text-gray-400">Nessuna classe per questa sede.</span>}
+                      {sezioniUtente.length === 0 && <span className="text-xs text-kidville-muted">Nessuna classe per questa sede.</span>}
                       {sezioniUtente.map((s) => {
                         const on = draft.section_ids.includes(s.id);
                         return (
                           <button key={s.id} type="button" onClick={() => toggleSezione(s.id)}
-                            className={`px-2 py-1 rounded-full text-[11px] font-bold border ${on ? 'bg-kidville-green text-white border-kidville-green' : 'bg-white text-gray-500 border-gray-200 hover:border-kidville-green'}`}>
+                            className={`px-2 py-1 rounded-full text-[11px] font-bold border ${on ? 'bg-kidville-green text-white border-kidville-green' : 'bg-white text-kidville-muted border-kidville-line hover:border-kidville-green'}`}>
                             {s.name}
                           </button>
                         );

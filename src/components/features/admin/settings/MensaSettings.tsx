@@ -132,17 +132,17 @@ export function MensaSettings({ userId, scuolaId }: Props) {
 
         <div className="space-y-4">
           <div>
-            <label className="font-maven text-xs text-gray-500 block mb-1">Orario limite (cutoff) prenotazioni/disdette</label>
+            <label className="font-maven text-xs text-kidville-muted block mb-1">Orario limite (cutoff) prenotazioni/disdette</label>
             <input type="time" value={cutoff} onChange={e => setCutoff(e.target.value)}
-              className="border-2 border-gray-200 rounded-lg px-3 py-1.5 font-maven text-sm text-kidville-green" />
+              className="border-2 border-kidville-line rounded-lg px-3 py-1.5 font-maven text-sm text-kidville-green" />
           </div>
 
           <div>
-            <label className="font-maven text-xs text-gray-500 block mb-1.5">Giorni mensa attivi</label>
+            <label className="font-maven text-xs text-kidville-muted block mb-1.5">Giorni mensa attivi</label>
             <div className="flex flex-wrap gap-1.5">
               {GIORNI.map(g => (
                 <button key={g.n} onClick={() => toggleGiorno(g.n)}
-                  className={`px-3 py-1.5 rounded-full font-maven text-xs font-bold border-2 ${giorni.includes(g.n) ? 'bg-kidville-green text-white border-kidville-green' : 'bg-white text-gray-400 border-gray-200'}`}>
+                  className={`px-3 py-1.5 rounded-full font-maven text-xs font-bold border-2 ${giorni.includes(g.n) ? 'bg-kidville-green text-white border-kidville-green' : 'bg-white text-kidville-muted border-kidville-line'}`}>
                   {g.l}
                 </button>
               ))}
@@ -151,26 +151,26 @@ export function MensaSettings({ userId, scuolaId }: Props) {
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="font-maven text-xs text-gray-500 block mb-1">Settimane di rotazione menu</label>
+              <label className="font-maven text-xs text-kidville-muted block mb-1">Settimane di rotazione menu</label>
               <input type="number" min={1} max={8} value={settimane} onChange={e => setSettimane(Number(e.target.value))}
-                className="w-full border-2 border-gray-200 rounded-lg px-3 py-1.5 font-maven text-sm text-kidville-green" />
+                className="w-full border-2 border-kidville-line rounded-lg px-3 py-1.5 font-maven text-sm text-kidville-green" />
             </div>
             <div>
-              <label className="font-maven text-xs text-gray-500 block mb-1">Soglia avviso saldo basso</label>
+              <label className="font-maven text-xs text-kidville-muted block mb-1">Soglia avviso saldo basso</label>
               <input type="number" min={0} value={soglia} onChange={e => setSoglia(Number(e.target.value))}
-                className="w-full border-2 border-gray-200 rounded-lg px-3 py-1.5 font-maven text-sm text-kidville-green" />
+                className="w-full border-2 border-kidville-line rounded-lg px-3 py-1.5 font-maven text-sm text-kidville-green" />
             </div>
           </div>
 
           <button onClick={salva} className="px-4 py-2 rounded-full bg-kidville-green text-white font-maven font-bold text-sm flex items-center gap-1">
             <Save size={15} /> Salva impostazioni
           </button>
-          {done && <p className="font-maven text-xs text-green-600 flex items-center gap-1"><CheckCircle2 size={13} /> Impostazioni salvate.</p>}
+          {done && <p className="font-maven text-xs text-kidville-success flex items-center gap-1"><CheckCircle2 size={13} /> Impostazioni salvate.</p>}
         </div>
       </div>
 
       {/* ── GESTIONE MENU ── */}
-      <div className="border-t border-gray-100 pt-5">
+      <div className="border-t border-kidville-line pt-5">
         <button
           onClick={() => setShowMenuSection(v => !v)}
           className="w-full flex items-center justify-between mb-4"
@@ -178,12 +178,12 @@ export function MensaSettings({ userId, scuolaId }: Props) {
           <h3 className="font-barlow font-bold text-kidville-green uppercase text-sm flex items-center gap-2">
             <UtensilsCrossed size={14} /> Menu mensa ({menus.length})
           </h3>
-          {showMenuSection ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />}
+          {showMenuSection ? <ChevronUp size={16} className="text-kidville-muted" /> : <ChevronDown size={16} className="text-kidville-muted" />}
         </button>
 
         {showMenuSection && (
           <div className="space-y-4">
-            <p className="font-maven text-xs text-gray-400 -mt-2">
+            <p className="font-maven text-xs text-kidville-muted -mt-2">
               Crea più menu per ordini scolastici diversi (es. Nido, Infanzia e Primaria). Ogni menu ha il suo piano di rotazione separato.
             </p>
 
@@ -191,11 +191,11 @@ export function MensaSettings({ userId, scuolaId }: Props) {
             {menus.length > 0 && (
               <div className="space-y-2">
                 {menus.map(m => (
-                  <div key={m.id} className="flex items-center gap-2 p-2.5 rounded-xl border border-gray-100 bg-gray-50">
+                  <div key={m.id} className="flex items-center gap-2 p-2.5 rounded-xl border border-kidville-line bg-kidville-cream">
                     <div className="flex-1 min-w-0">
                       <span className="font-maven font-bold text-sm text-kidville-green">{m.nome}</span>
                     </div>
-                    <button onClick={() => eliminaMenu(m.id)} className="p-1.5 rounded-lg text-red-400 hover:bg-red-50" title="Elimina menu">
+                    <button onClick={() => eliminaMenu(m.id)} className="p-1.5 rounded-lg text-kidville-error hover:bg-kidville-error-soft" title="Elimina menu">
                       <Trash2 size={14} />
                     </button>
                   </div>
@@ -211,7 +211,7 @@ export function MensaSettings({ userId, scuolaId }: Props) {
                 value={newMenuNome}
                 onChange={e => setNewMenuNome(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && creaMenu()}
-                className="flex-1 border-2 border-gray-200 rounded-lg px-3 py-1.5 font-maven text-sm text-kidville-green"
+                className="flex-1 border-2 border-kidville-line rounded-lg px-3 py-1.5 font-maven text-sm text-kidville-green"
               />
               <button
                 onClick={creaMenu}
@@ -222,28 +222,28 @@ export function MensaSettings({ userId, scuolaId }: Props) {
               </button>
             </div>
 
-            {menuMsg && <p className="font-maven text-xs text-red-500">{menuMsg}</p>}
+            {menuMsg && <p className="font-maven text-xs text-kidville-error">{menuMsg}</p>}
 
             {/* ── ASSEGNAZIONI CLASSI ── */}
             {menus.length > 0 && (
-              <div className="border-t border-gray-100 pt-4 space-y-3">
+              <div className="border-t border-kidville-line pt-4 space-y-3">
                 <h4 className="font-barlow font-bold text-kidville-green uppercase text-xs flex items-center gap-1.5">
                   <BookOpen size={12} /> Assegnazione classi ai menu
                 </h4>
-                <p className="font-maven text-xs text-gray-400">
+                <p className="font-maven text-xs text-kidville-muted">
                   Specifica da quale data una classe passa a un determinato menu.
                   La regola più recente (attivo_dal ≤ oggi) è quella in vigore.
                 </p>
 
                 {/* Assegnazioni esistenti raggruppate per classe */}
                 {Object.entries(assignmentsByClasse).map(([classe, list]) => (
-                  <div key={classe} className="rounded-xl border border-gray-100 overflow-hidden">
-                    <div className="px-3 py-2 bg-gray-50 font-maven font-bold text-xs text-kidville-green">
+                  <div key={classe} className="rounded-xl border border-kidville-line overflow-hidden">
+                    <div className="px-3 py-2 bg-kidville-cream font-maven font-bold text-xs text-kidville-green">
                       Classe: {classe}
                     </div>
                     {list.map(a => (
-                      <div key={a.id} className="flex items-center gap-2 px-3 py-2 border-t border-gray-100 text-xs">
-                        <span className={`flex-1 font-maven ${a.attivo_dal > today ? 'text-gray-400 italic' : 'text-gray-700'}`}>
+                      <div key={a.id} className="flex items-center gap-2 px-3 py-2 border-t border-kidville-line text-xs">
+                        <span className={`flex-1 font-maven ${a.attivo_dal > today ? 'text-kidville-muted italic' : 'text-kidville-ink'}`}>
                           {a.attivo_dal > today ? '⏳ Dal ' : '✓ Dal '}
                           <span className="font-bold">{a.attivo_dal}</span>
                           {' → '}
@@ -251,7 +251,7 @@ export function MensaSettings({ userId, scuolaId }: Props) {
                             {(a.mensa_menu_config as { nome: string } | undefined)?.nome ?? menus.find(m => m.id === a.menu_config_id)?.nome ?? '—'}
                           </span>
                         </span>
-                        <button onClick={() => eliminaAssegnazione(a.id)} className="p-1 rounded text-red-400 hover:bg-red-50">
+                        <button onClick={() => eliminaAssegnazione(a.id)} className="p-1 rounded text-kidville-error hover:bg-kidville-error-soft">
                           <Trash2 size={13} />
                         </button>
                       </div>
@@ -260,25 +260,25 @@ export function MensaSettings({ userId, scuolaId }: Props) {
                 ))}
 
                 {/* Form nuova assegnazione */}
-                <div className="rounded-xl border-2 border-dashed border-gray-200 p-3 space-y-2">
-                  <p className="font-maven text-xs text-gray-400 font-bold">Nuova assegnazione</p>
+                <div className="rounded-xl border-2 border-dashed border-kidville-line p-3 space-y-2">
+                  <p className="font-maven text-xs text-kidville-muted font-bold">Nuova assegnazione</p>
                   <div className="grid grid-cols-2 gap-2">
                     <div>
-                      <label className="font-maven text-[10px] text-gray-400 block mb-0.5">Classe / sezione</label>
+                      <label className="font-maven text-[10px] text-kidville-muted block mb-0.5">Classe / sezione</label>
                       <input
                         type="text"
                         placeholder="es. 1A, Sezione B"
                         value={newClasse}
                         onChange={e => setNewClasse(e.target.value)}
-                        className="w-full border border-gray-200 rounded-lg px-2 py-1.5 font-maven text-xs text-kidville-green"
+                        className="w-full border border-kidville-line rounded-lg px-2 py-1.5 font-maven text-xs text-kidville-green"
                       />
                     </div>
                     <div>
-                      <label className="font-maven text-[10px] text-gray-400 block mb-0.5">Menu</label>
+                      <label className="font-maven text-[10px] text-kidville-muted block mb-0.5">Menu</label>
                       <select
                         value={newMenuId}
                         onChange={e => setNewMenuId(e.target.value)}
-                        className="w-full border border-gray-200 rounded-lg px-2 py-1.5 font-maven text-xs text-kidville-green bg-white"
+                        className="w-full border border-kidville-line rounded-lg px-2 py-1.5 font-maven text-xs text-kidville-green bg-white"
                       >
                         <option value="">Seleziona…</option>
                         {menus.map(m => <option key={m.id} value={m.id}>{m.nome}</option>)}
@@ -286,12 +286,12 @@ export function MensaSettings({ userId, scuolaId }: Props) {
                     </div>
                   </div>
                   <div>
-                    <label className="font-maven text-[10px] text-gray-400 block mb-0.5">Attivo dal</label>
+                    <label className="font-maven text-[10px] text-kidville-muted block mb-0.5">Attivo dal</label>
                     <input
                       type="date"
                       value={newAttivoDal}
                       onChange={e => setNewAttivoDal(e.target.value)}
-                      className="border border-gray-200 rounded-lg px-2 py-1.5 font-maven text-xs text-kidville-green"
+                      className="border border-kidville-line rounded-lg px-2 py-1.5 font-maven text-xs text-kidville-green"
                     />
                   </div>
                   <button

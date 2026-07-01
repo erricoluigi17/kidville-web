@@ -45,11 +45,11 @@ export function DidatticaPrimariaPanel({ scuolaId, userId }: { scuolaId: string;
     <div>
       {(tab === 'materie' || tab === 'docenti') && (
         <div className="mb-4 flex items-center gap-3">
-          <label className="font-maven text-sm text-gray-600">Classe/Sezione:</label>
+          <label className="font-maven text-sm text-kidville-ink">Classe/Sezione:</label>
           <select
             value={sezioneId}
             onChange={(e) => setSezioneId(e.target.value)}
-            className="font-maven rounded-pill border border-gray-200 bg-white px-4 py-2 text-sm"
+            className="font-maven rounded-pill border border-kidville-line bg-white px-4 py-2 text-sm"
           >
             {sezioni.length === 0 && <option value="">Nessuna sezione primaria</option>}
             {sezioni.map((s) => (
@@ -65,7 +65,7 @@ export function DidatticaPrimariaPanel({ scuolaId, userId }: { scuolaId: string;
             key={t.id}
             onClick={() => setTab(t.id)}
             className={`font-maven inline-flex items-center gap-2 rounded-pill px-4 py-2 text-sm transition ${
-              tab === t.id ? 'bg-kidville-green text-kidville-yellow' : 'bg-white text-gray-600 hover:bg-kidville-green/10'
+              tab === t.id ? 'bg-kidville-green text-kidville-yellow' : 'bg-white text-kidville-ink hover:bg-kidville-green/10'
             }`}
           >
             {t.icon}

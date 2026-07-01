@@ -128,18 +128,18 @@ export function MaterieManager({ sectionId, sezione, userId, scuolaId }: Props) 
     load();
   };
 
-  if (!sectionId) return <p className="font-maven text-gray-500">Seleziona una sezione primaria.</p>;
+  if (!sectionId) return <p className="font-maven text-kidville-muted">Seleziona una sezione primaria.</p>;
 
   return (
     <div className="space-y-4">
       {error && <div className="rounded-card bg-kidville-error/10 text-kidville-error px-4 py-2 text-sm font-maven">{error}</div>}
 
       <div className="flex flex-wrap items-center gap-2 rounded-card bg-kidville-cream/50 p-3">
-        <span className="font-maven text-sm text-gray-600">Applica preset materie per livello</span>
+        <span className="font-maven text-sm text-kidville-ink">Applica preset materie per livello</span>
         <select
           value={livello}
           onChange={(e) => setLivello(Number(e.target.value))}
-          className="font-maven rounded-pill border border-gray-200 bg-white px-3 py-1.5 text-sm"
+          className="font-maven rounded-pill border border-kidville-line bg-white px-3 py-1.5 text-sm"
         >
           {[1, 2, 3, 4, 5].map((l) => (
             <option key={l} value={l}>{l}ª</option>
@@ -154,35 +154,35 @@ export function MaterieManager({ sectionId, sezione, userId, scuolaId }: Props) 
       </div>
 
       {loading ? (
-        <p className="font-maven text-gray-400 text-sm">Caricamento…</p>
+        <p className="font-maven text-kidville-muted text-sm">Caricamento…</p>
       ) : (
-        <ul className="divide-y divide-gray-100">
+        <ul className="divide-y divide-kidville-line">
           {materie.map((m) => {
             const obMateria = obiettivi.filter((o) => o.materia_codice === m.codice);
             return (
             <li key={m.id} className="py-2.5">
               <div className="flex items-center justify-between">
                 <div>
-                  <span className="font-maven text-gray-800">{m.nome}</span>
+                  <span className="font-maven text-kidville-ink">{m.nome}</span>
                   {m.e_civica && <span className="ml-2 rounded-pill bg-kidville-info-soft text-kidville-info px-2 py-0.5 text-[11px]">Ed. Civica</span>}
                   {m.turno_mensa && <span className="ml-2 rounded-pill bg-kidville-warn-soft text-kidville-warn px-2 py-0.5 text-[11px]">Mensa</span>}
-                  <span className="ml-2 text-xs text-gray-400">{m.codice}</span>
+                  <span className="ml-2 text-xs text-kidville-muted">{m.codice}</span>
                 </div>
                 <div className="flex items-center gap-3">
-                  <label className="font-maven text-xs text-gray-500 inline-flex items-center gap-1">
+                  <label className="font-maven text-xs text-kidville-muted inline-flex items-center gap-1">
                     <input type="checkbox" checked={m.attiva} onChange={() => toggleAttiva(m)} /> attiva
                   </label>
-                  <button onClick={() => removeMateria(m.id)} className="text-gray-400 hover:text-kidville-error">
+                  <button onClick={() => removeMateria(m.id)} className="text-kidville-muted hover:text-kidville-error">
                     <Trash2 size={16} />
                   </button>
                 </div>
               </div>
               <div className="mt-1.5 flex items-center gap-2">
-                <label className="font-maven text-[11px] text-gray-400 shrink-0">Obiettivo della classe</label>
+                <label className="font-maven text-[11px] text-kidville-muted shrink-0">Obiettivo della classe</label>
                 <select
                   value={assoc[m.id] ?? ''}
                   onChange={(e) => setObiettivo(m.id, e.target.value)}
-                  className="font-maven flex-1 rounded border border-gray-200 px-2 py-1 text-xs"
+                  className="font-maven flex-1 rounded border border-kidville-line px-2 py-1 text-xs"
                 >
                   <option value="">— nessuno —</option>
                   {obMateria.map((o) => (
@@ -191,30 +191,30 @@ export function MaterieManager({ sectionId, sezione, userId, scuolaId }: Props) 
                 </select>
               </div>
               {obMateria.length === 0 && (
-                <p className="font-maven text-[11px] text-gray-300 mt-1">Nessun obiettivo definito per {m.codice} al livello {livello}ª (sezione Obiettivi).</p>
+                <p className="font-maven text-[11px] text-kidville-muted mt-1">Nessun obiettivo definito per {m.codice} al livello {livello}ª (sezione Obiettivi).</p>
               )}
             </li>
           );})}
-          {materie.length === 0 && <li className="py-3 font-maven text-gray-400 text-sm">Nessuna materia. Applica un preset o aggiungine una.</li>}
+          {materie.length === 0 && <li className="py-3 font-maven text-kidville-muted text-sm">Nessuna materia. Applica un preset o aggiungine una.</li>}
         </ul>
       )}
 
-      <div className="flex flex-wrap items-end gap-2 border-t border-gray-100 pt-4">
+      <div className="flex flex-wrap items-end gap-2 border-t border-kidville-line pt-4">
         <div>
-          <label className="block font-maven text-xs text-gray-500">Nome materia</label>
+          <label className="block font-maven text-xs text-kidville-muted">Nome materia</label>
           <input
             value={nuova.nome}
             onChange={(e) => setNuova((s) => ({ ...s, nome: e.target.value }))}
-            className="font-maven rounded-pill border border-gray-200 px-3 py-1.5 text-sm"
+            className="font-maven rounded-pill border border-kidville-line px-3 py-1.5 text-sm"
             placeholder="Es. Coding"
           />
         </div>
         <div>
-          <label className="block font-maven text-xs text-gray-500">Codice</label>
+          <label className="block font-maven text-xs text-kidville-muted">Codice</label>
           <input
             value={nuova.codice}
             onChange={(e) => setNuova((s) => ({ ...s, codice: e.target.value.toLowerCase().replace(/\s+/g, '_') }))}
-            className="font-maven rounded-pill border border-gray-200 px-3 py-1.5 text-sm"
+            className="font-maven rounded-pill border border-kidville-line px-3 py-1.5 text-sm"
             placeholder="coding"
           />
         </div>

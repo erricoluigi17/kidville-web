@@ -19,7 +19,7 @@ export function ArmadiettoSettings({ userId }: { userId: string }) {
     const [nuova, setNuova] = useState('');
     const [msg, setMsg] = useState('');
 
-    if (!settings) return <p className="font-maven text-sm text-gray-400">Caricamento…</p>;
+    if (!settings) return <p className="font-maven text-sm text-kidville-muted">Caricamento…</p>;
     const cfg = draft ?? ((settings.armadietto_config ?? {}) as ArmadiettoConfig);
     const set = (patch: Partial<ArmadiettoConfig>) => { setMsg(''); setDraft({ ...cfg, ...patch }); };
     const extra = cfg.categorie_extra ?? [];
@@ -54,7 +54,7 @@ export function ArmadiettoSettings({ userId }: { userId: string }) {
                     {extra.map((c) => (
                         <span key={c} className="flex items-center gap-1 bg-kidville-cream rounded-full pl-3 pr-2 py-1 font-maven text-sm text-kidville-green capitalize">
                             {c}
-                            <button onClick={() => set({ categorie_extra: extra.filter((x) => x !== c) })} className="text-gray-400 hover:text-red-500"><Trash2 size={13} /></button>
+                            <button onClick={() => set({ categorie_extra: extra.filter((x) => x !== c) })} className="text-kidville-muted hover:text-kidville-error"><Trash2 size={13} /></button>
                         </span>
                     ))}
                 </div>
@@ -62,7 +62,7 @@ export function ArmadiettoSettings({ userId }: { userId: string }) {
                     <input value={nuova} onChange={(e) => setNuova(e.target.value)} placeholder="Nuova categoria…" className={`${input} flex-1`} />
                     <button
                         onClick={() => { const v = nuova.trim().toLowerCase(); if (v && !extra.includes(v)) { set({ categorie_extra: [...extra, v] }); setNuova(''); } }}
-                        className="px-3 py-2 rounded-full border-2 border-gray-200 font-maven text-sm text-gray-500 flex items-center gap-1"
+                        className="px-3 py-2 rounded-full border-2 border-kidville-line font-maven text-sm text-kidville-muted flex items-center gap-1"
                     >
                         <Plus size={14} /> Aggiungi
                     </button>

@@ -162,7 +162,7 @@ export function StudentRegistryForm() {
                         initial={{ opacity: 0, y: -20 }} 
                         animate={{ opacity: 1, y: 0 }} 
                         exit={{ opacity: 0, y: -20 }}
-                        className={`absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-2 px-6 py-3 rounded-full font-bold shadow-lg z-50 ${toast.type === 'success' ? 'bg-kidville-green text-white' : 'bg-red-500 text-white'}`}
+                        className={`absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-2 px-6 py-3 rounded-full font-bold shadow-lg z-50 ${toast.type === 'success' ? 'bg-kidville-green text-white' : 'bg-kidville-error text-white'}`}
                     >
                         {toast.type === 'success' ? <CheckCircle2 size={18} /> : <XCircle size={18} />}
                         {toast.message}
@@ -175,7 +175,7 @@ export function StudentRegistryForm() {
             </h2>
 
             {/* Stepper Header */}
-            <div className="flex gap-4 mb-8 border-b border-gray-100 pb-4">
+            <div className="flex gap-4 mb-8 border-b border-kidville-line pb-4">
                 {[
                     { num: 1, label: 'Dati Personali', icon: <User size={16} /> },
                     { num: 2, label: 'Residenza', icon: <Home size={16} /> },
@@ -185,7 +185,7 @@ export function StudentRegistryForm() {
                     <button
                         key={s.num}
                         onClick={() => setStep(s.num)}
-                        className={`flex items-center gap-2 px-4 py-2 rounded-full font-bold text-sm transition-all duration-300 ${step === s.num ? 'bg-kidville-green text-white shadow-md' : 'text-gray-400 hover:bg-gray-50'}`}
+                        className={`flex items-center gap-2 px-4 py-2 rounded-full font-bold text-sm transition-all duration-300 ${step === s.num ? 'bg-kidville-green text-white shadow-md' : 'text-kidville-muted hover:bg-kidville-cream'}`}
                     >
                         {s.icon} {s.label}
                     </button>
@@ -197,39 +197,39 @@ export function StudentRegistryForm() {
                 {step === 1 && (
                     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="grid grid-cols-2 gap-6">
                         <div>
-                            <label className="block text-sm font-bold text-gray-700 mb-1">Nome</label>
-                            <input name="nome" value={formData.nome} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none transition-all ${errors.nome ? 'border-red-500 bg-red-50' : 'border-gray-200 focus:ring-2 focus:ring-kidville-green'}`} />
-                            {errors.nome && <span className="text-xs text-red-500">{errors.nome}</span>}
+                            <label className="block text-sm font-bold text-kidville-ink mb-1">Nome</label>
+                            <input name="nome" value={formData.nome} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none transition-all ${errors.nome ? 'border-kidville-error bg-kidville-error-soft' : 'border-kidville-line focus:ring-2 focus:ring-kidville-green'}`} />
+                            {errors.nome && <span className="text-xs text-kidville-error">{errors.nome}</span>}
                         </div>
                         <div>
-                            <label className="block text-sm font-bold text-gray-700 mb-1">Cognome</label>
-                            <input name="cognome" value={formData.cognome} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none transition-all ${errors.cognome ? 'border-red-500 bg-red-50' : 'border-gray-200 focus:ring-2 focus:ring-kidville-green'}`} />
-                            {errors.cognome && <span className="text-xs text-red-500">{errors.cognome}</span>}
+                            <label className="block text-sm font-bold text-kidville-ink mb-1">Cognome</label>
+                            <input name="cognome" value={formData.cognome} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none transition-all ${errors.cognome ? 'border-kidville-error bg-kidville-error-soft' : 'border-kidville-line focus:ring-2 focus:ring-kidville-green'}`} />
+                            {errors.cognome && <span className="text-xs text-kidville-error">{errors.cognome}</span>}
                         </div>
                         <div>
-                            <label className="block text-sm font-bold text-gray-700 mb-1">Sesso</label>
-                            <select name="sesso" value={formData.sesso} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-kidville-green outline-none bg-white">
+                            <label className="block text-sm font-bold text-kidville-ink mb-1">Sesso</label>
+                            <select name="sesso" value={formData.sesso} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-line focus:ring-2 focus:ring-kidville-green outline-none bg-white">
                                 <option value="M">Maschio</option>
                                 <option value="F">Femmina</option>
                             </select>
                         </div>
                         <div>
-                            <label className="block text-sm font-bold text-gray-700 mb-1">Data di Nascita</label>
-                            <input type="date" name="data_nascita" value={formData.data_nascita} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none ${errors.data_nascita ? 'border-red-500 bg-red-50' : 'border-gray-200 focus:ring-2 focus:ring-kidville-green'}`} />
-                            {errors.data_nascita && <span className="text-xs text-red-500">{errors.data_nascita}</span>}
+                            <label className="block text-sm font-bold text-kidville-ink mb-1">Data di Nascita</label>
+                            <input type="date" name="data_nascita" value={formData.data_nascita} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none ${errors.data_nascita ? 'border-kidville-error bg-kidville-error-soft' : 'border-kidville-line focus:ring-2 focus:ring-kidville-green'}`} />
+                            {errors.data_nascita && <span className="text-xs text-kidville-error">{errors.data_nascita}</span>}
                         </div>
                         <div>
-                            <label className="block text-sm font-bold text-gray-700 mb-1">Comune di Nascita</label>
-                            <input name="comune_nascita" value={formData.comune_nascita} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none ${errors.comune_nascita ? 'border-red-500 bg-red-50' : 'border-gray-200 focus:ring-2 focus:ring-kidville-green'}`} />
-                            {errors.comune_nascita && <span className="text-xs text-red-500">{errors.comune_nascita}</span>}
+                            <label className="block text-sm font-bold text-kidville-ink mb-1">Comune di Nascita</label>
+                            <input name="comune_nascita" value={formData.comune_nascita} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none ${errors.comune_nascita ? 'border-kidville-error bg-kidville-error-soft' : 'border-kidville-line focus:ring-2 focus:ring-kidville-green'}`} />
+                            {errors.comune_nascita && <span className="text-xs text-kidville-error">{errors.comune_nascita}</span>}
                         </div>
                         <div>
-                            <label className="block text-sm font-bold text-gray-700 mb-1">Prov. Nascita (Sigla)</label>
-                            <input name="provincia_nascita" value={formData.provincia_nascita} onChange={handleInputChange} maxLength={2} className={`w-full p-3 rounded-xl border outline-none uppercase ${errors.provincia_nascita ? 'border-red-500 bg-red-50' : 'border-gray-200 focus:ring-2 focus:ring-kidville-green'}`} />
-                            {errors.provincia_nascita && <span className="text-xs text-red-500">{errors.provincia_nascita}</span>}
+                            <label className="block text-sm font-bold text-kidville-ink mb-1">Prov. Nascita (Sigla)</label>
+                            <input name="provincia_nascita" value={formData.provincia_nascita} onChange={handleInputChange} maxLength={2} className={`w-full p-3 rounded-xl border outline-none uppercase ${errors.provincia_nascita ? 'border-kidville-error bg-kidville-error-soft' : 'border-kidville-line focus:ring-2 focus:ring-kidville-green'}`} />
+                            {errors.provincia_nascita && <span className="text-xs text-kidville-error">{errors.provincia_nascita}</span>}
                         </div>
                         <div className="col-span-2">
-                            <label className="block text-sm font-bold text-gray-700 mb-1 flex items-center gap-2">
+                            <label className="block text-sm font-bold text-kidville-ink mb-1 flex items-center gap-2">
                                 <Fingerprint size={16} /> Codice Fiscale 
                                 {isCfLoading && <Loader2 size={14} className="animate-spin text-kidville-green" />}
                                 {isCfAutoCalculated && <span className="text-xs text-kidville-green font-normal">Autocalcolato! ✨</span>}
@@ -238,9 +238,9 @@ export function StudentRegistryForm() {
                                 name="codice_fiscale" 
                                 value={formData.codice_fiscale} 
                                 onChange={handleInputChange} 
-                                className={`w-full p-3 rounded-xl border outline-none uppercase transition-all duration-500 ${errors.codice_fiscale ? 'border-red-500 bg-red-50' : isCfAutoCalculated ? 'border-kidville-green ring-2 ring-kidville-green/50 bg-kidville-green/5' : 'border-gray-200 focus:ring-2 focus:ring-kidville-green'}`} 
+                                className={`w-full p-3 rounded-xl border outline-none uppercase transition-all duration-500 ${errors.codice_fiscale ? 'border-kidville-error bg-kidville-error-soft' : isCfAutoCalculated ? 'border-kidville-green ring-2 ring-kidville-green/50 bg-kidville-green/5' : 'border-kidville-line focus:ring-2 focus:ring-kidville-green'}`} 
                             />
-                            {errors.codice_fiscale && <span className="text-xs text-red-500">{errors.codice_fiscale}</span>}
+                            {errors.codice_fiscale && <span className="text-xs text-kidville-error">{errors.codice_fiscale}</span>}
                         </div>
                     </motion.div>
                 )}
@@ -248,19 +248,19 @@ export function StudentRegistryForm() {
                 {step === 2 && (
                     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="grid grid-cols-2 gap-6">
                         <div className="col-span-2">
-                            <label className="block text-sm font-bold text-gray-700 mb-1">Indirizzo di Residenza</label>
-                            <input name="indirizzo_residenza" value={formData.indirizzo_residenza} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none ${errors.indirizzo_residenza ? 'border-red-500 bg-red-50' : 'border-gray-200 focus:ring-2 focus:ring-kidville-green'}`} placeholder="Via Roma, 1" />
-                            {errors.indirizzo_residenza && <span className="text-xs text-red-500">{errors.indirizzo_residenza}</span>}
+                            <label className="block text-sm font-bold text-kidville-ink mb-1">Indirizzo di Residenza</label>
+                            <input name="indirizzo_residenza" value={formData.indirizzo_residenza} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none ${errors.indirizzo_residenza ? 'border-kidville-error bg-kidville-error-soft' : 'border-kidville-line focus:ring-2 focus:ring-kidville-green'}`} placeholder="Via Roma, 1" />
+                            {errors.indirizzo_residenza && <span className="text-xs text-kidville-error">{errors.indirizzo_residenza}</span>}
                         </div>
                         <div>
-                            <label className="block text-sm font-bold text-gray-700 mb-1">Comune di Residenza</label>
-                            <input name="comune_residenza" value={formData.comune_residenza} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none ${errors.comune_residenza ? 'border-red-500 bg-red-50' : 'border-gray-200 focus:ring-2 focus:ring-kidville-green'}`} />
-                            {errors.comune_residenza && <span className="text-xs text-red-500">{errors.comune_residenza}</span>}
+                            <label className="block text-sm font-bold text-kidville-ink mb-1">Comune di Residenza</label>
+                            <input name="comune_residenza" value={formData.comune_residenza} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none ${errors.comune_residenza ? 'border-kidville-error bg-kidville-error-soft' : 'border-kidville-line focus:ring-2 focus:ring-kidville-green'}`} />
+                            {errors.comune_residenza && <span className="text-xs text-kidville-error">{errors.comune_residenza}</span>}
                         </div>
                         <div>
-                            <label className="block text-sm font-bold text-gray-700 mb-1">CAP</label>
-                            <input name="cap" value={formData.cap} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none ${errors.cap ? 'border-red-500 bg-red-50' : 'border-gray-200 focus:ring-2 focus:ring-kidville-green'}`} maxLength={5} />
-                            {errors.cap && <span className="text-xs text-red-500">{errors.cap}</span>}
+                            <label className="block text-sm font-bold text-kidville-ink mb-1">CAP</label>
+                            <input name="cap" value={formData.cap} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none ${errors.cap ? 'border-kidville-error bg-kidville-error-soft' : 'border-kidville-line focus:ring-2 focus:ring-kidville-green'}`} maxLength={5} />
+                            {errors.cap && <span className="text-xs text-kidville-error">{errors.cap}</span>}
                         </div>
                     </motion.div>
                 )}
@@ -268,10 +268,10 @@ export function StudentRegistryForm() {
                 {step === 3 && (
                     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
                         <div>
-                            <label className="block text-sm font-bold text-gray-700 mb-1 flex items-center gap-2">
-                                <AlertTriangle size={16} className="text-red-500" /> Allergie e Intolleranze
+                            <label className="block text-sm font-bold text-kidville-ink mb-1 flex items-center gap-2">
+                                <AlertTriangle size={16} className="text-kidville-error" /> Allergie e Intolleranze
                             </label>
-                            <textarea name="allergies" value={formData.allergies} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-red-400 outline-none" rows={3} placeholder="Es. Lattosio, Fragole..." />
+                            <textarea name="allergies" value={formData.allergies} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-line focus:ring-2 focus:ring-kidville-error outline-none" rows={3} placeholder="Es. Lattosio, Fragole..." />
                         </div>
 
                         <div>
@@ -307,10 +307,10 @@ export function StudentRegistryForm() {
                 {step === 4 && (
                     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
                         <div>
-                            <label className="block text-sm font-bold text-gray-700 mb-2">Intestatario Fattura</label>
+                            <label className="block text-sm font-bold text-kidville-ink mb-2">Intestatario Fattura</label>
                             <div className="flex gap-4">
                                 {['mom', 'dad', 'other'].map(type => (
-                                    <label key={type} className={`flex-1 flex items-center justify-center p-3 rounded-xl border cursor-pointer transition-all ${formData.invoice_holder_type === type ? 'border-kidville-green bg-kidville-green/10 text-kidville-green font-bold' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}>
+                                    <label key={type} className={`flex-1 flex items-center justify-center p-3 rounded-xl border cursor-pointer transition-all ${formData.invoice_holder_type === type ? 'border-kidville-green bg-kidville-green/10 text-kidville-green font-bold' : 'border-kidville-line text-kidville-muted hover:bg-kidville-cream'}`}>
                                         <input type="radio" name="invoice_holder_type" value={type} checked={formData.invoice_holder_type === type} onChange={handleInputChange} className="hidden" />
                                         {type === 'mom' ? 'Madre' : type === 'dad' ? 'Padre' : 'Altro Soggetto'}
                                     </label>
@@ -327,7 +327,7 @@ export function StudentRegistryForm() {
                                     className="p-4 border border-kidville-info/30 bg-kidville-info-soft/50 rounded-2xl overflow-hidden mt-2"
                                 >
                                     <div className="flex items-center justify-between mb-4">
-                                        <h4 className="font-bold text-blue-900">Seleziona o Crea Adulto</h4>
+                                        <h4 className="font-bold text-kidville-info">Seleziona o Crea Adulto</h4>
                                         <button className="text-sm px-3 py-1 bg-white border border-kidville-info/30 rounded-full text-kidville-info font-medium hover:bg-kidville-info-soft">
                                             + Nuovo Adulto
                                         </button>
@@ -335,18 +335,18 @@ export function StudentRegistryForm() {
                                     
                                     <div className="grid grid-cols-2 gap-4">
                                         <div>
-                                            <label className="block text-sm font-bold text-gray-700 mb-1">Nome</label>
-                                            <input name="invoice_holder_details.nome" value={formData.invoice_holder_details.nome} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-gray-200 bg-white focus:ring-2 focus:ring-kidville-green outline-none" />
+                                            <label className="block text-sm font-bold text-kidville-ink mb-1">Nome</label>
+                                            <input name="invoice_holder_details.nome" value={formData.invoice_holder_details.nome} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-line bg-white focus:ring-2 focus:ring-kidville-green outline-none" />
                                         </div>
                                         <div>
-                                            <label className="block text-sm font-bold text-gray-700 mb-1">Cognome</label>
-                                            <input name="invoice_holder_details.cognome" value={formData.invoice_holder_details.cognome} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-gray-200 bg-white focus:ring-2 focus:ring-kidville-green outline-none" />
+                                            <label className="block text-sm font-bold text-kidville-ink mb-1">Cognome</label>
+                                            <input name="invoice_holder_details.cognome" value={formData.invoice_holder_details.cognome} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-line bg-white focus:ring-2 focus:ring-kidville-green outline-none" />
                                         </div>
                                         <div className="col-span-2">
-                                            <label className="block text-sm font-bold text-gray-700 mb-1">Codice Fiscale Intestatario</label>
-                                            <input name="invoice_holder_details.codice_fiscale" value={formData.invoice_holder_details.codice_fiscale} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-gray-200 bg-white focus:ring-2 focus:ring-kidville-green outline-none uppercase" />
+                                            <label className="block text-sm font-bold text-kidville-ink mb-1">Codice Fiscale Intestatario</label>
+                                            <input name="invoice_holder_details.codice_fiscale" value={formData.invoice_holder_details.codice_fiscale} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-line bg-white focus:ring-2 focus:ring-kidville-green outline-none uppercase" />
                                         </div>
-                                        <div className="col-span-2 text-xs text-gray-500">
+                                        <div className="col-span-2 text-xs text-kidville-muted">
                                             Nota: Salvando questa anagrafica, questo adulto verrà automaticamente registrato e collegato con `is_invoice_holder = true`.
                                         </div>
                                     </div>
@@ -357,11 +357,11 @@ export function StudentRegistryForm() {
                 )}
             </div>
 
-            <div className="mt-8 flex justify-between border-t border-gray-100 pt-6">
+            <div className="mt-8 flex justify-between border-t border-kidville-line pt-6">
                 <button 
                     onClick={() => setStep(s => Math.max(1, s - 1))}
                     disabled={step === 1}
-                    className="px-6 py-2 rounded-full font-bold text-gray-500 disabled:opacity-50"
+                    className="px-6 py-2 rounded-full font-bold text-kidville-muted disabled:opacity-50"
                 >
                     Indietro
                 </button>

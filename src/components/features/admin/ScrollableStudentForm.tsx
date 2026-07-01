@@ -197,12 +197,12 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
                         <p className="text-kidville-green/80 font-maven mt-1 text-lg">
                             {savedStudent.nome} {savedStudent.cognome}
                         </p>
-                        <p className="text-gray-500 font-maven text-sm mt-1">
+                        <p className="text-kidville-muted font-maven text-sm mt-1">
                             ID: {savedStudent.id.slice(0, 8)}...
                         </p>
                     </div>
 
-                    <div className="bg-green-50 border border-green-200 rounded-xl px-5 py-3 text-green-700 text-sm font-maven font-bold flex items-center gap-2">
+                    <div className="bg-kidville-success-soft border border-kidville-success-soft rounded-xl px-5 py-3 text-kidville-success text-sm font-maven font-bold flex items-center gap-2">
                         <CheckCircle2 size={15} />
                         Ora compila Madre e Padre per collegare i genitori
                     </div>
@@ -231,7 +231,7 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
                 {toast && (
                     <motion.div 
                         initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}
-                        className={`absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-2 px-6 py-3 rounded-full font-bold shadow-lg z-50 ${toast.type === 'success' ? 'bg-kidville-green text-white' : 'bg-red-500 text-white'}`}
+                        className={`absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-2 px-6 py-3 rounded-full font-bold shadow-lg z-50 ${toast.type === 'success' ? 'bg-kidville-green text-white' : 'bg-kidville-error text-white'}`}
                     >
                         {toast.type === 'success' ? <CheckCircle2 size={18} /> : <XCircle size={18} />}
                         {toast.message}
@@ -262,13 +262,13 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
                     <div className="grid grid-cols-2 gap-6">
                         <div>
                             <label className="block text-sm font-bold text-kidville-green/80 mb-1">Nome</label>
-                            <input name="nome" value={formData.nome} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green ${errors.nome ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} />
-                            {errors.nome && <span className="text-xs text-red-500 font-bold">{errors.nome}</span>}
+                            <input name="nome" value={formData.nome} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green ${errors.nome ? 'border-kidville-error shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} />
+                            {errors.nome && <span className="text-xs text-kidville-error font-bold">{errors.nome}</span>}
                         </div>
                         <div>
                             <label className="block text-sm font-bold text-kidville-green/80 mb-1">Cognome</label>
-                            <input name="cognome" value={formData.cognome} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green ${errors.cognome ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} />
-                            {errors.cognome && <span className="text-xs text-red-500 font-bold">{errors.cognome}</span>}
+                            <input name="cognome" value={formData.cognome} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green ${errors.cognome ? 'border-kidville-error shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} />
+                            {errors.cognome && <span className="text-xs text-kidville-error font-bold">{errors.cognome}</span>}
                         </div>
                         <div>
                             <label className="block text-sm font-bold text-kidville-green/80 mb-1">Sesso</label>
@@ -279,18 +279,18 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
                         </div>
                         <div>
                             <label className="block text-sm font-bold text-kidville-green/80 mb-1">Data di Nascita</label>
-                            <input type="date" name="data_nascita" value={formData.data_nascita} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green ${errors.data_nascita ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} style={{ colorScheme: 'light' }} />
-                            {errors.data_nascita && <span className="text-xs text-red-500 font-bold">{errors.data_nascita}</span>}
+                            <input type="date" name="data_nascita" value={formData.data_nascita} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green ${errors.data_nascita ? 'border-kidville-error shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} style={{ colorScheme: 'light' }} />
+                            {errors.data_nascita && <span className="text-xs text-kidville-error font-bold">{errors.data_nascita}</span>}
                         </div>
                         <div>
                             <label className="block text-sm font-bold text-kidville-green/80 mb-1">Comune di Nascita</label>
-                            <input name="comune_nascita" value={formData.comune_nascita} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green ${errors.comune_nascita ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} />
-                            {errors.comune_nascita && <span className="text-xs text-red-500 font-bold">{errors.comune_nascita}</span>}
+                            <input name="comune_nascita" value={formData.comune_nascita} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green ${errors.comune_nascita ? 'border-kidville-error shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} />
+                            {errors.comune_nascita && <span className="text-xs text-kidville-error font-bold">{errors.comune_nascita}</span>}
                         </div>
                         <div>
                             <label className="block text-sm font-bold text-kidville-green/80 mb-1">Prov. Nascita (Sigla)</label>
-                            <input name="provincia_nascita" value={formData.provincia_nascita} onChange={handleInputChange} maxLength={2} className={`w-full p-3 rounded-xl border outline-none uppercase bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green ${errors.provincia_nascita ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} />
-                            {errors.provincia_nascita && <span className="text-xs text-red-500 font-bold">{errors.provincia_nascita}</span>}
+                            <input name="provincia_nascita" value={formData.provincia_nascita} onChange={handleInputChange} maxLength={2} className={`w-full p-3 rounded-xl border outline-none uppercase bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green ${errors.provincia_nascita ? 'border-kidville-error shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} />
+                            {errors.provincia_nascita && <span className="text-xs text-kidville-error font-bold">{errors.provincia_nascita}</span>}
                         </div>
                         <div className="col-span-2">
                             <label className="block text-sm font-bold text-kidville-green/80 mb-1 flex items-center gap-2">
@@ -302,9 +302,9 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
                                 name="codice_fiscale" 
                                 value={formData.codice_fiscale} 
                                 onChange={handleInputChange} 
-                                className={`w-full p-3 rounded-xl border outline-none uppercase transition-all duration-500 bg-white text-kidville-green placeholder-kidville-green/40 ${errors.codice_fiscale ? 'border-red-500 bg-red-50 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : isCfAutoCalculated ? 'border-kidville-green ring-2 ring-kidville-green/50 bg-kidville-green/5' : 'border-kidville-green/15 focus:ring-2 focus:ring-kidville-green'}`} 
+                                className={`w-full p-3 rounded-xl border outline-none uppercase transition-all duration-500 bg-white text-kidville-green placeholder-kidville-green/40 ${errors.codice_fiscale ? 'border-kidville-error bg-kidville-error-soft shadow-[0_0_10px_rgba(239,68,68,0.3)]' : isCfAutoCalculated ? 'border-kidville-green ring-2 ring-kidville-green/50 bg-kidville-green/5' : 'border-kidville-green/15 focus:ring-2 focus:ring-kidville-green'}`} 
                             />
-                            {errors.codice_fiscale && <span className="text-xs text-red-500 font-bold">{errors.codice_fiscale}</span>}
+                            {errors.codice_fiscale && <span className="text-xs text-kidville-error font-bold">{errors.codice_fiscale}</span>}
                         </div>
                     </div>
                 </section>
@@ -329,60 +329,60 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
                                 name="classe_sezione" 
                                 value={formData.classe_sezione} 
                                 onChange={handleInputChange}
-                                className={`w-full p-3 rounded-xl border outline-none bg-white text-kidville-green focus:ring-2 focus:ring-kidville-green ${errors.classe_sezione ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`}
+                                className={`w-full p-3 rounded-xl border outline-none bg-white text-kidville-green focus:ring-2 focus:ring-kidville-green ${errors.classe_sezione ? 'border-kidville-error shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`}
                             >
                                 <option value="">— Seleziona sezione —</option>
                                 {sections.map(s => (
                                     <option key={s.id} value={s.name}>{s.name} ({s.school_type})</option>
                                 ))}
                             </select>
-                            {errors.classe_sezione && <span className="text-xs text-red-500 font-bold">{errors.classe_sezione}</span>}
+                            {errors.classe_sezione && <span className="text-xs text-kidville-error font-bold">{errors.classe_sezione}</span>}
                         </div>
                     </div>
                 </section>
 
                 {/* Sezione 2: Residenza */}
                 <section>
-                    <h3 className="text-lg font-bold text-kidville-green mb-4 flex items-center gap-2 border-l-4 border-blue-500 pl-3">
+                    <h3 className="text-lg font-bold text-kidville-green mb-4 flex items-center gap-2 border-l-4 border-kidville-info pl-3">
                         Residenza
                     </h3>
                     <div className="grid grid-cols-2 gap-6">
                         <div className="col-span-2">
                             <label className="block text-sm font-bold text-kidville-green/80 mb-1">Indirizzo di Residenza</label>
-                            <input name="indirizzo_residenza" value={formData.indirizzo_residenza} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green ${errors.indirizzo_residenza ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} placeholder="Via Roma, 1" />
-                            {errors.indirizzo_residenza && <span className="text-xs text-red-500 font-bold">{errors.indirizzo_residenza}</span>}
+                            <input name="indirizzo_residenza" value={formData.indirizzo_residenza} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green ${errors.indirizzo_residenza ? 'border-kidville-error shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} placeholder="Via Roma, 1" />
+                            {errors.indirizzo_residenza && <span className="text-xs text-kidville-error font-bold">{errors.indirizzo_residenza}</span>}
                         </div>
                         <div>
                             <label className="block text-sm font-bold text-kidville-green/80 mb-1">Comune di Residenza</label>
-                            <input name="comune_residenza" value={formData.comune_residenza} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green ${errors.comune_residenza ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} />
-                            {errors.comune_residenza && <span className="text-xs text-red-500 font-bold">{errors.comune_residenza}</span>}
+                            <input name="comune_residenza" value={formData.comune_residenza} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green ${errors.comune_residenza ? 'border-kidville-error shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} />
+                            {errors.comune_residenza && <span className="text-xs text-kidville-error font-bold">{errors.comune_residenza}</span>}
                         </div>
                         <div>
                             <label className="block text-sm font-bold text-kidville-green/80 mb-1">CAP</label>
-                            <input name="cap" value={formData.cap} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green ${errors.cap ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} maxLength={5} />
-                            {errors.cap && <span className="text-xs text-red-500 font-bold">{errors.cap}</span>}
+                            <input name="cap" value={formData.cap} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green ${errors.cap ? 'border-kidville-error shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} maxLength={5} />
+                            {errors.cap && <span className="text-xs text-kidville-error font-bold">{errors.cap}</span>}
                         </div>
                     </div>
                 </section>
 
                 {/* Sezione 3: Medica / BES */}
                 <section>
-                    <h3 className="text-lg font-bold text-kidville-green mb-4 flex items-center gap-2 border-l-4 border-red-500 pl-3">
+                    <h3 className="text-lg font-bold text-kidville-green mb-4 flex items-center gap-2 border-l-4 border-kidville-error pl-3">
                         Informazioni Mediche / BES
                     </h3>
                     <div className="space-y-6">
                         <div>
                             <label className="block text-sm font-bold text-kidville-green/80 mb-1 flex items-center gap-2">
-                                <AlertTriangle size={16} className="text-red-500" /> Allergie e Intolleranze
+                                <AlertTriangle size={16} className="text-kidville-error" /> Allergie e Intolleranze
                             </label>
-                            <textarea name="allergies" value={formData.allergies} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-white focus:ring-2 focus:ring-red-400 outline-none" rows={3} placeholder="Es. Lattosio, Fragole..." />
+                            <textarea name="allergies" value={formData.allergies} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-white focus:ring-2 focus:ring-kidville-error outline-none" rows={3} placeholder="Es. Lattosio, Fragole..." />
                         </div>
 
                         <div>
                             <AllergeniSelect value={formData.allergeni} onChange={next => setFormData(prev => ({ ...prev, allergeni: next }))} />
                         </div>
 
-                        <div className="p-4 bg-kidville-warn-soft0/10 rounded-2xl border border-kidville-warn">
+                        <div className="p-4 bg-kidville-warn-soft/10 rounded-2xl border border-kidville-warn">
                             <label className="flex items-center gap-3 cursor-pointer">
                                 <input type="checkbox" name="is_bes_dsa" checked={formData.is_bes_dsa} onChange={handleInputChange} className="w-5 h-5 rounded border-kidville-warn/50 bg-white text-kidville-warn focus:ring-kidville-warn" />
                                 <span className="font-bold text-kidville-warn flex items-center gap-2">
@@ -406,9 +406,9 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
                             </AnimatePresence>
                         </div>
 
-                        <div className="p-4 bg-kidville-info-soft0/10 rounded-2xl border border-sky-500/30">
+                        <div className="p-4 bg-kidville-info-soft0/10 rounded-2xl border border-kidville-info/30">
                             <label className="flex items-center gap-3 cursor-pointer">
-                                <input type="checkbox" name="usa_pannolino" checked={formData.usa_pannolino} onChange={handleInputChange} className="w-5 h-5 rounded border-sky-300/50 bg-white text-kidville-info focus:ring-sky-500" />
+                                <input type="checkbox" name="usa_pannolino" checked={formData.usa_pannolino} onChange={handleInputChange} className="w-5 h-5 rounded border-kidville-info-soft/50 bg-white text-kidville-info focus:ring-kidville-info" />
                                 <span className="font-bold text-kidville-info flex items-center gap-2">
                                     🧷 Usa pannolino
                                 </span>
@@ -428,7 +428,7 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
                             <label className="block text-sm font-bold text-kidville-green/80 mb-2">Intestatario Fattura</label>
                             <div className="flex gap-4">
                                 {['mom', 'dad', 'other'].map(type => (
-                                    <label key={type} className={`flex-1 flex items-center justify-center p-3 rounded-xl border cursor-pointer transition-all ${formData.invoice_holder_type === type ? 'border-kidville-green bg-kidville-green/20 text-kidville-green font-bold' : 'border-kidville-green/15 text-gray-500 hover:bg-kidville-cream'}`}>
+                                    <label key={type} className={`flex-1 flex items-center justify-center p-3 rounded-xl border cursor-pointer transition-all ${formData.invoice_holder_type === type ? 'border-kidville-green bg-kidville-green/20 text-kidville-green font-bold' : 'border-kidville-green/15 text-kidville-muted hover:bg-kidville-cream'}`}>
                                         <input type="radio" name="invoice_holder_type" value={type} checked={formData.invoice_holder_type === type} onChange={handleInputChange} className="hidden" />
                                         {type === 'mom' ? 'Madre' : type === 'dad' ? 'Padre' : 'Altro Soggetto'}
                                     </label>
@@ -442,7 +442,7 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
                                     initial={{ opacity: 0, height: 0 }}
                                     animate={{ opacity: 1, height: 'auto' }}
                                     exit={{ opacity: 0, height: 0 }}
-                                    className="p-6 border border-blue-500/30 bg-kidville-info-soft0/5 rounded-2xl overflow-hidden mt-2"
+                                    className="p-6 border border-kidville-info/30 bg-kidville-info-soft0/5 rounded-2xl overflow-hidden mt-2"
                                 >
                                     <div className="flex items-center justify-between mb-4">
                                         <h4 className="font-bold text-kidville-info">Dettagli Intestatario Fattura Alternativo</h4>
@@ -461,7 +461,7 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
                                             <label className="block text-sm font-bold text-kidville-green/80 mb-1">Codice Fiscale Intestatario</label>
                                             <input name="invoice_holder_details.codice_fiscale" value={formData.invoice_holder_details.codice_fiscale} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-white focus:ring-2 focus:ring-kidville-green outline-none uppercase" />
                                         </div>
-                                        <div className="col-span-2 text-xs text-gray-400 mt-2">
+                                        <div className="col-span-2 text-xs text-kidville-muted mt-2">
                                             Nota: Salvando l'anagrafica, questo soggetto verrà registrato come intestatario della fattura per l'alunno.
                                         </div>
                                     </div>

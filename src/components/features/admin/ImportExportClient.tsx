@@ -81,7 +81,7 @@ export function ImportExportClient() {
                     </div>
                     <div>
                         <h3 className="font-bold text-lg">Esporta Anagrafiche</h3>
-                        <p className="text-sm text-gray-500 mt-1">Scarica i dati completi in formato Excel.</p>
+                        <p className="text-sm text-kidville-muted mt-1">Scarica i dati completi in formato Excel.</p>
                     </div>
                     <button 
                         onClick={handleExport}
@@ -99,7 +99,7 @@ export function ImportExportClient() {
                     </div>
                     <div>
                         <h3 className="font-bold text-lg">Importa e Sincronizza</h3>
-                        <p className="text-sm text-gray-500 mt-1">Carica un file Excel per aggiornare o inserire record.</p>
+                        <p className="text-sm text-kidville-muted mt-1">Carica un file Excel per aggiornare o inserire record.</p>
                     </div>
                     
                     <label className={`mt-4 px-6 py-2 bg-kidville-info hover:bg-kidville-info-soft0 rounded-full font-medium transition-all cursor-pointer flex items-center gap-2 ${isImporting ? 'opacity-50 pointer-events-none' : ''}`}>
@@ -108,14 +108,14 @@ export function ImportExportClient() {
                     </label>
 
                     {importResult && (
-                        <div className="mt-4 p-3 bg-green-500/20 border border-green-500/30 rounded-xl flex items-center gap-2 text-green-400 text-sm font-bold">
+                        <div className="mt-4 p-3 bg-kidville-success/20 border border-kidville-success/30 rounded-xl flex items-center gap-2 text-kidville-success text-sm font-bold">
                             <CheckCircle size={16} /> Importati {importResult.success} su {importResult.total} record!
                         </div>
                     )}
                 </div>
             </div>
             
-            <div className="mt-6 text-xs text-gray-500 bg-kidville-cream p-4 rounded-xl border border-kidville-green/10">
+            <div className="mt-6 text-xs text-kidville-muted bg-kidville-cream p-4 rounded-xl border border-kidville-green/10">
                 <strong>Nota Tecnica:</strong> Questa operazione viene eseguita interamente lato browser utilizzando <code>xlsx</code> e il client Supabase. Questo approccio aggira i limiti di timeout di esecuzione dei serverless function di Next.js su Vercel, ideali per elaborazioni massive di dati.
             </div>
         </div>

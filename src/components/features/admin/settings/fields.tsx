@@ -53,7 +53,7 @@ export function PillMultiSelect({ options, selected, onChange }: { options: { id
                     type="button"
                     onClick={() => toggle(o.id)}
                     className={`font-maven rounded-full px-3 py-1.5 text-sm transition ${
-                        selected.includes(o.id) ? 'bg-kidville-green text-kidville-yellow' : 'bg-gray-100 text-gray-500 hover:bg-kidville-green/10'
+                        selected.includes(o.id) ? 'bg-kidville-green text-kidville-yellow' : 'bg-kidville-line text-kidville-muted hover:bg-kidville-green/10'
                     }`}
                 >
                     {o.label}

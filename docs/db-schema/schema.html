@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Kidville · Schema Database</title>
+<style>
+  :root { --bg:#0f172a; --panel:#1e293b; --txt:#e2e8f0; --muted:#94a3b8; --accent:#38bdf8; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background:var(--bg); color:var(--txt); }
+  header { display:flex; align-items:center; gap:16px; padding:12px 18px; background:var(--panel); border-bottom:1px solid #334155; flex-wrap:wrap; }
+  header h1 { font-size:16px; margin:0; font-weight:600; }
+  header .meta { color:var(--muted); font-size:13px; }
+  header .spacer { flex:1; }
+  header button, header input { font:inherit; font-size:13px; }
+  header input { background:#0b1220; border:1px solid #334155; color:var(--txt); border-radius:6px; padding:6px 10px; width:200px; }
+  header button { background:#0b1220; border:1px solid #334155; color:var(--txt); border-radius:6px; padding:6px 12px; cursor:pointer; }
+  header button:hover { border-color:var(--accent); color:var(--accent); }
+  #legend { display:flex; gap:14px; flex-wrap:wrap; padding:8px 18px; background:#162033; border-bottom:1px solid #334155; font-size:12px; color:var(--muted); }
+  #legend span { display:inline-flex; align-items:center; gap:6px; }
+  #legend i { width:12px; height:12px; border-radius:3px; display:inline-block; border:1px solid rgba(255,255,255,.15); }
+  #wrap { position:absolute; top:0; left:0; right:0; bottom:0; }
+  #stage { width:100%; height:100%; overflow:hidden; cursor:grab; }
+  #stage:active { cursor:grabbing; }
+  #stage svg { max-width:none !important; height:auto; }
+  .hint { position:fixed; bottom:12px; right:16px; background:rgba(15,23,42,.85); border:1px solid #334155; color:var(--muted); font-size:12px; padding:6px 10px; border-radius:6px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🗂️ Kidville — Schema Database</h1>
+  <span class="meta">83 tabelle · 141 relazioni (FK) · schema <code>public</code> · 2026-06-30</span>
+  <span class="spacer"></span>
+  <input id="search" type="text" placeholder="🔎 evidenzia tabella…" />
+  <button id="zoomIn">＋</button>
+  <button id="zoomOut">－</button>
+  <button id="zoomReset">⟳ reset</button>
+  <button id="dl">⬇︎ SVG</button>
+</header>
+<div id="legend">
+  <span><i style="background:#dbeafe"></i> Anagrafica &amp; Identità</span>
+  <span><i style="background:#dcfce7"></i> Didattica &amp; Registro</span>
+  <span><i style="background:#ede9fe"></i> Scrutini &amp; Pagelle</span>
+  <span><i style="background:#ffedd5"></i> Mensa</span>
+  <span><i style="background:#fee2e2"></i> Pagamenti &amp; Fatturazione</span>
+  <span><i style="background:#cffafe"></i> Comunicazione</span>
+  <span><i style="background:#fef9c3"></i> Documenti, Moduli &amp; FEA</span>
+  <span><i style="background:#e5e7eb"></i> Audit, Config &amp; Sistema</span>
+  <span><i style="background:#e0e7ff"></i> Interoperabilità SIDI</span>
+</div>
+<div id="wrap"><div id="stage"><pre class="mermaid" id="graph">graph LR
+
+  %% ======================= DOMINI (subgraph) =======================
+  subgraph ANAG["👥 Anagrafica & Identità"]
+    schools["schools<br/>1"]
+    scuole["scuole<br/>1"]
+    utenti["utenti<br/>10"]
+    alunni["alunni<br/>128"]
+    parents["parents<br/>92"]
+    student_parents["student_parents<br/>87"]
+    legame_genitori_alunni["legame_genitori_alunni<br/>7"]
+    delegates["delegates<br/>0"]
+    sections["sections<br/>10"]
+    utenti_sezioni["utenti_sezioni<br/>8"]
+    utenti_scuole["utenti_scuole<br/>0"]
+  end
+
+  subgraph DID["📚 Didattica & Registro"]
+    materie["materie<br/>56"]
+    materie_preset["materie_preset<br/>65"]
+    obiettivi_apprendimento["obiettivi_apprendimento<br/>7"]
+    sezione_materia_obiettivo["sezione_materia_obiettivo<br/>4"]
+    valutazioni["valutazioni<br/>13"]
+    valutazione_obiettivi["valutazione_obiettivi<br/>1"]
+    registro_orario["registro_orario<br/>9"]
+    firme_docenti["firme_docenti<br/>9"]
+    registro_destinatari["registro_destinatari<br/>1"]
+    allegati_registro["allegati_registro<br/>0"]
+    note_disciplinari["note_disciplinari<br/>1"]
+    nota_ricezioni["nota_ricezioni<br/>0"]
+    presenze["presenze<br/>63"]
+    giustifiche_didattiche["giustifiche_didattiche<br/>3"]
+    giudizi_sintetici_scala["giudizi_sintetici_scala<br/>6"]
+    giudizio_template["giudizio_template<br/>9"]
+    eventi_diario["eventi_diario<br/>76"]
+    tempo_scuola["tempo_scuola<br/>6"]
+    campanelle["campanelle<br/>130"]
+    orario_settimanale["orario_settimanale<br/>40"]
+    utenti_sezioni_materie["utenti_sezioni_materie<br/>56"]
+  end
+
+  subgraph SCR["🎓 Scrutini & Pagelle"]
+    scrutinio_periodi["scrutinio_periodi<br/>1"]
+    scrutini["scrutini<br/>3"]
+    scrutinio_giudizi["scrutinio_giudizi<br/>367"]
+    scrutinio_comportamento["scrutinio_comportamento<br/>32"]
+    scrutinio_giudizio_descrittivo["scrutinio_giudizio_descrittivo<br/>18"]
+    pagelle["pagelle<br/>32"]
+    pagella_ricezioni["pagella_ricezioni<br/>2"]
+    certificati_competenze["certificati_competenze<br/>0"]
+    certificato_competenza_livelli["certificato_competenza_livelli<br/>0"]
+    fascicolo_accessi_audit["fascicolo_accessi_audit<br/>3"]
+  end
+
+  subgraph MENSA["🍽️ Mensa"]
+    ticket_mensa["ticket_mensa<br/>7"]
+    mensa_prenotazioni["mensa_prenotazioni<br/>10"]
+    mensa_menu_rotazione["mensa_menu_rotazione<br/>5"]
+    mensa_menu_override["mensa_menu_override<br/>1"]
+    mensa_menu_config["mensa_menu_config<br/>1"]
+    mensa_class_menu_assignment["mensa_class_menu_assignment<br/>1"]
+    gruppi_mensa["gruppi_mensa<br/>0"]
+  end
+
+  subgraph PAY["💶 Pagamenti & Fatturazione"]
+    pagamenti["pagamenti<br/>1095"]
+    pagamenti_quote["pagamenti_quote<br/>0"]
+    payment_categories["payment_categories<br/>5"]
+    incassi["incassi<br/>15"]
+    fatture_numerazione["fatture_numerazione<br/>0"]
+    fatture_emesse["fatture_emesse<br/>0"]
+  end
+
+  subgraph COM["💬 Comunicazione"]
+    avvisi["avvisi<br/>4"]
+    avvisi_risposte["avvisi_risposte<br/>9"]
+    chat_threads["chat_threads<br/>3"]
+    chat_messages["chat_messages<br/>17"]
+    notifiche["notifiche<br/>15"]
+    push_subscriptions["push_subscriptions<br/>1"]
+    task_interni["task_interni<br/>7"]
+  end
+
+  subgraph DOC["📎 Documenti, Moduli & FEA"]
+    galleria_media["galleria_media<br/>0"]
+    galleria_media_v2["galleria_media_v2<br/>12"]
+    armadietto["armadietto<br/>51"]
+    locker_config["locker_config<br/>7"]
+    student_documents["student_documents<br/>0"]
+    firme_documenti["firme_documenti<br/>0"]
+    form_models["form_models<br/>3"]
+    form_submissions["form_submissions<br/>3"]
+    forms_templates["forms_templates<br/>2"]
+    forms_submissions["forms_submissions<br/>1"]
+    enrollment_submissions["enrollment_submissions<br/>2"]
+    fea_signatures["fea_signatures<br/>0"]
+    fea_audit_log["fea_audit_log<br/>0"]
+    certificati_medici["certificati_medici<br/>0"]
+  end
+
+  subgraph SYS["⚙️ Audit, Config & Sistema"]
+    registro_modifiche["registro_modifiche<br/>15"]
+    sblocchi_audit["sblocchi_audit<br/>0"]
+    audit_scritture_docente["audit_scritture_docente<br/>0"]
+    admin_settings["admin_settings<br/>1"]
+    test_table["test_table<br/>0"]
+  end
+
+  subgraph SIDI["🔌 Interoperabilità SIDI"]
+    sidi_import_batches["sidi_import_batches<br/>0"]
+    sidi_sync_state["sidi_sync_state<br/>0"]
+  end
+
+  %% ======================= RELAZIONI (FK) =======================
+  admin_settings --> schools
+  allegati_registro --> utenti
+  allegati_registro --> registro_orario
+  alunni --> gruppi_mensa
+  alunni --> schools
+  alunni --> sections
+  armadietto --> alunni
+  armadietto --> schools
+  audit_scritture_docente --> utenti
+  audit_scritture_docente --> schools
+  audit_scritture_docente --> sections
+  avvisi --> utenti
+  avvisi --> schools
+  avvisi_risposte --> avvisi
+  avvisi_risposte --> utenti
+  avvisi_risposte --> alunni
+  campanelle --> sections
+  certificati_competenze --> alunni
+  certificati_competenze --> scrutini
+  certificati_competenze --> sections
+  certificati_medici --> alunni
+  certificato_competenza_livelli --> certificati_competenze
+  chat_messages --> utenti
+  chat_messages --> chat_threads
+  chat_threads --> utenti
+  chat_threads --> alunni
+  delegates --> alunni
+  eventi_diario --> alunni
+  eventi_diario --> utenti
+  fascicolo_accessi_audit --> alunni
+  fascicolo_accessi_audit --> utenti
+  fatture_emesse --> pagamenti
+  firme_docenti --> registro_orario
+  firme_documenti --> utenti
+  form_submissions --> form_models
+  forms_submissions --> forms_templates
+  galleria_media --> utenti
+  galleria_media --> schools
+  galleria_media_v2 --> utenti
+  giudizi_sintetici_scala --> schools
+  giudizio_template --> schools
+  giustifiche_didattiche --> alunni
+  giustifiche_didattiche --> materie
+  giustifiche_didattiche --> sections
+  incassi --> pagamenti
+  incassi --> pagamenti_quote
+  incassi --> utenti
+  legame_genitori_alunni --> alunni
+  legame_genitori_alunni --> utenti
+  materie --> schools
+  materie --> sections
+  mensa_class_menu_assignment --> mensa_menu_config
+  mensa_class_menu_assignment --> schools
+  mensa_menu_config --> schools
+  mensa_menu_override --> mensa_menu_config
+  mensa_menu_override --> schools
+  mensa_menu_rotazione --> mensa_menu_config
+  mensa_menu_rotazione --> schools
+  mensa_prenotazioni --> alunni
+  mensa_prenotazioni --> utenti
+  mensa_prenotazioni --> schools
+  nota_ricezioni --> alunni
+  nota_ricezioni --> note_disciplinari
+  note_disciplinari --> alunni
+  note_disciplinari --> sections
+  notifiche --> utenti
+  obiettivi_apprendimento --> schools
+  orario_settimanale --> campanelle
+  orario_settimanale --> utenti
+  orario_settimanale --> materie
+  orario_settimanale --> sections
+  pagamenti --> alunni
+  pagamenti --> payment_categories
+  pagamenti --> utenti
+  pagamenti --> pagamenti
+  pagamenti --> schools
+  pagamenti_quote --> utenti
+  pagamenti_quote --> pagamenti
+  pagella_ricezioni --> alunni
+  pagella_ricezioni --> scrutini
+  pagelle --> alunni
+  pagelle --> utenti
+  pagelle --> scrutini
+  payment_categories --> schools
+  presenze --> alunni
+  presenze --> utenti
+  presenze --> schools
+  presenze --> sections
+  push_subscriptions --> utenti
+  registro_destinatari --> alunni
+  registro_destinatari --> firme_docenti
+  registro_destinatari --> registro_orario
+  registro_modifiche --> utenti
+  registro_orario --> materie
+  registro_orario --> schools
+  registro_orario --> sections
+  sblocchi_audit --> utenti
+  scrutini --> utenti
+  scrutini --> scrutinio_periodi
+  scrutini --> sections
+  scrutinio_comportamento --> alunni
+  scrutinio_comportamento --> scrutini
+  scrutinio_giudizi --> alunni
+  scrutinio_giudizi --> materie
+  scrutinio_giudizi --> utenti
+  scrutinio_giudizi --> scrutini
+  scrutinio_giudizio_descrittivo --> scrutinio_periodi
+  scrutinio_giudizio_descrittivo --> schools
+  scrutinio_periodi --> schools
+  sections --> schools
+  sezione_materia_obiettivo --> materie
+  sezione_materia_obiettivo --> obiettivi_apprendimento
+  sezione_materia_obiettivo --> sections
+  student_documents --> utenti
+  student_documents --> sections
+  student_documents --> alunni
+  student_parents --> parents
+  student_parents --> alunni
+  task_interni --> utenti
+  task_interni --> schools
+  tempo_scuola --> sections
+  ticket_mensa --> alunni
+  utenti --> schools
+  utenti_scuole --> schools
+  utenti_scuole --> utenti
+  utenti_sezioni --> sections
+  utenti_sezioni --> utenti
+  utenti_sezioni_materie --> materie
+  utenti_sezioni_materie --> sections
+  utenti_sezioni_materie --> utenti
+  valutazione_obiettivi --> obiettivi_apprendimento
+  valutazione_obiettivi --> valutazioni
+  valutazioni --> alunni
+  valutazioni --> utenti
+  valutazioni --> materie
+  valutazioni --> sections
+
+  %% ======================= STILI =======================
+  classDef anag  fill:#dbeafe,stroke:#2563eb,color:#1e3a8a;
+  classDef did   fill:#dcfce7,stroke:#16a34a,color:#14532d;
+  classDef scr   fill:#ede9fe,stroke:#7c3aed,color:#4c1d95;
+  classDef mensa fill:#ffedd5,stroke:#ea580c,color:#7c2d12;
+  classDef pay   fill:#fee2e2,stroke:#dc2626,color:#7f1d1d;
+  classDef com   fill:#cffafe,stroke:#0891b2,color:#164e63;
+  classDef doc   fill:#fef9c3,stroke:#ca8a04,color:#713f12;
+  classDef sys   fill:#e5e7eb,stroke:#4b5563,color:#1f2937;
+  classDef sidi  fill:#e0e7ff,stroke:#4f46e5,color:#312e81;
+
+  class schools,scuole,utenti,alunni,parents,student_parents,legame_genitori_alunni,delegates,sections,utenti_sezioni,utenti_scuole anag;
+  class materie,materie_preset,obiettivi_apprendimento,sezione_materia_obiettivo,valutazioni,valutazione_obiettivi,registro_orario,firme_docenti,registro_destinatari,allegati_registro,note_disciplinari,nota_ricezioni,presenze,giustifiche_didattiche,giudizi_sintetici_scala,giudizio_template,eventi_diario,tempo_scuola,campanelle,orario_settimanale,utenti_sezioni_materie did;
+  class scrutinio_periodi,scrutini,scrutinio_giudizi,scrutinio_comportamento,scrutinio_giudizio_descrittivo,pagelle,pagella_ricezioni,certificati_competenze,certificato_competenza_livelli,fascicolo_accessi_audit scr;
+  class ticket_mensa,mensa_prenotazioni,mensa_menu_rotazione,mensa_menu_override,mensa_menu_config,mensa_class_menu_assignment,gruppi_mensa mensa;
+  class pagamenti,pagamenti_quote,payment_categories,incassi,fatture_numerazione,fatture_emesse pay;
+  class avvisi,avvisi_risposte,chat_threads,chat_messages,notifiche,push_subscriptions,task_interni com;
+  class galleria_media,galleria_media_v2,armadietto,locker_config,student_documents,firme_documenti,form_models,form_submissions,forms_templates,forms_submissions,enrollment_submissions,fea_signatures,fea_audit_log,certificati_medici doc;
+  class registro_modifiche,sblocchi_audit,audit_scritture_docente,admin_settings,test_table sys;
+  class sidi_import_batches,sidi_sync_state sidi;
+</pre></div></div>
+<div class="hint">Trascina per spostare · rotella per zoom · numero = righe</div>
+
+<script type="module">
+import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+mermaid.initialize({ startOnLoad:false, theme:"default", securityLevel:"loose",
+  flowchart:{ curve:"basis", nodeSpacing:35, rankSpacing:60, htmlLabels:true }, maxEdges:400 });
+
+const el = document.getElementById("graph");
+const src = el.textContent;
+const { svg } = await mermaid.render("svgGraph", src);
+const stage = document.getElementById("stage");
+stage.innerHTML = svg;
+const svgEl = stage.querySelector("svg");
+svgEl.removeAttribute("style"); svgEl.style.transformOrigin="0 0";
+
+// --- pan & zoom ---
+let scale=0.9, tx=20, ty=20, dragging=false, sx=0, sy=0;
+function apply(){ svgEl.style.transform = `translate(${tx}px,${ty}px) scale(${scale})`; }
+apply();
+stage.addEventListener("wheel", e=>{ e.preventDefault();
+  const r=stage.getBoundingClientRect(), mx=e.clientX-r.left, my=e.clientY-r.top;
+  const f=e.deltaY<0?1.12:1/1.12, ns=Math.min(6,Math.max(0.15,scale*f));
+  tx=mx-(mx-tx)*(ns/scale); ty=my-(my-ty)*(ns/scale); scale=ns; apply();
+}, {passive:false});
+stage.addEventListener("mousedown", e=>{ dragging=true; sx=e.clientX-tx; sy=e.clientY-ty; });
+window.addEventListener("mousemove", e=>{ if(!dragging)return; tx=e.clientX-sx; ty=e.clientY-sy; apply(); });
+window.addEventListener("mouseup", ()=>dragging=false);
+document.getElementById("zoomIn").onclick = ()=>{ scale=Math.min(6,scale*1.2); apply(); };
+document.getElementById("zoomOut").onclick = ()=>{ scale=Math.max(0.15,scale/1.2); apply(); };
+document.getElementById("zoomReset").onclick = ()=>{ scale=0.9; tx=20; ty=20; apply(); };
+
+// --- highlight search ---
+const search=document.getElementById("search");
+search.addEventListener("input", ()=>{ const q=search.value.trim().toLowerCase();
+  svgEl.querySelectorAll("g.node").forEach(n=>{ const t=(n.textContent||"").toLowerCase();
+    n.style.opacity = (!q || t.includes(q)) ? "1" : "0.12"; });
+});
+
+// --- download svg ---
+document.getElementById("dl").onclick = ()=>{
+  const blob=new Blob([new XMLSerializer().serializeToString(svgEl)],{type:"image/svg+xml"});
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob);
+  a.download="kidville-schema.svg"; a.click(); URL.revokeObjectURL(a.href);
+};
+</script>
+</body>
+</html>

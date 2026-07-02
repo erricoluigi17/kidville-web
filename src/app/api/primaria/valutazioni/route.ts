@@ -1,24 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { getRequestUserId, loadAppUser } from '@/lib/auth/require-staff'
+import { requireDocente } from '@/lib/auth/require-staff'
+import { assertSezioneInScope, assertAlunnoInScope } from '@/lib/auth/scope'
+import { logScrittura } from '@/lib/audit/scrittura'
+import { risolviValutatore } from '@/lib/audit/valutatore'
 import { isOltreScadenza } from '@/lib/primaria/timelock'
 import { renderGiudizioDescrittivo } from '@/lib/primaria/giudizio'
-import { enqueueNotifichePerAlunni } from '@/lib/primaria/notifiche'
-
-const DEV_TEACHER = '22222222-2222-2222-2222-222222222222'
+import { obiettiviDisponibili } from '@/lib/primaria/obiettivi'
+import { enqueueNotifichePerAlunni, notificaTitolariScrittura } from '@/lib/primaria/notifiche'
 
 // Queste valutazioni includono l'annotazione numerica privata del docente: l'endpoint
 // è RISERVATO al personale docente/segreteria. Il genitore (role 'genitore') è escluso
 // così il suo appunto numerico non gli è mai accessibile via API (PRD §4 e §4.5).
-const RUOLI_DOCENTE = ['educator', 'admin', 'coordinator']
-async function negaSeNonDocente(userId: string | null): Promise<NextResponse | null> {
-  if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
-  const u = await loadAppUser(userId)
-  if (!u || !RUOLI_DOCENTE.includes(u.role)) {
-    return NextResponse.json({ error: 'Accesso negato: riservato al personale docente' }, { status: 403 })
-  }
-  return null
-}
 
 // GET /api/primaria/valutazioni?alunnoId=&materiaId=&userId=
 export async function GET(request: NextRequest) {
@@ -26,16 +19,22 @@ export async function GET(request: NextRequest) {
     const sp = new URL(request.url).searchParams
     const alunnoId = sp.get('alunnoId')
     const materiaId = sp.get('materiaId')
-    const denied = await negaSeNonDocente(getRequestUserId(request))
-    if (denied) return denied
+    const auth = await requireDocente(request)
+    if (auth.response) return auth.response
 
     const supabase = await createAdminClient()
+    // Scope per alunno (tenant + classe): blocca cross-tenant e, per l'educator,
+    // gli alunni fuori dalle proprie sezioni.
+    const scopeErr = await assertAlunnoInScope(supabase, auth.user, alunnoId)
+    if (scopeErr) return scopeErr
+
     let query = supabase
       .from('valutazioni')
       .select(`
         id, alunno_id, materia, materia_id, tipo, modalita, argomento,
         dim_autonomia, dim_continuita, dim_tipologia, dim_risorse,
-        giudizio_sintetico, giudizio_testo, annotazione_numerica, pubblicato, creato_il
+        giudizio_sintetico, giudizio_testo, annotazione_numerica, pubblicato, creato_il,
+        valutazione_obiettivi(obiettivo_id, obiettivi_apprendimento(id, codice, descrizione))
       `)
       .not('modalita', 'is', null) // solo valutazioni in itinere (primaria)
       .order('creato_il', { ascending: false })
@@ -57,13 +56,13 @@ export async function GET(request: NextRequest) {
 //         giudizioTesto?, obiettiviIds[], data? }
 export async function POST(request: NextRequest) {
   try {
-    const userId = getRequestUserId(request) ?? DEV_TEACHER
-    const denied = await negaSeNonDocente(userId)
-    if (denied) return denied
+    const auth = await requireDocente(request)
+    if (auth.response) return auth.response
     const body = await request.json()
     const {
       alunnoId, sectionId, materiaId, tipoProva = 'orale', modalita,
       dims, giudizioSintetico, giudizioTesto, argomento, data, annotazioneNumerica,
+      obiettiviIds,
     } = body
 
     if (!alunnoId || !sectionId || !materiaId) {
@@ -95,13 +94,42 @@ export async function POST(request: NextRequest) {
 
     const supabase = await createAdminClient()
 
-    // Materia (nome per il campo NOT NULL legacy) + scuola.
+    // Scope per tenant/classe (educator: solo sezioni assegnate; staff/segreteria: plesso).
+    const scopeErr = await assertSezioneInScope(supabase, auth.user, sectionId)
+    if (scopeErr) return scopeErr
+
+    // Autore della valutazione = docente (vincolo FEA). educator → sé stesso;
+    // segreteria → docente titolare della MATERIA indicato in body.docenteId, altrimenti 422.
+    const vr = await risolviValutatore(supabase, auth.user, sectionId, { docenteId: body.docenteId, materiaId })
+    if (vr.response) return vr.response
+    const maestraId = vr.valutatoreId
+
+    // Materia (nome per il campo NOT NULL legacy) + scuola + codice (per obiettivi).
     const { data: materia } = await supabase
       .from('materie')
-      .select('nome, scuola_id, section_id')
+      .select('nome, codice, scuola_id, section_id')
       .eq('id', materiaId)
       .single()
     if (!materia) return NextResponse.json({ error: 'Materia non trovata' }, { status: 404 })
+
+    // Collegamento a ≥1 obiettivo di apprendimento (DL-015), enforcement CONDIZIONALE:
+    // obbligatorio solo se la scuola ha configurato obiettivi per quella materia/livello
+    // (stesso filtro del selettore docente, via obiettiviDisponibili). Altrimenti
+    // fallback su `argomento` (sempre obbligatorio) per non bloccare scuole senza curricolo.
+    const disponibili = await obiettiviDisponibili(supabase, { codice: materia.codice, scuola_id: materia.scuola_id }, sectionId)
+    let obiettiviCollegati: string[] = []
+    if (disponibili.length > 0) {
+      const richiesti = Array.isArray(obiettiviIds) ? obiettiviIds.filter(Boolean) : []
+      if (richiesti.length === 0) {
+        return NextResponse.json({ error: 'Collega almeno un obiettivo di apprendimento alla valutazione.' }, { status: 400 })
+      }
+      const validi = new Set(disponibili.map((o) => o.id))
+      const fuori = richiesti.filter((id: string) => !validi.has(id))
+      if (fuori.length > 0) {
+        return NextResponse.json({ error: 'Obiettivo non valido per questa materia/livello.' }, { status: 400 })
+      }
+      obiettiviCollegati = [...new Set(richiesti)] as string[]
+    }
 
     // Vincolo temporale (scritto/pratico=15gg, orale=2gg). Data evento = data o oggi.
     const eventDate = data ?? new Date().toISOString().slice(0, 10)
@@ -124,7 +152,7 @@ export async function POST(request: NextRequest) {
       .from('valutazioni')
       .insert({
         alunno_id: alunnoId,
-        maestra_id: userId,
+        maestra_id: maestraId,
         section_id: sectionId,
         materia: materia.nome, // legacy NOT NULL
         materia_id: materiaId,
@@ -145,6 +173,25 @@ export async function POST(request: NextRequest) {
       .select()
       .single()
     if (valErr) return NextResponse.json({ error: valErr.message }, { status: 500 })
+
+    // Righe di collegamento valutazione↔obiettivo (DL-015). Best-effort: l'eventuale
+    // errore non annulla la valutazione già creata.
+    if (obiettiviCollegati.length > 0) {
+      const link = obiettiviCollegati.map((oid) => ({ valutazione_id: val.id, obiettivo_id: oid }))
+      const { error: linkErr } = await supabase.from('valutazione_obiettivi').insert(link)
+      if (linkErr) console.error('valutazione_obiettivi insert:', linkErr.message)
+    }
+
+    await logScrittura(supabase, {
+      attore: auth.user,
+      entitaTipo: 'valutazione',
+      entitaId: val.id,
+      azione: 'insert',
+      scuolaId: materia.scuola_id,
+      sectionId,
+      valoreDopo: val,
+    })
+    await notificaTitolariScrittura(supabase, { attore: auth.user, sectionId, scuolaId: materia.scuola_id, area: 'valutazioni', link: `/teacher/primaria/${sectionId}/valutazioni` })
 
     // Notifica valutazione con buffer (default 10 min). Best-effort.
     try {

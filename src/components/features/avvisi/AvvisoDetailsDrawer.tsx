@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Search, AlertCircle, Users, ThumbsUp, ThumbsDown, Eye, HelpCircle } from 'lucide-react';
 import { Avviso } from './AvvisoCard';
+import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 
 interface Props {
     open: boolean;
@@ -51,7 +52,7 @@ export function AvvisoDetailsDrawer({ open, avviso, onClose, availableClasses = 
             setLoading(true);
             try {
                 // 1. Carica le risposte/letture reali registrate nel database
-                const risposteRes = await fetch(`/api/avvisi/${avviso.id}/risposte`);
+                const risposteRes = await fetch(`/api/avvisi/${avviso.id}/risposte?userId=${getCurrentTeacherId(null)}`);
                 let risposteData: RispostaDettaglio[] = [];
                 if (risposteRes.ok) {
                     risposteData = await risposteRes.json();
@@ -66,7 +67,7 @@ export function AvvisoDetailsDrawer({ open, avviso, onClose, availableClasses = 
                 // 3. Carica tutti gli studenti per le sezioni target
                 const studentsPromises = targetClasses.map(async (classe) => {
                     try {
-                        const res = await fetch(`/api/diary/students?sezione=${classe}`);
+                        const res = await fetch(`/api/diary/students?sezione=${classe}&userId=${getCurrentTeacherId(null)}`);
                         if (res.ok) {
                             return (await res.json()) as StudentBasic[];
                         }
@@ -218,7 +219,7 @@ export function AvvisoDetailsDrawer({ open, avviso, onClose, availableClasses = 
                         <div className="px-6 py-5 border-b border-gray-100 flex items-start justify-between bg-white">
                             <div>
                                 <span className={`px-2 py-0.5 rounded-full text-[10px] font-barlow font-bold uppercase tracking-wider ${
-                                    isAdesione ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'
+                                    isAdesione ? 'bg-kidville-info-soft text-kidville-info' : 'bg-kidville-info-soft text-kidville-info'
                                 }`}>
                                     {isAdesione ? 'Adesione Interattiva' : 'Presa Visione'}
                                 </span>
@@ -282,14 +283,14 @@ export function AvvisoDetailsDrawer({ open, avviso, onClose, availableClasses = 
                                     {/* STATS AREA */}
                                     {mainTab === 'letture' ? (
                                         <div className="grid grid-cols-2 gap-3">
-                                            <div className="bg-gradient-to-br from-blue-50 to-indigo-50/30 border border-blue-100/60 p-4 rounded-3xl">
-                                                <div className="flex items-center gap-2 text-blue-600 mb-1">
+                                            <div className="bg-gradient-to-br from-blue-50 to-kidville-info-soft border border-kidville-info/60 p-4 rounded-3xl">
+                                                <div className="flex items-center gap-2 text-kidville-info mb-1">
                                                     <Eye size={16} strokeWidth={1.5} />
                                                     <span className="font-maven text-[10px] font-bold uppercase tracking-wider">Letti</span>
                                                 </div>
                                                 <div className="flex items-baseline gap-1.5">
                                                     <span className="font-barlow font-black text-2xl text-blue-900">{readCount}</span>
-                                                    <span className="font-maven text-xs text-blue-700/60">su {totalTarget} ({readPercentage}%)</span>
+                                                    <span className="font-maven text-xs text-kidville-info/60">su {totalTarget} ({readPercentage}%)</span>
                                                 </div>
                                             </div>
 
@@ -305,31 +306,31 @@ export function AvvisoDetailsDrawer({ open, avviso, onClose, availableClasses = 
                                             </div>
                                         </div>
                                     ) : (
-                                        <div className="bg-purple-50/50 border border-purple-100/60 p-4 rounded-3xl space-y-3">
-                                            <h4 className="font-barlow font-bold text-xs text-purple-800 uppercase tracking-wide flex items-center gap-1.5">
+                                        <div className="bg-kidville-info-soft/50 border border-kidville-info/60 p-4 rounded-3xl space-y-3">
+                                            <h4 className="font-barlow font-bold text-xs text-kidville-info uppercase tracking-wide flex items-center gap-1.5">
                                                 <Users size={14} strokeWidth={1.5} /> Dettaglio Adesioni
                                             </h4>
                                             <div className="grid grid-cols-3 gap-2">
-                                                <div className="bg-white/80 rounded-2xl p-2.5 text-center border border-purple-100/30">
-                                                    <div className="flex items-center justify-center text-emerald-600 gap-1 mb-0.5">
+                                                <div className="bg-white/80 rounded-2xl p-2.5 text-center border border-kidville-info/30">
+                                                    <div className="flex items-center justify-center text-kidville-success gap-1 mb-0.5">
                                                         <ThumbsUp size={12} strokeWidth={1.5} />
                                                         <span className="font-maven text-[9px] font-bold uppercase">Sì</span>
                                                     </div>
-                                                    <span className="font-barlow font-black text-lg text-emerald-700">{siCount}</span>
+                                                    <span className="font-barlow font-black text-lg text-kidville-success">{siCount}</span>
                                                 </div>
-                                                <div className="bg-white/80 rounded-2xl p-2.5 text-center border border-purple-100/30">
+                                                <div className="bg-white/80 rounded-2xl p-2.5 text-center border border-kidville-info/30">
                                                     <div className="flex items-center justify-center text-gray-500 gap-1 mb-0.5">
                                                         <ThumbsDown size={12} strokeWidth={1.5} />
                                                         <span className="font-maven text-[9px] font-bold uppercase">No</span>
                                                     </div>
                                                     <span className="font-barlow font-black text-lg text-gray-600">{noCount}</span>
                                                 </div>
-                                                <div className="bg-white/80 rounded-2xl p-2.5 text-center border border-purple-100/30">
-                                                    <div className="flex items-center justify-center text-amber-600 gap-1 mb-0.5">
+                                                <div className="bg-white/80 rounded-2xl p-2.5 text-center border border-kidville-info/30">
+                                                    <div className="flex items-center justify-center text-kidville-warn gap-1 mb-0.5">
                                                         <HelpCircle size={12} strokeWidth={1.5} />
                                                         <span className="font-maven text-[9px] font-bold uppercase">Attesa</span>
                                                     </div>
-                                                    <span className="font-barlow font-black text-lg text-amber-700">{pendingAnswers}</span>
+                                                    <span className="font-barlow font-black text-lg text-kidville-warn">{pendingAnswers}</span>
                                                 </div>
                                             </div>
                                         </div>
@@ -466,7 +467,7 @@ export function AvvisoDetailsDrawer({ open, avviso, onClose, availableClasses = 
                                                                         <p className="font-barlow font-bold text-xs text-kidville-green uppercase">{item.studentName}</p>
                                                                         <p className="font-maven text-[10px] text-gray-400 mt-0.5">Classe {item.classe}</p>
                                                                     </div>
-                                                                    <span className="flex items-center gap-1 font-maven text-[9px] font-bold text-amber-600 bg-amber-50 border border-amber-100 rounded-lg px-2 py-1">
+                                                                    <span className="flex items-center gap-1 font-maven text-[9px] font-bold text-kidville-warn bg-kidville-warn-soft border border-kidville-warn/30 rounded-lg px-2 py-1">
                                                                         <AlertCircle size={10} /> Da leggere
                                                                     </span>
                                                                 </div>
@@ -501,10 +502,10 @@ export function AvvisoDetailsDrawer({ open, avviso, onClose, availableClasses = 
                                                                 </div>
                                                                 <span className={`flex items-center gap-1 font-maven text-[9px] font-bold rounded-lg px-2 py-1 flex-shrink-0 border ${
                                                                     item.risposta === 'si' 
-                                                                        ? 'bg-emerald-50 border-emerald-100 text-emerald-700' 
+                                                                        ? 'bg-kidville-success-soft border-kidville-success/30 text-kidville-success' 
                                                                         : item.risposta === 'no' 
                                                                             ? 'bg-gray-100 border-gray-200 text-gray-600' 
-                                                                            : 'bg-amber-50 border-amber-100 text-amber-700'
+                                                                            : 'bg-kidville-warn-soft border-kidville-warn/30 text-kidville-warn'
                                                                 }`}>
                                                                     {item.risposta === 'si' && <><ThumbsUp size={10} /> Sì, Aderisco</>}
                                                                     {item.risposta === 'no' && <><ThumbsDown size={10} /> No</>}

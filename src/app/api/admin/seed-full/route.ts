@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { sealDangerous } from '@/lib/security/seal';
 
 const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -44,7 +45,9 @@ function generateCF(cognome: string, nome: string, gender: string, data: string,
 const PROVINCE = ['RM', 'MI', 'NA', 'TO', 'FI', 'BO', 'GE', 'PA', 'BA', 'CT'];
 const CITTA = ['Roma', 'Milano', 'Napoli', 'Torino', 'Firenze', 'Bologna', 'Genova', 'Palermo', 'Bari', 'Catania'];
 
-export async function POST() {
+export async function POST(request: Request) {
+    const sealed = await sealDangerous(request);
+    if (sealed) return sealed;
     const results = { students: 0, parents: 0, teachers: 0, links: 0, errors: [] as string[] };
 
     try {

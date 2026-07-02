@@ -1,20 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { getRequestUserId } from '@/lib/auth/require-staff'
+import { requireDocente } from '@/lib/auth/require-staff'
+import { scuoleDiUtente } from '@/lib/auth/scope'
 
 // GET /api/primaria/sezioni?userId=
-// Elenco di tutte le sezioni di scuola primaria della scuola, usato per la
-// "firma in un'altra classe" (supplenza): il docente può firmare ovunque.
+// Elenco delle sezioni di scuola primaria del PROPRIO plesso (o plessi, per la
+// Direzione), usato per la "firma in un'altra classe" (supplenza). Gate ruolo +
+// isolamento per tenant: niente sezioni di altri plessi.
 export async function GET(request: NextRequest) {
   try {
-    const userId = getRequestUserId(request)
-    if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
+    const auth = await requireDocente(request)
+    if (auth.response) return auth.response
 
     const supabase = await createAdminClient()
+    const plessi = await scuoleDiUtente(supabase, auth.user)
+    if (plessi.length === 0) return NextResponse.json({ success: true, data: [] })
+
     const { data, error } = await supabase
       .from('sections')
       .select('id, name, scuola_id')
       .eq('school_type', 'primaria')
+      .in('scuola_id', plessi)
       .order('name')
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 

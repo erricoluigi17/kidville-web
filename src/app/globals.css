@@ -1,6 +1,7 @@
 @import "tailwindcss";
 
 @theme inline {
+  /* ── Brand (esistenti) ── */
   --color-kidville-green: #006A5F;
   --color-kidville-yellow: #FDC400;
   --color-kidville-cream: #FEF1E4;
@@ -9,16 +10,146 @@
   --color-kidville-success: #43A047;
   --color-kidville-yellow-light: #FFF8E1;
   --color-kidville-green-light: #E8F5F3;
-  
+
+  /* ── Estensioni dal design (DR fondamenta.css: --kv-*) ──
+     Aggiunte come NUOVI token (i precedenti restano per retro-compatibilità).
+     Il re-skin usa queste varianti per allinearsi 1:1 ai mockup. */
+  --color-kidville-green-dark: #00544B;   /* hover / pressed */
+  --color-kidville-green-soft: #E2EEEC;   /* ghost / chip / link attivo */
+  --color-kidville-yellow-dark: #E6B100;
+  --color-kidville-yellow-soft: #FBF0DD;
+  --color-kidville-cream-dark: #F6E4D2;
+  --color-kidville-error-soft: #FDECEC;
+  --color-kidville-success-soft: #E7F3E8;
+
+  /* ── Stati semantici cockpit (segreteria/admin) ── */
+  --color-kidville-warn: #E6720A;
+  --color-kidville-warn-soft: #FBEFE2;
+  --color-kidville-info: #2A6FDB;
+  --color-kidville-info-soft: #E9F1FB;
+  --color-kidville-neutral: #8A958F;
+  --color-kidville-neutral-soft: #F0F2F1;
+
+  /* ── Testo / linee ── */
+  --color-kidville-ink: #1F3D38;
+  --color-kidville-muted: #9AA6A2;
+  --color-kidville-line: #EFE7DC;
+
   --font-barlow: var(--loaded-barlow), "Barlow Condensed", sans-serif;
   --font-maven: var(--loaded-maven), "Maven Pro", sans-serif;
-  
+
   --radius-pill: 9999px;
   --radius-card: 16px;
+  --radius-input: 12px;
+}
+
+/* =============================================================================
+   Tinte per-dato (NON token tema): gradi scolastici e materie.
+   Plain CSS vars referenziabili via var(--kv-grade-*) / var(--kv-subj-*) o da
+   una mappa TS lato componente. Non generano utility Tailwind di proposito
+   (sono scelte da dato, non classi statiche). Fonte: DR design-export/catalogo.
+   ============================================================================= */
+:root {
+  --kv-grade-nido: #2A6FDB;
+  --kv-grade-infanzia: #006A5F;
+  --kv-grade-primaria: #E6720A;
+
+  --kv-subj-italiano: #2A6FDB;
+  --kv-subj-matematica: #E6720A;
+  --kv-subj-inglese: #9A6BD0;
+  --kv-subj-storia: #B5651D;
+  --kv-subj-geografia: #0E9488;
+  --kv-subj-scienze: #43A047;
+  --kv-subj-arte: #E5468A;
+  --kv-subj-musica: #7C5CE6;
+  --kv-subj-motoria: #E53935;
+  --kv-subj-tecnologia: #5B6B79;
+  --kv-subj-religione: #C79A00;
+  --kv-subj-mensa: #006A5F;
 }
 
 body {
   background-color: var(--color-kidville-cream);
   color: var(--color-kidville-green);
   font-family: var(--font-maven);
+}
+
+/* =============================================================================
+   Cockpit Direzione/Segreteria — la cornice persistente (sidebar) non deve MAI
+   essere coperta da un overlay/modal a tutto schermo. Su desktop (>=1024px) gli
+   overlay `fixed inset-0` dentro l'area contenuto partono DOPO la sidebar (16rem),
+   quindi la barra laterale resta sempre visibile e cliccabile. Regola NON-layered
+   (Tailwind v4) -> vince sulle utility `inset-0` senza !important.
+   ============================================================================= */
+@media (min-width: 1024px) {
+  [data-cockpit-content] .fixed.inset-0 {
+    left: 16rem;
+  }
+}
+
+/* =============================================================================
+   Accessibilità — Alto contrasto (Legge Stanca / AgID), baseline P1.
+   Attivato da `<html data-contrast="high">` (provider globale + cookie SSR).
+   Rimappa i token cromatici Kidville su una coppia ad alto contrasto e forza
+   un focus-ring visibile ovunque (WCAG 2.4.7). I residui per-componente
+   (utility neutre `bg-white`/`text-zinc-*`) sono rifiniti incrementalmente
+   come definition-of-done nelle fasi successive.
+   ============================================================================= */
+[data-contrast="high"] {
+  --color-kidville-cream: #000000;
+  --color-kidville-white: #000000;
+  --color-kidville-green: #FFFFFF;
+  --color-kidville-green-light: #000000;
+  --color-kidville-yellow: #FFE500;
+  --color-kidville-yellow-light: #1A1A1A;
+  --color-kidville-success: #00E676;
+  --color-kidville-error: #FF5252;
+
+  /* Nuovi token re-skin → coerenti con la coppia ad alto contrasto */
+  --color-kidville-green-dark: #FFFFFF;
+  --color-kidville-green-soft: #000000;
+  --color-kidville-yellow-dark: #FFE500;
+  --color-kidville-yellow-soft: #1A1A1A;
+  --color-kidville-cream-dark: #000000;
+  --color-kidville-error-soft: #000000;
+  --color-kidville-success-soft: #000000;
+  --color-kidville-warn: #FFB300;
+  --color-kidville-warn-soft: #1A1A1A;
+  --color-kidville-info: #5AB0FF;
+  --color-kidville-info-soft: #000000;
+  --color-kidville-neutral: #E0E0E0;
+  --color-kidville-neutral-soft: #1A1A1A;
+  --color-kidville-ink: #FFFFFF;
+  --color-kidville-muted: #E0E0E0;
+  --color-kidville-line: #8A8A8A;
+}
+[data-contrast="high"] body {
+  background-color: #000000;
+  color: #FFFFFF;
+}
+[data-contrast="high"] a,
+[data-contrast="high"] button {
+  text-decoration-thickness: from-font;
+}
+[data-contrast="high"] *:focus-visible {
+  outline: 3px solid #FFE500;
+  outline-offset: 2px;
+}
+
+/* Focus-ring visibile anche in modalità normale (baseline WCAG). */
+:focus-visible {
+  outline: 2px solid var(--color-kidville-green);
+  outline-offset: 2px;
+}
+
+/* Rispetta la preferenza di movimento ridotto (vestibolarità). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
 }

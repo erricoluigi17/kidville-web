@@ -34,10 +34,10 @@ const ACTIVITY_TYPES = [
 ] as const;
 
 const PARTICIPATION_LEVELS = [
-    { value: 'non_fatta',  label: 'Non fatta',      bg: 'bg-red-100/80',     text: 'text-red-700',     border: 'border-red-200/60' },
-    { value: 'difficolta', label: 'Con difficoltà',  bg: 'bg-orange-100/80',  text: 'text-orange-700',  border: 'border-orange-200/60' },
+    { value: 'non_fatta',  label: 'Non fatta',      bg: 'bg-kidville-error-soft',     text: 'text-kidville-error',     border: 'border-kidville-error/25' },
+    { value: 'difficolta', label: 'Con difficoltà',  bg: 'bg-kidville-warn-soft/80',  text: 'text-kidville-warn',  border: 'border-kidville-warn/60' },
     { value: 'aiuto',      label: 'Con aiuto',       bg: 'bg-yellow-100/80',  text: 'text-yellow-700',  border: 'border-yellow-200/60' },
-    { value: 'autonomia',  label: 'In autonomia',    bg: 'bg-emerald-100/80', text: 'text-emerald-700', border: 'border-emerald-200/60' },
+    { value: 'autonomia',  label: 'In autonomia',    bg: 'bg-kidville-success-soft/80', text: 'text-kidville-success', border: 'border-kidville-success/60' },
 ] as const;
 
 function getActivityMeta(tipo: string) {
@@ -100,24 +100,24 @@ function ActivityAccordion({
                     <p className="font-barlow font-bold text-sm text-kidville-green uppercase tracking-wide">
                         {index + 1}. {meta.label}
                     </p>
-                    <p className="font-maven text-[11px] text-gray-400">
+                    <p className="font-maven text-[11px] text-kidville-muted">
                         {compiledCount}/{students.length} bambini compilati
                     </p>
                 </div>
                 {isComplete && (
-                    <CheckCircle size={16} className="text-emerald-500 flex-shrink-0" strokeWidth={1.5} />
+                    <CheckCircle size={16} className="text-kidville-success flex-shrink-0" strokeWidth={1.5} />
                 )}
                 <motion.div
                     animate={{ rotate: open ? 180 : 0 }}
                     transition={{ duration: 0.2 }}
                     className="flex-shrink-0"
                 >
-                    <ChevronDown size={15} className="text-gray-400" strokeWidth={1.5} />
+                    <ChevronDown size={15} className="text-kidville-muted" strokeWidth={1.5} />
                 </motion.div>
                 {total > 1 && (
                     <button
                         onClick={e => { e.stopPropagation(); onRemove(); }}
-                        className="w-7 h-7 rounded-lg bg-red-50 hover:bg-red-100 flex items-center justify-center text-red-400 hover:text-red-600 transition-colors flex-shrink-0"
+                        className="w-7 h-7 rounded-lg bg-kidville-error-soft hover:bg-kidville-error-soft flex items-center justify-center text-kidville-error hover:text-kidville-error transition-colors flex-shrink-0"
                     >
                         <Trash2 size={12} strokeWidth={1.5} />
                     </button>
@@ -134,11 +134,11 @@ function ActivityAccordion({
                         transition={{ duration: 0.22 }}
                         className="overflow-hidden"
                     >
-                        <div className="px-4 pb-4 pt-1 space-y-3 border-t border-gray-50">
+                        <div className="px-4 pb-4 pt-1 space-y-3 border-t border-kidville-line">
 
                             {/* Tipo attività */}
                             <div>
-                                <p className="font-maven text-[11px] text-gray-400 uppercase tracking-wide mb-1.5">Tipo</p>
+                                <p className="font-maven text-[11px] text-kidville-muted uppercase tracking-wide mb-1.5">Tipo</p>
                                 <div className="flex flex-wrap gap-1.5">
                                     {ACTIVITY_TYPES.map(at => (
                                         <button
@@ -146,8 +146,8 @@ function ActivityAccordion({
                                             onClick={() => onChange({ tipo: at.value })}
                                             className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-maven font-semibold border-2 transition-all duration-150 active:scale-95 ${
                                                 activity.tipo === at.value
-                                                    ? 'bg-purple-100/80 text-purple-700 border-purple-300/60'
-                                                    : 'bg-gray-50/80 text-gray-400 border-gray-100 hover:border-gray-200'
+                                                    ? 'bg-kidville-info-soft text-kidville-info border-kidville-info/50'
+                                                    : 'bg-kidville-cream text-kidville-muted border-kidville-line hover:border-kidville-line'
                                             }`}
                                         >
                                             <span>{at.emoji}</span>
@@ -159,32 +159,32 @@ function ActivityAccordion({
 
                             {/* Descrizione */}
                             <div>
-                                <p className="font-maven text-[11px] text-gray-400 uppercase tracking-wide mb-1.5">Descrizione (facoltativa)</p>
+                                <p className="font-maven text-[11px] text-kidville-muted uppercase tracking-wide mb-1.5">Descrizione (facoltativa)</p>
                                 <textarea
                                     value={activity.descrizione}
                                     onChange={e => onChange({ descrizione: e.target.value })}
                                     placeholder={`Descrivi l'attività di ${meta.label.toLowerCase()}...`}
                                     rows={2}
-                                    className="w-full px-3 py-2.5 rounded-xl bg-gray-50/60 border border-gray-200/60 font-maven text-sm text-kidville-green placeholder:text-gray-300 resize-none focus:outline-none focus:ring-2 focus:ring-purple-400/40 focus:border-purple-300/60 transition-all duration-200"
+                                    className="w-full px-3 py-2.5 rounded-xl bg-kidville-cream border border-kidville-line font-maven text-sm text-kidville-green placeholder:text-kidville-muted resize-none focus:outline-none focus:ring-2 focus:ring-kidville-info/40 focus:border-kidville-info/60 transition-all duration-200"
                                 />
                             </div>
 
                             {/* Partecipazione per studente */}
                             <div>
-                                <p className="font-maven text-[11px] text-gray-400 uppercase tracking-wide mb-1.5">Partecipazione</p>
+                                <p className="font-maven text-[11px] text-kidville-muted uppercase tracking-wide mb-1.5">Partecipazione</p>
                                 <div className="space-y-2">
                                     {students.map(student => {
                                         const sel = activity.studentPartecipazione[student.id] ?? null;
                                         const isSaved = savedStudentIds.has(student.id);
                                         return (
-                                            <div key={student.id} className="bg-gray-50/60 rounded-xl px-3 py-2.5">
+                                            <div key={student.id} className="bg-kidville-cream rounded-xl px-3 py-2.5">
                                                 <div className="flex items-center gap-2 mb-2">
                                                     <div className="w-6 h-6 rounded-full bg-kidville-cream text-kidville-green flex items-center justify-center font-barlow font-bold text-[10px] flex-shrink-0">
                                                         {student.firstName[0]}{student.lastName[0]}
                                                     </div>
                                                     <span className="font-maven text-xs text-kidville-green font-medium flex-1">
                                                         {student.firstName} {student.lastName}
-                                                        {isSaved && <span className="ml-1 text-emerald-500">✅</span>}
+                                                        {isSaved && <span className="ml-1 text-kidville-success">✅</span>}
                                                     </span>
                                                 </div>
                                                 <div className="grid grid-cols-2 gap-1">
@@ -195,7 +195,7 @@ function ActivityAccordion({
                                                             className={`py-2 rounded-lg border-2 text-[11px] font-maven font-semibold transition-all duration-150 active:scale-95 ${
                                                                 sel === lv.value
                                                                     ? `${lv.bg} ${lv.text} ${lv.border}`
-                                                                    : 'bg-white text-gray-400 border-gray-100 hover:border-gray-200'
+                                                                    : 'bg-white text-kidville-muted border-kidville-line hover:border-kidville-line'
                                                             }`}
                                                         >
                                                             {lv.label}
@@ -263,7 +263,7 @@ export function ActivityDetailInline({ students, activities, onActivitiesChange,
             {/* Aggiungi attività */}
             <button
                 onClick={addActivity}
-                className="w-full flex items-center justify-center gap-2 py-3 rounded-2xl border-2 border-dashed border-purple-200 hover:border-purple-400 hover:bg-purple-50/40 text-purple-400 hover:text-purple-600 transition-all duration-200 font-maven text-sm font-semibold"
+                className="w-full flex items-center justify-center gap-2 py-3 rounded-2xl border-2 border-dashed border-kidville-info/30 hover:border-kidville-info hover:bg-kidville-info-soft/40 text-kidville-info hover:text-kidville-info transition-all duration-200 font-maven text-sm font-semibold"
             >
                 <Plus size={15} strokeWidth={1.5} />
                 Aggiungi attività

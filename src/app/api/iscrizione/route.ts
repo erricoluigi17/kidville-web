@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
+import { rateLimit, clientIp } from '@/lib/security/rate-limit'
 import type { EnrollmentSubmissionData } from '@/types/database.types'
 
 const DEFAULT_SCUOLA_ID = '11111111-1111-1111-1111-111111111111'
@@ -7,6 +8,15 @@ const DEFAULT_SCUOLA_ID = '11111111-1111-1111-1111-111111111111'
 // POST: il genitore invia l'iscrizione dal form pubblico (service-role).
 export async function POST(request: NextRequest) {
   try {
+    // Rotta pubblica → rate-limit anti-abuso (5 invii / 10 min per IP).
+    const rl = rateLimit(`iscrizione:${clientIp(request)}`, { limit: 5, windowMs: 10 * 60 * 1000 })
+    if (!rl.ok) {
+      return NextResponse.json(
+        { error: 'Troppe richieste. Riprova tra qualche minuto.' },
+        { status: 429, headers: { 'Retry-After': String(Math.ceil(rl.retryAfterMs / 1000)) } }
+      )
+    }
+
     const body = await request.json()
     const data = body.data as EnrollmentSubmissionData | undefined
 

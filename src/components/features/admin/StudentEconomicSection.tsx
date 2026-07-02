@@ -28,8 +28,8 @@ interface Props {
 }
 
 const inputCls =
-    'w-full border-2 border-gray-200 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green';
-const labelCls = 'font-maven text-xs text-gray-500 mb-1 block';
+    'w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green';
+const labelCls = 'font-maven text-xs text-kidville-muted mb-1 block';
 
 export function StudentEconomicSection({ alunnoId, form, updateForm, parents }: Props) {
     const importo = Number(form.importo_retta_mensile ?? 0);
@@ -89,7 +89,7 @@ export function StudentEconomicSection({ alunnoId, form, updateForm, parents }: 
     const setIntestatario = (val: Intestatario | null) => updateForm('intestatario_fatture', val);
 
     return (
-        <section className="pt-4 border-t border-gray-100">
+        <section className="pt-4 border-t border-kidville-line">
             <h3 className="font-barlow font-bold text-kidville-green uppercase text-xs tracking-wide mb-3 flex items-center gap-2">
                 <Euro size={12} />
                 Dati Economici
@@ -107,7 +107,7 @@ export function StudentEconomicSection({ alunnoId, form, updateForm, parents }: 
                     placeholder="Es: 150.00"
                     className={inputCls}
                 />
-                <p className="font-maven text-[11px] text-gray-400 mt-1">
+                <p className="font-maven text-[11px] text-kidville-muted mt-1">
                     Per lo sconto fratelli, assegna l'intero importo familiare a un solo figlio (gli altri a 0).
                 </p>
             </div>
@@ -122,7 +122,7 @@ export function StudentEconomicSection({ alunnoId, form, updateForm, parents }: 
                             updateForm('genitori_separati', e.target.checked);
                             if (!e.target.checked) updateForm('retta_split_config', null);
                         }}
-                        className="w-4 h-4 rounded border-gray-300 text-kidville-green focus:ring-kidville-green"
+                        className="w-4 h-4 rounded border-kidville-muted text-kidville-green focus:ring-kidville-green"
                     />
                     <span className="font-maven font-semibold text-sm text-kidville-green flex items-center gap-1">
                         <Users2 size={14} /> Genitori separati (retta divisa in due quote)
@@ -138,20 +138,20 @@ export function StudentEconomicSection({ alunnoId, form, updateForm, parents }: 
                                 {q.nome || `Genitore ${i + 1}`}
                             </span>
                             <div className="flex items-center gap-1">
-                                <span className="font-maven text-xs text-gray-400">€</span>
+                                <span className="font-maven text-xs text-kidville-muted">€</span>
                                 <input
                                     type="number"
                                     min={0}
                                     step="0.01"
                                     value={q.importo || ''}
                                     onChange={(e) => updateQuota(i, e.target.value === '' ? 0 : Number(e.target.value))}
-                                    className="w-24 border-2 border-gray-200 rounded-lg px-2 py-1 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
+                                    className="w-24 border-2 border-kidville-line rounded-lg px-2 py-1 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
                                 />
                             </div>
                         </div>
                     ))}
-                    <div className="flex justify-between items-center pt-1 border-t border-gray-200">
-                        <span className="font-maven text-xs text-gray-500">Somma quote</span>
+                    <div className="flex justify-between items-center pt-1 border-t border-kidville-line">
+                        <span className="font-maven text-xs text-kidville-muted">Somma quote</span>
                         <span className={`font-maven text-sm font-bold ${sumMismatch ? 'text-kidville-error' : 'text-kidville-green'}`}>
                             € {quoteSum.toFixed(2)} {sumMismatch && `≠ € ${importo.toFixed(2)}`}
                         </span>

@@ -50,7 +50,7 @@ export function PrenotazioneSegreteria({ userId, scuolaId }: Props) {
       <div>
         <h3 className="font-barlow font-bold text-kidville-green uppercase text-sm mb-3 flex items-center gap-2"><Search size={14} /> Seleziona alunno</h3>
         <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Cerca…"
-          className="w-full border-2 border-gray-200 rounded-full px-4 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green mb-2" />
+          className="w-full border-2 border-kidville-line rounded-full px-4 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green mb-2" />
         <div className="space-y-1 max-h-72 overflow-y-auto">
           {filtered.map(a => (
             <button key={a.id} onClick={() => select(a)}
@@ -63,21 +63,21 @@ export function PrenotazioneSegreteria({ userId, scuolaId }: Props) {
 
       <div>
         <h3 className="font-barlow font-bold text-kidville-green uppercase text-sm mb-3 flex items-center gap-2"><CalendarPlus size={14} /> Inserisci ticket giornaliero</h3>
-        {!sel ? <p className="font-maven text-sm text-gray-400">Seleziona un alunno.</p> : (
+        {!sel ? <p className="font-maven text-sm text-kidville-muted">Seleziona un alunno.</p> : (
           <div className="bg-kidville-cream/60 rounded-xl p-4">
             <div className="flex justify-between mb-3">
               <span className="font-maven text-sm text-kidville-green font-bold">{sel.nome} {sel.cognome}</span>
-              <span className="font-maven text-sm text-gray-500 flex items-center gap-1">
-                <Ticket size={13} /> Saldo: <b className={saldo != null && saldo < 0 ? 'text-red-500' : 'text-kidville-green'}>{saldo ?? '—'}</b>
+              <span className="font-maven text-sm text-kidville-muted flex items-center gap-1">
+                <Ticket size={13} /> Saldo: <b className={saldo != null && saldo < 0 ? 'text-kidville-error' : 'text-kidville-green'}>{saldo ?? '—'}</b>
               </span>
             </div>
-            <label className="font-maven text-xs text-gray-500 block mb-1">Data del pasto</label>
+            <label className="font-maven text-xs text-kidville-muted block mb-1">Data del pasto</label>
             <input type="date" value={data} onChange={e => { setData(e.target.value); if (sel) loadSaldo(sel.id); }}
-              className="w-full border-2 border-gray-200 rounded-lg px-3 py-1.5 font-maven text-sm text-kidville-green mb-3" />
+              className="w-full border-2 border-kidville-line rounded-lg px-3 py-1.5 font-maven text-sm text-kidville-green mb-3" />
             <button onClick={inserisci} className="w-full py-2.5 rounded-full bg-kidville-green text-white font-maven font-bold text-sm flex items-center justify-center gap-1">
               <CalendarPlus size={15} /> Inserisci ticket (scala 1)
             </button>
-            <p className="mt-2 font-maven text-[11px] text-gray-400 flex items-start gap-1">
+            <p className="mt-2 font-maven text-[11px] text-kidville-muted flex items-start gap-1">
               <AlertTriangle size={12} className="mt-0.5 flex-shrink-0" /> La segreteria può forzare l&apos;inserimento anche con saldo a zero: il saldo andrà in negativo (debito).
             </p>
             {msg && <p className="mt-2 font-maven text-xs text-kidville-green flex items-center gap-1"><CheckCircle2 size={13} /> {msg}</p>}

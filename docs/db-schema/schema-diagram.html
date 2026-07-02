@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kidville — Schema Database (84 tabelle)</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#ffffff; --surface:#f9fafb; --border:#e5e7eb;
+    --text:#111827; --muted:#6b7280; --faint:#9ca3af;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#0f1115; --card:#171a21; --surface:#1f242d; --border:#2b313b;
+           --text:#e8eaed; --muted:#9aa3b0; --faint:#6b7280; }
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    padding:24px;}
+  .wrap{max-width:1280px;margin:0 auto;}
+  h1{font-size:22px;font-weight:600;margin:0 0 4px;}
+  .sub{font-size:13.5px;color:var(--muted);margin-bottom:18px;}
+  .sub b{color:var(--text);font-weight:600;}
+  #board{position:relative;display:grid;grid-template-columns:repeat(auto-fill,minmax(235px,1fr));gap:14px;align-items:start;}
+  #svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:0;overflow:visible;}
+  .card{position:relative;z-index:1;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:11px 12px 12px;}
+  .chead{display:flex;align-items:center;gap:7px;margin-bottom:9px;}
+  .chead .dot{width:9px;height:9px;border-radius:50%;flex:none;}
+  .chead .t{font-size:13px;font-weight:600;}
+  .chead .n{font-size:11px;color:var(--faint);margin-left:auto;}
+  .chips{display:flex;flex-wrap:wrap;gap:5px;}
+  .chip{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;line-height:1;padding:5px 8px;border-radius:6px;cursor:pointer;
+    background:var(--surface);border:1px solid var(--border);color:var(--text);white-space:nowrap;
+    transition:opacity .15s,box-shadow .15s,transform .1s;}
+  .chip .cd{width:6px;height:6px;border-radius:50%;flex:none;}
+  .chip.hub{font-weight:600;}
+  .toolbar{display:flex;align-items:center;gap:12px;margin-bottom:14px;}
+  #reset{font-size:12px;padding:6px 13px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--muted);cursor:pointer;}
+  #legend{display:flex;flex-wrap:wrap;gap:12px 20px;margin-top:18px;font-size:12.5px;color:var(--muted);}
+  #legend span.it{display:inline-flex;align-items:center;gap:6px;}
+  #legend .dot{width:9px;height:9px;border-radius:50%;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Schema Database — Kidville</h1>
+  <div class="sub"><b>84</b> tabelle · <b id="fkcount">—</b> relazioni (foreign key) · <b>9</b> domini funzionali — passa il mouse / tocca una tabella per evidenziarne i collegamenti</div>
+  <div class="toolbar"><button id="reset">Reset evidenziazione</button></div>
+  <div id="board"><svg id="svg"></svg></div>
+  <div id="legend"></div>
+</div>
+<script>
+(function(){
+  var DOMAINS=[
+    {k:'core',t:'Anagrafica & Struttura',c:'#2563eb'},
+    {k:'reg',t:'Didattica & Registro',c:'#16a34a'},
+    {k:'val',t:'Valutazioni & Scrutini',c:'#7c3aed'},
+    {k:'pay',t:'Pagamenti & Fatture',c:'#d97706'},
+    {k:'mensa',t:'Mensa',c:'#0d9488'},
+    {k:'com',t:'Comunicazione',c:'#db2777'},
+    {k:'doc',t:'Moduli, Documenti & FEA',c:'#4f46e5'},
+    {k:'diary',t:'Diario, Galleria & Armadietto',c:'#ea580c'},
+    {k:'sys',t:'Sistema, Audit & Integrazioni',c:'#64748b'}
+  ];
+  var TABLES={
+    core:['schools','scuole','sections','utenti','alunni','parents','student_parents','legame_genitori_alunni','delegates','utenti_scuole','utenti_sezioni','utenti_sezioni_materie'],
+    reg:['materie','materie_preset','obiettivi_apprendimento','sezione_materia_obiettivo','registro_orario','registro_destinatari','registro_modifiche','allegati_registro','firme_docenti','campanelle','orario_settimanale','tempo_scuola','presenze','giustifiche_didattiche'],
+    val:['valutazioni','valutazione_obiettivi','giudizi_sintetici_scala','giudizio_template','scrutini','scrutinio_periodi','scrutinio_giudizi','scrutinio_comportamento','scrutinio_giudizio_descrittivo','pagelle','pagella_ricezioni','certificati_competenze','certificato_competenza_livelli','note_disciplinari','nota_ricezioni'],
+    pay:['pagamenti','pagamenti_quote','incassi','payment_categories','fatture_emesse','fatture_numerazione'],
+    mensa:['mensa_prenotazioni','mensa_menu_config','mensa_menu_rotazione','mensa_menu_override','mensa_class_menu_assignment','gruppi_mensa','ticket_mensa'],
+    com:['avvisi','avvisi_risposte','chat_threads','chat_messages','notifiche','push_subscriptions','task_interni'],
+    doc:['form_models','form_submissions','forms_templates','forms_submissions','firme_documenti','fea_signatures','fea_audit_log','student_documents','certificati_medici','enrollment_submissions'],
+    diary:['eventi_diario','galleria_media','galleria_media_v2','armadietto','locker_config'],
+    sys:['admin_settings','audit_scritture_docente','sblocchi_audit','fascicolo_accessi_audit','sidi_import_batches','sidi_sync_state','test_table']
+  };
+  var FKS=[["galleria_media","schools"],["galleria_media","utenti"],["armadietto","alunni"],["ticket_mensa","alunni"],["utenti","schools"],["alunni","schools"],["legame_genitori_alunni","utenti"],["legame_genitori_alunni","alunni"],["eventi_diario","alunni"],["eventi_diario","utenti"],["valutazioni","alunni"],["valutazioni","utenti"],["pagamenti","alunni"],["pagamenti","schools"],["registro_modifiche","utenti"],["firme_documenti","utenti"],["sections","schools"],["alunni","sections"],["student_parents","alunni"],["student_parents","parents"],["delegates","alunni"],["student_documents","alunni"],["form_submissions","form_models"],["presenze","schools"],["presenze","sections"],["presenze","utenti"],["presenze","alunni"],["registro_orario","schools"],["firme_docenti","registro_orario"],["note_disciplinari","alunni"],["chat_threads","utenti"],["chat_threads","alunni"],["chat_messages","chat_threads"],["chat_messages","utenti"],["avvisi","utenti"],["avvisi_risposte","avvisi"],["avvisi_risposte","utenti"],["avvisi_risposte","alunni"],["galleria_media_v2","utenti"],["task_interni","utenti"],["forms_submissions","forms_templates"],["payment_categories","schools"],["admin_settings","schools"],["pagamenti","payment_categories"],["pagamenti","utenti"],["incassi","pagamenti"],["incassi","utenti"],["pagamenti_quote","pagamenti"],["pagamenti_quote","utenti"],["incassi","pagamenti_quote"],["notifiche","utenti"],["push_subscriptions","utenti"],["mensa_prenotazioni","alunni"],["mensa_prenotazioni","schools"],["mensa_prenotazioni","utenti"],["mensa_menu_rotazione","schools"],["mensa_menu_override","schools"],["utenti_sezioni","utenti"],["utenti_sezioni","sections"],["mensa_menu_config","schools"],["mensa_class_menu_assignment","schools"],["mensa_class_menu_assignment","mensa_menu_config"],["mensa_menu_rotazione","mensa_menu_config"],["mensa_menu_override","mensa_menu_config"],["registro_destinatari","alunni"],["note_disciplinari","sections"],["scrutinio_giudizi","materie"],["scrutinio_giudizi","utenti"],["materie","schools"],["materie","sections"],["obiettivi_apprendimento","schools"],["utenti_sezioni_materie","utenti"],["utenti_sezioni_materie","sections"],["utenti_sezioni_materie","materie"],["tempo_scuola","sections"],["valutazioni","sections"],["valutazioni","materie"],["campanelle","sections"],["orario_settimanale","sections"],["orario_settimanale","campanelle"],["orario_settimanale","materie"],["orario_settimanale","utenti"],["registro_orario","sections"],["registro_orario","materie"],["registro_destinatari","registro_orario"],["registro_destinatari","firme_docenti"],["valutazione_obiettivi","valutazioni"],["valutazione_obiettivi","obiettivi_apprendimento"],["giudizi_sintetici_scala","schools"],["giudizio_template","schools"],["sblocchi_audit","utenti"],["scrutinio_giudizi","scrutini"],["scrutinio_giudizi","alunni"],["allegati_registro","registro_orario"],["allegati_registro","utenti"],["giustifiche_didattiche","alunni"],["giustifiche_didattiche","sections"],["giustifiche_didattiche","materie"],["scrutinio_periodi","schools"],["scrutini","sections"],["scrutini","scrutinio_periodi"],["scrutini","utenti"],["scrutinio_comportamento","scrutini"],["scrutinio_comportamento","alunni"],["pagelle","scrutini"],["pagelle","alunni"],["pagelle","utenti"],["student_documents","sections"],["student_documents","utenti"],["fascicolo_accessi_audit","alunni"],["fascicolo_accessi_audit","utenti"],["sezione_materia_obiettivo","sections"],["sezione_materia_obiettivo","materie"],["sezione_materia_obiettivo","obiettivi_apprendimento"],["scrutinio_giudizio_descrittivo","schools"],["scrutinio_giudizio_descrittivo","scrutinio_periodi"],["pagella_ricezioni","scrutini"],["pagella_ricezioni","alunni"],["utenti_scuole","utenti"],["utenti_scuole","schools"],["audit_scritture_docente","utenti"],["audit_scritture_docente","schools"],["audit_scritture_docente","sections"],["armadietto","schools"],["task_interni","schools"],["avvisi","schools"],["nota_ricezioni","note_disciplinari"],["nota_ricezioni","alunni"],["fatture_emesse","pagamenti"],["certificati_medici","alunni"],["certificati_competenze","alunni"],["certificati_competenze","sections"],["certificati_competenze","scrutini"],["certificato_competenza_livelli","certificati_competenze"],["alunni","gruppi_mensa"]];
+
+  var dom2color={},tab2dom={};
+  DOMAINS.forEach(function(d){dom2color[d.k]=d.c;});
+  Object.keys(TABLES).forEach(function(k){TABLES[k].forEach(function(t){tab2dom[t]=k;});});
+  var deg={};
+  FKS.forEach(function(f){if(f[0]!==f[1]){deg[f[0]]=(deg[f[0]]||0)+1;deg[f[1]]=(deg[f[1]]||0)+1;}});
+  var adj={};
+  FKS.forEach(function(f){if(f[0]===f[1])return;(adj[f[0]]=adj[f[0]]||{})[f[1]]=1;(adj[f[1]]=adj[f[1]]||{})[f[0]]=1;});
+
+  var board=document.getElementById('board'),svg=document.getElementById('svg');
+  document.getElementById('fkcount').textContent=FKS.length;
+  var chipEls={};
+  DOMAINS.forEach(function(d){
+    var card=document.createElement('div');card.className='card';
+    var head=document.createElement('div');head.className='chead';
+    head.innerHTML='<span class="dot" style="background:'+d.c+'"></span><span class="t">'+d.t+'</span><span class="n">'+TABLES[d.k].length+'</span>';
+    card.appendChild(head);
+    var chips=document.createElement('div');chips.className='chips';
+    TABLES[d.k].forEach(function(t){
+      var hub=(deg[t]||0)>=8;
+      var chip=document.createElement('span');chip.className='chip'+(hub?' hub':'');chip.setAttribute('data-name',t);
+      chip.innerHTML='<span class="cd" style="background:'+d.c+';'+(hub?'box-shadow:0 0 0 2px '+d.c+'33;':'')+'"></span>'+t;
+      chips.appendChild(chip);chipEls[t]=chip;
+    });
+    card.appendChild(chips);board.appendChild(card);
+  });
+  var lg=document.getElementById('legend');
+  DOMAINS.forEach(function(d){var s=document.createElement('span');s.className='it';s.innerHTML='<span class="dot" style="background:'+d.c+'"></span>'+d.t;lg.appendChild(s);});
+  var hn=document.createElement('span');hn.className='it';hn.style.color='var(--faint)';hn.textContent='● tabella-hub (≥8 relazioni) in grassetto';lg.appendChild(hn);
+
+  var paths=[];
+  function draw(){
+    while(svg.firstChild)svg.removeChild(svg.firstChild);paths=[];
+    var br=board.getBoundingClientRect();
+    svg.setAttribute('viewBox','0 0 '+br.width+' '+br.height);
+    var seen={};
+    FKS.forEach(function(f){
+      if(f[0]===f[1])return;
+      var key=f[0]<f[1]?f[0]+'|'+f[1]:f[1]+'|'+f[0];if(seen[key])return;seen[key]=1;
+      var a=chipEls[f[0]],b=chipEls[f[1]];if(!a||!b)return;
+      var ra=a.getBoundingClientRect(),rb=b.getBoundingClientRect();
+      var x1=ra.left-br.left+ra.width/2,y1=ra.top-br.top+ra.height/2;
+      var x2=rb.left-br.left+rb.width/2,y2=rb.top-br.top+rb.height/2;
+      var mx=(x1+x2)/2,my=(y1+y2)/2-Math.min(60,Math.abs(x2-x1)*0.18);
+      var p=document.createElementNS('http://www.w3.org/2000/svg','path');
+      p.setAttribute('d','M'+x1+' '+y1+' Q'+mx+' '+my+' '+x2+' '+y2);
+      p.setAttribute('fill','none');p.setAttribute('stroke',dom2color[tab2dom[f[0]]]||'#888');
+      p.setAttribute('stroke-width','1');p.setAttribute('stroke-opacity','0.13');p.setAttribute('stroke-linecap','round');
+      p._a=f[0];p._b=f[1];svg.appendChild(p);paths.push(p);
+    });
+  }
+  function highlight(name){
+    var nb=adj[name]||{};
+    Object.keys(chipEls).forEach(function(t){
+      var on=(t===name)||nb[t];var c=chipEls[t];
+      c.style.opacity=on?'1':'0.18';
+      c.style.boxShadow=(t===name)?('0 0 0 1.5px '+(dom2color[tab2dom[t]]||'#888')):'none';
+      c.style.transform=(t===name)?'translateY(-1px)':'none';
+    });
+    paths.forEach(function(p){var on=(p._a===name||p._b===name);p.setAttribute('stroke-opacity',on?'0.9':'0.04');p.setAttribute('stroke-width',on?'1.8':'1');});
+  }
+  function clear(){
+    Object.keys(chipEls).forEach(function(t){var c=chipEls[t];c.style.opacity='1';c.style.boxShadow='none';c.style.transform='none';});
+    paths.forEach(function(p){p.setAttribute('stroke-opacity','0.13');p.setAttribute('stroke-width','1');});
+  }
+  Object.keys(chipEls).forEach(function(t){
+    chipEls[t].addEventListener('mouseenter',function(){highlight(t);});
+    chipEls[t].addEventListener('mouseleave',clear);
+    chipEls[t].addEventListener('click',function(e){e.stopPropagation();highlight(t);});
+  });
+  document.getElementById('reset').addEventListener('click',clear);
+  document.body.addEventListener('click',clear);
+  setTimeout(draw,30);setTimeout(draw,250);
+  if(window.ResizeObserver){new ResizeObserver(draw).observe(board);}
+  window.addEventListener('resize',draw);
+})();
+</script>
+</body>
+</html>

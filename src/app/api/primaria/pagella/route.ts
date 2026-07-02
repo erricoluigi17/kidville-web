@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { getRequestUserId, loadAppUser } from '@/lib/auth/require-staff'
+import { assertAlunnoInScope } from '@/lib/auth/scope'
 import { generaPagella } from '@/lib/primaria/pagella-store'
 
 // GET /api/primaria/pagella?scrutinioId=&alunnoId=&userId=[&persist=1]
@@ -17,12 +18,15 @@ export async function GET(request: NextRequest) {
 
     const supabase = await createAdminClient()
 
-    // Gate visibilità: lo staff (admin/coordinator) può generare/anteprima anche
-    // prima della pubblicazione; il genitore solo se pubblicato E dopo aver
-    // firmato la ricezione (OTP/FES, una volta per pagella).
+    // Gate visibilità: lo staff (admin/coordinator/segreteria) può generare/anteprima
+    // anche prima della pubblicazione, ma SOLO per gli alunni del proprio plesso;
+    // il genitore solo se pubblicato E dopo aver firmato la ricezione (OTP/FES).
     const appUser = await loadAppUser(userId)
-    const isStaff = appUser?.role === 'admin' || appUser?.role === 'coordinator'
-    if (!isStaff) {
+    const isStaff = !!appUser && ['admin', 'coordinator', 'segreteria'].includes(appUser.role)
+    if (isStaff) {
+      const scopeErr = await assertAlunnoInScope(supabase, appUser, alunnoId)
+      if (scopeErr) return scopeErr
+    } else {
       const { data: scr } = await supabase.from('scrutini').select('pubblicato').eq('id', scrutinioId).single()
       if (!scr?.pubblicato) return NextResponse.json({ error: 'Pagella non ancora pubblicata' }, { status: 403 })
       const { data: firma } = await supabase

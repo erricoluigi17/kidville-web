@@ -11,7 +11,8 @@ function sanitizeAruba(cfg: Record<string, unknown> | null) {
     username: c.username ?? '',
     password_ref: c.password_ref ? '••••••' : '', // mai in chiaro
     has_password: !!c.password_ref,
-    fiscal: c.fiscal ?? { piva: '', cf: '', ragione_sociale: '', sede: '', regime: '' },
+    // Dati fiscali strutturati consumati dal generatore XML FatturaPA (CedentePrestatore)
+    fiscal: c.fiscal ?? { piva: '', cf: '', ragione_sociale: '', regime: 'RF01', indirizzo: '', cap: '', comune: '', provincia: '' },
     iva: c.iva ?? [],
     abilitato: c.abilitato ?? false,
     ambiente: c.ambiente ?? 'sandbox',

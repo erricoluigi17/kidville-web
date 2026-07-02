@@ -1,10 +1,14 @@
+'use client';
+
+import { Wrench } from 'lucide-react';
 import { ImportExportClient } from '@/components/features/admin/ImportExportClient';
+import { CockpitPage, PageHeader } from '@/components/ui/cockpit';
 
 export default function AdminToolsPage() {
     return (
-        <div className="p-6 max-w-6xl mx-auto space-y-8">
-            <h1 className="text-3xl font-black text-kidville-green mb-8 text-center font-barlow uppercase">Strumenti Amministratore</h1>
+        <CockpitPage max={1152}>
+            <PageHeader icon={Wrench} title="Strumenti Amministratore" subtitle="Import/export dati e utilità di manutenzione." />
             <ImportExportClient />
-        </div>
+        </CockpitPage>
     );
 }

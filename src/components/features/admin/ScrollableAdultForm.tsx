@@ -184,7 +184,7 @@ export function ScrollableAdultForm({ tabId, defaultRole, updateTabLabel, studen
                 {toast && (
                     <motion.div 
                         initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}
-                        className={`absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-2 px-6 py-3 rounded-full font-bold shadow-lg z-50 ${toast.type === 'success' ? 'bg-kidville-green text-white' : 'bg-red-500 text-white'}`}
+                        className={`absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-2 px-6 py-3 rounded-full font-bold shadow-lg z-50 ${toast.type === 'success' ? 'bg-kidville-green text-white' : 'bg-kidville-error text-white'}`}
                     >
                         {toast.type === 'success' ? <CheckCircle2 size={18} /> : <XCircle size={18} />}
                         {toast.message}
@@ -221,13 +221,13 @@ export function ScrollableAdultForm({ tabId, defaultRole, updateTabLabel, studen
                     <div className="grid grid-cols-2 gap-6">
                         <div>
                             <label className="block text-sm font-bold text-kidville-green/80 mb-1">Nome</label>
-                            <input name="first_name" value={formData.first_name} onChange={handleInputChange} className={`w-full p-3 rounded-xl border bg-white text-kidville-green placeholder-kidville-green/40 outline-none focus:ring-2 focus:ring-kidville-green ${errors.first_name ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} />
-                            {errors.first_name && <span className="text-xs text-red-500 font-bold">{errors.first_name}</span>}
+                            <input name="first_name" value={formData.first_name} onChange={handleInputChange} className={`w-full p-3 rounded-xl border bg-white text-kidville-green placeholder-kidville-green/40 outline-none focus:ring-2 focus:ring-kidville-green ${errors.first_name ? 'border-kidville-error shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} />
+                            {errors.first_name && <span className="text-xs text-kidville-error font-bold">{errors.first_name}</span>}
                         </div>
                         <div>
                             <label className="block text-sm font-bold text-kidville-green/80 mb-1">Cognome</label>
-                            <input name="last_name" value={formData.last_name} onChange={handleInputChange} className={`w-full p-3 rounded-xl border bg-white text-kidville-green placeholder-kidville-green/40 outline-none focus:ring-2 focus:ring-kidville-green ${errors.last_name ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} />
-                            {errors.last_name && <span className="text-xs text-red-500 font-bold">{errors.last_name}</span>}
+                            <input name="last_name" value={formData.last_name} onChange={handleInputChange} className={`w-full p-3 rounded-xl border bg-white text-kidville-green placeholder-kidville-green/40 outline-none focus:ring-2 focus:ring-kidville-green ${errors.last_name ? 'border-kidville-error shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} />
+                            {errors.last_name && <span className="text-xs text-kidville-error font-bold">{errors.last_name}</span>}
                         </div>
                         <div>
                             <label className="block text-sm font-bold text-kidville-green/80 mb-1 flex items-center gap-2"><Shield size={14}/> Ruolo Familiare / Operativo</label>
@@ -251,7 +251,7 @@ export function ScrollableAdultForm({ tabId, defaultRole, updateTabLabel, studen
 
                 {/* Nascita e Cittadinanza */}
                 <section>
-                    <h3 className="text-lg font-bold text-kidville-green mb-4 flex items-center gap-2 border-l-4 border-amber-500 pl-3">
+                    <h3 className="text-lg font-bold text-kidville-green mb-4 flex items-center gap-2 border-l-4 border-kidville-warn pl-3">
                         Nascita e Cittadinanza
                     </h3>
                     <div className="grid grid-cols-2 gap-6">
@@ -281,16 +281,16 @@ export function ScrollableAdultForm({ tabId, defaultRole, updateTabLabel, studen
                                 {isCfLoading && <Loader2 size={14} className="animate-spin text-kidville-green" />}
                                 {isCfAutoCalculated && <span className="text-xs text-kidville-green font-normal">Autocalcolato! ✨</span>}
                             </label>
-                            <input name="fiscal_code" value={formData.fiscal_code} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none uppercase bg-white text-kidville-green placeholder-kidville-green/40 transition-colors ${errors.fiscal_code ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : isCfAutoCalculated ? 'border-kidville-green ring-2 ring-kidville-green/50 bg-kidville-green/5' : 'border-kidville-green/15 focus:ring-2 focus:ring-kidville-green'}`} />
-                            {errors.fiscal_code && <span className="text-xs text-red-500 font-bold">{errors.fiscal_code}</span>}
+                            <input name="fiscal_code" value={formData.fiscal_code} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none uppercase bg-white text-kidville-green placeholder-kidville-green/40 transition-colors ${errors.fiscal_code ? 'border-kidville-error shadow-[0_0_10px_rgba(239,68,68,0.3)]' : isCfAutoCalculated ? 'border-kidville-green ring-2 ring-kidville-green/50 bg-kidville-green/5' : 'border-kidville-green/15 focus:ring-2 focus:ring-kidville-green'}`} />
+                            {errors.fiscal_code && <span className="text-xs text-kidville-error font-bold">{errors.fiscal_code}</span>}
                         </div>
                     </div>
                 </section>
 
                 {/* Residenza */}
                 <section>
-                    <h3 className="text-lg font-bold text-kidville-green mb-4 flex items-center gap-2 border-l-4 border-blue-500 pl-3">
-                        <MapPin size={20} className="text-blue-500"/> Residenza
+                    <h3 className="text-lg font-bold text-kidville-green mb-4 flex items-center gap-2 border-l-4 border-kidville-info pl-3">
+                        <MapPin size={20} className="text-kidville-info"/> Residenza
                     </h3>
                     <div className="grid grid-cols-2 gap-6">
                         <div className="col-span-2">
@@ -322,7 +322,7 @@ export function ScrollableAdultForm({ tabId, defaultRole, updateTabLabel, studen
                                     {formData.phones.map((phone, idx) => (
                                         <motion.div key={idx} initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="flex items-center gap-2">
                                             <input value={phone} onChange={(e) => handleArrayChange(idx, 'phones', e.target.value)} placeholder="+39 333 000 0000" className="flex-1 p-3 rounded-xl border border-kidville-green/15 bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none" />
-                                            <button onClick={() => removeArrayItem(idx, 'phones')} className="p-3 bg-red-500/10 text-red-500 rounded-xl hover:bg-red-500/20 transition-colors">
+                                            <button onClick={() => removeArrayItem(idx, 'phones')} className="p-3 bg-kidville-error/10 text-kidville-error rounded-xl hover:bg-kidville-error/20 transition-colors">
                                                 <Trash2 size={18} />
                                             </button>
                                         </motion.div>
@@ -342,10 +342,10 @@ export function ScrollableAdultForm({ tabId, defaultRole, updateTabLabel, studen
                                     {formData.emails.map((email, idx) => (
                                         <motion.div key={idx} initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="flex items-center gap-2">
                                             <div className="flex-1 relative">
-                                                <input type="email" value={email} onChange={(e) => handleArrayChange(idx, 'emails', e.target.value)} placeholder="mario.rossi@email.com" className={`w-full p-3 rounded-xl border bg-white text-kidville-green placeholder-kidville-green/40 outline-none focus:ring-2 focus:ring-kidville-green ${errors[`emails.${idx}`] ? 'border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} />
+                                                <input type="email" value={email} onChange={(e) => handleArrayChange(idx, 'emails', e.target.value)} placeholder="mario.rossi@email.com" className={`w-full p-3 rounded-xl border bg-white text-kidville-green placeholder-kidville-green/40 outline-none focus:ring-2 focus:ring-kidville-green ${errors[`emails.${idx}`] ? 'border-kidville-error shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} />
                                                 {idx === 0 && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] uppercase font-black tracking-widest text-kidville-green bg-kidville-green/10 px-2 py-1 rounded">Primaria</span>}
                                             </div>
-                                            <button onClick={() => removeArrayItem(idx, 'emails')} className="p-3 bg-red-500/10 text-red-500 rounded-xl hover:bg-red-500/20 transition-colors">
+                                            <button onClick={() => removeArrayItem(idx, 'emails')} className="p-3 bg-kidville-error/10 text-kidville-error rounded-xl hover:bg-kidville-error/20 transition-colors">
                                                 <Trash2 size={18} />
                                             </button>
                                         </motion.div>

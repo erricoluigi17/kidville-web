@@ -92,7 +92,7 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave }: Props) {
             {/* Panel slide-in (Stile Bianco Kidville come Alunni) */}
             <div className="fixed inset-y-0 right-0 z-50 w-full max-w-md bg-white shadow-2xl flex flex-col">
                 {/* Header */}
-                <div className="flex items-center justify-between p-5 border-b border-gray-100">
+                <div className="flex items-center justify-between p-5 border-b border-kidville-line">
                     <div>
                         <h2 className="font-barlow font-black text-xl text-kidville-green uppercase tracking-wide flex items-center gap-2">
                             <Users size={20} />
@@ -100,13 +100,13 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave }: Props) {
                                 ? 'Membro dello Staff' 
                                 : 'Anagrafica Genitore'}
                         </h2>
-                        <p className="font-maven text-sm text-gray-500 mt-0.5">
+                        <p className="font-maven text-sm text-kidville-muted mt-0.5">
                             {form.first_name || ''} {form.last_name || ''}
                         </p>
                     </div>
                     <button
                         onClick={onClose}
-                        className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-gray-400 hover:text-gray-600"
+                        className="w-8 h-8 rounded-full bg-kidville-line flex items-center justify-center text-kidville-muted hover:text-kidville-ink"
                     >
                         <X size={16} />
                     </button>
@@ -114,8 +114,8 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave }: Props) {
 
                 {isLoading ? (
                     <div className="flex-1 flex flex-col items-center justify-center gap-4">
-                        <div className="w-8 h-8 border-4 border-gray-200 border-t-kidville-green rounded-full animate-spin"></div>
-                        <p className="font-maven text-gray-400">Caricamento dettagli...</p>
+                        <div className="w-8 h-8 border-4 border-kidville-line border-t-kidville-green rounded-full animate-spin"></div>
+                        <p className="font-maven text-kidville-muted">Caricamento dettagli...</p>
                     </div>
                 ) : (
                     <div className="flex-1 overflow-y-auto p-5 space-y-5 custom-scrollbar">
@@ -126,42 +126,42 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave }: Props) {
                             </h3>
                             <div className="grid grid-cols-2 gap-3">
                                 <div>
-                                    <label className="font-maven text-xs text-gray-500 mb-1 block">Nome</label>
+                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">Nome</label>
                                     <input
                                         type="text"
                                         value={(form.first_name as string) ?? ''}
                                         onChange={e => updateForm('first_name', e.target.value)}
-                                        className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
+                                        className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
                                     />
                                 </div>
                                 <div>
-                                    <label className="font-maven text-xs text-gray-500 mb-1 block">Cognome</label>
+                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">Cognome</label>
                                     <input
                                         type="text"
                                         value={(form.last_name as string) ?? ''}
                                         onChange={e => updateForm('last_name', e.target.value)}
-                                        className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
+                                        className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
                                     />
                                 </div>
                             </div>
                             <div className="grid grid-cols-2 gap-3 mt-3">
                                 <div>
-                                    <label className="font-maven text-xs text-gray-500 mb-1 block">Data di Nascita</label>
+                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">Data di Nascita</label>
                                     <input
                                         type="date"
                                         value={(form.birth_date as string) ?? ''}
                                         onChange={e => updateForm('birth_date', e.target.value)}
-                                        className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
+                                        className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
                                     />
                                 </div>
                                 <div>
-                                    <label className="font-maven text-xs text-gray-500 mb-1 block">Codice Fiscale</label>
+                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">Codice Fiscale</label>
                                     <input
                                         type="text"
                                         value={(form.fiscal_code as string) ?? ''}
                                         onChange={e => updateForm('fiscal_code', e.target.value.toUpperCase())}
                                         maxLength={16}
-                                        className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green uppercase"
+                                        className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green uppercase"
                                     />
                                 </div>
                             </div>
@@ -174,25 +174,25 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave }: Props) {
                             </h3>
                             <div className="grid grid-cols-2 gap-3">
                                 <div className="col-span-2">
-                                    <label className="font-maven text-xs text-gray-500 mb-1 block">Indirizzo di Residenza</label>
+                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">Indirizzo di Residenza</label>
                                     <input
                                         type="text"
                                         value={(form.residence_address as string) ?? ''}
                                         onChange={e => updateForm('residence_address', e.target.value)}
-                                        className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
+                                        className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
                                     />
                                 </div>
                                 <div>
-                                    <label className="font-maven text-xs text-gray-500 mb-1 block">Città</label>
+                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">Città</label>
                                     <input
                                         type="text"
                                         value={(form.residence_city as string) ?? ''}
                                         onChange={e => updateForm('residence_city', e.target.value)}
-                                        className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
+                                        className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
                                     />
                                 </div>
                                 <div>
-                                    <label className="font-maven text-xs text-gray-500 mb-1 block">Telefono</label>
+                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">Telefono</label>
                                     <input
                                         type="text"
                                         value={form.phone_numbers?.[0] || ''}
@@ -201,11 +201,11 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave }: Props) {
                                             newPhones[0] = e.target.value;
                                             updateForm('phone_numbers', newPhones);
                                         }}
-                                        className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
+                                        className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
                                     />
                                 </div>
                                 <div className="col-span-2">
-                                    <label className="font-maven text-xs text-gray-500 mb-1 block">Email Principale</label>
+                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">Email Principale</label>
                                     <input
                                         type="email"
                                         value={form.emails?.[0] || ''}
@@ -214,7 +214,7 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave }: Props) {
                                             newEmails[0] = e.target.value;
                                             updateForm('emails', newEmails);
                                         }}
-                                        className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
+                                        className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
                                     />
                                 </div>
                             </div>
@@ -234,17 +234,17 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave }: Props) {
                                         const isExpanded = expandedChild === child.id;
 
                                         return (
-                                            <div key={child.id} className="bg-gray-50 border border-gray-200 rounded-xl overflow-hidden transition-all">
+                                            <div key={child.id} className="bg-kidville-cream border border-kidville-line rounded-xl overflow-hidden transition-all">
                                                 {/* Header Figlio */}
                                                 <div 
-                                                    className={`p-4 flex items-center justify-between cursor-pointer hover:bg-gray-100 ${isExpanded ? 'bg-kidville-green/5 border-b border-kidville-green/10' : ''}`}
+                                                    className={`p-4 flex items-center justify-between cursor-pointer hover:bg-kidville-line ${isExpanded ? 'bg-kidville-green/5 border-b border-kidville-green/10' : ''}`}
                                                     onClick={() => setExpandedChild(isExpanded ? null : child.id)}
                                                 >
                                                     <div>
-                                                        <h4 className="font-barlow font-bold text-gray-800 uppercase tracking-wide">
+                                                        <h4 className="font-barlow font-bold text-kidville-ink uppercase tracking-wide">
                                                             {child.nome} {child.cognome}
                                                         </h4>
-                                                        <p className="font-maven text-xs text-gray-500 mt-0.5">
+                                                        <p className="font-maven text-xs text-kidville-muted mt-0.5">
                                                             {child.classe_sezione || 'Nessuna sezione'}
                                                         </p>
                                                     </div>
@@ -252,7 +252,7 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave }: Props) {
                                                         <span className="text-[10px] font-bold uppercase tracking-wider bg-kidville-green/10 text-kidville-green px-2 py-1 rounded-md">
                                                             Figlio
                                                         </span>
-                                                        <ChevronRight size={16} className={`text-gray-400 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+                                                        <ChevronRight size={16} className={`text-kidville-muted transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
                                                     </div>
                                                 </div>
 
@@ -268,18 +268,18 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave }: Props) {
                                                             <div className="p-4 bg-white/50">
                                                                 {otherParents.length > 0 ? (
                                                                     <>
-                                                                        <h5 className="font-maven text-[10px] text-gray-400 uppercase tracking-wider mb-2 font-bold">Altri familiari collegati</h5>
+                                                                        <h5 className="font-maven text-[10px] text-kidville-muted uppercase tracking-wider mb-2 font-bold">Altri familiari collegati</h5>
                                                                         <div className="space-y-2">
                                                                             {otherParents.map((sp: any) => (
-                                                                                <div key={sp.parents.id} className="flex items-center gap-3 p-3 bg-white border border-gray-100 rounded-lg shadow-sm">
-                                                                                    <div className="w-8 h-8 rounded-full bg-blue-50 text-blue-500 flex items-center justify-center">
+                                                                                <div key={sp.parents.id} className="flex items-center gap-3 p-3 bg-white border border-kidville-line rounded-lg shadow-sm">
+                                                                                    <div className="w-8 h-8 rounded-full bg-kidville-info-soft text-kidville-info flex items-center justify-center">
                                                                                         <User size={14} />
                                                                                     </div>
                                                                                     <div>
-                                                                                        <p className="font-barlow font-bold text-sm text-gray-800 leading-tight">
+                                                                                        <p className="font-barlow font-bold text-sm text-kidville-ink leading-tight">
                                                                                             {sp.parents.first_name} {sp.parents.last_name}
                                                                                         </p>
-                                                                                        <p className="font-maven text-[10px] text-gray-500 capitalize mt-0.5">
+                                                                                        <p className="font-maven text-[10px] text-kidville-muted capitalize mt-0.5">
                                                                                             {sp.relation_type === 'mother' ? 'Madre' : sp.relation_type === 'father' ? 'Padre' : 'Delegato'}
                                                                                         </p>
                                                                                     </div>
@@ -288,7 +288,7 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave }: Props) {
                                                                         </div>
                                                                     </>
                                                                 ) : (
-                                                                    <p className="font-maven text-xs text-gray-400 text-center py-2">Nessun altro familiare configurato.</p>
+                                                                    <p className="font-maven text-xs text-kidville-muted text-center py-2">Nessun altro familiare configurato.</p>
                                                                 )}
                                                             </div>
                                                         </motion.div>
@@ -304,7 +304,7 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave }: Props) {
                 )}
 
                 {/* Footer actions */}
-                <div className="flex-shrink-0 p-5 border-t border-gray-100 bg-white">
+                <div className="flex-shrink-0 p-5 border-t border-kidville-line bg-white">
                     <button
                         onClick={handleSave}
                         disabled={isSaving}

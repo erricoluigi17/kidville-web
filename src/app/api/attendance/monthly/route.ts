@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server-client';
+import { createAdminClient } from '@/lib/supabase/server-client';
+import { requireDocente } from '@/lib/auth/require-staff';
 
 export interface MonthlyAttendanceRecord {
     student_id: string;
@@ -20,6 +21,9 @@ export interface MonthlyAttendanceRecord {
  */
 export async function GET(request: NextRequest) {
     try {
+        const auth = await requireDocente(request);
+        if (auth.response) return auth.response;
+
         const { searchParams } = new URL(request.url);
 
         const now = new Date();
@@ -35,7 +39,7 @@ export async function GET(request: NextRequest) {
         const lastDay   = new Date(year, month, 0).getDate();
         const endDate   = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
 
-        const supabase = await createClient();
+        const supabase = await createAdminClient();
 
         // ── Query 1: alunni della sezione ──────────────────────────────────────
         const { data: alunniData, error: alunniError } = await supabase

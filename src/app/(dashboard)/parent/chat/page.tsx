@@ -299,9 +299,12 @@ function ParentChatContent() {
         <div className="max-w-5xl mx-auto p-4 sm:p-6">
             <div className="flex items-start justify-between mb-4">
                 <div>
+                    <p className="font-barlow font-bold text-[11px] uppercase tracking-[0.14em] text-kidville-yellow-dark">
+                        Comunicazioni
+                    </p>
                     <div className="flex items-center gap-3">
-                        <h1 className="font-barlow font-black text-3xl text-kidville-green uppercase tracking-wide">
-                            💬 Messaggi
+                        <h1 className="font-barlow font-black text-3xl text-kidville-green uppercase tracking-wide leading-none">
+                            Messaggi
                         </h1>
                         <AnimatePresence>
                             {unreadCount > 0 && (
@@ -310,7 +313,7 @@ function ParentChatContent() {
                                     animate={{ scale: 1, opacity: 1 }}
                                     exit={{ scale: 0, opacity: 0 }}
                                     transition={{ type: 'spring', stiffness: 500, damping: 25 }}
-                                    className="inline-flex items-center justify-center min-w-[24px] h-6 px-2 rounded-full bg-emerald-500 text-white font-barlow font-bold text-xs shadow-lg shadow-emerald-500/30"
+                                    className="inline-flex items-center justify-center min-w-[24px] h-6 px-2 rounded-full bg-kidville-yellow text-kidville-green font-barlow font-bold text-xs shadow-sm"
                                 >
                                     {unreadCount > 99 ? '99+' : unreadCount}
                                 </motion.span>
@@ -330,15 +333,15 @@ function ParentChatContent() {
             </div>
 
             {chatCfg && !chatCfg.in_orario && (
-                <div className="mb-4 rounded-2xl bg-amber-50 border border-amber-200 px-4 py-3 font-maven text-sm text-amber-800">
+                <div className="mb-4 rounded-2xl bg-kidville-yellow-soft border border-kidville-yellow/40 px-4 py-3 font-maven text-sm text-kidville-yellow-dark">
                     {chatCfg.risposta_fuori_orario_msg || `I docenti rispondono dalle ${chatCfg.orario_docenti_da} alle ${chatCfg.orario_docenti_a} nei giorni scolastici.`}
                 </div>
             )}
 
             {/* Desktop */}
             <div className="hidden md:flex gap-4 h-[calc(100vh-200px)] min-h-[500px]">
-                <div className="w-80 flex-shrink-0 bg-white/80 backdrop-blur-xl rounded-3xl border border-white/40 shadow-sm overflow-hidden flex flex-col">
-                    <div className="px-4 py-3 border-b border-gray-100/60">
+                <div className="w-80 flex-shrink-0 bg-white rounded-3xl border border-kidville-line shadow-sm overflow-hidden flex flex-col">
+                    <div className="px-4 py-3 border-b border-kidville-line">
                         <p className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide">Insegnanti</p>
                     </div>
                     <div className="flex-1 overflow-y-auto">
@@ -347,10 +350,10 @@ function ParentChatContent() {
                     </div>
                 </div>
 
-                <div className="flex-1 bg-white/80 backdrop-blur-xl rounded-3xl border border-white/40 shadow-sm overflow-hidden flex flex-col">
+                <div className="flex-1 bg-white rounded-3xl border border-kidville-line shadow-sm overflow-hidden flex flex-col">
                     {selectedThread ? (
                         <>
-                            <div className="flex items-center gap-3 px-5 py-3.5 border-b border-gray-100/60">
+                            <div className="flex items-center gap-3 px-5 py-3.5 border-b border-kidville-line">
                                 <div className="w-10 h-10 rounded-full bg-kidville-green flex items-center justify-center font-barlow font-bold text-sm text-kidville-yellow">
                                     {selectedThread.other_user.first_name[0]}{selectedThread.other_user.last_name[0]}
                                 </div>
@@ -391,14 +394,14 @@ function ParentChatContent() {
             <div className="md:hidden">
                 {showMobile === 'list' ? (
                     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-                        className="bg-white/80 backdrop-blur-xl rounded-3xl border border-white/40 shadow-sm overflow-hidden">
+                        className="bg-white rounded-3xl border border-kidville-line shadow-sm overflow-hidden">
                         <ChatThreadList threads={threads} selectedId={null}
                             currentUserId={parentId} onSelect={handleSelectThread} />
                     </motion.div>
                 ) : selectedThread && (
                     <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }}
-                        className="bg-white/80 backdrop-blur-xl rounded-3xl border border-white/40 shadow-sm overflow-hidden flex flex-col h-[calc(100vh-180px)]">
-                        <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-100/60">
+                        className="bg-white rounded-3xl border border-kidville-line shadow-sm overflow-hidden flex flex-col h-[calc(100vh-180px)]">
+                        <div className="flex items-center gap-3 px-4 py-3 border-b border-kidville-line">
                             <button onClick={() => setShowMobile('list')}
                                 className="w-8 h-8 rounded-xl bg-gray-50 hover:bg-gray-100 flex items-center justify-center text-gray-500 transition-colors">
                                 <ArrowLeft size={16} strokeWidth={1.5} />

@@ -1,13 +1,12 @@
 /**
- * Aruba — client di fatturazione elettronica (SCAFFOLD / STUB).
+ * Aruba — client REST reale per la Fatturazione Elettronica (SDI).
  *
- * In produzione qui andrà la chiamata reale alle API Aruba (SDI/XML):
- * autenticazione (username + password recuperata da `password_ref` via env/vault),
- * generazione XML FatturaPA, invio, polling stato (emessa/scartata).
+ * Integrazione REALE (DL-017): autenticazione OAuth-like (Bearer token),
+ * upload del tracciato FatturaPA (base64), polling stato/notifiche SDI.
+ * Le credenziali NON transitano mai dal client: username dal config,
+ * password risolta lato server da `process.env` via `password_ref` (vault/env).
  *
- * In questa fase è un mock deterministico: NESSUNA chiamata di rete, nessuna
- * credenziale usata. Serve a far funzionare l'intero flusso UI/DB (stati
- * emessa/scartata, download) in attesa dell'attivazione reale.
+ * Doc ufficiale: https://fatturazioneelettronica.aruba.it/apidoc/docs_EN.html
  */
 
 export interface ArubaConfig {
@@ -15,39 +14,176 @@ export interface ArubaConfig {
   password_ref?: string
   abilitato?: boolean
   ambiente?: string
-  fiscal?: Record<string, string>
+  fiscal?: Record<string, unknown>
   iva?: { causale: string; aliquota: number; natura?: string }[]
 }
 
-export interface FatturaInput {
-  pagamento_id: string
-  descrizione: string
-  importo: number
-  intestatario?: { tipo?: string; nome?: string; dati?: Record<string, string> } | null
+export interface ArubaCredentials {
+  username: string
+  password: string
 }
 
-export interface FatturaResult {
+export interface ArubaTokens {
+  accessToken: string
+  refreshToken: string
+  expiresAt: number // epoch ms
+}
+
+export interface ArubaUploadResult {
   ok: boolean
-  stato: 'emessa' | 'scartata'
-  fattura_id?: string
-  pdf_path?: string
-  errore?: string
+  uploadFileName?: string
+  errorCode: string
+  errorDescription?: string
+}
+
+export interface ArubaInvoiceStatus {
+  stato: number // 1..10 (vedi stato.ts)
+  pdfBase64?: string | null
+  raw?: unknown
+}
+
+/** Base URL per ambiente: DEMO (default) o PRODUCTION. */
+export function arubaBaseUrls(ambiente?: string): { auth: string; ws: string } {
+  if (ambiente === 'production' || ambiente === 'produzione') {
+    return {
+      auth: 'https://auth.fatturazioneelettronica.aruba.it',
+      ws: 'https://ws.fatturazioneelettronica.aruba.it',
+    }
+  }
+  return {
+    auth: 'https://demoauth.fatturazioneelettronica.aruba.it',
+    ws: 'https://demows.fatturazioneelettronica.aruba.it',
+  }
 }
 
 /**
- * Emette una fattura (STUB). Ritorna sempre un esito mock "emessa" con id e path
- * fittizi. La logica reale Aruba sostituirà questa funzione.
+ * Risolve le credenziali lato server. La password viene letta da `process.env`
+ * usando il nome indicato in `password_ref` (oppure dal fallback ARUBA_PASSWORD);
+ * lo username dal config (o ARUBA_USERNAME). Ritorna null se incompleto.
  */
-export async function emettiFattura(input: FatturaInput, _config: ArubaConfig): Promise<FatturaResult> {
-  // Validazione minima coerente con quanto servirà al chiamante reale.
-  if (!input.pagamento_id || input.importo <= 0) {
-    return { ok: false, stato: 'scartata', errore: 'Dati fattura non validi' }
+export function resolveArubaCredentials(config: ArubaConfig): ArubaCredentials | null {
+  const username = config.username || process.env.ARUBA_USERNAME
+  const password =
+    (config.password_ref ? process.env[config.password_ref] : undefined) || process.env.ARUBA_PASSWORD
+  if (!username || !password) return null
+  return { username, password }
+}
+
+async function readJson(res: Response): Promise<Record<string, unknown>> {
+  try {
+    return (await res.json()) as Record<string, unknown>
+  } catch {
+    return {}
   }
+}
 
-  // MOCK: id e path deterministici basati sul pagamento.
-  const shortId = input.pagamento_id.replace(/-/g, '').slice(0, 12).toUpperCase()
-  const fatturaId = `MOCK-${shortId}`
-  const pdfPath = `fatture/${input.pagamento_id}.pdf` // path logico (storage in produzione)
+/** Autenticazione: POST /auth/signin (grant_type=password). */
+export async function arubaSignin(ambiente: string | undefined, creds: ArubaCredentials): Promise<ArubaTokens> {
+  const { auth } = arubaBaseUrls(ambiente)
+  const body = new URLSearchParams({
+    grant_type: 'password',
+    username: creds.username,
+    password: creds.password,
+  }).toString()
+  const res = await fetch(`${auth}/auth/signin`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body,
+  })
+  if (!res.ok) throw new Error(`Aruba signin fallita (HTTP ${res.status})`)
+  const json = await readJson(res)
+  return {
+    accessToken: String(json.access_token ?? ''),
+    refreshToken: String(json.refresh_token ?? ''),
+    expiresAt: Date.now() + Number(json.expires_in ?? 1700) * 1000,
+  }
+}
 
-  return { ok: true, stato: 'emessa', fattura_id: fatturaId, pdf_path: pdfPath }
+/** Rinnovo token: POST /auth/signin (grant_type=refresh_token). */
+export async function arubaRefresh(ambiente: string | undefined, refreshToken: string): Promise<ArubaTokens> {
+  const { auth } = arubaBaseUrls(ambiente)
+  const body = new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refreshToken }).toString()
+  const res = await fetch(`${auth}/auth/signin`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body,
+  })
+  if (!res.ok) throw new Error(`Aruba refresh fallito (HTTP ${res.status})`)
+  const json = await readJson(res)
+  return {
+    accessToken: String(json.access_token ?? ''),
+    refreshToken: String(json.refresh_token ?? refreshToken),
+    expiresAt: Date.now() + Number(json.expires_in ?? 1700) * 1000,
+  }
+}
+
+/** Upload del tracciato FatturaPA (non firmato; Aruba firma CAdES e invia allo SDI). */
+export async function arubaUpload(
+  ambiente: string | undefined,
+  accessToken: string,
+  params: { dataFileBase64: string; senderPIVA: string }
+): Promise<ArubaUploadResult> {
+  const { ws } = arubaBaseUrls(ambiente)
+  const res = await fetch(`${ws}/services/invoice/upload`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json;charset=UTF-8',
+    },
+    body: JSON.stringify({
+      dataFile: params.dataFileBase64,
+      senderPIVA: params.senderPIVA,
+      skipExtraSchema: false,
+    }),
+  })
+  const json = await readJson(res)
+  const env = (json.value as Record<string, unknown>) ?? json
+  const errorCode = String(env.errorCode ?? (res.ok ? '0000' : String(res.status)))
+  return {
+    ok: errorCode === '0000',
+    uploadFileName: env.uploadFileName ? String(env.uploadFileName) : undefined,
+    errorCode,
+    errorDescription: env.errorDescription ? String(env.errorDescription) : undefined,
+  }
+}
+
+/** Stato di una fattura inviata: GET /services/invoice/out/getByFilename. */
+export async function arubaGetByFilename(
+  ambiente: string | undefined,
+  accessToken: string,
+  filename: string,
+  opts?: { includePdf?: boolean }
+): Promise<ArubaInvoiceStatus> {
+  const { ws } = arubaBaseUrls(ambiente)
+  const qs = new URLSearchParams({
+    filename,
+    includePdf: String(opts?.includePdf ?? true),
+    includeFile: 'false',
+  }).toString()
+  const res = await fetch(`${ws}/services/invoice/out/getByFilename?${qs}`, {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${accessToken}` },
+  })
+  if (!res.ok) throw new Error(`Aruba getByFilename fallita (HTTP ${res.status})`)
+  const json = await readJson(res)
+  const env = (json.value as Record<string, unknown>) ?? json
+  const stato = Number(env.status ?? env.stato ?? 0)
+  const pdf = (env.pdfFile ?? env.pdf ?? null) as string | null
+  return { stato, pdfBase64: pdf, raw: json }
+}
+
+/** Notifiche SDI relative a una fattura inviata. */
+export async function arubaGetNotifications(
+  ambiente: string | undefined,
+  accessToken: string,
+  filename: string
+): Promise<unknown> {
+  const { ws } = arubaBaseUrls(ambiente)
+  const qs = new URLSearchParams({ filename }).toString()
+  const res = await fetch(`${ws}/services/notification/out/getByInvoiceFilename?${qs}`, {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${accessToken}` },
+  })
+  if (!res.ok) throw new Error(`Aruba notifiche fallite (HTTP ${res.status})`)
+  return readJson(res)
 }

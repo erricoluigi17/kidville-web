@@ -1,10 +1,14 @@
 import { NextResponse } from 'next/server';
-import { createClient, createAdminClient } from '@/lib/supabase/server-client';
+import { createAdminClient } from '@/lib/supabase/server-client';
+import { requireDocente } from '@/lib/auth/require-staff';
 
 // GET /api/notes?alunnoId=xxx
 // Recupera le note disciplinari di un alunno
 export async function GET(request: Request) {
     try {
+        const auth = await requireDocente(request);
+        if (auth.response) return auth.response;
+
         const { searchParams } = new URL(request.url);
         const alunnoId = searchParams.get('alunnoId');
 
@@ -49,6 +53,9 @@ export async function GET(request: Request) {
 // Body: { alunnoIds: string[], categoria, testo, richiedeFirma }
 export async function POST(request: Request) {
     try {
+        const auth = await requireDocente(request);
+        if (auth.response) return auth.response;
+
         const body = await request.json();
         const { alunnoIds, categoria, testo, richiedeFirma } = body;
 
@@ -63,10 +70,8 @@ export async function POST(request: Request) {
         // Admin client per bypassare RLS
         const supabase = await createAdminClient();
 
-        // Recupera l'utente dalla sessione se disponibile, altrimenti usa ID fallback per dev
-        const sessionClient = await createClient();
-        const { data: { user } } = await sessionClient.auth.getUser();
-        const maestraId = user?.id ?? '00000000-0000-0000-0000-000000000001';
+        // L'autore della nota è l'utente del gate (identità risolta server-side).
+        const maestraId = auth.user.id;
 
         // Crea una nota per ogni alunno selezionato
         const noteRows = alunnoIds.map((alunnoId: string) => ({

@@ -133,7 +133,7 @@ export function MensaCalendar({ userId, studentId }: Props) {
       </div>
 
       {authError && (
-        <div className="mb-3 px-3 py-2.5 rounded-xl bg-orange-50 border border-orange-200 font-maven text-xs text-orange-700 flex items-start gap-2">
+        <div className="mb-3 px-3 py-2.5 rounded-xl bg-kidville-warn-soft border border-kidville-warn/30 font-maven text-xs text-orange-700 flex items-start gap-2">
           <AlertTriangle size={14} className="flex-shrink-0 mt-0.5" />
           <span>{authError}</span>
         </div>
@@ -144,7 +144,7 @@ export function MensaCalendar({ userId, studentId }: Props) {
         </div>
       )}
       {msg && (
-        <div className="mb-3 px-3 py-2 rounded-xl bg-amber-50 border border-amber-200 font-maven text-xs text-amber-700">{msg}</div>
+        <div className="mb-3 px-3 py-2 rounded-xl bg-kidville-warn-soft border border-kidville-warn/30 font-maven text-xs text-kidville-warn">{msg}</div>
       )}
 
       {loading ? (
@@ -169,7 +169,7 @@ export function MensaCalendar({ userId, studentId }: Props) {
                 key={g.data}
                 initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: idx * 0.03 }}
-                className={`rounded-2xl border p-3 ${prenotato ? 'bg-emerald-50/70 border-emerald-200' : 'bg-white border-gray-100'}`}
+                className={`rounded-2xl border p-3 ${prenotato ? 'bg-kidville-success-soft/70 border-kidville-success/30' : 'bg-white border-gray-100'}`}
               >
                 <div className="flex items-start gap-3">
                   <div className={`flex flex-col items-center justify-center w-12 h-12 rounded-xl flex-shrink-0 ${prenotato ? 'bg-kidville-green text-kidville-yellow' : 'bg-kidville-cream text-kidville-green'}`}>
@@ -196,7 +196,7 @@ export function MensaCalendar({ userId, studentId }: Props) {
                       <div className="flex flex-wrap gap-1 mt-1.5">
                         {allergeniDelGiorno(g.allergeni).map(k => (
                           <span key={k} title={allergeneLabel(k)}
-                            className="px-1.5 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-700 font-maven text-[10px] font-bold">
+                            className="px-1.5 py-0.5 rounded-full bg-kidville-warn-soft border border-kidville-warn/30 text-kidville-warn font-maven text-[10px] font-bold">
                             {allergeneEmoji(k)} {allergeneLabel(k)}
                           </span>
                         ))}
@@ -209,7 +209,7 @@ export function MensaCalendar({ userId, studentId }: Props) {
                           <button
                             disabled={busy === g.data || isPast}
                             onClick={() => disdici(g.data)}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white border-2 border-emerald-300 text-emerald-700 font-maven text-xs font-bold disabled:opacity-50"
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white border-2 border-kidville-success/30 text-kidville-success font-maven text-xs font-bold disabled:opacity-50"
                           >
                             {isPast ? <Lock size={13} /> : <X size={13} />}
                             {isPast ? 'Prenotato' : 'Disdici'}

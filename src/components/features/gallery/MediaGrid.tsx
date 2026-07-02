@@ -270,7 +270,7 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                                                         key={student.id}
                                                         className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs cursor-pointer select-none transition-all ${
                                                             isTagged
-                                                                ? 'bg-emerald-500/10 border-emerald-500 text-emerald-700 font-semibold shadow-sm'
+                                                                ? 'bg-kidville-success-soft border-kidville-success text-kidville-success font-semibold shadow-sm'
                                                                 : 'bg-white border-gray-200 text-gray-400 hover:bg-gray-50'
                                                         }`}
                                                     >
@@ -314,7 +314,7 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                                                     }
                                                 }}
                                                 disabled={savingTags}
-                                                className="px-3 py-1 bg-emerald-500 hover:bg-emerald-600 disabled:opacity-55 rounded-lg text-xs font-semibold text-white transition-colors"
+                                                className="px-3 py-1 bg-kidville-success hover:opacity-90 disabled:opacity-55 rounded-lg text-xs font-semibold text-white transition-colors"
                                             >
                                                 {savingTags ? 'Salvataggio...' : 'Salva'}
                                             </button>
@@ -396,7 +396,7 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                         {/* Delete (admin) */}
                         {onDelete && (
                             <button onClick={() => { onDelete(lightbox.id); handleCloseLightbox(); }}
-                                className="mt-4 mx-auto flex items-center gap-1 px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-full font-maven text-xs font-semibold transition-colors cursor-pointer">
+                                className="mt-4 mx-auto flex items-center gap-1 px-4 py-2 bg-kidville-error hover:opacity-90 text-white rounded-full font-maven text-xs font-semibold transition-colors cursor-pointer">
                                 🗑️ Elimina Media
                             </button>
                         )}

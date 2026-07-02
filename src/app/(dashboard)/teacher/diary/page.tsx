@@ -1,9 +1,11 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Plus, Minus, Clock, Users, WifiOff, Moon, Sun } from 'lucide-react';
 import { DiaryEventType } from '@/lib/offline/db';
+import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { EventTypeButton } from '@/components/features/teacher/diary/EventTypeButton';
 import { EVENT_CONFIG } from '@/components/features/teacher/diary/eventConfig';
 import { MealDetailInline } from '@/components/features/teacher/diary/MealDetailInline';
@@ -12,7 +14,6 @@ import { ActivityDetailInline, ActivityItem } from '@/components/features/teache
 interface Student { id: string; firstName: string; lastName: string; allergie: string[]; }
 
 const SEZIONE = 'Girasoli';
-const MAESTRA_ID = '22222222-2222-2222-2222-222222222222'; // dev default
 
 // Entrata rimossa — gestita dal modulo Presenze
 // Nanna e Sveglia sono DUE pulsanti distinti (PRD §3.1.1): Nanna = orario inizio, Sveglia = orario fine.
@@ -83,7 +84,9 @@ const itemVariants = {
 
 // ─── Componente Principale ────────────────────────────────────────────────────
 
-export default function TeacherDiaryPage() {
+function TeacherDiaryInner() {
+    const search = useSearchParams();
+    const userId = getCurrentTeacherId(search);
     const [students, setStudents] = useState<Student[]>([]);
     const [selectedEvent, setSelectedEvent] = useState<DiaryEventType | null>(null);
     const [studentStates, setStudentStates] = useState<Record<string, Record<string, unknown>>>({});
@@ -93,10 +96,12 @@ export default function TeacherDiaryPage() {
     const [savedStudentIds, setSavedStudentIds] = useState<Set<string>>(new Set());
     const [showSavedToast, setShowSavedToast] = useState(false);
     const [activities, setActivities] = useState<ActivityItem[]>([]);
+    const [notaLibera, setNotaLibera] = useState('');
+    // Filtro presenze (incongruenza #7): default = solo presenti; toggle per mostrare tutti.
+    const [showAll, setShowAll] = useState(false);
 
-    // Carica studenti da Supabase all'avvio
+    // Listener connettività (una volta).
     useEffect(() => {
-        fetchStudents();
         const onOnline = () => setIsOffline(false);
         const onOffline = () => setIsOffline(true);
         window.addEventListener('online', onOnline);
@@ -105,10 +110,16 @@ export default function TeacherDiaryPage() {
         return () => { window.removeEventListener('online', onOnline); window.removeEventListener('offline', onOffline); };
     }, []);
 
+    // Carica studenti: di default solo i presenti; rifa il fetch al toggle.
+    useEffect(() => {
+        fetchStudents();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [showAll]);
+
     const fetchStudents = async () => {
         setIsLoading(true);
         try {
-            const res = await fetch(`/api/diary/students?sezione=${SEZIONE}&onlyPresent=true`);
+            const res = await fetch(`/api/diary/students?sezione=${SEZIONE}&onlyPresent=${showAll ? 'false' : 'true'}&userId=${userId}`);
             const data = await res.json();
             if (Array.isArray(data)) {
                 const mapped: Student[] = data.map((a: { id: string; nome: string; cognome: string; note_mediche: string | null }) => ({
@@ -132,7 +143,7 @@ export default function TeacherDiaryPage() {
         if (list.length === 0) { setSavedStudentIds(new Set()); return; }
         try {
             const today = todayISO();
-            const res = await fetch(`/api/diary/entries?sezione=${SEZIONE}&date=${today}`);
+            const res = await fetch(`/api/diary/entries?sezione=${SEZIONE}&date=${today}&userId=${userId}`);
             const entries = await res.json();
             if (!Array.isArray(entries)) { setSavedStudentIds(new Set()); return; }
 
@@ -198,6 +209,7 @@ export default function TeacherDiaryPage() {
         // Prima imposta il tipo e lo stato pulito
         setSelectedEvent(type);
         setSavedStudentIds(new Set());
+        setNotaLibera('');
         // Inizializza con una attività vuota, con partecipazione null per ogni studente
         const initPart: Record<string, string | null> = {};
         students.forEach(s => { initPart[s.id] = null; });
@@ -223,6 +235,17 @@ export default function TeacherDiaryPage() {
         updateStudent(id, { [field]: Math.max(0, cur + delta) });
     };
 
+    // Bulk "Nanna per tutti": imposta l'orario di inizio nanna = ora per ogni bambino in elenco.
+    const bulkNannaOra = () => {
+        const t = now();
+        setStudentStates(prev => {
+            const next = { ...prev };
+            students.forEach(s => { next[s.id] = { ...next[s.id], orario_inizio: t }; });
+            return next;
+        });
+        setSavedStudentIds(new Set());
+    };
+
     const handleSave = async () => {
         setIsSaving(true);
         try {
@@ -246,16 +269,17 @@ export default function TeacherDiaryPage() {
                 }
                 return {
                     alunno_id: student.id,
-                    maestra_id: MAESTRA_ID,
+                    maestra_id: userId,
                     tipo_evento: selectedEvent,
                     orario_inizio: nowIso,
                     dettagli,
+                    nota_libera: notaLibera.trim() || null,
                 };
             });
 
-            const res = await fetch('/api/diary/entries', {
+            const res = await fetch(`/api/diary/entries?userId=${userId}`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
                 body: JSON.stringify(payload),
             });
 
@@ -291,32 +315,45 @@ export default function TeacherDiaryPage() {
         return (
             <div className="max-w-2xl mx-auto p-4 sm:p-6 flex flex-col items-center justify-center min-h-[60vh] gap-4">
                 <div className="w-10 h-10 border-4 border-kidville-green/30 border-t-kidville-green rounded-full animate-spin" />
-                <p className="font-maven text-gray-500">Caricamento alunni da Supabase...</p>
+                <p className="font-maven text-kidville-muted">Caricamento alunni da Supabase...</p>
             </div>
         );
     }
 
     return (
-        <div className="w-full max-w-2xl mx-auto p-4 sm:p-6 pb-32">
+        <div className="mx-auto max-w-[460px] px-4 pt-5">
 
-            {/* Header */}
-            <div className="flex items-start justify-between mb-6">
-                <div>
-                    <h1 className="font-barlow font-black text-3xl text-kidville-green uppercase tracking-wide">Diario del Giorno</h1>
-                    <p className="font-maven text-gray-500 mt-1 flex items-center gap-2">
-                        <Users size={15} strokeWidth={1.5} />
-                        Sezione Girasoli • {new Date().toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' })}
-                    </p>
-                </div>
+            {/* Header verde (DR) */}
+            <div className="rounded-3xl bg-kidville-green px-5 py-5" style={{ boxShadow: '0 16px 34px -18px rgba(0,60,52,.6)' }}>
+                <p className="font-barlow text-[11px] font-bold uppercase tracking-[0.14em] text-kidville-yellow">In sezione</p>
+                <h1 className="font-barlow text-3xl font-black uppercase tracking-wide text-white">Diario del giorno</h1>
+                <p className="mt-1.5 font-maven text-xs capitalize text-white/80">
+                    Sezione Girasoli • {new Date().toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' })}
+                </p>
+            </div>
+
+            {/* Controlli (filtro presenze + offline) */}
+            <div className="mt-3 flex items-center gap-2">
+                <button
+                    onClick={() => setShowAll(v => !v)}
+                    className={`flex items-center gap-1.5 rounded-pill border px-3 py-1.5 font-maven text-xs font-semibold transition-colors ${
+                        showAll
+                            ? 'border-kidville-line bg-white text-kidville-muted'
+                            : 'border-kidville-green/20 bg-kidville-green-soft text-kidville-green'
+                    }`}
+                    title={showAll ? 'Sto mostrando tutti i bambini' : 'Sto mostrando solo i presenti'}
+                >
+                    <Users size={12} strokeWidth={1.5} /> {showAll ? 'Tutti' : 'Solo presenti'}
+                </button>
                 {isOffline && (
-                    <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 text-amber-600 px-3 py-1.5 rounded-full text-xs font-maven">
+                    <div className="flex items-center gap-1.5 rounded-pill border border-kidville-warn/30 bg-kidville-warn-soft px-3 py-1.5 font-maven text-xs text-kidville-warn">
                         <WifiOff size={12} strokeWidth={1.5} /> Offline
                     </div>
                 )}
             </div>
 
-            {/* ── Griglia eventi ── */}
-            <div className="w-full bg-white/80 backdrop-blur-xl rounded-3xl p-4 shadow-sm border border-white/40">
+            {/* ── Griglia eventi (6 routine) ── */}
+            <div className="mt-4 w-full rounded-3xl border border-kidville-line bg-white p-4 shadow-sm">
                 <p className="font-barlow font-bold text-kidville-green uppercase text-xs tracking-wide mb-3">Cosa vuoi registrare?</p>
                 <div className="grid grid-cols-3 gap-2">
                     {ALL_EVENT_TYPES.map(type => (
@@ -345,22 +382,22 @@ export default function TeacherDiaryPage() {
                         exit="exit"
                         className="w-full mt-4"
                     >
-                        {/* Header sezione con glassmorphism */}
-                        <div className="w-full bg-white/70 backdrop-blur-2xl rounded-3xl border border-white/30 shadow-xl overflow-hidden">
+                        {/* Header sezione (DR) */}
+                        <div className="w-full overflow-hidden rounded-3xl border border-kidville-line bg-white shadow-lg">
                             {/* Title bar */}
-                            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100/60">
+                            <div className="flex items-center justify-between px-5 py-4 border-b border-kidville-line">
                                 <div className="flex items-center gap-3">
                                     <div className={`w-10 h-10 rounded-2xl flex items-center justify-center text-xl ${cfg.color} border ${cfg.accentColor.split(' ').find(c => c.startsWith('border-')) ?? ''}`}>
                                         {cfg.emoji}
                                     </div>
                                     <div>
                                         <h2 className="font-barlow font-black text-lg text-kidville-green uppercase tracking-wide">{cfg.label}</h2>
-                                        <p className="font-maven text-[11px] text-gray-400">{students.length} bambini • {todayISO()}</p>
+                                        <p className="font-maven text-[11px] text-kidville-muted">{students.length} bambini • {todayISO()}</p>
                                     </div>
                                 </div>
                                 <button
                                     onClick={() => setSelectedEvent(null)}
-                                    className="w-8 h-8 rounded-xl bg-gray-100/80 hover:bg-gray-200/80 flex items-center justify-center text-gray-400 hover:text-gray-600 transition-colors"
+                                    className="w-8 h-8 rounded-xl bg-kidville-cream-dark hover:bg-kidville-cream flex items-center justify-center text-kidville-green transition-colors"
                                 >
                                     <X size={14} strokeWidth={1.5} />
                                 </button>
@@ -391,6 +428,16 @@ export default function TeacherDiaryPage() {
                                     />
                                 )}
 
+                                {/* ── Bulk "Nanna per tutti": un tap imposta l'orario inizio = ora per tutti ── */}
+                                {selectedEvent === 'nanna_inizio' && students.length > 0 && (
+                                    <button
+                                        onClick={bulkNannaOra}
+                                        className="w-full mb-1 py-2.5 rounded-2xl bg-kidville-info-soft border border-kidville-info/30 text-kidville-info font-maven font-semibold text-sm flex items-center justify-center gap-2 hover:bg-kidville-info-soft transition-colors"
+                                    >
+                                        <Moon size={14} strokeWidth={1.5} /> Tutti a nanna ora ({now()})
+                                    </button>
+                                )}
+
                                 {/* ── NANNA (inizio) / SVEGLIA (fine) — due eventi distinti (PRD §3.1.1) ── */}
                                 {(selectedEvent === 'nanna_inizio' || selectedEvent === 'nanna_fine') && students.map((student, idx) => {
                                     const state = studentStates[student.id] ?? {};
@@ -403,7 +450,7 @@ export default function TeacherDiaryPage() {
                                             variants={itemVariants}
                                             initial="hidden"
                                             animate="visible"
-                                            className="bg-white/80 backdrop-blur-xl rounded-2xl border border-white/40 shadow-sm px-4 py-3"
+                                            className="rounded-2xl border border-kidville-line bg-white shadow-sm px-4 py-3"
                                         >
                                             <div className="flex items-center gap-3 mb-3">
                                                 <div className="w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center font-barlow font-bold text-xs bg-kidville-cream text-kidville-green">
@@ -411,14 +458,14 @@ export default function TeacherDiaryPage() {
                                                 </div>
                                                 <span className="font-maven font-medium text-sm text-kidville-green flex-1">
                                                     {student.firstName} {student.lastName}
-                                                    {isSaved && <span className="ml-1.5 text-emerald-500">✅</span>}
+                                                    {isSaved && <span className="ml-1.5 text-kidville-success">✅</span>}
                                                 </span>
                                             </div>
                                             <div className="flex items-center gap-1.5 mb-1.5">
                                                 {isInizio
-                                                    ? <Moon size={12} className="text-blue-400" strokeWidth={1.5} />
-                                                    : <Sun size={12} className="text-yellow-500" strokeWidth={1.5} />}
-                                                <p className="font-maven text-xs text-gray-500">
+                                                    ? <Moon size={12} className="text-kidville-info" strokeWidth={1.5} />
+                                                    : <Sun size={12} className="text-kidville-yellow-dark" strokeWidth={1.5} />}
+                                                <p className="font-maven text-xs text-kidville-muted">
                                                     {isInizio ? 'Si addormenta (inizio nanna)' : 'Si sveglia (fine nanna)'}
                                                 </p>
                                             </div>
@@ -426,7 +473,7 @@ export default function TeacherDiaryPage() {
                                                 type="time"
                                                 value={(isInizio ? (state.orario_inizio as string) : (state.orario_fine as string)) ?? ''}
                                                 onChange={e => updateStudent(student.id, isInizio ? { orario_inizio: e.target.value } : { orario_fine: e.target.value })}
-                                                className={`w-full border-2 border-gray-200/60 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white/60 focus:outline-none focus:ring-2 transition-all ${isInizio ? 'focus:ring-blue-300/40 focus:border-blue-300/60' : 'focus:ring-yellow-300/40 focus:border-yellow-300/60'}`}
+                                                className={`w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:ring-2 transition-all ${isInizio ? 'focus:ring-kidville-info/40 focus:border-kidville-info/60' : 'focus:ring-kidville-yellow-dark/40 focus:border-kidville-yellow-dark/60'}`}
                                             />
                                         </motion.div>
                                     );
@@ -446,7 +493,7 @@ export default function TeacherDiaryPage() {
                                             variants={itemVariants}
                                             initial="hidden"
                                             animate="visible"
-                                            className="bg-white/80 backdrop-blur-xl rounded-2xl border border-white/40 shadow-sm px-4 py-3"
+                                            className="rounded-2xl border border-kidville-line bg-white shadow-sm px-4 py-3"
                                         >
                                             {/* Avatar + Nome */}
                                             <div className="flex items-center gap-3 mb-3">
@@ -455,58 +502,58 @@ export default function TeacherDiaryPage() {
                                                 </div>
                                                 <span className="font-maven font-medium text-sm text-kidville-green flex-1">
                                                     {student.firstName} {student.lastName}
-                                                    {isSaved && <span className="ml-1.5 text-emerald-500">✅</span>}
+                                                    {isSaved && <span className="ml-1.5 text-kidville-success">✅</span>}
                                                 </span>
                                             </div>
                                             {/* Contatori in griglia */}
                                             <div className="grid grid-cols-3 gap-2">
                                                 {/* Pipì */}
-                                                <div className="flex items-center gap-2 bg-sky-50/80 backdrop-blur-sm rounded-xl px-3 py-2 border border-sky-100/40">
+                                                <div className="flex items-center gap-2 bg-kidville-info-soft/80 backdrop-blur-sm rounded-xl px-3 py-2 border border-kidville-info/20">
                                                     <span className="text-lg leading-none">💧</span>
                                                     <button
                                                         onClick={() => counter(student.id, 'pipi', -1)}
-                                                        className="w-7 h-7 rounded-full bg-white border border-sky-200 text-sky-600 flex items-center justify-center hover:bg-sky-50 transition-colors"
+                                                        className="w-7 h-7 rounded-full bg-white border border-kidville-info/30 text-kidville-info flex items-center justify-center hover:bg-kidville-info-soft transition-colors"
                                                     >
                                                         <Minus size={10} strokeWidth={1.5} />
                                                     </button>
-                                                    <span className="font-barlow font-black text-xl text-sky-700 w-6 text-center">{pipi}</span>
+                                                    <span className="font-barlow font-black text-xl text-kidville-info w-6 text-center">{pipi}</span>
                                                     <button
                                                         onClick={() => counter(student.id, 'pipi', 1)}
-                                                        className="w-7 h-7 rounded-full bg-sky-500 text-white flex items-center justify-center hover:bg-sky-600 transition-colors"
+                                                        className="w-7 h-7 rounded-full bg-kidville-info text-white flex items-center justify-center hover:opacity-90 transition-colors"
                                                     >
                                                         <Plus size={10} strokeWidth={1.5} />
                                                     </button>
                                                 </div>
                                                 {/* Cacca */}
-                                                <div className="flex items-center gap-2 bg-amber-50/80 backdrop-blur-sm rounded-xl px-3 py-2 border border-amber-100/40">
+                                                <div className="flex items-center gap-2 bg-kidville-warn-soft/80 backdrop-blur-sm rounded-xl px-3 py-2 border border-kidville-warn/20">
                                                     <span className="text-lg leading-none">💩</span>
                                                     <button
                                                         onClick={() => counter(student.id, 'cacca', -1)}
-                                                        className="w-7 h-7 rounded-full bg-white border border-amber-200 text-amber-600 flex items-center justify-center hover:bg-amber-50 transition-colors"
+                                                        className="w-7 h-7 rounded-full bg-white border border-kidville-warn/30 text-kidville-warn flex items-center justify-center hover:bg-kidville-warn-soft transition-colors"
                                                     >
                                                         <Minus size={10} strokeWidth={1.5} />
                                                     </button>
-                                                    <span className="font-barlow font-black text-xl text-amber-700 w-6 text-center">{cacca}</span>
+                                                    <span className="font-barlow font-black text-xl text-kidville-warn w-6 text-center">{cacca}</span>
                                                     <button
                                                         onClick={() => counter(student.id, 'cacca', 1)}
-                                                        className="w-7 h-7 rounded-full bg-amber-500 text-white flex items-center justify-center hover:bg-amber-600 transition-colors"
+                                                        className="w-7 h-7 rounded-full bg-kidville-warn text-white flex items-center justify-center hover:opacity-90 transition-colors"
                                                     >
                                                         <Plus size={10} strokeWidth={1.5} />
                                                     </button>
                                                 </div>
                                                 {/* Vasino (potty training) */}
-                                                <div className="flex items-center gap-2 bg-emerald-50/80 backdrop-blur-sm rounded-xl px-3 py-2 border border-emerald-100/40">
+                                                <div className="flex items-center gap-2 bg-kidville-success-soft/80 backdrop-blur-sm rounded-xl px-3 py-2 border border-kidville-success/20">
                                                     <span className="text-lg leading-none">🪣</span>
                                                     <button
                                                         onClick={() => counter(student.id, 'vasino', -1)}
-                                                        className="w-7 h-7 rounded-full bg-white border border-emerald-200 text-emerald-600 flex items-center justify-center hover:bg-emerald-50 transition-colors"
+                                                        className="w-7 h-7 rounded-full bg-white border border-kidville-success/30 text-kidville-success flex items-center justify-center hover:bg-kidville-success-soft transition-colors"
                                                     >
                                                         <Minus size={10} strokeWidth={1.5} />
                                                     </button>
-                                                    <span className="font-barlow font-black text-xl text-emerald-700 w-6 text-center">{vasino}</span>
+                                                    <span className="font-barlow font-black text-xl text-kidville-success w-6 text-center">{vasino}</span>
                                                     <button
                                                         onClick={() => counter(student.id, 'vasino', 1)}
-                                                        className="w-7 h-7 rounded-full bg-emerald-500 text-white flex items-center justify-center hover:bg-emerald-600 transition-colors"
+                                                        className="w-7 h-7 rounded-full bg-kidville-success text-white flex items-center justify-center hover:opacity-90 transition-colors"
                                                     >
                                                         <Plus size={10} strokeWidth={1.5} />
                                                     </button>
@@ -517,8 +564,19 @@ export default function TeacherDiaryPage() {
                                 })}
                             </div>
 
+                            {/* ── Nota libera (visibile ai genitori) ── */}
+                            <div className="px-4 pt-1 pb-2">
+                                <textarea
+                                    value={notaLibera}
+                                    onChange={e => setNotaLibera(e.target.value)}
+                                    rows={2}
+                                    placeholder="Nota libera per i genitori (opzionale)…"
+                                    className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:ring-2 focus:ring-kidville-green/30 resize-none"
+                                />
+                            </div>
+
                             {/* ── Footer salva ── */}
-                            <div className="px-4 py-3 border-t border-gray-100/60">
+                            <div className="px-4 py-3 border-t border-kidville-line">
                                 <button
                                     onClick={handleSave}
                                     disabled={isSaving}
@@ -543,7 +601,7 @@ export default function TeacherDiaryPage() {
                     transition={{ delay: 0.1, duration: 0.3 }}
                     className="mt-6 text-center py-12"
                 >
-                    <p className="font-maven text-gray-400 text-sm">
+                    <p className="font-maven text-kidville-muted text-sm">
                         👆 Seleziona un evento per iniziare a compilare il diario
                     </p>
                 </motion.div>
@@ -556,12 +614,20 @@ export default function TeacherDiaryPage() {
                         initial={{ opacity: 0, y: -20, scale: 0.95 }}
                         animate={{ opacity: 1, y: 0, scale: 1 }}
                         exit={{ opacity: 0, y: -10, scale: 0.95 }}
-                        className="fixed top-6 left-1/2 -translate-x-1/2 z-[60] bg-emerald-600 text-white font-maven font-semibold px-6 py-3 rounded-2xl shadow-xl flex items-center gap-2"
+                        className="fixed top-6 left-1/2 -translate-x-1/2 z-[60] bg-kidville-green text-white font-maven font-semibold px-6 py-3 rounded-2xl shadow-xl flex items-center gap-2"
                     >
                         ✅ Salvato con successo!
                     </motion.div>
                 )}
             </AnimatePresence>
         </div>
+    );
+}
+
+export default function TeacherDiaryPage() {
+    return (
+        <Suspense fallback={null}>
+            <TeacherDiaryInner />
+        </Suspense>
     );
 }

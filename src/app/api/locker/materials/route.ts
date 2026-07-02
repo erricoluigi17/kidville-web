@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server-client';
+import { createAdminClient } from '@/lib/supabase/server-client';
+import { requireDocente } from '@/lib/auth/require-staff';
+import { assertClasseNomeInScope } from '@/lib/auth/scope';
+import { logScrittura } from '@/lib/audit/scrittura';
 
 /**
  * GET /api/locker/materials?classe_sezione=Girasoli
@@ -11,8 +14,8 @@ export async function GET(request: NextRequest) {
     const classeSezione = searchParams.get('classe_sezione') ?? null;
 
     try {
-        const supabase = await createClient();
-        let q = supabase
+        const admin = await createAdminClient();
+        let q = admin
             .from('locker_config')
             .select('*')
             .eq('attivo', true)
@@ -41,8 +44,16 @@ export async function GET(request: NextRequest) {
  */
 export async function POST(request: NextRequest) {
     try {
+        const auth = await requireDocente(request);
+        if (auth.response) return auth.response;
         const body = await request.json();
-        const supabase = await createClient();
+        const admin = await createAdminClient();
+
+        // Scope per plesso (classe risolta per nome dentro i propri plessi).
+        if (body.classe_sezione) {
+            const scopeErr = await assertClasseNomeInScope(admin, auth.user, body.classe_sezione);
+            if (scopeErr) return scopeErr;
+        }
 
         const payload = {
             classe_sezione:    body.classe_sezione ?? null,
@@ -57,16 +68,21 @@ export async function POST(request: NextRequest) {
 
         let result;
         if (body.id) {
-            const { data, error } = await supabase
+            const { data, error } = await admin
                 .from('locker_config').update(payload).eq('id', body.id).select().single();
             if (error) throw error;
             result = data;
         } else {
-            const { data, error } = await supabase
+            const { data, error } = await admin
                 .from('locker_config').insert(payload).select().single();
             if (error) throw error;
             result = data;
         }
+
+        await logScrittura(admin, {
+            attore: auth.user, entitaTipo: 'armadietto_config', entitaId: result?.id ?? null,
+            azione: body.id ? 'update' : 'insert', valoreDopo: result,
+        });
 
         return NextResponse.json({ success: true, data: result });
     } catch (err: any) {
@@ -80,12 +96,25 @@ export async function POST(request: NextRequest) {
  */
 export async function PATCH(request: NextRequest) {
     try {
+        const auth = await requireDocente(request);
+        if (auth.response) return auth.response;
         const body = await request.json();
-        const supabase = await createClient();
+        const admin = await createAdminClient();
         const { id, ...updates } = body;
-        const { data, error } = await supabase
+
+        // Scope: risolve la classe del record (per nome) entro i propri plessi.
+        const { data: row } = await admin.from('locker_config').select('classe_sezione').eq('id', id).maybeSingle();
+        if (row?.classe_sezione) {
+            const scopeErr = await assertClasseNomeInScope(admin, auth.user, row.classe_sezione);
+            if (scopeErr) return scopeErr;
+        }
+
+        const { data, error } = await admin
             .from('locker_config').update(updates).eq('id', id).select().single();
         if (error) throw error;
+        await logScrittura(admin, {
+            attore: auth.user, entitaTipo: 'armadietto_config', entitaId: id, azione: 'update', valoreDopo: data,
+        });
         return NextResponse.json({ success: true, data });
     } catch (err: any) {
         return NextResponse.json({ error: err.message }, { status: 500 });
@@ -97,13 +126,25 @@ export async function PATCH(request: NextRequest) {
  */
 export async function DELETE(request: NextRequest) {
     try {
+        const auth = await requireDocente(request);
+        if (auth.response) return auth.response;
         const { searchParams } = new URL(request.url);
         const id = searchParams.get('id');
         if (!id) return NextResponse.json({ error: 'id mancante' }, { status: 400 });
 
-        const supabase = await createClient();
-        const { error } = await supabase.from('locker_config').delete().eq('id', id);
+        const admin = await createAdminClient();
+
+        const { data: row } = await admin.from('locker_config').select('classe_sezione').eq('id', id).maybeSingle();
+        if (row?.classe_sezione) {
+            const scopeErr = await assertClasseNomeInScope(admin, auth.user, row.classe_sezione);
+            if (scopeErr) return scopeErr;
+        }
+
+        const { error } = await admin.from('locker_config').delete().eq('id', id);
         if (error) throw error;
+        await logScrittura(admin, {
+            attore: auth.user, entitaTipo: 'armadietto_config', entitaId: id, azione: 'delete',
+        });
         return NextResponse.json({ success: true });
     } catch (err: any) {
         return NextResponse.json({ error: err.message }, { status: 500 });

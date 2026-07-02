@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient, createAdminClient } from '@/lib/supabase/server-client';
+import { requireDocente } from '@/lib/auth/require-staff';
+import { alunniSenzaConsenso } from '@/lib/gallery/privacy';
 
 // GET /api/gallery?studentId=xxx&classe=xxx&date=YYYY-MM-DD&limit=30&offset=0
 // Lista media con filtri (studentId per genitore, classe per insegnante)
@@ -108,9 +110,11 @@ export async function GET(request: Request) {
 // Body: { uploaded_by, file_url, file_type?, caption?, tag_students?, is_broadcast?, target_classes? }
 export async function POST(request: Request) {
     try {
+        const auth = await requireDocente(request);
+        if (auth.response) return auth.response;
+
         const body = await request.json();
         const {
-            uploaded_by,
             file_url,
             file_type,
             caption,
@@ -119,14 +123,31 @@ export async function POST(request: Request) {
             target_classes,
         } = body;
 
-        if (!uploaded_by || !file_url) {
+        if (!file_url) {
             return NextResponse.json(
-                { error: 'uploaded_by e file_url sono obbligatori' },
+                { error: 'file_url è obbligatorio' },
                 { status: 400 }
             );
         }
 
+        // L'uploader è l'utente del gate (no spoofing del campo uploaded_by).
+        const uploaded_by = auth.user.id;
+
         const supabase = await createAdminClient();
+
+        // Privacy Lock (DL-041): inibisce il tagging di alunni senza consenso privacy
+        // (liberatoria foto), tranne nelle foto broadcast (istituzionali).
+        const senza = await alunniSenzaConsenso(supabase, tag_students, is_broadcast ?? false);
+        if (senza.length > 0) {
+            return NextResponse.json(
+                {
+                    error: 'Consenso privacy mancante: questi bambini non possono essere taggati nelle foto.',
+                    nomi: senza.map((s) => s.nome),
+                    ids: senza.map((s) => s.id),
+                },
+                { status: 422 }
+            );
+        }
 
         const { data, error } = await supabase
             .from('galleria_media_v2')
@@ -413,6 +434,23 @@ export async function PATCH(request: Request) {
         }
 
         // 3. Esegui l'aggiornamento
+        // Privacy Lock (DL-041): valida i tag EFFETTIVI quando si modificano tag/broadcast.
+        if (tag_students !== undefined || is_broadcast !== undefined) {
+            const effBroadcast = is_broadcast !== undefined ? is_broadcast : media.is_broadcast;
+            const effTags = tag_students !== undefined ? tag_students : media.tag_students;
+            const senza = await alunniSenzaConsenso(supabase, effTags, effBroadcast ?? false);
+            if (senza.length > 0) {
+                return NextResponse.json(
+                    {
+                        error: 'Consenso privacy mancante: questi bambini non possono essere taggati nelle foto.',
+                        nomi: senza.map((s) => s.nome),
+                        ids: senza.map((s) => s.id),
+                    },
+                    { status: 422 }
+                );
+            }
+        }
+
         const updateData: Record<string, any> = {};
         if (tag_students !== undefined) updateData.tag_students = tag_students;
         if (is_broadcast !== undefined) updateData.is_broadcast = is_broadcast;

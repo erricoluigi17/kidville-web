@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { LayoutGrid, CalendarDays, Loader2, WifiOff, Users, RefreshCw, ChevronLeft, ChevronRight, Calendar } from 'lucide-react';
+import { LayoutGrid, CalendarDays, Loader2, WifiOff, Users, RefreshCw, ChevronLeft, ChevronRight, Calendar, Check } from 'lucide-react';
 import { LocalDelegate } from '@/lib/offline/db';
 import { StudentAttendanceRow, AttendanceRecord, AttendanceStato } from '@/components/features/teacher/StudentAttendanceRow';
 import { CheckoutModal } from '@/components/features/teacher/CheckoutModal';
@@ -12,6 +12,15 @@ import { MonthlyAttendanceTable } from '@/components/features/teacher/attendance
 
 const SEZIONE = 'Girasoli';
 
+// Scala stati con i token brand (DR STATI). Sostituisce i colori off-token
+// (blu/grigio) della versione glassmorphism precedente.
+const STATI: Record<string, { label: string; tint: string; soft: string }> = {
+    presente: { label: 'Presenti', tint: 'var(--color-kidville-success)', soft: 'var(--color-kidville-success-soft)' },
+    ritardo: { label: 'Ritardo', tint: 'var(--color-kidville-warn)', soft: 'var(--color-kidville-warn-soft)' },
+    uscita_anticipata: { label: 'Uscita', tint: 'var(--color-kidville-info)', soft: 'var(--color-kidville-info-soft)' },
+    assente: { label: 'Assenti', tint: 'var(--color-kidville-neutral)', soft: 'var(--color-kidville-neutral-soft)' },
+};
+
 // ─── Tipi ─────────────────────────────────────────────────────────────────────
 
 interface Student {
@@ -20,30 +29,21 @@ interface Student {
     lastName: string;
 }
 
+type FilterKey = 'tutti' | 'todo' | AttendanceStato;
+
 // ─── Tab ──────────────────────────────────────────────────────────────────────
 
 type Tab = 'oggi' | 'mese';
 
 const TABS: { id: Tab; label: string; icon: typeof LayoutGrid }[] = [
-    { id: 'oggi', label: 'Oggi',   icon: LayoutGrid },
-    { id: 'mese', label: 'Mese',   icon: CalendarDays },
+    { id: 'oggi', label: 'Oggi', icon: LayoutGrid },
+    { id: 'mese', label: 'Mese', icon: CalendarDays },
 ];
 
 const tabContentVariants = {
-    enter: (direction: number) => ({
-        x: direction > 0 ? 32 : -32,
-        opacity: 0,
-    }),
-    center: {
-        x: 0,
-        opacity: 1,
-        transition: { duration: 0.28, ease: 'easeInOut' as const },
-    },
-    exit: (direction: number) => ({
-        x: direction > 0 ? -32 : 32,
-        opacity: 0,
-        transition: { duration: 0.2, ease: 'easeInOut' as const },
-    }),
+    enter: (direction: number) => ({ x: direction > 0 ? 32 : -32, opacity: 0 }),
+    center: { x: 0, opacity: 1, transition: { duration: 0.28, ease: 'easeInOut' as const } },
+    exit: (direction: number) => ({ x: direction > 0 ? -32 : 32, opacity: 0, transition: { duration: 0.2, ease: 'easeInOut' as const } }),
 };
 
 // ─── Utility data ─────────────────────────────────────────────────────────────
@@ -70,30 +70,30 @@ function DateNavigator({ date, onChange }: { date: string; onChange: (d: string)
     const isToday = date === todayISO;
 
     return (
-        <div className="flex items-center gap-2 bg-white/60 backdrop-blur-sm rounded-2xl p-2 border border-white/80 shadow-sm">
+        <div className="flex items-center gap-2 rounded-2xl border border-kidville-line bg-kidville-cream p-2">
             <button
                 onClick={() => onChange(addDays(date, -1))}
-                className="w-8 h-8 rounded-xl bg-white/80 border border-gray-200 flex items-center justify-center text-gray-500 hover:text-kidville-green hover:border-kidville-green/30 transition-all"
+                className="flex h-8 w-8 items-center justify-center rounded-xl bg-white text-kidville-green shadow-sm"
                 title="Giorno precedente"
             >
                 <ChevronLeft size={15} />
             </button>
 
-            <div className="relative flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white border border-gray-200 hover:border-kidville-green/40 transition-all cursor-pointer">
-                <Calendar size={14} className="text-kidville-green flex-shrink-0" />
+            <div className="relative flex flex-1 items-center gap-2 rounded-xl bg-white px-3 py-1.5 shadow-sm">
+                <Calendar size={14} className="flex-shrink-0 text-kidville-green" />
                 <input
                     type="date"
                     value={date}
                     max={todayISO}
-                    onChange={e => e.target.value && onChange(e.target.value)}
-                    className="font-maven text-sm font-medium text-gray-700 bg-transparent outline-none cursor-pointer w-32"
+                    onChange={(e) => e.target.value && onChange(e.target.value)}
+                    className="w-full cursor-pointer bg-transparent font-maven text-sm font-medium text-kidville-ink outline-none"
                 />
             </div>
 
             <button
                 onClick={() => !isToday && onChange(addDays(date, 1))}
                 disabled={isToday}
-                className="w-8 h-8 rounded-xl bg-white/80 border border-gray-200 flex items-center justify-center text-gray-500 hover:text-kidville-green hover:border-kidville-green/30 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                className="flex h-8 w-8 items-center justify-center rounded-xl bg-white text-kidville-green shadow-sm disabled:cursor-not-allowed disabled:opacity-30"
                 title="Giorno successivo"
             >
                 <ChevronRight size={15} />
@@ -102,11 +102,77 @@ function DateNavigator({ date, onChange }: { date: string; onChange: (d: string)
             {!isToday && (
                 <button
                     onClick={() => onChange(todayISO)}
-                    className="px-3 py-1.5 rounded-xl bg-kidville-green text-white font-maven text-xs font-semibold hover:opacity-90 transition-all"
+                    className="rounded-pill bg-kidville-green px-3 py-1.5 font-maven text-xs font-semibold text-kidville-yellow"
                 >
                     Oggi
                 </button>
             )}
+        </div>
+    );
+}
+
+// ─── Card riepilogo + filtro (DR Summary) ──────────────────────────────────────
+
+function Summary({
+    counts, total, filter, onFilter,
+}: {
+    counts: Record<string, number>;
+    total: number;
+    filter: FilterKey;
+    onFilter: (f: FilterKey) => void;
+}) {
+    const reg = (counts.presente ?? 0) + (counts.ritardo ?? 0) + (counts.uscita_anticipata ?? 0) + (counts.assente ?? 0);
+    const safeTot = total || 1;
+    const chips: { key: FilterKey; label: string; n: number; tint: string; soft: string }[] = [
+        { key: 'tutti', label: 'Tutti', n: total, tint: 'var(--color-kidville-green)', soft: 'var(--color-kidville-green-soft)' },
+        { key: 'presente', label: 'Presenti', n: counts.presente ?? 0, tint: STATI.presente.tint, soft: STATI.presente.soft },
+        { key: 'ritardo', label: 'Ritardo', n: counts.ritardo ?? 0, tint: STATI.ritardo.tint, soft: STATI.ritardo.soft },
+        { key: 'uscita_anticipata', label: 'Uscita', n: counts.uscita_anticipata ?? 0, tint: STATI.uscita_anticipata.tint, soft: STATI.uscita_anticipata.soft },
+        { key: 'assente', label: 'Assenti', n: counts.assente ?? 0, tint: STATI.assente.tint, soft: STATI.assente.soft },
+        { key: 'todo', label: 'Da registrare', n: total - reg, tint: 'var(--color-kidville-yellow-dark)', soft: 'var(--color-kidville-yellow-soft)' },
+    ];
+
+    return (
+        <div>
+            <div className="rounded-[20px] bg-white p-4" style={{ boxShadow: '0 1px 2px rgba(0,84,75,.05), 0 10px 28px -20px rgba(0,84,75,.4)' }}>
+                <div className="flex items-end justify-between gap-3">
+                    <div>
+                        <div className="font-barlow text-[11px] font-bold uppercase tracking-[0.12em] text-kidville-yellow-dark">Sezione {SEZIONE}</div>
+                        <div className="mt-0.5 flex items-baseline gap-1.5">
+                            <span className="font-barlow text-[34px] font-black leading-none text-kidville-green">{reg}</span>
+                            <span className="font-barlow text-lg font-extrabold text-kidville-muted">/ {total}</span>
+                            <span className="ml-0.5 font-maven text-xs text-kidville-ink">registrati</span>
+                        </div>
+                    </div>
+                    {reg === total && total > 0 ? (
+                        <span className="inline-flex items-center gap-1 rounded-pill bg-kidville-success-soft px-2.5 py-1 font-barlow text-[10.5px] font-extrabold uppercase text-kidville-success"><Check size={11} strokeWidth={2.8} /> Completo</span>
+                    ) : (
+                        <span className="rounded-pill bg-kidville-yellow-soft px-2.5 py-1 font-barlow text-[10.5px] font-extrabold uppercase text-kidville-yellow-dark">{total - reg} mancanti</span>
+                    )}
+                </div>
+                <div className="mt-3 flex h-2 overflow-hidden rounded-full bg-kidville-cream-dark">
+                    <div style={{ width: `${(counts.presente ?? 0) / safeTot * 100}%`, background: STATI.presente.tint }} />
+                    <div style={{ width: `${(counts.ritardo ?? 0) / safeTot * 100}%`, background: STATI.ritardo.tint }} />
+                    <div style={{ width: `${(counts.uscita_anticipata ?? 0) / safeTot * 100}%`, background: STATI.uscita_anticipata.tint }} />
+                    <div style={{ width: `${(counts.assente ?? 0) / safeTot * 100}%`, background: STATI.assente.tint }} />
+                </div>
+            </div>
+            <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
+                {chips.map((c) => {
+                    const on = filter === c.key;
+                    return (
+                        <button
+                            key={c.key}
+                            onClick={() => onFilter(c.key)}
+                            className="flex shrink-0 items-center gap-1.5 rounded-pill bg-white py-1.5 pl-2 pr-3"
+                            style={on ? { boxShadow: `inset 0 0 0 1.5px ${c.tint}`, background: c.soft } : { boxShadow: '0 1px 2px rgba(0,84,75,.05)' }}
+                        >
+                            <span className="inline-flex h-5 min-w-[20px] items-center justify-center rounded-full px-1.5 font-barlow text-xs font-extrabold text-white" style={{ background: c.tint }}>{c.n}</span>
+                            <span className="font-barlow text-xs font-extrabold uppercase tracking-wide" style={{ color: on ? c.tint : '#6c766f' }}>{c.label}</span>
+                        </button>
+                    );
+                })}
+            </div>
         </div>
     );
 }
@@ -123,7 +189,8 @@ function TodayView() {
     const [loadingStudentId, setLoadingStudentId] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-    const [isOffline, setIsOffline] = useState(false);
+    const [isOffline, setIsOffline] = useState(() => typeof navigator !== 'undefined' && !navigator.onLine);
+    const [filter, setFilter] = useState<FilterKey>('tutti');
 
     // ── Fetch studenti reali dall'anagrafica Supabase ──
     const fetchStudents = useCallback(async () => {
@@ -203,7 +270,6 @@ function TodayView() {
         const onOffline = () => setIsOffline(true);
         window.addEventListener('online', onOnline);
         window.addEventListener('offline', onOffline);
-        setIsOffline(!navigator.onLine);
         return () => {
             window.removeEventListener('online', onOnline);
             window.removeEventListener('offline', onOffline);
@@ -285,27 +351,35 @@ function TodayView() {
     const checkoutStudent = students.find(s => s.id === selectedCheckout);
     const studentDelegates = delegates.filter(d => d.alunno_id === selectedCheckout);
 
-    const presentiCount = Object.values(records).filter(r =>
-        r.stato === 'presente' || r.stato === 'ritardo' || r.stato === 'uscita_anticipata'
-    ).length;
+    const counts = useMemo(() => {
+        const c: Record<string, number> = { presente: 0, ritardo: 0, uscita_anticipata: 0, assente: 0 };
+        Object.values(records).forEach((r) => { if (r.stato in c) c[r.stato] += 1; });
+        return c;
+    }, [records]);
+
+    const visibleStudents = useMemo(() => {
+        if (filter === 'tutti') return students;
+        if (filter === 'todo') return students.filter((s) => !records[s.id]);
+        return students.filter((s) => records[s.id]?.stato === filter);
+    }, [students, records, filter]);
 
     // ── Stati UI ──
     if (isLoading) {
         return (
-            <div className="flex flex-col items-center justify-center py-20 gap-4">
-                <Loader2 size={32} className="text-kidville-green animate-spin" />
-                <p className="font-maven text-gray-500 text-sm">Caricamento alunni da anagrafica…</p>
+            <div className="flex flex-col items-center justify-center gap-4 py-20">
+                <Loader2 size={32} className="animate-spin text-kidville-green" />
+                <p className="font-maven text-sm text-kidville-muted">Caricamento alunni da anagrafica…</p>
             </div>
         );
     }
 
     if (error) {
         return (
-            <div className="flex flex-col items-center justify-center py-20 gap-4">
-                <p className="font-maven text-red-500 text-sm">⚠️ {error}</p>
+            <div className="flex flex-col items-center justify-center gap-4 py-20">
+                <p className="font-maven text-sm text-kidville-error">⚠️ {error}</p>
                 <button
                     onClick={loadAll}
-                    className="px-4 py-2 bg-kidville-green text-white font-maven text-sm rounded-xl hover:opacity-90 flex items-center gap-2"
+                    className="flex items-center gap-2 rounded-pill bg-kidville-green px-4 py-2 font-maven text-sm text-kidville-yellow"
                 >
                     <RefreshCw size={14} /> Riprova
                 </button>
@@ -315,9 +389,9 @@ function TodayView() {
 
     if (students.length === 0) {
         return (
-            <div className="flex flex-col items-center justify-center py-20 gap-4">
+            <div className="flex flex-col items-center justify-center gap-4 py-20">
                 <span className="text-5xl opacity-30">👶</span>
-                <p className="font-maven text-gray-400 text-sm text-center">
+                <p className="text-center font-maven text-sm text-kidville-muted">
                     Nessun alunno nella sezione <strong>{SEZIONE}</strong>.<br />
                     Verifica che gli alunni abbiano la sezione corretta in anagrafica.
                 </p>
@@ -326,54 +400,35 @@ function TodayView() {
     }
 
     return (
-        <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-4">
             {/* Navigatore data + intestazione */}
-            <div className="bg-white/60 backdrop-blur-sm rounded-2xl p-4 border border-white/80 shadow-sm flex flex-col gap-3">
+            <div className="flex flex-col gap-3 rounded-2xl border border-kidville-line bg-white p-4 shadow-sm">
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                        <p className="font-barlow font-bold text-kidville-green uppercase text-xs tracking-widest mb-1">
-                            Presenze del giorno
-                        </p>
-                        <p className="font-maven text-gray-500 text-sm capitalize">
-                            {formatDateIT(selectedDate)}
-                        </p>
-                    </div>
+                    <p className="font-maven text-sm capitalize text-kidville-muted">{formatDateIT(selectedDate)}</p>
                     <div className="flex items-center gap-2">
                         {isOffline && (
-                            <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 text-amber-600 px-3 py-1.5 rounded-full text-xs font-maven">
+                            <div className="flex items-center gap-1.5 rounded-pill border border-kidville-warn/30 bg-kidville-warn-soft px-3 py-1.5 font-maven text-xs text-kidville-warn">
                                 <WifiOff size={12} /> Offline
                             </div>
                         )}
                         <button
                             onClick={fetchTodayRecords}
                             title="Aggiorna presenze"
-                            className="w-8 h-8 flex items-center justify-center rounded-xl bg-white/80 border border-white/80 text-gray-400 hover:text-kidville-green transition-colors"
+                            className="flex h-8 w-8 items-center justify-center rounded-xl bg-kidville-cream text-kidville-muted transition-colors hover:text-kidville-green"
                         >
                             <RefreshCw size={14} />
                         </button>
-                        <div className="flex items-center gap-2 bg-kidville-green/8 border border-kidville-green/15 rounded-xl px-3 py-1.5">
-                            <span className="w-2 h-2 rounded-full bg-kidville-green animate-pulse" />
-                            <span className="font-maven text-xs text-kidville-green font-semibold">
-                                {presentiCount}/{students.length} presenti
-                            </span>
-                        </div>
                     </div>
                 </div>
-                {/* Selettore data */}
                 <DateNavigator date={selectedDate} onChange={setSelectedDate} />
             </div>
 
-            {/* Legenda stati */}
-            <div className="flex items-center gap-4 px-1 text-xs font-maven text-gray-400">
-                <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-kidville-success inline-block" />Presente</span>
-                <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-amber-400 inline-block" />Ritardo</span>
-                <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-blue-400 inline-block" />Uscita Ant.</span>
-                <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-gray-300 inline-block" />Assente</span>
-            </div>
+            {/* Card riepilogo + chip filtro */}
+            <Summary counts={counts} total={students.length} filter={filter} onFilter={setFilter} />
 
-            {/* Lista studenti */}
+            {/* Lista studenti (filtrata) */}
             <div className="flex flex-col gap-2">
-                {students.map(student => (
+                {visibleStudents.map(student => (
                     <StudentAttendanceRow
                         key={student.id}
                         student={student}
@@ -383,6 +438,11 @@ function TodayView() {
                         isLoading={loadingStudentId === student.id}
                     />
                 ))}
+                {visibleStudents.length === 0 && (
+                    <div className="rounded-2xl border border-dashed border-kidville-line bg-white/60 p-6 text-center font-maven text-sm text-kidville-muted">
+                        Nessun alunno per questo filtro.
+                    </div>
+                )}
             </div>
 
             {/* Modal uscita delegato */}
@@ -414,72 +474,63 @@ export default function TeacherAttendancePage() {
     };
 
     return (
-        <div className="min-h-screen" style={{ background: 'linear-gradient(160deg, hsl(145,30%,97%) 0%, hsl(200,25%,95%) 100%)' }}>
-            <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
+        <div className="mx-auto max-w-[460px] px-4 pt-5">
+            {/* ── Header verde (DR) ── */}
+            <div className="rounded-3xl bg-kidville-green px-5 py-5" style={{ boxShadow: '0 16px 34px -18px rgba(0,60,52,.6)' }}>
+                <p className="font-barlow text-[11px] font-bold uppercase tracking-[0.14em] text-kidville-yellow">Registro</p>
+                <h1 className="font-barlow text-3xl font-black uppercase tracking-wide text-white">Appello</h1>
+                <span className="mt-2 inline-flex items-center gap-1.5 rounded-pill bg-white/15 px-2.5 py-1 font-maven text-xs font-semibold text-white backdrop-blur">
+                    <Users size={13} /> Sezione {SEZIONE}
+                </span>
+            </div>
 
-                {/* ── Page Header ── */}
-                <div className="mb-6">
-                    <h1 className="font-barlow font-black text-3xl text-kidville-green uppercase tracking-wide">
-                        Registro Presenze
-                    </h1>
-                    <p className="font-maven text-gray-500 mt-1 flex items-center gap-2">
-                        <Users size={15} />
-                        Sezione {SEZIONE}
-                    </p>
-                </div>
-
-                {/* ── Tab Switcher ── */}
-                <div className="mb-6 inline-flex bg-white/70 backdrop-blur-sm border border-white/80 rounded-2xl p-1 shadow-sm gap-1">
-                    {TABS.map(tab => {
-                        const Icon = tab.icon;
-                        const isActive = activeTab === tab.id;
-                        return (
-                            <button
-                                key={tab.id}
-                                id={`tab-attendance-${tab.id}`}
-                                onClick={() => handleTabChange(tab.id)}
-                                className={`
-                                    relative flex items-center gap-2 px-4 py-2 rounded-xl font-maven font-semibold text-sm
-                                    transition-all duration-200
-                                    ${isActive ? 'text-white shadow-md' : 'text-gray-500 hover:text-kidville-green hover:bg-white/60'}
-                                `}
-                            >
-                                {isActive && (
-                                    <motion.div
-                                        layoutId="tab-bg-attendance"
-                                        className="absolute inset-0 rounded-xl bg-kidville-green"
-                                        style={{ zIndex: 0 }}
-                                        transition={{ duration: 0.25, ease: 'easeInOut' }}
-                                    />
-                                )}
-                                <Icon size={15} className="relative z-10" />
-                                <span className="relative z-10">{tab.label}</span>
-                            </button>
-                        );
-                    })}
-                </div>
-
-                {/* ── Tab Content ── */}
-                <div className="relative overflow-hidden">
-                    <AnimatePresence initial={false} custom={direction} mode="wait">
-                        <motion.div
-                            key={activeTab}
-                            custom={direction}
-                            variants={tabContentVariants}
-                            initial="enter"
-                            animate="center"
-                            exit="exit"
+            {/* ── Tab Switcher ── */}
+            <div className="mt-4 inline-flex gap-1 rounded-pill bg-white p-1 shadow-sm">
+                {TABS.map(tab => {
+                    const Icon = tab.icon;
+                    const isActive = activeTab === tab.id;
+                    return (
+                        <button
+                            key={tab.id}
+                            id={`tab-attendance-${tab.id}`}
+                            onClick={() => handleTabChange(tab.id)}
+                            className={`relative flex items-center gap-2 rounded-pill px-4 py-2 font-maven text-sm font-semibold transition-all duration-200 ${isActive ? 'text-kidville-yellow' : 'text-kidville-muted hover:text-kidville-green'}`}
                         >
-                            {activeTab === 'oggi' && <TodayView />}
-
-                            {activeTab === 'mese' && (
-                                <div className="bg-white/60 backdrop-blur-sm rounded-3xl p-5 sm:p-6 border border-white/80 shadow-sm">
-                                    <MonthlyAttendanceTable sezione={SEZIONE} />
-                                </div>
+                            {isActive && (
+                                <motion.div
+                                    layoutId="tab-bg-attendance"
+                                    className="absolute inset-0 rounded-pill bg-kidville-green"
+                                    style={{ zIndex: 0 }}
+                                    transition={{ duration: 0.25, ease: 'easeInOut' }}
+                                />
                             )}
-                        </motion.div>
-                    </AnimatePresence>
-                </div>
+                            <Icon size={15} className="relative z-10" />
+                            <span className="relative z-10">{tab.label}</span>
+                        </button>
+                    );
+                })}
+            </div>
+
+            {/* ── Tab Content ── */}
+            <div className="relative mt-4 overflow-hidden">
+                <AnimatePresence initial={false} custom={direction} mode="wait">
+                    <motion.div
+                        key={activeTab}
+                        custom={direction}
+                        variants={tabContentVariants}
+                        initial="enter"
+                        animate="center"
+                        exit="exit"
+                    >
+                        {activeTab === 'oggi' && <TodayView />}
+
+                        {activeTab === 'mese' && (
+                            <div className="overflow-x-auto rounded-3xl border border-kidville-line bg-white p-4 shadow-sm">
+                                <MonthlyAttendanceTable sezione={SEZIONE} />
+                            </div>
+                        )}
+                    </motion.div>
+                </AnimatePresence>
             </div>
         </div>
     );

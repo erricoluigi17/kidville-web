@@ -38,20 +38,20 @@ const STATO_CONFIG: Record<AttendanceStato, { label: string; color: string; bg: 
     assente: {
         label: 'Assente',
         color: 'text-white',
-        bg: 'bg-gray-400',
-        border: 'border-gray-400',
+        bg: 'bg-kidville-neutral',
+        border: 'border-kidville-neutral',
     },
     ritardo: {
         label: 'Ritardo',
         color: 'text-white',
-        bg: 'bg-amber-500',
-        border: 'border-amber-500',
+        bg: 'bg-kidville-warn',
+        border: 'border-kidville-warn',
     },
     uscita_anticipata: {
         label: 'Uscita Ant.',
         color: 'text-white',
-        bg: 'bg-blue-500',
-        border: 'border-blue-500',
+        bg: 'bg-kidville-info',
+        border: 'border-kidville-info',
     },
 };
 
@@ -88,7 +88,7 @@ export function StudentAttendanceRow({ student, record, onSetStato, onCheckoutCl
     return (
         <motion.div
             layout
-            className="bg-white p-4 rounded-2xl shadow-sm flex items-center justify-between border-l-4 transition-colors hover:bg-gray-50/80"
+            className="bg-white p-4 rounded-2xl shadow-sm flex items-center justify-between border-l-4 transition-colors hover:bg-kidville-cream"
             style={{ borderLeftColor: borderColor }}
         >
             {/* Avatar + Info studente */}
@@ -100,7 +100,7 @@ export function StudentAttendanceRow({ student, record, onSetStato, onCheckoutCl
                     <h3 className="font-barlow font-semibold text-lg text-kidville-green uppercase tracking-wide truncate">
                         {student.firstName} {student.lastName}
                     </h3>
-                    <div className="flex items-center gap-3 text-xs text-gray-400 font-maven">
+                    <div className="flex items-center gap-3 text-xs text-kidville-muted font-maven">
                         {checkInTime && (
                             <span className="flex items-center gap-1">
                                 <Clock size={11} /> Ingresso: {checkInTime}
@@ -132,14 +132,14 @@ export function StudentAttendanceRow({ student, record, onSetStato, onCheckoutCl
                         <button
                             id={`btn-ritardo-${student.id}`}
                             onClick={() => onSetStato(student.id, 'ritardo')}
-                            className="h-9 px-3 font-maven font-medium text-sm rounded-xl bg-amber-50 text-amber-600 border border-amber-200 hover:bg-amber-500 hover:text-white transition-all flex items-center gap-1.5"
+                            className="h-9 px-3 font-maven font-medium text-sm rounded-xl bg-kidville-warn-soft text-kidville-warn border border-kidville-warn/30 hover:bg-kidville-warn hover:text-white transition-all flex items-center gap-1.5"
                         >
                             <Timer size={15} /> Ritardo
                         </button>
                         <button
                             id={`btn-assente-${student.id}`}
                             onClick={() => onSetStato(student.id, 'assente')}
-                            className="h-9 px-3 font-maven font-medium text-sm rounded-xl bg-gray-100 text-gray-500 border border-gray-200 hover:bg-gray-400 hover:text-white transition-all flex items-center gap-1.5"
+                            className="h-9 px-3 font-maven font-medium text-sm rounded-xl bg-kidville-cream text-kidville-muted border border-kidville-line hover:bg-kidville-neutral hover:text-white transition-all flex items-center gap-1.5"
                         >
                             <X size={15} /> Assente
                         </button>
@@ -163,7 +163,7 @@ export function StudentAttendanceRow({ student, record, onSetStato, onCheckoutCl
                             <button
                                 id={`btn-uscita-${student.id}`}
                                 onClick={() => onSetStato(student.id, 'uscita_anticipata')}
-                                className="h-9 px-3 font-maven font-medium text-sm rounded-xl bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-500 hover:text-white transition-all flex items-center gap-1.5"
+                                className="h-9 px-3 font-maven font-medium text-sm rounded-xl bg-kidville-info-soft text-kidville-info border border-kidville-info/30 hover:bg-kidville-info hover:text-white transition-all flex items-center gap-1.5"
                             >
                                 <LogOut size={15} /> Uscita Ant.
                             </button>
@@ -185,7 +185,7 @@ export function StudentAttendanceRow({ student, record, onSetStato, onCheckoutCl
                             id={`btn-reset-${student.id}`}
                             onClick={() => onSetStato(student.id, 'assente')}
                             title="Cambia stato"
-                            className="h-9 w-9 flex items-center justify-center rounded-xl bg-gray-100 text-gray-400 hover:bg-gray-200 transition-all"
+                            className="h-9 w-9 flex items-center justify-center rounded-xl bg-kidville-cream text-kidville-muted hover:bg-kidville-cream-dark transition-all"
                         >
                             <X size={14} />
                         </button>

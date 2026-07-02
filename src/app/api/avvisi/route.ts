@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { getModuleConfig } from '@/lib/settings/module-config';
+import { requireDocente } from '@/lib/auth/require-staff';
+import { scuoleDiUtente } from '@/lib/auth/scope';
+import { logScrittura } from '@/lib/audit/scrittura';
 
 // GET /api/avvisi?scope=globale|classe&classe=xxx&parentId=xxx
 // Lista avvisi con filtri
@@ -13,6 +16,16 @@ export async function GET(request: Request) {
         const studentId = searchParams.get('studentId');
 
         const supabase = await createAdminClient();
+
+        // Ramo STAFF (no parentId): gate ruolo + isolamento per plesso.
+        // Ramo GENITORE (?parentId): resta aperto (scoping per classe del figlio).
+        let plessiScope: string[] | null = null;
+        if (!parentId) {
+            const auth = await requireDocente(request);
+            if (auth.response) return auth.response;
+            plessiScope = await scuoleDiUtente(supabase, auth.user);
+            if (plessiScope.length === 0) return NextResponse.json([]);
+        }
 
         let query = supabase
             .from('avvisi')
@@ -29,6 +42,10 @@ export async function GET(request: Request) {
                 created_at
             `)
             .order('created_at', { ascending: false });
+
+        if (plessiScope) {
+            query = query.in('scuola_id', plessiScope);
+        }
 
         if (scope) {
             query = query.eq('target_scope', scope);
@@ -130,6 +147,9 @@ export async function GET(request: Request) {
 // Body: { author_id, titolo, contenuto, tipo, target_scope, target_classes?, scadenza?, attachment_url? }
 export async function POST(request: Request) {
     try {
+        const auth = await requireDocente(request);
+        if (auth.response) return auth.response;
+
         const body = await request.json();
         const { author_id, titolo, contenuto, tipo, target_scope, target_classes, scadenza, attachment_url } = body;
 
@@ -172,6 +192,7 @@ export async function POST(request: Request) {
                 target_classes: target_classes ?? null,
                 scadenza: scadenza ?? null,
                 attachment_url: attachment_url ?? null,
+                scuola_id: autore?.scuola_id ?? auth.user.scuola_id ?? null, // tenant
             })
             .select()
             .single();
@@ -180,6 +201,12 @@ export async function POST(request: Request) {
             console.error('Errore POST avvisi:', error);
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
+
+        await logScrittura(supabase, {
+            attore: auth.user, entitaTipo: 'avviso', entitaId: (data as { id?: string })?.id ?? null,
+            azione: 'insert', scuolaId: autore?.scuola_id ?? auth.user.scuola_id ?? null,
+            valoreDopo: { id: (data as { id?: string })?.id, titolo, target_scope },
+        });
 
         return NextResponse.json(data, { status: 201 });
     } catch (error) {

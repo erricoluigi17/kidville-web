@@ -39,7 +39,7 @@ export function ParentRegistryForm({ studentId }: { studentId?: string }) {
 
             <div className="space-y-6">
                 <div>
-                    <label className="block text-sm font-bold text-gray-700 mb-1 flex items-center gap-2">
+                    <label className="block text-sm font-bold text-kidville-ink mb-1 flex items-center gap-2">
                         <Mail size={16} /> Email Genitore
                     </label>
                     <input 
@@ -47,7 +47,7 @@ export function ParentRegistryForm({ studentId }: { studentId?: string }) {
                         value={email} 
                         onChange={e => setEmail(e.target.value)} 
                         placeholder="mario.rossi@email.com"
-                        className="w-full p-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-kidville-green outline-none" 
+                        className="w-full p-3 rounded-xl border border-kidville-line focus:ring-2 focus:ring-kidville-green outline-none" 
                     />
                 </div>
 
@@ -60,7 +60,7 @@ export function ParentRegistryForm({ studentId }: { studentId?: string }) {
                         <Key size={18} /> {loading ? 'Invio in corso...' : 'Rigenera Credenziali'}
                     </button>
                     {message && (
-                        <span className={`text-sm font-bold ${message.includes('Errore') ? 'text-red-500' : 'text-kidville-green'}`}>
+                        <span className={`text-sm font-bold ${message.includes('Errore') ? 'text-kidville-error' : 'text-kidville-green'}`}>
                             {message}
                         </span>
                     )}

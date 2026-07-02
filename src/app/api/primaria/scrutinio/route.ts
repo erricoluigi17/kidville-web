@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { getRequestUserId } from '@/lib/auth/require-staff'
-
-const DEV_TEACHER = '22222222-2222-2222-2222-222222222222'
+import { requireDocente } from '@/lib/auth/require-staff'
+import { assertSezioneInScope } from '@/lib/auth/scope'
+import { logScrittura } from '@/lib/audit/scrittura'
+import { titolareDiMateria } from '@/lib/audit/valutatore'
+import { notificaTitolariScrittura } from '@/lib/primaria/notifiche'
 
 // GET /api/primaria/scrutinio?sectionId=&periodoId=&userId=
 // Apre (o recupera) lo scrutinio della classe per il periodo. Ritorna alunni,
@@ -10,7 +12,9 @@ const DEV_TEACHER = '22222222-2222-2222-2222-222222222222'
 // proposti, il comportamento e la scala dei 6 giudizi ufficiali.
 export async function GET(request: NextRequest) {
   try {
-    const userId = getRequestUserId(request) ?? DEV_TEACHER
+    const auth = await requireDocente(request)
+    if (auth.response) return auth.response
+    const userId = auth.user.id
     const sp = new URL(request.url).searchParams
     const sectionId = sp.get('sectionId')
     const periodoId = sp.get('periodoId')
@@ -19,6 +23,9 @@ export async function GET(request: NextRequest) {
     }
 
     const supabase = await createAdminClient()
+
+    const scopeErr = await assertSezioneInScope(supabase, auth.user, sectionId)
+    if (scopeErr) return scopeErr
 
     // Sezione + scuola (per la scala giudizi).
     const { data: sezione } = await supabase
@@ -77,7 +84,11 @@ export async function GET(request: NextRequest) {
           : Promise.resolve({ data: [] as { etichetta: string; ordine: number }[] }),
       ])
 
-    const mieMaterieIds = (mieMaterie ?? []).map((m) => m.materia_id)
+    // Materie modificabili: l'educator solo le proprie (contitolarità); staff/segreteria
+    // possono intervenire su tutte le materie della sezione (agiscono per l'intera classe).
+    const mieMaterieIds = auth.user.role === 'educator'
+      ? (mieMaterie ?? []).map((m) => m.materia_id)
+      : (materie ?? []).map((m) => m.id)
 
     return NextResponse.json({
       success: true,
@@ -102,7 +113,8 @@ export async function GET(request: NextRequest) {
 // body: { scrutinioId, giudizi: [{ alunnoId, materiaId, giudizioSintetico }] }
 export async function POST(request: NextRequest) {
   try {
-    const userId = getRequestUserId(request) ?? DEV_TEACHER
+    const auth = await requireDocente(request)
+    if (auth.response) return auth.response
     const { scrutinioId, giudizi } = await request.json()
     if (!scrutinioId || !Array.isArray(giudizi)) {
       return NextResponse.json({ error: 'scrutinioId e giudizi[] obbligatori' }, { status: 400 })
@@ -110,27 +122,76 @@ export async function POST(request: NextRequest) {
 
     const supabase = await createAdminClient()
 
-    // Scrutinio chiuso → blocca le modifiche.
-    const { data: scr } = await supabase.from('scrutini').select('id, stato').eq('id', scrutinioId).single()
+    // Scrutinio + sezione (per scope + risoluzione titolare).
+    const { data: scr } = await supabase.from('scrutini').select('id, stato, section_id').eq('id', scrutinioId).single()
     if (!scr) return NextResponse.json({ error: 'Scrutinio non trovato' }, { status: 404 })
     if (scr.stato === 'chiuso') return NextResponse.json({ error: 'Scrutinio chiuso: modifiche non consentite', locked: true }, { status: 423 })
 
-    const rows = giudizi
-      .filter((g) => g && g.alunnoId && g.materiaId)
-      .map((g) => ({
+    const sectionId = scr.section_id as string
+    const scopeErr = await assertSezioneInScope(supabase, auth.user, sectionId)
+    if (scopeErr) return scopeErr
+
+    const valid = giudizi.filter((g) => g && g.alunnoId && g.materiaId)
+    if (valid.length === 0) return NextResponse.json({ success: true, data: [] })
+
+    // proposto_da = "vero valutatore" (vincolo FEA): MAI la segreteria.
+    //  - educator → sé stesso;
+    //  - staff/segreteria → preserva il proponente esistente; per i giudizi nuovi
+    //    risolve il docente titolare della materia (null se nessuno). Mai l'attore staff.
+    let rows: { scrutinio_id: string; alunno_id: string; materia_id: string; giudizio_sintetico: string | null; proposto_da: string | null }[]
+    if (auth.user.role === 'educator') {
+      rows = valid.map((g) => ({
         scrutinio_id: scrutinioId,
         alunno_id: g.alunnoId,
         materia_id: g.materiaId,
         giudizio_sintetico: g.giudizioSintetico ?? null,
-        proposto_da: userId,
+        proposto_da: auth.user.id,
       }))
-    if (rows.length === 0) return NextResponse.json({ success: true, data: [] })
+    } else {
+      const { data: esistenti } = await supabase
+        .from('scrutinio_giudizi')
+        .select('alunno_id, materia_id, proposto_da')
+        .eq('scrutinio_id', scrutinioId)
+      const propByKey = new Map<string, string | null>(
+        (esistenti ?? []).map((e) => [`${e.alunno_id}:${e.materia_id}`, (e.proposto_da as string | null) ?? null]),
+      )
+      const titolareCache = new Map<string, string | null>()
+      rows = []
+      for (const g of valid) {
+        const key = `${g.alunnoId}:${g.materiaId}`
+        let proposto = propByKey.get(key) ?? null
+        if (!proposto) {
+          if (!titolareCache.has(g.materiaId)) {
+            titolareCache.set(g.materiaId, await titolareDiMateria(supabase, sectionId, g.materiaId))
+          }
+          proposto = titolareCache.get(g.materiaId) ?? null
+        }
+        rows.push({
+          scrutinio_id: scrutinioId,
+          alunno_id: g.alunnoId,
+          materia_id: g.materiaId,
+          giudizio_sintetico: g.giudizioSintetico ?? null,
+          proposto_da: proposto, // mai la segreteria
+        })
+      }
+    }
 
     const { data, error } = await supabase
       .from('scrutinio_giudizi')
       .upsert(rows, { onConflict: 'scrutinio_id,alunno_id,materia_id' })
       .select()
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+    await logScrittura(supabase, {
+      attore: auth.user,
+      entitaTipo: 'scrutinio',
+      entitaId: scrutinioId,
+      azione: 'update',
+      sectionId,
+      valoreDopo: data ?? [],
+    })
+    await notificaTitolariScrittura(supabase, { attore: auth.user, sectionId, area: 'scrutinio', link: `/teacher/primaria/${sectionId}/scrutinio` })
+
     return NextResponse.json({ success: true, data: data ?? [] })
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Errore interno'
@@ -143,15 +204,21 @@ export async function POST(request: NextRequest) {
 // body: { scrutinioId, comportamento: [{ alunnoId, giudizioTesto?, scalaValore?, giudizioGlobale? }] }
 export async function PATCH(request: NextRequest) {
   try {
+    const auth = await requireDocente(request)
+    if (auth.response) return auth.response
     const { scrutinioId, comportamento } = await request.json()
     if (!scrutinioId || !Array.isArray(comportamento)) {
       return NextResponse.json({ error: 'scrutinioId e comportamento[] obbligatori' }, { status: 400 })
     }
 
     const supabase = await createAdminClient()
-    const { data: scr } = await supabase.from('scrutini').select('id, stato').eq('id', scrutinioId).single()
+    const { data: scr } = await supabase.from('scrutini').select('id, stato, section_id').eq('id', scrutinioId).single()
     if (!scr) return NextResponse.json({ error: 'Scrutinio non trovato' }, { status: 404 })
     if (scr.stato === 'chiuso') return NextResponse.json({ error: 'Scrutinio chiuso: modifiche non consentite', locked: true }, { status: 423 })
+
+    const sectionId = scr.section_id as string
+    const scopeErr = await assertSezioneInScope(supabase, auth.user, sectionId)
+    if (scopeErr) return scopeErr
 
     const rows = comportamento
       .filter((c) => c && c.alunnoId)
@@ -169,6 +236,17 @@ export async function PATCH(request: NextRequest) {
       .upsert(rows, { onConflict: 'scrutinio_id,alunno_id' })
       .select()
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+    await logScrittura(supabase, {
+      attore: auth.user,
+      entitaTipo: 'scrutinio',
+      entitaId: scrutinioId,
+      azione: 'update',
+      sectionId,
+      valoreDopo: data ?? [],
+    })
+    await notificaTitolariScrittura(supabase, { attore: auth.user, sectionId, area: 'scrutinio', link: `/teacher/primaria/${sectionId}/scrutinio` })
+
     return NextResponse.json({ success: true, data: data ?? [] })
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Errore interno'

@@ -1,11 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server-client';
+import { createAdminClient } from '@/lib/supabase/server-client';
+import { requireDocente } from '@/lib/auth/require-staff';
+import { assertAlunnoInScope, scuoleDiUtente } from '@/lib/auth/scope';
+import { logScrittura } from '@/lib/audit/scrittura';
+import { notificaTitolariScrittura, enqueueDiarioGenitori } from '@/lib/primaria/notifiche';
 
 // GET /api/diary/entries
 // Modalità insegnante: ?sezione=Girasoli&date=2026-05-12
 // Modalità genitore:   ?alunno_id=xxx&from=2026-04-28
+//
+// P0/S9b (DL-040): tutti gli accessi a `eventi_diario` usano service-role +
+// scoping applicativo (End-state X, DL-035), così le policy permissive anon
+// sono droppate. NB: lo scoping di proprietà del ramo genitore (un genitore solo
+// i propri figli) è rinviato all'onboarding/sigillo S13 — finché l'identità è via
+// header (spoofabile) il gate non aggiunge sicurezza reale e romperebbe l'accesso
+// demo; la lettura passa comunque via service-role (anon = default-deny).
 export async function GET(request: NextRequest) {
-    const supabase = await createClient();
+    const admin = await createAdminClient();
     const params = request.nextUrl.searchParams;
 
     // ── Modalità genitore: per singolo alunno in un range di date ──
@@ -18,7 +29,7 @@ export async function GET(request: NextRequest) {
         })();
         const toDate = to ?? new Date().toISOString().split('T')[0];
 
-        const { data, error } = await supabase
+        const { data, error } = await admin
             .from('eventi_diario')
             .select('id, tipo_evento, orario_inizio, dettagli, nota_libera')
             .eq('alunno_id', alunnoId)
@@ -39,14 +50,21 @@ export async function GET(request: NextRequest) {
         return NextResponse.json(mapped);
     }
 
-    // ── Modalità insegnante: per sezione + data ──
+    // ── Modalità insegnante/staff: per sezione + data ──
+    // Gate ruolo + isolamento per plesso (nome classe risolto DENTRO i propri plessi).
+    const auth = await requireDocente(request);
+    if (auth.response) return auth.response;
+    const plessi = await scuoleDiUtente(admin, auth.user);
+    if (plessi.length === 0) return NextResponse.json([]);
+
     const sezione = params.get('sezione') ?? 'Girasoli';
     const date = params.get('date') ?? new Date().toISOString().split('T')[0];
 
-    const { data: alunni } = await supabase
+    const { data: alunni } = await admin
         .from('alunni')
         .select('id')
-        .eq('classe_sezione', sezione);
+        .eq('classe_sezione', sezione)
+        .in('scuola_id', plessi);
 
     if (!alunni || alunni.length === 0) return NextResponse.json([]);
 
@@ -54,7 +72,7 @@ export async function GET(request: NextRequest) {
     const startOfDay = `${date}T00:00:00.000Z`;
     const endOfDay   = `${date}T23:59:59.999Z`;
 
-    const { data, error } = await supabase
+    const { data, error } = await admin
         .from('eventi_diario')
         .select('*')
         .in('alunno_id', ids)
@@ -70,10 +88,21 @@ export async function GET(request: NextRequest) {
 // POST /api/diary/entries — salva (upsert) eventi diario
 // Per ogni alunno+tipo_evento: se già esiste oggi → UPDATE, altrimenti → INSERT
 export async function POST(request: NextRequest) {
+    const auth = await requireDocente(request);
+    if (auth.response) return auth.response;
+
     const body = await request.json();
-    const supabase = await createClient();
+    const admin = await createAdminClient();
 
     const entries = Array.isArray(body) ? body : [body];
+
+    // Scope: ogni alunno deve essere nello scope dell'attore (tenant + classe).
+    const alunnoIds = [...new Set(entries.map((e) => e.alunno_id).filter(Boolean))];
+    for (const aid of alunnoIds) {
+        const scopeErr = await assertAlunnoInScope(admin, auth.user, aid);
+        if (scopeErr) return scopeErr;
+    }
+
     const today = new Date().toISOString().split('T')[0];
     const startOfDay = `${today}T00:00:00.000Z`;
     const endOfDay = `${today}T23:59:59.999Z`;
@@ -83,7 +112,7 @@ export async function POST(request: NextRequest) {
 
     for (const entry of entries) {
         // Cerca se esiste già un evento per questo alunno+tipo oggi
-        const { data: existing } = await supabase
+        const { data: existing } = await admin
             .from('eventi_diario')
             .select('id')
             .eq('alunno_id', entry.alunno_id)
@@ -95,7 +124,7 @@ export async function POST(request: NextRequest) {
 
         if (existing && existing.length > 0) {
             // UPDATE
-            const { data, error } = await supabase
+            const { data, error } = await admin
                 .from('eventi_diario')
                 .update({
                     dettagli: entry.dettagli ?? null,
@@ -110,11 +139,12 @@ export async function POST(request: NextRequest) {
             else if (data) results.push(...data);
         } else {
             // INSERT
-            const { data, error } = await supabase
+            const { data, error } = await admin
                 .from('eventi_diario')
                 .insert({
                     alunno_id: entry.alunno_id,
-                    maestra_id: entry.maestra_id ?? '22222222-2222-2222-2222-222222222222',
+                    // Provenienza operativa = chi registra (anche la segreteria). Non è una firma valutativa.
+                    maestra_id: auth.user.id,
                     tipo_evento: entry.tipo_evento,
                     orario_inizio: entry.orario_inizio ?? new Date().toISOString(),
                     orario_fine: entry.orario_fine ?? null,
@@ -134,7 +164,7 @@ export async function POST(request: NextRequest) {
         // Best-effort e idempotente per giorno: non blocca mai il salvataggio del diario.
         if (entry.tipo_evento === 'bagno') {
             try {
-                const { data: al } = await supabase
+                const { data: al } = await admin
                     .from('alunni')
                     .select('usa_pannolino')
                     .eq('id', entry.alunno_id)
@@ -142,7 +172,7 @@ export async function POST(request: NextRequest) {
 
                 if (al?.usa_pannolino === true) {
                     // Evita doppio scalo nello stesso giorno (idempotenza su update ripetuti)
-                    const { data: giaScalato } = await supabase
+                    const { data: giaScalato } = await admin
                         .from('armadietto')
                         .select('id')
                         .eq('alunno_id', entry.alunno_id)
@@ -152,7 +182,7 @@ export async function POST(request: NextRequest) {
                         .limit(1);
 
                     if (!giaScalato || giaScalato.length === 0) {
-                        await supabase.from('armadietto').insert({
+                        await admin.from('armadietto').insert({
                             alunno_id: entry.alunno_id,
                             nome_oggetto: 'Pannolini',
                             materiale: 'Pannolini',
@@ -168,6 +198,26 @@ export async function POST(request: NextRequest) {
             } catch (e) {
                 console.warn('[diary/entries] scalo pannolino saltato:', (e as Error).message);
             }
+        }
+    }
+
+    // Audit (diff) + notifica al docente titolare se scrive segreteria/direzione.
+    if (results.length > 0) {
+        const { data: al } = await admin.from('alunni').select('section_id, scuola_id').eq('id', results[0].alunno_id).maybeSingle();
+        await logScrittura(admin, {
+            attore: auth.user, entitaTipo: 'diario', azione: 'update',
+            scuolaId: al?.scuola_id ?? null, sectionId: al?.section_id ?? null, valoreDopo: results,
+        });
+        if (al?.section_id) {
+            await notificaTitolariScrittura(admin, { attore: auth.user, sectionId: al.section_id, scuolaId: al?.scuola_id, area: 'diario' });
+        }
+
+        // Push genitori per aggiornamento diario (buffer 10' + debounce) — 1 per figlio.
+        const figliIds = [...new Set(results.map((r) => r.alunno_id).filter(Boolean))];
+        const { data: nomi } = await admin.from('alunni').select('id, nome').in('id', figliIds);
+        const nomeById = new Map((nomi ?? []).map((n) => [n.id, n.nome as string | null]));
+        for (const aid of figliIds) {
+            await enqueueDiarioGenitori(admin, { alunnoId: aid, nome: nomeById.get(aid) });
         }
     }
 

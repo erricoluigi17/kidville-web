@@ -14,11 +14,11 @@ interface AuditRow {
 }
 
 const AZIONE: Record<string, { l: string; cls: string }> = {
-  list: { l: 'Elenco', cls: 'bg-gray-100 text-gray-600' },
-  view: { l: 'Visualizzazione', cls: 'bg-blue-100 text-blue-700' },
-  download: { l: 'Download', cls: 'bg-amber-100 text-amber-700' },
-  upload: { l: 'Caricamento', cls: 'bg-green-100 text-green-700' },
-  delete: { l: 'Eliminazione', cls: 'bg-red-100 text-red-700' },
+  list: { l: 'Elenco', cls: 'bg-kidville-line text-kidville-ink' },
+  view: { l: 'Visualizzazione', cls: 'bg-kidville-info-soft text-kidville-info' },
+  download: { l: 'Download', cls: 'bg-kidville-warn-soft text-kidville-warn' },
+  upload: { l: 'Caricamento', cls: 'bg-kidville-success-soft text-kidville-success' },
+  delete: { l: 'Eliminazione', cls: 'bg-kidville-error-soft text-kidville-error' },
 };
 
 export function FascicoloAuditViewer({ userId }: { scuolaId: string; userId: string }) {
@@ -38,19 +38,19 @@ export function FascicoloAuditViewer({ userId }: { scuolaId: string; userId: str
   return (
     <div>
       <div className="mb-3 flex items-center justify-between">
-        <h3 className="font-barlow text-base font-bold text-gray-800 flex items-center gap-2">
+        <h3 className="font-barlow text-base font-bold text-kidville-ink flex items-center gap-2">
           <FolderLock size={16} className="text-kidville-green" /> Registro accessi al fascicolo
         </h3>
         <button onClick={load} className="font-maven inline-flex items-center gap-1.5 rounded-pill bg-kidville-green/10 px-3 py-1.5 text-xs text-kidville-green">
           <RefreshCw size={13} className={loading ? 'animate-spin' : ''} /> Aggiorna
         </button>
       </div>
-      <p className="font-maven text-xs text-gray-400 mb-3">Log immodificabile degli accessi ai documenti riservati (PEI/PDP/sanitari).</p>
+      <p className="font-maven text-xs text-kidville-muted mb-3">Log immodificabile degli accessi ai documenti riservati (PEI/PDP/sanitari).</p>
 
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
-            <tr className="text-left font-maven text-xs text-gray-500">
+            <tr className="text-left font-maven text-xs text-kidville-muted">
               <th className="py-2 pr-3">Data/ora</th>
               <th className="py-2 pr-3">Azione</th>
               <th className="py-2 pr-3">Utente</th>
@@ -60,17 +60,17 @@ export function FascicoloAuditViewer({ userId }: { scuolaId: string; userId: str
           </thead>
           <tbody>
             {rows.length === 0 && (
-              <tr><td colSpan={5} className="py-3 font-maven text-sm text-gray-400">Nessun accesso registrato.</td></tr>
+              <tr><td colSpan={5} className="py-3 font-maven text-sm text-kidville-muted">Nessun accesso registrato.</td></tr>
             )}
             {rows.map((r) => (
-              <tr key={r.id} className="border-t border-gray-100 font-maven">
-                <td className="py-2 pr-3 text-gray-600 whitespace-nowrap">{new Date(r.creato_il).toLocaleString('it-IT')}</td>
+              <tr key={r.id} className="border-t border-kidville-line font-maven">
+                <td className="py-2 pr-3 text-kidville-ink whitespace-nowrap">{new Date(r.creato_il).toLocaleString('it-IT')}</td>
                 <td className="py-2 pr-3">
-                  <span className={`rounded-pill px-2 py-0.5 text-[11px] ${AZIONE[r.azione]?.cls ?? 'bg-gray-100 text-gray-600'}`}>{AZIONE[r.azione]?.l ?? r.azione}</span>
+                  <span className={`rounded-pill px-2 py-0.5 text-[11px] ${AZIONE[r.azione]?.cls ?? 'bg-kidville-line text-kidville-ink'}`}>{AZIONE[r.azione]?.l ?? r.azione}</span>
                 </td>
-                <td className="py-2 pr-3 text-gray-700">{r.utenti ? `${r.utenti.cognome ?? ''} ${r.utenti.nome ?? ''}`.trim() || '—' : '—'}</td>
-                <td className="py-2 pr-3 text-gray-700">{r.alunni ? `${r.alunni.cognome ?? ''} ${r.alunni.nome ?? ''}`.trim() || '—' : '—'}</td>
-                <td className="py-2 pr-3 text-gray-400 text-xs">{r.ip ?? '—'}</td>
+                <td className="py-2 pr-3 text-kidville-ink">{r.utenti ? `${r.utenti.cognome ?? ''} ${r.utenti.nome ?? ''}`.trim() || '—' : '—'}</td>
+                <td className="py-2 pr-3 text-kidville-ink">{r.alunni ? `${r.alunni.cognome ?? ''} ${r.alunni.nome ?? ''}`.trim() || '—' : '—'}</td>
+                <td className="py-2 pr-3 text-kidville-muted text-xs">{r.ip ?? '—'}</td>
               </tr>
             ))}
           </tbody>

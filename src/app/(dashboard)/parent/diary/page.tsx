@@ -207,7 +207,7 @@ function EventCard({ entry, index }: { entry: DiaryEntry; index: number }) {
             initial={{ opacity: 0, y: 14 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: index * 0.07, duration: 0.3, ease: 'easeOut' }}
-            className={`bg-white/80 backdrop-blur-xl rounded-3xl border-l-4 ${borderColor} border border-white/40 shadow-sm px-5 py-4`}
+            className={`bg-white rounded-3xl border-l-4 ${borderColor} border border-kidville-line shadow-sm px-5 py-4`}
         >
             {/* Header card */}
             <div className="flex items-center gap-3 mb-3">
@@ -250,7 +250,7 @@ function PhotosSection({ photos }: { photos: MediaItem[] }) {
             initial={{ opacity: 0, y: 14 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.4, duration: 0.3 }}
-            className="bg-white/80 backdrop-blur-xl rounded-3xl border border-white/40 shadow-sm overflow-hidden"
+            className="bg-white rounded-3xl border border-kidville-line shadow-sm overflow-hidden"
         >
             <button
                 onClick={() => setOpen(v => !v)}
@@ -305,6 +305,9 @@ function ParentDiaryContent() {
     const [loading, setLoading] = useState(true);
     const [direction, setDirection] = useState<1 | -1>(1);
     const [studentName, setStudentName] = useState<string | null>(null);
+    const [classe, setClasse] = useState<string | null>(null);
+    // "Entrata" letta dal modulo Presenze (read-only, DL-040).
+    const [checkIn, setCheckIn] = useState<string | null>(null);
 
     const goDay = (delta: number) => {
         setDirection(delta as 1 | -1);
@@ -328,6 +331,12 @@ function ParentDiaryContent() {
             } else {
                 setEntries([]);
             }
+
+            // "Entrata" dal modulo Presenze (orario di check-in del giorno)
+            try {
+                const ciRes = await fetch(`/api/diary/checkin?alunno_id=${alunnoId}&date=${dk}`);
+                setCheckIn(ciRes.ok ? ((await ciRes.json()).orario_entrata ?? null) : null);
+            } catch { setCheckIn(null); }
 
             // Carica foto reali associate a questo alunno per il giorno selezionato
             let photosUrl = `/api/gallery?studentId=${alunnoId}&date=${dk}`;
@@ -356,6 +365,7 @@ function ParentDiaryContent() {
             .then(r => r.ok ? r.json() : null)
             .then(d => {
                 if (d?.nome) setStudentName(`${d.nome} ${d.cognome ?? ''}`.trim());
+                if (d?.classe_sezione) setClasse(d.classe_sezione);
             })
             .catch(() => {});
     }, [alunnoId]);
@@ -378,15 +388,18 @@ function ParentDiaryContent() {
             {/* Header: titolo + chip nome bambino */}
             <div className="flex items-start justify-between mb-6">
                 <div>
-                    <h1 className="font-barlow font-black text-3xl text-kidville-green uppercase tracking-wide">
+                    <p className="font-barlow font-bold text-[11px] uppercase tracking-[0.14em] text-kidville-yellow-dark">
+                        Diario
+                    </p>
+                    <h1 className="font-barlow font-black text-3xl text-kidville-green uppercase tracking-wide leading-none">
                         Il mio diario
                     </h1>
-                    <p className="font-maven text-gray-400 mt-1 text-sm">
+                    <p className="font-maven text-kidville-muted mt-1 text-sm">
                         La giornata a scuola, raccontata da me 🌈
                     </p>
                 </div>
                 {/* Chip nome bambino — top right */}
-                <div className="flex items-center gap-2 bg-white/80 backdrop-blur-xl rounded-2xl border border-white/40 shadow-sm px-3 py-2 ml-3 flex-shrink-0">
+                <div className="flex items-center gap-2 bg-white rounded-2xl border border-kidville-line shadow-sm px-3 py-2 ml-3 flex-shrink-0">
                     <div className="w-8 h-8 rounded-full bg-kidville-green flex items-center justify-center font-barlow font-black text-xs text-kidville-yellow flex-shrink-0">
                         {initials}
                     </div>
@@ -394,13 +407,13 @@ function ParentDiaryContent() {
                         <p className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide leading-tight">
                             {studentName ?? '...'}
                         </p>
-                        <p className="font-maven text-[10px] text-gray-400">Sezione Girasoli</p>
+                        {classe && <p className="font-maven text-[10px] text-gray-400">{classe}</p>}
                     </div>
                 </div>
             </div>
 
             {/* Navigazione giorno */}
-            <div className="flex items-center justify-between mb-5 bg-white/70 backdrop-blur-xl rounded-2xl border border-white/40 shadow-sm px-4 py-3">
+            <div className="flex items-center justify-between mb-5 bg-white rounded-2xl border border-kidville-line shadow-sm px-4 py-3">
                 <button
                     onClick={() => goDay(-1)}
                     className="w-9 h-9 rounded-xl bg-gray-50 hover:bg-gray-100 flex items-center justify-center text-gray-500 transition-colors"
@@ -451,8 +464,8 @@ function ParentDiaryContent() {
                         </div>
                     )}
 
-                    {/* Stato vuoto */}
-                    {!loading && entries.length === 0 && (
+                    {/* Stato vuoto (nessuna voce e nessuna entrata registrata) */}
+                    {!loading && entries.length === 0 && !checkIn && (
                         <div className="flex flex-col items-center justify-center py-20 text-center">
                             <div className="w-20 h-20 bg-kidville-cream rounded-full flex items-center justify-center mb-4 text-4xl">
                                 📖
@@ -466,11 +479,47 @@ function ParentDiaryContent() {
                         </div>
                     )}
 
-                    {/* Timeline eventi */}
-                    {!loading && entries.length > 0 && (
+                    {/* Timeline eventi (con "Entrata" in cima, letta dalle Presenze) */}
+                    {!loading && (checkIn || entries.length > 0) && (
                         <div className="space-y-3">
+                            {/* Banner umore (DR mood banner). Nessun backend "umore" disponibile
+                                (è solo un'opzione in DiarioSettings, non catturata): reso come
+                                placeholder onesto. Vedi LISTA 1 del piano. */}
+                            <div className="flex items-center gap-3 rounded-[20px] bg-kidville-yellow px-4 py-3.5">
+                                <span className="text-[26px] leading-none">🙂</span>
+                                <div className="min-w-0">
+                                    <p className="font-barlow text-[15px] font-black uppercase leading-none tracking-wide text-kidville-green">
+                                        Umore della giornata
+                                    </p>
+                                    <p className="mt-1 font-maven text-[12px] text-kidville-green/75">
+                                        Presto la maestra potrà segnalare come è andata{studentName ? ` per ${studentName.split(' ')[0]}` : ''}.
+                                    </p>
+                                </div>
+                            </div>
+                            {checkIn && (
+                                <motion.div
+                                    initial={{ opacity: 0, y: 14 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    transition={{ duration: 0.3, ease: 'easeOut' }}
+                                    className="bg-white rounded-3xl border-l-4 border-kidville-success/30 border border-kidville-line shadow-sm px-5 py-4"
+                                >
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-10 h-10 rounded-2xl flex items-center justify-center text-xl flex-shrink-0 bg-kidville-success-soft">
+                                            🚪
+                                        </div>
+                                        <div className="flex-1">
+                                            <p className="font-barlow font-black text-sm uppercase tracking-wide text-kidville-success">Entrata</p>
+                                            <p className="font-maven text-[11px] text-gray-400">{checkIn}</p>
+                                        </div>
+                                        <span className="text-2xl">👋</span>
+                                    </div>
+                                    <p className="font-maven text-sm text-gray-700 leading-relaxed pl-1 mt-2">
+                                        Sono arrivato/a a scuola alle {checkIn}!
+                                    </p>
+                                </motion.div>
+                            )}
                             {entries.map((entry, i) => (
-                                <EventCard key={entry.id} entry={entry} index={i} />
+                                <EventCard key={entry.id} entry={entry} index={i + (checkIn ? 1 : 0)} />
                             ))}
                             {/* Foto reali della giornata */}
                             <PhotosSection photos={photos} />
@@ -480,7 +529,7 @@ function ParentDiaryContent() {
             </AnimatePresence>
 
             {/* Footer */}
-            <div className="mt-8 p-4 bg-white/50 backdrop-blur-sm rounded-2xl border border-white/30 text-center">
+            <div className="mt-8 p-4 bg-white rounded-2xl border border-kidville-line text-center">
                 <p className="font-maven text-xs text-gray-400">
                     📋 Le informazioni sono visibili per i 14 giorni precedenti.<br />
                     Per lo storico completo contatta la segreteria.

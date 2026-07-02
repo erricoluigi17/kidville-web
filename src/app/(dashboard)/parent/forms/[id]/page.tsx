@@ -21,7 +21,7 @@ export default async function ParentFormPage({
 
   const { data: model, error } = await supabase
     .from('form_models')
-    .select('id, title, description, schema, is_active, requires_signature')
+    .select('id, title, description, schema, is_active, requires_signature, signature_mode')
     .eq('id', id)
     .maybeSingle()
 
@@ -45,6 +45,7 @@ export default async function ParentFormPage({
       description={model.description}
       schema={schema}
       requiresSignature={model.requires_signature}
+      signatureMode={model.signature_mode === 'joint' ? 'joint' : 'single'}
       userId={parentId}
       parentEmail={parent?.email ?? null}
     />

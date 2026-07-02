@@ -1,11 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server-client';
+import { createClient, createAdminClient } from '@/lib/supabase/server-client';
+import { requireDocente } from '@/lib/auth/require-staff';
+import { assertAlunnoInScope } from '@/lib/auth/scope';
+import { logScrittura } from '@/lib/audit/scrittura';
+import { notificaTitolariScrittura } from '@/lib/primaria/notifiche';
 
 // ============================================================
-// POST /api/diary — Salva un evento diario
+// POST /api/diary — Salva un evento diario (azione docente/staff)
 // ============================================================
 export async function POST(request: NextRequest) {
     try {
+        const auth = await requireDocente(request);
+        if (auth.response) return auth.response;
+
         const body = await request.json();
         const { alunno_id, classe_id, tipo_evento, timestamp_evento, note, dettagli } = body;
 
@@ -17,6 +24,9 @@ export async function POST(request: NextRequest) {
         }
 
         const supabase = await createClient();
+        const admin = await createAdminClient();
+        const scopeErr = await assertAlunnoInScope(admin, auth.user, alunno_id);
+        if (scopeErr) return scopeErr;
 
         // Calcola il timestamp per la notifica (evento + 10 min buffer)
         const eventTime = timestamp_evento ? new Date(timestamp_evento) : new Date();
@@ -39,6 +49,15 @@ export async function POST(request: NextRequest) {
         if (error) {
             console.error('Errore inserimento diario:', error);
             return NextResponse.json({ error: error.message }, { status: 500 });
+        }
+
+        const { data: al } = await admin.from('alunni').select('section_id, scuola_id').eq('id', alunno_id).maybeSingle();
+        await logScrittura(admin, {
+            attore: auth.user, entitaTipo: 'diario', entitaId: data.id, azione: 'insert',
+            scuolaId: al?.scuola_id ?? null, sectionId: al?.section_id ?? null, valoreDopo: data,
+        });
+        if (al?.section_id) {
+            await notificaTitolariScrittura(admin, { attore: auth.user, sectionId: al.section_id, scuolaId: al?.scuola_id, area: 'diario' });
         }
 
         return NextResponse.json({ success: true, data }, { status: 201 });
@@ -65,6 +84,9 @@ export async function GET(request: NextRequest) {
         const supabase = await createClient();
 
         if (classeId) {
+            // Vista insegnante/staff (azione docente): gate ruolo. Il genitore usa il ramo alunno_id.
+            const auth = await requireDocente(request);
+            if (auth.response) return auth.response;
             // Vista insegnante: tutti gli eventi della classe per una data specifica
             const startOfDay = `${date}T00:00:00.000Z`;
             const endOfDay = `${date}T23:59:59.999Z`;

@@ -1,14 +1,17 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/server-client';
+import { requireDocente } from '@/lib/auth/require-staff';
 
 interface RouteParams {
     params: Promise<{ id: string }>;
 }
 
 // GET /api/avvisi/[id]/risposte
-// Lista risposte per un avviso specifico (dashboard monitoraggio)
+// Lista risposte per un avviso specifico (dashboard monitoraggio = staff). Gatato.
 export async function GET(request: Request, { params }: RouteParams) {
     try {
+        const auth = await requireDocente(request);
+        if (auth.response) return auth.response;
         const { id: avvisoId } = await params;
 
         const supabase = await createAdminClient();

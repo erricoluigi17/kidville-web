@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server-client';
+import { createAdminClient } from '@/lib/supabase/server-client';
+import { requireDocente } from '@/lib/auth/require-staff';
+import { assertAlunnoInScope, scuoleDiUtente } from '@/lib/auth/scope';
+import { logScrittura } from '@/lib/audit/scrittura';
 
 function getMonthRange(ym: string) {
     const [y, m] = ym.split('-').map(Number);
@@ -28,7 +31,18 @@ export async function GET(request: NextRequest) {
         const matFilter     = searchParams.get('material_filter');
         const mode          = searchParams.get('mode'); // 'stock' | 'carico' | null
 
-        const supabase = await createClient();
+        const supabase = await createAdminClient();
+
+        // Ramo docente/staff (per classe): gate ruolo + isolamento per plesso.
+        // Il ramo genitore (?alunno_id) resta aperto.
+        let plessiScope: string[] = [];
+        if (classeSezione && !alunnoId) {
+            const auth = await requireDocente(request);
+            if (auth.response) return auth.response;
+            const admin = await createAdminClient();
+            plessiScope = await scuoleDiUtente(admin, auth.user);
+            if (plessiScope.length === 0) return NextResponse.json([]);
+        }
 
         // ── Stock aggregato per singolo alunno ───────────────────────────────
         if (alunnoId && mode === 'stock') {
@@ -54,7 +68,7 @@ export async function GET(request: NextRequest) {
         if (classeSezione && mode === 'stock') {
             const { data: alunni, error: errA } = await supabase
                 .from('alunni').select('id, nome, cognome')
-                .eq('classe_sezione', classeSezione).eq('stato', 'iscritto');
+                .eq('classe_sezione', classeSezione).eq('stato', 'iscritto').in('scuola_id', plessiScope);
             if (errA) throw errA;
             const ids = (alunni ?? []).map(a => a.id);
             const { data: inv, error: errI } = await supabase
@@ -96,7 +110,7 @@ export async function GET(request: NextRequest) {
         if (classeSezione) {
             const { data: alunni, error: errA } = await supabase
                 .from('alunni').select('id, nome, cognome')
-                .eq('classe_sezione', classeSezione).eq('stato', 'iscritto');
+                .eq('classe_sezione', classeSezione).eq('stato', 'iscritto').in('scuola_id', plessiScope);
             if (errA) throw errA;
             const ids = (alunni ?? []).map(a => a.id);
             let q = supabase.from('armadietto').select('*').in('alunno_id', ids);
@@ -131,7 +145,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
     try {
         const body = await request.json();
-        const supabase = await createClient();
+        const supabase = await createAdminClient();
         const { alunno_id, materiale, quantita, date } = body;
 
         if (!alunno_id || !materiale || !quantita) {
@@ -194,13 +208,20 @@ export async function POST(request: NextRequest) {
  */
 export async function PATCH(request: NextRequest) {
     try {
+        // CONSUMO = azione docente/staff: gate ruolo + scope + audit.
+        const auth = await requireDocente(request);
+        if (auth.response) return auth.response;
+
         const body = await request.json();
-        const supabase = await createClient();
+        const supabase = await createAdminClient();
+        const admin = await createAdminClient();
         const { alunno_id, materiale, quantita_usata } = body;
 
         if (!alunno_id || !materiale || !quantita_usata) {
             return NextResponse.json({ error: 'Dati mancanti' }, { status: 400 });
         }
+        const scopeErr = await assertAlunnoInScope(admin, auth.user, alunno_id);
+        if (scopeErr) return scopeErr;
         const today = new Date().toISOString().slice(0, 10);
 
         const { data, error } = await supabase
@@ -219,6 +240,13 @@ export async function PATCH(request: NextRequest) {
             .select().single();
 
         if (error) throw error;
+
+        const { data: al } = await admin.from('alunni').select('section_id, scuola_id').eq('id', alunno_id).maybeSingle();
+        await logScrittura(admin, {
+            attore: auth.user, entitaTipo: 'armadietto', entitaId: data.id, azione: 'insert',
+            scuolaId: al?.scuola_id ?? null, sectionId: al?.section_id ?? null, valoreDopo: data,
+        });
+
         return NextResponse.json({ success: true, data });
     } catch (err: any) {
         console.error('PATCH /api/locker/inventory:', err.message);

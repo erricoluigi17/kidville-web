@@ -19,6 +19,7 @@ export type FormFieldType =
   | 'radio'
   | 'checkbox'
   | 'file'
+  | 'consent'
   | 'signature'
   | 'section_header'
   | 'paragraph'
@@ -58,6 +59,26 @@ export interface FormField {
   /** Mapping verso colonna DB per ETL (es. "adults.fiscal_code") */
   db_mapping?: string
   validation?: FormFieldValidation
+  /** Blocco `consent`: corpo testuale del consenso (può essere lungo). */
+  text?: string
+  /** Blocco `consent`: URL all'informativa estesa (facoltativo). */
+  link?: string
+  /** Blocco `consent`: etichetta del link informativa. */
+  link_label?: string
+  /** Blocco `file`: estensioni/MIME ammessi (es. ".pdf,.jpg,image/png"). */
+  accept?: string
+  /** Blocco `file`: dimensione massima in MB (override del default server). */
+  max_size_mb?: number
+}
+
+/** Snapshot di un consenso accettato/rifiutato, per evidenza legale (GDPR). */
+export interface ConsentoSnapshot {
+  field_id: string
+  label: string
+  text?: string
+  link?: string
+  accepted: boolean
+  accepted_at: string
 }
 
 // ─── Iscrizione nuovi alunni — submission raggruppata per persona ──

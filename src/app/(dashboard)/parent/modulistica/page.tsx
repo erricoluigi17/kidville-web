@@ -2,11 +2,10 @@
 
 import { useState, useEffect } from 'react';
 import {
-  FileText, Clock, Archive, Award, HeartPulse, Shield,
+  Clock, Archive, Award, HeartPulse, Shield,
   ArrowRight, Download, CheckCircle2, User, Key, Info, Upload, Mail
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
-import { getSupabase } from '@/lib/supabase/browser-client';
 import { OtpEmailModal } from '@/components/features/parent/forms/OtpEmailModal';
 
 const PARENT_ID = '33333333-3333-3333-3333-333333333333'; // Sarah Pagano
@@ -81,6 +80,9 @@ export default function ParentModulisticaPage() {
   // Medical Certificate form
   const [selectedChildId, setSelectedChildId] = useState('');
   const [certFileName, setCertFileName] = useState('');
+  const [certFile, setCertFile] = useState<File | null>(null);
+  const [certDal, setCertDal] = useState('');
+  const [certAl, setCertAl] = useState('');
   const [certNotes, setCertNotes] = useState('');
 
   // Notifications
@@ -108,31 +110,21 @@ export default function ParentModulisticaPage() {
       const mData = await mRes.json();
       if (Array.isArray(mData)) setMedCerts(mData);
 
-      // 4. Fetch children list from Supabase directly
-      const supabase = getSupabase();
-      const { data: legami } = await supabase
-        .from('legame_genitori_alunni')
-        .select('alunno_id')
-        .eq('genitore_id', PARENT_ID);
-      
-      if (legami && legami.length > 0) {
-        const { data: studs } = await supabase
-          .from('alunni')
-          .select('id, nome, cognome')
-          .in('id', legami.map((l: any) => l.alunno_id));
-        if (studs) {
-          setChildren(studs);
-          if (studs.length > 0) setSelectedChildId(studs[0].id);
-        }
+      // 4. Fetch children list via route server gated (parent-scoped, service-role)
+      const sRes = await fetch('/api/parent/students', { headers: { 'x-user-id': PARENT_ID } });
+      const sJson = await sRes.json().catch(() => ({}));
+      const studs = Array.isArray(sJson?.data) ? sJson.data : [];
+      if (studs.length > 0) {
+        setChildren(studs);
+        setSelectedChildId(studs[0].id);
       }
 
-      // 5. Fetch Parent info (from utenti table)
-      const { data: parent } = await supabase
-        .from('utenti')
-        .select('*')
-        .eq('id', PARENT_ID)
-        .single();
-      if (parent) setParentInfo(parent);
+      // 5. Fetch Parent info via /api/me (gated, niente lettura anon di `utenti`)
+      const pRes = await fetch('/api/me', { headers: { 'x-user-id': PARENT_ID } });
+      if (pRes.ok) {
+        const parent = await pRes.json().catch(() => null);
+        if (parent) setParentInfo(parent);
+      }
 
     } catch (err) {
       console.error(err);
@@ -427,30 +419,27 @@ export default function ParentModulisticaPage() {
   // Submit Medical Certificate
   const handleUploadMedicalCert = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!certFileName) {
-      showToastMsg('❌ Caricare un file di certificato medico.');
-      return;
-    }
+    if (!certFile) { showToastMsg('❌ Caricare un file di certificato medico.'); return; }
+    if (!selectedChildId) { showToastMsg('❌ Seleziona il figlio.'); return; }
+    if (!certDal || !certAl || certDal > certAl) { showToastMsg('❌ Indica un periodo di copertura valido (dal/al).'); return; }
 
     try {
-      const mockStoragePath = `medical_certs/${PARENT_ID}/${selectedChildId}_${Date.now()}_${certFileName}`;
+      const fd = new FormData();
+      fd.append('file', certFile);
+      fd.append('student_id', selectedChildId);
+      fd.append('data_inizio', certDal);
+      fd.append('data_fine', certAl);
+      fd.append('note', certNotes);
       const res = await fetch('/api/parent/medical-certificates', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          student_id: selectedChildId,
-          file_path: mockStoragePath,
-          notes: certNotes,
-          parent_id: PARENT_ID
-        })
+        headers: { 'x-user-id': PARENT_ID },
+        body: fd,
       });
-
       if (!res.ok) throw new Error('Errore upload');
-      showToastMsg('✅ Certificato medico caricato. Assenza giustificata!');
-      setCertFileName('');
-      setCertNotes('');
+      showToastMsg('✅ Certificato caricato. In attesa di validazione della Segreteria.');
+      setCertFile(null); setCertFileName(''); setCertDal(''); setCertAl(''); setCertNotes('');
       fetchData();
-    } catch (err) {
+    } catch {
       showToastMsg('❌ Errore caricamento certificato medico');
     }
   };
@@ -458,12 +447,15 @@ export default function ParentModulisticaPage() {
   return (
     <div className="flex-1 flex flex-col p-4 sm:p-6 max-w-4xl mx-auto w-full">
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-gray-100 pb-4 mb-6">
+      <div className="flex items-center justify-between border-b border-kidville-line pb-4 mb-6">
         <div>
-          <h1 className="font-barlow font-black text-3xl text-kidville-green uppercase tracking-wide flex items-center gap-2">
-            <FileText size={28} className="text-kidville-yellow" /> Modulistica & Burocrazia
+          <p className="font-barlow font-bold text-[11px] uppercase tracking-[0.14em] text-kidville-yellow-dark">
+            Documenti
+          </p>
+          <h1 className="font-barlow font-black text-3xl text-kidville-green uppercase tracking-wide leading-none">
+            Modulistica
           </h1>
-          <p className="font-maven text-gray-500 mt-1">Giulia Bianchi</p>
+          <p className="font-maven text-kidville-muted mt-1">Firme, certificati e documenti</p>
         </div>
       </div>
 
@@ -507,7 +499,7 @@ export default function ParentModulisticaPage() {
             <div className="space-y-4">
               {assignedForms.filter(f => f.status === 'pending').length === 0 ? (
                 <div className="bg-white rounded-card p-10 text-center border border-gray-100">
-                  <CheckCircle2 className="mx-auto text-emerald-500 mb-3" size={48} />
+                  <CheckCircle2 className="mx-auto text-kidville-success mb-3" size={48} />
                   <p className="font-maven text-gray-500">Ottimo lavoro! Non hai moduli da compilare.</p>
                 </div>
               ) : (
@@ -538,7 +530,7 @@ export default function ParentModulisticaPage() {
                         </span>
 
                         {form.expiration_date && (
-                          <span className="bg-amber-50 text-amber-600 px-2.5 py-1 rounded-full text-xs font-semibold flex items-center gap-1">
+                          <span className="bg-kidville-warn-soft text-kidville-warn px-2.5 py-1 rounded-full text-xs font-semibold flex items-center gap-1">
                             <Clock size={12} />
                             Scade il: {new Date(form.expiration_date).toLocaleDateString()}
                           </span>
@@ -703,7 +695,7 @@ export default function ParentModulisticaPage() {
                       <p className="font-maven text-xs text-gray-500 mt-1">
                         Figlio: {item.alunni?.nome} {item.alunni?.cognome} | Firmato il: {new Date(item.created_at).toLocaleDateString()}
                       </p>
-                      <div className="mt-2.5 flex items-center gap-1 text-[10px] text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full font-bold w-fit uppercase tracking-wider">
+                      <div className="mt-2.5 flex items-center gap-1 text-[10px] text-kidville-success bg-kidville-success-soft px-2 py-0.5 rounded-full font-bold w-fit uppercase tracking-wider">
                         <Shield size={10} /> Ricevuta FES Protetta
                       </div>
                     </div>
@@ -788,9 +780,9 @@ export default function ParentModulisticaPage() {
                       Documento Scansionato (PDF / Foto) *
                     </label>
                     {certFileName ? (
-                      <div className="flex items-center justify-between border-2 border-emerald-100 bg-emerald-50 text-emerald-700 px-3 py-2 rounded-xl text-xs font-semibold">
+                      <div className="flex items-center justify-between border-2 border-kidville-success/20 bg-kidville-success-soft text-kidville-success px-3 py-2 rounded-xl text-xs font-semibold">
                         <span>📄 {certFileName}</span>
-                        <button type="button" onClick={() => setCertFileName('')} className="text-gray-400 hover:text-red-500">✕</button>
+                        <button type="button" onClick={() => { setCertFileName(''); setCertFile(null); }} className="text-gray-400 hover:text-red-500">✕</button>
                       </div>
                     ) : (
                       <label className="w-full h-10 border-2 border-dashed border-gray-200 hover:border-kidville-green rounded-xl flex items-center justify-center gap-1.5 cursor-pointer text-xs font-semibold text-gray-600 transition-colors">
@@ -799,10 +791,24 @@ export default function ParentModulisticaPage() {
                           type="file"
                           accept=".pdf,image/*"
                           className="hidden"
-                          onChange={e => setCertFileName(e.target.files?.[0]?.name || '')}
+                          onChange={e => { const f = e.target.files?.[0] ?? null; setCertFile(f); setCertFileName(f?.name || ''); }}
                         />
                       </label>
                     )}
+                  </div>
+                </div>
+
+                {/* Periodo di copertura (dal/al) — DL-027 */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block font-maven text-xs font-semibold text-kidville-green mb-1">Coperto dal *</label>
+                    <input type="date" value={certDal} onChange={e => setCertDal(e.target.value)}
+                      className="w-full border-2 border-gray-100 rounded-xl px-3 py-2 font-maven text-xs text-gray-600 focus:outline-none focus:border-kidville-green" />
+                  </div>
+                  <div>
+                    <label className="block font-maven text-xs font-semibold text-kidville-green mb-1">al *</label>
+                    <input type="date" value={certAl} min={certDal || undefined} onChange={e => setCertAl(e.target.value)}
+                      className="w-full border-2 border-gray-100 rounded-xl px-3 py-2 font-maven text-xs text-gray-600 focus:outline-none focus:border-kidville-green" />
                   </div>
                 </div>
 
@@ -846,11 +852,11 @@ export default function ParentModulisticaPage() {
 
                       <div className="flex flex-col items-end gap-1.5">
                         {cert.giorni_coperti?.length > 0 ? (
-                          <span className="bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider">
+                          <span className="bg-kidville-success-soft text-kidville-success px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider">
                             Giustificato: {cert.giorni_coperti.map((d: string) => new Date(d).toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit' })).join(', ')}
                           </span>
                         ) : (
-                          <span className="bg-amber-50 text-amber-600 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider">
+                          <span className="bg-kidville-warn-soft text-kidville-warn px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider">
                             In attesa di abbinamento assenza
                           </span>
                         )}

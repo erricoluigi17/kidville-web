@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { getRequestUserId } from '@/lib/auth/require-staff'
+import { getRequestUserId, loadAppUser } from '@/lib/auth/require-staff'
 import { puoAccedereFascicolo, logAccessoFascicolo } from '@/lib/primaria/fascicolo-rbac'
+import { logScrittura } from '@/lib/audit/scrittura'
+import { notificaTitolariScrittura } from '@/lib/primaria/notifiche'
 
 const BUCKET = 'sensitive_documents'
 const MAX_SIZE = 15 * 1024 * 1024 // 15MB
@@ -12,7 +14,9 @@ const TIPI = ['diagnosi', 'pei', 'pdp', '104']
 // Lista dei documenti del fascicolo (RBAC ristretto + audit).
 export async function GET(request: NextRequest) {
   try {
-    const alunnoId = new URL(request.url).searchParams.get('alunnoId')
+    const sp = new URL(request.url).searchParams
+    const alunnoId = sp.get('alunnoId')
+    const finalita = sp.get('finalita')
     const userId = getRequestUserId(request)
     if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
     if (!alunnoId) return NextResponse.json({ error: 'alunnoId obbligatorio' }, { status: 400 })
@@ -30,7 +34,7 @@ export async function GET(request: NextRequest) {
       .order('created_at', { ascending: false })
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-    await logAccessoFascicolo(supabase, { alunnoId, utenteId: userId, azione: 'list', request })
+    await logAccessoFascicolo(supabase, { alunnoId, utenteId: userId, azione: 'list', finalita, request })
 
     return NextResponse.json({ success: true, data: data ?? [] })
   } catch (err) {
@@ -48,6 +52,7 @@ export async function POST(request: NextRequest) {
     const documentType = (formData.get('documentType') as string | null) ?? 'diagnosi'
     const descrizione = (formData.get('descrizione') as string | null) ?? null
     const expiryDate = (formData.get('expiryDate') as string | null) ?? null
+    const finalita = (formData.get('finalita') as string | null) ?? null
     const userId = (formData.get('userId') as string | null) ?? getRequestUserId(request)
 
     if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
@@ -99,7 +104,23 @@ export async function POST(request: NextRequest) {
       .single()
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-    await logAccessoFascicolo(supabase, { alunnoId, utenteId: userId, azione: 'upload', documentoId: data.id, request })
+    await logAccessoFascicolo(supabase, { alunnoId, utenteId: userId, azione: 'upload', documentoId: data.id, finalita, request })
+
+    // Audit unificato delle scritture + notifica al titolare se carica la segreteria.
+    const attore = await loadAppUser(userId)
+    if (attore) {
+      await logScrittura(supabase, {
+        attore,
+        entitaTipo: 'fascicolo',
+        entitaId: data.id,
+        azione: 'insert',
+        sectionId: alunno?.section_id ?? null,
+        valoreDopo: { id: data.id, document_type: documentType, file_name: file.name },
+      })
+      if (alunno?.section_id) {
+        await notificaTitolariScrittura(supabase, { attore, sectionId: alunno.section_id, area: 'fascicolo' })
+      }
+    }
 
     return NextResponse.json({ success: true, data }, { status: 201 })
   } catch (err) {

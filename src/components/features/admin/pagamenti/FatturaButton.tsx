@@ -30,7 +30,7 @@ export function FatturaButton({ pagamentoId, userId, fatturaStato, descrizione, 
                 body: JSON.stringify({ pagamento_id: pagamentoId, causale: causale.trim() || undefined }),
             });
             const j = await res.json();
-            if (res.ok) { setStato('emessa'); setOpen(false); onEmessa?.(); }
+            if (res.ok) { setStato(j.data?.fattura_stato ?? 'in_attesa'); setOpen(false); onEmessa?.(); }
             else { setStato(j.data?.fattura_stato ?? 'scartata'); alert(j.error); }
         } finally { setBusy(false); }
     };
@@ -44,10 +44,18 @@ export function FatturaButton({ pagamentoId, userId, fatturaStato, descrizione, 
         );
     }
 
+    if (stato === 'in_attesa') {
+        return (
+            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-kidville-warn-soft text-kidville-warn text-xs font-bold" title="Trasmessa allo SDI tramite Aruba, in attesa di esito">
+                <Loader2 size={12} className="animate-spin" /> In attesa SDI
+            </span>
+        );
+    }
+
     return (
         <>
             <button onClick={() => { setCausale(descrizione ?? ''); setOpen(true); }}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-full border border-gray-200 text-gray-500 text-xs font-bold hover:border-kidville-green hover:text-kidville-green">
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-full border border-kidville-line text-kidville-muted text-xs font-bold hover:border-kidville-green hover:text-kidville-green">
                 <FileText size={12} />
                 {stato === 'scartata' ? 'Riprova fattura' : 'Invia fattura'}
             </button>
@@ -63,14 +71,14 @@ export function FatturaButton({ pagamentoId, userId, fatturaStato, descrizione, 
                             <h3 className="font-barlow font-black text-lg text-kidville-green uppercase flex items-center gap-2">
                                 <FileText size={18} /> Emetti fattura
                             </h3>
-                            <button onClick={() => setOpen(false)} className="text-gray-400 hover:text-gray-600"><X size={20} /></button>
+                            <button onClick={() => setOpen(false)} className="text-kidville-muted hover:text-kidville-ink"><X size={20} /></button>
                         </div>
-                        <label className="font-maven text-xs text-gray-500 mb-1 block">Causale fattura</label>
+                        <label className="font-maven text-xs text-kidville-muted mb-1 block">Causale fattura</label>
                         <textarea value={causale} onChange={(e) => setCausale(e.target.value)} rows={3}
                             placeholder="Lascia vuoto per usare il template delle impostazioni"
-                            className="w-full border-2 border-gray-200 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
+                            className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
                         <div className="flex gap-2 mt-4">
-                            <button onClick={() => setOpen(false)} className="flex-1 py-2.5 rounded-full border-2 border-gray-200 font-maven font-bold text-sm text-gray-500 hover:bg-gray-50">
+                            <button onClick={() => setOpen(false)} className="flex-1 py-2.5 rounded-full border-2 border-kidville-line font-maven font-bold text-sm text-kidville-muted hover:bg-kidville-cream">
                                 Annulla
                             </button>
                             <button onClick={emetti} disabled={busy}

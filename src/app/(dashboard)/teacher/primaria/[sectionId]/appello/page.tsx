@@ -42,8 +42,8 @@ function oraCorrente(): string {
 const STATI: { key: Stato; label: string; icon: React.ReactNode; cls: string }[] = [
   { key: 'presente', label: 'Presente', icon: <Check size={14} />, cls: 'bg-kidville-success text-white' },
   { key: 'assente', label: 'Assente', icon: <X size={14} />, cls: 'bg-kidville-error text-white' },
-  { key: 'ritardo', label: 'Ritardo', icon: <Clock size={14} />, cls: 'bg-amber-500 text-white' },
-  { key: 'uscita_anticipata', label: 'Uscita', icon: <LogOut size={14} />, cls: 'bg-purple-500 text-white' },
+  { key: 'ritardo', label: 'Ritardo', icon: <Clock size={14} />, cls: 'bg-kidville-warn text-white' },
+  { key: 'uscita_anticipata', label: 'Uscita', icon: <LogOut size={14} />, cls: 'bg-kidville-info text-white' },
 ];
 
 function oggiIso() {
@@ -180,13 +180,13 @@ export default function AppelloPage() {
     <div className="space-y-4">
     <div className="rounded-card bg-white p-5 shadow-sm">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <h2 className="font-barlow text-lg font-bold text-gray-800">Appello</h2>
+        <h2 className="font-barlow text-lg font-bold text-kidville-ink">Appello</h2>
         <div className="flex items-center gap-2">
           <input
             type="date"
             value={data}
             onChange={(e) => setData(e.target.value)}
-            className="font-maven rounded-pill border border-gray-200 px-3 py-1.5 text-sm"
+            className="font-maven rounded-pill border border-kidville-line px-3 py-1.5 text-sm"
           />
           <button
             onClick={tuttiPresenti}
@@ -199,12 +199,12 @@ export default function AppelloPage() {
       </div>
 
       {loading ? (
-        <p className="font-maven text-gray-400 text-sm">Caricamento…</p>
+        <p className="font-maven text-kidville-muted text-sm">Caricamento…</p>
       ) : (
-        <ul className="divide-y divide-gray-100">
+        <ul className="divide-y divide-kidville-line">
           {righe.map((r) => (
             <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 py-2.5">
-              <span className="font-maven text-gray-800">{r.cognome} {r.nome}</span>
+              <span className="font-maven text-kidville-ink">{r.cognome} {r.nome}</span>
               <div className="flex flex-wrap items-center gap-1.5">
                 {STATI.map((s) => (
                   <button
@@ -212,7 +212,7 @@ export default function AppelloPage() {
                     onClick={() => setStato(r.id, s.key)}
                     title={s.label}
                     className={`font-maven inline-flex items-center gap-1 rounded-pill px-2.5 py-1 text-xs transition ${
-                      r.stato === s.key ? s.cls : 'bg-gray-100 text-gray-400 hover:bg-gray-200'
+                      r.stato === s.key ? s.cls : 'bg-kidville-cream text-kidville-muted hover:bg-kidville-cream-dark'
                     }`}
                   >
                     {s.icon}
@@ -221,13 +221,13 @@ export default function AppelloPage() {
                 ))}
                 {/* Orario di entrata (ritardo) / uscita (uscita anticipata). */}
                 {(r.stato === 'ritardo' || r.stato === 'uscita_anticipata') && (
-                  <label className="font-maven inline-flex items-center gap-1 text-xs text-gray-500">
+                  <label className="font-maven inline-flex items-center gap-1 text-xs text-kidville-muted">
                     {r.stato === 'ritardo' ? 'Entrata' : 'Uscita'}
                     <input
                       type="time"
                       value={oraDaTs(r.stato === 'ritardo' ? r.orario_entrata : r.orario_uscita)}
                       onChange={(e) => setOrario(r.id, e.target.value)}
-                      className="rounded-pill border border-gray-200 px-2 py-0.5 text-xs"
+                      className="rounded-pill border border-kidville-line px-2 py-0.5 text-xs"
                     />
                   </label>
                 )}
@@ -239,7 +239,7 @@ export default function AppelloPage() {
                     <button
                       onClick={() => r.presenza_id && presaVisione(r.presenza_id)}
                       title={r.giustificazione_testo ?? 'Giustificata dal genitore'}
-                      className="font-maven rounded-pill bg-amber-100 px-2.5 py-1 text-[11px] text-amber-700"
+                      className="font-maven rounded-pill bg-kidville-warn-soft px-2.5 py-1 text-[11px] text-kidville-warn"
                     >
                       Giustificata · presa visione
                     </button>
@@ -248,39 +248,39 @@ export default function AppelloPage() {
               </div>
             </li>
           ))}
-          {righe.length === 0 && <li className="py-3 font-maven text-gray-400 text-sm">Nessun alunno nella classe.</li>}
+          {righe.length === 0 && <li className="py-3 font-maven text-kidville-muted text-sm">Nessun alunno nella classe.</li>}
         </ul>
       )}
     </div>
 
     {/* ── Riepilogo ore assenze per materia ───────────────────────── */}
     <div className="rounded-card bg-white p-5 shadow-sm">
-      <h3 className="font-barlow text-base font-bold text-gray-800 mb-1 flex items-center gap-2">
+      <h3 className="font-barlow text-base font-bold text-kidville-ink mb-1 flex items-center gap-2">
         <BarChart2 size={16} className="text-kidville-green" /> Riepilogo ore assenze
       </h3>
-      <p className="font-maven text-xs text-gray-400 mb-3">Monte ore mancate totali e per materia, in base all&apos;orario settimanale.</p>
+      <p className="font-maven text-xs text-kidville-muted mb-3">Monte ore mancate totali e per materia, in base all&apos;orario settimanale.</p>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-3">
         <select
           value={riepilogoAlunnoId}
           onChange={(e) => setRiepilogoAlunnoId(e.target.value)}
-          className="font-maven rounded-pill border border-gray-200 px-3 py-2 text-sm"
+          className="font-maven rounded-pill border border-kidville-line px-3 py-2 text-sm"
         >
           <option value="">Alunno…</option>
           {alunniList.map((a) => <option key={a.id} value={a.id}>{a.cognome} {a.nome}</option>)}
         </select>
         <input type="date" value={riepilogoDal} onChange={(e) => setRiepilogoDal(e.target.value)}
-          className="font-maven rounded-pill border border-gray-200 px-3 py-2 text-sm" />
+          className="font-maven rounded-pill border border-kidville-line px-3 py-2 text-sm" />
         <input type="date" value={riepilogoAl} onChange={(e) => setRiepilogoAl(e.target.value)}
-          className="font-maven rounded-pill border border-gray-200 px-3 py-2 text-sm" />
+          className="font-maven rounded-pill border border-kidville-line px-3 py-2 text-sm" />
       </div>
 
       {!riepilogoAlunnoId ? (
-        <p className="font-maven text-sm text-gray-400">Seleziona un alunno.</p>
+        <p className="font-maven text-sm text-kidville-muted">Seleziona un alunno.</p>
       ) : riepilogoLoading ? (
-        <p className="font-maven text-sm text-gray-400">Calcolo in corso…</p>
+        <p className="font-maven text-sm text-kidville-muted">Calcolo in corso…</p>
       ) : !riepilogo ? (
-        <p className="font-maven text-sm text-gray-400">Nessuna assenza registrata nel periodo.</p>
+        <p className="font-maven text-sm text-kidville-muted">Nessuna assenza registrata nel periodo.</p>
       ) : (
         <div className="space-y-3">
           {/* Totale */}
@@ -292,7 +292,7 @@ export default function AppelloPage() {
               { label: 'Totale ore', val: riepilogo.oreTotali },
             ].map((s) => (
               <div key={s.label} className="rounded-card bg-kidville-green/5 border border-kidville-green/20 px-3 py-2 text-center">
-                <p className="font-maven text-[10px] text-gray-500 mb-0.5">{s.label}</p>
+                <p className="font-maven text-[10px] text-kidville-muted mb-0.5">{s.label}</p>
                 <p className="font-barlow text-xl font-bold text-kidville-green">{s.val.toFixed(1)}h</p>
               </div>
             ))}
@@ -301,17 +301,17 @@ export default function AppelloPage() {
           {riepilogo.perMateria && Object.keys(riepilogo.perMateria).length > 0 && (
             <table className="w-full font-maven text-sm">
               <thead>
-                <tr className="border-b border-gray-100">
-                  <th className="text-left py-1.5 text-xs font-semibold text-gray-500">Materia</th>
-                  <th className="text-right py-1.5 text-xs font-semibold text-gray-500">Ore mancate</th>
+                <tr className="border-b border-kidville-line">
+                  <th className="text-left py-1.5 text-xs font-semibold text-kidville-muted">Materia</th>
+                  <th className="text-right py-1.5 text-xs font-semibold text-kidville-muted">Ore mancate</th>
                 </tr>
               </thead>
               <tbody>
                 {Object.entries(riepilogo.perMateria)
                   .sort((a, b) => b[1].oreMancate - a[1].oreMancate)
                   .map(([id, m]) => (
-                    <tr key={id} className="border-b border-gray-50">
-                      <td className="py-1.5 text-gray-700">{m.nome}</td>
+                    <tr key={id} className="border-b border-kidville-line">
+                      <td className="py-1.5 text-kidville-ink">{m.nome}</td>
                       <td className="py-1.5 text-right font-semibold text-kidville-green">{m.oreMancate.toFixed(1)}h</td>
                     </tr>
                   ))}

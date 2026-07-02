@@ -30,7 +30,7 @@ export function FamilyDetailView({ familyData }: { familyData?: any }) {
                     <button
                         key={tab.id}
                         onClick={() => setActiveTab(tab.id)}
-                        className={`relative px-6 py-3 rounded-xl font-bold text-sm transition-colors flex items-center gap-2 ${activeTab === tab.id ? 'text-white' : 'text-gray-500 hover:text-kidville-green'}`}
+                        className={`relative px-6 py-3 rounded-xl font-bold text-sm transition-colors flex items-center gap-2 ${activeTab === tab.id ? 'text-white' : 'text-kidville-muted hover:text-kidville-green'}`}
                     >
                         {activeTab === tab.id && (
                             <motion.div 
@@ -65,7 +65,7 @@ export function FamilyDetailView({ familyData }: { familyData?: any }) {
                                     Dettagli {tab.label.split(':')[0]}
                                 </h3>
                                 {/* Qui andrebbe il render del componente di dettaglio specifico (DettaglioAlunno o DettaglioAdulto) */}
-                                <div className="text-gray-600">
+                                <div className="text-kidville-ink">
                                     <p className="mb-4">Visualizzazione dati per: <strong className="text-kidville-green">{tab.data.nome}</strong></p>
                                     <div className="grid grid-cols-2 gap-4 opacity-50">
                                         <div className="h-12 bg-kidville-cream rounded-xl animate-pulse"></div>

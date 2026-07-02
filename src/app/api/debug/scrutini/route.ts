@@ -1,10 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
+import { sealDangerous } from '@/lib/security/seal'
 
 export async function GET(request: NextRequest) {
+  const sealed = await sealDangerous(request)
+  if (sealed) return sealed
   try {
     const sp = new URL(request.url).searchParams
-    const parentId = sp.get('parentId') || '33333333-3333-3333-3333-333333333333'
+    const parentId = sp.get('parentId')
+    if (!parentId) {
+      return NextResponse.json({ error: 'parentId obbligatorio' }, { status: 400 })
+    }
 
     const supabase = await createAdminClient()
     const result: Record<string, unknown> = {}

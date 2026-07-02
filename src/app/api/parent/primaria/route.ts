@@ -19,13 +19,13 @@ export async function GET(request: NextRequest) {
       .from('alunni')
       .select('id, nome, cognome, section_id, scuola_id')
       .eq('id', studentId)
-      .single()
+      .maybeSingle()
     if (!alunno) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
 
     // Tipo scuola della sezione (per la vista adattiva lato client).
     let schoolType: string | null = null
     if (alunno.section_id) {
-      const { data: sez } = await supabase.from('sections').select('school_type').eq('id', alunno.section_id).single()
+      const { data: sez } = await supabase.from('sections').select('school_type').eq('id', alunno.section_id).maybeSingle()
       schoolType = sez?.school_type ?? null
     }
 

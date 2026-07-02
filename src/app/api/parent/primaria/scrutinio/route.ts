@@ -24,7 +24,7 @@ export async function GET(request: NextRequest) {
       .from('scrutini')
       .select('id, section_id, periodo_id, stato, pubblicato')
       .eq('id', scrutinioId)
-      .single()
+      .maybeSingle()
     if (!scrutinio) return NextResponse.json({ error: 'Scrutinio non trovato' }, { status: 404 })
     if (scrutinio.stato !== 'chiuso' || !scrutinio.pubblicato) {
       return NextResponse.json({ error: 'Pagella non ancora pubblicata' }, { status: 403 })
@@ -43,7 +43,7 @@ export async function GET(request: NextRequest) {
     }
 
     const [{ data: periodo }, { data: materie }, { data: giudizi }, { data: comp }] = await Promise.all([
-      supabase.from('scrutinio_periodi').select('nome, anno_scolastico').eq('id', scrutinio.periodo_id).single(),
+      supabase.from('scrutinio_periodi').select('nome, anno_scolastico').eq('id', scrutinio.periodo_id).maybeSingle(),
       supabase.from('materie').select('id, nome, ordine').eq('section_id', scrutinio.section_id).eq('attiva', true).order('ordine'),
       supabase.from('scrutinio_giudizi').select('materia_id, giudizio_sintetico').eq('scrutinio_id', scrutinioId).eq('alunno_id', studentId),
       supabase.from('scrutinio_comportamento').select('giudizio_testo, giudizio_globale').eq('scrutinio_id', scrutinioId).eq('alunno_id', studentId).maybeSingle(),

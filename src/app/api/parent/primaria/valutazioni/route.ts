@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
       .from('alunni')
       .select('section_id, scuola_id')
       .eq('id', studentId)
-      .single()
+      .maybeSingle()
     if (!alunno) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
 
     // Buffer visibilità

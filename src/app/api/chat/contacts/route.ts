@@ -21,7 +21,7 @@ export async function GET(request: Request) {
             .from('utenti')
             .select('id, nome, cognome, ruolo, first_name, last_name, role')
             .eq('id', userId)
-            .single();
+            .maybeSingle();
 
         if (!user) {
             return NextResponse.json({ error: 'Utente non trovato' }, { status: 404 });
@@ -108,7 +108,7 @@ export async function GET(request: Request) {
                                 .from('utenti')
                                 .select('id, nome, cognome, first_name, last_name')
                                 .eq('id', legame.genitore_id)
-                                .single();
+                                .maybeSingle();
 
                             if (parent) {
                                 const exists = contacts.some(c => c.user_id === parent.id && c.student_id === student.id);
@@ -140,7 +140,7 @@ export async function GET(request: Request) {
                         .from('alunni')
                         .select('id, nome, cognome, classe_sezione, section_id')
                         .eq('id', legame.alunno_id)
-                        .single();
+                        .maybeSingle();
 
                     if (student) {
                         // Insegnanti della sezione del figlio (fonte canonica utenti_sezioni).

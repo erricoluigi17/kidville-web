@@ -37,7 +37,7 @@ export async function POST(request: NextRequest) {
       .from('scrutini')
       .select('id, pubblicato')
       .eq('id', scrutinioId)
-      .single()
+      .maybeSingle()
     if (!scr) return NextResponse.json({ error: 'Scrutinio non trovato' }, { status: 404 })
     if (!scr.pubblicato) return NextResponse.json({ error: 'Pagella non ancora pubblicata' }, { status: 403 })
 

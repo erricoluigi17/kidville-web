@@ -25,7 +25,7 @@ export async function GET(request: Request) {
                 .from('chat_threads')
                 .select('teacher_id, parent_id')
                 .eq('id', threadId)
-                .single();
+                .maybeSingle();
 
             if (!thread) {
                 return NextResponse.json({ error: 'Thread non trovato' }, { status: 404 });

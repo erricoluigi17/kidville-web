@@ -16,7 +16,7 @@ export async function GET(request: NextRequest) {
       .from('alunni')
       .select('id, section_id')
       .eq('id', studentId)
-      .single()
+      .maybeSingle()
     if (!alunno) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
     if (!alunno.section_id) {
       return NextResponse.json({ success: true, data: { campanelle: [], orario: [] } })

@@ -34,7 +34,7 @@ export async function POST(request: NextRequest) {
       .from('note_disciplinari')
       .select('id, alunno_id, richiede_firma')
       .eq('id', notaId)
-      .single()
+      .maybeSingle()
     if (!nota) return NextResponse.json({ error: 'Nota non trovata' }, { status: 404 })
 
     // Solo un genitore COLLEGATO all'alunno della nota può firmarne la presa visione.

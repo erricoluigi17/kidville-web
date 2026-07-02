@@ -100,7 +100,7 @@ export async function GET(request: Request) {
                     .from('utenti')
                     .select('nome, cognome, ruolo, first_name, last_name, role')
                     .eq('id', avviso.author_id)
-                    .single();
+                    .maybeSingle();
 
                 // Se è un genitore, controlla se ha letto
                 let myResponse = null;

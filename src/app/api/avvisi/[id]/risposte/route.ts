@@ -40,13 +40,13 @@ export async function GET(request: Request, { params }: RouteParams) {
                     .from('utenti')
                     .select('nome, cognome, first_name, last_name')
                     .eq('id', r.parent_id)
-                    .single();
+                    .maybeSingle();
 
                 const { data: student } = await supabase
                     .from('alunni')
                     .select('nome, cognome')
                     .eq('id', r.student_id)
-                    .single();
+                    .maybeSingle();
 
                 return {
                     ...r,
@@ -91,7 +91,7 @@ export async function POST(request: Request, { params }: RouteParams) {
             .eq('student_id', student_id)
             .maybeSingle();
 
-        const insertPayload: any = {
+        const insertPayload: Record<string, unknown> = {
             avviso_id: avvisoId,
             parent_id,
             student_id,

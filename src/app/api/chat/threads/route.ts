@@ -36,7 +36,7 @@ export async function GET(request: Request) {
                     .eq('thread_id', thread.id)
                     .order('created_at', { ascending: false })
                     .limit(1)
-                    .single();
+                    .maybeSingle();
 
                 // Conta messaggi non letti (inviati dall'altro)
                 const { count: unreadCount } = await supabase
@@ -52,13 +52,13 @@ export async function GET(request: Request) {
                     .from('utenti')
                     .select('nome, cognome, ruolo, first_name, last_name, role')
                     .eq('id', otherUserId)
-                    .single();
+                    .maybeSingle();
 
                 const { data: student } = await supabase
                     .from('alunni')
                     .select('nome, cognome, classe_sezione')
                     .eq('id', thread.student_id)
-                    .single();
+                    .maybeSingle();
 
                 return {
                     ...thread,
@@ -106,7 +106,7 @@ export async function POST(request: Request) {
             .eq('teacher_id', teacher_id)
             .eq('parent_id', parent_id)
             .eq('student_id', student_id)
-            .single();
+            .maybeSingle();
 
         if (existing) {
             return NextResponse.json(existing);

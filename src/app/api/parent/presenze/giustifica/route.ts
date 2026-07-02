@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
       .from('alunni')
       .select('id, section_id, scuola_id')
       .eq('id', studentId)
-      .single()
+      .maybeSingle()
     if (!alunno) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
 
     const presenzeCfg = await getModuleConfig<{
@@ -62,7 +62,7 @@ export async function POST(request: NextRequest) {
 
     let schoolType: string | null = null
     if (alunno.section_id) {
-      const { data: sez } = await supabase.from('sections').select('school_type').eq('id', alunno.section_id).single()
+      const { data: sez } = await supabase.from('sections').select('school_type').eq('id', alunno.section_id).maybeSingle()
       schoolType = sez?.school_type ?? null
     }
     if (schoolType !== 'primaria') {

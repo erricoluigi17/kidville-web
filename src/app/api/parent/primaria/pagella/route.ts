@@ -18,9 +18,9 @@ export async function GET(request: NextRequest) {
       .from('alunni')
       .select('id, section_id')
       .eq('id', studentId)
-      .single()
-    console.log('[pagella GET] studentId=', studentId, 'alunno=', alunno)
-    if (!alunno?.section_id) return NextResponse.json({ success: true, data: [] })
+      .maybeSingle()
+    if (!alunno) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
+    if (!alunno.section_id) return NextResponse.json({ success: true, data: [] })
 
     // Scrutini PUBBLICATI della sezione del figlio + periodo (la chiusura non
     // basta: i voti sono visibili solo dopo l'OK/pubblicazione del dirigente).

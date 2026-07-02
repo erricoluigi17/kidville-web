@@ -37,6 +37,17 @@ export async function POST(request: NextRequest) {
       .single()
     if (!nota) return NextResponse.json({ error: 'Nota non trovata' }, { status: 404 })
 
+    // Solo un genitore COLLEGATO all'alunno della nota può firmarne la presa visione.
+    const { data: legame } = await supabase
+      .from('legame_genitori_alunni')
+      .select('alunno_id')
+      .eq('genitore_id', userId)
+      .eq('alunno_id', nota.alunno_id)
+      .maybeSingle()
+    if (!legame) {
+      return NextResponse.json({ error: 'Accesso negato: alunno non collegato al genitore' }, { status: 403 })
+    }
+
     const firma = buildSignatureLog({
       method: 'OTP_EMAIL',
       email,

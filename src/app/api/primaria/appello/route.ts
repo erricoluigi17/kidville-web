@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
-import { assertSezioneInScope } from '@/lib/auth/scope'
+import { assertSezioneInScope, assertAlunniInSezione } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { notificaTitolariScrittura } from '@/lib/primaria/notifiche'
 
@@ -83,6 +83,10 @@ export async function POST(request: NextRequest) {
     // Compone un timestamp completo da data (YYYY-MM-DD) + orario (HH:MM).
     const toTs = (orario?: string) =>
       orario && /^\d{2}:\d{2}$/.test(orario) ? `${data}T${orario}:00` : null
+
+    // Gli alunni dei record devono appartenere alla sezione asserita (no upsert cross-sezione).
+    const alunniErr = await assertAlunniInSezione(supabase, records.map((r) => r.alunnoId), sectionId)
+    if (alunniErr) return alunniErr
 
     // Stato PRIMA (per audit diff).
     const alunnoIds = records.map((r) => r.alunnoId)

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { getRequestUserId } from '@/lib/auth/require-staff'
+import { requireDocente } from '@/lib/auth/require-staff'
+import { assertSezioneInScope, assertAlunniInSezione } from '@/lib/auth/scope'
 import {
   calcolaOreAssenza,
   calcolaOreAssenzaPerMateria,
@@ -20,10 +21,17 @@ export async function GET(request: NextRequest) {
     const to = sp.get('to')
     const alunnoId = sp.get('alunnoId')
     const includiMaterie = sp.get('includiMaterie') === 'true'
-    if (!getRequestUserId(request)) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
+    const auth = await requireDocente(request)
+    if (auth.response) return auth.response
     if (!sectionId) return NextResponse.json({ error: 'sectionId obbligatorio' }, { status: 400 })
 
     const supabase = await createAdminClient()
+    const scopeErr = await assertSezioneInScope(supabase, auth.user, sectionId)
+    if (scopeErr) return scopeErr
+    if (alunnoId) {
+      const alunnoErr = await assertAlunniInSezione(supabase, [alunnoId], sectionId)
+      if (alunnoErr) return alunnoErr
+    }
 
     // Campanelle della sezione (con id per il calcolo per materia).
     const { data: campanelle } = await supabase

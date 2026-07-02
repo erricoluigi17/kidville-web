@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
-import { assertSezioneInScope } from '@/lib/auth/scope'
+import { assertSezioneInScope, assertAlunniInSezione } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { risolviValutatore } from '@/lib/audit/valutatore'
 import { isOltreScadenza } from '@/lib/primaria/timelock'
@@ -114,6 +114,12 @@ export async function POST(request: NextRequest) {
     // Scope per tenant/classe (educator: solo sezioni assegnate; staff/segreteria: plesso).
     const scopeErr = await assertSezioneInScope(supabase, auth.user, sectionId)
     if (scopeErr) return scopeErr
+
+    // I destinatari (oscuramento firma indipendente) devono essere alunni della sezione.
+    if (Array.isArray(destinatariIds) && destinatariIds.length > 0) {
+      const alunniErr = await assertAlunniInSezione(supabase, destinatariIds, sectionId)
+      if (alunniErr) return alunniErr
+    }
 
     // La FIRMA del registro deve restare del docente (vincolo FEA). educator → sé
     // stesso; segreteria → docente titolare indicato in body.docenteId, altrimenti 422.

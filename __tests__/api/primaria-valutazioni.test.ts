@@ -45,6 +45,7 @@ vi.mock('@/lib/auth/require-staff', () => ({ requireDocente: authMock.requireDoc
 vi.mock('@/lib/auth/scope', () => ({
   assertSezioneInScope: vi.fn().mockResolvedValue(null),
   assertAlunnoInScope: vi.fn().mockResolvedValue(null),
+  assertAlunniInSezione: vi.fn().mockResolvedValue(null),
 }))
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: vi.fn().mockResolvedValue(undefined) }))
 vi.mock('@/lib/audit/valutatore', () => ({

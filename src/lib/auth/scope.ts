@@ -104,6 +104,36 @@ export async function assertClasseNomeInScope(
 }
 
 /**
+ * Verifica batched che TUTTI gli alunni indicati appartengano alla sezione data.
+ * Per gli handler che ricevono array di alunno_id dentro una sezione GIÀ asserita
+ * con assertSezioneInScope (appello, note, destinatari registro, giudizi scrutinio):
+ * impedisce scritture/notifiche verso alunni di altre sezioni/plessi. 403 se anche
+ * un solo id è estraneo alla sezione.
+ */
+export async function assertAlunniInSezione(
+  supabase: SupabaseClient,
+  alunnoIds: (string | null | undefined)[],
+  sectionId: string,
+): Promise<NextResponse | null> {
+  const ids = [...new Set(alunnoIds.filter(Boolean) as string[])]
+  if (ids.length === 0) return null
+  const { data } = await supabase
+    .from('alunni')
+    .select('id')
+    .in('id', ids)
+    .eq('section_id', sectionId)
+  const inSezione = new Set((data ?? []).map((r) => r.id as string))
+  const estranei = ids.filter((id) => !inSezione.has(id))
+  if (estranei.length > 0) {
+    return NextResponse.json(
+      { error: `Alunni non appartenenti alla sezione: ${estranei.join(', ')}` },
+      { status: 403 }
+    )
+  }
+  return null
+}
+
+/**
  * Verifica che l'alunno (`alunnoId`) sia nello scope dell'utente, risolvendo la
  * sua sezione/plesso. Per gli endpoint che ricevono alunnoId e non sectionId
  * (valutazioni, prospetto, fascicolo, diario, ...). 403/404 se fuori scope.

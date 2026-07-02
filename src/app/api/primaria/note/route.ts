@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
-import { assertSezioneInScope } from '@/lib/auth/scope'
+import { assertSezioneInScope, assertAlunniInSezione } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { risolviValutatore } from '@/lib/audit/valutatore'
 import { enqueueNotifichePerAlunni, notificaTitolariScrittura } from '@/lib/primaria/notifiche'
@@ -53,6 +53,10 @@ export async function POST(request: NextRequest) {
     const supabase = await createAdminClient()
     const scopeErr = await assertSezioneInScope(supabase, auth.user, sectionId)
     if (scopeErr) return scopeErr
+
+    // Gli alunni destinatari devono appartenere alla sezione asserita (no note cross-sezione).
+    const alunniErr = await assertAlunniInSezione(supabase, alunnoIds, sectionId)
+    if (alunniErr) return alunniErr
 
     // Autore della nota = docente (vincolo FEA). educator → sé stesso; segreteria
     // → docente titolare indicato in body.docenteId (validato), altrimenti 422.

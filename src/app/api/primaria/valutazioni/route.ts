@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
-import { assertSezioneInScope, assertAlunnoInScope } from '@/lib/auth/scope'
+import { assertSezioneInScope, assertAlunnoInScope, assertAlunniInSezione } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { risolviValutatore } from '@/lib/audit/valutatore'
 import { isOltreScadenza } from '@/lib/primaria/timelock'
@@ -98,6 +98,10 @@ export async function POST(request: NextRequest) {
     const scopeErr = await assertSezioneInScope(supabase, auth.user, sectionId)
     if (scopeErr) return scopeErr
 
+    // L'alunno valutato deve appartenere alla sezione asserita (no valutazioni cross-sezione).
+    const alunnoErr = await assertAlunniInSezione(supabase, [alunnoId], sectionId)
+    if (alunnoErr) return alunnoErr
+
     // Autore della valutazione = docente (vincolo FEA). educator → sé stesso;
     // segreteria → docente titolare della MATERIA indicato in body.docenteId, altrimenti 422.
     const vr = await risolviValutatore(supabase, auth.user, sectionId, { docenteId: body.docenteId, materiaId })
@@ -111,6 +115,11 @@ export async function POST(request: NextRequest) {
       .eq('id', materiaId)
       .single()
     if (!materia) return NextResponse.json({ error: 'Materia non trovata' }, { status: 404 })
+    // La materia deve essere del catalogo della sezione asserita: il suo scuola_id
+    // pilota timelock, template giudizio e audit — mai da un tenant estraneo.
+    if (materia.section_id !== sectionId) {
+      return NextResponse.json({ error: 'Materia non appartenente alla sezione' }, { status: 403 })
+    }
 
     // Collegamento a ≥1 obiettivo di apprendimento (DL-015), enforcement CONDIZIONALE:
     // obbligatorio solo se la scuola ha configurato obiettivi per quella materia/livello

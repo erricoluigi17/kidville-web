@@ -1,10 +1,17 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/server-client';
+import { sealDangerous } from '@/lib/security/seal';
 
 export async function GET(request: Request) {
+  const sealed = await sealDangerous(request);
+  if (sealed) return sealed;
+
   const supabase = await createAdminClient();
   const { searchParams } = new URL(request.url);
-  const userId = searchParams.get('userId') || '33333333-3333-3333-3333-333333333333';
+  const userId = searchParams.get('userId');
+  if (!userId) {
+    return NextResponse.json({ error: 'userId obbligatorio' }, { status: 400 });
+  }
 
   const [
     { data: utente },

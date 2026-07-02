@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { sealDangerous } from '@/lib/security/seal';
 import { createAdminClient } from '@/lib/supabase/server-client';
 
 /**
@@ -66,7 +67,9 @@ async function runMigration() {
   return { success: true };
 }
 
-export async function POST() {
+export async function POST(request: Request) {
+  const sealed = await sealDangerous(request);
+  if (sealed) return sealed;
   try {
     return NextResponse.json(await runMigration());
   } catch (error) {
@@ -74,7 +77,9 @@ export async function POST() {
   }
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const sealed = await sealDangerous(request);
+  if (sealed) return sealed;
   try {
     return NextResponse.json(await runMigration());
   } catch (error) {

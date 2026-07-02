@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { requireStaff } from '@/lib/auth/require-staff';
+import { sealDangerous } from '@/lib/security/seal';
 import { backfillParentsAuth } from '@/lib/auth/backfill';
 
 /**
@@ -12,8 +12,8 @@ import { backfillParentsAuth } from '@/lib/auth/backfill';
  * impostare/azzerare una password staff usare "Rigenera credenziali" (S11).
  */
 export async function POST(request: Request) {
-  const auth = await requireStaff(request, ['admin']);
-  if (auth.response) return auth.response;
+  const sealed = await sealDangerous(request);
+  if (sealed) return sealed;
 
   const url = new URL(request.url);
   const dryRun = url.searchParams.get('dryRun') === '1' || url.searchParams.get('dryRun') === 'true';

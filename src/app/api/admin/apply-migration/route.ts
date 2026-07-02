@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { sealDangerous } from '@/lib/security/seal';
 import { createAdminClient } from '@/lib/supabase/server-client';
 
 /**
@@ -35,7 +36,7 @@ async function runMigration() {
   }
 
   // Verify columns now exist by reading table structure
-  const { data: testRow, error: readError } = await supabase
+  const { error: readError } = await supabase
     .from('task_interni')
     .select('id, status, priority, category, deadline, student_id, resolved_by, resolution_notes, resolved_at, target_role, target_scope, compiti')
     .limit(1);
@@ -51,7 +52,9 @@ async function runMigration() {
   };
 }
 
-export async function POST() {
+export async function POST(request: Request) {
+  const sealed = await sealDangerous(request);
+  if (sealed) return sealed;
   try {
     const result = await runMigration();
     return NextResponse.json(result);
@@ -60,7 +63,9 @@ export async function POST() {
   }
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const sealed = await sealDangerous(request);
+  if (sealed) return sealed;
   try {
     const result = await runMigration();
     return NextResponse.json(result);

@@ -1,7 +1,10 @@
 import { NextResponse } from 'next/server';
+import { sealDangerous } from '@/lib/security/seal';
 import { createAdminClient } from '@/lib/supabase/server-client';
 
-export async function GET() {
+export async function GET(request: Request) {
+  const sealed = await sealDangerous(request);
+  if (sealed) return sealed;
   const supabase = await createAdminClient();
   
   // Get staff from utenti (adults table not in public schema)

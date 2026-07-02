@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { sealDangerous } from '@/lib/security/seal';
 import { createAdminClient } from '@/lib/supabase/server-client';
 
 /**
@@ -6,7 +7,9 @@ import { createAdminClient } from '@/lib/supabase/server-client';
  * Endpoint temporaneo per creare le tabelle del registro primaria nel DB Supabase.
  * Da eseguire UNA SOLA VOLTA. Idempotente (usa IF NOT EXISTS).
  */
-export async function GET() {
+export async function GET(request: Request) {
+    const sealed = await sealDangerous(request);
+    if (sealed) return sealed;
     try {
         const supabase = await createAdminClient();
 

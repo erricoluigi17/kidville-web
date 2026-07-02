@@ -1,6 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { getRequestUserId } from '@/lib/auth/require-staff'
+import { parseQuery } from '@/lib/validation/http'
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+// studentId lasco (niente zUuid): un valore non-GUID oggi degrada a 404 dalla
+// query su `alunni` — stesso criterio di parent/competenze.
+const getQuerySchema = z.object({
+  studentId: z.string({ error: 'studentId obbligatorio' }).min(1, 'studentId obbligatorio'),
+})
 
 // GET /api/parent/primaria/valutazioni?studentId=&userId=
 // Valutazioni in itinere del figlio, raggruppate per materia.
@@ -11,11 +20,12 @@ import { getRequestUserId } from '@/lib/auth/require-staff'
 // (notif_buffer_valutazioni_min, default 10') dalla creazione (PRD §4.5).
 export async function GET(request: NextRequest) {
   try {
-    const sp = new URL(request.url).searchParams
-    const studentId = sp.get('studentId')
     const userId = getRequestUserId(request)
     if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
-    if (!studentId) return NextResponse.json({ error: 'studentId obbligatorio' }, { status: 400 })
+
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+    const { studentId } = q.data
 
     const supabase = await createAdminClient()
 

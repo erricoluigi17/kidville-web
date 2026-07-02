@@ -1,15 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { getRequestUserId } from '@/lib/auth/require-staff'
+import { parseQuery } from '@/lib/validation/http'
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+// studentId lasco (niente zUuid): un valore non-GUID oggi degrada a 404 dalla
+// query su `alunni` — stesso criterio di parent/competenze (e fixture test 'a-1').
+const getQuerySchema = z.object({
+  studentId: z.string({ error: 'studentId obbligatorio' }).min(1, 'studentId obbligatorio'),
+})
 
 // GET /api/parent/primaria/orario?studentId=&userId=
 // Orario settimanale (campanelle + griglia) della sezione del figlio, in SOLA
 // LETTURA per la famiglia. Ricalca la lettura docente (/api/primaria/orario).
 export async function GET(request: NextRequest) {
   try {
-    const studentId = new URL(request.url).searchParams.get('studentId')
     if (!getRequestUserId(request)) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
-    if (!studentId) return NextResponse.json({ error: 'studentId obbligatorio' }, { status: 400 })
+
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+    const { studentId } = q.data
 
     const supabase = await createAdminClient()
     const { data: alunno } = await supabase

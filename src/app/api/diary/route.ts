@@ -14,8 +14,8 @@ const postBodySchema = z.object({
     tipo_evento: z.string().min(1),
     // Default dinamico (adesso) calcolato nel codice; accetta ciò che accetta new Date(...).
     timestamp_evento: z.union([z.string(), z.number()]).nullish(),
-    note: z.unknown(),
-    dettagli: z.unknown(),
+    note: z.unknown().optional(),
+    dettagli: z.unknown().optional(),
 });
 
 // Vista insegnante: eventi della classe per una data (default oggi, calcolato nel codice).

@@ -1,9 +1,17 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
+import { parseQuery } from '@/lib/validation/http'
+import { zUuid, zDataYMD } from '@/lib/validation/common'
 import { loadResolveOptions, DEFAULT_SCUOLA } from '@/lib/mensa/server'
 import { resolveMenuGiorno } from '@/lib/mensa/resolveMenu'
 import { allergeniAlunno, conflittiAllergie, allergeneLabel } from '@/lib/mensa/allergeni'
+
+const getQuerySchema = z.object({
+  alunno_id: zUuid,
+  date: zDataYMD.optional(), // default dinamico: oggi (calcolato nell'handler)
+})
 
 // GET /api/parent/mensa/allergie?alunno_id=&date= — icona pericolo allergeni
 // lato genitore (DL-043): incrocia gli allergeni del figlio col menu del giorno.
@@ -12,10 +20,10 @@ export async function GET(request: Request) {
   const auth = await requireUser(request)
   if (auth.response) return auth.response
 
-  const { searchParams } = new URL(request.url)
-  const alunnoId = searchParams.get('alunno_id')
-  const date = searchParams.get('date') ?? new Date().toISOString().slice(0, 10)
-  if (!alunnoId) return NextResponse.json({ error: 'alunno_id obbligatorio' }, { status: 400 })
+  const q = parseQuery(request, getQuerySchema)
+  if ('response' in q) return q.response
+  const alunnoId = q.data.alunno_id
+  const date = q.data.date ?? new Date().toISOString().slice(0, 10)
 
   const supabase = await createAdminClient()
   const { data: al } = await supabase

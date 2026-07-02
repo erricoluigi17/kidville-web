@@ -1,10 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { getRequestUserId } from '@/lib/auth/require-staff'
 import { getUserEmail, verifyTicket, codeHash } from '@/lib/auth/otp-ticket'
 import { buildSignatureLog, extractRequestMeta } from '@/lib/fea/signature-log'
 import { recordSignerSlot } from '@/lib/fea/slots'
 import { logFeaEvent } from '@/lib/fea/audit'
+import { parseBody } from '@/lib/validation/http'
+
+// Id laschi (non zUuid): il comportamento attuale accetta qualsiasi stringa non
+// vuota (il lookup su `scrutini` fa da gate con 404). I campi OTP restano
+// permissivi: oggi sono coerciti a String/Number senza vincoli di tipo e la
+// verifica vera è verifyTicket (400 con semantica propria).
+const postBodySchema = z.object({
+  scrutinioId: z.string({ error: 'scrutinioId obbligatorio' }).min(1, 'scrutinioId obbligatorio'),
+  studentId: z.string({ error: 'studentId obbligatorio' }).min(1, 'studentId obbligatorio'),
+  code: z.unknown().optional(),
+  expiry: z.unknown().optional(),
+  ticket: z.unknown().optional(),
+})
 
 // POST /api/parent/primaria/pagella/firma?userId=
 // body: { scrutinioId, studentId, code, expiry, ticket }
@@ -15,10 +29,9 @@ export async function POST(request: NextRequest) {
     const userId = getRequestUserId(request)
     if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
 
-    const { scrutinioId, studentId, code, expiry, ticket } = await request.json()
-    if (!scrutinioId || !studentId) {
-      return NextResponse.json({ error: 'scrutinioId e studentId obbligatori' }, { status: 400 })
-    }
+    const b = await parseBody(request, postBodySchema)
+    if ('response' in b) return b.response
+    const { scrutinioId, studentId, code, expiry, ticket } = b.data
 
     const supabase = await createAdminClient()
 

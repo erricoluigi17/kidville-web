@@ -1,9 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { getRequestUserId } from '@/lib/auth/require-staff'
 import { sendOtp } from '@/lib/auth/otp-ticket'
 import { logFeaEvent } from '@/lib/fea/audit'
 import { extractRequestMeta } from '@/lib/fea/signature-log'
+import { parseQuery } from '@/lib/validation/http'
+
+// nessun parametro in ingresso (userId è consumato dal gate auth, il body non viene letto)
+const querySchema = z.object({})
 
 // POST /api/parent/primaria/pagella/firma/otp?userId=
 // Invia un OTP via email al genitore per firmare la ricezione della pagella.
@@ -11,6 +16,9 @@ export async function POST(request: NextRequest) {
   try {
     const userId = getRequestUserId(request)
     if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
+
+    const q = parseQuery(request, querySchema)
+    if ('response' in q) return q.response
 
     const supabase = await createAdminClient()
     const res = await sendOtp(supabase, userId, {

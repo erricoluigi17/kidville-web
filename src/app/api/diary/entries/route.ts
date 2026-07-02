@@ -28,10 +28,10 @@ const entrySchema = z.object({
     // Nessun vincolo di non-vuoto: il codice attuale non lo impone su questa route.
     tipo_evento: z.string(),
     // Default dinamico (adesso) calcolato nel codice.
-    orario_inizio: z.unknown(),
-    orario_fine: z.unknown(),
-    dettagli: z.unknown(),
-    nota_libera: z.unknown(),
+    orario_inizio: z.unknown().optional(),
+    orario_fine: z.unknown().optional(),
+    dettagli: z.unknown().optional(),
+    nota_libera: z.unknown().optional(),
 });
 
 // Il body può essere un singolo evento o un array di eventi.

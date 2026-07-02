@@ -1,10 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { getRequestUserId } from '@/lib/auth/require-staff'
 import { getUserEmail, verifyTicket, codeHash } from '@/lib/auth/otp-ticket'
 import { buildSignatureLog, extractRequestMeta } from '@/lib/fea/signature-log'
 import { recordSignerSlot } from '@/lib/fea/slots'
 import { logFeaEvent } from '@/lib/fea/audit'
+import { parseBody } from '@/lib/validation/http'
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+// `userId` in query è consumato dal gate identità (getRequestUserId), non dall'handler.
+// notaId permissivo (stringa non vuota): oggi nessun vincolo di formato (un id
+// non valido ricade nel 404 "Nota non trovata").
+// code/expiry/ticket restano pass-through (z.unknown): il codice li coercizza
+// già (String(code ?? ''), Number(expiry ?? 0), String(ticket ?? '')) e la
+// verifica autorevole è l'HMAC di verifyTicket, che su valori assenti o
+// malformati produce il 400 `verify_failed` CON evento di audit — vincoli di
+// tipo nello schema salterebbero quell'evidenza.
+const postBodySchema = z.object({
+  notaId: z.string({ error: 'notaId obbligatorio' }).min(1, 'notaId obbligatorio'),
+  code: z.unknown().optional(),
+  expiry: z.unknown().optional(),
+  ticket: z.unknown().optional(),
+})
 
 // POST /api/parent/primaria/note/firma?userId=
 // body: { notaId, code, expiry, ticket }
@@ -15,8 +33,9 @@ export async function POST(request: NextRequest) {
     const userId = getRequestUserId(request)
     if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
 
-    const { notaId, code, expiry, ticket } = await request.json()
-    if (!notaId) return NextResponse.json({ error: 'notaId obbligatorio' }, { status: 400 })
+    const b = await parseBody(request, postBodySchema)
+    if ('response' in b) return b.response
+    const { notaId, code, expiry, ticket } = b.data
 
     const supabase = await createAdminClient()
 

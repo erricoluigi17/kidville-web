@@ -29,8 +29,8 @@ const getQuerySchema = z.object({
 // PUT: righe permissive (i vincoli veri — settimana 1-8, portate JSONB — restano
 // al DB come prima; qui si valida solo la struttura, senza inventare vincoli nuovi).
 const rotazioneRowSchema = z.object({
-  settimana: z.unknown(),
-  giorno_settimana: z.unknown(),
+  settimana: z.unknown().optional(),
+  giorno_settimana: z.unknown().optional(),
   portate: z.unknown().optional(),
   ingredienti: z.unknown().optional(),
   allergeni: z.unknown().optional(),
@@ -38,7 +38,7 @@ const rotazioneRowSchema = z.object({
 })
 
 const overrideRowSchema = z.object({
-  data: z.unknown(),
+  data: z.unknown().optional(),
   chiuso: z.unknown().optional(),
   portate: z.unknown().optional(),
   ingredienti: z.unknown().optional(),

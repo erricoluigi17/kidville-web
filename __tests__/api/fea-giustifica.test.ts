@@ -71,44 +71,44 @@ beforeEach(() => {
 describe('POST /api/parent/presenze/giustifica', () => {
   it('401 senza userId', async () => {
     auth.getRequestUserId.mockReturnValue(null)
-    const res = await POST(req({ studentId: 'a-1', data: TODAY }))
+    const res = await POST(req({ studentId: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1', data: TODAY }))
     expect(res.status).toBe(401)
   })
 
   it('400 se mancano studentId/data', async () => {
-    const res = await POST(req({ studentId: 'a-1' }))
+    const res = await POST(req({ studentId: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1' }))
     expect(res.status).toBe(400)
   })
 
   it('404 se alunno non trovato', async () => {
     h.state.queues = { alunni: [{ data: null, error: null }] }
-    const res = await POST(req({ studentId: 'a-1', data: TODAY, code: '1', expiry: 1, ticket: 't' }))
+    const res = await POST(req({ studentId: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1', data: TODAY, code: '1', expiry: 1, ticket: 't' }))
     expect(res.status).toBe(404)
   })
 
   it('400 se OTP richiesto e non valido', async () => {
-    h.state.queues = { alunni: [{ data: { id: 'a-1', section_id: 'sec-1', scuola_id: 'sc-1' }, error: null }] }
+    h.state.queues = { alunni: [{ data: { id: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1', section_id: 'sec-1', scuola_id: 'sc-1' }, error: null }] }
     otp.verifyTicket.mockReturnValue({ ok: false, error: 'Codice non valido' })
-    const res = await POST(req({ studentId: 'a-1', data: TODAY, code: '1', expiry: 1, ticket: 't' }))
+    const res = await POST(req({ studentId: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1', data: TODAY, code: '1', expiry: 1, ticket: 't' }))
     expect(res.status).toBe(400)
   })
 
   it('403 se non primaria', async () => {
     h.state.queues = {
-      alunni: [{ data: { id: 'a-1', section_id: 'sec-1', scuola_id: 'sc-1' }, error: null }],
+      alunni: [{ data: { id: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1', section_id: 'sec-1', scuola_id: 'sc-1' }, error: null }],
       sections: [{ data: { school_type: 'infanzia' }, error: null }],
     }
-    const res = await POST(req({ studentId: 'a-1', data: TODAY, code: '1', expiry: 1, ticket: 't' }))
+    const res = await POST(req({ studentId: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1', data: TODAY, code: '1', expiry: 1, ticket: 't' }))
     expect(res.status).toBe(403)
   })
 
   it('200 firma OTP_EMAIL con signature_log completo', async () => {
     h.state.queues = {
-      alunni: [{ data: { id: 'a-1', section_id: 'sec-1', scuola_id: 'sc-1' }, error: null }],
+      alunni: [{ data: { id: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1', section_id: 'sec-1', scuola_id: 'sc-1' }, error: null }],
       sections: [{ data: { school_type: 'primaria' }, error: null }],
       presenze: [{ data: { id: 'p-1', giustificata: true }, error: null }],
     }
-    const res = await POST(req({ studentId: 'a-1', data: TODAY, motivo: 'malattia', code: '424242', expiry: 999, ticket: 't' }))
+    const res = await POST(req({ studentId: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1', data: TODAY, motivo: 'malattia', code: '424242', expiry: 999, ticket: 't' }))
     const body = await res.json()
     expect(res.status).toBe(200)
     expect(body.success).toBe(true)
@@ -128,11 +128,11 @@ describe('POST /api/parent/presenze/giustifica', () => {
   it('200 firma CONFERMA_APP quando OTP disattivato dalle impostazioni', async () => {
     cfg.getModuleConfig.mockResolvedValue({ giustifica_max_giorni_retroattivi: 5, giustifica_richiede_firma_otp: false })
     h.state.queues = {
-      alunni: [{ data: { id: 'a-1', section_id: 'sec-1', scuola_id: 'sc-1' }, error: null }],
+      alunni: [{ data: { id: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1', section_id: 'sec-1', scuola_id: 'sc-1' }, error: null }],
       sections: [{ data: { school_type: 'primaria' }, error: null }],
       presenze: [{ data: { id: 'p-1', giustificata: true }, error: null }],
     }
-    const res = await POST(req({ studentId: 'a-1', data: TODAY, motivo: 'visita' }))
+    const res = await POST(req({ studentId: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1', data: TODAY, motivo: 'visita' }))
     const body = await res.json()
     expect(res.status).toBe(200)
     expect(body.success).toBe(true)

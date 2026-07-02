@@ -30,6 +30,10 @@ const GRUPPI_COPERTI: string[] = [
     'parent/competenze',
     'parent/medical-certificates',
     'parent/giustifiche-didattiche',
+    // M3.5 (zod 4/14 — parent B: chiude tutto parent/*)
+    'parent/presenze',
+    'parent/primaria',
+    'parent/mensa',
 ];
 
 const API_ROOT = path.join(process.cwd(), 'src', 'app', 'api');

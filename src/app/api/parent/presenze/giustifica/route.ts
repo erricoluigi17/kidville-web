@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { getRequestUserId } from '@/lib/auth/require-staff'
 import { getUserEmail, verifyTicket, codeHash } from '@/lib/auth/otp-ticket'
@@ -6,6 +7,22 @@ import { buildSignatureLog, extractRequestMeta } from '@/lib/fea/signature-log'
 import { recordSignerSlot } from '@/lib/fea/slots'
 import { logFeaEvent } from '@/lib/fea/audit'
 import { getModuleConfig } from '@/lib/settings/module-config'
+import { parseBody } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+// `data` resta stringa permissiva (oggi il DB accetta anche formati non YYYY-MM-DD);
+// `motivo` permissivo: oggi qualunque tipo è accettato (i non-string diventano null).
+// code/expiry/ticket: oggi possono mancare o arrivare come numero — la verifica
+// vera la fa verifyTicket (HMAC), e solo se l'OTP è richiesto dalle impostazioni.
+const postBodySchema = z.object({
+  studentId: zUuid,
+  data: z.string().min(1),
+  motivo: z.unknown().optional(),
+  code: z.unknown().optional(),
+  expiry: z.unknown().optional(),
+  ticket: z.unknown().optional(),
+})
 
 // POST /api/parent/presenze/giustifica?userId=
 // body: { studentId, data, motivo, code, expiry, ticket }
@@ -16,10 +33,9 @@ export async function POST(request: NextRequest) {
     const userId = getRequestUserId(request)
     if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
 
-    const { studentId, data, motivo, code, expiry, ticket } = await request.json()
-    if (!studentId || !data) {
-      return NextResponse.json({ error: 'studentId e data obbligatori' }, { status: 400 })
-    }
+    const b = await parseBody(request, postBodySchema)
+    if ('response' in b) return b.response
+    const { studentId, data, motivo, code, expiry, ticket } = b.data
 
     const supabase = await createAdminClient()
 

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/server-client';
+import { requireDocente } from '@/lib/auth/require-staff';
 
 // Educator section mapping - in production this would come from a DB table
 // For now we derive it from the alunni table using the educator's uploaded media
@@ -83,16 +84,19 @@ async function getEducatorSectionNames(
     return [];
 }
 
-// GET /api/educator-sections?userId=xxx
-// Returns the section names that a given educator is assigned to
+// GET /api/educator-sections[?userId=xxx]
+// Returns the section names that the authenticated educator is assigned to.
+// `?userId=` (sezioni di un ALTRO utente) è onorato solo per admin/coordinator;
+// per tutti gli altri l'identità è quella della sessione.
 export async function GET(request: Request) {
     try {
-        const { searchParams } = new URL(request.url);
-        const userId = searchParams.get('userId');
+        const auth = await requireDocente(request);
+        if (auth.response) return auth.response;
 
-        if (!userId) {
-            return NextResponse.json({ sectionNames: [] });
-        }
+        const { searchParams } = new URL(request.url);
+        const requestedId = searchParams.get('userId');
+        const canQueryOthers = auth.user.role === 'admin' || auth.user.role === 'coordinator';
+        const userId = canQueryOthers && requestedId ? requestedId : auth.user.id;
 
         const supabase = await createAdminClient();
 

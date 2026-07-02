@@ -1,8 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
 import { assertAlunnoInScope } from '@/lib/auth/scope'
 import { mediaGiudizi, type ScalaVoce } from '@/lib/primaria/media'
+import { parseQuery } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+const getQuerySchema = z.object({
+  alunnoId: zUuid,
+  materiaId: zUuid.optional(),
+})
 
 // GET /api/primaria/prospetto?alunnoId=&materiaId=&userId=
 // Con materiaId: valutazioni raggruppate per obiettivo + media per quella materia.
@@ -15,15 +24,14 @@ import { mediaGiudizi, type ScalaVoce } from '@/lib/primaria/media'
 // direttamente questa route con l'id del proprio figlio.
 export async function GET(request: NextRequest) {
   try {
-    const sp = new URL(request.url).searchParams
-    const alunnoId = sp.get('alunnoId')
-    const materiaId = sp.get('materiaId')
-    if (!alunnoId) return NextResponse.json({ error: 'alunnoId obbligatorio' }, { status: 400 })
-
     // Gate di ruolo: solo docenti/segreteria/staff. Il genitore (role 'genitore')
     // è escluso, così la media numerica non gli è mai accessibile via API (vedi nota sopra).
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
+
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+    const { alunnoId, materiaId } = q.data
 
     const supabase = await createAdminClient()
 

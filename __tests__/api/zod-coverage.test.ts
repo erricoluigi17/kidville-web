@@ -34,19 +34,8 @@ const GRUPPI_COPERTI: string[] = [
     'parent/presenze',
     'parent/primaria',
     'parent/mensa',
-    // M3.6 (zod 5/14 — primaria A; il prefisso 'primaria' intero arriva col 6/14)
-    'primaria/me',
-    'primaria/classi',
-    'primaria/sezioni',
-    'primaria/classe',
-    'primaria/registro',
-    'primaria/appello',
-    'primaria/ore-assenza',
-    'primaria/valutazioni',
-    'primaria/obiettivi',
-    'primaria/note',
-    'primaria/orario',
-    'primaria/allegati',
+    // M3.6 + M3.7 (zod 5/14 + 6/14 — chiude tutto primaria/*)
+    'primaria',
 ];
 
 const API_ROOT = path.join(process.cwd(), 'src', 'app', 'api');

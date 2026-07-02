@@ -1,10 +1,48 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
 import { assertSezioneInScope, assertAlunniInSezione } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { titolareDiMateria } from '@/lib/audit/valutatore'
 import { notificaTitolariScrittura } from '@/lib/primaria/notifiche'
+import { parseBody, parseQuery } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+// periodoId assente o '' → lista periodi configurati (come oggi: '' è falsy).
+const getQuerySchema = z.object({
+  sectionId: zUuid,
+  periodoId: zUuid.or(z.literal('')).optional(),
+})
+
+// Le voci di giudizi[]/comportamento[] prive di alunnoId (o materiaId) sono
+// scartate in silenzio dal filtro dell'handler, come oggi: gli id restano
+// quindi opzionali ('' compreso) e le voci possono essere null.
+const giudizioItemSchema = z
+  .object({
+    alunnoId: zUuid.or(z.literal('')).nullish(),
+    materiaId: zUuid.or(z.literal('')).nullish(),
+    giudizioSintetico: z.string().nullish(),
+  })
+  .nullable()
+const postBodySchema = z.object({
+  scrutinioId: zUuid,
+  giudizi: z.array(giudizioItemSchema),
+})
+
+const comportamentoItemSchema = z
+  .object({
+    alunnoId: zUuid.or(z.literal('')).nullish(),
+    giudizioTesto: z.string().nullish(),
+    scalaValore: z.string().nullish(),
+    giudizioGlobale: z.string().nullish(),
+  })
+  .nullable()
+const patchBodySchema = z.object({
+  scrutinioId: zUuid,
+  comportamento: z.array(comportamentoItemSchema),
+})
 
 // GET /api/primaria/scrutinio?sectionId=&periodoId=&userId=
 // Apre (o recupera) lo scrutinio della classe per il periodo. Ritorna alunni,
@@ -15,12 +53,9 @@ export async function GET(request: NextRequest) {
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
     const userId = auth.user.id
-    const sp = new URL(request.url).searchParams
-    const sectionId = sp.get('sectionId')
-    const periodoId = sp.get('periodoId')
-    if (!sectionId) {
-      return NextResponse.json({ error: 'sectionId obbligatorio' }, { status: 400 })
-    }
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+    const { sectionId, periodoId } = q.data
 
     const supabase = await createAdminClient()
 
@@ -127,10 +162,9 @@ export async function POST(request: NextRequest) {
   try {
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
-    const { scrutinioId, giudizi } = await request.json()
-    if (!scrutinioId || !Array.isArray(giudizi)) {
-      return NextResponse.json({ error: 'scrutinioId e giudizi[] obbligatori' }, { status: 400 })
-    }
+    const b = await parseBody(request, postBodySchema)
+    if ('response' in b) return b.response
+    const { scrutinioId, giudizi } = b.data
 
     const supabase = await createAdminClient()
 
@@ -143,13 +177,16 @@ export async function POST(request: NextRequest) {
     const scopeErr = await assertSezioneInScope(supabase, auth.user, sectionId)
     if (scopeErr) return scopeErr
 
-    const valid = giudizi.filter((g) => g && g.alunnoId && g.materiaId)
+    const valid = giudizi.filter(
+      (g): g is { alunnoId: string; materiaId: string; giudizioSintetico?: string | null } =>
+        Boolean(g && g.alunnoId && g.materiaId),
+    )
     if (valid.length === 0) return NextResponse.json({ success: true, data: [] })
 
     // Alunni e materie dei giudizi devono appartenere alla sezione dello scrutinio.
     const alunniErr = await assertAlunniInSezione(supabase, valid.map((g) => g.alunnoId), sectionId)
     if (alunniErr) return alunniErr
-    const materiaIds = [...new Set(valid.map((g) => g.materiaId as string))]
+    const materiaIds = [...new Set(valid.map((g) => g.materiaId))]
     const { data: materieSez } = await supabase
       .from('materie')
       .select('id')
@@ -245,10 +282,9 @@ export async function PATCH(request: NextRequest) {
   try {
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
-    const { scrutinioId, comportamento } = await request.json()
-    if (!scrutinioId || !Array.isArray(comportamento)) {
-      return NextResponse.json({ error: 'scrutinioId e comportamento[] obbligatori' }, { status: 400 })
-    }
+    const b = await parseBody(request, patchBodySchema)
+    if ('response' in b) return b.response
+    const { scrutinioId, comportamento } = b.data
 
     const supabase = await createAdminClient()
     const { data: scr } = await supabase.from('scrutini').select('id, stato, section_id').eq('id', scrutinioId).maybeSingle()
@@ -260,7 +296,14 @@ export async function PATCH(request: NextRequest) {
     if (scopeErr) return scopeErr
 
     const rows = comportamento
-      .filter((c) => c && c.alunnoId)
+      .filter(
+        (c): c is {
+          alunnoId: string
+          giudizioTesto?: string | null
+          scalaValore?: string | null
+          giudizioGlobale?: string | null
+        } => Boolean(c && c.alunnoId),
+      )
       .map((c) => ({
         scrutinio_id: scrutinioId,
         alunno_id: c.alunnoId,

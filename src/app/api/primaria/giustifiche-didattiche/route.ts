@@ -1,18 +1,37 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
 import { assertSezioneInScope, assertAlunniInSezione } from '@/lib/auth/scope'
+import { parseBody, parseQuery } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+// `data` resta stringa permissiva (il DB accetta anche formati non YYYY-MM-DD,
+// come nella route parent gemella); `motivo` permissivo: oggi qualunque tipo è
+// accettato (i non-string diventano null nell'insert).
+const getQuerySchema = z.object({
+  sectionId: zUuid,
+  data: z.string().optional(),
+})
+
+const postBodySchema = z.object({
+  sectionId: zUuid,
+  alunnoId: zUuid,
+  data: z.string().min(1),
+  motivo: z.unknown().optional(),
+  materiaId: zUuid.nullable().optional(),
+})
 
 // GET /api/primaria/giustifiche-didattiche?sectionId=&data=&userId=
 // Elenco delle giustifiche didattiche (impreparato) per la classe/giorno.
 export async function GET(request: NextRequest) {
   try {
-    const sp = new URL(request.url).searchParams
-    const sectionId = sp.get('sectionId')
-    const data = sp.get('data')
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
-    if (!sectionId) return NextResponse.json({ error: 'sectionId obbligatorio' }, { status: 400 })
+    const parsed = parseQuery(request, getQuerySchema)
+    if ('response' in parsed) return parsed.response
+    const { sectionId, data } = parsed.data
 
     const supabase = await createAdminClient()
     const scopeErr = await assertSezioneInScope(supabase, auth.user, sectionId)
@@ -41,10 +60,9 @@ export async function POST(request: NextRequest) {
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
     const userId = auth.user.id
-    const { sectionId, alunnoId, data, motivo, materiaId } = await request.json()
-    if (!sectionId || !alunnoId || !data) {
-      return NextResponse.json({ error: 'sectionId, alunnoId, data obbligatori' }, { status: 400 })
-    }
+    const b = await parseBody(request, postBodySchema)
+    if ('response' in b) return b.response
+    const { sectionId, alunnoId, data, motivo, materiaId } = b.data
 
     const supabase = await createAdminClient()
     const scopeErr = await assertSezioneInScope(supabase, auth.user, sectionId)

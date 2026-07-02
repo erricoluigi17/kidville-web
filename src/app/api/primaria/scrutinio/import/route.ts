@@ -1,7 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
 import { assertSezioneInScope } from '@/lib/auth/scope'
+import { parseBody } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+// righe[] resta volutamente permissivo (z.unknown()): l'handler risolve e
+// valida ogni riga singolarmente (per id o per nome/codice) accumulando gli
+// errori riga per riga in `errori`, senza rifiutare l'intera richiesta.
+const postBodySchema = z.object({
+  scrutinioId: zUuid,
+  righe: z.array(z.unknown()),
+})
 
 // POST /api/primaria/scrutinio/import?userId=
 // Caricamento massivo dei giudizi sintetici di uno scrutinio (aperto) via CSV.
@@ -13,10 +25,9 @@ export async function POST(request: NextRequest) {
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
     const userId = auth.user.id
-    const { scrutinioId, righe } = await request.json()
-    if (!scrutinioId || !Array.isArray(righe)) {
-      return NextResponse.json({ error: 'scrutinioId e righe[] obbligatori' }, { status: 400 })
-    }
+    const b = await parseBody(request, postBodySchema)
+    if ('response' in b) return b.response
+    const { scrutinioId, righe } = b.data
 
     const supabase = await createAdminClient()
 
@@ -56,7 +67,8 @@ export async function POST(request: NextRequest) {
     const errori: { riga: number; messaggio: string }[] = []
     const rows: Record<string, unknown>[] = []
 
-    righe.forEach((r: Record<string, unknown>, i: number) => {
+    righe.forEach((raw, i) => {
+      const r = raw as Record<string, unknown>
       const n = i + 1
       const alunnoId = r.alunnoId && alunnoById.has(String(r.alunnoId))
         ? String(r.alunnoId)

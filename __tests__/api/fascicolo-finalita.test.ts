@@ -61,7 +61,7 @@ beforeEach(() => {
 describe('Fascicolo — finalità di accesso', () => {
   it('GET list inoltra finalita a logAccessoFascicolo', async () => {
     h.state.queues = { student_documents: [{ data: [], error: null }] }
-    const req = new NextRequest('http://localhost/api/primaria/fascicolo?alunnoId=a-1&finalita=Colloquio%20GLO', { headers: { 'x-user-id': 'u-1' } })
+    const req = new NextRequest('http://localhost/api/primaria/fascicolo?alunnoId=a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1&finalita=Colloquio%20GLO', { headers: { 'x-user-id': 'u-1' } })
     const res = await LIST(req)
     expect(res.status).toBe(200)
     expect(rbac.logAccessoFascicolo).toHaveBeenCalledWith(
@@ -71,8 +71,8 @@ describe('Fascicolo — finalità di accesso', () => {
   })
 
   it('GET file (download) inoltra finalita a logAccessoFascicolo', async () => {
-    h.state.queues = { student_documents: [{ data: { id: 'd-1', student_id: 'a-1', storage_path: 'a-1/x.pdf', file_name: 'x.pdf' }, error: null }] }
-    const req = new NextRequest('http://localhost/api/primaria/fascicolo/file?documentoId=d-1&finalita=Verifica%20diagnosi', { headers: { 'x-user-id': 'u-1' } })
+    h.state.queues = { student_documents: [{ data: { id: 'd1d1d1d1-d1d1-4d1d-8d1d-d1d1d1d1d1d1', student_id: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1', storage_path: 'a-1/x.pdf', file_name: 'x.pdf' }, error: null }] }
+    const req = new NextRequest('http://localhost/api/primaria/fascicolo/file?documentoId=d1d1d1d1-d1d1-4d1d-8d1d-d1d1d1d1d1d1&finalita=Verifica%20diagnosi', { headers: { 'x-user-id': 'u-1' } })
     const res = await FILE(req)
     expect(res.status).toBe(200)
     expect(rbac.logAccessoFascicolo).toHaveBeenCalledWith(

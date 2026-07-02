@@ -1,21 +1,30 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { resolveIdentity } from '@/lib/auth/require-staff'
 import { puoAccedereFascicolo, logAccessoFascicolo } from '@/lib/primaria/fascicolo-rbac'
+import { parseQuery } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
 
 const BUCKET = 'sensitive_documents'
 const SIGNED_TTL = 60 // secondi
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+const getQuerySchema = z.object({
+  documentoId: zUuid,
+  finalita: z.string().optional(),
+})
 
 // GET /api/primaria/fascicolo/file?documentoId=&userId=
 // Restituisce un signed URL a tempo per il download del documento (RBAC + audit).
 export async function GET(request: NextRequest) {
   try {
-    const sp = new URL(request.url).searchParams
-    const documentoId = sp.get('documentoId')
-    const finalita = sp.get('finalita')
     const { userId } = await resolveIdentity(request)
     if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
-    if (!documentoId) return NextResponse.json({ error: 'documentoId obbligatorio' }, { status: 400 })
+
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+    const { documentoId, finalita } = q.data
 
     const supabase = await createAdminClient()
     const { data: doc } = await supabase

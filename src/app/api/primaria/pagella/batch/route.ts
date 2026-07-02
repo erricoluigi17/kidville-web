@@ -1,8 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { assertSezioneInScope } from '@/lib/auth/scope'
 import { generaPagella } from '@/lib/primaria/pagella-store'
+import { parseBody } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
+
+const postBodySchema = z.object({
+  scrutinioId: zUuid,
+})
 
 // POST /api/primaria/pagella/batch?userId=
 // Genera e archivia in batch un PDF per OGNI alunno dello scrutinio (chiuso).
@@ -13,8 +20,9 @@ export async function POST(request: NextRequest) {
     const auth = await requireStaff(request, ['admin', 'coordinator'])
     if (auth.response) return auth.response
 
-    const { scrutinioId } = await request.json()
-    if (!scrutinioId) return NextResponse.json({ error: 'scrutinioId obbligatorio' }, { status: 400 })
+    const b = await parseBody(request, postBodySchema)
+    if ('response' in b) return b.response
+    const { scrutinioId } = b.data
 
     const supabase = await createAdminClient()
 

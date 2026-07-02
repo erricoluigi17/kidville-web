@@ -1,20 +1,29 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { resolveIdentity, loadAppUser } from '@/lib/auth/require-staff'
 import { assertAlunnoInScope, assertAlunniInSezione } from '@/lib/auth/scope'
 import { generaPagella } from '@/lib/primaria/pagella-store'
+import { parseQuery } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
+
+const getQuerySchema = z.object({
+  scrutinioId: zUuid,
+  alunnoId: zUuid,
+  // Flag storico: attivo SOLO con '1' (qualsiasi altro valore = false).
+  persist: z.string().optional(),
+})
 
 // GET /api/primaria/pagella?scrutinioId=&alunnoId=&userId=[&persist=1]
 // Genera (e opzionalmente archivia) il PDF della pagella e lo restituisce.
 export async function GET(request: NextRequest) {
   try {
-    const sp = new URL(request.url).searchParams
-    const scrutinioId = sp.get('scrutinioId')
-    const alunnoId = sp.get('alunnoId')
-    const persist = sp.get('persist') === '1'
     const { userId } = await resolveIdentity(request)
     if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
-    if (!scrutinioId || !alunnoId) return NextResponse.json({ error: 'scrutinioId e alunnoId obbligatori' }, { status: 400 })
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+    const { scrutinioId, alunnoId } = q.data
+    const persist = q.data.persist === '1'
 
     const supabase = await createAdminClient()
 

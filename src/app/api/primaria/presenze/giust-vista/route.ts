@@ -1,7 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
 import { assertSezioneInScope } from '@/lib/auth/scope'
+import { parseBody } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+const postBodySchema = z.object({
+  presenzaId: zUuid,
+})
 
 // POST /api/primaria/presenze/giust-vista?userId=
 // body: { presenzaId }
@@ -12,8 +20,9 @@ export async function POST(request: NextRequest) {
     if (auth.response) return auth.response
     const userId = auth.user.id
 
-    const { presenzaId } = await request.json()
-    if (!presenzaId) return NextResponse.json({ error: 'presenzaId obbligatorio' }, { status: 400 })
+    const b = await parseBody(request, postBodySchema)
+    if ('response' in b) return b.response
+    const { presenzaId } = b.data
 
     const supabase = await createAdminClient()
     // Risolve la presenza → section_id e ne verifica lo scope prima dell'update.

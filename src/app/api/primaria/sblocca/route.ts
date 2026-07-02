@@ -1,7 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { assertSezioneInScope } from '@/lib/auth/scope'
+import { parseBody } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
+
+const ENTITA_TIPI = ['registro', 'valutazione', 'nota'] as const
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+const postBodySchema = z.object({
+  entitaTipo: z.enum(ENTITA_TIPI, { error: `entitaTipo in ${ENTITA_TIPI.join('/')}` }),
+  entitaId: zUuid,
+  motivazione: z.string().min(1, 'motivazione obbligatoria'),
+})
 
 // POST /api/primaria/sblocca?userId=
 // Override diretto del dirigente sul vincolo temporale. Riservato allo staff
@@ -12,10 +24,9 @@ export async function POST(request: NextRequest) {
     const auth = await requireStaff(request, ['admin', 'coordinator'])
     if (auth.response) return auth.response
 
-    const { entitaTipo, entitaId, motivazione } = await request.json()
-    if (!['registro', 'valutazione', 'nota'].includes(entitaTipo) || !entitaId || !motivazione) {
-      return NextResponse.json({ error: 'entitaTipo, entitaId e motivazione obbligatori' }, { status: 400 })
-    }
+    const b = await parseBody(request, postBodySchema)
+    if ('response' in b) return b.response
+    const { entitaTipo, entitaId, motivazione } = b.data
 
     const supabase = await createAdminClient()
 

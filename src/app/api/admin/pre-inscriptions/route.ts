@@ -4,7 +4,7 @@ import { createAdminClient } from '@/lib/supabase/server-client';
 const DEFAULT_SCUOLA_ID = '11111111-1111-1111-1111-111111111111';
 
 // GET: Recupera tutte le pre-iscrizioni (Sala d'attesa)
-export async function GET(request: NextRequest) {
+export async function GET() {
   try {
     const supabase = await createAdminClient();
     const { data, error } = await supabase
@@ -17,8 +17,8 @@ export async function GET(request: NextRequest) {
     }
 
     return NextResponse.json(data);
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message || 'Errore interno' }, { status: 500 });
+  } catch (err) {
+    return NextResponse.json({ error: err instanceof Error ? err.message : 'Errore interno' }, { status: 500 });
   }
 }
 
@@ -66,8 +66,8 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.json(data, { status: 201 });
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message || 'Errore interno' }, { status: 500 });
+  } catch (err) {
+    return NextResponse.json({ error: err instanceof Error ? err.message : 'Errore interno' }, { status: 500 });
   }
 }
 
@@ -107,7 +107,7 @@ export async function PATCH(request: NextRequest) {
         .from('pre_inscriptions')
         .select('*')
         .eq('id', id)
-        .single();
+        .maybeSingle();
 
       if (fetchErr || !pre) {
         return NextResponse.json({ error: 'Pre-iscrizione non trovata' }, { status: 404 });
@@ -180,7 +180,7 @@ export async function PATCH(request: NextRequest) {
           role: 'parent'
         };
         await supabase.from('adults').upsert(adultsRecord);
-      } catch (adultsErr) {
+      } catch {
         console.log('Tabella adults non presente o non interrogabile direttamente, skippo...');
       }
 
@@ -254,8 +254,8 @@ export async function PATCH(request: NextRequest) {
     }
 
     return NextResponse.json({ error: 'Stato non valido' }, { status: 400 });
-  } catch (err: any) {
+  } catch (err) {
     console.error('Errore PATCH /api/admin/pre-inscriptions:', err);
-    return NextResponse.json({ error: err.message || 'Errore interno' }, { status: 500 });
+    return NextResponse.json({ error: err instanceof Error ? err.message : 'Errore interno' }, { status: 500 });
   }
 }

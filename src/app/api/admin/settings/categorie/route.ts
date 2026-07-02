@@ -95,8 +95,9 @@ export async function DELETE(request: Request) {
     if (!id) return NextResponse.json({ error: 'id è obbligatorio' }, { status: 400 })
 
     const supabase = await createAdminClient()
-    const { data: cat } = await supabase.from('payment_categories').select('is_sistema').eq('id', id).single()
-    if (cat?.is_sistema) {
+    const { data: cat } = await supabase.from('payment_categories').select('is_sistema').eq('id', id).maybeSingle()
+    if (!cat) return NextResponse.json({ error: 'Categoria non trovata' }, { status: 404 })
+    if (cat.is_sistema) {
       return NextResponse.json({ error: 'Le categorie di sistema non possono essere eliminate' }, { status: 403 })
     }
     const { error } = await supabase.from('payment_categories').delete().eq('id', id)

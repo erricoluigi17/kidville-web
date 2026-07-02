@@ -23,13 +23,17 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.select = () => b
       b.eq = () => b
       b.order = async () => ({ data: [], error: null })
-      b.maybeSingle = async () => ({ data: null, error: null }) // forza creazione (no dedup)
+      b.maybeSingle = async () => {
+        // la submission esiste; il resto ritorna null per forzare la creazione (no dedup)
+        if (table === 'enrollment_submissions') return { data: h.sub, error: null }
+        return { data: null, error: null }
+      }
       b.single = async () => {
         if (table === 'enrollment_submissions') return { data: h.sub, error: null }
         return { data: null, error: null }
       }
       b.insert = (row: unknown) => ({
-        select: () => ({ single: async () => ({ data: { id: `${table}-new`, nome: (row as any)?.nome ?? 'X' }, error: null }) }),
+        select: () => ({ single: async () => ({ data: { id: `${table}-new`, nome: (row as { nome?: string } | null)?.nome ?? 'X' }, error: null }) }),
       })
       b.update = () => ({ eq: () => ({ select: () => ({ single: async () => ({ data: { id: 'x' }, error: null }) }) }) })
       b.upsert = async () => ({ data: null, error: null })

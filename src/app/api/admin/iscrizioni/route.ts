@@ -30,8 +30,8 @@ export async function GET(request: NextRequest) {
       .order('created_at', { ascending: false })
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json(data)
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message || 'Errore interno' }, { status: 500 })
+  } catch (err) {
+    return NextResponse.json({ error: err instanceof Error ? err.message : 'Errore interno' }, { status: 500 })
   }
 }
 
@@ -80,7 +80,7 @@ export async function PATCH(request: NextRequest) {
       .from('enrollment_submissions')
       .select('*')
       .eq('id', id)
-      .single()
+      .maybeSingle()
     if (subErr || !sub) {
       return NextResponse.json({ error: 'Invio non trovato' }, { status: 404 })
     }
@@ -330,8 +330,8 @@ export async function PATCH(request: NextRequest) {
       linked_parents: parentLinks.length,
       warnings,
     })
-  } catch (err: any) {
+  } catch (err) {
     console.error('Errore PATCH /api/admin/iscrizioni:', err)
-    return NextResponse.json({ error: err.message || 'Errore interno' }, { status: 500 })
+    return NextResponse.json({ error: err instanceof Error ? err.message : 'Errore interno' }, { status: 500 })
   }
 }

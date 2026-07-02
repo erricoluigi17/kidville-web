@@ -18,7 +18,7 @@ export async function GET(request: NextRequest) {
       .from('forms_templates')
       .select('*')
       .eq('id', formId)
-      .single();
+      .maybeSingle();
 
     if (tempErr || !template) {
       return NextResponse.json({ error: 'Template del form non trovato' }, { status: 404 });

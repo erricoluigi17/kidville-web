@@ -46,7 +46,7 @@ export async function POST(request: NextRequest) {
       .from('sections')
       .select('id, scuola_id')
       .eq('id', sectionId)
-      .single()
+      .maybeSingle()
     if (!section) return NextResponse.json({ error: 'Sezione non trovata' }, { status: 404 })
 
     if (action === 'apply-preset') {

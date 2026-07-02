@@ -34,7 +34,7 @@ export async function GET(
                 delegates (*)
             `)
             .eq('id', studentId)
-            .single();
+            .maybeSingle();
 
         if (studentError || !student) {
             return NextResponse.json({ error: studentError?.message || 'Alunno non trovato' }, { status: 404 });

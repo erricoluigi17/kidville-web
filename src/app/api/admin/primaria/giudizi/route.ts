@@ -65,7 +65,7 @@ export async function POST(request: NextRequest) {
         .select('etichetta')
         .eq('id', id)
         .eq('scuola_id', scuolaId)
-        .single()
+        .maybeSingle()
       if (!prev) return NextResponse.json({ error: 'Giudizio non trovato' }, { status: 404 })
 
       const { data, error } = await supabase

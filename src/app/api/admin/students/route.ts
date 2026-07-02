@@ -78,9 +78,9 @@ export async function POST(request: NextRequest) {
         });
 
         return NextResponse.json(data, { status: 201 });
-    } catch (err: any) {
+    } catch (err) {
         console.error('Errore POST /api/admin/students:', err);
-        return NextResponse.json({ error: err.message || 'Errore interno del server' }, { status: 500 });
+        return NextResponse.json({ error: err instanceof Error ? err.message : 'Errore interno del server' }, { status: 500 });
     }
 }
 
@@ -194,7 +194,8 @@ export async function PATCH(request: NextRequest) {
                 }
 
                 // Stato precedente per l'audit (valore prima/dopo).
-                const { data: prima } = await supabase.from('alunni').select('*').eq('id', body.id).single();
+                const { data: prima } = await supabase.from('alunni').select('*').eq('id', body.id).maybeSingle();
+                if (!prima) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 });
 
                 let { data, error } = await supabase
                     .from('alunni')
@@ -222,15 +223,15 @@ export async function PATCH(request: NextRequest) {
                 });
 
                 return NextResponse.json(data);
-            } catch (err: any) {
-                return NextResponse.json({ error: err.message || 'Errore durante il salvataggio alunno' }, { status: 500 });
+            } catch (err) {
+                return NextResponse.json({ error: err instanceof Error ? err.message : 'Errore durante il salvataggio alunno' }, { status: 500 });
             }
         }
 
         return NextResponse.json({ error: 'Specificare id o ids[]' }, { status: 400 });
-    } catch (err: any) {
+    } catch (err) {
         console.error('Errore PATCH /api/admin/students:', err);
-        return NextResponse.json({ error: err.message || 'Errore interno del server' }, { status: 500 });
+        return NextResponse.json({ error: err instanceof Error ? err.message : 'Errore interno del server' }, { status: 500 });
     }
 }
 
@@ -255,7 +256,7 @@ export async function DELETE(request: NextRequest) {
             .from('alunni')
             .select('*')
             .eq('id', id)
-            .single();
+            .maybeSingle();
 
         if (!alunno) {
             return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 });

@@ -31,7 +31,7 @@ const h = vi.hoisted(() => {
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: vi.fn().mockResolvedValue(h.makeClient()),
 }))
-const push = vi.hoisted(() => ({ sendPush: vi.fn() }))
+const push = vi.hoisted(() => ({ sendPush: vi.fn(), vapidConfigured: vi.fn() }))
 vi.mock('@/lib/push/web-push', () => push)
 
 import { POST } from '@/app/api/push/dispatch/route'
@@ -50,12 +50,23 @@ beforeEach(() => {
   h.state.calls = []
   process.env.CRON_SECRET = 'test-secret'
   push.sendPush.mockResolvedValue({ ok: true })
+  push.vapidConfigured.mockReturnValue(true)
 })
 
 describe('POST /api/push/dispatch', () => {
   it('401 senza secret o con secret errato', async () => {
     expect((await POST(req())).status).toBe(401)
     expect((await POST(req('wrong'))).status).toBe(401)
+  })
+
+  it('senza chiavi VAPID → 200 non_configurato, niente invii né marcature', async () => {
+    push.vapidConfigured.mockReturnValue(false)
+    const res = await POST(req('test-secret'))
+    const body = await res.json()
+    expect(res.status).toBe(200)
+    expect(body.data).toEqual({ inviate: 0, non_configurato: true })
+    expect(push.sendPush).not.toHaveBeenCalled()
+    expect(h.state.calls).toHaveLength(0)
   })
 
   it('200 inviate:0 quando non ci sono notifiche pendenti', async () => {

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
+import { vapidConfigured } from '@/lib/push/web-push'
 
 // POST /api/push/subscribe  — registra la subscription Web Push dell'utente
 // Body: { userId, subscription: { endpoint, keys: { p256dh, auth } } }
@@ -9,6 +10,15 @@ export async function POST(request: Request) {
     const auth = await requireUser(request)
     if (auth.response) return auth.response
     const { user } = auth
+
+    // Registrare una subscription che non potrà mai ricevere push è fuorviante:
+    // meglio un 503 chiaro finché le chiavi VAPID non sono configurate.
+    if (!vapidConfigured()) {
+      return NextResponse.json(
+        { error: 'configurazione mancante: VAPID (push web non configurato)' },
+        { status: 503 }
+      )
+    }
 
     const body = await request.json()
     const sub = body.subscription

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { sendPush } from '@/lib/push/web-push'
+import { sendPush, vapidConfigured } from '@/lib/push/web-push'
 
 // POST /api/push/dispatch — invio Web Push delle notifiche non ancora inviate.
 // SERVICE-TO-SERVICE: richiede header `x-cron-secret`. NON chiamabile dal browser.
@@ -10,6 +10,13 @@ export async function POST(request: Request) {
     const secret = request.headers.get('x-cron-secret')
     if (!secret || secret !== process.env.CRON_SECRET) {
       return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
+    }
+
+    // Senza chiavi VAPID il push web non può partire: esito visibile (non_configurato)
+    // e notifiche NON marcate come inviate, così partiranno appena configurato.
+    if (!vapidConfigured()) {
+      console.warn('[PUSH] dispatch saltato: chiavi VAPID non configurate')
+      return NextResponse.json({ success: true, data: { inviate: 0, non_configurato: true } })
     }
 
     const supabase = await createAdminClient()

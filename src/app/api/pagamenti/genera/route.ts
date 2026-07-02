@@ -1,11 +1,43 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { parseBody, parseQuery } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
 
 // Genera pagamenti una tantum per una categoria, su una classe o un elenco di alunni.
 // Riusa il filtro alunni di genera-rette e la logica di creazione di pagamenti/rate.
 
-interface RataInput { importo: number; scadenza: string }
+// scuola_id in query: stringa vuota equivale ad assente (come il vecchio
+// `searchParams.get(...) || fallback`), poi si ricade su quella dell'utente.
+const zScuolaIdQuery = z.preprocess((v) => (v === '' ? undefined : v), zUuid.optional())
+
+const getQuerySchema = z.object({
+  scuola_id: zScuolaIdQuery,
+  classe_sezione: z.string().optional(),
+  gruppo: z.string().optional(),
+})
+
+const rataSchema = z.object({
+  // gli importi possono arrivare come numero o stringa numerica (come incassi)
+  importo: z.coerce.number(),
+  scadenza: z.string(),
+})
+
+const postBodySchema = z.object({
+  descrizione: z.string().optional(),
+  importo: z.coerce.number().nullish(),
+  scadenza: z.string().nullish(),
+  gruppo: z.string().nullish(),
+  // il vincolo "almeno 2 rate" resta a runtime: storicamente una lista più corta
+  // viene ignorata (si ricade su importo+scadenza), non è un errore
+  rate: z.array(rataSchema).optional(),
+  alunno_ids: z.array(zUuid).optional(),
+  scuola_id: zUuid.nullish(),
+  classe_sezione: z.string().nullish(),
+  obbligatorio: z.boolean().nullish(),
+  categoria_id: zUuid.nullish(),
+})
 
 // GET /api/pagamenti/genera?userId=&categoria_id=&classe_sezione=&gruppo=  (staff)
 //   Preview: alunni candidati (iscritti con sezione), esclusi quelli che hanno
@@ -15,10 +47,11 @@ export async function GET(request: Request) {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
 
-    const { searchParams } = new URL(request.url)
-    const scuolaId = searchParams.get('scuola_id') || auth.user.scuola_id
-    const classeSezione = searchParams.get('classe_sezione')
-    const gruppo = searchParams.get('gruppo')
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+    const scuolaId = q.data.scuola_id || auth.user.scuola_id
+    const classeSezione = q.data.classe_sezione
+    const gruppo = q.data.gruppo
 
     const supabase = await createAdminClient()
 
@@ -60,9 +93,11 @@ export async function POST(request: Request) {
     if (auth.response) return auth.response
     const { user } = auth
 
-    const body = await request.json()
+    const b = await parseBody(request, postBodySchema)
+    if ('response' in b) return b.response
+    const body = b.data
     const { descrizione, importo, scadenza, gruppo } = body
-    const rate: RataInput[] | undefined = Array.isArray(body.rate) && body.rate.length >= 2 ? body.rate : undefined
+    const rate = body.rate && body.rate.length >= 2 ? body.rate : undefined
 
     if (!descrizione || (!rate && (importo == null || !scadenza))) {
       return NextResponse.json(
@@ -74,7 +109,7 @@ export async function POST(request: Request) {
     const supabase = await createAdminClient()
 
     // risolve l'elenco alunni target
-    let alunnoIds: string[] = Array.isArray(body.alunno_ids) ? body.alunno_ids : []
+    let alunnoIds: string[] = body.alunno_ids ?? []
     if (alunnoIds.length === 0) {
       const scuolaId = body.scuola_id || user.scuola_id
       let alQuery = supabase.from('alunni').select('id, classe_sezione, section_id').eq('stato', 'iscritto')

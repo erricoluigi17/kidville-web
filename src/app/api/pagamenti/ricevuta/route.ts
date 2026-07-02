@@ -1,7 +1,14 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
+import { parseQuery } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
 import { jsPDF } from 'jspdf'
+
+const getQuerySchema = z.object({
+  pagamento_id: zUuid,
+})
 
 // GET /api/pagamenti/ricevuta?pagamento_id=&userId=  — ricevuta NON fiscale (DL-023).
 // Documento di cortesia per un pagamento SALDATO, indipendente dalla fattura
@@ -11,9 +18,9 @@ export async function GET(request: Request) {
     const auth = await requireUser(request)
     if (auth.response) return auth.response
     const { user } = auth
-    const { searchParams } = new URL(request.url)
-    const pagamentoId = searchParams.get('pagamento_id')
-    if (!pagamentoId) return NextResponse.json({ error: 'pagamento_id è obbligatorio' }, { status: 400 })
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+    const { pagamento_id: pagamentoId } = q.data
 
     const supabase = await createAdminClient()
     const { data: pag } = await supabase

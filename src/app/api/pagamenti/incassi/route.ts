@@ -1,7 +1,30 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { applyOverpaymentSpill } from '@/lib/pagamenti/spill'
+import { parseBody, parseQuery } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
+
+const getQuerySchema = z.object({
+  pagamento_id: zUuid,
+})
+
+const postBodySchema = z.object({
+  pagamento_id: zUuid,
+  // importo può arrivare come numero o stringa numerica; ≠ 0 come da check storico
+  importo: z.coerce.number().refine((v) => v !== 0, 'importo deve essere ≠ 0'),
+  data_incasso: z.string().nullish(),
+  metodo: z.string().nullish(),
+  note: z.string().nullish(),
+  quota_id: zUuid.nullish(),
+  // spill: qualunque valore ≠ false attiva lo spill (comportamento storico)
+  spill: z.unknown().optional(),
+})
+
+const deleteQuerySchema = z.object({
+  id: zUuid,
+})
 
 // GET /api/pagamenti/incassi?pagamento_id=xxx&userId=yyy
 // Ledger di un pagamento (staff). I genitori leggono gli incassi tramite il
@@ -11,11 +34,9 @@ export async function GET(request: Request) {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
 
-    const { searchParams } = new URL(request.url)
-    const pagamentoId = searchParams.get('pagamento_id')
-    if (!pagamentoId) {
-      return NextResponse.json({ error: 'pagamento_id è obbligatorio' }, { status: 400 })
-    }
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+    const pagamentoId = q.data.pagamento_id
 
     const supabase = await createAdminClient()
     const { data, error } = await supabase
@@ -43,14 +64,10 @@ export async function POST(request: Request) {
     if (auth.response) return auth.response
     const { user } = auth
 
-    const body = await request.json()
+    const b = await parseBody(request, postBodySchema)
+    if ('response' in b) return b.response
+    const body = b.data
     const { pagamento_id, importo } = body
-    if (!pagamento_id || importo == null || Number(importo) === 0) {
-      return NextResponse.json(
-        { error: 'pagamento_id e importo (≠ 0) sono obbligatori' },
-        { status: 400 }
-      )
-    }
 
     const supabase = await createAdminClient()
 
@@ -119,9 +136,9 @@ export async function DELETE(request: Request) {
     if (auth.response) return auth.response
     const { user } = auth
 
-    const { searchParams } = new URL(request.url)
-    const id = searchParams.get('id')
-    if (!id) return NextResponse.json({ error: 'id è obbligatorio' }, { status: 400 })
+    const q = parseQuery(request, deleteQuerySchema)
+    if ('response' in q) return q.response
+    const id = q.data.id
 
     const supabase = await createAdminClient()
     const { data: old } = await supabase.from('incassi').select('*').eq('id', id).maybeSingle()

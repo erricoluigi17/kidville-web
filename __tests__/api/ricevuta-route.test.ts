@@ -27,7 +27,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
 import { GET } from '@/app/api/pagamenti/ricevuta/route'
 
 const PAG_SALDATO = {
-  id: 'pag-1', descrizione: 'Retta Marzo', importo: 150, importo_pagato: 150, stato: 'pagato',
+  id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2', descrizione: 'Retta Marzo', importo: 150, importo_pagato: 150, stato: 'pagato',
   scadenza: '2026-03-31', alunno_id: 'al-1', alunni: { nome: 'Mario', cognome: 'Rossi' },
 }
 function req(pid?: string) {
@@ -45,7 +45,7 @@ describe('GET /api/pagamenti/ricevuta', () => {
 
   it('401 se non autenticato', async () => {
     h.requireUser.mockResolvedValue({ response: NextResponse.json({}, { status: 401 }) })
-    expect((await GET(req('pag-1'))).status).toBe(401)
+    expect((await GET(req('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2'))).status).toBe(401)
   })
 
   it('400 senza pagamento_id', async () => {
@@ -54,11 +54,11 @@ describe('GET /api/pagamenti/ricevuta', () => {
 
   it('409 se il pagamento non è saldato', async () => {
     h.pagamento = { ...PAG_SALDATO, stato: 'da_pagare' }
-    expect((await GET(req('pag-1'))).status).toBe(409)
+    expect((await GET(req('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2'))).status).toBe(409)
   })
 
   it('staff: 200 PDF per pagamento saldato', async () => {
-    const res = await GET(req('pag-1'))
+    const res = await GET(req('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2'))
     expect(res.status).toBe(200)
     expect(res.headers.get('Content-Type')).toBe('application/pdf')
   })
@@ -66,13 +66,13 @@ describe('GET /api/pagamenti/ricevuta', () => {
   it('genitore senza legame col bambino: 403', async () => {
     h.requireUser.mockResolvedValue({ user: { id: 'gen-1', role: 'genitore' } })
     h.legame = null
-    expect((await GET(req('pag-1'))).status).toBe(403)
+    expect((await GET(req('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2'))).status).toBe(403)
   })
 
   it('genitore collegato: 200 PDF', async () => {
     h.requireUser.mockResolvedValue({ user: { id: 'gen-1', role: 'genitore' } })
     h.legame = { alunno_id: 'al-1' }
-    const res = await GET(req('pag-1'))
+    const res = await GET(req('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2'))
     expect(res.status).toBe(200)
     expect(res.headers.get('Content-Type')).toBe('application/pdf')
   })

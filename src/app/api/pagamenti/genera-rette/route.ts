@@ -1,6 +1,25 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { parseData, parseQuery } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
+
+// `anno` e `periodo` NON sono vincolati nel formato: storicamente un valore
+// malformato ricade sull'anteprima/generazione mensile del mese corrente
+// (vedi firstOfMonth e il test /^\d{4}$/ a runtime), non è un errore.
+const getQuerySchema = z.object({
+  anno: z.string().optional(),
+  periodo: z.string().optional(),
+  // stringa vuota = assente (come il vecchio `searchParams.get(...) || fallback`)
+  scuola_id: z.preprocess((v) => (v === '' ? undefined : v), zUuid.optional()),
+})
+
+const postBodySchema = z.object({
+  // dalla UI `anno` arriva come numero; ammessa anche la stringa (storico)
+  anno: z.union([z.number(), z.string()]).nullish(),
+  periodo: z.string().nullish(),
+})
 
 function firstOfMonth(periodo?: string | null): string {
   if (periodo && /^\d{4}-\d{2}/.test(periodo)) {
@@ -33,9 +52,10 @@ export async function GET(request: Request) {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
 
-    const { searchParams } = new URL(request.url)
-    const annoParam = searchParams.get('anno')
-    const scuolaId = searchParams.get('scuola_id') || auth.user.scuola_id
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+    const annoParam = q.data.anno
+    const scuolaId = q.data.scuola_id || auth.user.scuola_id
 
     const supabase = await createAdminClient()
     const { data: cat } = await supabase
@@ -98,7 +118,7 @@ export async function GET(request: Request) {
     }
 
     // --- Anteprima MENSILE ---
-    const periodo = firstOfMonth(searchParams.get('periodo'))
+    const periodo = firstOfMonth(q.data.periodo)
     const { data: esistenti } = await supabase
       .from('pagamenti')
       .select('alunno_id')
@@ -129,7 +149,13 @@ export async function POST(request: Request) {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
 
-    const body = await request.json().catch(() => ({}))
+    // Il body è opzionale: senza body (o JSON malformato) si genera il mese
+    // corrente (comportamento storico), quindi niente parseBody che darebbe 400.
+    const raw: unknown = await request.json().catch(() => ({}))
+    const b = parseData(postBodySchema, raw)
+    if ('response' in b) return b.response
+    const body = b.data
+
     const supabase = await createAdminClient()
 
     // --- Generazione ANNUALE ---

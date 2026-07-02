@@ -1,8 +1,22 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff, requireUser } from '@/lib/auth/require-staff'
 import { emettiFatturaPagamento } from '@/lib/aruba/emissione'
+import { parseBody, parseQuery } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
 import { jsPDF } from 'jspdf'
+
+// causale: il comportamento pre-esistente accetta qualsiasi tipo e la usa solo
+// se è una stringa non vuota → unknown().optional(), il typeof resta nell'handler.
+const postBodySchema = z.object({
+  pagamento_id: zUuid,
+  causale: z.unknown().optional(),
+})
+
+const getQuerySchema = z.object({
+  pagamento_id: zUuid,
+})
 
 // POST /api/pagamenti/fattura  (staff) — "Invia Fattura" → emissione REALE Aruba/SDI.
 // Body: { userId, pagamento_id, causale? }. Richiede pagamento saldato.
@@ -11,15 +25,15 @@ export async function POST(request: Request) {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
 
-    const body = await request.json()
-    const { pagamento_id } = body
-    if (!pagamento_id) return NextResponse.json({ error: 'pagamento_id è obbligatorio' }, { status: 400 })
+    const b = await parseBody(request, postBodySchema)
+    if ('response' in b) return b.response
+    const { pagamento_id, causale } = b.data
 
     const supabase = await createAdminClient()
 
     // causale personalizzata dalla Segreteria → persistita prima dell'emissione
-    if (typeof body.causale === 'string' && body.causale.trim()) {
-      await supabase.from('pagamenti').update({ fattura_causale: body.causale.trim() }).eq('id', pagamento_id)
+    if (typeof causale === 'string' && causale.trim()) {
+      await supabase.from('pagamenti').update({ fattura_causale: causale.trim() }).eq('id', pagamento_id)
     }
 
     const esito = await emettiFatturaPagamento(supabase, pagamento_id, { id: auth.user.id })
@@ -48,9 +62,9 @@ export async function GET(request: Request) {
     const auth = await requireUser(request)
     if (auth.response) return auth.response
     const { user } = auth
-    const { searchParams } = new URL(request.url)
-    const pagamentoId = searchParams.get('pagamento_id')
-    if (!pagamentoId) return NextResponse.json({ error: 'pagamento_id è obbligatorio' }, { status: 400 })
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+    const { pagamento_id: pagamentoId } = q.data
 
     const supabase = await createAdminClient()
     const { data: pag } = await supabase

@@ -1,6 +1,27 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { parseBody, parseData } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
+
+const patchBodySchema = z
+  .object({
+    // importo può arrivare come numero o stringa numerica; ≠ 0 come da check storico
+    importo: z.coerce.number().optional(),
+    data_incasso: z.string().nullish(),
+    metodo: z.string().nullish(),
+    note: z.string().nullish(),
+  })
+  .refine(
+    (b) =>
+      b.importo !== undefined ||
+      b.data_incasso !== undefined ||
+      b.metodo !== undefined ||
+      b.note !== undefined,
+    'Nessun campo da aggiornare'
+  )
+  .refine((b) => b.importo === undefined || b.importo !== 0, 'importo deve essere ≠ 0')
 
 // PATCH /api/pagamenti/incassi/[id]  (staff) — correzione di un incasso registrato
 // Body: { userId, importo?, data_incasso?, metodo?, note? }
@@ -10,22 +31,22 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
     const { user } = auth
-    const { id } = await context.params
-    const body = await request.json()
+    const { id: rawId } = await context.params
+    const idParsed = parseData(zUuid, rawId)
+    if ('response' in idParsed) return idParsed.response
+    const id = idParsed.data
+
+    const b = await parseBody(request, patchBodySchema)
+    if ('response' in b) return b.response
+    const body = b.data
 
     const supabase = await createAdminClient()
     const { data: old } = await supabase.from('incassi').select('*').eq('id', id).maybeSingle()
     if (!old) return NextResponse.json({ error: 'Incasso non trovato' }, { status: 404 })
 
-    const allowed = ['importo', 'data_incasso', 'metodo', 'note']
+    const allowed = ['importo', 'data_incasso', 'metodo', 'note'] as const
     const updates: Record<string, unknown> = {}
     for (const f of allowed) if (body[f] !== undefined) updates[f] = body[f]
-    if (Object.keys(updates).length === 0) {
-      return NextResponse.json({ error: 'Nessun campo da aggiornare' }, { status: 400 })
-    }
-    if (updates.importo !== undefined && Number(updates.importo) === 0) {
-      return NextResponse.json({ error: 'importo deve essere ≠ 0' }, { status: 400 })
-    }
 
     const { data: incasso, error } = await supabase
       .from('incassi').update(updates).eq('id', id).select().single()
@@ -60,7 +81,10 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
     const { user } = auth
-    const { id } = await context.params
+    const { id: rawId } = await context.params
+    const idParsed = parseData(zUuid, rawId)
+    if ('response' in idParsed) return idParsed.response
+    const id = idParsed.data
 
     const supabase = await createAdminClient()
     const { data: old } = await supabase.from('incassi').select('*').eq('id', id).maybeSingle()

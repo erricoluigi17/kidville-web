@@ -36,6 +36,8 @@ const GRUPPI_COPERTI: string[] = [
     'parent/mensa',
     // M3.6 + M3.7 (zod 5/14 + 6/14 — chiude tutto primaria/*)
     'primaria',
+    // M3.8 (zod 7/14)
+    'pagamenti',
 ];
 
 const API_ROOT = path.join(process.cwd(), 'src', 'app', 'api');

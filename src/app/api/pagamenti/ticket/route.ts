@@ -1,6 +1,23 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff, requireUser } from '@/lib/auth/require-staff'
+import { parseBody, parseQuery } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
+
+const getQuerySchema = z.object({
+  alunno_id: zUuid,
+})
+
+const postBodySchema = z.object({
+  alunno_id: zUuid,
+  // pezzi/costo possono arrivare come numero o stringa numerica (come incassi);
+  // i vincoli pezzi > 0 e costo >= 0 sono quelli del check storico
+  pezzi: z.coerce.number().refine((v) => v > 0, 'pezzi deve essere > 0'),
+  costo: z.coerce.number().refine((v) => v >= 0, 'costo deve essere >= 0'),
+  metodo: z.string().nullish(),
+  scuola_id: zUuid.nullish(),
+})
 
 // GET /api/pagamenti/ticket?alunno_id=&userId=
 //   staff -> saldo di qualsiasi alunno; genitore -> solo dei propri figli
@@ -9,9 +26,9 @@ export async function GET(request: Request) {
     const auth = await requireUser(request)
     if (auth.response) return auth.response
     const { user } = auth
-    const { searchParams } = new URL(request.url)
-    const alunnoId = searchParams.get('alunno_id')
-    if (!alunnoId) return NextResponse.json({ error: 'alunno_id è obbligatorio' }, { status: 400 })
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+    const alunnoId = q.data.alunno_id
 
     const supabase = await createAdminClient()
     const isStaff = user.role === 'admin' || user.role === 'coordinator'
@@ -40,17 +57,13 @@ export async function POST(request: Request) {
     if (auth.response) return auth.response
     const { user } = auth
 
-    const body = await request.json()
+    const b = await parseBody(request, postBodySchema)
+    if ('response' in b) return b.response
+    const body = b.data
     const { alunno_id, pezzi, costo } = body
-    if (!alunno_id || !pezzi || costo == null) {
-      return NextResponse.json({ error: 'alunno_id, pezzi e costo sono obbligatori' }, { status: 400 })
-    }
-    if (Number(pezzi) <= 0 || Number(costo) < 0) {
-      return NextResponse.json({ error: 'pezzi > 0 e costo >= 0' }, { status: 400 })
-    }
 
     const supabase = await createAdminClient()
-    let scuolaId = body.scuola_id as string | undefined
+    let scuolaId = body.scuola_id
     if (!scuolaId) {
       const { data: al } = await supabase.from('alunni').select('scuola_id').eq('id', alunno_id).maybeSingle()
       if (!al) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })

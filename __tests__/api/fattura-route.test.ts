@@ -34,7 +34,7 @@ describe('POST /api/pagamenti/fattura', () => {
 
   it('blocca i non-staff (gate requireStaff)', async () => {
     h.requireStaff.mockResolvedValue({ response: NextResponse.json({ error: 'x' }, { status: 403 }) })
-    const res = await POST(post({ pagamento_id: 'p1' }))
+    const res = await POST(post({ pagamento_id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1' }))
     expect(res.status).toBe(403)
     expect(h.emetti).not.toHaveBeenCalled()
   })
@@ -46,13 +46,13 @@ describe('POST /api/pagamenti/fattura', () => {
 
   it('mappa esito non_configurato → 503', async () => {
     h.emetti.mockResolvedValue({ ok: false, motivo: 'non_configurato', messaggio: 'Aruba non configurata', httpStatus: 503 })
-    const res = await POST(post({ pagamento_id: 'p1' }))
+    const res = await POST(post({ pagamento_id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1' }))
     expect(res.status).toBe(503)
   })
 
   it('esito ok → 200 con numero e id', async () => {
     h.emetti.mockResolvedValue({ ok: true, fatturaStato: 'in_attesa', uploadFileName: 'ITxx_a.xml.p7m', numero: 7 })
-    const res = await POST(post({ pagamento_id: 'p1' }))
+    const res = await POST(post({ pagamento_id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1' }))
     expect(res.status).toBe(200)
     const json = await res.json()
     expect(json.success).toBe(true)

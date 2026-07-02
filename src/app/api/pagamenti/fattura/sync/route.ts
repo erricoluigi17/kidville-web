@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
+import { parseQuery } from '@/lib/validation/http'
 import {
   arubaSignin,
   arubaGetByFilename,
@@ -15,12 +17,17 @@ import { enqueueNotifiche } from '@/lib/push/enqueue'
 // interroga Aruba, mappa lo stato (DL-020) e, su scarto, notifica la Segreteria.
 const STATI_IN_VOLO = [1, 3, 5]
 
+const postQuerySchema = z.object({}) // nessun parametro in ingresso
+
 export async function POST(request: Request) {
   try {
     const secret = request.headers.get('x-cron-secret')
     if (!secret || secret !== process.env.CRON_SECRET) {
       return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
     }
+
+    const q = parseQuery(request, postQuerySchema)
+    if ('response' in q) return q.response
 
     const supabase = await createAdminClient()
     const { data: pendenti } = await supabase

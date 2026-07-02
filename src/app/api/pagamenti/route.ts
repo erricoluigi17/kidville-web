@@ -1,6 +1,43 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff, requireUser } from '@/lib/auth/require-staff'
+import { parseBody, parseQuery } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+// Uuid opzionale da query string: stringa vuota trattata come assente
+// (preserva i check truthy `if (alunnoId)` pre-esistenti).
+const zUuidQueryOpzionale = z.preprocess(
+  (v) => (v === '' ? undefined : v),
+  zUuid.optional()
+)
+
+// Filtri del ramo staff (il ramo genitore li ignora, come oggi).
+const getQuerySchema = z.object({
+  alunno_id: zUuidQueryOpzionale,
+  stato: z.string().optional(),
+  categoria_id: zUuidQueryOpzionale,
+  scuola_id: zUuidQueryOpzionale,
+  gruppo: z.string().optional(),
+  periodo: z.string().optional(),
+})
+
+const postBodySchema = z.object({
+  alunno_id: zUuid,
+  descrizione: z.string().min(1, 'alunno_id, descrizione, importo e scadenza sono obbligatori'),
+  // numero o stringa numerica (Postgres casta la stringa); il vincolo > 0 resta il check sotto
+  importo: z.union([z.number(), z.string()], {
+    error: 'alunno_id, descrizione, importo e scadenza sono obbligatori',
+  }),
+  scadenza: z.string().min(1, 'alunno_id, descrizione, importo e scadenza sono obbligatori'),
+  scuola_id: z.string().nullish(), // assente/vuota → derivata dall'alunno (come oggi)
+  categoria_id: zUuid.nullish(),
+  tipo: z.string().nullish(), // default 'singolo' applicato nel codice
+  obbligatorio: z.boolean().nullish(), // default true applicato nel codice
+  periodo_competenza: z.string().nullish(),
+  gruppo: z.string().nullish(),
+})
 
 const SELECT = `
   id, alunno_id, scuola_id, descrizione, importo, importo_pagato, scadenza, stato,
@@ -21,7 +58,6 @@ export async function GET(request: Request) {
     if (auth.response) return auth.response
     const { user } = auth
 
-    const { searchParams } = new URL(request.url)
     const supabase = await createAdminClient()
 
     let query = supabase.from('pagamenti').select(SELECT).order('scadenza', { ascending: false })
@@ -29,12 +65,10 @@ export async function GET(request: Request) {
     const isStaff = user.role === 'admin' || user.role === 'coordinator'
 
     if (isStaff) {
-      const alunnoId = searchParams.get('alunno_id')
-      const stato = searchParams.get('stato')
-      const categoriaId = searchParams.get('categoria_id')
-      const scuolaId = searchParams.get('scuola_id')
-      const gruppo = searchParams.get('gruppo')
-      const periodo = searchParams.get('periodo')
+      // I filtri sono validati solo nel ramo staff: il ramo genitore li ignora (come oggi).
+      const q = parseQuery(request, getQuerySchema)
+      if ('response' in q) return q.response
+      const { alunno_id: alunnoId, stato, categoria_id: categoriaId, scuola_id: scuolaId, gruppo, periodo } = q.data
       if (alunnoId) query = query.eq('alunno_id', alunnoId)
       if (stato) query = query.eq('stato', stato)
       if (categoriaId) query = query.eq('categoria_id', categoriaId)
@@ -106,15 +140,11 @@ export async function POST(request: Request) {
     if (auth.response) return auth.response
     const { user } = auth
 
-    const body = await request.json()
+    const b = await parseBody(request, postBodySchema)
+    if ('response' in b) return b.response
+    const body = b.data
     const { alunno_id, descrizione, importo, scadenza } = body
 
-    if (!alunno_id || !descrizione || importo == null || !scadenza) {
-      return NextResponse.json(
-        { error: 'alunno_id, descrizione, importo e scadenza sono obbligatori' },
-        { status: 400 }
-      )
-    }
     if (Number(importo) <= 0) {
       return NextResponse.json({ error: 'importo deve essere maggiore di 0' }, { status: 400 })
     }
@@ -122,7 +152,7 @@ export async function POST(request: Request) {
     const supabase = await createAdminClient()
 
     // scuola_id: dal body o derivata dall'alunno
-    let scuolaId = body.scuola_id as string | undefined
+    let scuolaId = body.scuola_id ?? undefined
     if (!scuolaId) {
       const { data: al } = await supabase.from('alunni').select('scuola_id').eq('id', alunno_id).maybeSingle()
       if (!al) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })

@@ -1,20 +1,29 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
 import { assertSezioneInScope } from '@/lib/auth/scope'
 import { obiettiviDisponibili } from '@/lib/primaria/obiettivi'
+import { parseQuery } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
+
+// ─── Schema di validazione input (M3) ────────────────────────────────────────
+// '' su sectionId equivale ad assente (nessun filtro livello, nessun check 403).
+const getQuerySchema = z.object({
+  materiaId: zUuid,
+  sectionId: zUuid.or(z.literal('')).optional(),
+})
 
 // GET /api/primaria/obiettivi?materiaId=&sectionId=&userId=
 // Obiettivi disponibili per la materia (e livello dedotto dalla classe), usati
 // dal docente nella valutazione in itinere. Restituisce anche la scala giudizi.
 export async function GET(request: NextRequest) {
   try {
-    const sp = new URL(request.url).searchParams
-    const materiaId = sp.get('materiaId')
-    const sectionId = sp.get('sectionId')
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
-    if (!materiaId) return NextResponse.json({ error: 'materiaId obbligatorio' }, { status: 400 })
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+    const { materiaId, sectionId } = q.data
 
     const supabase = await createAdminClient()
     const { data: materia } = await supabase

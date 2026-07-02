@@ -4,6 +4,13 @@ import { requireDocente } from '@/lib/auth/require-staff'
 import { assertSezioneInScope } from '@/lib/auth/scope'
 import { loadGradoContext } from '@/lib/auth/require-grado'
 import { materieDiDocenteInSezione } from '@/lib/sezioni/docenti'
+import { parseData } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+// `sectionId` (param dinamico) è usato come UUID nelle query (sections.id,
+// alunni.section_id, materie.section_id) → zUuid. `userId` in query è
+// consumato dal gate identità (requireDocente), non dall'handler.
 
 // GET /api/primaria/classe/[sectionId]?userId=
 // Bundle di contesto classe: dati sezione, alunni, materie.
@@ -12,12 +19,16 @@ export async function GET(
   { params }: { params: Promise<{ sectionId: string }> }
 ) {
   try {
-    const { sectionId } = await params
+    const { sectionId: rawSectionId } = await params
 
     // 1) Gate ruolo (educator/admin/coordinator/segreteria; genitore escluso).
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
     const user = auth.user
+
+    const secParsed = parseData(zUuid, rawSectionId)
+    if ('response' in secParsed) return secParsed.response
+    const sectionId = secParsed.data
 
     const supabase = await createAdminClient()
 

@@ -1,19 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
 import { assertSezioneInScope } from '@/lib/auth/scope'
+import { parseQuery } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
+
+const getQuerySchema = z.object({
+  sectionId: zUuid,
+})
 
 // GET /api/primaria/orario?sectionId=&userId=
 // Orario settimanale in SOLA LETTURA (personale docente/segreteria): campanelle + griglia.
 // (Il genitore consulta l'orario dalle proprie pagine /api/parent/**.)
 export async function GET(request: NextRequest) {
   try {
-    const sp = new URL(request.url).searchParams
-    const sectionId = sp.get('sectionId')
-    if (!sectionId) return NextResponse.json({ error: 'sectionId obbligatorio' }, { status: 400 })
-
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
+
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+    const { sectionId } = q.data
 
     const supabase = await createAdminClient()
     const scopeErr = await assertSezioneInScope(supabase, auth.user, sectionId)

@@ -70,7 +70,7 @@ function req(body: unknown): NextRequest {
 }
 
 const BASE = {
-  alunnoId: 'a-1', sectionId: 'sez-1', materiaId: 'mat-1',
+  alunnoId: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1', sectionId: '0e20e2e2-0e2e-40e2-8e2e-0e2e2e2e2e21', materiaId: '3a73a73a-3a7a-43a7-8a73-a73a73a73a71',
   modalita: 'sintetico', giudizioSintetico: 'Buono', argomento: 'Le tabelline',
 }
 
@@ -86,9 +86,9 @@ beforeEach(() => {
 
 // Materia configurata + valutazione inserita con successo.
 function seedMateriaAndInsert() {
-  h.state.queues.materie = [{ data: { nome: 'Matematica', codice: 'matematica', scuola_id: 'sc-1', section_id: 'sez-1' }, error: null }]
+  h.state.queues.materie = [{ data: { nome: 'Matematica', codice: 'matematica', scuola_id: 'sc-1', section_id: '0e20e2e2-0e2e-40e2-8e2e-0e2e2e2e2e21' }, error: null }]
   h.state.queues.sections = [{ data: { name: '1A' }, error: null }]
-  h.state.queues.valutazioni = [{ data: { id: 'v-1', alunno_id: 'a-1' }, error: null }]
+  h.state.queues.valutazioni = [{ data: { id: 'v-1', alunno_id: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1' }, error: null }]
   h.state.queues.admin_settings = [{ data: { notif_buffer_valutazioni_min: 10 }, error: null }]
 }
 

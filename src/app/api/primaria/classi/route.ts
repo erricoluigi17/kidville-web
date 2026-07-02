@@ -1,9 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
 import { scuoleDiUtente } from '@/lib/auth/scope'
 import { loadGradoContext } from '@/lib/auth/require-grado'
 import { sezioniDiUtentePerGrado, type SezioneInfo } from '@/lib/sezioni/docenti'
+import { parseQuery } from '@/lib/validation/http'
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+// `userId` in query è consumato dal gate identità (requireDocente), non dall'handler.
+const getQuerySchema = z.object({}) // nessun parametro in ingresso
 
 // GET /api/primaria/classi?userId=
 // Classi di scuola primaria visibili all'utente (hub "Le mie classi").
@@ -14,6 +20,9 @@ export async function GET(request: NextRequest) {
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
     const user = auth.user
+
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
 
     const supabase = await createAdminClient()
 

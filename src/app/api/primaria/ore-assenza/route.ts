@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
 import { assertSezioneInScope, assertAlunniInSezione } from '@/lib/auth/scope'
@@ -9,21 +10,31 @@ import {
   type PresenzaInput,
   type PresenzaConData,
 } from '@/lib/primaria/oreAssenza'
+import { parseQuery } from '@/lib/validation/http'
+import { zDataYMD, zUuid } from '@/lib/validation/common'
+
+const getQuerySchema = z.object({
+  sectionId: zUuid,
+  // '' ammesso sui filtri opzionali: ?from=&to=&alunnoId= (vuoti) equivalgono ad assenti,
+  // come oggi (la UI invia i filtri anche quando i campi data sono svuotati).
+  from: zDataYMD.or(z.literal('')).optional(),
+  to: zDataYMD.or(z.literal('')).optional(),
+  alunnoId: zUuid.or(z.literal('')).optional(),
+  // Semantica storica: solo il literal 'true' attiva il breakdown per materia.
+  includiMaterie: z.string().optional(),
+})
 
 // GET /api/primaria/ore-assenza?sectionId=&from=&to=&alunnoId=&userId=&includiMaterie=true
 // Monte ore di assenza (assenze intere + ritardi + permessi) per alunno.
 // Con includiMaterie=true aggiunge il breakdown per materia.
 export async function GET(request: NextRequest) {
   try {
-    const sp = new URL(request.url).searchParams
-    const sectionId = sp.get('sectionId')
-    const from = sp.get('from')
-    const to = sp.get('to')
-    const alunnoId = sp.get('alunnoId')
-    const includiMaterie = sp.get('includiMaterie') === 'true'
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
-    if (!sectionId) return NextResponse.json({ error: 'sectionId obbligatorio' }, { status: 400 })
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+    const { sectionId, from, to, alunnoId } = q.data
+    const includiMaterie = q.data.includiMaterie === 'true'
 
     const supabase = await createAdminClient()
     const scopeErr = await assertSezioneInScope(supabase, auth.user, sectionId)

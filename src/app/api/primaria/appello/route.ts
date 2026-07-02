@@ -1,11 +1,36 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
 import { assertSezioneInScope, assertAlunniInSezione } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { notificaTitolariScrittura } from '@/lib/primaria/notifiche'
+import { parseBody, parseData, parseQuery } from '@/lib/validation/http'
+import { zDataYMD, zUuid } from '@/lib/validation/common'
 
 const STATI = ['presente', 'assente', 'ritardo', 'uscita_anticipata'] as const
+
+const getQuerySchema = z.object({
+  sectionId: zUuid,
+  data: zDataYMD,
+})
+
+// Base loose: il dispatch singolo/bulk legge dal body campi diversi (records
+// oppure alunnoId/stato/... top-level), poi validati con recordsSchema.
+const postBaseSchema = z.object({
+  sectionId: zUuid,
+  data: zDataYMD,
+}).loose()
+
+const recordSchema = z.object({
+  alunnoId: zUuid,
+  stato: z.enum(STATI),
+  noteAppello: z.string().nullish(),
+  // 'HH:MM'; altri formati ricadono su null (toTs) come oggi: nessun vincolo qui.
+  orarioEntrata: z.string().nullish(),
+  orarioUscita: z.string().nullish(),
+})
+const recordsSchema = z.array(recordSchema)
 
 // GET /api/primaria/appello?sectionId=&data=&userId=
 // Alunni della classe + stato presenza del giorno.
@@ -13,10 +38,9 @@ export async function GET(request: NextRequest) {
   try {
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
-    const sp = new URL(request.url).searchParams
-    const sectionId = sp.get('sectionId')
-    const data = sp.get('data')
-    if (!sectionId || !data) return NextResponse.json({ error: 'sectionId e data obbligatori' }, { status: 400 })
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+    const { sectionId, data } = q.data
 
     const supabase = await createAdminClient()
     const scopeErr = await assertSezioneInScope(supabase, auth.user, sectionId)
@@ -62,26 +86,24 @@ export async function POST(request: NextRequest) {
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
     const userId = auth.user.id
-    const body = await request.json()
-    const { sectionId, data } = body
-    if (!sectionId || !data) return NextResponse.json({ error: 'sectionId e data obbligatori' }, { status: 400 })
+    const b = await parseBody(request, postBaseSchema)
+    if ('response' in b) return b.response
+    const { sectionId, data } = b.data
 
     const supabase = await createAdminClient()
     const scopeErr = await assertSezioneInScope(supabase, auth.user, sectionId)
     if (scopeErr) return scopeErr
 
-    const records: { alunnoId: string; stato: string; noteAppello?: string; orarioEntrata?: string; orarioUscita?: string }[] = Array.isArray(body.records)
-      ? body.records
-      : [{ alunnoId: body.alunnoId, stato: body.stato, noteAppello: body.noteAppello, orarioEntrata: body.orarioEntrata, orarioUscita: body.orarioUscita }]
-
-    for (const r of records) {
-      if (!r.alunnoId || !STATI.includes(r.stato as typeof STATI[number])) {
-        return NextResponse.json({ error: `Record non valido (stato in ${STATI.join('/')})` }, { status: 400 })
-      }
-    }
+    // Dispatch singolo/bulk come oggi: records array → bulk, altrimenti campi top-level.
+    const rawRecords = Array.isArray(b.data.records)
+      ? b.data.records
+      : [{ alunnoId: b.data.alunnoId, stato: b.data.stato, noteAppello: b.data.noteAppello, orarioEntrata: b.data.orarioEntrata, orarioUscita: b.data.orarioUscita }]
+    const rec = parseData(recordsSchema, rawRecords)
+    if ('response' in rec) return rec.response
+    const records = rec.data
 
     // Compone un timestamp completo da data (YYYY-MM-DD) + orario (HH:MM).
-    const toTs = (orario?: string) =>
+    const toTs = (orario?: string | null) =>
       orario && /^\d{2}:\d{2}$/.test(orario) ? `${data}T${orario}:00` : null
 
     // Gli alunni dei record devono appartenere alla sezione asserita (no upsert cross-sezione).

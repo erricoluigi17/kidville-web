@@ -28,3 +28,4 @@ deve essere ≤ del gate precedente, fino allo zero assoluto in M9 (`npx eslint 
 |---|---|---|
 | M0 (baseline) | 2026-07-02 | 262 / 96 |
 | M1 (sicurezza) | 2026-07-02 | 262 / 95 |
+| M2 (robustezza) | 2026-07-02 | 231 / 84 |

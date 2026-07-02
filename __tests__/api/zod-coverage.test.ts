@@ -54,6 +54,16 @@ const GRUPPI_COPERTI: string[] = [
     'seed-db',
     'debug-supabase',
     'debug',
+    // M3.11 (zod 10/14 — admin A; il prefisso 'admin' intero arriva col 13/14)
+    'admin/dashboard',
+    'admin/students',
+    'admin/adults',
+    'admin/parents',
+    'admin/staff',
+    'admin/schools',
+    'admin/sections',
+    'admin/pre-inscriptions',
+    'admin/iscrizioni',
 ];
 
 const API_ROOT = path.join(process.cwd(), 'src', 'app', 'api');

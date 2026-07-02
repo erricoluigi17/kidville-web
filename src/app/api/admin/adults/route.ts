@@ -1,13 +1,31 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
+import { parseBody, parseQuery } from '@/lib/validation/http';
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+const getQuerySchema = z.object({
+    role: z.string().optional(),
+});
+
+const postBodySchema = z.object({
+    // La presenza della prima email resta verificata nell'handler (400 dedicato);
+    // nessun vincolo di formato, come oggi.
+    emails: z.array(z.string()).optional(),
+    first_name: z.string().nullable().optional(),
+    last_name: z.string().nullable().optional(),
+    role: z.string().nullable().optional(),
+    scuola_id: z.string().nullable().optional(),
+});
 
 // GET /api/admin/adults?role=educator
 // Returns staff from utenti table (adults table not available in public schema)
 export async function GET(request: NextRequest) {
+    const q = parseQuery(request, getQuerySchema);
+    if ('response' in q) return q.response;
+    const role = q.data.role;
+
     try {
-        const { searchParams } = new URL(request.url);
-        const role = searchParams.get('role');
-        
         const supabase = await createAdminClient();
 
         let query = supabase
@@ -51,10 +69,11 @@ export async function GET(request: NextRequest) {
 // POST /api/admin/adults
 // Creates a new staff user in auth + utenti
 export async function POST(request: NextRequest) {
+    const b = await parseBody(request, postBodySchema);
+    if ('response' in b) return b.response;
+    const { emails, first_name, last_name, role, scuola_id } = b.data;
+
     try {
-        const body = await request.json();
-        const { emails, first_name, last_name, role, scuola_id, ...otherData } = body;
-        
         const primaryEmail = emails && emails.length > 0 ? emails[0] : null;
 
         if (!primaryEmail) {

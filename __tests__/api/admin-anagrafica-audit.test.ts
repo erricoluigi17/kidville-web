@@ -90,7 +90,7 @@ describe('P0 anagrafica — gate Segreteria+Direzione (DL-036)', () => {
     ['students PATCH', () => students.PATCH(req(u('students'), { id: 'al-1', stato: 'ritirato' }, 'PATCH') as never)],
     ['students DELETE', () => students.DELETE(req(u('students'), { id: 'al-1' }, 'DELETE') as never)],
     ['parents POST', () => parents.POST(req(u('parents'), { action: 'create_parent', fiscal_code: 'RSSMRA', role: 'mother' }, 'POST') as never)],
-    ['parents PATCH', () => parents.PATCH(req(u('parents'), { id: 'p-1', emails: ['x@y.it'] }, 'PATCH') as never)],
+    ['parents PATCH', () => parents.PATCH(req(u('parents'), { id: '99999999-9999-4999-8999-999999999991', emails: ['x@y.it'] }, 'PATCH') as never)],
     ['sections POST', () => sections.POST(req(u('sections'), { name: 'Girasoli' }, 'POST') as never)],
     ['sections PATCH', () => sections.PATCH(req(u('sections'), { id: 'sec-1', name: 'Tulipani' }, 'PATCH') as never)],
   ]
@@ -136,7 +136,7 @@ describe('P0 anagrafica — audit immutabile su ogni mutazione (DL-037)', () => 
 
   it('parents POST create_parent: audit insert(genitori)', async () => {
     h.existing = null // forza creazione nuovo genitore
-    const res = await parents.POST(req(u('parents'), { action: 'create_parent', fiscal_code: 'RSSMRA80', role: 'mother', student_id: 'al-1' }, 'POST') as never)
+    const res = await parents.POST(req(u('parents'), { action: 'create_parent', fiscal_code: 'RSSMRA80', role: 'mother', student_id: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1' }, 'POST') as never)
     expect(res.status).toBe(200)
     expect(h.logScrittura).toHaveBeenCalledWith(
       expect.anything(),
@@ -145,11 +145,11 @@ describe('P0 anagrafica — audit immutabile su ogni mutazione (DL-037)', () => 
   })
 
   it('parents PATCH: audit update(genitori)', async () => {
-    const res = await parents.PATCH(req(u('parents'), { id: 'p-1', emails: ['x@y.it'] }, 'PATCH') as never)
+    const res = await parents.PATCH(req(u('parents'), { id: '99999999-9999-4999-8999-999999999991', emails: ['x@y.it'] }, 'PATCH') as never)
     expect(res.status).toBe(200)
     expect(h.logScrittura).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ entitaTipo: 'genitori', azione: 'update', entitaId: 'p-1' }),
+      expect.objectContaining({ entitaTipo: 'genitori', azione: 'update', entitaId: '99999999-9999-4999-8999-999999999991' }),
     )
   })
 

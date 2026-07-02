@@ -1,8 +1,10 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { logScrittura } from '@/lib/audit/scrittura'
-import { validaNomeScuola, normalizzaScuola } from '@/lib/scuole/validate'
+import { normalizzaScuola } from '@/lib/scuole/validate'
+import { parseBody, parseQuery } from '@/lib/validation/http'
 
 // Multi-Sede CRUD (DL-033). Riservato alla Direzione (admin/coordinator).
 // Aggiungi / rinomina / disattiva (soft) + config isolata per sede. Service-role
@@ -10,9 +12,39 @@ import { validaNomeScuola, normalizzaScuola } from '@/lib/scuole/validate'
 
 const DIREZIONE = ['admin', 'coordinator'] as const
 
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+const getQuerySchema = z.object({}) // nessun parametro in ingresso
+
+/** Stesse regole del vecchio validaNomeScuola: obbligatorio, ≤120 caratteri dopo trim. */
+const zNomeScuola = z
+  .string({ error: 'Il nome della sede è obbligatorio' })
+  .refine((v) => v.trim().length > 0, 'Il nome della sede è obbligatorio')
+  .refine((v) => v.trim().length <= 120, 'Il nome della sede è troppo lungo (max 120 caratteri)')
+
+const postBodySchema = z.object({
+  nome: zNomeScuola,
+  citta: z.string().nullish(),
+  indirizzo: z.string().nullish(),
+})
+
+// id come stringa libera e NON zUuid: la tabella scuole è un registry soft-ref
+// (id non-uuid nei test/dev); un id sconosciuto continua a dare 404, come prima.
+// citta/indirizzo/attiva/config oggi accettano qualunque tipo (String()/!!/pass-through).
+const patchBodySchema = z.object({
+  id: z.string().min(1, 'id obbligatorio'), // sostituisce il 400 manuale 'id obbligatorio'
+  nome: zNomeScuola.optional(),
+  citta: z.unknown().optional(),
+  indirizzo: z.unknown().optional(),
+  attiva: z.unknown().optional(),
+  config: z.unknown().optional(),
+})
+
 export async function GET(request: Request) {
   const auth = await requireStaff(request, [...DIREZIONE])
   if (auth.response) return auth.response
+
+  const q = parseQuery(request, getQuerySchema)
+  if ('response' in q) return q.response
 
   const supabase = await createAdminClient()
   const { data, error } = await supabase
@@ -27,12 +59,11 @@ export async function POST(request: Request) {
   const auth = await requireStaff(request, [...DIREZIONE])
   if (auth.response) return auth.response
 
-  try {
-    const body = await request.json()
-    const check = validaNomeScuola(body?.nome)
-    if (!check.ok) return NextResponse.json({ error: check.error }, { status: 400 })
+  const b = await parseBody(request, postBodySchema)
+  if ('response' in b) return b.response
 
-    const scuola = normalizzaScuola(body)
+  try {
+    const scuola = normalizzaScuola(b.data)
     const supabase = await createAdminClient()
     const { data, error } = await supabase
       .from('scuole')
@@ -63,15 +94,11 @@ export async function PATCH(request: Request) {
   const auth = await requireStaff(request, [...DIREZIONE])
   if (auth.response) return auth.response
 
-  try {
-    const body = await request.json()
-    const { id, nome, citta, indirizzo, attiva, config } = body ?? {}
-    if (!id) return NextResponse.json({ error: 'id obbligatorio' }, { status: 400 })
-    if (nome !== undefined) {
-      const check = validaNomeScuola(nome)
-      if (!check.ok) return NextResponse.json({ error: check.error }, { status: 400 })
-    }
+  const b = await parseBody(request, patchBodySchema)
+  if ('response' in b) return b.response
+  const { id, nome, citta, indirizzo, attiva, config } = b.data
 
+  try {
     const supabase = await createAdminClient()
     const { data: existing } = await supabase
       .from('scuole')

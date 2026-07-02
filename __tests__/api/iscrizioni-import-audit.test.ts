@@ -55,7 +55,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   h.requireStaff.mockResolvedValue({ user: { id: 'seg-1', role: 'segreteria', scuola_id: 'sc-1' } })
   h.sub = {
-    id: 'sub-1',
+    id: '5b5b5b5b-5b5b-45b5-85b5-5b5b5b5b5b5b',
     scuola_id: 'sc-1',
     data: {
       children: [{ nome: 'Bimbo', codice_fiscale: 'CFC1' }],
@@ -67,7 +67,7 @@ beforeEach(() => {
 describe('P0 iscrizioni import — gate + audit', () => {
   it('PATCH: 403 quando il gate nega', async () => {
     h.requireStaff.mockResolvedValue(denied())
-    const res = await PATCH(req({ id: 'sub-1', action: 'import', assignments: { '0': 'Girasoli' }, referenteIndex: 99 }) as never)
+    const res = await PATCH(req({ id: '5b5b5b5b-5b5b-45b5-85b5-5b5b5b5b5b5b', action: 'import', assignments: { '0': 'Girasoli' }, referenteIndex: 99 }) as never)
     expect(res.status).toBe(403)
     expect(h.requireStaff).toHaveBeenCalled()
   })
@@ -79,7 +79,7 @@ describe('P0 iscrizioni import — gate + audit', () => {
   })
 
   it('import: audit insert(genitori) + insert(alunni) per ogni entità creata', async () => {
-    const res = await PATCH(req({ id: 'sub-1', action: 'import', assignments: { '0': 'Girasoli' }, referenteIndex: 99 }) as never)
+    const res = await PATCH(req({ id: '5b5b5b5b-5b5b-45b5-85b5-5b5b5b5b5b5b', action: 'import', assignments: { '0': 'Girasoli' }, referenteIndex: 99 }) as never)
     expect(res.status).toBe(200)
     const tipi = h.logScrittura.mock.calls.map((c) => (c[1] as { entitaTipo: string }).entitaTipo)
     expect(tipi).toContain('genitori')

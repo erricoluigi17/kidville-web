@@ -3,17 +3,35 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { sendEmail, credentialsEmailBody } from '@/lib/email/send'
+import { parseBody, parseQuery } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
+import { z } from 'zod'
 import type { EnrollmentSubmissionData, EnrollmentAdult, EnrollmentChild } from '@/types/database.types'
 
 const DEFAULT_SCUOLA_ID = '11111111-1111-1111-1111-111111111111'
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+const getQuerySchema = z.object({
+  doc: z.string().optional(), // path storage → signed URL
+})
+
+// referenteIndex resta unknown: il codice accetta qualsiasi valore e usa 0
+// quando non è un numero (fallback pre-esistente da preservare, niente 400).
+const patchBodySchema = z.object({
+  id: zUuid,
+  action: z.enum(['reject', 'import']),
+  assignments: z.record(z.string(), z.string()).nullish(),
+  referenteIndex: z.unknown().optional(),
+})
 
 // GET: lista invii, oppure ?doc=<path> per ottenere una signed URL del documento.
 export async function GET(request: NextRequest) {
   const auth = await requireStaff(request)
   if (auth.response) return auth.response
   try {
-    const { searchParams } = new URL(request.url)
-    const docPath = searchParams.get('doc')
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+    const docPath = q.data.doc
     const supabase = await createAdminClient()
 
     if (docPath) {
@@ -42,11 +60,9 @@ export async function PATCH(request: NextRequest) {
   const auth = await requireStaff(request)
   if (auth.response) return auth.response
   try {
-    const body = await request.json()
-    const { id, action } = body
-    if (!id || !action) {
-      return NextResponse.json({ error: 'id e action obbligatori' }, { status: 400 })
-    }
+    const b = await parseBody(request, patchBodySchema)
+    if ('response' in b) return b.response
+    const { id, action } = b.data
 
     const supabase = await createAdminClient()
 
@@ -68,12 +84,9 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json(data)
     }
 
-    if (action !== 'import') {
-      return NextResponse.json({ error: 'Azione non valida' }, { status: 400 })
-    }
-
-    const assignments: Record<string, string> = body.assignments || {}
-    const referenteIndex: number = typeof body.referenteIndex === 'number' ? body.referenteIndex : 0
+    // action === 'import' garantito dallo schema (enum reject|import)
+    const assignments: Record<string, string> = b.data.assignments || {}
+    const referenteIndex: number = typeof b.data.referenteIndex === 'number' ? b.data.referenteIndex : 0
 
     // 1. Carica l'invio
     const { data: sub, error: subErr } = await supabase

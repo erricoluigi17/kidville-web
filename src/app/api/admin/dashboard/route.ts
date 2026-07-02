@@ -1,6 +1,11 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { parseQuery } from '@/lib/validation/http'
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+const getQuerySchema = z.object({}) // nessun parametro in ingresso
 
 const SCUOLA_ID = '11111111-1111-1111-1111-111111111111'
 
@@ -21,6 +26,9 @@ function ymKey(d: Date) {
 export async function GET(request: Request) {
   const auth = await requireStaff(request)
   if (auth.response) return auth.response
+
+  const q = parseQuery(request, getQuerySchema)
+  if ('response' in q) return q.response
 
   const supabase = await createAdminClient()
 

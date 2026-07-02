@@ -1,16 +1,36 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { requireStaff } from '@/lib/auth/require-staff'
+import { requireStaff, type AppRole } from '@/lib/auth/require-staff'
 import { logScrittura } from '@/lib/audit/scrittura'
-import { isRuoloAssegnabile } from '@/lib/auth/ruoli'
+import { RUOLI_VALIDI } from '@/lib/auth/ruoli'
+import { parseBody, parseQuery } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
 
 const DIREZIONE = ['admin', 'coordinator'] as const
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+const getQuerySchema = z.object({}) // nessun parametro in ingresso
+
+// PATCH — body: { id, ruolo?, scuola_id?, gradi?, section_ids? }.
+// gradi/section_ids non-array oggi vengono ignorati in silenzio (Array.isArray
+// nel codice): restano z.unknown() per non respingere richieste che oggi passano.
+const patchBodySchema = z.object({
+  id: zUuid, // obbligatorio (sostituisce il 400 manuale 'id è obbligatorio')
+  // Stessi valori ammessi di isRuoloAssegnabile (sostituisce il 400 manuale).
+  ruolo: z.enum(RUOLI_VALIDI as [AppRole, ...AppRole[]], { error: 'Ruolo non assegnabile' }).optional(),
+  scuola_id: zUuid.nullish(), // null oggi arriva al DB così com'è: preservato
+  gradi: z.unknown().optional(),
+  section_ids: z.unknown().optional(),
+})
 
 // GET /api/admin/staff — elenco personale (esclude i genitori). Solo Direzione.
 export async function GET(request: Request) {
   try {
     const auth = await requireStaff(request, [...DIREZIONE])
     if (auth.response) return auth.response
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
     const supabase = await createAdminClient()
     const { data, error } = await supabase
       .from('utenti')
@@ -46,18 +66,14 @@ export async function PATCH(request: Request) {
     const auth = await requireStaff(request, [...DIREZIONE])
     if (auth.response) return auth.response
 
-    const body = await request.json()
+    const parsed = await parseBody(request, patchBodySchema)
+    if ('response' in parsed) return parsed.response
+    const body = parsed.data
     const id = body.id
-    if (!id) return NextResponse.json({ error: 'id è obbligatorio' }, { status: 400 })
 
-    if (body.ruolo !== undefined) {
-      if (!isRuoloAssegnabile(body.ruolo)) {
-        return NextResponse.json({ error: 'Ruolo non assegnabile' }, { status: 400 })
-      }
-      // self-lockout guard: la Direzione non può cambiare il proprio ruolo
-      if (id === auth.user.id) {
-        return NextResponse.json({ error: 'Non puoi modificare il tuo stesso ruolo' }, { status: 403 })
-      }
+    // self-lockout guard: la Direzione non può cambiare il proprio ruolo
+    if (body.ruolo !== undefined && id === auth.user.id) {
+      return NextResponse.json({ error: 'Non puoi modificare il tuo stesso ruolo' }, { status: 403 })
     }
 
     const patch: Record<string, unknown> = {}
@@ -78,7 +94,7 @@ export async function PATCH(request: Request) {
       if (body.section_ids.length > 0) {
         await supabase
           .from('utenti_sezioni')
-          .insert(body.section_ids.map((sid: string) => ({ utente_id: id, section_id: sid })))
+          .insert(body.section_ids.map((sid) => ({ utente_id: id, section_id: sid })))
       }
     }
 

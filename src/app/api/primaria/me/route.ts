@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getRequestUserId, loadAppUser } from '@/lib/auth/require-staff'
+import { resolveIdentity, loadAppUser } from '@/lib/auth/require-staff'
 import { loadGradoContext } from '@/lib/auth/require-grado'
 
-// GET /api/primaria/me?userId=
+// GET /api/primaria/me
 // Riepilogo del contesto docente: gradi + funzioni abilitate (per gating UI).
+// Identità session-first (resolveIdentity); header/query solo come fallback legacy.
 export async function GET(request: NextRequest) {
   try {
-    const userId = getRequestUserId(request)
+    const { userId } = await resolveIdentity(request)
     if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
     const ctx = await loadGradoContext(userId)
     if (!ctx) return NextResponse.json({ error: 'Utente non trovato' }, { status: 401 })

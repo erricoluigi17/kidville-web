@@ -41,6 +41,9 @@ function req(body: unknown) {
 describe('POST /api/admin/regenerate-credentials (DL-005)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // requireEnv (M2.3): la route risponde 503 senza queste env
+    process.env.NEXT_PUBLIC_SUPABASE_URL = 'http://localhost:54321';
+    process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-service-role';
     h.requireStaff.mockResolvedValue({ user: { id: 'admin-1', role: 'segreteria', scuola_id: 's1' } });
     h.sendEmail.mockResolvedValue(true);
     h.adminRow = { data: null, error: null };

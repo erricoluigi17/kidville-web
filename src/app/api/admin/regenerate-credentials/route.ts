@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { requireStaff } from '@/lib/auth/require-staff';
+import { requireEnv } from '@/lib/security/require-env';
 import { sendEmail, credentialsEmailBody } from '@/lib/email/send';
 import { randomPassword } from '@/lib/auth/backfill';
 import { logScrittura } from '@/lib/audit/scrittura';
@@ -32,9 +33,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'targetKind (parent|staff) e targetId sono obbligatori' }, { status: 400 });
   }
 
+  const missingEnv = requireEnv('NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY');
+  if (missingEnv) return missingEnv;
   const admin = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    process.env.NEXT_PUBLIC_SUPABASE_URL as string,
+    process.env.SUPABASE_SERVICE_ROLE_KEY as string,
     { auth: { autoRefreshToken: false, persistSession: false } }
   );
 

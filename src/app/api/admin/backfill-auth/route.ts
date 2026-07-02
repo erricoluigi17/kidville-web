@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { sealDangerous } from '@/lib/security/seal';
+import { requireEnv } from '@/lib/security/require-env';
 import { backfillParentsAuth } from '@/lib/auth/backfill';
 
 /**
@@ -26,9 +27,11 @@ export async function POST(request: Request) {
     );
   }
 
+  const missingEnv = requireEnv('NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY');
+  if (missingEnv) return missingEnv;
   const admin = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    process.env.NEXT_PUBLIC_SUPABASE_URL as string,
+    process.env.SUPABASE_SERVICE_ROLE_KEY as string,
     { auth: { autoRefreshToken: false, persistSession: false } }
   );
 

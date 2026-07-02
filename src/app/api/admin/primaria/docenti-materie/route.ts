@@ -1,20 +1,42 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { parseBody, parseQuery } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
 
 // ============================================================
 // Assegnazione DOCENTE × CLASSE × MATERIA (contitolarità + isolamento materia).
 // Tabella: utenti_sezioni_materie.
 // ============================================================
 
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+/** '' equivale ad assente (i check truthy pre-esistenti restano invariati). */
+const vuotoComeAssente = (v: unknown) => (v === '' ? undefined : v)
+
+const getQuerySchema = z.object({
+  sectionId: zUuid, // obbligatorio (sostituisce il 400 manuale)
+  // Filtro eq opzionale su utente_id ('' = nessun filtro, come prima).
+  utenteId: z.preprocess(vuotoComeAssente, zUuid.optional()),
+})
+
+const postBodySchema = z.object({
+  utenteId: zUuid,
+  sectionId: zUuid,
+  materiaId: zUuid,
+  eContitolare: z.boolean().nullish(), // default false applicato nel codice (?? come prima)
+})
+
+const deleteQuerySchema = z.object({
+  id: zUuid, // obbligatorio (sostituisce il 400 manuale)
+})
+
 // GET /api/admin/primaria/docenti-materie?sectionId=  (opz. &utenteId=)
 export async function GET(request: NextRequest) {
+  const q = parseQuery(request, getQuerySchema)
+  if ('response' in q) return q.response
+  const { sectionId, utenteId } = q.data
   try {
-    const sp = new URL(request.url).searchParams
-    const sectionId = sp.get('sectionId')
-    const utenteId = sp.get('utenteId')
-    if (!sectionId) return NextResponse.json({ error: 'sectionId obbligatorio' }, { status: 400 })
-
     const supabase = await createAdminClient()
     let query = supabase
       .from('utenti_sezioni_materie')
@@ -38,10 +60,9 @@ export async function POST(request: NextRequest) {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
 
-    const { utenteId, sectionId, materiaId, eContitolare } = await request.json()
-    if (!utenteId || !sectionId || !materiaId) {
-      return NextResponse.json({ error: 'utenteId, sectionId, materiaId obbligatori' }, { status: 400 })
-    }
+    const b = await parseBody(request, postBodySchema)
+    if ('response' in b) return b.response
+    const { utenteId, sectionId, materiaId, eContitolare } = b.data
 
     const supabase = await createAdminClient()
 
@@ -72,8 +93,9 @@ export async function DELETE(request: NextRequest) {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
 
-    const id = new URL(request.url).searchParams.get('id')
-    if (!id) return NextResponse.json({ error: 'id obbligatorio' }, { status: 400 })
+    const q = parseQuery(request, deleteQuerySchema)
+    if ('response' in q) return q.response
+    const { id } = q.data
 
     const supabase = await createAdminClient()
     const { error } = await supabase.from('utenti_sezioni_materie').delete().eq('id', id)

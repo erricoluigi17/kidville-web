@@ -1,11 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { parseQuery } from '@/lib/validation/http'
 import { buildGenitoriAlunni } from '@/lib/sidi/payload'
 import { serializeGenitoriAlunni } from '@/lib/sidi/serializer'
 import { sidiTransmit } from '@/lib/sidi/client'
 import { loadSyncState, persistFaseStato } from '@/lib/sidi/sync-store'
 import { puoInviarePiattaformaUnica } from '@/lib/sidi/sequenza'
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+const postQuerySchema = z.object({}) // nessun parametro in ingresso (il body non viene letto; userId è consumato dal gate)
 
 const SCUOLA_ID_DEFAULT = '11111111-1111-1111-1111-111111111111'
 
@@ -18,6 +23,8 @@ const one = <T>(v: T | T[] | null): T | null => (Array.isArray(v) ? v[0] ?? null
 export async function POST(request: NextRequest) {
   const auth = await requireStaff(request, ['admin', 'coordinator'])
   if (auth.response) return auth.response
+  const q = parseQuery(request, postQuerySchema)
+  if ('response' in q) return q.response
   try {
     const supabase = await createAdminClient()
     const scuolaId = auth.user.scuola_id || SCUOLA_ID_DEFAULT

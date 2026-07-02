@@ -1,8 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { parseBody, parseData, parseQuery } from '@/lib/validation/http'
 import { parseSidiZip } from '@/lib/sidi/zip-parser'
 import { applySidiBatch } from '@/lib/sidi/import-apply'
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+const getQuerySchema = z.object({}) // nessun parametro in ingresso (userId è consumato dal gate)
+
+// Il file si valida come presenza/istanza (contratto attuale: qualunque valore
+// non-stringa passato in formData); il contenuto .zip non è materia di zod.
+type UploadedFile = { name?: string; arrayBuffer: () => Promise<ArrayBuffer> }
+const postFormSchema = z.object({
+  file: z.custom<UploadedFile>((v) => Boolean(v) && typeof v !== 'string', { error: 'File .zip mancante' }),
+})
+
+const patchBodySchema = z.object({
+  // batchId è un id di batch: min(1) come il check attuale (niente zUuid:
+  // il contratto odierno accetta qualunque stringa non vuota; il not-found è gestito da applySidiBatch).
+  batchId: z.string().min(1, 'batchId obbligatorio'),
+})
 
 const SCUOLA_ID_DEFAULT = '11111111-1111-1111-1111-111111111111'
 
@@ -10,6 +28,8 @@ const SCUOLA_ID_DEFAULT = '11111111-1111-1111-1111-111111111111'
 export async function GET(request: NextRequest) {
   const auth = await requireStaff(request)
   if (auth.response) return auth.response
+  const q = parseQuery(request, getQuerySchema)
+  if ('response' in q) return q.response
   try {
     const supabase = await createAdminClient()
     const { data } = await supabase
@@ -31,13 +51,14 @@ export async function POST(request: NextRequest) {
   if (auth.response) return auth.response
   try {
     const form = await request.formData()
-    const file = form.get('file')
-    if (!file || typeof file === 'string') return NextResponse.json({ error: 'File .zip mancante' }, { status: 400 })
+    const f = parseData(postFormSchema, { file: form.get('file') })
+    if ('response' in f) return f.response
+    const { file } = f.data
 
-    const buf = Buffer.from(await (file as Blob).arrayBuffer())
+    const buf = Buffer.from(await file.arrayBuffer())
     const parsed = await parseSidiZip(buf)
     const scuolaId = auth.user.scuola_id || SCUOLA_ID_DEFAULT
-    const filename = (file as File).name ?? 'sidi.zip'
+    const filename = file.name ?? 'sidi.zip'
 
     const supabase = await createAdminClient()
     const { data: batch, error } = await supabase
@@ -73,11 +94,11 @@ export async function PATCH(request: NextRequest) {
   const auth = await requireStaff(request, ['admin', 'coordinator'])
   if (auth.response) return auth.response
   try {
-    const body = await request.json().catch(() => ({}))
-    if (!body.batchId) return NextResponse.json({ error: 'batchId obbligatorio' }, { status: 400 })
+    const b = await parseBody(request, patchBodySchema)
+    if ('response' in b) return b.response
 
     const supabase = await createAdminClient()
-    const res = await applySidiBatch(supabase, body.batchId, auth.user)
+    const res = await applySidiBatch(supabase, b.data.batchId, auth.user)
     if (res.error) return NextResponse.json({ error: res.error }, { status: res.status ?? 500 })
     return NextResponse.json({ success: true, ...res })
   } catch (err) {

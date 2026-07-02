@@ -1,6 +1,11 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { parseQuery } from '@/lib/validation/http'
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+const getQuerySchema = z.object({}) // nessun parametro in ingresso
 
 // Lista "diritto all'oblio" (DL-034): alunni NON iscritti e non ancora
 // anonimizzati, con i genitori collegati. Riservata alla Direzione.
@@ -10,6 +15,9 @@ const DIREZIONE = ['admin', 'coordinator'] as const
 export async function GET(request: Request) {
   const auth = await requireStaff(request, [...DIREZIONE])
   if (auth.response) return auth.response
+
+  const q = parseQuery(request, getQuerySchema)
+  if ('response' in q) return q.response
 
   const supabase = await createAdminClient()
 

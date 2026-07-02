@@ -1,16 +1,58 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { parseBody, parseQuery } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
 
 // ============================================================
 // Configurazione giudizi: scala sintetica + template descrittivi.
 // ============================================================
 
+const getQuerySchema = z.object({
+  scuolaId: zUuid,
+})
+
+const postQuerySchema = z.object({
+  action: z.enum(['scala', 'scala-rename', 'template']),
+})
+
+// I campi opzionali sono pass-through verso il DB (conversioni fatte nel codice):
+// schema permissivo per non alterare il comportamento attuale.
+const scalaBodySchema = z.object({
+  scuolaId: zUuid,
+  etichetta: z.string().min(1),
+  ordine: z.unknown().optional(),
+  valoreNumerico: z.unknown().optional(),
+  giudizioDescrittivo: z.unknown().optional(),
+  attivo: z.unknown().optional(),
+})
+
+const scalaRenameBodySchema = z.object({
+  scuolaId: zUuid,
+  id: zUuid,
+  etichetta: z.string().min(1),
+})
+
+const templateBodySchema = z.object({
+  scuolaId: zUuid,
+  dimensione: z.string().min(1),
+  valore: z.string().min(1),
+  frammento: z.string().min(1),
+})
+
+const deleteQuerySchema = z.object({
+  // qualunque valore diverso da 'scala' oggi ricade su 'template': niente enum
+  tipo: z.string().min(1),
+  id: zUuid,
+})
+
 // GET /api/admin/primaria/giudizi?scuolaId=
 export async function GET(request: NextRequest) {
   try {
-    const scuolaId = new URL(request.url).searchParams.get('scuolaId')
-    if (!scuolaId) return NextResponse.json({ error: 'scuolaId obbligatorio' }, { status: 400 })
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+    const { scuolaId } = q.data
 
     const supabase = await createAdminClient()
     const [{ data: scala }, { data: template }] = await Promise.all([
@@ -34,13 +76,15 @@ export async function POST(request: NextRequest) {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
 
-    const action = new URL(request.url).searchParams.get('action')
-    const body = await request.json()
+    const q = parseQuery(request, postQuerySchema)
+    if ('response' in q) return q.response
+    const action = q.data.action
     const supabase = await createAdminClient()
 
     if (action === 'scala') {
-      const { scuolaId, etichetta, ordine, valoreNumerico, giudizioDescrittivo, attivo } = body
-      if (!scuolaId || !etichetta) return NextResponse.json({ error: 'scuolaId ed etichetta obbligatori' }, { status: 400 })
+      const b = await parseBody(request, scalaBodySchema)
+      if ('response' in b) return b.response
+      const { scuolaId, etichetta, ordine, valoreNumerico, giudizioDescrittivo, attivo } = b.data
       const row: Record<string, unknown> = { scuola_id: scuolaId, etichetta, ordine: ordine ?? 0 }
       if (valoreNumerico !== undefined) row.valore_numerico = valoreNumerico === null || valoreNumerico === '' ? null : Number(valoreNumerico)
       if (giudizioDescrittivo !== undefined) row.giudizio_descrittivo = giudizioDescrittivo || null
@@ -55,8 +99,9 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === 'scala-rename') {
-      const { scuolaId, id, etichetta } = body
-      if (!scuolaId || !id || !etichetta) return NextResponse.json({ error: 'scuolaId, id ed etichetta obbligatori' }, { status: 400 })
+      const b = await parseBody(request, scalaRenameBodySchema)
+      if ('response' in b) return b.response
+      const { scuolaId, id, etichetta } = b.data
 
       // Etichetta vecchia: serve per propagare la rinomina ai giudizi descrittivi
       // configurati (referenziati per testo via etichetta_voto).
@@ -92,10 +137,9 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === 'template') {
-      const { scuolaId, dimensione, valore, frammento } = body
-      if (!scuolaId || !dimensione || !valore || !frammento) {
-        return NextResponse.json({ error: 'scuolaId, dimensione, valore, frammento obbligatori' }, { status: 400 })
-      }
+      const b = await parseBody(request, templateBodySchema)
+      if ('response' in b) return b.response
+      const { scuolaId, dimensione, valore, frammento } = b.data
       const { data, error } = await supabase
         .from('giudizio_template')
         .upsert({ scuola_id: scuolaId, dimensione, valore, frammento }, { onConflict: 'scuola_id,dimensione,valore' })
@@ -118,10 +162,9 @@ export async function DELETE(request: NextRequest) {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
 
-    const sp = new URL(request.url).searchParams
-    const tipo = sp.get('tipo')
-    const id = sp.get('id')
-    if (!id || !tipo) return NextResponse.json({ error: 'tipo e id obbligatori' }, { status: 400 })
+    const q = parseQuery(request, deleteQuerySchema)
+    if ('response' in q) return q.response
+    const { tipo, id } = q.data
 
     const table = tipo === 'scala' ? 'giudizi_sintetici_scala' : 'giudizio_template'
     const supabase = await createAdminClient()

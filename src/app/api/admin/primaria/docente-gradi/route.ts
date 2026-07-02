@@ -1,14 +1,34 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { parseBody, parseQuery } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
 
 const GRADI_VALIDI = ['nido', 'infanzia', 'primaria'] as const
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+/** '' equivale ad assente (i check truthy pre-esistenti restano invariati). */
+const vuotoComeAssente = (v: unknown) => (v === '' ? undefined : v)
+
+const getQuerySchema = z.object({
+  // Filtro eq su utenti.scuola_id ('' = nessun filtro, come prima).
+  scuolaId: z.preprocess(vuotoComeAssente, zUuid.optional()),
+})
+
+const patchBodySchema = z.object({
+  utenteId: zUuid,
+  // Sostituisce i 400 manuali (utenteId/gradi obbligatori + gradi non validi).
+  gradi: z.array(z.enum(GRADI_VALIDI, { error: 'Grado non valido' })),
+})
 
 // GET /api/admin/primaria/docente-gradi?scuolaId=
 // Elenco docenti/staff con i loro gradi (per la gestione classificazione).
 export async function GET(request: NextRequest) {
+  const q = parseQuery(request, getQuerySchema)
+  if ('response' in q) return q.response
+  const { scuolaId } = q.data
   try {
-    const scuolaId = new URL(request.url).searchParams.get('scuolaId')
     const supabase = await createAdminClient()
     let query = supabase
       .from('utenti')
@@ -32,14 +52,9 @@ export async function PATCH(request: NextRequest) {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
 
-    const { utenteId, gradi } = await request.json()
-    if (!utenteId || !Array.isArray(gradi)) {
-      return NextResponse.json({ error: 'utenteId e gradi[] obbligatori' }, { status: 400 })
-    }
-    const invalid = gradi.filter((g: string) => !GRADI_VALIDI.includes(g as typeof GRADI_VALIDI[number]))
-    if (invalid.length) {
-      return NextResponse.json({ error: `Gradi non validi: ${invalid.join(', ')}` }, { status: 400 })
-    }
+    const b = await parseBody(request, patchBodySchema)
+    if ('response' in b) return b.response
+    const { utenteId, gradi } = b.data
 
     const supabase = await createAdminClient()
     const { data, error } = await supabase

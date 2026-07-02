@@ -1,17 +1,60 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { parseBody, parseData, parseQuery } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
 
 // ============================================================
 // Materie (discipline) per sezione — catalogo editabile derivato dal preset.
 // ============================================================
 
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+const getQuerySchema = z.object({
+  sectionId: zUuid, // obbligatorio (sostituisce il 400 manuale)
+})
+
+const postQuerySchema = z.object({
+  action: z.string().optional(), // solo 'apply-preset' ha effetto, come prima
+})
+
+// Il body del POST dipende dal ramo (?action=): base comune, poi schema per ramo.
+// .loose() perché i campi del ramo vengono rivalidati da `body` dopo il lookup sezione.
+const postBodyBaseSchema = z.object({
+  sectionId: zUuid, // sostituisce il 400 manuale
+}).loose()
+
+// Ramo apply-preset: stessa semantica di `Number(body.livello)` + check 1-5.
+const postPresetBodySchema = z.object({
+  livello: z.coerce.number({ error: 'livello (1-5) obbligatorio' })
+    .min(1, 'livello (1-5) obbligatorio')
+    .max(5, 'livello (1-5) obbligatorio'),
+})
+
+// Ramo creazione materia singola.
+const postMateriaBodySchema = z.object({
+  nome: z.string().min(1, 'nome e codice obbligatori'),
+  codice: z.string().min(1, 'nome e codice obbligatori'),
+  e_civica: z.boolean().nullish(), // default false applicato nel codice (?? come prima)
+  turno_mensa: z.boolean().nullish(), // default false applicato nel codice (?? come prima)
+  ordine: z.coerce.number().nullish(), // default 0 applicato nel codice (?? come prima)
+})
+
+// Il body (meno id e chiavi di tenancy) va in update(updates): .loose() preserva le chiavi extra.
+const patchBodySchema = z.object({
+  id: zUuid, // sostituisce il 400 manuale
+}).loose()
+
+const deleteQuerySchema = z.object({
+  id: zUuid, // obbligatorio (sostituisce il 400 manuale)
+})
+
 // GET /api/admin/primaria/materie?sectionId=
 export async function GET(request: NextRequest) {
+  const q = parseQuery(request, getQuerySchema)
+  if ('response' in q) return q.response
+  const { sectionId } = q.data
   try {
-    const sectionId = new URL(request.url).searchParams.get('sectionId')
-    if (!sectionId) return NextResponse.json({ error: 'sectionId obbligatorio' }, { status: 400 })
-
     const supabase = await createAdminClient()
     const { data, error } = await supabase
       .from('materie')
@@ -35,13 +78,17 @@ export async function POST(request: NextRequest) {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
 
-    const action = new URL(request.url).searchParams.get('action')
-    const body = await request.json()
+    const qp = parseQuery(request, postQuerySchema)
+    if ('response' in qp) return qp.response
+    const action = qp.data.action
+
+    const base = await parseBody(request, postBodyBaseSchema)
+    if ('response' in base) return base.response
+    const body = base.data
     const supabase = await createAdminClient()
 
     // Risolve la scuola dalla sezione (single source of truth).
-    const sectionId: string | undefined = body.sectionId
-    if (!sectionId) return NextResponse.json({ error: 'sectionId obbligatorio' }, { status: 400 })
+    const sectionId = body.sectionId
     const { data: section } = await supabase
       .from('sections')
       .select('id, scuola_id')
@@ -50,10 +97,9 @@ export async function POST(request: NextRequest) {
     if (!section) return NextResponse.json({ error: 'Sezione non trovata' }, { status: 404 })
 
     if (action === 'apply-preset') {
-      const livello = Number(body.livello)
-      if (!livello || livello < 1 || livello > 5) {
-        return NextResponse.json({ error: 'livello (1-5) obbligatorio' }, { status: 400 })
-      }
+      const pv = parseData(postPresetBodySchema, body)
+      if ('response' in pv) return pv.response
+      const { livello } = pv.data
       const { data: preset, error: presetErr } = await supabase
         .from('materie_preset')
         .select('nome, codice, e_civica, turno_mensa, ordine')
@@ -81,19 +127,19 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true, data: data ?? [] }, { status: 201 })
     }
 
-    if (!body.nome || !body.codice) {
-      return NextResponse.json({ error: 'nome e codice obbligatori' }, { status: 400 })
-    }
+    const mv = parseData(postMateriaBodySchema, body)
+    if ('response' in mv) return mv.response
+    const materia = mv.data
     const { data, error } = await supabase
       .from('materie')
       .insert({
         scuola_id: section.scuola_id,
         section_id: sectionId,
-        nome: body.nome,
-        codice: body.codice,
-        e_civica: body.e_civica ?? false,
-        turno_mensa: body.turno_mensa ?? false,
-        ordine: body.ordine ?? 0,
+        nome: materia.nome,
+        codice: materia.codice,
+        e_civica: materia.e_civica ?? false,
+        turno_mensa: materia.turno_mensa ?? false,
+        ordine: materia.ordine ?? 0,
       })
       .select()
       .single()
@@ -111,8 +157,9 @@ export async function PATCH(request: NextRequest) {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
 
-    const { id, ...updates } = await request.json()
-    if (!id) return NextResponse.json({ error: 'id obbligatorio' }, { status: 400 })
+    const b = await parseBody(request, patchBodySchema)
+    if ('response' in b) return b.response
+    const { id, ...updates } = b.data
     // Non si modificano chiavi di tenancy via PATCH.
     delete updates.scuola_id
     delete updates.section_id
@@ -138,8 +185,9 @@ export async function DELETE(request: NextRequest) {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
 
-    const id = new URL(request.url).searchParams.get('id')
-    if (!id) return NextResponse.json({ error: 'id obbligatorio' }, { status: 400 })
+    const q = parseQuery(request, deleteQuerySchema)
+    if ('response' in q) return q.response
+    const { id } = q.data
 
     const supabase = await createAdminClient()
     const { error } = await supabase.from('materie').delete().eq('id', id)

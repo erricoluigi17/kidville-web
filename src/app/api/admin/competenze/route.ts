@@ -1,17 +1,50 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { seedCertificato } from '@/lib/competenze/certificato-store'
 import { COMPETENZE_SIGNIFICATIVE_CODICE } from '@/lib/competenze/modello'
+import { parseBody, parseQuery } from '@/lib/validation/http'
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+// Gli id restano stringhe libere (niente zUuid): oggi il codice non impone
+// alcun formato e nei test/dati seed circolano id non-UUID.
+// `userId` in query è consumato dal gate (requireStaff), non qui.
+
+const getQuerySchema = z.object({
+  sectionId: z.string({ error: 'sectionId obbligatorio' }).min(1, 'sectionId obbligatorio'),
+})
+
+const postBodySchema = z.object({
+  sectionId: z.string({ error: 'sectionId obbligatorio' }).min(1, 'sectionId obbligatorio'),
+  // opzionale: la guardia truthy resta nell'handler (stringa vuota/null → intera classe, come oggi)
+  alunnoId: z.string().nullish(),
+})
+
+const patchBodySchema = z.object({
+  certificatoId: z.string({ error: 'certificatoId obbligatorio' }).min(1, 'certificatoId obbligatorio'),
+  livelli: z
+    .array(
+      z.object({
+        competenza_codice: z.string(),
+        livello: z.string().nullish(),
+        note: z.string().nullish(),
+      })
+    )
+    .nullish(),
+  // presente (anche null) → aggiorna la nota "competenze significative"
+  competenzeSignificative: z.string().nullish(),
+})
 
 // GET /api/admin/competenze?sectionId=&userId=  — elenco certificati della sezione.
 export async function GET(request: NextRequest) {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
-    const sectionId = new URL(request.url).searchParams.get('sectionId')
-    if (!sectionId) return NextResponse.json({ error: 'sectionId obbligatorio' }, { status: 400 })
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+    const { sectionId } = q.data
 
     const supabase = await createAdminClient()
     const { data: certs } = await supabase
@@ -32,8 +65,9 @@ export async function POST(request: NextRequest) {
   try {
     const auth = await requireStaff(request, ['admin', 'coordinator'])
     if (auth.response) return auth.response
-    const body = await request.json().catch(() => ({}))
-    if (!body.sectionId) return NextResponse.json({ error: 'sectionId obbligatorio' }, { status: 400 })
+    const b = await parseBody(request, postBodySchema)
+    if ('response' in b) return b.response
+    const body = b.data
 
     const supabase = await createAdminClient()
     let alunniIds: string[] = []
@@ -77,12 +111,13 @@ export async function PATCH(request: NextRequest) {
   try {
     const auth = await requireStaff(request, ['admin', 'coordinator'])
     if (auth.response) return auth.response
-    const body = await request.json().catch(() => ({}))
-    if (!body.certificatoId) return NextResponse.json({ error: 'certificatoId obbligatorio' }, { status: 400 })
+    const b = await parseBody(request, patchBodySchema)
+    if ('response' in b) return b.response
+    const body = b.data
 
     const supabase = await createAdminClient()
     const rows: { certificato_id: string; competenza_codice: string; livello: string | null; note: string | null }[] = []
-    for (const l of (body.livelli ?? []) as { competenza_codice: string; livello?: string | null; note?: string | null }[]) {
+    for (const l of body.livelli ?? []) {
       rows.push({ certificato_id: body.certificatoId, competenza_codice: l.competenza_codice, livello: l.livello ?? null, note: l.note ?? null })
     }
     if (body.competenzeSignificative !== undefined) {

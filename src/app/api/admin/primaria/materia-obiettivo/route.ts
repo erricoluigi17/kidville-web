@@ -1,19 +1,37 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { parseBody, parseQuery } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
 
 // ============================================================
 // Obiettivo associato a una materia di una classe (sezione).
 // Un solo obiettivo per (section_id, materia_id), mostrato in pagella.
 // ============================================================
 
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+/** '' equivale ad assente (i check truthy pre-esistenti restano invariati). */
+const vuotoComeAssente = (v: unknown) => (v === '' ? undefined : v)
+
+const getQuerySchema = z.object({
+  sectionId: zUuid, // obbligatorio (sostituisce il 400 manuale)
+})
+
+const postBodySchema = z.object({
+  sectionId: zUuid,
+  materiaId: zUuid,
+  // null/''/assente → rimuove l'associazione (check falsy preservato nel codice).
+  obiettivoId: z.preprocess(vuotoComeAssente, zUuid.nullish()),
+})
+
 // GET /api/admin/primaria/materia-obiettivo?sectionId=
 // Ritorna la mappa materia_id → obiettivo_id per la sezione.
 export async function GET(request: NextRequest) {
+  const q = parseQuery(request, getQuerySchema)
+  if ('response' in q) return q.response
+  const { sectionId } = q.data
   try {
-    const sectionId = new URL(request.url).searchParams.get('sectionId')
-    if (!sectionId) return NextResponse.json({ error: 'sectionId obbligatorio' }, { status: 400 })
-
     const supabase = await createAdminClient()
     const { data, error } = await supabase
       .from('sezione_materia_obiettivo')
@@ -35,8 +53,9 @@ export async function POST(request: NextRequest) {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
 
-    const { sectionId, materiaId, obiettivoId } = await request.json()
-    if (!sectionId || !materiaId) return NextResponse.json({ error: 'sectionId e materiaId obbligatori' }, { status: 400 })
+    const b = await parseBody(request, postBodySchema)
+    if ('response' in b) return b.response
+    const { sectionId, materiaId, obiettivoId } = b.data
 
     const supabase = await createAdminClient()
 

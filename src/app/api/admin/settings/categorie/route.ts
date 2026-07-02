@@ -1,6 +1,44 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { parseBody, parseQuery } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+/**
+ * scuola_id opzionale: qualunque valore falsy ('', null, assente) → "non fornito",
+ * così il codice applica il fallback storico (`|| auth.user.scuola_id ...`).
+ * Validarlo come uuid chiude anche l'interpolazione nel filtro PostgREST `.or()`.
+ */
+const zScuolaId = z.preprocess((v) => v || undefined, zUuid.optional())
+
+const getQuerySchema = z.object({ scuola_id: zScuolaId })
+
+// slug/colore/icona/ordine: oggi pass-through senza vincoli (tipi enforced dal
+// DB): schema volutamente permissivo. L'.optional() su z.unknown() è
+// OBBLIGATORIO (in zod v4 z.unknown() nudo è required a runtime).
+const postBodySchema = z.object({
+  nome: z.string({ error: 'nome è obbligatorio' }).min(1, 'nome è obbligatorio'),
+  scuola_id: zScuolaId,
+  slug: z.unknown().optional(),
+  colore: z.unknown().optional(),
+  icona: z.unknown().optional(),
+  ordine: z.unknown().optional(),
+})
+
+const patchBodySchema = z.object({
+  id: zUuid, // sostituisce il 400 manuale 'id è obbligatorio'
+  nome: z.unknown().optional(),
+  colore: z.unknown().optional(),
+  icona: z.unknown().optional(),
+  ordine: z.unknown().optional(),
+  attivo: z.unknown().optional(),
+})
+
+const deleteQuerySchema = z.object({
+  id: zUuid, // sostituisce il 400 manuale 'id è obbligatorio'
+})
 
 function slugify(s: string): string {
   return s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
@@ -12,8 +50,10 @@ export async function GET(request: Request) {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
-    const { searchParams } = new URL(request.url)
-    const scuolaId = searchParams.get('scuola_id') || auth.user.scuola_id
+
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+    const scuolaId = q.data.scuola_id || auth.user.scuola_id
 
     const supabase = await createAdminClient()
     let query = supabase.from('payment_categories').select('*').order('ordine', { ascending: true })
@@ -36,8 +76,10 @@ export async function POST(request: Request) {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
-    const body = await request.json()
-    if (!body.nome) return NextResponse.json({ error: 'nome è obbligatorio' }, { status: 400 })
+
+    const b = await parseBody(request, postBodySchema)
+    if ('response' in b) return b.response
+    const body = b.data
 
     const supabase = await createAdminClient()
     const record = {
@@ -64,8 +106,10 @@ export async function PATCH(request: Request) {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
-    const body = await request.json()
-    if (!body.id) return NextResponse.json({ error: 'id è obbligatorio' }, { status: 400 })
+
+    const b = await parseBody(request, patchBodySchema)
+    if ('response' in b) return b.response
+    const body = b.data as Record<string, unknown>
 
     const allowed = ['nome', 'colore', 'icona', 'ordine', 'attivo']
     const updates: Record<string, unknown> = {}
@@ -75,7 +119,7 @@ export async function PATCH(request: Request) {
     }
 
     const supabase = await createAdminClient()
-    const { data, error } = await supabase.from('payment_categories').update(updates).eq('id', body.id).select().single()
+    const { data, error } = await supabase.from('payment_categories').update(updates).eq('id', b.data.id).select().single()
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json({ success: true, data })
   } catch (err) {
@@ -90,9 +134,10 @@ export async function DELETE(request: Request) {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
-    const { searchParams } = new URL(request.url)
-    const id = searchParams.get('id')
-    if (!id) return NextResponse.json({ error: 'id è obbligatorio' }, { status: 400 })
+
+    const q = parseQuery(request, deleteQuerySchema)
+    if ('response' in q) return q.response
+    const id = q.data.id
 
     const supabase = await createAdminClient()
     const { data: cat } = await supabase.from('payment_categories').select('is_sistema').eq('id', id).maybeSingle()

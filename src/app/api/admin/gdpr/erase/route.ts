@@ -1,9 +1,23 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { patchAlunno, patchParent, confermaValida } from '@/lib/gdpr/anonimizza'
 import { parentHaAltriFigliIscritti } from '@/lib/gdpr/orfano'
+import { parseBody } from '@/lib/validation/http'
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+// `alunno_id`: contratto storico permissivo (qualunque stringa non vuota; id
+// inesistente → 404 a valle, niente vincolo uuid). `mode`: stessi valori del
+// check manuale sostituito. `confirm`: verificato da `confermaValida` solo in
+// mode=execute (400 dedicato a valle) — .optional() esplicito perché in zod v4
+// z.unknown() come chiave di z.object è required a runtime.
+const postBodySchema = z.object({
+  alunno_id: z.string().min(1),
+  mode: z.enum(['dryrun', 'execute']),
+  confirm: z.unknown().optional(),
+})
 
 // Diritto all'oblio (DL-034). SOLO anonimizzazione (no DELETE), preserva audit +
 // fisco, dry-run + doppia conferma. Riservato alla Direzione.
@@ -14,13 +28,11 @@ export async function POST(request: Request) {
   const auth = await requireStaff(request, [...DIREZIONE])
   if (auth.response) return auth.response
 
-  try {
-    const body = await request.json()
-    const { alunno_id, mode, confirm } = body ?? {}
-    if (!alunno_id || (mode !== 'dryrun' && mode !== 'execute')) {
-      return NextResponse.json({ error: 'alunno_id e mode (dryrun|execute) obbligatori' }, { status: 400 })
-    }
+  const b = await parseBody(request, postBodySchema)
+  if ('response' in b) return b.response
+  const { alunno_id, mode, confirm } = b.data
 
+  try {
     const supabase = await createAdminClient()
     const { data: alunno } = await supabase
       .from('alunni')

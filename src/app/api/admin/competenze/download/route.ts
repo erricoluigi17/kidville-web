@@ -1,7 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { CERTIFICATI_BUCKET } from '@/lib/competenze/certificato-store'
+import { parseQuery } from '@/lib/validation/http'
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+// certificatoId permissivo (stringa non vuota, niente zUuid): oggi nessun
+// vincolo di formato. `userId` in query è consumato dal gate (requireStaff).
+const getQuerySchema = z.object({
+  certificatoId: z.string({ error: 'certificatoId obbligatorio' }).min(1, 'certificatoId obbligatorio'),
+})
 
 // GET /api/admin/competenze/download?certificatoId=&userId=
 // URL firmato del PDF del certificato (lato staff/dirigenza).
@@ -9,8 +18,9 @@ export async function GET(request: NextRequest) {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
-    const certificatoId = new URL(request.url).searchParams.get('certificatoId')
-    if (!certificatoId) return NextResponse.json({ error: 'certificatoId obbligatorio' }, { status: 400 })
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+    const { certificatoId } = q.data
 
     const supabase = await createAdminClient()
     const { data: cert } = await supabase

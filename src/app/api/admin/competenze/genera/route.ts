@@ -1,7 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { generaCertificato } from '@/lib/competenze/certificato-store'
+import { parseBody } from '@/lib/validation/http'
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+// Id permissivi (niente zUuid: nei test/dati seed circolano id non-UUID).
+// Entrambi opzionali: la guardia truthy "almeno uno dei due" resta
+// nell'handler (stringa vuota → 400 finale, come oggi).
+const postBodySchema = z.object({
+  sectionId: z.string().nullish(),
+  certificatoId: z.string().nullish(),
+})
 
 // POST /api/admin/competenze/genera?userId=
 // Genera e FIRMA (FEA applicativa dirigente) il Certificato delle Competenze.
@@ -12,7 +23,9 @@ export async function POST(request: NextRequest) {
     const auth = await requireStaff(request, ['admin', 'coordinator'])
     if (auth.response) return auth.response
 
-    const body = await request.json().catch(() => ({}))
+    const b = await parseBody(request, postBodySchema)
+    if ('response' in b) return b.response
+    const body = b.data
     const supabase = await createAdminClient()
 
     if (body.sectionId) {

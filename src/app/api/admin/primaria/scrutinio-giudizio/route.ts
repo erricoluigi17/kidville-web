@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { parseBody, parseQuery } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
 
 // ============================================================
 // Giudizio descrittivo di scrutinio per voto.
@@ -8,17 +11,31 @@ import { requireStaff } from '@/lib/auth/require-staff'
 // In pagella il testo si associa in automatico al voto assegnato.
 // ============================================================
 
+const getQuerySchema = z.object({
+  scuolaId: zUuid,
+  // conversione Number() nell'handler come oggi
+  livello: z.string().min(1),
+  periodoId: zUuid,
+})
+
+const postBodySchema = z.object({
+  scuolaId: zUuid,
+  // oggi: check truthy sul valore grezzo, poi Number() — replicato con refine
+  livello: z.union([z.number(), z.string()]).refine((v) => !!v, 'livello obbligatorio'),
+  materiaCodice: z.string().min(1),
+  periodoId: zUuid,
+  etichettaVoto: z.string().min(1),
+  // testo vuoto/null/non-stringa → rimuove la riga (gestito nell'handler)
+  testo: z.unknown().optional(),
+})
+
 // GET /api/admin/primaria/scrutinio-giudizio?scuolaId=&livello=&periodoId=
 // Ritorna le righe (materia_codice × etichetta_voto → testo) per livello+periodo.
 export async function GET(request: NextRequest) {
   try {
-    const sp = new URL(request.url).searchParams
-    const scuolaId = sp.get('scuolaId')
-    const livello = sp.get('livello')
-    const periodoId = sp.get('periodoId')
-    if (!scuolaId || !livello || !periodoId) {
-      return NextResponse.json({ error: 'scuolaId, livello e periodoId obbligatori' }, { status: 400 })
-    }
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+    const { scuolaId, livello, periodoId } = q.data
 
     const supabase = await createAdminClient()
     const { data, error } = await supabase
@@ -43,10 +60,9 @@ export async function POST(request: NextRequest) {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
 
-    const { scuolaId, livello, materiaCodice, periodoId, etichettaVoto, testo } = await request.json()
-    if (!scuolaId || !livello || !materiaCodice || !periodoId || !etichettaVoto) {
-      return NextResponse.json({ error: 'scuolaId, livello, materiaCodice, periodoId, etichettaVoto obbligatori' }, { status: 400 })
-    }
+    const b = await parseBody(request, postBodySchema)
+    if ('response' in b) return b.response
+    const { scuolaId, livello, materiaCodice, periodoId, etichettaVoto, testo } = b.data
 
     const supabase = await createAdminClient()
 

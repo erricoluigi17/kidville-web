@@ -69,6 +69,14 @@ const GRUPPI_COPERTI: string[] = [
     'admin/form-models',
     'admin/regenerate-credentials',
     'admin/documents-merge',
+    // M3.13 (zod 12/14 — admin C)
+    'admin/primaria',
+    'admin/settings',
+    'admin/sidi',
+    'admin/audit',
+    'admin/gdpr',
+    'admin/competenze',
+    'admin/gruppi-mensa',
 ];
 
 const API_ROOT = path.join(process.cwd(), 'src', 'app', 'api');

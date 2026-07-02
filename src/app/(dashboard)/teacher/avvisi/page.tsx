@@ -1,17 +1,17 @@
 'use client';
 
 import { useState, useEffect, useCallback, Suspense } from 'react';
-import { useSearchParams } from 'next/navigation';
 import { Plus } from 'lucide-react';
 import { AvvisoCard, Avviso } from '@/components/features/avvisi/AvvisoCard';
 import { AvvisoForm } from '@/components/features/avvisi/AvvisoForm';
 import { AvvisoDetailsDrawer } from '@/components/features/avvisi/AvvisoDetailsDrawer';
+import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 
 const AVAILABLE_CLASSES = ['Girasoli', 'Margherite', 'Tulipani', '3A', '4B'];
 
+// Identità dalla sessione (URL → localStorage → /api/me), senza fallback demo (M4).
 function TeacherAvvisiContent() {
-    const searchParams = useSearchParams();
-    const teacherId = searchParams.get('userId') || '22222222-2222-2222-2222-222222222222';
+    const { userId: teacherId } = useSessionIdentity();
 
     const [avvisi, setAvvisi] = useState<Avviso[]>([]);
     const [loading, setLoading] = useState(true);
@@ -21,12 +21,10 @@ function TeacherAvvisiContent() {
     const [showDetails, setShowDetails] = useState(false);
 
     const loadAvvisi = useCallback(async () => {
-        setLoading(true);
+        if (!teacherId) return;
         try {
-            const res = await fetch(`/api/avvisi?userId=${teacherId}`);
-            if (res.ok) setAvvisi(await res.json());
-        } catch (err) {
-            console.error('Errore caricamento avvisi:', err);
+            const res = await fetch(`/api/avvisi?userId=${teacherId}`).catch(() => null);
+            if (res?.ok) setAvvisi(await res.json());
         } finally {
             setLoading(false);
         }
@@ -39,6 +37,7 @@ function TeacherAvvisiContent() {
         target_scope: string; target_classes: string[]; scadenza: string | null;
         attachment_url: string | null;
     }) => {
+        if (!teacherId) return;
         try {
             if (editingAvviso) {
                 // UPDATE (PUT)
@@ -66,6 +65,7 @@ function TeacherAvvisiContent() {
     };
 
     const handleDelete = async (avvisoId: string) => {
+        if (!teacherId) return;
         if (!window.confirm("Sei sicuro di voler eliminare definitivamente questo avviso? Questa azione eliminerà anche tutte le risposte associate.")) return;
         try {
             const res = await fetch(`/api/avvisi/${avvisoId}?userId=${teacherId}`, {

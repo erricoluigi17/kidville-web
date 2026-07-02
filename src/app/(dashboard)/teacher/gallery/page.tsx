@@ -8,7 +8,7 @@ import { MediaUploader } from '@/components/features/gallery/MediaUploader';
 import { StudentTagger } from '@/components/features/gallery/StudentTagger';
 import { saveLocalGalleryMedia, syncPendingGalleryMedia } from '@/lib/offline/syncEngine';
 import { processImageWithWatermark, validateVideoFile, processVideoWithWatermark } from '@/lib/media/processing';
-import { useSearchParams } from 'next/navigation';
+import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 
 interface Student {
     id: string;
@@ -21,8 +21,7 @@ interface Student {
 type Step = 'gallery' | 'upload' | 'tag';
 
 function TeacherGalleryContent() {
-    const searchParams = useSearchParams();
-    const teacherId = searchParams.get('userId') || '22222222-2222-2222-2222-222222222222';
+    const { userId: teacherId } = useSessionIdentity();
 
     const [media, setMedia] = useState<MediaItem[]>([]);
     const [students, setStudents] = useState<Student[]>([]);
@@ -37,23 +36,20 @@ function TeacherGalleryContent() {
     const [activeFileIndex, setActiveFileIndex] = useState<number>(0);
     const [uploading, setUploading] = useState(false);
     const [userRole, setUserRole] = useState<string>('educator');
-    const [isOnline, setIsOnline] = useState(true);
+    const [isOnline, setIsOnline] = useState(() => typeof navigator === 'undefined' || navigator.onLine);
 
     const [sezione, setSezione] = useState<string>('Girasoli');
     const [availableSections, setAvailableSections] = useState<string[]>([]);
 
     const loadMedia = useCallback(async () => {
         if (!sezione) return;
-        setLoading(true);
         try {
             // Seleziona media per la sezione del docente
-            const res = await fetch(`/api/gallery?classe=${sezione}`);
-            if (res.ok) {
-                const data = await res.json();
-                setMedia(data.media ?? []);
+            const res = await fetch(`/api/gallery?classe=${sezione}`).catch(() => null);
+            if (res?.ok) {
+                const data = await res.json().catch(() => null);
+                setMedia(data?.media ?? []);
             }
-        } catch (err) {
-            console.error('Errore caricamento media:', err);
         } finally {
             setLoading(false);
         }
@@ -62,27 +58,28 @@ function TeacherGalleryContent() {
     const loadStudents = useCallback(async () => {
         if (!sezione) return;
         try {
-            const res = await fetch(`/api/diary/students?sezione=${sezione}`);
-            if (res.ok) {
-                const data = await res.json();
+            const res = await fetch(`/api/diary/students?sezione=${sezione}`).catch(() => null);
+            if (res?.ok) {
+                const data = await res.json().catch(() => null);
                 if (Array.isArray(data)) {
-                    setStudents(data.map((s: { id: string; nome: string; cognome: string; consenso_privacy?: boolean; parents?: any[] }) => ({
+                    setStudents(data.map((s: { id: string; nome: string; cognome: string; consenso_privacy?: boolean; parents?: Student['parents'] }) => ({
                         id: s.id,
-                        nome: s.nome, 
+                        nome: s.nome,
                         cognome: s.cognome,
                         consenso_privacy: s.consenso_privacy !== false,
                         parents: s.parents || [],
                     })));
                 }
             }
-        } catch (err) {
-            console.error('Errore caricamento studenti:', err);
+        } finally {
+            // Nessuno stato di loading dedicato: l'errore di rete lascia lo stato invariato.
         }
     }, [sezione]);
 
     // Carica sezioni educatore
     useEffect(() => {
         const fetchSections = async () => {
+            if (!teacherId) return;
             try {
                 const res = await fetch(`/api/educator-sections?userId=${teacherId}`);
                 if (res.ok) {
@@ -103,7 +100,6 @@ function TeacherGalleryContent() {
     // Gestione connettività
     useEffect(() => {
         if (typeof window !== 'undefined') {
-            setIsOnline(navigator.onLine);
             const handleOnline = () => {
                 setIsOnline(true);
                 // Prova a sincronizzare i file in sospeso
@@ -123,6 +119,7 @@ function TeacherGalleryContent() {
     // Carica ruolo utente corrente (via /api/me gated, niente lettura anon di `utenti`)
     useEffect(() => {
         const fetchUserRole = async () => {
+            if (!teacherId) return;
             try {
                 const res = await fetch('/api/me', { headers: { 'x-user-id': teacherId } });
                 if (!res.ok) return;
@@ -212,6 +209,7 @@ function TeacherGalleryContent() {
     const activeIsBroadcast = activeFile ? activeFile.is_broadcast : false;
 
     const handleConfirmUpload = async () => {
+        if (!teacherId) return;
         setUploading(true);
         try {
             const offlineMode = !isOnline;
@@ -318,6 +316,7 @@ function TeacherGalleryContent() {
     };
 
     const handleDeleteMedia = async (id: string) => {
+        if (!teacherId) return;
         if (!confirm('Sei sicuro di voler eliminare questo media?')) return;
         try {
             const res = await fetch(`/api/gallery?id=${id}&userId=${teacherId}`, {
@@ -337,6 +336,7 @@ function TeacherGalleryContent() {
     };
 
     const handleUpdateTags = async (mediaId: string, newTags: string[]) => {
+        if (!teacherId) return;
         try {
             const res = await fetch('/api/gallery', {
                 method: 'PATCH',

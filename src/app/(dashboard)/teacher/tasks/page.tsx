@@ -1,12 +1,12 @@
 'use client';
 
 import { useState, useEffect, useCallback, Suspense, useRef } from 'react';
-import { useSearchParams } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Plus, ListTodo, CheckSquare, History, X, CheckCircle, Paperclip, Eye } from 'lucide-react';
 import { TaskCard, Task } from '@/components/features/teacher/tasks/TaskCard';
 import { TaskForm, TaskFormData } from '@/components/features/teacher/tasks/TaskForm';
 import { TaskEditModal } from '@/components/features/teacher/tasks/TaskEditModal';
+import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 
 interface StaffMember { id: string; first_name: string; last_name: string; role: string; }
 interface StudentOption { id: string; nome: string; cognome: string; classe_sezione: string; }
@@ -75,8 +75,7 @@ function isLastActivityByCurrentUser(task: Task, currentUserId: string): boolean
 }
 
 function TeacherTasksContent() {
-    const searchParams = useSearchParams();
-    const teacherId = searchParams.get('userId') || '22222222-2222-2222-2222-222222222222';
+    const { userId: teacherId } = useSessionIdentity();
 
     const [activeTab, setActiveTab] = useState<'assigned' | 'created' | 'to_review' | 'all' | 'archive'>('assigned');
     const [toReviewCount, setToReviewCount] = useState(0);
@@ -104,7 +103,7 @@ function TeacherTasksContent() {
     const prevTasksRef = useRef<Task[]>([]);
 
     const markTaskReadLocally = useCallback((task: Task) => {
-        if (typeof window === 'undefined') return;
+        if (typeof window === 'undefined' || !teacherId) return;
         const actTime = getTaskLastActivityTime(task);
         const lastSeenStr = localStorage.getItem(`kidville_tasks_last_seen_${teacherId}`);
         const lastSeenMap = lastSeenStr ? JSON.parse(lastSeenStr) : {};
@@ -124,35 +123,38 @@ function TeacherTasksContent() {
 
     // Fetch user role and their classes (educator-sections returns both)
     const loadUserInfo = useCallback(async () => {
+        if (!teacherId) return; // identità non risolta: niente fetch
         try {
-            const secRes = await fetch(`/api/educator-sections?userId=${teacherId}`);
-            if (secRes.ok) {
-                const secData = await secRes.json();
-                setUserRole(secData.role || 'educator');
-                setUserClasses(secData.sectionNames || []);
+            const secRes = await fetch(`/api/educator-sections?userId=${teacherId}`).catch(() => null);
+            if (secRes?.ok) {
+                const secData = await secRes.json().catch(() => null);
+                if (secData) {
+                    setUserRole(secData.role || 'educator');
+                    setUserClasses(secData.sectionNames || []);
+                }
             }
-        } catch (err) {
-            console.error('Errore caricamento info utente:', err);
-        }
+        } finally { /* niente cleanup: pattern try/finally per react-hooks 7 */ }
     }, [teacherId]);
 
     const loadMetadata = useCallback(async () => {
+        if (!teacherId) return;
         try {
-            const metaRes = await fetch(`/api/tasks/meta?userId=${teacherId}`);
-            if (metaRes.ok) {
-                const meta = await metaRes.json();
-                setStaff(meta.staff);
-                setStudents(meta.students);
-                setClasses(meta.classes);
+            const metaRes = await fetch(`/api/tasks/meta?userId=${teacherId}`).catch(() => null);
+            if (metaRes?.ok) {
+                const meta = await metaRes.json().catch(() => null);
+                if (meta) {
+                    setStaff(meta.staff);
+                    setStudents(meta.students);
+                    setClasses(meta.classes);
+                }
             }
-        } catch (err) {
-            console.error('Errore caricamento metadata:', err);
-        }
+        } finally { /* niente cleanup: pattern try/finally per react-hooks 7 */ }
     }, [teacherId]);
 
     // Helper to upload files to backend
     const uploadFiles = async (files: File[]) => {
-        const uploaded = [];
+        const uploaded: Array<{ fileUrl: string; name: string; size: number; type: string }> = [];
+        if (!teacherId) return uploaded;
         for (const file of files) {
             const formData = new FormData();
             formData.append('file', file);
@@ -172,7 +174,7 @@ function TeacherTasksContent() {
     };
 
     const loadTasks = useCallback(async (showLoading = false) => {
-        if (showLoading) setLoading(true);
+        if (!teacherId) return; // identità non risolta: lo spinner iniziale resta attivo
         try {
             let url = `/api/tasks?userId=${teacherId}`;
 
@@ -188,10 +190,10 @@ function TeacherTasksContent() {
                 url += '&status=approved';
             }
 
-            const res = await fetch(url);
-            if (res.ok) {
-                const data = await res.json();
-                
+            const res = await fetch(url).catch(() => null);
+            const data: Task[] | null = res?.ok ? await res.json().catch(() => null) : null;
+            if (data) {
+
                 // Determine updates based on activity timestamp comparison and localStorage
                 const lastSeenStr = typeof window !== 'undefined' ? localStorage.getItem(`kidville_tasks_last_seen_${teacherId}`) : null;
                 const lastSeenMap = lastSeenStr ? JSON.parse(lastSeenStr) : {};
@@ -283,14 +285,12 @@ function TeacherTasksContent() {
             // Fetch toReview count in the background for managers if not currently viewing it
             const isManager = userRole === 'admin' || userRole === 'coordinator';
             if (isManager && activeTab !== 'to_review') {
-                const countRes = await fetch(`/api/tasks?userId=${teacherId}&status=completed&filter=to_review`);
-                if (countRes.ok) {
-                    const countData = await countRes.json();
-                    setToReviewCount(countData.length);
+                const countRes = await fetch(`/api/tasks?userId=${teacherId}&status=completed&filter=to_review`).catch(() => null);
+                if (countRes?.ok) {
+                    const countData = await countRes.json().catch(() => null);
+                    if (countData) setToReviewCount(countData.length);
                 }
             }
-        } catch (err) {
-            console.error('Errore caricamento task:', err);
         } finally {
             if (showLoading) setLoading(false);
         }
@@ -313,6 +313,7 @@ function TeacherTasksContent() {
 
     // Take charge
     const handleTakeCharge = async (taskId: string) => {
+        if (!teacherId) return;
         try {
             const res = await fetch(`/api/tasks/${taskId}?userId=${teacherId}`, {
                 method: 'PUT',
@@ -343,10 +344,10 @@ function TeacherTasksContent() {
     // Confirm task completion (with file upload support)
     const handleConfirmResolution = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!resolvingTask) return;
+        if (!resolvingTask || !teacherId) return;
         setIsSavingResolution(true);
         try {
-            let uploadedAttachments = [];
+            let uploadedAttachments: Array<{ fileUrl: string; name: string; size: number; type: string }> = [];
             if (resolvingFiles.length > 0) {
                 uploadedAttachments = await uploadFiles(resolvingFiles);
             }
@@ -368,14 +369,15 @@ function TeacherTasksContent() {
                 triggerToast('Task completato e archiviato! 🎉');
                 await loadTasks(false);
             }
-        } catch (err: any) { 
-            alert(err.message || 'Errore durante la chiusura del task');
+        } catch (err) {
+            alert(err instanceof Error && err.message ? err.message : 'Errore durante la chiusura del task');
         }
         finally { setIsSavingResolution(false); }
     };
 
     // Create task
     const handleCreateTask = async (data: TaskFormData) => {
+        if (!teacherId) return;
         try {
             const res = await fetch(`/api/tasks?userId=${teacherId}`, {
                 method: 'POST',
@@ -394,6 +396,7 @@ function TeacherTasksContent() {
 
     // Edit task fields (managers only)
     const handleSaveEdit = async (taskId: string, updates: Record<string, unknown>, toastMessage?: string) => {
+        if (!teacherId) return;
         const res = await fetch(`/api/tasks/${taskId}?userId=${teacherId}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
@@ -406,6 +409,7 @@ function TeacherTasksContent() {
 
     // Delete task
     const handleDeleteTask = async (taskId: string) => {
+        if (!teacherId) return;
         if (!window.confirm('Eliminare definitivamente questo task?')) return;
         try {
             const res = await fetch(`/api/tasks/${taskId}?userId=${teacherId}`, { method: 'DELETE' });
@@ -417,7 +421,8 @@ function TeacherTasksContent() {
     };
 
     // Resolve subtask (compito)
-    const handleResolveSubtask = async (taskId: string, subtaskId: string, notes: string, attachments: any[] = []) => {
+    const handleResolveSubtask = async (taskId: string, subtaskId: string, notes: string, attachments: NonNullable<Task['attachments']> = []) => {
+        if (!teacherId) return;
         const taskToUpdate = tasks.find(t => t.id === taskId);
         if (!taskToUpdate || !taskToUpdate.compiti) return;
 
@@ -462,7 +467,8 @@ function TeacherTasksContent() {
     };
 
     // Generic subtasks update (comments, approvals, rejections)
-    const handleUpdateSubtasks = async (taskId: string, updatedCompiti: any[], toastMessage?: string) => {
+    const handleUpdateSubtasks = async (taskId: string, updatedCompiti: NonNullable<Task['compiti']>, toastMessage?: string) => {
+        if (!teacherId) return;
         const isAllCompleted = updatedCompiti.every(c => c.status === 'completed' || c.status === 'approved');
         const body: Record<string, unknown> = { compiti: updatedCompiti };
         
@@ -538,7 +544,7 @@ function TeacherTasksContent() {
                 ].map(({ key, icon, label }) => (
                     <button
                         key={key}
-                        onClick={() => setActiveTab(key as any)}
+                        onClick={() => setActiveTab(key as typeof activeTab)}
                         className={`flex-1 min-w-[45%] md:min-w-0 flex items-center justify-center gap-1.5 py-2.5 md:py-3 rounded-xl text-[10px] md:text-xs font-semibold uppercase tracking-wider font-barlow transition-all relative
                             ${activeTab === key
                                 ? 'bg-white shadow text-kidville-green font-bold'
@@ -581,7 +587,7 @@ function TeacherTasksContent() {
             )}
 
             {/* Tasks List */}
-            {!loading && tasks.length > 0 && (
+            {!loading && teacherId && tasks.length > 0 && (
                 <div className="space-y-4">
                     {tasks.map((task, idx) => (
                         <TaskCard
@@ -623,7 +629,7 @@ function TeacherTasksContent() {
 
             {/* Edit Task Modal (managers only) */}
             <AnimatePresence>
-                {editingTask && (
+                {editingTask && teacherId && (
                     <TaskEditModal
                         task={editingTask}
                         open={!!editingTask}

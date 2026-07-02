@@ -1,20 +1,20 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { 
-  FileText, Users, Clock, ShieldCheck, HeartPulse, 
-  AlertCircle, Upload, Check, Bell, Calendar, Eye
+import { useState, useEffect, useCallback } from 'react';
+import {
+  FileText, Users, HeartPulse,
+  AlertCircle, Upload, Check, Bell, Calendar
 } from 'lucide-react';
+import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 
 const CLASS_NAME = 'Girasoli';
-const TEACHER_ID = '22222222-2222-2222-2222-222222222222'; // Maestra Anna
 
 interface StudentSemaforo {
   student_id: string;
   nome: string;
   cognome: string;
   status: 'green' | 'red';
-  submission: any | null;
+  submission: unknown;
 }
 
 interface FormTemplate {
@@ -39,7 +39,9 @@ interface MedicalCertificate {
   creato_il: string;
 }
 
+// Identità dalla sessione (URL → localStorage → /api/me), senza fallback demo (M4).
 export default function TeacherModulisticaPage() {
+  const { userId: teacherId } = useSessionIdentity();
   const [activeTab, setActiveTab] = useState<'semaforo' | 'medici'>('semaforo');
   const [forms, setForms] = useState<FormTemplate[]>([]);
   const [selectedFormId, setSelectedFormId] = useState('');
@@ -60,62 +62,59 @@ export default function TeacherModulisticaPage() {
   // Notifications
   const [toast, setToast] = useState('');
 
-  useEffect(() => {
-    fetchForms();
-    fetchMedicalCertificates();
-  }, []);
-
-  useEffect(() => {
-    if (selectedFormId) {
-      fetchSemaforo();
-    }
-  }, [selectedFormId]);
-
-  const showToastMsg = (msg: string) => {
-    setToast(msg);
-    setTimeout(() => setToast(''), 3000);
-  };
-
-  const fetchForms = async () => {
-    setIsLoading(true);
+  const fetchForms = useCallback(async () => {
+    if (!teacherId) return; // identità non risolta: lo spinner resta
     try {
-      const res = await fetch('/api/admin/forms');
-      const data = await res.json();
+      const res = await fetch('/api/admin/forms').catch(() => null);
+      const data = await res?.json().catch(() => null);
       if (Array.isArray(data)) {
         // Filter forms assigned to this teacher's class
-        const classForms = data.filter((f: any) => f.target_classes?.includes(CLASS_NAME));
+        const classForms = data.filter((f: FormTemplate) => f.target_classes?.includes(CLASS_NAME));
         setForms(classForms);
         if (classForms.length > 0) {
           setSelectedFormId(classForms[0].id);
         }
       }
-    } catch (err) {
-      console.error(err);
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [teacherId]);
 
-  const fetchSemaforo = async () => {
+  const fetchSemaforo = useCallback(async () => {
     if (!selectedFormId) return;
     try {
-      const res = await fetch(`/api/teacher/modulistica?form_id=${selectedFormId}&class_name=${CLASS_NAME}`);
-      const data = await res.json();
+      const res = await fetch(`/api/teacher/modulistica?form_id=${selectedFormId}&class_name=${CLASS_NAME}`).catch(() => null);
+      const data = await res?.json().catch(() => null);
       if (Array.isArray(data)) setStudents(data);
-    } catch (err) {
-      console.error(err);
+    } finally {
+      // errore di rete ⇒ stato invariato (nessun loading dedicato)
     }
-  };
+  }, [selectedFormId]);
 
-  const fetchMedicalCertificates = async () => {
+  const fetchMedicalCertificates = useCallback(async () => {
+    if (!teacherId) return; // identità non risolta: lo spinner resta
     try {
-      const res = await fetch(`/api/teacher/medical-certificates?class_name=${CLASS_NAME}`, { headers: { 'x-user-id': TEACHER_ID } });
-      const data = await res.json();
-      const rows = Array.isArray(data) ? data : (data.data ?? []);
+      const res = await fetch(`/api/teacher/medical-certificates?class_name=${CLASS_NAME}`, { headers: { 'x-user-id': teacherId } }).catch(() => null);
+      const data = await res?.json().catch(() => null);
+      const rows = Array.isArray(data) ? data : (data?.data ?? []);
       setMedCerts(rows);
-    } catch (err) {
-      console.error(err);
+    } finally {
+      // errore di rete ⇒ stato invariato (nessun loading dedicato)
     }
+  }, [teacherId]);
+
+  useEffect(() => {
+    fetchForms();
+    fetchMedicalCertificates();
+  }, [fetchForms, fetchMedicalCertificates]);
+
+  useEffect(() => {
+    fetchSemaforo();
+  }, [fetchSemaforo]);
+
+  const showToastMsg = (msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(''), 3000);
   };
 
   // Actions
@@ -124,7 +123,7 @@ export default function TeacherModulisticaPage() {
   };
 
   const handleProxyUploadSubmit = async () => {
-    if (!showProxyModal || !proxyFile) return;
+    if (!showProxyModal || !proxyFile || !teacherId) return;
     setProxyUploading(true);
     try {
       // Upload reale della scansione (multipart) — DL-032.
@@ -134,7 +133,7 @@ export default function TeacherModulisticaPage() {
       fd.append('student_id', showProxyModal.student_id);
       const res = await fetch('/api/teacher/modulistica', {
         method: 'POST',
-        headers: { 'x-user-id': TEACHER_ID },
+        headers: { 'x-user-id': teacherId },
         body: fd,
       });
 
@@ -145,7 +144,7 @@ export default function TeacherModulisticaPage() {
       setProxyFileName('');
       setProxyFile(null);
       fetchSemaforo();
-    } catch (err) {
+    } catch {
       showToastMsg('❌ Errore durante l\'inserimento');
     } finally {
       setProxyUploading(false);
@@ -159,11 +158,11 @@ export default function TeacherModulisticaPage() {
   };
 
   const handleValidate = async (esito: 'validato' | 'rifiutato') => {
-    if (!managingCert) return;
+    if (!managingCert || !teacherId) return;
     try {
       const res = await fetch('/api/teacher/medical-certificates', {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', 'x-user-id': TEACHER_ID },
+        headers: { 'Content-Type': 'application/json', 'x-user-id': teacherId },
         body: JSON.stringify({
           id: managingCert.id,
           esito,
@@ -312,7 +311,7 @@ export default function TeacherModulisticaPage() {
                       </p>
                       {cert.note && (
                         <p className="font-maven text-xs text-kidville-ink mt-2 bg-kidville-cream p-2 rounded-lg italic">
-                          "{cert.note}"
+                          &quot;{cert.note}&quot;
                         </p>
                       )}
                       
@@ -432,7 +431,7 @@ export default function TeacherModulisticaPage() {
                 <p className="font-maven text-xs text-kidville-ink"><span className="font-semibold">Note genitore:</span> {managingCert.note}</p>
               )}
 
-              <a href={`/api/parent/medical-certificates/file?id=${managingCert.id}&userId=${TEACHER_ID}`} target="_blank" rel="noopener noreferrer"
+              <a href={`/api/parent/medical-certificates/file?id=${managingCert.id}&userId=${teacherId ?? ''}`} target="_blank" rel="noopener noreferrer"
                 className="inline-flex items-center gap-1.5 text-xs font-bold text-kidville-green hover:underline">
                 <FileText size={14} /> Apri documento
               </a>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, Suspense, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowLeft, MessageSquare, Plus, X, UserPlus } from 'lucide-react';
 import { ChatThreadList, ChatThread } from '@/components/features/chat/ChatThreadList';
@@ -8,8 +8,7 @@ import { ChatMessageArea, ChatMessage } from '@/components/features/chat/ChatMes
 import { ChatInput } from '@/components/features/chat/ChatInput';
 import { useUnreadNotifications } from '@/components/features/chat/useUnreadNotifications';
 import { useChatRealtime } from '@/components/features/chat/useChatRealtime';
-import { useSearchParams } from 'next/navigation';
-import { Suspense } from 'react';
+import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 
 interface Contact {
     user_id: string;
@@ -20,9 +19,9 @@ interface Contact {
     sezione: string;
 }
 
+// Identità dalla sessione (URL → localStorage → /api/me), senza fallback demo (M4).
 function TeacherChatContent() {
-    const searchParams = useSearchParams();
-    const teacherId = searchParams.get('userId') || '22222222-2222-2222-2222-222222222222';
+    const { userId: teacherId } = useSessionIdentity();
 
     const [threads, setThreads] = useState<ChatThread[]>([]);
     const [selectedThread, setSelectedThread] = useState<ChatThread | null>(null);
@@ -43,7 +42,7 @@ function TeacherChatContent() {
 
     // Notifiche non letti + badge titolo pagina (mantenuto come fallback)
     useUnreadNotifications({
-        userId: teacherId,
+        userId: teacherId ?? '', // il hook ignora gli id falsy
         enabled: true,
         onUnreadChange: setUnreadCount,
         pollInterval: 30000, // ridotto a 30s ora che c'è il realtime
@@ -51,11 +50,10 @@ function TeacherChatContent() {
 
     // Carica thread
     const loadThreads = useCallback(async () => {
+        if (!teacherId) return; // identità non risolta: lo spinner resta
         try {
-            const res = await fetch(`/api/chat/threads?userId=${teacherId}`);
-            if (res.ok) setThreads(await res.json());
-        } catch (err) {
-            console.error('Errore caricamento thread:', err);
+            const res = await fetch(`/api/chat/threads?userId=${teacherId}`).catch(() => null);
+            if (res?.ok) setThreads(await res.json());
         } finally {
             setLoading(false);
         }
@@ -64,16 +62,16 @@ function TeacherChatContent() {
     useEffect(() => { loadThreads(); }, [loadThreads]);
 
     // Carica contatti disponibili
+    // NB: lo spinner contatti (loadingContacts) viene attivato dall'handler di
+    // apertura modale, non qui: nessun setState sincrono nei loader da effect.
     const loadContacts = useCallback(async () => {
-        setLoadingContacts(true);
+        if (!teacherId) return;
         try {
-            const res = await fetch(`/api/chat/contacts?userId=${teacherId}`);
-            if (res.ok) {
+            const res = await fetch(`/api/chat/contacts?userId=${teacherId}`).catch(() => null);
+            if (res?.ok) {
                 const data = await res.json();
                 setContacts(data.contacts ?? []);
             }
-        } catch (err) {
-            console.error('Errore caricamento contatti:', err);
         } finally {
             setLoadingContacts(false);
         }
@@ -133,7 +131,7 @@ function TeacherChatContent() {
 
     // Attiva il realtime
     useChatRealtime({
-        userId: teacherId,
+        userId: teacherId ?? '', // il hook ignora gli id falsy
         selectedThreadId: selectedThread?.id ?? null,
         threads,
         onNewMessage: handleRealtimeNewMessage,
@@ -194,6 +192,7 @@ function TeacherChatContent() {
     };
 
     const handleNewChat = async (contact: Contact) => {
+        if (!teacherId) return;
         try {
             const res = await fetch('/api/chat/threads', {
                 method: 'POST',
@@ -222,7 +221,7 @@ function TeacherChatContent() {
     };
 
     const handleSendMessage = async (content: string, attachmentUrl?: string, attachmentType?: string) => {
-        if (!selectedThread) return;
+        if (!selectedThread || !teacherId) return;
         try {
             const res = await fetch('/api/chat/messages', {
                 method: 'POST',
@@ -251,7 +250,7 @@ function TeacherChatContent() {
     };
 
 
-    if (loading) {
+    if (loading || !teacherId) {
         return (
             <div className="max-w-5xl mx-auto p-4 sm:p-6 flex flex-col items-center justify-center min-h-[60vh] gap-4">
                 <div className="w-10 h-10 border-4 border-kidville-green/30 border-t-kidville-green rounded-full animate-spin" />
@@ -286,7 +285,7 @@ function TeacherChatContent() {
                     <p className="font-maven text-kidville-muted mt-1">Messaggi con le famiglie</p>
                 </div>
                 <button
-                    onClick={() => { setShowNewChat(true); loadContacts(); }}
+                    onClick={() => { setShowNewChat(true); setLoadingContacts(true); loadContacts(); }}
                     className="flex items-center gap-2 px-4 py-2.5 bg-kidville-green text-kidville-yellow font-barlow font-bold text-sm uppercase rounded-2xl hover:opacity-90 active:scale-[0.98] transition-all shadow-lg shadow-kidville-green/20"
                 >
                     <Plus size={16} strokeWidth={1.5} /> Nuova Chat

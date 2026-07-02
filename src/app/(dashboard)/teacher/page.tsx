@@ -2,12 +2,11 @@
 
 import { useEffect, useMemo, useState, Suspense } from 'react';
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
 import {
   BookOpen, ClipboardCheck, NotebookPen, Images, Megaphone, ListTodo,
   Bell, ChevronRight, Check, AlertTriangle, CalendarDays, Eye, Users,
 } from 'lucide-react';
-import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
+import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { GradeWorldSwitch } from '@/components/features/teacher/GradeWorldSwitch';
 
 // Scorciatoie del giorno (DR ScorciatoieBlock). Le voci didattiche sono gated
@@ -50,9 +49,10 @@ function relDate(iso: string) {
 }
 
 function TeacherDashboardInner() {
-  const params = useSearchParams();
-  const userId = getCurrentTeacherId(params);
-  const withUser = (href: string) => `${href}?userId=${userId}`;
+  const { userId } = useSessionIdentity();
+  // La home docente semina i link dell'app: con identità non risolta il
+  // parametro viene omesso (href invariato), mai `userId=null`.
+  const withUser = (href: string) => (userId ? `${href}?userId=${userId}` : href);
 
   const [me, setMe] = useState<MeData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -67,6 +67,7 @@ function TeacherDashboardInner() {
   // indipendenti, come i 3 effect originali): un avviso che fallisce non
   // blocca me/sezioni né lascia lo skeleton acceso. Zero cambio visivo.
   useEffect(() => {
+    if (!userId) return; // identità non risolta: lo skeleton (loading=true) resta attivo
     let active = true;
     const meReq = fetch(`/api/primaria/me?userId=${userId}`)
       .then((r) => r.json())
@@ -92,7 +93,7 @@ function TeacherDashboardInner() {
   // dati della sezione attiva: presenze di oggi + alunni (per allergie/conteggio).
   const today = useMemo(() => new Date().toLocaleDateString('en-CA'), []); // YYYY-MM-DD locale
   useEffect(() => {
-    if (!activeSection) return;
+    if (!activeSection || !userId) return;
     let active = true;
     fetch(`/api/attendance/daily?data=${today}&sezione=${encodeURIComponent(activeSection)}&userId=${userId}`)
       .then((r) => r.json())

@@ -1,8 +1,16 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
+import { parseQuery } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
 
 const BUCKET = 'certificati-medici'
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+const getQuerySchema = z.object({
+  id: zUuid,
+})
 
 // GET /api/parent/medical-certificates/file?id=  — scarica il certificato (dato
 // sanitario). Accesso: staff oppure genitore collegato all'alunno.
@@ -11,9 +19,10 @@ export async function GET(request: Request) {
     const auth = await requireUser(request)
     if (auth.response) return auth.response
     const { user } = auth
-    const { searchParams } = new URL(request.url)
-    const id = searchParams.get('id')
-    if (!id) return NextResponse.json({ error: 'id è obbligatorio' }, { status: 400 })
+
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+    const { id } = q.data
 
     const supabase = await createAdminClient()
     const { data: cert } = await supabase

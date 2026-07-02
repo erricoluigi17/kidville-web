@@ -49,7 +49,7 @@ function patchReq(body: unknown) {
 describe('POST /api/parent/medical-certificates (upload)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    h.legame = { alunno_id: 'al-1' }
+    h.legame = { alunno_id: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1' }
     h.uploadCalls = []
     h.inserts = []
     h.requireUser.mockResolvedValue({ user: { id: 'gen-1', role: 'genitore' } })
@@ -57,24 +57,24 @@ describe('POST /api/parent/medical-certificates (upload)', () => {
 
   it('401 se non autenticato', async () => {
     h.requireUser.mockResolvedValue({ response: NextResponse.json({}, { status: 401 }) })
-    expect((await POST(uploadReq({ student_id: 'al-1', data_inizio: '2026-03-01', data_fine: '2026-03-05' }))).status).toBe(401)
+    expect((await POST(uploadReq({ student_id: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1', data_inizio: '2026-03-01', data_fine: '2026-03-05' }))).status).toBe(401)
   })
 
   it('400 senza file', async () => {
-    expect((await POST(uploadReq({ student_id: 'al-1', data_inizio: '2026-03-01', data_fine: '2026-03-05' }, false))).status).toBe(400)
+    expect((await POST(uploadReq({ student_id: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1', data_inizio: '2026-03-01', data_fine: '2026-03-05' }, false))).status).toBe(400)
   })
 
   it('400 periodo non valido (inizio > fine)', async () => {
-    expect((await POST(uploadReq({ student_id: 'al-1', data_inizio: '2026-03-06', data_fine: '2026-03-05' }))).status).toBe(400)
+    expect((await POST(uploadReq({ student_id: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1', data_inizio: '2026-03-06', data_fine: '2026-03-05' }))).status).toBe(400)
   })
 
   it('403 se il genitore non è collegato all’alunno', async () => {
     h.legame = null
-    expect((await POST(uploadReq({ student_id: 'al-9', data_inizio: '2026-03-01', data_fine: '2026-03-05' }))).status).toBe(403)
+    expect((await POST(uploadReq({ student_id: 'a9a9a9a9-a9a9-a9a9-a9a9-a9a9a9a9a9a9', data_inizio: '2026-03-01', data_fine: '2026-03-05' }))).status).toBe(403)
   })
 
   it('201: carica il file e crea il record in_validazione', async () => {
-    const res = await POST(uploadReq({ student_id: 'al-1', data_inizio: '2026-03-01', data_fine: '2026-03-05', note: 'influenza' }))
+    const res = await POST(uploadReq({ student_id: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1', data_inizio: '2026-03-01', data_fine: '2026-03-05', note: 'influenza' }))
     expect(res.status).toBe(201)
     expect(h.uploadCalls).toHaveLength(1)
     expect(h.inserts[0].stato).toBe('in_validazione')

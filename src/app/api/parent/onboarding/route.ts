@@ -1,7 +1,22 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
 import { consensiMancanti, CONSENSI_RICHIESTI } from '@/lib/onboarding/consensi'
+import { parseBody } from '@/lib/validation/http'
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+const postBodySchema = z.object({
+  // Record salvato tal quale in `parents.consensi_gdpr`: valori permissivi
+  // (oggi nessun vincolo di tipo sui singoli consensi). L'obbligo dei consensi
+  // richiesti resta il 422 semantico dell'handler.
+  consensi: z.record(z.string(), z.unknown()).optional(),
+  // Permissivo: oggi un valore falsy ('' incluso) viene ignorato e qualsiasi
+  // valore truthy con String(v).length >= 8 è accettato; un vincolo
+  // z.string().min(8) cambierebbe il comportamento. Il check di lunghezza
+  // resta nell'handler.
+  password: z.unknown().optional(),
+})
 
 // POST /api/parent/onboarding — primo accesso genitore (DL-045):
 // accettazione consensi GDPR obbligatori + (opzionale) impostazione password
@@ -11,10 +26,12 @@ export async function POST(request: Request) {
   const auth = await requireUser(request)
   if (auth.response) return auth.response
 
+  const b = await parseBody(request, postBodySchema)
+  if ('response' in b) return b.response
+
   try {
-    const body = await request.json()
-    const consensi = (body?.consensi ?? {}) as Record<string, boolean>
-    const password = body?.password as string | undefined
+    const consensi = (b.data.consensi ?? {}) as Record<string, boolean>
+    const password = b.data.password as string | undefined
 
     const mancanti = consensiMancanti(consensi, CONSENSI_RICHIESTI)
     if (mancanti.length > 0) {

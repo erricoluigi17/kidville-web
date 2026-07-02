@@ -1,8 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { getRequestUserId } from '@/lib/auth/require-staff'
 import { CERTIFICATI_BUCKET } from '@/lib/competenze/certificato-store'
+import { parseQuery } from '@/lib/validation/http'
 import type { SupabaseClient } from '@supabase/supabase-js'
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+// `userId` in query è consumato dal gate identità (getRequestUserId), non qui.
+// studentId permissivo (stringa non vuota): oggi nessun vincolo di formato
+// (in dev/test circolano id non-UUID).
+const getQuerySchema = z.object({
+  studentId: z.string({ error: 'studentId obbligatorio' }).min(1, 'studentId obbligatorio'),
+})
 
 // Verifica che il figlio sia collegato al genitore (modello autoritativo
 // student_parents + ponte legacy legame_genitori_alunni). Scoping app-level
@@ -27,10 +37,12 @@ async function parentOwnsStudent(supabase: SupabaseClient, userId: string, stude
 // download firmato. Nessun leak: se il figlio non è collegato, lista vuota.
 export async function GET(request: NextRequest) {
   try {
-    const studentId = new URL(request.url).searchParams.get('studentId')
     const userId = getRequestUserId(request)
     if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
-    if (!studentId) return NextResponse.json({ error: 'studentId obbligatorio' }, { status: 400 })
+
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+    const { studentId } = q.data
 
     const supabase = await createAdminClient()
     if (!(await parentOwnsStudent(supabase, userId, studentId))) {

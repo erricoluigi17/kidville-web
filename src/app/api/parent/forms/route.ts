@@ -1,12 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
+import { parseQuery } from '@/lib/validation/http';
+import { zUuid } from '@/lib/validation/common';
 
 const DEFAULT_PARENT_ID = '33333333-3333-3333-3333-333333333333';
 
+// parent_id opzionale: ogni valore falsy (assente, stringa vuota) ricade sul
+// genitore demo, come il pre-esistente `searchParams.get('parent_id') || DEFAULT_PARENT_ID`.
+const zParentIdConDefault = z.preprocess(
+  (v) => (v ? v : undefined),
+  zUuid.default(DEFAULT_PARENT_ID)
+);
+
+const getQuerySchema = z.object({
+  parent_id: zParentIdConDefault,
+});
+
 export async function GET(request: NextRequest) {
   try {
-    const { searchParams } = new URL(request.url);
-    const parentId = searchParams.get('parent_id') || DEFAULT_PARENT_ID;
+    const q = parseQuery(request, getQuerySchema);
+    if ('response' in q) return q.response;
+    const parentId = q.data.parent_id;
 
     const supabase = await createAdminClient();
 
@@ -65,7 +80,7 @@ export async function GET(request: NextRequest) {
     }
 
     // 4. Mappa lo stato di compilazione per ogni combinazione modulo-figlio
-    const result: any[] = [];
+    const result: Array<Record<string, unknown>> = [];
 
     for (const temp of assignedTemplates) {
       // Per ogni figlio a cui è destinato il modulo (in base alla sua classe)
@@ -73,7 +88,7 @@ export async function GET(request: NextRequest) {
 
       for (const student of targetStudents) {
         const sub = submissions?.find(s => s.form_id === temp.id && s.student_id === student.id);
-        
+
         result.push({
           form_id: temp.id,
           title: temp.title,
@@ -98,8 +113,9 @@ export async function GET(request: NextRequest) {
     }
 
     return NextResponse.json(result);
-  } catch (err: any) {
+  } catch (err) {
     console.error('Errore GET /api/parent/forms:', err);
-    return NextResponse.json({ error: err.message || 'Errore interno' }, { status: 500 });
+    const message = err instanceof Error && err.message ? err.message : 'Errore interno';
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

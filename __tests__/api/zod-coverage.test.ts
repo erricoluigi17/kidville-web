@@ -22,6 +22,14 @@ const GRUPPI_COPERTI: string[] = [
     'gallery',
     'locker',
     'mensa',
+    // M3.4 (zod 3/14 — parent A)
+    'parent/forms',
+    'parent/submissions',
+    'parent/students',
+    'parent/onboarding',
+    'parent/competenze',
+    'parent/medical-certificates',
+    'parent/giustifiche-didattiche',
 ];
 
 const API_ROOT = path.join(process.cwd(), 'src', 'app', 'api');

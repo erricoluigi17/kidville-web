@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
-import { assertSezioneInScope } from '@/lib/auth/scope'
+import { assertSezioneInScope, assertAlunniInSezione } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { titolareDiMateria } from '@/lib/audit/valutatore'
 import { notificaTitolariScrittura } from '@/lib/primaria/notifiche'
@@ -46,6 +46,18 @@ export async function GET(request: NextRequest) {
             .order('ordine')
         : { data: [] as { id: string; nome: string }[] }
       return NextResponse.json({ success: true, data: { periodi: periodi ?? [] } })
+    }
+
+    // Il periodo deve appartenere alla scuola della sezione asserita: il GET crea
+    // la riga scrutini(section, periodo), mai con un periodo di un altro tenant.
+    const { data: periodo } = await supabase
+      .from('scrutinio_periodi')
+      .select('id')
+      .eq('id', periodoId)
+      .eq('scuola_id', scuolaId)
+      .maybeSingle()
+    if (!periodo) {
+      return NextResponse.json({ error: 'Periodo non valido per questa scuola' }, { status: 403 })
     }
 
     // Scrutinio: crea se non esiste (idempotente via UNIQUE section+periodo).
@@ -133,6 +145,33 @@ export async function POST(request: NextRequest) {
 
     const valid = giudizi.filter((g) => g && g.alunnoId && g.materiaId)
     if (valid.length === 0) return NextResponse.json({ success: true, data: [] })
+
+    // Alunni e materie dei giudizi devono appartenere alla sezione dello scrutinio.
+    const alunniErr = await assertAlunniInSezione(supabase, valid.map((g) => g.alunnoId), sectionId)
+    if (alunniErr) return alunniErr
+    const materiaIds = [...new Set(valid.map((g) => g.materiaId as string))]
+    const { data: materieSez } = await supabase
+      .from('materie')
+      .select('id')
+      .eq('section_id', sectionId)
+      .in('id', materiaIds)
+    const materieOk = new Set((materieSez ?? []).map((m) => m.id as string))
+    if (materiaIds.some((id) => !materieOk.has(id))) {
+      return NextResponse.json({ error: 'Materia non appartenente alla sezione' }, { status: 403 })
+    }
+    // L'educator propone solo per le proprie discipline (contitolarità server-side,
+    // stesso criterio di mieMaterieIds nel GET). Staff/segreteria: tutte le materie.
+    if (auth.user.role === 'educator') {
+      const { data: mie } = await supabase
+        .from('utenti_sezioni_materie')
+        .select('materia_id')
+        .eq('utente_id', auth.user.id)
+        .eq('section_id', sectionId)
+      const mieSet = new Set((mie ?? []).map((m) => m.materia_id as string))
+      if (materiaIds.some((id) => !mieSet.has(id))) {
+        return NextResponse.json({ error: 'Materia non assegnata al docente' }, { status: 403 })
+      }
+    }
 
     // proposto_da = "vero valutatore" (vincolo FEA): MAI la segreteria.
     //  - educator → sé stesso;
@@ -230,6 +269,10 @@ export async function PATCH(request: NextRequest) {
         giudizio_globale: c.giudizioGlobale ?? null,
       }))
     if (rows.length === 0) return NextResponse.json({ success: true, data: [] })
+
+    // Gli alunni devono appartenere alla sezione dello scrutinio (no cross-sezione).
+    const alunniErr = await assertAlunniInSezione(supabase, rows.map((r) => r.alunno_id), sectionId)
+    if (alunniErr) return alunniErr
 
     const { data, error } = await supabase
       .from('scrutinio_comportamento')

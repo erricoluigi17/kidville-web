@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { getRequestUserId } from '@/lib/auth/require-staff'
+import { resolveIdentity } from '@/lib/auth/require-staff'
 import { puoAccedereFascicolo, logAccessoFascicolo } from '@/lib/primaria/fascicolo-rbac'
 
 const BUCKET = 'sensitive_documents'
@@ -13,7 +13,7 @@ export async function GET(request: NextRequest) {
     const sp = new URL(request.url).searchParams
     const documentoId = sp.get('documentoId')
     const finalita = sp.get('finalita')
-    const userId = getRequestUserId(request)
+    const { userId } = await resolveIdentity(request)
     if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
     if (!documentoId) return NextResponse.json({ error: 'documentoId obbligatorio' }, { status: 400 })
 

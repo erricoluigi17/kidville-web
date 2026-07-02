@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { assertSezioneInScope } from '@/lib/auth/scope'
 import { enqueueNotifichePerAlunni } from '@/lib/primaria/notifiche'
 
 // POST /api/primaria/scrutinio/pubblica?userId=
@@ -27,6 +28,10 @@ export async function POST(request: NextRequest) {
       .single()
     if (!scrutinio) return NextResponse.json({ error: 'Scrutinio non trovato' }, { status: 404 })
     if (scrutinio.stato !== 'chiuso') return NextResponse.json({ error: 'Pubblicabile solo a scrutinio chiuso' }, { status: 409 })
+
+    // Scoping di plesso per la dirigenza: si pubblicano solo scrutini del proprio plesso.
+    const scopeErr = await assertSezioneInScope(supabase, auth.user, scrutinio.section_id as string)
+    if (scopeErr) return scopeErr
 
     const { data: updated, error } = await supabase
       .from('scrutini')

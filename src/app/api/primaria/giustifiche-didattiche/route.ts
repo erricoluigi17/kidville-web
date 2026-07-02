@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { getRequestUserId } from '@/lib/auth/require-staff'
-
-const DEV_TEACHER = '22222222-2222-2222-2222-222222222222'
+import { requireDocente } from '@/lib/auth/require-staff'
+import { assertSezioneInScope, assertAlunniInSezione } from '@/lib/auth/scope'
 
 // GET /api/primaria/giustifiche-didattiche?sectionId=&data=&userId=
 // Elenco delle giustifiche didattiche (impreparato) per la classe/giorno.
@@ -11,10 +10,13 @@ export async function GET(request: NextRequest) {
     const sp = new URL(request.url).searchParams
     const sectionId = sp.get('sectionId')
     const data = sp.get('data')
-    if (!getRequestUserId(request)) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
+    const auth = await requireDocente(request)
+    if (auth.response) return auth.response
     if (!sectionId) return NextResponse.json({ error: 'sectionId obbligatorio' }, { status: 400 })
 
     const supabase = await createAdminClient()
+    const scopeErr = await assertSezioneInScope(supabase, auth.user, sectionId)
+    if (scopeErr) return scopeErr
     let q = supabase
       .from('giustifiche_didattiche')
       .select('id, alunno_id, materia_id, data, motivo, origine, creato_il, alunni(nome, cognome)')
@@ -36,13 +38,19 @@ export async function GET(request: NextRequest) {
 // Il docente registra "impreparato giustificato" durante la lezione.
 export async function POST(request: NextRequest) {
   try {
-    const userId = getRequestUserId(request) ?? DEV_TEACHER
+    const auth = await requireDocente(request)
+    if (auth.response) return auth.response
+    const userId = auth.user.id
     const { sectionId, alunnoId, data, motivo, materiaId } = await request.json()
     if (!sectionId || !alunnoId || !data) {
       return NextResponse.json({ error: 'sectionId, alunnoId, data obbligatori' }, { status: 400 })
     }
 
     const supabase = await createAdminClient()
+    const scopeErr = await assertSezioneInScope(supabase, auth.user, sectionId)
+    if (scopeErr) return scopeErr
+    const alunnoErr = await assertAlunniInSezione(supabase, [alunnoId], sectionId)
+    if (alunnoErr) return alunnoErr
     const { data: inserted, error } = await supabase
       .from('giustifiche_didattiche')
       .insert({

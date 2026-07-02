@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { getRequestUserId } from '@/lib/auth/require-staff'
+import { resolveIdentity } from '@/lib/auth/require-staff'
 import { puoAccedereFascicolo } from '@/lib/primaria/fascicolo-rbac'
 
 // GET /api/primaria/fascicolo/pagelle?alunnoId=&userId=
@@ -10,7 +10,7 @@ export async function GET(request: NextRequest) {
   try {
     const sp = new URL(request.url).searchParams
     const alunnoId = sp.get('alunnoId')
-    const userId = getRequestUserId(request)
+    const { userId } = await resolveIdentity(request)
     if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
     if (!alunnoId) return NextResponse.json({ error: 'alunnoId obbligatorio' }, { status: 400 })
 

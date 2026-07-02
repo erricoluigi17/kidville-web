@@ -41,7 +41,7 @@ const h = vi.hoisted(() => {
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: vi.fn().mockResolvedValue(h.makeClient()),
 }))
-const auth = vi.hoisted(() => ({ getRequestUserId: vi.fn(), loadAppUser: vi.fn() }))
+const auth = vi.hoisted(() => ({ getRequestUserId: vi.fn(), resolveIdentity: vi.fn(), loadAppUser: vi.fn() }))
 vi.mock('@/lib/auth/require-staff', () => auth)
 
 import { GET as LIST } from '@/app/api/primaria/fascicolo/route'
@@ -53,6 +53,7 @@ beforeEach(() => {
   h.state.queues = {}
   h.state.used = {}
   auth.getRequestUserId.mockReturnValue('u-1')
+  auth.resolveIdentity.mockResolvedValue({ userId: 'u-1', source: 'header' })
   rbac.puoAccedereFascicolo.mockResolvedValue({ consentito: true, ruolo: 'coordinator', motivo: 'staff' })
   rbac.logAccessoFascicolo.mockResolvedValue(undefined)
 })

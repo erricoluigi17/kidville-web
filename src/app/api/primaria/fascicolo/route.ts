@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { getRequestUserId, loadAppUser } from '@/lib/auth/require-staff'
+import { resolveIdentity, loadAppUser } from '@/lib/auth/require-staff'
 import { puoAccedereFascicolo, logAccessoFascicolo } from '@/lib/primaria/fascicolo-rbac'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { notificaTitolariScrittura } from '@/lib/primaria/notifiche'
@@ -17,7 +17,7 @@ export async function GET(request: NextRequest) {
     const sp = new URL(request.url).searchParams
     const alunnoId = sp.get('alunnoId')
     const finalita = sp.get('finalita')
-    const userId = getRequestUserId(request)
+    const { userId } = await resolveIdentity(request)
     if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
     if (!alunnoId) return NextResponse.json({ error: 'alunnoId obbligatorio' }, { status: 400 })
 
@@ -53,7 +53,9 @@ export async function POST(request: NextRequest) {
     const descrizione = (formData.get('descrizione') as string | null) ?? null
     const expiryDate = (formData.get('expiryDate') as string | null) ?? null
     const finalita = (formData.get('finalita') as string | null) ?? null
-    const userId = (formData.get('userId') as string | null) ?? getRequestUserId(request)
+    // Identità dalla richiesta (sessione o header/query legacy), MAI dal formData:
+    // il campo multipart 'userId' permetterebbe di impersonare chiunque.
+    const { userId } = await resolveIdentity(request)
 
     if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
     if (!file || !alunnoId) return NextResponse.json({ error: 'file e alunnoId obbligatori' }, { status: 400 })

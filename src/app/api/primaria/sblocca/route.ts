@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { assertSezioneInScope } from '@/lib/auth/scope'
 
 // POST /api/primaria/sblocca?userId=
 // Override diretto del dirigente sul vincolo temporale. Riservato allo staff
@@ -17,6 +18,20 @@ export async function POST(request: NextRequest) {
     }
 
     const supabase = await createAdminClient()
+
+    // Risolve l'entità → section_id e ne verifica lo scope PRIMA di scrivere
+    // audit/lock: niente sblocchi cross-plesso né audit su id inesistenti.
+    const entitaTable =
+      entitaTipo === 'registro' ? 'registro_orario' : entitaTipo === 'valutazione' ? 'valutazioni' : 'note_disciplinari'
+    const { data: entita } = await supabase
+      .from(entitaTable)
+      .select('id, section_id')
+      .eq('id', entitaId)
+      .maybeSingle()
+    if (!entita) return NextResponse.json({ error: 'Entità da sbloccare non trovata' }, { status: 404 })
+    const scopeErr = await assertSezioneInScope(supabase, auth.user, entita.section_id as string)
+    if (scopeErr) return scopeErr
+
     const { data, error } = await supabase
       .from('sblocchi_audit')
       .insert({ entita_tipo: entitaTipo, entita_id: entitaId, dirigente_id: auth.user.id, motivazione })

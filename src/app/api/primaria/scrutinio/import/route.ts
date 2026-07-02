@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { getRequestUserId } from '@/lib/auth/require-staff'
-
-const DEV_TEACHER = '22222222-2222-2222-2222-222222222222'
+import { requireDocente } from '@/lib/auth/require-staff'
+import { assertSezioneInScope } from '@/lib/auth/scope'
 
 // POST /api/primaria/scrutinio/import?userId=
 // Caricamento massivo dei giudizi sintetici di uno scrutinio (aperto) via CSV.
@@ -11,7 +10,9 @@ const DEV_TEACHER = '22222222-2222-2222-2222-222222222222'
 // body: { scrutinioId, righe: [{ alunnoId?, alunno?, materiaId?, materia?, giudizioSintetico }] }
 export async function POST(request: NextRequest) {
   try {
-    const userId = getRequestUserId(request) ?? DEV_TEACHER
+    const auth = await requireDocente(request)
+    if (auth.response) return auth.response
+    const userId = auth.user.id
     const { scrutinioId, righe } = await request.json()
     if (!scrutinioId || !Array.isArray(righe)) {
       return NextResponse.json({ error: 'scrutinioId e righe[] obbligatori' }, { status: 400 })
@@ -26,6 +27,10 @@ export async function POST(request: NextRequest) {
       .single()
     if (!scrutinio) return NextResponse.json({ error: 'Scrutinio non trovato' }, { status: 404 })
     if (scrutinio.stato === 'chiuso') return NextResponse.json({ error: 'Scrutinio chiuso: import non consentito', locked: true }, { status: 423 })
+
+    // Scope sulla sezione dello scrutinio (educator: solo proprie sezioni; staff: plesso).
+    const scopeErr = await assertSezioneInScope(supabase, auth.user, scrutinio.section_id as string)
+    if (scopeErr) return scopeErr
 
     // Anagrafiche della sezione per risoluzione per nome.
     const [{ data: alunni }, { data: materie }, { data: sez }] = await Promise.all([

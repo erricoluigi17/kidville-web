@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { assertSezioneInScope } from '@/lib/auth/scope'
 
 // POST /api/primaria/scrutinio/chiudi?userId=
 // Chiusura della sessione di scrutinio. Riservata alla dirigenza (admin/coordinator).
@@ -24,6 +25,10 @@ export async function POST(request: NextRequest) {
       .single()
     if (!scrutinio) return NextResponse.json({ error: 'Scrutinio non trovato' }, { status: 404 })
     if (scrutinio.stato === 'chiuso') return NextResponse.json({ error: 'Scrutinio già chiuso' }, { status: 409 })
+
+    // Scoping di plesso per la dirigenza: si chiudono solo scrutini del proprio plesso.
+    const scopeErr = await assertSezioneInScope(supabase, auth.user, scrutinio.section_id as string)
+    if (scopeErr) return scopeErr
 
     const [{ data: alunni }, { data: materie }, { data: giudizi }, { data: comportamento }] = await Promise.all([
       supabase.from('alunni').select('id').eq('section_id', scrutinio.section_id),

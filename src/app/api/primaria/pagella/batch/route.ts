@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { assertSezioneInScope } from '@/lib/auth/scope'
 import { generaPagella } from '@/lib/primaria/pagella-store'
 
 // POST /api/primaria/pagella/batch?userId=
@@ -24,6 +25,10 @@ export async function POST(request: NextRequest) {
       .single()
     if (!scrutinio) return NextResponse.json({ error: 'Scrutinio non trovato' }, { status: 404 })
     if (scrutinio.stato !== 'chiuso') return NextResponse.json({ error: 'Generazione disponibile solo a scrutinio chiuso' }, { status: 409 })
+
+    // Scoping di plesso per la dirigenza: batch solo su scrutini del proprio plesso.
+    const scopeErr = await assertSezioneInScope(supabase, auth.user, scrutinio.section_id as string)
+    if (scopeErr) return scopeErr
 
     const { data: alunni } = await supabase.from('alunni').select('id').eq('section_id', scrutinio.section_id)
     const alunniIds = (alunni ?? []).map((a) => a.id)

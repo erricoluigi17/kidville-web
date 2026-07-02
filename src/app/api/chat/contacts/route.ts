@@ -38,16 +38,13 @@ export async function GET(request: Request) {
         }> = [];
 
         if (role === 'maestra' || role === 'educator') {
-            // Maestra: determina la propria sezione.
-            let teacherSection: string | null = null;
-
-            // Fonte canonica: legame docente↔sezione (utenti_sezioni → sections).
+            // Maestra: sezione dalla fonte canonica (utenti_sezioni → sections).
             const { data: legamiSez } = await supabase
                 .from('utenti_sezioni')
                 .select('sections(name)')
                 .eq('utente_id', userId)
                 .limit(1);
-            teacherSection = ((legamiSez?.[0]?.sections as { name?: string } | null)?.name) ?? null;
+            let teacherSection = ((legamiSez?.[0]?.sections as { name?: string } | null)?.name) ?? null;
 
             // Fallback storico: deriva la sezione dai media caricati con studenti taggati
             if (!teacherSection) {
@@ -72,118 +69,125 @@ export async function GET(request: Request) {
                 }
             }
 
-            // Fallback: mappa email→sezione per docenti noti
-            if (!teacherSection) {
-                const emailToSection: Record<string, string> = {
-                    'maestra.anna@kidville.it': 'Girasoli',
-                    'maestra.chiara@kidville.it': 'Tulipani',
-                };
-                const userEmail = user.id === '22222222-2222-2222-2222-222222222222'
-                    ? 'maestra.anna@kidville.it'
-                    : user.id === '22222222-2222-2222-2222-333333333333'
-                        ? 'maestra.chiara@kidville.it'
-                        : null;
-                if (userEmail) teacherSection = emailToSection[userEmail] ?? null;
-            }
+            // Senza sezione risolta la lista resta vuota: niente default arbitrari.
+            if (teacherSection) {
+                // 3 query batched: alunni della sezione → legami → genitori (niente N+1).
+                const { data: allStudents } = await supabase
+                    .from('alunni')
+                    .select('id, nome, cognome, classe_sezione')
+                    .eq('classe_sezione', teacherSection);
+                const students = allStudents ?? [];
+                const studentIds = students.map(s => s.id);
 
-            const sectionFilter = teacherSection ?? 'Girasoli';
-
-            // Trova tutti gli studenti della sezione della maestra
-            const { data: allStudents } = await supabase
-                .from('alunni')
-                .select('id, nome, cognome, classe_sezione')
-                .eq('classe_sezione', sectionFilter);
-
-            if (allStudents) {
-                for (const student of allStudents) {
-                    // Cerca genitori del bambino in legame_genitori_alunni
-                    const { data: legami } = await supabase
+                const { data: legami } = studentIds.length > 0
+                    ? await supabase
                         .from('legame_genitori_alunni')
-                        .select('genitore_id')
-                        .eq('alunno_id', student.id);
+                        .select('alunno_id, genitore_id')
+                        .in('alunno_id', studentIds)
+                    : { data: [] };
 
-                    if (legami) {
-                        for (const legame of legami) {
-                            const { data: parent } = await supabase
-                                .from('utenti')
-                                .select('id, nome, cognome, first_name, last_name')
-                                .eq('id', legame.genitore_id)
-                                .maybeSingle();
+                const parentIds = [...new Set((legami ?? []).map(l => l.genitore_id))];
+                const { data: parents } = parentIds.length > 0
+                    ? await supabase
+                        .from('utenti')
+                        .select('id, nome, cognome, first_name, last_name')
+                        .in('id', parentIds)
+                    : { data: [] };
 
-                            if (parent) {
-                                const exists = contacts.some(c => c.user_id === parent.id && c.student_id === student.id);
-                                if (!exists) {
-                                    contacts.push({
-                                        user_id: parent.id,
-                                        user_name: `${parent.first_name || parent.nome} ${parent.last_name || parent.cognome}`,
-                                        user_role: 'genitore',
-                                        student_id: student.id,
-                                        student_name: `${student.nome} ${student.cognome}`,
-                                        sezione: student.classe_sezione ?? '',
-                                    });
-                                }
-                            }
-                        }
-                    }
+                const studentById = new Map(students.map(s => [s.id, s]));
+                const parentById = new Map((parents ?? []).map(p => [p.id, p]));
+                const seen = new Set<string>();
+                for (const legame of legami ?? []) {
+                    const student = studentById.get(legame.alunno_id);
+                    const parent = parentById.get(legame.genitore_id);
+                    if (!student || !parent) continue;
+                    const key = `${parent.id}:${student.id}`;
+                    if (seen.has(key)) continue;
+                    seen.add(key);
+                    contacts.push({
+                        user_id: parent.id,
+                        user_name: `${parent.first_name || parent.nome} ${parent.last_name || parent.cognome}`,
+                        user_role: 'genitore',
+                        student_id: student.id,
+                        student_name: `${student.nome} ${student.cognome}`,
+                        sezione: student.classe_sezione ?? '',
+                    });
                 }
             }
         } else if (role === 'genitore') {
-            // Genitore: trova i figli, poi le maestre delle sezioni dei figli
+            // Genitore: figli → docenti delle loro sezioni, tutto batched (niente N+1).
             const { data: legami } = await supabase
                 .from('legame_genitori_alunni')
                 .select('alunno_id')
                 .eq('genitore_id', userId);
+            const alunnoIds = [...new Set((legami ?? []).map(l => l.alunno_id))];
 
-            if (legami) {
-                for (const legame of legami) {
-                    const { data: student } = await supabase
-                        .from('alunni')
-                        .select('id, nome, cognome, classe_sezione, section_id')
-                        .eq('id', legame.alunno_id)
-                        .maybeSingle();
+            const { data: studentsData } = alunnoIds.length > 0
+                ? await supabase
+                    .from('alunni')
+                    .select('id, nome, cognome, classe_sezione, section_id')
+                    .in('id', alunnoIds)
+                : { data: [] };
+            const students = studentsData ?? [];
 
-                    if (student) {
-                        // Insegnanti della sezione del figlio (fonte canonica utenti_sezioni).
-                        let teachers: { id: string; nome: string | null; cognome: string | null; first_name: string | null; last_name: string | null }[] = [];
-                        if (student.section_id) {
-                            const { data: legamiSez } = await supabase
-                                .from('utenti_sezioni')
-                                .select('utente_id')
-                                .eq('section_id', student.section_id);
-                            const ids = (legamiSez ?? []).map(r => r.utente_id);
-                            if (ids.length > 0) {
-                                const { data } = await supabase
-                                    .from('utenti')
-                                    .select('id, nome, cognome, first_name, last_name')
-                                    .in('id', ids);
-                                teachers = data ?? [];
-                            }
-                        }
-                        // Fallback storico: tutte le maestre se la sezione non è mappata.
-                        if (teachers.length === 0) {
-                            const { data } = await supabase
-                                .from('utenti')
-                                .select('id, nome, cognome, first_name, last_name')
-                                .or('ruolo.eq.maestra,role.eq.educator');
-                            teachers = data ?? [];
-                        }
+            // Insegnanti per sezione (fonte canonica utenti_sezioni), in blocco.
+            const sectionIds = [...new Set(students.map(s => s.section_id).filter(Boolean))] as string[];
+            const { data: legamiSez } = sectionIds.length > 0
+                ? await supabase
+                    .from('utenti_sezioni')
+                    .select('section_id, utente_id')
+                    .in('section_id', sectionIds)
+                : { data: [] };
 
-                        if (teachers) {
-                            for (const teacher of teachers) {
-                                const exists = contacts.some(c => c.user_id === teacher.id && c.student_id === student.id);
-                                if (!exists) {
-                                    contacts.push({
-                                        user_id: teacher.id,
-                                        user_name: `${teacher.first_name || teacher.nome} ${teacher.last_name || teacher.cognome}`,
-                                        user_role: 'maestra',
-                                        student_id: student.id,
-                                        student_name: `${student.nome} ${student.cognome}`,
-                                        sezione: student.classe_sezione ?? '',
-                                    });
-                                }
-                            }
-                        }
-                    }
+            type Teacher = { id: string; nome: string | null; cognome: string | null; first_name: string | null; last_name: string | null };
+            const teacherIds = [...new Set((legamiSez ?? []).map(r => r.utente_id))];
+            const { data: teachersData } = teacherIds.length > 0
+                ? await supabase
+                    .from('utenti')
+                    .select('id, nome, cognome, first_name, last_name')
+                    .in('id', teacherIds)
+                : { data: [] };
+            const teacherById = new Map<string, Teacher>(((teachersData ?? []) as Teacher[]).map(t => [t.id, t]));
+
+            const teachersBySection = new Map<string, Teacher[]>();
+            for (const r of legamiSez ?? []) {
+                const t = teacherById.get(r.utente_id);
+                if (!t) continue;
+                const arr = teachersBySection.get(r.section_id) ?? [];
+                arr.push(t);
+                teachersBySection.set(r.section_id, arr);
+            }
+
+            // Fallback storico (una sola query, solo se serve): tutte le maestre
+            // per i figli con sezione non mappata.
+            let allTeachers: Teacher[] | null = null;
+            const needsFallback = students.some(
+                s => !s.section_id || (teachersBySection.get(s.section_id) ?? []).length === 0
+            );
+            if (needsFallback) {
+                const { data } = await supabase
+                    .from('utenti')
+                    .select('id, nome, cognome, first_name, last_name')
+                    .or('ruolo.eq.maestra,role.eq.educator');
+                allTeachers = (data ?? []) as Teacher[];
+            }
+
+            const seen = new Set<string>();
+            for (const student of students) {
+                const own = student.section_id ? (teachersBySection.get(student.section_id) ?? []) : [];
+                const teachers = own.length > 0 ? own : (allTeachers ?? []);
+                for (const teacher of teachers) {
+                    const key = `${teacher.id}:${student.id}`;
+                    if (seen.has(key)) continue;
+                    seen.add(key);
+                    contacts.push({
+                        user_id: teacher.id,
+                        user_name: `${teacher.first_name || teacher.nome} ${teacher.last_name || teacher.cognome}`,
+                        user_role: 'maestra',
+                        student_id: student.id,
+                        student_name: `${student.nome} ${student.cognome}`,
+                        sezione: student.classe_sezione ?? '',
+                    });
                 }
             }
         }
@@ -196,7 +200,7 @@ export async function GET(request: Request) {
 
         const available = contacts.filter(c => {
             const hasThread = (existingThreads ?? []).some(t => {
-                if (role === 'maestra') {
+                if (role === 'maestra' || role === 'educator') {
                     return t.teacher_id === userId && t.parent_id === c.user_id && t.student_id === c.student_id;
                 } else {
                     return t.parent_id === userId && t.teacher_id === c.user_id && t.student_id === c.student_id;

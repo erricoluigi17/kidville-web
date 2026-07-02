@@ -54,29 +54,8 @@ const GRUPPI_COPERTI: string[] = [
     'seed-db',
     'debug-supabase',
     'debug',
-    // M3.11 (zod 10/14 — admin A; il prefisso 'admin' intero arriva col 13/14)
-    'admin/dashboard',
-    'admin/students',
-    'admin/adults',
-    'admin/parents',
-    'admin/staff',
-    'admin/schools',
-    'admin/sections',
-    'admin/pre-inscriptions',
-    'admin/iscrizioni',
-    // M3.12 (zod 11/14 — admin B)
-    'admin/forms',
-    'admin/form-models',
-    'admin/regenerate-credentials',
-    'admin/documents-merge',
-    // M3.13 (zod 12/14 — admin C)
-    'admin/primaria',
-    'admin/settings',
-    'admin/sidi',
-    'admin/audit',
-    'admin/gdpr',
-    'admin/competenze',
-    'admin/gruppi-mensa',
+    // M3.11–M3.14 (zod 10-13/14 — chiude tutto admin/*)
+    'admin',
 ];
 
 const API_ROOT = path.join(process.cwd(), 'src', 'app', 'api');

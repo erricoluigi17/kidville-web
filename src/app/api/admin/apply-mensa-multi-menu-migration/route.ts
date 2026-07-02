@@ -1,6 +1,11 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { sealDangerous } from '@/lib/security/seal';
 import { createAdminClient } from '@/lib/supabase/server-client';
+import { parseQuery } from '@/lib/validation/http';
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+const querySchema = z.object({}); // nessun parametro in ingresso
 
 const steps_sql = [
   {
@@ -121,6 +126,8 @@ async function runMigration() {
 export async function GET(request: Request) {
   const sealed = await sealDangerous(request);
   if (sealed) return sealed;
+  const q = parseQuery(request, querySchema);
+  if ('response' in q) return q.response;
   try {
     const result = await runMigration();
     return NextResponse.json(result);
@@ -132,6 +139,8 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const sealed = await sealDangerous(request);
   if (sealed) return sealed;
+  const q = parseQuery(request, querySchema);
+  if ('response' in q) return q.response;
   try {
     const result = await runMigration();
     return NextResponse.json(result);

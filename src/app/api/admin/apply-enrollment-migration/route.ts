@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { sealDangerous } from '@/lib/security/seal'
 import { requireEnv } from '@/lib/security/require-env'
+import { parseQuery } from '@/lib/validation/http'
+
+const querySchema = z.object({}) // nessun parametro in ingresso
 
 /**
  * POST/GET /api/admin/apply-enrollment-migration
@@ -222,6 +226,8 @@ export async function POST(request: Request) {
   if (sealed) return sealed
   const missingEnv = requireEnv('NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY')
   if (missingEnv) return missingEnv
+  const q = parseQuery(request, querySchema)
+  if ('response' in q) return q.response
   try {
     return NextResponse.json(await runMigration())
   } catch (error) {
@@ -234,6 +240,8 @@ export async function GET(request: Request) {
   if (sealed) return sealed
   const missingEnv = requireEnv('NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY')
   if (missingEnv) return missingEnv
+  const q = parseQuery(request, querySchema)
+  if ('response' in q) return q.response
   try {
     return NextResponse.json(await runMigration())
   } catch (error) {

@@ -1,8 +1,27 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createClient } from '@supabase/supabase-js';
 import { sealDangerous } from '@/lib/security/seal';
 import { requireEnv } from '@/lib/security/require-env';
 import { backfillParentsAuth } from '@/lib/auth/backfill';
+import { parseQuery } from '@/lib/validation/http';
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+const postQuerySchema = z.object({
+  // Oggi: dryRun attivo SOLO con '1' o 'true' (case-sensitive); qualunque altro
+  // valore (o assenza) equivale a false. Trasformazione permissiva, niente zBool.
+  dryRun: z
+    .string()
+    .optional()
+    .transform((v) => v === '1' || v === 'true'),
+  // Sostituisce il 400 manuale su target !== 'parents' (stessa semantica).
+  target: z
+    .enum(['parents'], {
+      error:
+        'target non supportato. Solo "parents": lo staff è già auth-backed (usa Rigenera credenziali).',
+    })
+    .default('parents'),
+});
 
 /**
  * POST /api/admin/backfill-auth?target=parents&dryRun=1  (admin only)
@@ -16,16 +35,9 @@ export async function POST(request: Request) {
   const sealed = await sealDangerous(request);
   if (sealed) return sealed;
 
-  const url = new URL(request.url);
-  const dryRun = url.searchParams.get('dryRun') === '1' || url.searchParams.get('dryRun') === 'true';
-  const target = url.searchParams.get('target') ?? 'parents';
-
-  if (target !== 'parents') {
-    return NextResponse.json(
-      { error: 'target non supportato. Solo "parents": lo staff è già auth-backed (usa Rigenera credenziali).' },
-      { status: 400 }
-    );
-  }
+  const q = parseQuery(request, postQuerySchema);
+  if ('response' in q) return q.response;
+  const { dryRun } = q.data;
 
   const missingEnv = requireEnv('NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY');
   if (missingEnv) return missingEnv;

@@ -36,13 +36,13 @@ describe('POST /api/admin/pagamenti/sospensione', () => {
   })
 
   it('è gated alla Direzione (requireStaff con allowlist admin/coordinator)', async () => {
-    await POST(post({ alunno_id: 'a1', sospeso: true }))
+    await POST(post({ alunno_id: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1', sospeso: true }))
     expect(h.requireStaff).toHaveBeenCalledWith(expect.anything(), ['admin', 'coordinator'])
   })
 
   it('blocca se requireStaff nega', async () => {
     h.requireStaff.mockResolvedValue({ response: NextResponse.json({}, { status: 403 }) })
-    const res = await POST(post({ alunno_id: 'a1', sospeso: true }))
+    const res = await POST(post({ alunno_id: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1', sospeso: true }))
     expect(res.status).toBe(403)
   })
 
@@ -52,7 +52,7 @@ describe('POST /api/admin/pagamenti/sospensione', () => {
   })
 
   it('sospende: set sospeso=true + motivo + sospeso_da + audit', async () => {
-    const res = await POST(post({ alunno_id: 'a1', sospeso: true, motivo: 'morosità 3 rate' }))
+    const res = await POST(post({ alunno_id: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1', sospeso: true, motivo: 'morosità 3 rate' }))
     expect(res.status).toBe(200)
     expect(h.updates[0].row.sospeso).toBe(true)
     expect(h.updates[0].row.sospeso_motivo).toBe('morosità 3 rate')
@@ -61,7 +61,7 @@ describe('POST /api/admin/pagamenti/sospensione', () => {
   })
 
   it('riattiva: set sospeso=false e azzera sospeso_il/motivo', async () => {
-    const res = await POST(post({ alunno_id: 'a1', sospeso: false }))
+    const res = await POST(post({ alunno_id: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1', sospeso: false }))
     expect(res.status).toBe(200)
     expect(h.updates[0].row.sospeso).toBe(false)
     expect(h.updates[0].row.sospeso_il).toBeNull()
@@ -69,7 +69,7 @@ describe('POST /api/admin/pagamenti/sospensione', () => {
 
   it('rispetta lo scope tenant (assertAlunnoInScope)', async () => {
     h.assertAlunnoInScope.mockResolvedValue(NextResponse.json({}, { status: 404 }))
-    const res = await POST(post({ alunno_id: 'a1', sospeso: true }))
+    const res = await POST(post({ alunno_id: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1', sospeso: true }))
     expect(res.status).toBe(404)
     expect(h.updates.length).toBe(0)
   })

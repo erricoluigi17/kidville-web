@@ -1,13 +1,19 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createClient } from '@supabase/supabase-js';
 import { sealDangerous } from '@/lib/security/seal';
 import { requireEnv } from '@/lib/security/require-env';
+import { parseQuery } from '@/lib/validation/http';
+
+const querySchema = z.object({}); // nessun parametro in ingresso
 
 export async function POST(request: Request) {
     const sealed = await sealDangerous(request);
     if (sealed) return sealed;
     const missingEnv = requireEnv('NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY');
     if (missingEnv) return missingEnv;
+    const q = parseQuery(request, querySchema);
+    if ('response' in q) return q.response;
     const supabase = createClient(
         process.env.NEXT_PUBLIC_SUPABASE_URL as string,
         process.env.SUPABASE_SERVICE_ROLE_KEY as string

@@ -1,8 +1,20 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { assertAlunnoInScope } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
+import { parseBody } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
+
+// Comportamento storico preservato: `sospeso` conta solo se strettamente === true,
+// `motivo` è usato solo se stringa — qualunque altro valore è tollerato (→ false/null).
+// NB zod v4: z.unknown() come chiave è required a runtime, serve .optional().
+const postBodySchema = z.object({
+  alunno_id: zUuid,
+  sospeso: z.unknown().optional(),
+  motivo: z.unknown().optional(),
+})
 
 // POST /api/admin/pagamenti/sospensione  (Direzione) — sospende/riattiva un alunno
 // per morosità (DL-021). Body: { userId, alunno_id, sospeso: boolean, motivo? }.
@@ -12,10 +24,10 @@ export async function POST(request: Request) {
     const auth = await requireStaff(request, ['admin', 'coordinator'])
     if (auth.response) return auth.response
 
-    const body = await request.json()
-    const alunnoId = body.alunno_id
-    if (!alunnoId) return NextResponse.json({ error: 'alunno_id è obbligatorio' }, { status: 400 })
-    const sospeso = body.sospeso === true
+    const b = await parseBody(request, postBodySchema)
+    if ('response' in b) return b.response
+    const alunnoId = b.data.alunno_id
+    const sospeso = b.data.sospeso === true
 
     const supabase = await createAdminClient()
 
@@ -25,7 +37,7 @@ export async function POST(request: Request) {
     const patch = sospeso
       ? {
           sospeso: true,
-          sospeso_motivo: typeof body.motivo === 'string' ? body.motivo : null,
+          sospeso_motivo: typeof b.data.motivo === 'string' ? b.data.motivo : null,
           sospeso_il: new Date().toISOString(),
           sospeso_da: auth.user.id,
         }

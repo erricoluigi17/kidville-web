@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { sealDangerous } from '@/lib/security/seal';
 import { createAdminClient } from '@/lib/supabase/server-client';
+import { parseQuery } from '@/lib/validation/http';
+
+const querySchema = z.object({}); // nessun parametro in ingresso
 
 /**
  * Migrazione idempotente per il sistema moduli (modulistica genitori/esterni).
@@ -70,6 +74,8 @@ async function runMigration() {
 export async function POST(request: Request) {
   const sealed = await sealDangerous(request);
   if (sealed) return sealed;
+  const q = parseQuery(request, querySchema);
+  if ('response' in q) return q.response;
   try {
     return NextResponse.json(await runMigration());
   } catch (error) {
@@ -80,6 +86,8 @@ export async function POST(request: Request) {
 export async function GET(request: Request) {
   const sealed = await sealDangerous(request);
   if (sealed) return sealed;
+  const q = parseQuery(request, querySchema);
+  if ('response' in q) return q.response;
   try {
     return NextResponse.json(await runMigration());
   } catch (error) {

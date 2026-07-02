@@ -44,3 +44,7 @@ next-env.d.ts
 /scratch
 
 .claude/
+
+# working dirs non destinate al repo
+scratch/
+design-reference/

@@ -62,21 +62,17 @@ function TeacherDashboardInner() {
   const [presenze, setPresenze] = useState<Presenza[]>([]);
   const [avvisi, setAvvisi] = useState<Avviso[]>([]);
 
-  // me (gradi/funzioni) — fetch esistente, preservato.
+  // me (gradi/funzioni) + sezioni + avvisi: 3 fetch indipendenti in UN solo
+  // effect con Promise.all. Esiti gestiti per-fetch (catch silenziosi
+  // indipendenti, come i 3 effect originali): un avviso che fallisce non
+  // blocca me/sezioni né lascia lo skeleton acceso. Zero cambio visivo.
   useEffect(() => {
     let active = true;
-    fetch(`/api/primaria/me?userId=${userId}`)
+    const meReq = fetch(`/api/primaria/me?userId=${userId}`)
       .then((r) => r.json())
       .then((d) => { if (active && d?.success) setMe(d.data); })
-      .catch(() => {})
-      .finally(() => active && setLoading(false));
-    return () => { active = false; };
-  }, [userId]);
-
-  // sezioni del docente (read-only) → ClassSwitcher + contesto Appello/Allergie.
-  useEffect(() => {
-    let active = true;
-    fetch(`/api/educator-sections?userId=${userId}`)
+      .catch(() => {});
+    const sectionsReq = fetch(`/api/educator-sections?userId=${userId}`)
       .then((r) => r.json())
       .then((d) => {
         if (!active) return;
@@ -85,16 +81,11 @@ function TeacherDashboardInner() {
         setActiveSection((cur) => cur || names[0] || '');
       })
       .catch(() => {});
-    return () => { active = false; };
-  }, [userId]);
-
-  // avvisi (bacheca del docente) — read-only.
-  useEffect(() => {
-    let active = true;
-    fetch(`/api/avvisi?userId=${userId}`)
+    const avvisiReq = fetch(`/api/avvisi?userId=${userId}`)
       .then((r) => r.json())
       .then((d) => { if (active && Array.isArray(d)) setAvvisi(d); })
       .catch(() => {});
+    Promise.all([meReq, sectionsReq, avvisiReq]).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [userId]);
 

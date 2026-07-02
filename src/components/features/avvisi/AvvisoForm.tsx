@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Send, Upload, Link, AlertCircle } from 'lucide-react';
+import { X, Send, Upload, Link } from 'lucide-react';
 import { Avviso } from './AvvisoCard';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 
@@ -35,7 +35,12 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     // Gestione precompilazione in caso di modifica
-    useEffect(() => {
+    // (adjust-state-during-render, prior art: TaskForm.tsx)
+    const [prevOpen, setPrevOpen] = useState(false);
+    const [prevAvviso, setPrevAvviso] = useState<Avviso | null>(initialAvviso);
+    if (open !== prevOpen || initialAvviso !== prevAvviso) {
+        setPrevOpen(open);
+        setPrevAvviso(initialAvviso);
         if (open) {
             if (initialAvviso) {
                 setTitolo(initialAvviso.titolo);
@@ -77,7 +82,7 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
                 setFileName('');
             }
         }
-    }, [open, initialAvviso]);
+    }
 
     const toggleClass = (c: string) => {
         setSelectedClasses(prev => prev.includes(c) ? prev.filter(x => x !== c) : [...prev, c]);
@@ -93,9 +98,11 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
             const formData = new FormData();
             formData.append('file', file);
 
-            const res = await fetch(`/api/avvisi/upload?userId=${getCurrentTeacherId(null)}`, {
+            // Identità nullable (M4): header vuoto → il server risponde 401,
+            // gestito dal ramo d'errore esistente (niente fallback demo).
+            const res = await fetch(`/api/avvisi/upload?userId=${getCurrentTeacherId(null) ?? ''}`, {
                 method: 'POST',
-                headers: { 'x-user-id': getCurrentTeacherId(null) },
+                headers: { 'x-user-id': getCurrentTeacherId(null) ?? '' },
                 body: formData,
             });
 

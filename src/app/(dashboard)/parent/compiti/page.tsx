@@ -14,8 +14,7 @@ function CompitiInner() {
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
-    if (!ready || !studentId) return;
-    setLoading(true);
+    if (!ready || !parentId || !studentId) return;
     try {
       const r = await fetch(`/api/parent/primaria?studentId=${studentId}&userId=${parentId}`, { headers: { 'x-user-id': parentId } });
       const d = await r.json();

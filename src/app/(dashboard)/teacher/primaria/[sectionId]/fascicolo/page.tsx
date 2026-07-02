@@ -56,21 +56,29 @@ export default function FascicoloPage() {
   }, [sectionId, userId]);
 
   const loadDocs = useCallback(async () => {
-    if (!alunnoId) { setDocs([]); setDenied(false); setAnniPagelle([]); return; }
+    if (!alunnoId) return;
     const fz = finalitaRef.current ? `&finalita=${encodeURIComponent(finalitaRef.current)}` : '';
-    const r = await fetch(`/api/primaria/fascicolo?alunnoId=${alunnoId}&userId=${userId}${fz}`);
-    if (r.status === 403) { setDenied(true); setDocs([]); return; }
-    setDenied(false);
-    const d = await r.json();
-    if (d.success) setDocs(d.data);
+    try {
+      const r = await fetch(`/api/primaria/fascicolo?alunnoId=${alunnoId}&userId=${userId}${fz}`);
+      if (r.status === 403) {
+        setDenied(true);
+        setDocs([]);
+      } else {
+        setDenied(false);
+        const d = await r.json();
+        if (d.success) setDocs(d.data);
 
-    // Carica anche le pagelle
-    const rp = await fetch(`/api/primaria/fascicolo/pagelle?alunnoId=${alunnoId}&userId=${userId}`);
-    const dp = await rp.json();
-    if (dp.success) {
-      setAnniPagelle(dp.data ?? []);
-      // Apri automaticamente l'anno più recente
-      if (dp.data?.length > 0) setAnniAperti(new Set([dp.data[0].annoScolastico]));
+        // Carica anche le pagelle
+        const rp = await fetch(`/api/primaria/fascicolo/pagelle?alunnoId=${alunnoId}&userId=${userId}`);
+        const dp = await rp.json();
+        if (dp.success) {
+          setAnniPagelle(dp.data ?? []);
+          // Apri automaticamente l'anno più recente
+          if (dp.data?.length > 0) setAnniAperti(new Set([dp.data[0].annoScolastico]));
+        }
+      }
+    } finally {
+      // nessuno stato di caricamento da azzerare
     }
   }, [alunnoId, userId]);
 
@@ -87,6 +95,7 @@ export default function FascicoloPage() {
     const file = fileRef.current?.files?.[0];
     if (!alunnoId) { setMsg('Seleziona un alunno'); return; }
     if (!file) { setMsg('Seleziona un file'); return; }
+    if (!userId) { setMsg('Identità non risolta: riapri la pagina dal registro.'); return; }
     setUploading(true);
     const fd = new FormData();
     fd.append('file', file);
@@ -152,7 +161,7 @@ export default function FascicoloPage() {
           />
         </div>
 
-        {denied && (
+        {alunnoId && denied && (
           <div className="mt-3 flex items-center gap-2 rounded-card bg-kidville-error-soft px-3 py-2 font-maven text-sm text-kidville-error">
             <ShieldAlert size={15} /> Non sei autorizzato ad accedere al fascicolo di questo alunno.
           </div>

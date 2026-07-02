@@ -64,14 +64,18 @@ export default function ValutazioniPage() {
   // Carica la scala dei giudizi sintetici per la materia/livello.
   const loadScala = useCallback(async () => {
     if (!materiaId) return;
-    const r = await fetch(`/api/primaria/obiettivi?materiaId=${materiaId}&sectionId=${sectionId}&userId=${userId}`);
-    const d = await r.json();
-    if (d.success) {
-      setScala(d.data.scala);
-      setScalaValori(d.data.scalaValori ?? []);
-      setObiettivi(d.data.obiettivi ?? []);
-      setObiettiviSel([]);
-      if (d.data.scala.length) setGiudizioSintetico(d.data.scala[0]);
+    try {
+      const r = await fetch(`/api/primaria/obiettivi?materiaId=${materiaId}&sectionId=${sectionId}&userId=${userId}`);
+      const d = await r.json();
+      if (d.success) {
+        setScala(d.data.scala);
+        setScalaValori(d.data.scalaValori ?? []);
+        setObiettivi(d.data.obiettivi ?? []);
+        setObiettiviSel([]);
+        if (d.data.scala.length) setGiudizioSintetico(d.data.scala[0]);
+      }
+    } finally {
+      // nessuno stato di caricamento da azzerare
     }
   }, [materiaId, sectionId, userId]);
 
@@ -79,16 +83,24 @@ export default function ValutazioniPage() {
     setObiettiviSel((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
 
   const loadRecenti = useCallback(async () => {
-    if (!alunnoId || !materiaId) { setRecenti([]); return; }
-    const r = await fetch(`/api/primaria/valutazioni?alunnoId=${alunnoId}&materiaId=${materiaId}&userId=${userId}`);
-    const d = await r.json();
-    if (d.success) setRecenti(d.data);
+    if (!alunnoId || !materiaId) return;
+    try {
+      const r = await fetch(`/api/primaria/valutazioni?alunnoId=${alunnoId}&materiaId=${materiaId}&userId=${userId}`);
+      const d = await r.json();
+      if (d.success) setRecenti(d.data);
+    } finally {
+      // nessuno stato di caricamento da azzerare
+    }
   }, [alunnoId, materiaId, userId]);
 
   const loadImpreparati = useCallback(async () => {
-    const r = await fetch(`/api/primaria/giustifiche-didattiche?sectionId=${sectionId}&data=${oggiIso()}&userId=${userId}`);
-    const d = await r.json();
-    if (d.success) setImpreparati(d.data);
+    try {
+      const r = await fetch(`/api/primaria/giustifiche-didattiche?sectionId=${sectionId}&data=${oggiIso()}&userId=${userId}`);
+      const d = await r.json();
+      if (d.success) setImpreparati(d.data);
+    } finally {
+      // nessuno stato di caricamento da azzerare
+    }
   }, [sectionId, userId]);
 
   useEffect(() => { loadScala(); }, [loadScala]);
@@ -98,6 +110,7 @@ export default function ValutazioniPage() {
   // Il docente segna l'alunno selezionato come impreparato giustificato (oggi).
   const segnaImpreparato = async () => {
     if (!alunnoId) { setMsg('Seleziona un alunno'); return; }
+    if (!userId) { setMsg('Identità non risolta: riapri la pagina dal registro.'); return; }
     await fetch(`/api/primaria/giustifiche-didattiche?userId=${userId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
@@ -110,6 +123,7 @@ export default function ValutazioniPage() {
     setMsg('');
     if (!alunnoId || !materiaId) { setMsg('Seleziona alunno e materia'); return; }
     if (!argomento.trim()) { setMsg("Inserisci l'argomento"); return; }
+    if (!userId) { setMsg('Identità non risolta: riapri la pagina dal registro.'); return; }
     // Collegamento obiettivo obbligatorio quando la materia/livello ne ha di configurati (DL-015).
     if (obiettivi.length > 0 && obiettiviSel.length === 0) { setMsg('Collega almeno un obiettivo di apprendimento'); return; }
     setSaving(true);

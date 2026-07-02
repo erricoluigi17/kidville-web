@@ -1,15 +1,15 @@
 'use client';
 
 import { Suspense, useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { ShieldCheck, KeyRound, Loader2 } from 'lucide-react';
-import { getCurrentParentId } from '@/lib/auth/current-user';
+import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 
 // Onboarding genitore (DL-045): primo accesso → password + consensi GDPR.
+// L'identità viene dalla sessione (URL → localStorage → /api/me), senza demo.
 function Inner() {
   const router = useRouter();
-  const search = useSearchParams();
-  const parentId = getCurrentParentId(search);
+  const { userId: parentId } = useSessionIdentity();
 
   const [password, setPassword] = useState('');
   const [privacy, setPrivacy] = useState(false);
@@ -21,6 +21,7 @@ function Inner() {
     setError(null);
     if (!privacy) { setError('Per continuare devi accettare l’informativa sulla privacy.'); return; }
     if (password && password.length < 8) { setError('La password deve avere almeno 8 caratteri.'); return; }
+    if (!parentId) { setError('Identità non risolta: accedi di nuovo dal link ricevuto.'); return; }
     setSaving(true);
     try {
       const res = await fetch('/api/parent/onboarding', {

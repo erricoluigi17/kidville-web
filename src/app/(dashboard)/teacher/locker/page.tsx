@@ -28,7 +28,8 @@ function shiftMonth(ym: string, delta: number) {
 
 interface StockItem  { materiale: string; stock: number; }
 interface StockAlunno { id: string; nome: string; cognome: string; stocks: StockItem[]; }
-interface CaricoDayStudent { id: string; nome: string; cognome: string; inventario: any[]; }
+interface InventarioRecord { date: string; nome_oggetto: string; materiale?: string; quantita?: number; }
+interface CaricoDayStudent { id: string; nome: string; cognome: string; inventario: InventarioRecord[]; }
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -48,7 +49,7 @@ function TeacherLockerInner() {
 
     // Carico state
     const [caricoStudents, setCaricoStudents] = useState<CaricoDayStudent[]>([]);
-    const [caricoLoading,  setCaricoLoading]  = useState(false);
+    const [caricoLoading,  setCaricoLoading]  = useState(true);
     const [expandedCarico, setExpandedCarico] = useState<string | null>(null);
     const [showModal,      setShowModal]      = useState(false);
     const [preStudent,     setPreStudent]     = useState('');
@@ -56,7 +57,7 @@ function TeacherLockerInner() {
 
     // Consumo state
     const [consumoStudents, setConsumoStudents] = useState<StockAlunno[]>([]);
-    const [consumoLoading,  setConsumoLoading]  = useState(false);
+    const [consumoLoading,  setConsumoLoading]  = useState(true);
     const [expandedConsumo, setExpandedConsumo] = useState<string | null>(null);
     // inline consumo form: { studentId, materiale }
     const [consumoForm, setConsumoForm]         = useState<{sid: string; mat: string} | null>(null);
@@ -65,11 +66,10 @@ function TeacherLockerInner() {
 
     // Mensile state
     const [mensileStudents, setMensileStudents] = useState<StudentInfo[]>([]);
-    const [mensileLoading,  setMensileLoading]  = useState(false);
+    const [mensileLoading,  setMensileLoading]  = useState(true);
 
     // ── Fetch Carico ─────────────────────────────────────────────────────────
     const fetchCarico = useCallback(async () => {
-        setCaricoLoading(true);
         try {
             const today = new Date().toISOString().slice(0, 10);
             const res = await fetch(
@@ -78,20 +78,18 @@ function TeacherLockerInner() {
             const data = await res.json();
             if (Array.isArray(data)) {
                 // Filtra solo record di OGGI
-                const todayData = data.map((s: any) => ({
+                const todayData = data.map((s: CaricoDayStudent) => ({
                     ...s,
-                    inventario: (s.inventario ?? []).filter((r: any) => r.date === today),
+                    inventario: (s.inventario ?? []).filter((r) => r.date === today),
                 }));
                 setCaricoStudents(todayData);
                 if (todayData.length > 0 && !expandedCarico) setExpandedCarico(todayData[0].id);
             }
-        } catch (e) { console.error(e); }
-        finally { setCaricoLoading(false); }
-    }, [expandedCarico]);
+        } finally { setCaricoLoading(false); }
+    }, [expandedCarico, userId]);
 
     // ── Fetch Consumo (stock aggregato) ──────────────────────────────────────
     const fetchConsumo = useCallback(async () => {
-        setConsumoLoading(true);
         try {
             const res = await fetch(`/api/locker/inventory?classe_sezione=${SEZIONE}&mode=stock&userId=${userId}`);
             const data = await res.json();
@@ -99,22 +97,20 @@ function TeacherLockerInner() {
                 setConsumoStudents(data);
                 if (data.length > 0 && !expandedConsumo) setExpandedConsumo(data[0].id);
             }
-        } catch (e) { console.error(e); }
-        finally { setConsumoLoading(false); }
-    }, [expandedConsumo]);
+        } finally { setConsumoLoading(false); }
+    }, [expandedConsumo, userId]);
 
     // ── Fetch Mensile ─────────────────────────────────────────────────────────
     const fetchMensile = useCallback(async (ym: string) => {
-        setMensileLoading(true);
         try {
             const res = await fetch(
                 `/api/locker/inventory?classe_sezione=${SEZIONE}&mode=carico&month=${ym}&userId=${userId}`
             );
             const data = await res.json();
             if (Array.isArray(data)) {
-                setMensileStudents(data.map((s: any) => ({
+                setMensileStudents(data.map((s: CaricoDayStudent) => ({
                     id: s.id, nome: s.nome, cognome: s.cognome,
-                    inventario: (s.inventario ?? []).map((r: any) => ({
+                    inventario: (s.inventario ?? []).map((r) => ({
                         id:        r.nome_oggetto + r.date,
                         alunno_id: s.id,
                         materiale: r.materiale ?? r.nome_oggetto,
@@ -124,13 +120,12 @@ function TeacherLockerInner() {
                     })),
                 })));
             }
-        } catch (e) { console.error(e); }
-        finally { setMensileLoading(false); }
-    }, []);
+        } finally { setMensileLoading(false); }
+    }, [userId]);
 
     // Carica entrambi subito (Carico odierno + stock totale per confronto)
-    useEffect(() => { fetchCarico(); fetchConsumo(); }, []);
-    useEffect(() => { if (view === 'mensile') fetchMensile(month); }, [view, month]);
+    useEffect(() => { fetchCarico(); fetchConsumo(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    useEffect(() => { if (view === 'mensile') fetchMensile(month); }, [view, month, fetchMensile]);
 
     // ── Azioni ────────────────────────────────────────────────────────────────
     const handleLoadStock = async (body: { alunno_id: string; materiale: string; quantita: number }) => {
@@ -146,7 +141,7 @@ function TeacherLockerInner() {
     };
 
     const handleConsumo = async () => {
-        if (!consumoForm) return;
+        if (!consumoForm || !userId) return;
         setConsumoSaving(true);
         try {
             const res = await fetch(`/api/locker/inventory?userId=${userId}`, {
@@ -162,7 +157,7 @@ function TeacherLockerInner() {
             setConsumoForm(null);
             setConsumoQty(1);
             fetchConsumo();
-        } catch (e: any) { alert('❌ ' + e.message); }
+        } catch (e) { alert('❌ ' + (e instanceof Error ? e.message : String(e))); }
         finally { setConsumoSaving(false); }
     };
 
@@ -267,7 +262,7 @@ function TeacherLockerInner() {
                                                         <div className="rounded-xl bg-kidville-green/5 border border-kidville-green/10 px-3 py-2">
                                                             <p className="text-[10px] font-bold text-kidville-green uppercase tracking-wide mb-1.5">📦 Stock Totale Attuale</p>
                                                             <div className="flex gap-3 flex-wrap">
-                                                                {studentStocks.map((s: any) => (
+                                                                {studentStocks.map((s) => (
                                                                     <span key={s.materiale} className="text-xs font-maven font-semibold text-kidville-ink">
                                                                         {s.materiale}: <strong className="text-kidville-green">{s.stock} pz</strong>
                                                                     </span>
@@ -280,8 +275,8 @@ function TeacherLockerInner() {
                                                     {todayCount > 0 ? (
                                                         <div className="space-y-1.5">
                                                             <p className="text-[10px] font-bold text-kidville-success uppercase tracking-wide">✅ Consegnato oggi</p>
-                                                            {student.inventario.map((item: any, idx: number) => {
-                                                                const matStock = studentStocks.find((s: any) => s.materiale === (item.materiale ?? item.nome_oggetto))?.stock ?? 0;
+                                                            {student.inventario.map((item, idx) => {
+                                                                const matStock = studentStocks.find((s) => s.materiale === (item.materiale ?? item.nome_oggetto))?.stock ?? 0;
                                                                 return (
                                                                     <div key={idx} className="flex items-center justify-between bg-white rounded-xl px-4 py-2 border border-kidville-success/20">
                                                                         <span className="font-maven font-semibold text-kidville-green text-sm">
@@ -331,7 +326,7 @@ function TeacherLockerInner() {
             {view === 'consumo' && (
                 <>
                     <div className="mb-4 bg-kidville-warn-soft border border-kidville-warn/30 rounded-2xl px-4 py-3 text-xs text-kidville-warn font-maven">
-                        <strong>👆 Tocca un materiale</strong> per registrare che l'hai utilizzato. Lo stock si aggiorna in tempo reale.
+                        <strong>👆 Tocca un materiale</strong> per registrare che l&apos;hai utilizzato. Lo stock si aggiorna in tempo reale.
                     </div>
 
                     {consumoLoading ? (

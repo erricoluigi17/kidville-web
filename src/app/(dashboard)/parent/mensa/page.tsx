@@ -45,7 +45,7 @@ function Inner() {
         </h1>
         <p className="font-maven text-xs text-kidville-muted mt-1">Prenota il pranzo e consulta il menù della settimana.</p>
       </header>
-      {ready
+      {ready && parentId && studentId
         ? <><AllergyBanner studentId={studentId} parentId={parentId} /><MensaCalendar userId={parentId} studentId={studentId} /></>
         : <div className="py-12 flex justify-center"><div className="w-7 h-7 border-[3px] border-kidville-green/20 border-t-kidville-green rounded-full animate-spin" /></div>
       }

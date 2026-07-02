@@ -59,25 +59,32 @@ export default function ScrutinioPage() {
 
   const loadScrutinio = useCallback(async () => {
     if (!periodoId) return;
-    const r = await fetch(`/api/primaria/scrutinio?sectionId=${sectionId}&periodoId=${periodoId}&userId=${userId}`);
-    const d = await r.json();
-    if (!d.success) { setMsg(d.error || 'Errore'); return; }
-    setScrutinio(d.data.scrutinio);
-    setAlunni(d.data.alunni);
-    setMaterie(d.data.materie);
-    setMieMaterieIds(d.data.mieMaterieIds);
-    setScala(d.data.scala);
-    const g: Record<string, Record<string, string>> = {};
-    (d.data.giudizi as Giudizio[]).forEach((x) => {
-      g[x.alunno_id] = g[x.alunno_id] || {};
-      g[x.alunno_id][x.materia_id] = x.giudizio_sintetico || '';
-    });
-    setGiudizi(g);
-    const c: Record<string, { testo: string; globale: string }> = {};
-    (d.data.comportamento as Comportamento[]).forEach((x) => {
-      c[x.alunno_id] = { testo: x.giudizio_testo || '', globale: x.giudizio_globale || '' };
-    });
-    setComp(c);
+    try {
+      const r = await fetch(`/api/primaria/scrutinio?sectionId=${sectionId}&periodoId=${periodoId}&userId=${userId}`);
+      const d = await r.json();
+      if (!d.success) {
+        setMsg(d.error || 'Errore');
+      } else {
+        setScrutinio(d.data.scrutinio);
+        setAlunni(d.data.alunni);
+        setMaterie(d.data.materie);
+        setMieMaterieIds(d.data.mieMaterieIds);
+        setScala(d.data.scala);
+        const g: Record<string, Record<string, string>> = {};
+        (d.data.giudizi as Giudizio[]).forEach((x) => {
+          g[x.alunno_id] = g[x.alunno_id] || {};
+          g[x.alunno_id][x.materia_id] = x.giudizio_sintetico || '';
+        });
+        setGiudizi(g);
+        const c: Record<string, { testo: string; globale: string }> = {};
+        (d.data.comportamento as Comportamento[]).forEach((x) => {
+          c[x.alunno_id] = { testo: x.giudizio_testo || '', globale: x.giudizio_globale || '' };
+        });
+        setComp(c);
+      }
+    } finally {
+      // nessuno stato di caricamento da azzerare
+    }
   }, [periodoId, sectionId, userId]);
 
   useEffect(() => { loadScrutinio(); }, [loadScrutinio]);
@@ -89,7 +96,7 @@ export default function ScrutinioPage() {
   };
 
   const salvaGiudizi = async () => {
-    if (!scrutinio) return;
+    if (!scrutinio || !userId) return;
     setSaving(true); setMsg('');
     const payload: { alunnoId: string; materiaId: string; giudizioSintetico: string }[] = [];
     alunni.forEach((a) => {
@@ -110,7 +117,7 @@ export default function ScrutinioPage() {
   };
 
   const salvaComportamento = async () => {
-    if (!scrutinio) return;
+    if (!scrutinio || !userId) return;
     setSaving(true); setMsg('');
     const payload = alunni.map((a) => ({
       alunnoId: a.id,
@@ -128,7 +135,7 @@ export default function ScrutinioPage() {
   };
 
   const chiudiScrutinio = async () => {
-    if (!scrutinio) return;
+    if (!scrutinio || !userId) return;
     if (!confirm('Chiudere lo scrutinio? Dopo la chiusura i giudizi non saranno più modificabili. Potrai poi generare le pagelle e pubblicarle ai genitori.')) return;
     setSaving(true); setMsg('');
     const r = await fetch(`/api/primaria/scrutinio/chiudi?userId=${userId}`, {
@@ -168,7 +175,7 @@ export default function ScrutinioPage() {
   };
 
   const importaCsv = async (file: File) => {
-    if (!scrutinio) return;
+    if (!scrutinio || !userId) return;
     setSaving(true); setMsg('');
     try {
       const buf = await file.arrayBuffer();
@@ -202,7 +209,7 @@ export default function ScrutinioPage() {
 
   // --- Dirigente: generazione batch + pubblicazione ai genitori ---
   const generaTutte = async () => {
-    if (!scrutinio) return;
+    if (!scrutinio || !userId) return;
     setSaving(true); setMsg('');
     const r = await fetch(`/api/primaria/pagella/batch?userId=${userId}`, {
       method: 'POST',
@@ -215,7 +222,7 @@ export default function ScrutinioPage() {
   };
 
   const togglePubblica = async () => {
-    if (!scrutinio) return;
+    if (!scrutinio || !userId) return;
     const nuovo = !pubblicato;
     if (nuovo && !confirm('Pubblicare i voti? I genitori potranno vedere le pagelle e riceveranno una notifica.')) return;
     setSaving(true); setMsg('');

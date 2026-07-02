@@ -16,7 +16,7 @@ export function useChildSchoolType(): { schoolType: SchoolType | null; ready: bo
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    if (!idReady || !studentId) return;
+    if (!idReady || !parentId || !studentId) return;
     let cancelled = false;
     fetch(`/api/parent/primaria?studentId=${studentId}&userId=${parentId}`, { headers: { 'x-user-id': parentId } })
       .then((r) => (r.ok ? r.json() : null))

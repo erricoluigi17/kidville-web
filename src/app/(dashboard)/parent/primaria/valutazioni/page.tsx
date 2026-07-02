@@ -36,8 +36,7 @@ function ValutazioniGenitore() {
   const [aperta, setAperta] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!ready || !studentId) return;
-    setLoading(true);
+    if (!ready || !parentId || !studentId) return;
     fetch(`/api/parent/primaria/valutazioni?studentId=${studentId}&userId=${parentId}`, {
       headers: { 'x-user-id': parentId },
     })

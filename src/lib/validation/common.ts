@@ -5,7 +5,7 @@ import { z } from 'zod';
  *
  * NB: zUuid usa z.guid() (formato 8-4-4-4-12) e NON z.uuid():
  * lo strict RFC 9562 rifiuterebbe gli ID seedati in dev
- * (es. '33333333-3333-3333-3333-333333333333', variant non standard).
+ * (cifre ripetute a variant non standard, es. 'aaaaaaaa-aaaa-…').
  */
 
 /** Identificatore UUID/GUID nel formato 8-4-4-4-12. */

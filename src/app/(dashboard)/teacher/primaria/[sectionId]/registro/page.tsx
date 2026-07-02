@@ -41,7 +41,6 @@ export default function RegistroPage() {
   }, [userId]);
 
   const load = useCallback(async () => {
-    setLoading(true);
     try {
       const [reg, ctx] = await Promise.all([
         fetch(`/api/primaria/registro?sectionId=${sectionId}&data=${data}&userId=${userId}`).then((r) => r.json()),
@@ -71,6 +70,7 @@ export default function RegistroPage() {
   }, [load]);
 
   const uploadAllegato = async (registroId: string, file: File) => {
+    if (!userId) { alert('Identità non risolta: riapri la pagina dal registro.'); return; }
     const fd = new FormData();
     fd.append('file', file);
     fd.append('registroId', registroId);
@@ -196,7 +196,7 @@ export default function RegistroPage() {
         </ul>
       )}
 
-      {modal && (
+      {modal && userId && (
         <FirmaModal
           sectionId={sectionId}
           userId={userId}

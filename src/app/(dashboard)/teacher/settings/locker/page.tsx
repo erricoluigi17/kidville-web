@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useEffect, Suspense } from 'react';
+import { useState, useEffect, useCallback, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import {
-    Settings, Plus, Trash2, GripVertical, ToggleLeft, ToggleRight,
+    Settings, Plus, Trash2, ToggleLeft, ToggleRight,
     ChevronUp, ChevronDown, Package, Save, ArrowLeft,
 } from 'lucide-react';
 import Link from 'next/link';
@@ -44,20 +44,19 @@ function LockerSettingsInner() {
     const [addError, setAddError]         = useState('');
 
     // ── Fetch ─────────────────────────────────────────────────────────────────
-    const fetchMateriali = async (classe: string) => {
-        setLoading(true);
+    const fetchMateriali = useCallback(async (classe: string) => {
         try {
             const res = await fetch(`/api/locker/materials?classe_sezione=${classe}&userId=${userId}`);
             const data = await res.json();
             setMateriali(Array.isArray(data) ? data : []);
-        } catch (e) { console.error(e); }
-        finally { setLoading(false); }
-    };
+        } finally { setLoading(false); }
+    }, [userId]);
 
-    useEffect(() => { fetchMateriali(classeFilter); }, [classeFilter]);
+    useEffect(() => { fetchMateriali(classeFilter); }, [classeFilter, fetchMateriali]);
 
     // ── Toggle attivo ─────────────────────────────────────────────────────────
     const toggleAttivo = async (mat: MaterialeConfig) => {
+        if (!userId) return;
         setSaving(mat.id);
         try {
             await fetch(`/api/locker/materials?userId=${userId}`, {
@@ -71,6 +70,7 @@ function LockerSettingsInner() {
 
     // ── Modifica soglie ───────────────────────────────────────────────────────
     const updateSoglie = async (mat: MaterialeConfig, field: 'livello_allerta' | 'livello_emergenza', val: number) => {
+        if (!userId) return;
         setSaving(mat.id);
         try {
             await fetch(`/api/locker/materials?userId=${userId}`, {
@@ -84,6 +84,7 @@ function LockerSettingsInner() {
 
     // ── Sposta ordine ─────────────────────────────────────────────────────────
     const moveOrdine = async (mat: MaterialeConfig, dir: 'up' | 'down') => {
+        if (!userId) return;
         const idx = materiali.findIndex(m => m.id === mat.id);
         const targetIdx = dir === 'up' ? idx - 1 : idx + 1;
         if (targetIdx < 0 || targetIdx >= materiali.length) return;
@@ -111,6 +112,7 @@ function LockerSettingsInner() {
 
     // ── Elimina ───────────────────────────────────────────────────────────────
     const deleteMat = async (mat: MaterialeConfig) => {
+        if (!userId) return;
         if (!confirm(`Eliminare "${mat.nome}"? Questa azione non può essere annullata.`)) return;
         setSaving(mat.id);
         try {
@@ -121,6 +123,7 @@ function LockerSettingsInner() {
 
     // ── Aggiungi nuovo ────────────────────────────────────────────────────────
     const addMateriale = async () => {
+        if (!userId) return;
         if (!newMat.nome.trim()) { setAddError('Inserisci un nome'); return; }
         setSaving('new');
         try {
@@ -139,8 +142,8 @@ function LockerSettingsInner() {
             setNewMat({ nome: '', icona: '📦', unita: 'pz', livello_allerta: 5, livello_emergenza: 2 });
             setShowAddForm(false);
             setAddError('');
-        } catch (e: any) {
-            setAddError(e.message);
+        } catch (e) {
+            setAddError(e instanceof Error ? e.message : String(e));
         } finally { setSaving(null); }
     };
 
@@ -353,7 +356,7 @@ function LockerSettingsInner() {
             <div className="mt-6 bg-kidville-info-soft rounded-2xl p-4 text-xs text-kidville-info font-maven">
                 <strong>ℹ️ Come funziona:</strong>
                 <ul className="mt-1 space-y-1 list-disc list-inside opacity-80">
-                    <li>I materiali configurati qui appaiono nel form "Carico Genitore" e nel portale genitore</li>
+                    <li>I materiali configurati qui appaiono nel form &quot;Carico Genitore&quot; e nel portale genitore</li>
                     <li>Disattiva un materiale per nasconderlo senza perderlo</li>
                     <li>Le soglie determinano il colore del semaforo (🟡 allerta, 🔴 urgente)</li>
                     <li>Ogni classe può avere materiali diversi</li>

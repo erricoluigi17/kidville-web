@@ -2,57 +2,64 @@
 
 import { useState, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { getCurrentParentId, getCurrentStudentId, DEV_PARENT_ID, DEFAULT_STUDENT_ID } from './current-user';
+import { useSessionIdentity } from './use-session-identity';
+import { getCurrentStudentId } from './current-user';
 
 export interface ParentIdentity {
-  parentId: string;
-  studentId: string;
+  parentId: string | null;
+  studentId: string | null;
   ready: boolean; // false finché l'auto-resolve non è completato
 }
 
 /**
  * Risolve parentId e studentId per le pagine genitore.
- * Se lo studentId in URL/localStorage è il fallback demo,
- * recupera il figlio reale dal DB tramite legame_genitori_alunni.
+ * parentId viene dall'identità di sessione (URL → localStorage → /api/me →
+ * null+redirect login, vedi useSessionIdentity). studentId: URL →
+ * localStorage → primo figlio dal DB (legame_genitori_alunni) → null.
+ * Nessun fallback demo (M4).
  */
 export function useParentIdentity(): ParentIdentity {
+  const session = useSessionIdentity();
   const searchParams = useSearchParams();
-  const parentId = getCurrentParentId(searchParams);
   // Inizializza solo dall'URL per evitare hydration mismatch (localStorage non
-  // è disponibile durante SSR). Il useEffect aggiorna dal localStorage dopo mount.
+  // è disponibile durante SSR). Il useEffect risolve il resto dopo il mount.
   const fromUrl = searchParams.get('id');
-  const [studentId, setStudentId] = useState<string>(fromUrl ?? DEFAULT_STUDENT_ID);
-  const [ready, setReady] = useState<boolean>(!!fromUrl);
+  const [studentId, setStudentId] = useState<string | null>(fromUrl);
+  const [studentReady, setStudentReady] = useState<boolean>(!!fromUrl);
 
   useEffect(() => {
-    const urlId = searchParams.get('id');
+    if (!session.ready) return;
+    const parentId = session.userId;
+    let cancelled = false;
 
-    // Se l'ID è esplicito nell'URL, è già corretto e va persistito.
-    if (urlId) {
-      try { localStorage.setItem('kv_student_id', urlId); } catch { /* ignore */ }
-      setStudentId(urlId);
-      setReady(true);
-      return;
-    }
+    const resolve = async () => {
+      let resolved: string | null = null;
+      try {
+        // URL esplicita o localStorage (getCurrentStudentId persiste l'URL).
+        const known = getCurrentStudentId(searchParams);
+        if (known) { resolved = known; return; }
 
-    // Leggi da localStorage (solo lato client, dopo mount)
-    const stored = getCurrentStudentId(searchParams);
-    if (stored !== DEFAULT_STUDENT_ID) { setStudentId(stored); setReady(true); return; }
-
-    // Auto-resolve: chiedi al backend i figli del genitore
-    fetch(`/api/parent/students?userId=${parentId}`, {
-      headers: { 'x-user-id': parentId },
-    })
-      .then(r => r.ok ? r.json() : null)
-      .then(d => {
+        // Auto-resolve: chiedi al backend i figli del genitore.
+        if (!parentId) return;
+        const res = await fetch(`/api/parent/students?userId=${parentId}`, {
+          headers: { 'x-user-id': parentId },
+        }).catch(() => null);
+        const d = res?.ok ? await res.json().catch(() => null) : null;
         const first = d?.data?.[0];
-        if (!first?.id) { setReady(true); return; }
-        try { localStorage.setItem('kv_student_id', first.id); } catch { /* ignore */ }
-        setStudentId(first.id);
-        setReady(true);
-      })
-      .catch(() => setReady(true));
-  }, [parentId, searchParams]);
+        if (first?.id) {
+          try { localStorage.setItem('kv_student_id', first.id); } catch { /* ignore */ }
+          resolved = first.id;
+        }
+      } finally {
+        if (!cancelled) {
+          setStudentId(resolved);
+          setStudentReady(true);
+        }
+      }
+    };
+    void resolve();
+    return () => { cancelled = true; };
+  }, [session.ready, session.userId, searchParams]);
 
-  return { parentId, studentId, ready };
+  return { parentId: session.userId, studentId, ready: session.ready && studentReady };
 }

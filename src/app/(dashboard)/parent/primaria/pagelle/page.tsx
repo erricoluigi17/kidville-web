@@ -25,19 +25,21 @@ function PagelleGenitore() {
   const [msg, setMsg] = useState('');
 
   const carica = useCallback(async () => {
-    if (!ready || !studentId) return;
-    setLoading(true);
-    const r = await fetch(`/api/parent/primaria/pagella?studentId=${studentId}&userId=${parentId}`, {
-      headers: { 'x-user-id': parentId },
-    });
-    const d = await r.json();
-    if (d.success) setPagelle(d.data);
+    if (!ready || !parentId || !studentId) return;
     try {
-      const rc = await fetch(`/api/parent/competenze?studentId=${studentId}&userId=${parentId}`, { headers: { 'x-user-id': parentId } });
-      const dc = await rc.json();
-      if (dc.success) setCertificati(dc.data ?? []);
-    } catch { /* no-op */ }
-    setLoading(false);
+      const r = await fetch(`/api/parent/primaria/pagella?studentId=${studentId}&userId=${parentId}`, {
+        headers: { 'x-user-id': parentId },
+      });
+      const d = await r.json();
+      if (d.success) setPagelle(d.data);
+      try {
+        const rc = await fetch(`/api/parent/competenze?studentId=${studentId}&userId=${parentId}`, { headers: { 'x-user-id': parentId } });
+        const dc = await rc.json();
+        if (dc.success) setCertificati(dc.data ?? []);
+      } catch { /* no-op */ }
+    } finally {
+      setLoading(false);
+    }
   }, [ready, studentId, parentId]);
 
   useEffect(() => { carica(); }, [carica]);
@@ -48,6 +50,7 @@ function PagelleGenitore() {
   };
 
   const caricaDettaglio = async (scrutinioId: string) => {
+    if (!parentId) return;
     if (dettaglio[scrutinioId] !== undefined) { setDettaglio((p) => ({ ...p, [scrutinioId]: dettaglio[scrutinioId] === null ? undefined as unknown as null : null })); return; }
     const r = await fetch(`/api/parent/primaria/scrutinio?scrutinioId=${scrutinioId}&studentId=${studentId}&userId=${parentId}`, {
       headers: { 'x-user-id': parentId },
@@ -57,6 +60,7 @@ function PagelleGenitore() {
   };
 
   const avviaFirma = async (scrutinioId: string) => {
+    if (!parentId) return;
     setMsg(''); setOtpTarget(scrutinioId);
     const r = await fetch(`/api/parent/primaria/pagella/firma/otp?userId=${parentId}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'x-user-id': parentId },
@@ -67,7 +71,7 @@ function PagelleGenitore() {
   };
 
   const confermaFirma = async () => {
-    if (!otpTarget || !otpState) return;
+    if (!otpTarget || !otpState || !parentId) return;
     setFirmando(otpTarget);
     const r = await fetch(`/api/parent/primaria/pagella/firma?userId=${parentId}`, {
       method: 'POST',

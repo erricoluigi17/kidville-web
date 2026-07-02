@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useCallback, useEffect, useState } from 'react';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 import { Check } from 'lucide-react';
 
@@ -25,21 +25,24 @@ function NoteGenitore() {
   const [otpTarget, setOtpTarget] = useState<string | null>(null);
   const [msg, setMsg] = useState('');
 
-  const carica = async () => {
-    if (!ready || !studentId) return;
-    setLoading(true);
-    const r = await fetch(`/api/parent/primaria/note?studentId=${studentId}&userId=${parentId}`, {
-      headers: { 'x-user-id': parentId },
-    });
-    const d = await r.json();
-    if (d.success) setNote(d.data);
-    setLoading(false);
-  };
+  const carica = useCallback(async () => {
+    if (!ready || !parentId || !studentId) return;
+    try {
+      const r = await fetch(`/api/parent/primaria/note?studentId=${studentId}&userId=${parentId}`, {
+        headers: { 'x-user-id': parentId },
+      });
+      const d = await r.json();
+      if (d.success) setNote(d.data);
+    } finally {
+      setLoading(false);
+    }
+  }, [ready, studentId, parentId]);
 
-  useEffect(() => { carica(); }, [ready, studentId]);
+  useEffect(() => { carica(); }, [carica]);
 
   // Presa visione con firma OTP/FES (DL-014): invio codice → conferma → firma.
   const avviaFirma = async (notaId: string) => {
+    if (!parentId) return;
     setMsg(''); setOtpTarget(notaId); setOtpCode('');
     const r = await fetch(`/api/parent/primaria/note/firma/otp?userId=${parentId}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'x-user-id': parentId },
@@ -50,7 +53,7 @@ function NoteGenitore() {
   };
 
   const confermaFirma = async () => {
-    if (!otpTarget || !otpState) return;
+    if (!otpTarget || !otpState || !parentId) return;
     setFirmando(otpTarget);
     const r = await fetch(`/api/parent/primaria/note/firma?userId=${parentId}`, {
       method: 'POST',

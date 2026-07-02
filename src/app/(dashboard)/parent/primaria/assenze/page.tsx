@@ -37,8 +37,7 @@ function AssenzeGenitore() {
   const [msg, setMsg] = useState('');
 
   const carica = useCallback(() => {
-    if (!ready || !studentId) return;
-    setLoading(true);
+    if (!ready || !parentId || !studentId) return;
     fetch(`/api/parent/primaria/assenze?studentId=${studentId}&userId=${parentId}`, {
       headers: { 'x-user-id': parentId },
     })
@@ -50,6 +49,7 @@ function AssenzeGenitore() {
   useEffect(() => { carica(); }, [carica]);
 
   const avviaGiustifica = async (presenzaId: string) => {
+    if (!parentId) return;
     setMsg(''); setOtpTarget(presenzaId); setOtpCode(''); setMotivo('');
     const r = await fetch(`/api/parent/presenze/giustifica/otp?userId=${parentId}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'x-user-id': parentId },
@@ -60,7 +60,7 @@ function AssenzeGenitore() {
   };
 
   const confermaGiustifica = async (p: Presenza) => {
-    if (!otpState) return;
+    if (!otpState || !parentId) return;
     setFirmando(true);
     const r = await fetch(`/api/parent/presenze/giustifica?userId=${parentId}`, {
       method: 'POST',

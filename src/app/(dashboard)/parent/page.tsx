@@ -165,9 +165,11 @@ function ParentHomeContent() {
       </div>
 
       {/* ── RIEPILOGO PAGAMENTI ───────────────────── */}
-      <div className="pt-4">
-        <PagamentiSummary userId={parentId} href={wi('/parent/pagamenti')} />
-      </div>
+      {parentId && (
+        <div className="pt-4">
+          <PagamentiSummary userId={parentId} href={wi('/parent/pagamenti')} />
+        </div>
+      )}
 
       {/* ── DIARIO OGGI (solo infanzia) ───────────── */}
       {!isPrimaria && studentId && (

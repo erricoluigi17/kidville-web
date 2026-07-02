@@ -147,6 +147,7 @@ export async function syncLockerInventory(classeSezione: string) {
 
     try {
         const userId = getCurrentTeacherId(null);
+        if (!userId) return; // identità non risolta: niente refresh cache
         const res = await fetch(`/api/locker/inventory?classe_sezione=${classeSezione}&userId=${userId}`);
         const data = await res.json();
 
@@ -186,8 +187,7 @@ export async function getLocalStudentDetails(studentId: string) {
         // Nuova architettura: cerchiamo in "adulti" (in app offline non abbiamo la join pivot in db.ts completa, 
         // ma possiamo espanderla. Per ora usiamo un fallback per non rompere app vecchie)
         const adults = await db.adulti.toArray();
-        const parents = await db.genitori.toArray(); 
-        
+
         return {
             delegates: delegates.map(d => ({
                 id: d.id,
@@ -260,8 +260,6 @@ export async function syncPendingGalleryMedia() {
     }
 
     try {
-        const supabase = getSupabaseClient();
-        
         const pending = await db.galleria
             .where('sync_status')
             .anyOf('pending', 'error')
@@ -335,12 +333,16 @@ export async function syncPendingGalleryMedia() {
 // /api/primaria/* per applicare la logica server (compresenza, vincoli, notifiche).
 // ============================================================
 
-function teacherId(): string {
+// Identità docente per la coda offline: localStorage → sessione (kv_user_id)
+// → null. Nessun fallback demo (M4): senza identità il sync resta in coda
+// (pending) e riparte alla prossima chiamata con identità risolta.
+function teacherId(): string | null {
     if (typeof window !== 'undefined') {
-        const stored = window.localStorage.getItem('kv_teacher_id');
+        const stored = window.localStorage.getItem('kv_teacher_id')
+            || window.localStorage.getItem('kv_user_id');
         if (stored) return stored;
     }
-    return '22222222-2222-2222-2222-222222222222';
+    return null;
 }
 
 export async function saveLocalAppello(data: Omit<LocalPrimariaAppello, 'sync_status'>) {
@@ -355,6 +357,7 @@ export async function syncPendingAppello() {
         const pending = await db.primaria_appello.where('sync_status').anyOf('pending', 'error').toArray();
         if (pending.length === 0) return;
         const uid = teacherId();
+        if (!uid) return; // identità non risolta: la coda resta pending
         for (const r of pending) {
             const res = await fetch(`/api/primaria/appello?userId=${uid}`, {
                 method: 'POST',
@@ -380,6 +383,7 @@ export async function syncPendingRegistro() {
         const pending = await db.primaria_registro.where('sync_status').anyOf('pending', 'error').toArray();
         if (pending.length === 0) return;
         const uid = teacherId();
+        if (!uid) return; // identità non risolta: la coda resta pending
         for (const r of pending) {
             const res = await fetch(`/api/primaria/registro?userId=${uid}`, {
                 method: 'POST',

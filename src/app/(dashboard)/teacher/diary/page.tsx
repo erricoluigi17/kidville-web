@@ -3,7 +3,7 @@
 import { useState, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Plus, Minus, Clock, Users, WifiOff, Moon, Sun } from 'lucide-react';
+import { X, Plus, Minus, Users, WifiOff, Moon, Sun } from 'lucide-react';
 import { DiaryEventType } from '@/lib/offline/db';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { EventTypeButton } from '@/components/features/teacher/diary/EventTypeButton';
@@ -90,7 +90,7 @@ function TeacherDiaryInner() {
     const [students, setStudents] = useState<Student[]>([]);
     const [selectedEvent, setSelectedEvent] = useState<DiaryEventType | null>(null);
     const [studentStates, setStudentStates] = useState<Record<string, Record<string, unknown>>>({});
-    const [isOffline, setIsOffline] = useState(false);
+    const [isOffline, setIsOffline] = useState(() => typeof navigator !== 'undefined' && !navigator.onLine);
     const [isSaving, setIsSaving] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
     const [savedStudentIds, setSavedStudentIds] = useState<Set<string>>(new Set());
@@ -106,18 +106,10 @@ function TeacherDiaryInner() {
         const onOffline = () => setIsOffline(true);
         window.addEventListener('online', onOnline);
         window.addEventListener('offline', onOffline);
-        setIsOffline(!navigator.onLine);
         return () => { window.removeEventListener('online', onOnline); window.removeEventListener('offline', onOffline); };
     }, []);
 
-    // Carica studenti: di default solo i presenti; rifa il fetch al toggle.
-    useEffect(() => {
-        fetchStudents();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [showAll]);
-
     const fetchStudents = async () => {
-        setIsLoading(true);
         try {
             const res = await fetch(`/api/diary/students?sezione=${SEZIONE}&onlyPresent=${showAll ? 'false' : 'true'}&userId=${userId}`);
             const data = await res.json();
@@ -130,12 +122,16 @@ function TeacherDiaryInner() {
                 }));
                 setStudents(mapped);
             }
-        } catch (err) {
-            console.error('Errore caricamento alunni:', err);
         } finally {
             setIsLoading(false);
         }
     };
+
+    // Carica studenti: di default solo i presenti; rifa il fetch al toggle.
+    useEffect(() => {
+        fetchStudents();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [showAll]);
 
     // Ripristina lo stato UI dai dati già salvati su Supabase per un certo tipo evento
     const restoreFromSupabase = async (eventType: DiaryEventType, studentList?: Student[]) => {
@@ -249,7 +245,7 @@ function TeacherDiaryInner() {
     const handleSave = async () => {
         setIsSaving(true);
         try {
-            if (!selectedEvent) return;
+            if (!selectedEvent || !userId) return;
             const nowIso = new Date().toISOString();
             const payload = students.map(student => {
                 // dettagli specifico per tipo evento:

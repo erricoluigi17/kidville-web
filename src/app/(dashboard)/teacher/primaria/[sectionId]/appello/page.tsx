@@ -70,7 +70,6 @@ export default function AppelloPage() {
   const [riepilogoLoading, setRiepilogoLoading] = useState(false);
 
   const load = useCallback(async () => {
-    setLoading(true);
     try {
       const r = await fetch(`/api/primaria/appello?sectionId=${sectionId}&data=${data}&userId=${userId}`);
       const d = await r.json();
@@ -88,15 +87,17 @@ export default function AppelloPage() {
   }, [sectionId, userId]);
 
   const caricaRiepilogo = useCallback(async () => {
-    if (!riepilogoAlunnoId) { setRiepilogo(null); return; }
-    setRiepilogoLoading(true);
-    const r = await fetch(
-      `/api/primaria/ore-assenza?sectionId=${sectionId}&alunnoId=${riepilogoAlunnoId}&from=${riepilogoDal}&to=${riepilogoAl}&includiMaterie=true&userId=${userId}`
-    );
-    const d = await r.json();
-    setRiepilogoLoading(false);
-    if (d.success && d.data.length > 0) setRiepilogo(d.data[0]);
-    else setRiepilogo(null);
+    if (!riepilogoAlunnoId) return;
+    try {
+      const r = await fetch(
+        `/api/primaria/ore-assenza?sectionId=${sectionId}&alunnoId=${riepilogoAlunnoId}&from=${riepilogoDal}&to=${riepilogoAl}&includiMaterie=true&userId=${userId}`
+      );
+      const d = await r.json();
+      if (d.success && d.data.length > 0) setRiepilogo(d.data[0]);
+      else setRiepilogo(null);
+    } finally {
+      setRiepilogoLoading(false);
+    }
   }, [sectionId, riepilogoAlunnoId, riepilogoDal, riepilogoAl, userId]);
 
   useEffect(() => { caricaRiepilogo(); }, [caricaRiepilogo]);
@@ -114,7 +115,8 @@ export default function AppelloPage() {
 
   // Invia (o riprova offline) lo stato di un alunno, con eventuali orari.
   const invia = async (alunnoId: string, stato: Stato, orarioEntrata?: string, orarioUscita?: string) => {
-    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    // Senza identità risolta si accoda in locale come da offline (sync poi).
+    if (!userId || (typeof navigator !== 'undefined' && !navigator.onLine)) {
       await saveLocalAppello({ id: `${alunnoId}|${data}`, section_id: sectionId, alunno_id: alunnoId, data, stato, aggiornato_il: new Date().toISOString() });
       return;
     }
@@ -153,6 +155,7 @@ export default function AppelloPage() {
 
   // Presa visione della giustifica inserita dal genitore.
   const presaVisione = async (presenzaId: string) => {
+    if (!userId) return;
     await fetch(`/api/primaria/presenze/giust-vista?userId=${userId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
@@ -162,6 +165,7 @@ export default function AppelloPage() {
   };
 
   const tuttiPresenti = async () => {
+    if (!userId) return;
     setSaving(true);
     setRighe((prev) => prev.map((r) => ({ ...r, stato: 'presente', orario_entrata: null, orario_uscita: null })));
     await fetch(`/api/primaria/appello?userId=${userId}`, {

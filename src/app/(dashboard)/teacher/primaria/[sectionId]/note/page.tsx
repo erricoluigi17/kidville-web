@@ -43,9 +43,13 @@ export default function NotePage() {
   }, [sectionId, userId]);
 
   const loadNote = useCallback(async () => {
-    const r = await fetch(`/api/primaria/note?sectionId=${sectionId}&userId=${userId}`);
-    const d = await r.json();
-    if (d.success) setNote(d.data);
+    try {
+      const r = await fetch(`/api/primaria/note?sectionId=${sectionId}&userId=${userId}`);
+      const d = await r.json();
+      if (d.success) setNote(d.data);
+    } finally {
+      // nessuno stato di caricamento da azzerare
+    }
   }, [sectionId, userId]);
 
   useEffect(() => { loadNote(); }, [loadNote]);
@@ -56,6 +60,7 @@ export default function NotePage() {
   const salva = async () => {
     setMsg('');
     if (sel.length === 0 || !testo) { setMsg('Seleziona alunni e scrivi il testo'); return; }
+    if (!userId) { setMsg('Identità non risolta: riapri la pagina dal registro.'); return; }
     setSaving(true);
     const r = await fetch(`/api/primaria/note?userId=${userId}`, {
       method: 'POST',

@@ -6,9 +6,17 @@ import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import {
     Clock, User, CheckCircle, Play, Trash2, Tag, Calendar,
     ChevronDown, ChevronUp, Edit2, Eye, AlertCircle, Lock,
-    Paperclip, MessageSquare, Send, Download, ExternalLink,
-    CheckSquare, RefreshCw, Undo, EyeOff
+    Paperclip, MessageSquare, Send, ExternalLink,
+    CheckSquare, EyeOff
 } from 'lucide-react';
+
+interface TaskAttachment {
+    name: string;
+    url: string;
+    fileUrl?: string;
+    size: number;
+    type: string;
+}
 
 export interface Task {
     id: string;
@@ -78,8 +86,8 @@ interface TaskCardProps {
     onComplete: (task: Task) => void;
     onDelete?: (id: string) => void;
     onEdit?: (task: Task) => void;
-    onResolveSubtask?: (taskId: string, subtaskId: string, notes: string, attachments?: any[]) => Promise<void>;
-    onUpdateSubtasks?: (taskId: string, updatedCompiti: any[], toastMessage?: string) => Promise<void>;
+    onResolveSubtask?: (taskId: string, subtaskId: string, notes: string, attachments?: TaskAttachment[]) => Promise<void>;
+    onUpdateSubtasks?: (taskId: string, updatedCompiti: NonNullable<Task['compiti']>, toastMessage?: string) => Promise<void>;
     onUpdateTaskFields?: (taskId: string, updates: Record<string, unknown>, toastMessage?: string) => Promise<void>;
 }
 
@@ -175,9 +183,11 @@ export function TaskCard({
         for (const file of files) {
             const formData = new FormData();
             formData.append('file', file);
-            const res = await fetch(`/api/tasks/upload?userId=${getCurrentTeacherId(null)}`, {
+            // Identità nullable (M4): header vuoto → il server risponde 401,
+            // gestito dal throw sottostante (niente fallback demo).
+            const res = await fetch(`/api/tasks/upload?userId=${getCurrentTeacherId(null) ?? ''}`, {
                 method: 'POST',
-                headers: { 'x-user-id': getCurrentTeacherId(null) },
+                headers: { 'x-user-id': getCurrentTeacherId(null) ?? '' },
                 body: formData
             });
             if (res.ok) {
@@ -191,7 +201,7 @@ export function TaskCard({
     };
 
     // Render attachments grid with file types
-    const renderAttachments = (attachmentsList?: any[] | null) => {
+    const renderAttachments = (attachmentsList?: TaskAttachment[] | null) => {
         if (!attachmentsList || attachmentsList.length === 0) return null;
         return (
             <div className="mt-2.5 grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -205,6 +215,7 @@ export function TaskCard({
                                     onClick={() => setLightboxUrl(att.fileUrl || att.url)}
                                     className="w-9 h-9 rounded-lg overflow-hidden bg-kidville-cream flex-shrink-0 border border-kidville-line hover:opacity-85 transition-opacity"
                                 >
+                                    {/* eslint-disable-next-line @next/next/no-img-element */}
                                     <img src={att.fileUrl || att.url} alt={att.name} className="w-full h-full object-cover" />
                                 </button>
                             ) : (
@@ -504,8 +515,8 @@ export function TaskCard({
                                                                     setCommentText('');
                                                                     setCommentFiles([]);
                                                                 }
-                                                            } catch (err: any) {
-                                                                alert(err.message || 'Errore');
+                                                            } catch (err) {
+                                                                alert(err instanceof Error && err.message ? err.message : 'Errore');
                                                             } finally {
                                                                 setIsUploadingCommentFile(false);
                                                             }
@@ -667,8 +678,8 @@ export function TaskCard({
                                                                                 setSubtaskNotes('');
                                                                                 setSelectedFiles([]);
                                                                             }
-                                                                        } catch (err: any) { 
-                                                                            alert(err.message || 'Errore durante il completamento');
+                                                                        } catch (err) {
+                                                                            alert(err instanceof Error && err.message ? err.message : 'Errore durante il completamento');
                                                                         } finally { 
                                                                             setIsResolvingSubtask(false); 
                                                                         }
@@ -882,8 +893,8 @@ export function TaskCard({
                                                                                         setCommentText('');
                                                                                         setCommentFiles([]);
                                                                                     }
-                                                                                } catch (err: any) {
-                                                                                    alert(err.message || 'Errore');
+                                                                                } catch (err) {
+                                                                                    alert(err instanceof Error && err.message ? err.message : 'Errore');
                                                                                 } finally {
                                                                                     setIsUploadingCommentFile(false);
                                                                                 }
@@ -1076,6 +1087,7 @@ export function TaskCard({
                     >
                         ✕
                     </button>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={lightboxUrl} alt="Allegato" className="max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl animate-fade-in" />
                 </div>
             )}

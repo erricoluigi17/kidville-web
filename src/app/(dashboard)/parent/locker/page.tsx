@@ -11,28 +11,6 @@ import {
 } from '@/components/features/teacher/locker/MonthlyLockerTable';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 
-interface InventoryItem {
-    id?: string;
-    alunno_id?: string;
-    materiale: string;
-    quantita: number;
-    quantita_residua?: number;
-    livello_allerta?: number;
-    livello_emergenza?: number;
-    nome_oggetto?: string;
-    date?: string;
-    portato?: boolean;
-    // Legacy join structure (potrebbe non essere presente nello schema flat)
-    locker_catalog?: {
-        id: string;
-        nome: string;
-        icona: string;
-        unita: string;
-        soglia_gialla: number;
-        soglia_rossa: number;
-    };
-}
-
 interface LockerRequest {
     id: string;
     livello_alert: 'giallo' | 'rosso';
@@ -114,7 +92,7 @@ function LockerInner() {
     const [monthlyData, setMonthlyData] = useState<StudentInfo[]>([]);
 
     const [isLoading, setIsLoading]               = useState(true);
-    const [isMonthlyLoading, setIsMonthlyLoading] = useState(false);
+    const [isMonthlyLoading, setIsMonthlyLoading] = useState(true);
     const [showHistory, setShowHistory]           = useState(false);
     const [savingId, setSavingId]                 = useState<string | null>(null);
     const [showToast, setShowToast]               = useState(false);
@@ -125,7 +103,6 @@ function LockerInner() {
 
     // ── Fetch overview (usa mode=stock per numeri precisi) ──────────────────────────────
     const fetchData = useCallback(async (silent = false) => {
-        if (!silent) setIsLoading(true);
         try {
             // mode=stock: ritorna [{materiale, stock}] con stock aggregato reale
             const [stockRes, reqRes] = await Promise.all([
@@ -148,16 +125,14 @@ function LockerInner() {
                 setStockData(stockJson);
             }
             if (Array.isArray(reqData)) setRequests(reqData);
-        } catch (err) {
-            console.error('Errore caricamento:', err);
         } finally {
             if (!silent) setIsLoading(false);
         }
     }, [studentId]);
 
     // ── Fetch tabella mensile (solo per il figlio corrente) ───────────────────
-    const fetchMonthly = async (ym: string) => {
-        setIsMonthlyLoading(true);
+    const fetchMonthly = useCallback(async (ym: string) => {
+        if (!studentId) return; // identità non risolta
         try {
             // mode=carico → solo giorni in cui il genitore ha consegnato
             const res = await fetch(
@@ -170,7 +145,7 @@ function LockerInner() {
                         id: studentId,
                         nome: childName,
                         cognome: '',
-                        inventario: data.map((item: any) => ({
+                        inventario: data.map((item: { nome_oggetto: string; date: string; materiale?: string; quantita?: number }) => ({
                             id:        item.nome_oggetto + item.date,
                             alunno_id: studentId,
                             materiale: item.materiale ?? item.nome_oggetto ?? '',
@@ -181,17 +156,15 @@ function LockerInner() {
                     },
                 ]);
             }
-        } catch (err) {
-            console.error('Errore caricamento mensile:', err);
         } finally {
             setIsMonthlyLoading(false);
         }
-    };
+    }, [studentId, childName]);
 
     useEffect(() => { fetchData(); }, [fetchData]);
     useEffect(() => {
         if (activeTab === 'monthly') fetchMonthly(month);
-    }, [activeTab, month]);
+    }, [activeTab, month, fetchMonthly]);
 
     // ── Polling: aggiornamento ogni 20 secondi (affidabile, funziona sempre) ─────────
     useEffect(() => {
@@ -200,7 +173,7 @@ function LockerInner() {
             if (activeTab === 'monthly') fetchMonthly(month);
         }, 20_000); // ogni 20 secondi
         return () => clearInterval(interval);
-    }, [fetchData, activeTab, month]);
+    }, [fetchData, fetchMonthly, activeTab, month]);
 
     const handleAcknowledge = async (requestId: string) => {
         setSavingId(requestId);

@@ -1,13 +1,12 @@
 'use client';
 
 import { Suspense } from 'react';
-import { useSearchParams } from 'next/navigation';
 import { StoricoPagamenti } from '@/components/features/parent/pagamenti/StoricoPagamenti';
-import { getCurrentParentId } from '@/lib/auth/current-user';
+import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 
+// L'identità viene dalla sessione (URL → localStorage → /api/me), senza demo.
 function Inner() {
-    const params = useSearchParams();
-    const userId = getCurrentParentId(params);
+    const { userId } = useSessionIdentity();
     return (
         <div className="px-4 pt-6 pb-24">
             <header className="mb-5">
@@ -19,7 +18,7 @@ function Inner() {
                 </h1>
                 <p className="font-maven text-xs text-kidville-muted mt-1">Storico pagamenti effettuati e da effettuare.</p>
             </header>
-            <StoricoPagamenti userId={userId} />
+            {userId && <StoricoPagamenti userId={userId} />}
         </div>
     );
 }

@@ -18,8 +18,7 @@ function OrarioGenitore() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!ready || !studentId) return;
-    setLoading(true);
+    if (!ready || !parentId || !studentId) return;
     fetch(`/api/parent/primaria/orario?studentId=${studentId}&userId=${parentId}`, { headers: { 'x-user-id': parentId } })
       .then((r) => r.json())
       .then((d) => {

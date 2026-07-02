@@ -27,3 +27,4 @@ deve essere ≤ del gate precedente, fino allo zero assoluto in M9 (`npx eslint 
 | Gate | Data | eslint src+supabase (err/warn) |
 |---|---|---|
 | M0 (baseline) | 2026-07-02 | 262 / 96 |
+| M1 (sicurezza) | 2026-07-02 | 262 / 95 |

@@ -1,7 +1,15 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { jsPDF } from 'jspdf'
+import { parseQuery } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+const getQuerySchema = z.object({
+  modelId: zUuid,
+})
 
 const ESITO_LABEL: Record<string, string> = {
   ammesso: 'AMMESSO',
@@ -23,9 +31,9 @@ export async function GET(request: Request) {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
-    const { searchParams } = new URL(request.url)
-    const modelId = searchParams.get('modelId')
-    if (!modelId) return NextResponse.json({ error: 'modelId è obbligatorio' }, { status: 400 })
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+    const { modelId } = q.data
 
     const supabase = await createAdminClient()
     const { data: model } = await supabase.from('form_models').select('title').eq('id', modelId).maybeSingle()

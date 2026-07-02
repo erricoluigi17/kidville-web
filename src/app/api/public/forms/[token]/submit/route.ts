@@ -1,12 +1,23 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { rateLimit, clientIp } from '@/lib/security/rate-limit'
 import { estraiConsensi, consensiObbligatoriMancanti } from '@/lib/forms/consensi'
 import { accessoConsentito } from '@/lib/forms/publish'
+import { parseBody, parseData } from '@/lib/validation/http'
 import type { FormSchemaConfig, FormSubmissionData } from '@/types/database.types'
 
 // Submission ANONIMA di un modello pubblicato (DL-030). Token-scoped, service-role.
 // Solo `completed` (la firma OTP pubblica è materia della slice firma congiunta).
+
+// Il token pubblico è una stringa opaca (usata su form_models.public_token), non un uuid.
+const tokenParamSchema = z.string().min(1)
+
+// `data` è il payload libero della submission: oggi è accettato qualsiasi valore
+// truthy (il codice controllava solo `!data`), quindi resta volutamente permissivo.
+const postBodySchema = z.object({
+  data: z.unknown().refine((v) => Boolean(v), { message: 'data obbligatorio' }),
+})
 
 export async function POST(
   request: Request,
@@ -21,12 +32,14 @@ export async function POST(
   }
 
   try {
-    const { token } = await params
-    const body = (await request.json()) as { data?: FormSubmissionData }
-    const data = body.data
-    if (!data) {
-      return NextResponse.json({ error: 'data obbligatorio' }, { status: 400 })
-    }
+    const rawParams = await params
+    const tk = parseData(tokenParamSchema, rawParams.token)
+    if ('response' in tk) return tk.response
+    const token = tk.data
+
+    const b = await parseBody(request, postBodySchema)
+    if ('response' in b) return b.response
+    const data = b.data.data as FormSubmissionData
 
     const supabase = await createAdminClient()
     const { data: model } = await supabase

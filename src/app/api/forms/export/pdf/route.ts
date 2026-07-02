@@ -1,7 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { jsPDF } from 'jspdf'
 import type { FormSchemaConfig, FormSubmissionStatus } from '@/types/database.types'
+import { parseQuery } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+const getQuerySchema = z.object({
+  id: zUuid,
+})
 
 const STATUS_LABELS: Record<FormSubmissionStatus, string> = {
   draft: 'Bozza',
@@ -10,12 +18,9 @@ const STATUS_LABELS: Record<FormSubmissionStatus, string> = {
 }
 
 export async function GET(request: NextRequest) {
-  const { searchParams } = new URL(request.url)
-  const id = searchParams.get('id')
-
-  if (!id) {
-    return NextResponse.json({ error: 'Parametro id obbligatorio' }, { status: 400 })
-  }
+  const q = parseQuery(request, getQuerySchema)
+  if ('response' in q) return q.response
+  const { id } = q.data
 
   const supabase = await createAdminClient()
 

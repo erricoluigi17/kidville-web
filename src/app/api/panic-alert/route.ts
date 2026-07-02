@@ -1,26 +1,30 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createClient, createAdminClient } from '@/lib/supabase/server-client';
 import { enqueueNotifiche } from '@/lib/push/enqueue';
 import { enqueueNotifichePerAlunni } from '@/lib/primaria/notifiche';
+import { parseBody } from '@/lib/validation/http';
+import { zUuid } from '@/lib/validation/common';
 
 // Ruoli che presidiano l'uscita: ricevono il Panic Alert in tempo reale.
 const STAFF_PANIC = new Set(['segreteria', 'admin', 'coordinator']);
 
+const postBodySchema = z.object({
+    alunnoId: zUuid,
+});
+
 export async function POST(request: Request) {
     try {
-        const body = await request.json();
-        const { alunnoId } = body;
-
-        if (!alunnoId) {
-            return NextResponse.json({ error: 'alunnoId è obbligatorio' }, { status: 400 });
-        }
-
         const supabase = await createClient();
 
         const { data: { user }, error: authError } = await supabase.auth.getUser();
         if (authError || !user) {
             return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 });
         }
+
+        const b = await parseBody(request, postBodySchema);
+        if ('response' in b) return b.response;
+        const { alunnoId } = b.data;
 
         const today = new Date().toISOString().split('T')[0];
 

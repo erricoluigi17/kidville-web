@@ -1,13 +1,25 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
 import { rateLimit, clientIp } from '@/lib/security/rate-limit'
+import { parseData } from '@/lib/validation/http'
 
 // Upload generico di un allegato di un modello (Sistema A `form_models`).
 // Service-role + scoping app (decisione DL-029): bucket privato `form_attachments`,
 // nessuna policy storage. Ripara l'upload del wizard AUTENTICATO (il client browser
 // è anonimo e non può scrivere su bucket deny-by-default). Variante pubblica
 // token-scoped: slice "Pubblica modello".
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+// Il file si valida come presenza/istanza (il contenuto non è materia di zod).
+// max_size_mb resta permissivo: oggi QUALSIASI valore non numerico ricade sul
+// default (`Number(...) || DEFAULT_MAX_MB`), quindi niente coerce numerica.
+const postFormSchema = z.object({
+  file: z.instanceof(File, { error: 'Nessun file ricevuto' }),
+  folder: z.string().nullish(),
+  max_size_mb: z.unknown().optional(),
+})
 
 const DEFAULT_MAX_MB = 8
 const ALLOWED_EXT = new Set(['pdf', 'jpg', 'jpeg', 'png', 'webp', 'heic'])
@@ -35,14 +47,16 @@ export async function POST(request: Request) {
 
   try {
     const form = await request.formData()
-    const file = form.get('file') as File | null
-    const folder = ((form.get('folder') as string | null) || 'generico').replace(/[^a-zA-Z0-9._-]/g, '_')
+    const parsed = parseData(postFormSchema, {
+      file: form.get('file'),
+      folder: form.get('folder'),
+      max_size_mb: form.get('max_size_mb'),
+    })
+    if ('response' in parsed) return parsed.response
+    const { file } = parsed.data
+    const folder = (parsed.data.folder || 'generico').replace(/[^a-zA-Z0-9._-]/g, '_')
 
-    if (!file) {
-      return NextResponse.json({ error: 'Nessun file ricevuto' }, { status: 400 })
-    }
-
-    const maxMb = Number(form.get('max_size_mb')) || DEFAULT_MAX_MB
+    const maxMb = Number(parsed.data.max_size_mb) || DEFAULT_MAX_MB
     if (file.size > maxMb * 1024 * 1024) {
       return NextResponse.json({ error: `File troppo grande (max ${maxMb}MB)` }, { status: 400 })
     }

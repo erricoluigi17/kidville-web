@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server'
 import { createHash, randomInt } from 'crypto'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
+import { parseBody } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
 import { sendEmail } from '@/lib/email/send'
 import { rateLimit, clientIp } from '@/lib/security/rate-limit'
 import { getUserEmail } from '@/lib/auth/otp-ticket'
@@ -11,6 +14,31 @@ import { logFeaEvent } from '@/lib/fea/audit'
 import { assertGenitoreNonSospeso } from '@/lib/pagamenti/sospensione'
 import { estraiConsensi, consensiObbligatoriMancanti } from '@/lib/forms/consensi'
 import type { FormSchemaConfig, FormSubmissionData } from '@/types/database.types'
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+// Id opzionale: stringa vuota trattata come assente (i guard truthy esistenti
+// `if (submissionId)` / `if (!modelId)` già la trattavano così).
+const zUuidOpzionale = z.preprocess((v) => (v === '' ? undefined : v), zUuid.nullish())
+
+// POST ha due modalità mutuamente esclusive: reinvio/2° firmatario (submissionId
+// presente) oppure creazione submission (modelId + data). I campi restano
+// opzionali a livello di schema; il vincolo condizionale "modelId e data
+// obbligatori senza submissionId" resta nel codice (non esprimibile campo-per-campo).
+const postBodySchema = z.object({
+  modelId: zUuidOpzionale,
+  userId: zUuid.nullish(),
+  // Pass-through jsonb { field_id → valore }: nessun vincolo sul contenuto.
+  data: z.unknown().optional(),
+  submissionId: zUuidOpzionale,
+  signerEmail: z.string().nullish(),
+})
+
+const patchBodySchema = z.object({
+  submissionId: zUuid,
+  // Un numero funziona identico nell'hash (`${code}`): union per non
+  // restringere il comportamento. Falsy ('' / 0) → 400 come il vecchio guard.
+  code: z.union([z.string(), z.number()]).refine((v) => !!v, 'code è obbligatorio'),
+})
 
 // Hash deterministico: lega il codice alla submission (sale anti-rainbow-table)
 function hashOtp(submissionId: string, code: string): string {
@@ -38,14 +66,10 @@ export async function POST(request: Request) {
       )
     }
 
-    const body = (await request.json()) as {
-      modelId?: string
-      userId?: string | null
-      data?: FormSubmissionData
-      submissionId?: string
-      signerEmail?: string
-    }
-    const { modelId, userId, data, submissionId, signerEmail } = body
+    const b = await parseBody(request, postBodySchema)
+    if ('response' in b) return b.response
+    const { modelId, userId, submissionId, signerEmail } = b.data
+    const data = b.data.data as FormSubmissionData | undefined
 
     const supabase = await createAdminClient()
 
@@ -186,15 +210,10 @@ export async function POST(request: Request) {
 // ── PATCH: verifica l'OTP e finalizza la firma (completed + signed_at) ──
 export async function PATCH(request: Request) {
   try {
-    const body = (await request.json()) as { submissionId?: string; code?: string }
-    const { submissionId, code } = body
-
-    if (!submissionId || !code) {
-      return NextResponse.json(
-        { error: 'submissionId e code sono obbligatori' },
-        { status: 400 }
-      )
-    }
+    const b = await parseBody(request, patchBodySchema)
+    if ('response' in b) return b.response
+    const { submissionId } = b.data
+    const code = String(b.data.code)
 
     const supabase = await createAdminClient()
 

@@ -28,7 +28,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
           : null,
         error: null,
       })
-      b.single = async () => ({ data: { id: 'sub-1' }, error: null })
+      b.single = async () => ({ data: { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12' }, error: null })
       b.insert = (row: Record<string, unknown>) => { h.inserts.push({ table, ...row }); return b }
       b.update = (row: Record<string, unknown>) => { h.updates.push({ table, ...row }); return b }
       b.upsert = (row: Record<string, unknown>) => { h.upserts.push({ table, ...row }); return { select: () => ({ maybeSingle: async () => ({ data: row, error: null }) }) } }
@@ -60,16 +60,16 @@ beforeEach(() => {
 describe('POST send-otp — reinvio / 2° firmatario', () => {
   it('404 se la submission da reinviare non esiste', async () => {
     h.submission = null
-    const res = await POST(reqJSON({ submissionId: 'nope' }))
+    const res = await POST(reqJSON({ submissionId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa13' }))
     expect(res.status).toBe(404)
   })
 
   it('reinvia: nessuna nuova submission, aggiorna otp_secret e invia al signerEmail', async () => {
-    h.submission = { id: 'sub-1', status: 'pending_signature', user_id: 'u-1' }
-    const res = await POST(reqJSON({ submissionId: 'sub-1', signerEmail: 'papa@x.it' }))
+    h.submission = { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', status: 'pending_signature', user_id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa11' }
+    const res = await POST(reqJSON({ submissionId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', signerEmail: 'papa@x.it' }))
     expect(res.status).toBe(200)
     const json = await res.json()
-    expect(json.submissionId).toBe('sub-1')
+    expect(json.submissionId).toBe('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12')
     expect(json.email).toBe('papa@x.it')
     // niente insert di nuove submission; solo update di otp_secret
     expect(h.inserts.filter(i => i.table === 'form_submissions')).toHaveLength(0)
@@ -79,10 +79,10 @@ describe('POST send-otp — reinvio / 2° firmatario', () => {
 
 describe('PATCH send-otp — completamento per policy', () => {
   it('joint, 1° firmatario: resta pending → needsMoreSigners', async () => {
-    h.submission = { id: 'sub-1', otp_secret: hashOtp('sub-1', '111111'), status: 'pending_signature', user_id: 'u-1', model_id: 'm-1' }
+    h.submission = { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', otp_secret: hashOtp('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', '111111'), status: 'pending_signature', user_id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa11', model_id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa10' }
     h.model = { signature_mode: 'joint' }
     h.slots = [] // nessuno ha ancora firmato
-    const res = await PATCH(reqJSON({ submissionId: 'sub-1', code: '111111' }, 'PATCH'))
+    const res = await PATCH(reqJSON({ submissionId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', code: '111111' }, 'PATCH'))
     expect(res.status).toBe(200)
     const json = await res.json()
     expect(json.completed).toBe(false)
@@ -93,10 +93,10 @@ describe('PATCH send-otp — completamento per policy', () => {
   })
 
   it('joint, 2° firmatario: con 1 slot già firmato → completed', async () => {
-    h.submission = { id: 'sub-1', otp_secret: hashOtp('sub-1', '222222'), status: 'pending_signature', user_id: 'u-1', model_id: 'm-1' }
+    h.submission = { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', otp_secret: hashOtp('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', '222222'), status: 'pending_signature', user_id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa11', model_id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa10' }
     h.model = { signature_mode: 'joint' }
     h.slots = [{ slot_index: 0, stato: 'signed' }] // primo già firmato
-    const res = await PATCH(reqJSON({ submissionId: 'sub-1', code: '222222' }, 'PATCH'))
+    const res = await PATCH(reqJSON({ submissionId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', code: '222222' }, 'PATCH'))
     expect(res.status).toBe(200)
     const json = await res.json()
     expect(json.completed).toBe(true)
@@ -107,10 +107,10 @@ describe('PATCH send-otp — completamento per policy', () => {
   })
 
   it('single (default): completa al 1° codice', async () => {
-    h.submission = { id: 'sub-1', otp_secret: hashOtp('sub-1', '333333'), status: 'pending_signature', user_id: 'u-1', model_id: 'm-1' }
+    h.submission = { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', otp_secret: hashOtp('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', '333333'), status: 'pending_signature', user_id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa11', model_id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa10' }
     h.model = { signature_mode: 'single' }
     h.slots = []
-    const res = await PATCH(reqJSON({ submissionId: 'sub-1', code: '333333' }, 'PATCH'))
+    const res = await PATCH(reqJSON({ submissionId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', code: '333333' }, 'PATCH'))
     const json = await res.json()
     expect(json.completed).toBe(true)
   })

@@ -45,7 +45,7 @@ describe('GET /api/forms/export/delibera', () => {
 
   it('gated allo staff', async () => {
     h.requireStaff.mockResolvedValue({ response: NextResponse.json({}, { status: 403 }) })
-    expect((await GET(req('m1'))).status).toBe(403)
+    expect((await GET(req('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2'))).status).toBe(403)
   })
 
   it('400 senza modelId', async () => {
@@ -53,7 +53,7 @@ describe('GET /api/forms/export/delibera', () => {
   })
 
   it('200 PDF della delibera', async () => {
-    const res = await GET(req('m1'))
+    const res = await GET(req('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2'))
     expect(res.status).toBe(200)
     expect(res.headers.get('Content-Type')).toBe('application/pdf')
   })

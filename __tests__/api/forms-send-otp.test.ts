@@ -69,60 +69,60 @@ beforeEach(() => {
 
 describe('POST /api/forms/send-otp — crea submission + invia OTP', () => {
   it('400 se mancano modelId o data', async () => {
-    const res = await POST(jsonReq({ userId: 'u-1' }))
+    const res = await POST(jsonReq({ userId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa11' }))
     expect(res.status).toBe(400)
   })
 
   it('200 crea form_submissions(pending_signature) e ritorna submissionId/email/sent', async () => {
     h.state.queues = {
-      form_submissions: [{ data: { id: 'sub-1' }, error: null }, { data: null, error: null }],
+      form_submissions: [{ data: { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12' }, error: null }, { data: null, error: null }],
       utenti: [{ data: { email: 'genitore@example.it' }, error: null }],
     }
-    const res = await POST(jsonReq({ modelId: 'm-1', userId: 'u-1', data: { campo: 'x' } }))
+    const res = await POST(jsonReq({ modelId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa10', userId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa11', data: { campo: 'x' } }))
     const body = await res.json()
     expect(res.status).toBe(200)
-    expect(body).toMatchObject({ submissionId: 'sub-1', email: 'genitore@example.it', sent: true })
+    expect(body).toMatchObject({ submissionId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', email: 'genitore@example.it', sent: true })
   })
 })
 
 describe('PATCH /api/forms/send-otp — verifica OTP e finalizza', () => {
   it('400 se mancano submissionId o code', async () => {
-    const res = await PATCH(jsonReq({ submissionId: 'sub-1' }))
+    const res = await PATCH(jsonReq({ submissionId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12' }))
     expect(res.status).toBe(400)
   })
 
   it('404 se la submission non esiste', async () => {
     h.state.queues = { form_submissions: [{ data: null, error: null }] }
-    const res = await PATCH(jsonReq({ submissionId: 'nope', code: '000000' }))
+    const res = await PATCH(jsonReq({ submissionId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa13', code: '000000' }))
     expect(res.status).toBe(404)
   })
 
   it('409 se già completata', async () => {
     h.state.queues = {
-      form_submissions: [{ data: { id: 'sub-1', otp_secret: 'x', status: 'completed' }, error: null }],
+      form_submissions: [{ data: { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', otp_secret: 'x', status: 'completed' }, error: null }],
     }
-    const res = await PATCH(jsonReq({ submissionId: 'sub-1', code: '123456' }))
+    const res = await PATCH(jsonReq({ submissionId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', code: '123456' }))
     expect(res.status).toBe(409)
   })
 
   it('400 se il codice è errato', async () => {
     h.state.queues = {
       form_submissions: [
-        { data: { id: 'sub-1', otp_secret: hashOtp('sub-1', '111111'), status: 'pending_signature' }, error: null },
+        { data: { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', otp_secret: hashOtp('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', '111111'), status: 'pending_signature' }, error: null },
       ],
     }
-    const res = await PATCH(jsonReq({ submissionId: 'sub-1', code: '999999' }))
+    const res = await PATCH(jsonReq({ submissionId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', code: '999999' }))
     expect(res.status).toBe(400)
   })
 
   it('200 con codice corretto → ok + signedAt', async () => {
     h.state.queues = {
       form_submissions: [
-        { data: { id: 'sub-1', otp_secret: hashOtp('sub-1', '424242'), status: 'pending_signature' }, error: null },
+        { data: { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', otp_secret: hashOtp('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', '424242'), status: 'pending_signature' }, error: null },
         { data: null, error: null },
       ],
     }
-    const res = await PATCH(jsonReq({ submissionId: 'sub-1', code: '424242' }))
+    const res = await PATCH(jsonReq({ submissionId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', code: '424242' }))
     const body = await res.json()
     expect(res.status).toBe(200)
     expect(body.ok).toBe(true)
@@ -132,11 +132,11 @@ describe('PATCH /api/forms/send-otp — verifica OTP e finalizza', () => {
   it('S7: salva signature_log su form_submissions + slot fea_signatures', async () => {
     h.state.queues = {
       form_submissions: [
-        { data: { id: 'sub-1', otp_secret: hashOtp('sub-1', '424242'), status: 'pending_signature', user_id: 'u-1' }, error: null },
+        { data: { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', otp_secret: hashOtp('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', '424242'), status: 'pending_signature', user_id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa11' }, error: null },
         { data: null, error: null },
       ],
     }
-    await PATCH(jsonReq({ submissionId: 'sub-1', code: '424242' }))
+    await PATCH(jsonReq({ submissionId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12', code: '424242' }))
     const updates = h.state.captured.update as Array<{ table: string; value: Record<string, unknown> }>
     const fsUpdate = updates.find((u) => u.table === 'form_submissions' && u.value.signature_log)
     expect(fsUpdate).toBeTruthy()

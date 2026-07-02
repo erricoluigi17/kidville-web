@@ -16,7 +16,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.select = () => b
       b.eq = () => b
       b.maybeSingle = async () => ({ data: table === 'utenti' ? { email: 'p@x.it' } : null, error: null })
-      b.single = async () => ({ data: { id: 'sub-1' }, error: null })
+      b.single = async () => ({ data: { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12' }, error: null })
       b.update = () => ({ eq: async () => ({ error: null }) })
       b.insert = () => { h.insertCalled++; return b }
       return b
@@ -30,7 +30,7 @@ function post(userId: string | null) {
   return new Request('http://localhost/api/forms/send-otp', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ modelId: 'm1', userId, data: { campo: 'x' } }),
+    body: JSON.stringify({ modelId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa10', userId, data: { campo: 'x' } }),
   })
 }
 
@@ -42,14 +42,14 @@ describe('POST /api/forms/send-otp — gate sospensione (DL-021)', () => {
 
   it('genitore con figlio sospeso → 403 e NESSUNA submission creata', async () => {
     h.assertGenitore.mockResolvedValue(NextResponse.json({ motivo: 'account_sospeso' }, { status: 403 }))
-    const res = await POST(post('gen-1'))
+    const res = await POST(post('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa14'))
     expect(res.status).toBe(403)
     expect(h.insertCalled).toBe(0)
   })
 
   it('genitore non sospeso → prosegue e crea la submission', async () => {
     h.assertGenitore.mockResolvedValue(null)
-    const res = await POST(post('gen-1'))
+    const res = await POST(post('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa14'))
     expect(res.status).toBe(200)
     expect(h.insertCalled).toBe(1)
   })

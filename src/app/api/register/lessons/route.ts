@@ -1,16 +1,33 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createClient, createAdminClient } from '@/lib/supabase/server-client';
+import { parseBody, parseQuery } from '@/lib/validation/http';
+import { zDataYMD, zUuid } from '@/lib/validation/common';
+
+const getQuerySchema = z.object({
+    classeSezione: z.string().min(1),
+    data: zDataYMD,
+});
+
+const postBodySchema = z.object({
+    classeSezione: z.string().min(1),
+    // '' e null oggi ricadono sul fallback (prima scuola dal DB), quindi restano ammessi
+    scuolaId: z.union([zUuid, z.literal('')]).nullish(),
+    data: zDataYMD,
+    // oggi: qualsiasi valore truthy (numero ≠ 0 o stringa non vuota); il CHECK 1..8 resta al DB
+    oraLezione: z.union([z.number().refine((n) => n !== 0), z.string().min(1)]),
+    materia: z.string().min(1),
+    argomento: z.string().nullish(),
+    compiti: z.string().nullish(),
+    dataConsegnaCompiti: z.union([zDataYMD, z.literal('')]).nullish(),
+});
 
 // GET /api/register/lessons?classeSezione=3A&data=2026-05-13
 export async function GET(request: Request) {
     try {
-        const { searchParams } = new URL(request.url);
-        const classeSezione = searchParams.get('classeSezione');
-        const data = searchParams.get('data');
-
-        if (!classeSezione || !data) {
-            return NextResponse.json({ error: 'classeSezione e data sono obbligatori' }, { status: 400 });
-        }
+        const q = parseQuery(request, getQuerySchema);
+        if ('response' in q) return q.response;
+        const { classeSezione, data } = q.data;
 
         const supabase = await createAdminClient();
 
@@ -52,12 +69,9 @@ export async function GET(request: Request) {
 // Body: { classeSezione, scuolaId, data, oraLezione, materia, argomento, compiti, dataConsegnaCompiti }
 export async function POST(request: Request) {
     try {
-        const body = await request.json();
-        const { classeSezione, scuolaId, data, oraLezione, materia, argomento, compiti, dataConsegnaCompiti } = body;
-
-        if (!classeSezione || !data || !oraLezione || !materia) {
-            return NextResponse.json({ error: 'classeSezione, data, oraLezione e materia sono obbligatori' }, { status: 400 });
-        }
+        const b = await parseBody(request, postBodySchema);
+        if ('response' in b) return b.response;
+        const { classeSezione, scuolaId, data, oraLezione, materia, argomento, compiti, dataConsegnaCompiti } = b.data;
 
         // Admin client per bypassare RLS (stesso pattern delle altre API del progetto)
         const supabase = await createAdminClient();

@@ -15,7 +15,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.eq = () => b
       b.maybeSingle = async () => ({ data: table === 'form_models' ? h.model : { email: 'g@x.it' }, error: null })
       b.insert = (row: Record<string, unknown>) => { h.inserts.push(row); return b }
-      b.single = async () => ({ data: { id: 'sub-1' }, error: null })
+      b.single = async () => ({ data: { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12' }, error: null })
       b.update = () => ({ eq: async () => ({ error: null }) })
       return b
     },
@@ -51,13 +51,13 @@ beforeEach(() => {
 
 describe('POST send-otp — consensi (DL-029)', () => {
   it('400 se un consenso obbligatorio non è spuntato', async () => {
-    const res = await POST(req({ modelId: 'm-1', userId: 'u-1', data: { privacy: false } }))
+    const res = await POST(req({ modelId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa10', userId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa11', data: { privacy: false } }))
     expect(res.status).toBe(400)
     expect(h.inserts).toHaveLength(0)
   })
 
   it('200 e la submission salva consents_log snapshot', async () => {
-    const res = await POST(req({ modelId: 'm-1', userId: 'u-1', data: { privacy: true } }))
+    const res = await POST(req({ modelId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa10', userId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa11', data: { privacy: true } }))
     expect(res.status).toBe(200)
     const log = h.inserts[0]?.consents_log as Array<Record<string, unknown>>
     expect(log[0]).toMatchObject({ field_id: 'privacy', accepted: true })

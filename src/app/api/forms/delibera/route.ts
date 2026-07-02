@@ -1,9 +1,33 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { calcolaDelibera, type EsitoAmmissione } from '@/lib/forms/delibera'
+import { parseBody, parseData } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
 
-const ESITI_VALIDI: EsitoAmmissione[] = ['ammesso', 'lista_attesa', 'non_ammesso']
+const ESITI_VALIDI = ['ammesso', 'lista_attesa', 'non_ammesso'] as const satisfies readonly EsitoAmmissione[]
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+// Il body ha due forme (override singolo vs delibera bulk) discriminate dalla
+// PRESENZA di submissionId: prima un parse loose del body, poi lo schema del
+// ramo scelto (così i campi dell'altro ramo restano ignorati come prima).
+const postBodySchema = z.looseObject({
+  submissionId: z.unknown().optional(),
+  modelId: z.unknown().optional(),
+})
+
+const postOverrideSchema = z.object({
+  submissionId: zUuid,
+  esito: z.enum(ESITI_VALIDI),
+  note: z.unknown().optional(), // usato solo se stringa (comportamento invariato)
+})
+
+const postBulkSchema = z.object({
+  modelId: zUuid,
+  posti: z.unknown().optional(), // coercizione Number() nel handler (default 0)
+  soglia: z.unknown().optional(), // coercizione Number() nel handler (default 0)
+})
 
 // POST /api/forms/delibera  (staff) — delibera ammissioni (DL-025).
 //  • bulk:     { modelId, posti, soglia }  → calcola e assegna gli esiti
@@ -13,39 +37,41 @@ export async function POST(request: Request) {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
 
-    const body = await request.json()
+    const parsed = await parseBody(request, postBodySchema)
+    if ('response' in parsed) return parsed.response
+    const body = parsed.data
+
     const supabase = await createAdminClient()
     const nowIso = new Date().toISOString()
 
     // ── Override singolo ──
     if (body.submissionId) {
-      if (!ESITI_VALIDI.includes(body.esito)) {
-        return NextResponse.json({ error: 'Esito non valido' }, { status: 400 })
-      }
+      const o = parseData(postOverrideSchema, body)
+      if ('response' in o) return o.response
+      const { submissionId, esito, note } = o.data
       const { error } = await supabase
         .from('form_submissions')
         .update({
-          esito_ammissione: body.esito,
+          esito_ammissione: esito,
           esito_il: nowIso,
           esito_da: auth.user.id,
-          esito_note: typeof body.note === 'string' ? body.note : null,
+          esito_note: typeof note === 'string' ? note : null,
         })
-        .eq('id', body.submissionId)
+        .eq('id', submissionId)
       if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-      return NextResponse.json({ success: true, data: { submissionId: body.submissionId, esito: body.esito } })
+      return NextResponse.json({ success: true, data: { submissionId, esito } })
     }
 
     // ── Delibera bulk ──
-    if (!body.modelId) {
-      return NextResponse.json({ error: 'modelId o submissionId obbligatorio' }, { status: 400 })
-    }
-    const posti = Math.max(0, Number(body.posti ?? 0))
-    const soglia = Number(body.soglia ?? 0)
+    const bulk = parseData(postBulkSchema, body)
+    if ('response' in bulk) return bulk.response
+    const posti = Math.max(0, Number(bulk.data.posti ?? 0))
+    const soglia = Number(bulk.data.soglia ?? 0)
 
     const { data: subs } = await supabase
       .from('form_submissions')
       .select('id, score')
-      .eq('model_id', body.modelId)
+      .eq('model_id', bulk.data.modelId)
       .eq('status', 'completed')
       .order('score', { ascending: false })
 

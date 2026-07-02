@@ -38,6 +38,13 @@ const GRUPPI_COPERTI: string[] = [
     'primaria',
     // M3.8 (zod 7/14)
     'pagamenti',
+    // M3.9 (zod 8/14 — pubblici)
+    'forms',
+    'fea',
+    'iscrizione',
+    'public',
+    'register',
+    'panic-alert',
 ];
 
 const API_ROOT = path.join(process.cwd(), 'src', 'app', 'api');

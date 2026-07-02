@@ -42,7 +42,7 @@ describe('POST /api/forms/delibera', () => {
 
   it('gated allo staff', async () => {
     h.requireStaff.mockResolvedValue({ response: NextResponse.json({}, { status: 403 }) })
-    expect((await POST(post({ modelId: 'm1', posti: 1, soglia: 0 }))).status).toBe(403)
+    expect((await POST(post({ modelId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2', posti: 1, soglia: 0 }))).status).toBe(403)
   })
 
   it('400 senza modelId né submissionId', async () => {
@@ -51,7 +51,7 @@ describe('POST /api/forms/delibera', () => {
 
   it('delibera bulk: assegna ammesso/lista/non-ammesso secondo soglia+posti', async () => {
     h.subs = [{ id: 'a', score: 10 }, { id: 'b', score: 8 }, { id: 'c', score: 3 }]
-    const res = await POST(post({ modelId: 'm1', posti: 1, soglia: 5 }))
+    const res = await POST(post({ modelId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2', posti: 1, soglia: 5 }))
     expect(res.status).toBe(200)
     const esitoById = Object.fromEntries(h.updates.map((u) => [u.id, u.row.esito_ammissione]))
     expect(esitoById).toEqual({ a: 'ammesso', b: 'lista_attesa', c: 'non_ammesso' })
@@ -61,15 +61,15 @@ describe('POST /api/forms/delibera', () => {
   })
 
   it('override singolo: aggiorna l’esito del candidato + tracciamento', async () => {
-    const res = await POST(post({ submissionId: 'sub-9', esito: 'ammesso' }))
+    const res = await POST(post({ submissionId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa3', esito: 'ammesso' }))
     expect(res.status).toBe(200)
     expect(h.updates).toHaveLength(1)
-    expect(h.updates[0].id).toBe('sub-9')
+    expect(h.updates[0].id).toBe('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa3')
     expect(h.updates[0].row.esito_ammissione).toBe('ammesso')
     expect(h.updates[0].row.esito_da).toBe('seg-1')
   })
 
   it('override con esito non valido → 400', async () => {
-    expect((await POST(post({ submissionId: 'sub-9', esito: 'boh' }))).status).toBe(400)
+    expect((await POST(post({ submissionId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa3', esito: 'boh' }))).status).toBe(400)
   })
 })

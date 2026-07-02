@@ -1,10 +1,22 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { rateLimit, clientIp } from '@/lib/security/rate-limit'
+import { parseData } from '@/lib/validation/http'
 
 // Upload allegato ANONIMO per un modello pubblicato (DL-030). Token-scoped, service-role.
 
 const DEFAULT_MAX_MB = 8
+
+// Il token pubblico è una stringa opaca (usata su form_models.public_token), non un uuid.
+const tokenParamSchema = z.string().min(1)
+
+// max_size_mb: oggi qualsiasi valore non numerico ricade sul default (`Number(x) || 8`);
+// `.catch(undefined)` preserva quel comportamento invece di rispondere 400.
+const postFormSchema = z.object({
+  file: z.instanceof(File, { error: 'Nessun file ricevuto' }),
+  max_size_mb: z.coerce.number().optional().catch(undefined),
+})
 const ALLOWED_EXT = new Set(['pdf', 'jpg', 'jpeg', 'png', 'webp', 'heic'])
 const ALLOWED_MIME = new Set([
   'application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'image/heic',
@@ -23,7 +35,11 @@ export async function POST(
   }
 
   try {
-    const { token } = await params
+    const rawParams = await params
+    const tk = parseData(tokenParamSchema, rawParams.token)
+    if ('response' in tk) return tk.response
+    const token = tk.data
+
     const supabase = await createAdminClient()
 
     // Il token deve corrispondere a un modello pubblicato (anti-abuso storage).
@@ -37,12 +53,14 @@ export async function POST(
     }
 
     const form = await request.formData()
-    const file = form.get('file') as File | null
-    if (!file) {
-      return NextResponse.json({ error: 'Nessun file ricevuto' }, { status: 400 })
-    }
+    const parsed = parseData(postFormSchema, {
+      file: form.get('file') ?? undefined,
+      max_size_mb: form.get('max_size_mb') ?? undefined,
+    })
+    if ('response' in parsed) return parsed.response
+    const { file } = parsed.data
 
-    const maxMb = Number(form.get('max_size_mb')) || DEFAULT_MAX_MB
+    const maxMb = parsed.data.max_size_mb || DEFAULT_MAX_MB
     if (file.size > maxMb * 1024 * 1024) {
       return NextResponse.json({ error: `File troppo grande (max ${maxMb}MB)` }, { status: 400 })
     }

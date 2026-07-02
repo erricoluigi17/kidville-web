@@ -1,9 +1,21 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { rateLimit, clientIp } from '@/lib/security/rate-limit'
 import { assertGenitoreNonSospeso } from '@/lib/pagamenti/sospensione'
 import { estraiConsensi, consensiObbligatoriMancanti } from '@/lib/forms/consensi'
+import { parseBody } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
 import type { FormSchemaConfig, FormSubmissionData } from '@/types/database.types'
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+const postBodySchema = z.object({
+  modelId: zUuid,
+  userId: zUuid.nullish(),
+  // Pass-through jsonb { field_id → valore }: oggi è accettato qualsiasi
+  // valore truthy (vecchio guard `!data`), nessun vincolo sul contenuto.
+  data: z.unknown().refine((v) => !!v, 'data è obbligatorio'),
+})
 
 // Submission SENZA firma (status `completed`) del Sistema A `form_models`.
 // Sostituisce l'insert client-side del wizard (rotto: il client browser è anon e
@@ -20,15 +32,10 @@ export async function POST(request: Request) {
   }
 
   try {
-    const body = (await request.json()) as {
-      modelId?: string
-      userId?: string | null
-      data?: FormSubmissionData
-    }
-    const { modelId, userId, data } = body
-    if (!modelId || !data) {
-      return NextResponse.json({ error: 'modelId e data sono obbligatori' }, { status: 400 })
-    }
+    const b = await parseBody(request, postBodySchema)
+    if ('response' in b) return b.response
+    const { modelId, userId } = b.data
+    const data = b.data.data as FormSubmissionData
 
     const supabase = await createAdminClient()
 

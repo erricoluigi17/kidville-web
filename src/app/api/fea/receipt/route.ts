@@ -1,14 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { getRequestUserId } from '@/lib/auth/require-staff'
 import { buildReceiptPdf } from '@/lib/fea/receipt-pdf'
+import { parseQuery } from '@/lib/validation/http'
 import type { ReceiptPayload, SignatureLog } from '@/lib/fea/types'
 
 // GET /api/fea/receipt?entita=pagella|giustifica|forms&id=<entitaId>&userId=
 // Ricevuta di firma inattaccabile on-demand (FEA in-house, DL-001). Servita solo
 // al firmatario. Nessuna persistenza: il PDF è rigenerato deterministicamente.
 
-type Entita = 'pagella' | 'giustifica' | 'forms'
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+// `id` resta stringa libera (min 1): oggi un id malformato non produce 400 ma
+// 404 "Firma non trovata" (la query non trova righe) — zUuid sarebbe più
+// severo del comportamento attuale.
+const getQuerySchema = z.object({
+  entita: z.enum(['pagella', 'giustifica', 'forms'], { error: 'Parametro entita non valido' }),
+  id: z.string({ error: 'Parametro id obbligatorio' }).min(1, 'Parametro id obbligatorio'),
+})
+
+type Entita = z.infer<typeof getQuerySchema>['entita']
 
 interface Resolved {
   signerId: string | null
@@ -58,13 +69,9 @@ export async function GET(request: NextRequest) {
     const userId = getRequestUserId(request)
     if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
 
-    const { searchParams } = new URL(request.url)
-    const entita = searchParams.get('entita') as Entita | null
-    const id = searchParams.get('id')
-    if (!entita || !['pagella', 'giustifica', 'forms'].includes(entita)) {
-      return NextResponse.json({ error: 'Parametro entita non valido' }, { status: 400 })
-    }
-    if (!id) return NextResponse.json({ error: 'Parametro id obbligatorio' }, { status: 400 })
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+    const { entita, id } = q.data
 
     const supabase = await createAdminClient()
     const resolved = await resolveEntita(supabase, entita, id)

@@ -41,25 +41,26 @@ describe('API Route: Panic Alert', () => {
     const response = await POST(request);
     const data = await response.json();
     expect(response.status).toBe(400);
-    expect(data.error).toBe('alunnoId è obbligatorio');
+    // Shape standard M3: { error: 'Dati non validi', details: [{ path, message }] }
+    expect(data.error).toBe('Dati non validi');
   });
 
   it('upserts a panic alert to the database', async () => {
     mocks.mockUpsert.mockResolvedValueOnce({ error: null });
-    const request = new Request('http://localhost', { method: 'POST', body: JSON.stringify({ alunnoId: '123' }) });
+    const request = new Request('http://localhost', { method: 'POST', body: JSON.stringify({ alunnoId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1' }) });
     const response = await POST(request);
     const data = await response.json();
     expect(response.status).toBe(200);
     expect(data.success).toBe(true);
     expect(mocks.mockUpsert).toHaveBeenCalledWith(
-      expect.objectContaining({ alunno_id: '123', panic_alert: true }),
+      expect.objectContaining({ alunno_id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1', panic_alert: true }),
       expect.any(Object)
     );
   });
 
   it('returns 500 if database fails', async () => {
     mocks.mockUpsert.mockResolvedValueOnce({ error: { message: 'DB Error' } });
-    const request = new Request('http://localhost', { method: 'POST', body: JSON.stringify({ alunnoId: '123' }) });
+    const request = new Request('http://localhost', { method: 'POST', body: JSON.stringify({ alunnoId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1' }) });
     const response = await POST(request);
     const data = await response.json();
     expect(response.status).toBe(500);
@@ -72,7 +73,7 @@ describe('API Route: Panic Alert', () => {
       alunni: { data: { scuola_id: 'sc-1' }, error: null },
       utenti: { data: [{ id: 'seg-1', role: 'segreteria' }, { id: 'adm-1', ruolo: 'admin' }], error: null },
     };
-    const request = new Request('http://localhost', { method: 'POST', body: JSON.stringify({ alunnoId: '123' }) });
+    const request = new Request('http://localhost', { method: 'POST', body: JSON.stringify({ alunnoId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1' }) });
     const response = await POST(request);
     expect(response.status).toBe(200);
 
@@ -88,7 +89,7 @@ describe('API Route: Panic Alert', () => {
     // Genitori dell'alunno.
     expect(mocks.enqueueNotifichePerAlunni).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ alunnoIds: ['123'], tipo: 'panic_alert', bufferMin: 0 }),
+      expect.objectContaining({ alunnoIds: ['aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1'], tipo: 'panic_alert', bufferMin: 0 }),
     );
   });
 
@@ -99,7 +100,7 @@ describe('API Route: Panic Alert', () => {
       alunni: { data: { scuola_id: 'sc-1' }, error: null },
       utenti: { data: [{ id: 'seg-1', role: 'segreteria' }], error: null },
     };
-    const request = new Request('http://localhost', { method: 'POST', body: JSON.stringify({ alunnoId: '123' }) });
+    const request = new Request('http://localhost', { method: 'POST', body: JSON.stringify({ alunnoId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1' }) });
     const response = await POST(request);
     expect(response.status).toBe(200);
   });

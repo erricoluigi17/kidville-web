@@ -61,29 +61,29 @@ beforeEach(() => {
 
 describe('POST /api/forms/submit (path senza firma)', () => {
   it('400 se mancano modelId o data', async () => {
-    expect((await POST(req({ userId: 'u-1' }))).status).toBe(400)
+    expect((await POST(req({ userId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa11' }))).status).toBe(400)
   })
 
   it('400 se un consenso obbligatorio non è spuntato', async () => {
-    const res = await POST(req({ modelId: 'm-1', userId: 'u-1', data: { nome: 'Marco', privacy: false } }))
+    const res = await POST(req({ modelId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa10', userId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa11', data: { nome: 'Marco', privacy: false } }))
     expect(res.status).toBe(400)
     expect(h.inserts).toHaveLength(0)
   })
 
   it('403 se il genitore è sospeso (moroso)', async () => {
     h.sospensione = NextResponse.json({ error: 'sospeso' }, { status: 403 })
-    const res = await POST(req({ modelId: 'm-1', userId: 'u-1', data: { nome: 'Marco', privacy: true } }))
+    const res = await POST(req({ modelId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa10', userId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa11', data: { nome: 'Marco', privacy: true } }))
     expect(res.status).toBe(403)
   })
 
   it('201 inserisce completed con consents_log snapshot', async () => {
-    const res = await POST(req({ modelId: 'm-1', userId: 'u-1', data: { nome: 'Marco', privacy: true } }))
+    const res = await POST(req({ modelId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa10', userId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa11', data: { nome: 'Marco', privacy: true } }))
     expect(res.status).toBe(201)
     const json = await res.json()
     expect(json.id).toBe('sub-new')
     const row = h.inserts[0]
     expect(row.status).toBe('completed')
-    expect(row.model_id).toBe('m-1')
+    expect(row.model_id).toBe('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa10')
     const log = row.consents_log as Array<Record<string, unknown>>
     expect(log[0]).toMatchObject({ field_id: 'privacy', label: 'Trattamento dati', accepted: true })
     expect(typeof log[0].accepted_at).toBe('string')

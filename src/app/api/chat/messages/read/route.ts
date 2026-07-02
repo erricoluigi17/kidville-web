@@ -1,5 +1,13 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
+import { parseBody } from '@/lib/validation/http';
+import { zUuid } from '@/lib/validation/common';
+
+const patchBodySchema = z.object({
+    messageIds: z.array(zUuid).min(1, 'messageIds è obbligatorio e non può essere vuoto'),
+    userId: zUuid,
+});
 
 /**
  * PATCH /api/chat/messages/read
@@ -11,15 +19,9 @@ import { createAdminClient } from '@/lib/supabase/server-client';
  */
 export async function PATCH(request: Request) {
     try {
-        const body = await request.json();
-        const { messageIds, userId } = body as { messageIds: string[]; userId: string };
-
-        if (!Array.isArray(messageIds) || messageIds.length === 0 || !userId) {
-            return NextResponse.json(
-                { error: 'messageIds (array) e userId sono obbligatori' },
-                { status: 400 }
-            );
-        }
+        const b = await parseBody(request, patchBodySchema);
+        if ('response' in b) return b.response;
+        const { messageIds, userId } = b.data;
 
         const supabase = await createAdminClient();
 

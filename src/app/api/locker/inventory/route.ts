@@ -1,8 +1,37 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { assertAlunnoInScope, scuoleDiUtente } from '@/lib/auth/scope';
 import { logScrittura } from '@/lib/audit/scrittura';
+import { parseBody, parseQuery } from '@/lib/validation/http';
+import { zAnnoMese, zDataYMD, zUuid } from '@/lib/validation/common';
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+/** '' nei query param equivale ad assente (i check truthy pre-esistenti restano invariati). */
+const vuotoComeAssente = (v: unknown) => (v === '' ? undefined : v);
+
+const getQuerySchema = z.object({
+    alunno_id: z.preprocess(vuotoComeAssente, zUuid.optional()),
+    classe_sezione: z.string().optional(),
+    month: z.preprocess(vuotoComeAssente, zAnnoMese.optional()),
+    material_filter: z.string().optional(),
+    mode: z.string().optional(), // 'stock' | 'carico' | altro (altri valori = nessun effetto, come prima)
+});
+
+const postBodySchema = z.object({
+    alunno_id: zUuid,
+    materiale: z.string().min(1),
+    // Il check pre-esistente (!quantita) rifiutava anche 0; i negativi restano ammessi.
+    quantita: z.number().refine((v) => v !== 0, { message: 'quantita deve essere diversa da zero' }),
+    date: zDataYMD.nullish(), // default dinamico (oggi) calcolato nel codice
+});
+
+const patchBodySchema = z.object({
+    alunno_id: zUuid,
+    materiale: z.string().min(1),
+    quantita_usata: z.number().refine((v) => v !== 0, { message: 'quantita_usata deve essere diversa da zero' }),
+});
 
 function getMonthRange(ym: string) {
     const [y, m] = ym.split('-').map(Number);
@@ -24,12 +53,15 @@ function getMonthRange(ym: string) {
  */
 export async function GET(request: NextRequest) {
     try {
-        const { searchParams } = new URL(request.url);
-        const alunnoId      = searchParams.get('alunno_id');
-        const classeSezione = searchParams.get('classe_sezione');
-        const month         = searchParams.get('month');
-        const matFilter     = searchParams.get('material_filter');
-        const mode          = searchParams.get('mode'); // 'stock' | 'carico' | null
+        const q = parseQuery(request, getQuerySchema);
+        if ('response' in q) return q.response;
+        const {
+            alunno_id: alunnoId,
+            classe_sezione: classeSezione,
+            month,
+            material_filter: matFilter,
+            mode,
+        } = q.data;
 
         const supabase = await createAdminClient();
 
@@ -130,9 +162,10 @@ export async function GET(request: NextRequest) {
         }
 
         return NextResponse.json({ error: 'Missing params' }, { status: 400 });
-    } catch (err: any) {
-        console.error('GET /api/locker/inventory:', err.message);
-        return NextResponse.json({ error: err.message }, { status: 500 });
+    } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Errore interno';
+        console.error('GET /api/locker/inventory:', msg);
+        return NextResponse.json({ error: msg }, { status: 500 });
     }
 }
 
@@ -144,13 +177,11 @@ export async function GET(request: NextRequest) {
  */
 export async function POST(request: NextRequest) {
     try {
-        const body = await request.json();
+        const b = await parseBody(request, postBodySchema);
+        if ('response' in b) return b.response;
         const supabase = await createAdminClient();
-        const { alunno_id, materiale, quantita, date } = body;
+        const { alunno_id, materiale, quantita, date } = b.data;
 
-        if (!alunno_id || !materiale || !quantita) {
-            return NextResponse.json({ error: 'Dati mancanti' }, { status: 400 });
-        }
         const targetDate = date ?? new Date().toISOString().slice(0, 10);
 
         // Cerca record esistente per (alunno, materiale, data, portato=true)
@@ -195,9 +226,10 @@ export async function POST(request: NextRequest) {
         }
 
         return NextResponse.json({ success: true, data: result });
-    } catch (err: any) {
-        console.error('POST /api/locker/inventory:', err.message);
-        return NextResponse.json({ error: err.message }, { status: 500 });
+    } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Errore interno';
+        console.error('POST /api/locker/inventory:', msg);
+        return NextResponse.json({ error: msg }, { status: 500 });
     }
 }
 
@@ -212,14 +244,12 @@ export async function PATCH(request: NextRequest) {
         const auth = await requireDocente(request);
         if (auth.response) return auth.response;
 
-        const body = await request.json();
+        const b = await parseBody(request, patchBodySchema);
+        if ('response' in b) return b.response;
         const supabase = await createAdminClient();
         const admin = await createAdminClient();
-        const { alunno_id, materiale, quantita_usata } = body;
+        const { alunno_id, materiale, quantita_usata } = b.data;
 
-        if (!alunno_id || !materiale || !quantita_usata) {
-            return NextResponse.json({ error: 'Dati mancanti' }, { status: 400 });
-        }
         const scopeErr = await assertAlunnoInScope(admin, auth.user, alunno_id);
         if (scopeErr) return scopeErr;
         const today = new Date().toISOString().slice(0, 10);
@@ -248,8 +278,9 @@ export async function PATCH(request: NextRequest) {
         });
 
         return NextResponse.json({ success: true, data });
-    } catch (err: any) {
-        console.error('PATCH /api/locker/inventory:', err.message);
-        return NextResponse.json({ error: err.message }, { status: 500 });
+    } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Errore interno';
+        console.error('PATCH /api/locker/inventory:', msg);
+        return NextResponse.json({ error: msg }, { status: 500 });
     }
 }

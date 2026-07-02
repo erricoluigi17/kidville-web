@@ -1,7 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { scuoleDiUtente } from '@/lib/auth/scope';
+import { parseBody, parseQuery } from '@/lib/validation/http';
+import { zUuid } from '@/lib/validation/common';
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+/** '' nei query param equivale ad assente (i check truthy pre-esistenti restano invariati). */
+const vuotoComeAssente = (v: unknown) => (v === '' ? undefined : v);
+
+const getQuerySchema = z.object({
+    alunno_id: z.preprocess(vuotoComeAssente, zUuid.optional()),
+    classe_sezione: z.string().optional(),
+    stato: z.string().optional(), // filtro libero, come prima (nessun enum imposto sul GET)
+});
+
+// Stessi valori ammessi del check manuale pre-esistente.
+const patchBodySchema = z.object({
+    id: zUuid,
+    stato: z.enum(['acknowledged', 'fulfilled']),
+});
 
 // ============================================================
 // GET /api/locker/requests
@@ -12,10 +31,9 @@ import { scuoleDiUtente } from '@/lib/auth/scope';
 // ============================================================
 export async function GET(request: NextRequest) {
     try {
-        const { searchParams } = new URL(request.url);
-        const alunnoId = searchParams.get('alunno_id');
-        const classeSezione = searchParams.get('classe_sezione');
-        const stato = searchParams.get('stato');
+        const q = parseQuery(request, getQuerySchema);
+        if ('response' in q) return q.response;
+        const { alunno_id: alunnoId, classe_sezione: classeSezione, stato } = q.data;
 
         const supabase = await createAdminClient();
 
@@ -88,23 +106,9 @@ export async function GET(request: NextRequest) {
 // ============================================================
 export async function PATCH(request: NextRequest) {
     try {
-        const body = await request.json();
-        const { id, stato } = body;
-
-        if (!id || !stato) {
-            return NextResponse.json(
-                { error: 'Campi obbligatori: id, stato' },
-                { status: 400 }
-            );
-        }
-
-        const validStates = ['acknowledged', 'fulfilled'];
-        if (!validStates.includes(stato)) {
-            return NextResponse.json(
-                { error: `Stato non valido. Ammessi: ${validStates.join(', ')}` },
-                { status: 400 }
-            );
-        }
+        const b = await parseBody(request, patchBodySchema);
+        if ('response' in b) return b.response;
+        const { id, stato } = b.data;
 
         const supabase = await createAdminClient();
 

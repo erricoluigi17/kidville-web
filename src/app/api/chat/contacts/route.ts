@@ -1,19 +1,24 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
+import { parseQuery } from '@/lib/validation/http';
+import { zUuid } from '@/lib/validation/common';
+
+// userId è usato come uuid nelle query (eq su utenti.id, interpolato nel filtro .or).
+const getQuerySchema = z.object({
+    userId: zUuid,
+});
 
 // GET /api/chat/contacts?userId=xxx
 // Restituisce i contatti disponibili per iniziare una nuova chat
 // - Se l'utente è maestra: restituisce i genitori dei suoi studenti
 // - Se l'utente è genitore: restituisce le maestre della sezione dei suoi figli
 export async function GET(request: Request) {
+    const q = parseQuery(request, getQuerySchema);
+    if ('response' in q) return q.response;
+    const { userId } = q.data;
+
     try {
-        const { searchParams } = new URL(request.url);
-        const userId = searchParams.get('userId');
-
-        if (!userId) {
-            return NextResponse.json({ error: 'userId è obbligatorio' }, { status: 400 });
-        }
-
         const supabase = await createAdminClient();
 
         // Determina il ruolo dell'utente

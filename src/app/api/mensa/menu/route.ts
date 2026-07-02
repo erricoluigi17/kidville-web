@@ -1,13 +1,61 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { loadMensaConfig, loadResolveOptions, resolveMenuConfigId, DEFAULT_SCUOLA } from '@/lib/mensa/server'
 import { resolveMenuRange } from '@/lib/mensa/resolveMenu'
+import { parseBody, parseQuery } from '@/lib/validation/http'
+import { zDataYMD, zUuid } from '@/lib/validation/common'
 
-function scuolaIdFrom(request: Request, fallback?: string | null): string {
-  const { searchParams } = new URL(request.url)
-  return searchParams.get('scuola_id') || fallback || DEFAULT_SCUOLA
-}
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+// '' è ammesso per retro-compatibilità sui param opzionali: ?scuola_id= (vuoto)
+// equivale ad assente (si applica il fallback, come col vecchio `|| default`).
+
+// GET con ?raw=1 (editor admin): tabelle grezze rotazione/override.
+const rawQuerySchema = z.object({
+  scuola_id: zUuid.or(z.literal('')).optional(),
+  menu_config_id: zUuid.or(z.literal('')).optional(),
+})
+
+// GET normale: default dinamici calcolati nell'handler (from = oggi, to = from).
+const getQuerySchema = z.object({
+  scuola_id: zUuid.or(z.literal('')).optional(),
+  from: zDataYMD.or(z.literal('')).optional(),
+  to: zDataYMD.or(z.literal('')).optional(),
+  menu_config_id: zUuid.or(z.literal('')).optional(),
+  alunno_id: zUuid.or(z.literal('')).optional(),
+})
+
+// PUT: righe permissive (i vincoli veri — settimana 1-8, portate JSONB — restano
+// al DB come prima; qui si valida solo la struttura, senza inventare vincoli nuovi).
+const rotazioneRowSchema = z.object({
+  settimana: z.unknown(),
+  giorno_settimana: z.unknown(),
+  portate: z.unknown().optional(),
+  ingredienti: z.unknown().optional(),
+  allergeni: z.unknown().optional(),
+  note: z.unknown().optional(),
+})
+
+const overrideRowSchema = z.object({
+  data: z.unknown(),
+  chiuso: z.unknown().optional(),
+  portate: z.unknown().optional(),
+  ingredienti: z.unknown().optional(),
+  allergeni: z.unknown().optional(),
+  note: z.unknown().optional(),
+})
+
+const putBodySchema = z.object({
+  scuola_id: zUuid.or(z.literal('')).nullish(),
+  menu_config_id: zUuid.or(z.literal('')).nullish(),
+  rotazione: z.array(rotazioneRowSchema).nullish(),
+  override: z.array(overrideRowSchema).nullish(),
+})
+
+const deleteQuerySchema = z.object({
+  override_id: zUuid,
+})
 
 // GET /api/mensa/menu?userId=&from=&to=&scuola_id=&menu_config_id=&alunno_id=
 //   risolve il menu per ogni data dell'intervallo (override -> rotazione).
@@ -23,8 +71,10 @@ export async function GET(request: Request) {
     if (searchParams.get('raw') === '1') {
       const auth = await requireStaff(request)
       if (auth.response) return auth.response
-      const scuolaId = scuolaIdFrom(request, auth.user.scuola_id)
-      const menuConfigId = searchParams.get('menu_config_id') || null
+      const q = parseQuery(request, rawQuerySchema)
+      if ('response' in q) return q.response
+      const scuolaId = q.data.scuola_id || auth.user.scuola_id || DEFAULT_SCUOLA
+      const menuConfigId = q.data.menu_config_id || null
       let rotQ = supabase.from('mensa_menu_rotazione').select('*').eq('scuola_id', scuolaId).order('settimana').order('giorno_settimana')
       let ovrQ = supabase.from('mensa_menu_override').select('*').eq('scuola_id', scuolaId).order('data')
       if (menuConfigId) {
@@ -38,15 +88,17 @@ export async function GET(request: Request) {
       return NextResponse.json({ success: true, data: { rotazione: rotazione ?? [], override: override ?? [], config } })
     }
 
-    const scuolaId = scuolaIdFrom(request)
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+    const scuolaId = q.data.scuola_id || DEFAULT_SCUOLA
     const today = new Date().toISOString().slice(0, 10)
-    const from = searchParams.get('from') ?? today
-    const to = searchParams.get('to') ?? from
+    const from = q.data.from ?? today
+    const to = q.data.to ?? from
 
     // Determina menu_config_id: esplicito → dall'alunno → null (legacy)
-    let menuConfigId: string | null = searchParams.get('menu_config_id') || null
+    let menuConfigId: string | null = q.data.menu_config_id || null
     if (!menuConfigId) {
-      const alunnoId = searchParams.get('alunno_id')
+      const alunnoId = q.data.alunno_id
       if (alunnoId) {
         const { data: al } = await supabase.from('alunni').select('classe_sezione, scuola_id').eq('id', alunnoId).maybeSingle()
         if (al) {
@@ -80,13 +132,15 @@ export async function PUT(request: Request) {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
-    const body = await request.json()
+    const b = await parseBody(request, putBodySchema)
+    if ('response' in b) return b.response
+    const body = b.data
     const scuolaId = body.scuola_id || auth.user.scuola_id || DEFAULT_SCUOLA
     const menuConfigId: string | null = body.menu_config_id || null
     const supabase = await createAdminClient()
 
-    if (Array.isArray(body.rotazione) && body.rotazione.length > 0) {
-      const rows = body.rotazione.map((r: Record<string, unknown>) => ({
+    if (body.rotazione && body.rotazione.length > 0) {
+      const rows = body.rotazione.map((r) => ({
         scuola_id: scuolaId,
         menu_config_id: menuConfigId,
         settimana: r.settimana,
@@ -104,8 +158,8 @@ export async function PUT(request: Request) {
       if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     }
 
-    if (Array.isArray(body.override) && body.override.length > 0) {
-      const rows = body.override.map((o: Record<string, unknown>) => ({
+    if (body.override && body.override.length > 0) {
+      const rows = body.override.map((o) => ({
         scuola_id: scuolaId,
         menu_config_id: menuConfigId,
         data: o.data,
@@ -132,11 +186,10 @@ export async function DELETE(request: Request) {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
-    const { searchParams } = new URL(request.url)
-    const overrideId = searchParams.get('override_id')
-    if (!overrideId) return NextResponse.json({ error: 'override_id obbligatorio' }, { status: 400 })
+    const q = parseQuery(request, deleteQuerySchema)
+    if ('response' in q) return q.response
     const supabase = await createAdminClient()
-    const { error } = await supabase.from('mensa_menu_override').delete().eq('id', overrideId)
+    const { error } = await supabase.from('mensa_menu_override').delete().eq('id', q.data.override_id)
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json({ success: true })
   } catch (err) {

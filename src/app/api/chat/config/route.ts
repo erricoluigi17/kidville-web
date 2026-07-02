@@ -1,13 +1,23 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { getModuleConfig } from '@/lib/settings/module-config';
+import { parseQuery } from '@/lib/validation/http';
+
+// Permissivo (niente zUuid): oggi un valore non-UUID degrada ai default di
+// getModuleConfig (200 con config vuota), non deve diventare un 400.
+const getQuerySchema = z.object({
+    scuola_id: z.string().optional(),
+});
 
 // GET /api/chat/config — config chat per il client (banner fuori orario, abilitazione).
 // Leggibile da genitori e docenti: contiene solo parametri non sensibili.
 export async function GET(request: Request) {
+    const q = parseQuery(request, getQuerySchema);
+    if ('response' in q) return q.response;
+    const scuolaId = q.data.scuola_id ?? null;
+
     try {
-        const { searchParams } = new URL(request.url);
-        const scuolaId = searchParams.get('scuola_id');
         const supabase = await createAdminClient();
         const cfg = await getModuleConfig<{
             abilitata_genitori: boolean;

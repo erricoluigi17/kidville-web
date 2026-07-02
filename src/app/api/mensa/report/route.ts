@@ -1,9 +1,20 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireKitchenRead } from '@/lib/auth/require-staff'
 import { DEFAULT_SCUOLA, loadResolveOptions } from '@/lib/mensa/server'
 import { resolveMenuGiorno } from '@/lib/mensa/resolveMenu'
 import { allergeniAlunno, conflittiAllergie, type ConflittoAllergia } from '@/lib/mensa/allergeni'
+import { parseQuery } from '@/lib/validation/http'
+import { zDataYMD } from '@/lib/validation/common'
+
+const getQuerySchema = z.object({
+  // default dinamico (oggi) calcolato nell'handler
+  data: zDataYMD.optional(),
+  // stringa permissiva: oggi '' e valori non-uuid ricadono sui fallback `||` / query vuota
+  scuola_id: z.string().optional(),
+  sezione: z.string().optional(),
+})
 
 interface AlunnoRow {
   id: string
@@ -33,10 +44,11 @@ export async function GET(request: Request) {
     if (auth.response) return auth.response
     const { user } = auth
 
-    const { searchParams } = new URL(request.url)
-    const data = searchParams.get('data') ?? new Date().toISOString().slice(0, 10)
-    const scuolaId = searchParams.get('scuola_id') || user.scuola_id || DEFAULT_SCUOLA
-    const sezione = searchParams.get('sezione')
+    const qp = parseQuery(request, getQuerySchema)
+    if ('response' in qp) return qp.response
+    const data = qp.data.data ?? new Date().toISOString().slice(0, 10)
+    const scuolaId = qp.data.scuola_id || user.scuola_id || DEFAULT_SCUOLA
+    const sezione = qp.data.sezione
 
     if (user.role === 'educator' && !sezione) {
       return NextResponse.json({ error: 'Parametro sezione obbligatorio per il ruolo insegnante' }, { status: 400 })

@@ -1,6 +1,12 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
+import { parseData } from '@/lib/validation/http';
+
+const postFormSchema = z.object({
+    file: z.instanceof(File, { error: 'Nessun file fornito' }),
+});
 
 export async function POST(request: Request) {
     try {
@@ -8,13 +14,11 @@ export async function POST(request: Request) {
         if (auth.response) return auth.response;
 
         const formData = await request.formData();
-        const file = formData.get('file') as File | null;
+        const f = parseData(postFormSchema, { file: formData.get('file') });
+        if ('response' in f) return f.response;
+        const { file } = f.data;
         // Il path è namespaced sull'utente del gate, non su un campo client.
         const userId = auth.user.id;
-
-        if (!file) {
-            return NextResponse.json({ error: 'Nessun file fornito' }, { status: 400 });
-        }
 
         const supabase = await createAdminClient();
 
@@ -53,7 +57,7 @@ export async function POST(request: Request) {
         const filePath = `uploads/${userId}/${uniqueFileName}`;
 
         const fileBuffer = await file.arrayBuffer();
-        const { data, error } = await supabase.storage
+        const { error } = await supabase.storage
             .from('gallery')
             .upload(filePath, Buffer.from(fileBuffer), {
                 contentType: file.type,

@@ -1,7 +1,18 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { requireUser } from '@/lib/auth/require-staff'
 import { rateLimit, clientIp } from '@/lib/security/rate-limit'
 import { translateText } from '@/lib/translate/claude'
+import { parseBody } from '@/lib/validation/http'
+
+// text/targetLang: oggi qualsiasi valore truthy è accettato e poi convertito con
+// String(...) prima della chiamata a translateText; lo schema replica esattamente
+// quel comportamento senza aggiungere vincoli di tipo.
+const zTruthy = z.unknown().refine((v) => Boolean(v), 'Campo obbligatorio')
+const postBodySchema = z.object({
+  text: zTruthy,
+  targetLang: zTruthy,
+})
 
 // POST /api/chat/translate — traduzione automatica di un messaggio chat (DL-042).
 // Gated (qualsiasi utente autenticato) + rate-limit anti-abuso. Delega a
@@ -19,15 +30,11 @@ export async function POST(request: Request) {
     )
   }
 
-  try {
-    const body = await request.json()
-    const text = body?.text
-    const targetLang = body?.targetLang
-    if (!text || !targetLang) {
-      return NextResponse.json({ error: 'text e targetLang sono obbligatori' }, { status: 400 })
-    }
+  const b = await parseBody(request, postBodySchema)
+  if ('response' in b) return b.response
 
-    const res = await translateText(String(text), String(targetLang))
+  try {
+    const res = await translateText(String(b.data.text), String(b.data.targetLang))
     if (res.disabled) {
       return NextResponse.json(
         { disabled: true, error: 'Traduzione non configurata (chiave assente)' },

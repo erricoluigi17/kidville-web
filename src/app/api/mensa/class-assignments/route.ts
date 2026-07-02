@@ -1,6 +1,26 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff, requireUser } from '@/lib/auth/require-staff'
+import { parseBody, parseQuery } from '@/lib/validation/http'
+import { zDataYMD, zUuid } from '@/lib/validation/common'
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+const getQuerySchema = z.object({
+  scuola_id: zUuid,
+})
+
+const postBodySchema = z.object({
+  scuola_id: zUuid,
+  // trim come nel vecchio insert; vuoto/solo spazi era già rifiutato con 400
+  classe: z.string().trim().min(1, 'classe è obbligatoria'),
+  menu_config_id: zUuid,
+  attivo_dal: zDataYMD,
+})
+
+const deleteQuerySchema = z.object({
+  id: zUuid,
+})
 
 // GET /api/mensa/class-assignments?scuola_id=
 // Ritorna tutte le assegnazioni (incluse quelle future), ordinate per classe + data.
@@ -8,9 +28,9 @@ export async function GET(request: Request) {
   try {
     const auth = await requireUser(request)
     if (auth.response) return auth.response
-    const { searchParams } = new URL(request.url)
-    const scuolaId = searchParams.get('scuola_id')
-    if (!scuolaId) return NextResponse.json({ error: 'scuola_id è obbligatorio' }, { status: 400 })
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+    const scuolaId = q.data.scuola_id
 
     const supabase = await createAdminClient()
     const { data, error } = await supabase
@@ -32,16 +52,14 @@ export async function POST(request: Request) {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
-    const body = await request.json()
-    const { scuola_id, classe, menu_config_id, attivo_dal } = body
-    if (!scuola_id || !classe?.trim() || !menu_config_id || !attivo_dal) {
-      return NextResponse.json({ error: 'scuola_id, classe, menu_config_id e attivo_dal sono obbligatori' }, { status: 400 })
-    }
+    const b = await parseBody(request, postBodySchema)
+    if ('response' in b) return b.response
+    const { scuola_id, classe, menu_config_id, attivo_dal } = b.data
 
     const supabase = await createAdminClient()
     const { data, error } = await supabase
       .from('mensa_class_menu_assignment')
-      .insert({ scuola_id, classe: classe.trim(), menu_config_id, attivo_dal })
+      .insert({ scuola_id, classe, menu_config_id, attivo_dal })
       .select('id, classe, menu_config_id, attivo_dal')
       .single()
     if (error) throw error
@@ -57,12 +75,11 @@ export async function DELETE(request: Request) {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
-    const { searchParams } = new URL(request.url)
-    const id = searchParams.get('id')
-    if (!id) return NextResponse.json({ error: 'id è obbligatorio' }, { status: 400 })
+    const q = parseQuery(request, deleteQuerySchema)
+    if ('response' in q) return q.response
 
     const supabase = await createAdminClient()
-    const { error } = await supabase.from('mensa_class_menu_assignment').delete().eq('id', id)
+    const { error } = await supabase.from('mensa_class_menu_assignment').delete().eq('id', q.data.id)
     if (error) throw error
     return NextResponse.json({ success: true })
   } catch (err) {

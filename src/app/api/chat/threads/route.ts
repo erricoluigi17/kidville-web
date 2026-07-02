@@ -1,17 +1,28 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
+import { parseBody, parseQuery } from '@/lib/validation/http';
+import { zUuid } from '@/lib/validation/common';
+
+// userId è usato come uuid nelle query (interpolato nel filtro .or, neq su sender_id).
+const getQuerySchema = z.object({
+    userId: zUuid,
+});
+
+const postBodySchema = z.object({
+    teacher_id: zUuid,
+    parent_id: zUuid,
+    student_id: zUuid,
+});
 
 // GET /api/chat/threads?userId=xxx
 // Lista thread per un utente (insegnante o genitore)
 export async function GET(request: Request) {
+    const q = parseQuery(request, getQuerySchema);
+    if ('response' in q) return q.response;
+    const { userId } = q.data;
+
     try {
-        const { searchParams } = new URL(request.url);
-        const userId = searchParams.get('userId');
-
-        if (!userId) {
-            return NextResponse.json({ error: 'userId è obbligatorio' }, { status: 400 });
-        }
-
         const supabase = await createAdminClient();
 
         // Cerca thread dove l'utente è teacher o parent
@@ -86,17 +97,11 @@ export async function GET(request: Request) {
 // POST /api/chat/threads
 // Body: { teacher_id, parent_id, student_id }
 export async function POST(request: Request) {
+    const b = await parseBody(request, postBodySchema);
+    if ('response' in b) return b.response;
+    const { teacher_id, parent_id, student_id } = b.data;
+
     try {
-        const body = await request.json();
-        const { teacher_id, parent_id, student_id } = body;
-
-        if (!teacher_id || !parent_id || !student_id) {
-            return NextResponse.json(
-                { error: 'teacher_id, parent_id e student_id sono obbligatori' },
-                { status: 400 }
-            );
-        }
-
         const supabase = await createAdminClient();
 
         // Cerca se esiste già un thread per questa combinazione

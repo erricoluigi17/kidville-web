@@ -17,6 +17,11 @@ const GRUPPI_COPERTI: string[] = [
     'grades',
     'notes',
     'tasks',
+    // M3.3 (zod 2/14)
+    'chat',
+    'gallery',
+    'locker',
+    'mensa',
 ];
 
 const API_ROOT = path.join(process.cwd(), 'src', 'app', 'api');

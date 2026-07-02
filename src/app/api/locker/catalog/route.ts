@@ -1,8 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createClient, createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { scuoleDiUtente } from '@/lib/auth/scope';
 import { logScrittura } from '@/lib/audit/scrittura';
+import { parseBody, parseQuery } from '@/lib/validation/http';
+import { zUuid } from '@/lib/validation/common';
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+const getQuerySchema = z.object({
+    scuola_id: zUuid, // obbligatorio (sostituisce il 400 manuale pre-esistente)
+});
+
+const postBodySchema = z.object({
+    scuola_id: zUuid,
+    nome: z.string().min(1),
+    icona: z.string().nullish(),         // default '📦' applicato nel codice (?? copre anche null)
+    unita: z.string().nullish(),         // default 'pz'
+    soglia_gialla: z.number().nullish(), // default 5
+    soglia_rossa: z.number().nullish(),  // default 2
+});
 
 // ============================================================
 // GET /api/locker/catalog — Lista catalogo materiali per sede
@@ -10,15 +27,9 @@ import { logScrittura } from '@/lib/audit/scrittura';
 // ============================================================
 export async function GET(request: NextRequest) {
     try {
-        const { searchParams } = new URL(request.url);
-        const scuolaId = searchParams.get('scuola_id');
-
-        if (!scuolaId) {
-            return NextResponse.json(
-                { error: 'Parametro scuola_id obbligatorio' },
-                { status: 400 }
-            );
-        }
+        const q = parseQuery(request, getQuerySchema);
+        if ('response' in q) return q.response;
+        const scuolaId = q.data.scuola_id;
 
         const supabase = await createClient();
 
@@ -49,15 +60,9 @@ export async function POST(request: NextRequest) {
         const auth = await requireDocente(request);
         if (auth.response) return auth.response;
 
-        const body = await request.json();
-        const { scuola_id, nome, icona, unita, soglia_gialla, soglia_rossa } = body;
-
-        if (!scuola_id || !nome) {
-            return NextResponse.json(
-                { error: 'Campi obbligatori: scuola_id, nome' },
-                { status: 400 }
-            );
-        }
+        const b = await parseBody(request, postBodySchema);
+        if ('response' in b) return b.response;
+        const { scuola_id, nome, icona, unita, soglia_gialla, soglia_rossa } = b.data;
 
         const admin = await createAdminClient();
         // Isolamento per tenant: la scuola_id del catalogo deve essere tra i plessi dell'attore.

@@ -1,9 +1,52 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createClient, createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
+import { parseBody, parseQuery } from '@/lib/validation/http';
+import { zUuid } from '@/lib/validation/common';
 import { alunniSenzaConsenso } from '@/lib/gallery/privacy';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const getQuerySchema = z.object({
+    studentId: zUuid.optional(),
+    // Fallback storico senza vincolo di formato: se il legame non esiste → 403.
+    parentId: z.string().optional(),
+    classe: z.string().optional(),
+    // Storicamente senza vincolo di formato (concatenata in un timestamp ISO).
+    date: z.string().optional(),
+    // Clamp storico preservato nell'handler (default 30, max 100, garbage → 30):
+    // NON zPaginazione, che cambierebbe default e limiti.
+    limit: z.string().optional(),
+    offset: z.string().optional(),
+});
+
+const postBodySchema = z.object({
+    // `uploaded_by` dal client è volutamente ignorato (si usa l'utente del gate).
+    file_url: z.string().min(1, 'file_url è obbligatorio'),
+    file_type: z.string().nullish(),
+    caption: z.string().nullish(),
+    // Lasco: oggi nessun vincolo uuid sugli id taggati.
+    tag_students: z.array(z.string()).nullish(),
+    is_broadcast: z.boolean().nullish(),
+    target_classes: z.array(z.string()).nullish(),
+});
+
+const deleteQuerySchema = z.object({
+    id: zUuid,
+    // Fallback quando non c'è sessione: la sessione, se presente, lo sovrascrive,
+    // quindi resta lasco (un valore non-uuid oggi non blocca la richiesta).
+    userId: z.string().optional(),
+});
+
+const patchBodySchema = z.object({
+    id: zUuid,
+    userId: zUuid,
+    tag_students: z.array(z.string()).nullish(),
+    is_broadcast: z.boolean().nullish(),
+    target_classes: z.array(z.string()).nullish(),
+    caption: z.string().nullish(),
+});
 
 // GET /api/gallery?studentId=xxx&classe=xxx&date=YYYY-MM-DD&limit=30&offset=0
 // Lista media con filtri (studentId per genitore, classe per insegnante).
@@ -11,22 +54,17 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 // tabella con filtro/slice in memoria. Contratto risposta invariato: { media, total }.
 export async function GET(request: Request) {
     try {
-        const { searchParams } = new URL(request.url);
-        const studentId = searchParams.get('studentId');
-        const classe = searchParams.get('classe');
-        const date = searchParams.get('date');
-        const limit = Math.min(Math.max(parseInt(searchParams.get('limit') ?? '30') || 30, 1), 100);
-        const offset = Math.max(parseInt(searchParams.get('offset') ?? '0') || 0, 0);
-
-        if (studentId && !UUID_RE.test(studentId)) {
-            return NextResponse.json({ error: 'studentId non valido' }, { status: 400 });
-        }
+        const q = parseQuery(request, getQuerySchema);
+        if ('response' in q) return q.response;
+        const { studentId, classe, date } = q.data;
+        const limit = Math.min(Math.max(parseInt(q.data.limit ?? '30') || 30, 1), 100);
+        const offset = Math.max(parseInt(q.data.offset ?? '0') || 0, 0);
 
         const supabase = await createAdminClient();
 
         // Validazione genitore-studente PRIMA di leggere i media
         if (studentId) {
-            const parentId = searchParams.get('parentId');
+            const parentId = q.data.parentId;
             if (parentId) {
                 const { data: link } = await supabase
                     .from('legame_genitori_alunni')
@@ -118,7 +156,8 @@ export async function POST(request: Request) {
         const auth = await requireDocente(request);
         if (auth.response) return auth.response;
 
-        const body = await request.json();
+        const b = await parseBody(request, postBodySchema);
+        if ('response' in b) return b.response;
         const {
             file_url,
             file_type,
@@ -126,14 +165,7 @@ export async function POST(request: Request) {
             tag_students,
             is_broadcast,
             target_classes,
-        } = body;
-
-        if (!file_url) {
-            return NextResponse.json(
-                { error: 'file_url è obbligatorio' },
-                { status: 400 }
-            );
-        }
+        } = b.data;
 
         // L'uploader è l'utente del gate (no spoofing del campo uploaded_by).
         const uploaded_by = auth.user.id;
@@ -184,16 +216,13 @@ export async function POST(request: Request) {
 // Cancella un media con controllo granularizzato dei ruoli
 export async function DELETE(request: Request) {
     try {
-        const { searchParams } = new URL(request.url);
-        const id = searchParams.get('id');
-        const paramUserId = searchParams.get('userId');
-
-        if (!id) {
-            return NextResponse.json({ error: 'id è obbligatorio' }, { status: 400 });
-        }
+        const q = parseQuery(request, deleteQuerySchema);
+        if ('response' in q) return q.response;
+        const id = q.data.id;
+        const paramUserId = q.data.userId;
 
         // Recupera l'utente dalla sessione se disponibile
-        let userId = paramUserId;
+        let userId: string | undefined = paramUserId;
         try {
             const sessionClient = await createClient();
             const { data: { user } } = await sessionClient.auth.getUser();
@@ -331,16 +360,9 @@ export async function DELETE(request: Request) {
 // Body: { id, userId, tag_students, is_broadcast, target_classes, caption }
 export async function PATCH(request: Request) {
     try {
-        const body = await request.json();
-        const { id, userId, tag_students, is_broadcast, target_classes, caption } = body;
-
-        if (!id) {
-            return NextResponse.json({ error: 'id è obbligatorio' }, { status: 400 });
-        }
-
-        if (!userId) {
-            return NextResponse.json({ error: 'userId è obbligatorio' }, { status: 400 });
-        }
+        const b = await parseBody(request, patchBodySchema);
+        if ('response' in b) return b.response;
+        const { id, userId, tag_students, is_broadcast, target_classes, caption } = b.data;
 
         const supabase = await createAdminClient();
 

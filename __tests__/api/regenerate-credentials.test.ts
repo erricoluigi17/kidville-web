@@ -64,7 +64,11 @@ describe('POST /api/admin/regenerate-credentials (DL-005)', () => {
     const res = await POST(req({ targetKind: 'parent', targetId: 'p1' }));
     const data = await res.json();
     expect(res.status).toBe(200);
-    expect(data).toEqual({ ok: true, emailed: true });
+    expect(data.ok).toBe(true);
+    expect(data.email_inviata).toBe(true);
+    expect(data.warning).toBeUndefined();
+    // fuori da production le credenziali sono restituite per la consegna manuale
+    expect(data.devCredentials).toEqual({ email: 'p@x.it', password: expect.any(String) });
     expect(h.updates).toHaveLength(1);
     expect(h.updates[0].id).toBe('auth-p');
     expect(typeof h.updates[0].attrs.password).toBe('string');
@@ -72,6 +76,16 @@ describe('POST /api/admin/regenerate-credentials (DL-005)', () => {
     expect(h.updates[0].attrs.email_confirm).toBe(true);
     expect(h.sendEmail).toHaveBeenCalledWith(expect.objectContaining({ to: 'p@x.it' }));
     expect(h.logScrittura).toHaveBeenCalled();
+  });
+
+  it('email non inviata → esito propagato con warning (mai perdita silenziosa)', async () => {
+    h.sendEmail.mockResolvedValue(false);
+    h.adminRow = { data: { auth_user_id: 'auth-p', emails: ['p@x.it'], first_name: 'Mario' }, error: null };
+    const res = await POST(req({ targetKind: 'parent', targetId: 'p1' }));
+    const data = await res.json();
+    expect(res.status).toBe(200);
+    expect(data.email_inviata).toBe(false);
+    expect(data.warning).toMatch(/Email non inviata/);
   });
 
   it('genitore senza account auth → 409', async () => {

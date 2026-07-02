@@ -85,5 +85,15 @@ export async function POST(request: Request) {
     valoreDopo: { targetKind, emailed },
   });
 
-  return NextResponse.json({ ok: true, emailed });
+  // La password è già stata cambiata: un fallimento email NON può restare
+  // silenzioso, altrimenti l'utente resta chiuso fuori senza che nessuno lo sappia.
+  return NextResponse.json({
+    ok: true,
+    email_inviata: emailed,
+    ...(emailed
+      ? {}
+      : { warning: 'Email non inviata (provider non configurato): comunicare le credenziali manualmente.' }),
+    // In dev (nessun provider email) restituiamo le credenziali per la consegna manuale.
+    ...(process.env.NODE_ENV !== 'production' ? { devCredentials: { email, password } } : {}),
+  });
 }

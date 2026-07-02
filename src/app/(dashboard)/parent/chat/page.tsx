@@ -8,7 +8,7 @@ import { ChatMessageArea, ChatMessage } from '@/components/features/chat/ChatMes
 import { ChatInput } from '@/components/features/chat/ChatInput';
 import { useUnreadNotifications } from '@/components/features/chat/useUnreadNotifications';
 import { useChatRealtime } from '@/components/features/chat/useChatRealtime';
-import { useSearchParams } from 'next/navigation';
+import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 
 interface Contact {
     user_id: string;
@@ -19,9 +19,9 @@ interface Contact {
     sezione: string;
 }
 
+// Identità dalla sessione (URL → localStorage → /api/me), senza fallback demo (M4).
 function ParentChatContent() {
-    const searchParams = useSearchParams();
-    const parentId = searchParams.get('userId') || '33333333-3333-3333-3333-333333333333';
+    const { userId: parentId } = useSessionIdentity();
 
     const [threads, setThreads] = useState<ChatThread[]>([]);
     const [selectedThread, setSelectedThread] = useState<ChatThread | null>(null);
@@ -50,23 +50,23 @@ function ParentChatContent() {
 
     // Notifiche non letti + badge titolo pagina (mantenuto come fallback)
     useUnreadNotifications({
-        userId: parentId,
+        userId: parentId ?? '', // il hook ignora gli id falsy
+
         enabled: true,
         onUnreadChange: setUnreadCount,
         pollInterval: 30000, // ridotto a 30s ora che c'è il realtime
     });
 
     const loadThreads = useCallback(async () => {
+        if (!parentId) return; // identità non risolta: lo spinner resta
         try {
-            const res = await fetch(`/api/chat/threads?userId=${parentId}`);
-            if (res.ok) {
+            const res = await fetch(`/api/chat/threads?userId=${parentId}`).catch(() => null);
+            if (res?.ok) {
                 const data: ChatThread[] = await res.json();
                 setThreads(data);
                 const names = [...new Set(data.map(t => t.student.nome))];
                 if (names.length > 0) setChildrenNames(names);
             }
-        } catch (err) {
-            console.error('Errore caricamento thread:', err);
         } finally {
             setLoading(false);
         }
@@ -82,18 +82,18 @@ function ParentChatContent() {
             .catch(() => {});
     }, []);
 
+    // NB: lo spinner contatti (loadingContacts) viene attivato dall'handler di
+    // apertura modale, non qui: nessun setState sincrono nei loader da effect.
     const loadContacts = useCallback(async () => {
-        setLoadingContacts(true);
+        if (!parentId) return;
         try {
-            const res = await fetch(`/api/chat/contacts?userId=${parentId}`);
-            if (res.ok) {
+            const res = await fetch(`/api/chat/contacts?userId=${parentId}`).catch(() => null);
+            if (res?.ok) {
                 const data = await res.json();
                 setContacts(data.contacts ?? []);
                 const names: string[] = [...new Set<string>((data.contacts ?? []).map((c: Contact) => c.student_name.split(' ')[0]))];
                 if (names.length > 0) setChildrenNames(names);
             }
-        } catch (err) {
-            console.error('Errore caricamento contatti:', err);
         } finally {
             setLoadingContacts(false);
         }
@@ -160,7 +160,8 @@ function ParentChatContent() {
 
     // Attiva il realtime solo quando i thread sono caricati
     useChatRealtime({
-        userId: parentId,
+        userId: parentId ?? '', // il hook ignora gli id falsy
+
         selectedThreadId: selectedThread?.id ?? null,
         threads,
         onNewMessage: handleRealtimeNewMessage,
@@ -226,6 +227,7 @@ function ParentChatContent() {
     };
 
     const handleNewChat = async (contact: Contact) => {
+        if (!parentId) return;
         try {
             const res = await fetch('/api/chat/threads', {
                 method: 'POST',
@@ -254,7 +256,7 @@ function ParentChatContent() {
     };
 
     const handleSendMessage = async (content: string, attachmentUrl?: string, attachmentType?: string) => {
-        if (!selectedThread) return;
+        if (!selectedThread || !parentId) return;
         try {
             const res = await fetch('/api/chat/messages', {
                 method: 'POST',
@@ -286,7 +288,7 @@ function ParentChatContent() {
     // Rimuovere il calcolo reattivo: firstUnreadId è ora uno stato
     // gestito da loadMessages e resettato da handleSendMessage/handleSelectThread
 
-    if (loading) {
+    if (loading || !parentId) {
         return (
             <div className="max-w-5xl mx-auto p-4 sm:p-6 flex flex-col items-center justify-center min-h-[60vh] gap-4">
                 <div className="w-10 h-10 border-4 border-kidville-green/30 border-t-kidville-green rounded-full animate-spin" />
@@ -325,7 +327,7 @@ function ParentChatContent() {
                     </p>
                 </div>
                 <button
-                    onClick={() => { setShowNewChat(true); loadContacts(); }}
+                    onClick={() => { setShowNewChat(true); setLoadingContacts(true); loadContacts(); }}
                     className="flex items-center gap-2 px-4 py-2.5 bg-kidville-green text-kidville-yellow font-barlow font-bold text-sm uppercase rounded-2xl hover:opacity-90 active:scale-[0.98] transition-all shadow-lg shadow-kidville-green/20"
                 >
                     <Plus size={16} strokeWidth={1.5} /> Nuova Chat

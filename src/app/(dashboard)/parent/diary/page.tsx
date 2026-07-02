@@ -2,9 +2,9 @@
 
 import { useState, useEffect, useCallback, Suspense } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronLeft, ChevronRight, BookOpen, Camera, ChevronDown } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Camera, ChevronDown } from 'lucide-react';
 import { getEventConfig } from '@/components/features/teacher/diary/eventConfig';
-import { useSearchParams } from 'next/navigation';
+import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 import { MediaGrid, MediaItem } from '@/components/features/gallery/MediaGrid';
 
 // ─── Tipi ─────────────────────────────────────────────────────────────────────
@@ -16,12 +16,6 @@ interface DiaryEntry {
     dettagli: Record<string, unknown> | null;
     note: string | null;
     activity_description?: string | null;
-}
-
-interface DailyPhoto {
-    id: string;
-    url: string;
-    caption: string;
 }
 
 // ─── Ordine canonico della giornata ───────────────────────────────────────────
@@ -56,7 +50,7 @@ const QUANTITY_NARRATIVE: Record<string, string> = {
     tutto:  'ho finito tutto! 🌟',
 };
 
-function buildFirstPersonNarrative(tipo: string, dettagli: Record<string, unknown> | null, actDesc?: string | null): { lines: string[], emoji: string } {
+function buildFirstPersonNarrative(tipo: string, dettagli: Record<string, unknown> | null): { lines: string[], emoji: string } {
     if (tipo === 'entrata') {
         const orario = (dettagli?.orario as string) ?? '';
         return {
@@ -198,7 +192,6 @@ function EventCard({ entry, index }: { entry: DiaryEntry; index: number }) {
     const { lines, emoji } = buildFirstPersonNarrative(
         entry.tipo_evento,
         entry.dettagli,
-        entry.activity_description,
     );
     const borderColor = config.accentColor.split(' ').find(c => c.startsWith('border-')) ?? 'border-gray-100';
 
@@ -294,15 +287,17 @@ function PhotosSection({ photos }: { photos: MediaItem[] }) {
 
 // ─── Pagina principale ────────────────────────────────────────────────────────
 
+// Identità dalla sessione (URL → localStorage → /api/me), senza fallback demo (M4).
 function ParentDiaryContent() {
-    const searchParams = useSearchParams();
-    const alunnoId = searchParams.get('id') || 'dc617529-e80d-4084-9041-fb28e864089f'; // Default: Tommaso Bianchi
-    const parentId = searchParams.get('parentId') || null;
+    const { parentId, studentId: alunnoId, ready } = useParentIdentity();
 
     const [dateKey, setDateKey] = useState<string>(toDateKey(new Date()));
     const [entries, setEntries] = useState<DiaryEntry[]>([]);
     const [photos, setPhotos] = useState<MediaItem[]>([]);
-    const [loading, setLoading] = useState(true);
+    // Il giorno di cui abbiamo completato il caricamento: lo spinner è derivato
+    // (loading = giorno richiesto ≠ giorno caricato), niente setState sincroni.
+    const [loadedKey, setLoadedKey] = useState<string | null>(null);
+    const loading = loadedKey !== dateKey;
     const [direction, setDirection] = useState<1 | -1>(1);
     const [studentName, setStudentName] = useState<string | null>(null);
     const [classe, setClasse] = useState<string | null>(null);
@@ -321,11 +316,11 @@ function ParentDiaryContent() {
     };
 
     const load = useCallback(async (dk: string) => {
-        setLoading(true);
+        if (!ready || !alunnoId) return; // identità non risolta: lo spinner resta
         try {
-            // Carica eventi diario
-            const res = await fetch(`/api/diary/entries?alunno_id=${alunnoId}&from=${dk}&to=${dk}`);
-            if (res.ok) {
+            // Carica eventi diario (errore di rete ⇒ stato vuoto, come prima)
+            const res = await fetch(`/api/diary/entries?alunno_id=${alunnoId}&from=${dk}&to=${dk}`).catch(() => null);
+            if (res?.ok) {
                 const data: DiaryEntry[] = await res.json();
                 setEntries(deduplicateAndSort(data));
             } else {
@@ -333,34 +328,30 @@ function ParentDiaryContent() {
             }
 
             // "Entrata" dal modulo Presenze (orario di check-in del giorno)
-            try {
-                const ciRes = await fetch(`/api/diary/checkin?alunno_id=${alunnoId}&date=${dk}`);
-                setCheckIn(ciRes.ok ? ((await ciRes.json()).orario_entrata ?? null) : null);
-            } catch { setCheckIn(null); }
+            const ciRes = await fetch(`/api/diary/checkin?alunno_id=${alunnoId}&date=${dk}`).catch(() => null);
+            const ci = ciRes?.ok ? await ciRes.json().catch(() => null) : null;
+            setCheckIn(ci?.orario_entrata ?? null);
 
             // Carica foto reali associate a questo alunno per il giorno selezionato
             let photosUrl = `/api/gallery?studentId=${alunnoId}&date=${dk}`;
             if (parentId) photosUrl += `&parentId=${parentId}`;
-            const photosRes = await fetch(photosUrl);
-            if (photosRes.ok) {
+            const photosRes = await fetch(photosUrl).catch(() => null);
+            if (photosRes?.ok) {
                 const photosData = await photosRes.json();
                 setPhotos(photosData.media ?? []);
             } else {
                 setPhotos([]);
             }
-        } catch (err) {
-            console.error('Errore nel caricamento del diario/foto:', err);
-            setEntries([]);
-            setPhotos([]);
         } finally {
-            setLoading(false);
+            setLoadedKey(dk);
         }
-    }, [alunnoId, parentId]);
+    }, [ready, alunnoId, parentId]);
 
     useEffect(() => { load(dateKey); }, [dateKey, load]);
 
     // Carica il nome reale del bambino
     useEffect(() => {
+        if (!alunnoId) return;
         fetch(`/api/diary/students?id=${alunnoId}`)
             .then(r => r.ok ? r.json() : null)
             .then(d => {

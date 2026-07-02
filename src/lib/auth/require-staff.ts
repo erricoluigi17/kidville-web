@@ -107,6 +107,24 @@ export async function resolveIdentity(
 }
 
 /**
+ * Risolve l'id applicativo dalla SOLA sessione (cookie Supabase), per i
+ * server component che non hanno una `Request` (es. pagine). Nessun percorso
+ * header/query e nessun fallback demo: `null` = anonimo.
+ */
+export async function resolveSessionAppId(): Promise<string | null> {
+  try {
+    const supabase = await createClient()
+    const { data } = await supabase.auth.getUser()
+    const uid = data?.user?.id ?? null
+    if (!uid) return null
+    const appId = await resolveAppIdFromAuthUid(uid).catch(() => null)
+    return appId ?? uid
+  } catch {
+    return null
+  }
+}
+
+/**
  * Carica l'utente applicativo da `utenti` (tabella reale: il DB non usa
  * Supabase Auth, `utenti.id ≠ auth.uid()`). Usa il client service-role perché
  * è il pattern di tutta la codebase; l'enforcement è applicativo.

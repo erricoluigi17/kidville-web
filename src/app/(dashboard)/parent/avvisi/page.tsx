@@ -1,16 +1,12 @@
 'use client';
 
 import { useState, useEffect, useCallback, Suspense } from 'react';
-import { useSearchParams } from 'next/navigation';
 import { AvvisoCard, Avviso } from '@/components/features/avvisi/AvvisoCard';
+import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 
-const DEFAULT_PARENT_ID = '33333333-3333-3333-3333-333333333333';
-const DEFAULT_STUDENT_ID = 'dc617529-e80d-4084-9041-fb28e864089f';
-
+// Identità dalla sessione (URL → localStorage → /api/me), senza fallback demo (M4).
 function ParentAvvisiContent() {
-    const searchParams = useSearchParams();
-    const studentId = searchParams.get('id') || DEFAULT_STUDENT_ID;
-    const parentId = searchParams.get('userId') || DEFAULT_PARENT_ID;
+    const { parentId, studentId, ready } = useParentIdentity();
 
     const [avvisi, setAvvisi] = useState<Avviso[]>([]);
     const [loading, setLoading] = useState(true);
@@ -19,6 +15,7 @@ function ParentAvvisiContent() {
 
     // 1. Carica info studente (per ricavare nome e classe)
     useEffect(() => {
+        if (!studentId) return;
         fetch(`/api/diary/students?id=${studentId}`)
             .then(r => r.ok ? r.json() : null)
             .then(d => {
@@ -34,22 +31,21 @@ function ParentAvvisiContent() {
 
     // 2. Carica gli avvisi per la classe dello studente
     const loadAvvisi = useCallback(async () => {
-        setLoading(true);
+        if (!ready || !parentId || !studentId) return;
         try {
             const res = await fetch(`/api/avvisi?classe=${classe}&parentId=${parentId}&studentId=${studentId}`);
             if (res.ok) setAvvisi(await res.json());
-        } catch (err) {
-            console.error('Errore caricamento avvisi:', err);
         } finally {
             setLoading(false);
         }
-    }, [classe, parentId, studentId]);
+    }, [ready, classe, parentId, studentId]);
 
     useEffect(() => {
         loadAvvisi();
     }, [loadAvvisi]);
 
     const handleReadReceipt = async (avvisoId: string) => {
+        if (!parentId || !studentId) return;
         try {
             await fetch(`/api/avvisi/${avvisoId}/risposte`, {
                 method: 'POST',
@@ -63,6 +59,7 @@ function ParentAvvisiContent() {
     };
 
     const handleAdesione = async (avvisoId: string, risposta: 'si' | 'no') => {
+        if (!parentId || !studentId) return;
         try {
             await fetch(`/api/avvisi/${avvisoId}/risposte`, {
                 method: 'POST',

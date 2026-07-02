@@ -4,17 +4,15 @@ import { useState, useEffect, useCallback, Suspense } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronDown, ImageOff, Info } from 'lucide-react';
 import { MediaGrid, MediaItem } from '@/components/features/gallery/MediaGrid';
-import { useSearchParams } from 'next/navigation';
+import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 
+// Identità dalla sessione (URL → localStorage → /api/me), senza fallback demo (M4).
 function ParentGalleryContent() {
-    const searchParams = useSearchParams();
-    const studentId = searchParams.get('id') || 'dc617529-e80d-4084-9041-fb28e864089f';
-    const parentId = searchParams.get('parentId') || null;
+    const { parentId, studentId, ready } = useParentIdentity();
 
     const [media, setMedia] = useState<MediaItem[]>([]);
     const [loading, setLoading] = useState(true);
     const [loadingMore, setLoadingMore] = useState(false);
-    const [offset, setOffset] = useState(0);
     const [hasMore, setHasMore] = useState(true);
     const [studentName, setStudentName] = useState<string | null>(null);
     const [totalCount, setTotalCount] = useState(0);
@@ -22,22 +20,17 @@ function ParentGalleryContent() {
     const LIMIT = 12;
 
     const loadMedia = useCallback(async (currentOffset: number, append: boolean) => {
-        if (currentOffset === 0) {
-            setLoading(true);
-        } else {
-            setLoadingMore(true);
-        }
-
+        if (!ready || !studentId) return; // identità non risolta: lo spinner resta
         try {
             let url = `/api/gallery?studentId=${studentId}&limit=${LIMIT}&offset=${currentOffset}`;
             if (parentId) url += `&parentId=${parentId}`;
-            
-            const res = await fetch(url);
-            if (res.ok) {
+
+            const res = await fetch(url).catch(() => null);
+            if (res?.ok) {
                 const data = await res.json();
                 const fetchedMedia = data.media ?? [];
                 const total = data.total ?? 0;
-                
+
                 setTotalCount(total);
 
                 if (append) {
@@ -51,26 +44,24 @@ function ParentGalleryContent() {
                     setHasMore(fetchedMedia.length < total);
                 }
             }
-        } catch (err) {
-            console.error('Errore caricamento media:', err);
         } finally {
             setLoading(false);
             setLoadingMore(false);
         }
-    }, [studentId, parentId]);
+    }, [ready, studentId, parentId]);
 
     useEffect(() => {
-        setOffset(0);
         loadMedia(0, false);
-    }, [studentId, loadMedia]);
+    }, [loadMedia]);
 
     const handleLoadMore = () => {
-        const nextOffset = offset + LIMIT;
-        setOffset(nextOffset);
-        loadMedia(nextOffset, true);
+        setLoadingMore(true);
+        // L'offset successivo è derivato da quanto già caricato (niente stato offset).
+        loadMedia(media.length, true);
     };
 
     useEffect(() => {
+        if (!studentId) return;
         fetch(`/api/diary/students?id=${studentId}`)
             .then(r => r.ok ? r.json() : null)
             .then(d => { if (d?.nome) setStudentName(`${d.nome} ${d.cognome ?? ''}`.trim()); })

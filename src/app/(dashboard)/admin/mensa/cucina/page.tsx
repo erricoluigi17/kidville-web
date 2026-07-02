@@ -6,8 +6,7 @@ import { ChefHat, UtensilsCrossed } from 'lucide-react';
 import { MensaReport } from '@/components/features/admin/mensa/MensaReport';
 import { allergeniDelGiorno, allergeneLabel, allergeneEmoji, type AllergeniPortate } from '@/lib/mensa/allergeni';
 import { CockpitPage, PageHeader } from '@/components/ui/cockpit';
-
-const DEV_COOK = '22222222-2222-2222-2222-555555555555';
+import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 
 interface Portate { primo?: string; secondo?: string; contorno?: string; frutta?: string }
 interface MenuGiorno { data: string; attivo: boolean; chiuso: boolean; portate: Portate | null; ingredienti?: Portate | null; allergeni?: AllergeniPortate | null; note?: string | null }
@@ -15,16 +14,21 @@ const hdr = (u: string) => ({ 'Content-Type': 'application/json', 'x-user-id': u
 
 function CucinaInner() {
   const params = useSearchParams();
-  const userId = params.get('userId') || DEV_COOK;
+  const { userId } = useSessionIdentity();
   // l'insegnante arriva con ?sezione=… per restare scoped alla sua classe
   const sezione = params.get('sezione') || undefined;
   const [oggi, setOggi] = useState<MenuGiorno | null>(null);
 
   const data = new Date().toISOString().slice(0, 10);
   const loadMenu = useCallback(async () => {
-    const r = await fetch(`/api/mensa/menu?userId=${userId}&from=${data}&to=${data}`, { headers: hdr(userId) });
-    const j = await r.json();
-    if (j.success && j.data?.[0]) setOggi(j.data[0]);
+    if (!userId) return; // identità non risolta: resta "Caricamento…"
+    try {
+      const r = await fetch(`/api/mensa/menu?userId=${userId}&from=${data}&to=${data}`, { headers: hdr(userId) }).catch(() => null);
+      const j = await r?.json().catch(() => null);
+      if (j?.success && j.data?.[0]) setOggi(j.data[0]);
+    } finally {
+      // nessun flag di loading dedicato: l'UI mostra "Caricamento…" finché `oggi` è null
+    }
   }, [userId, data]);
 
   useEffect(() => { loadMenu(); }, [loadMenu]);
@@ -64,7 +68,7 @@ function CucinaInner() {
 
       {/* Report pasti + allergie */}
       <div className="bg-kidville-white rounded-2xl shadow-sm p-4 md:p-6">
-        <MensaReport userId={userId} sezione={sezione} />
+        {userId && <MensaReport userId={userId} sezione={sezione} />}
       </div>
     </CockpitPage>
   );

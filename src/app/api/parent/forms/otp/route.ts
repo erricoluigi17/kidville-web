@@ -1,20 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
+import { requireUser } from '@/lib/auth/require-staff'
 import { persistSignedSubmission } from '@/lib/forms/persist-submission'
 import { getUserEmail, sendOtp, verifyTicket, codeHash } from '@/lib/auth/otp-ticket'
 import { buildSignatureLog, extractRequestMeta } from '@/lib/fea/signature-log'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 
-const DEFAULT_PARENT_ID = '33333333-3333-3333-3333-333333333333'
-
-// parent_id opzionale: ogni valore falsy (assente, null, stringa vuota) ricade
-// sul genitore demo, come il pre-esistente `body.parent_id || DEFAULT_PARENT_ID`.
-const zParentIdConDefault = z.preprocess(
-  (v) => (v ? v : undefined),
-  zUuid.default(DEFAULT_PARENT_ID)
-)
+// ─── Schemi di validazione input (M3/M4) ─────────────────────────────────────
+// L'identità del firmatario viene dal gate (requireUser): il `parent_id`
+// legacy nel body è ignorato, nessun fallback demo (M4). La firma FES resta
+// legata all'email autorevole dell'utente autenticato.
 
 // student_id opzionale: stringa vuota trattata come assente
 // (persistSignedSubmission fa già `student_id || null`).
@@ -23,12 +20,9 @@ const zStudentIdOpzionale = z.preprocess(
   zUuid.nullish()
 )
 
-const postBodySchema = z.object({
-  parent_id: zParentIdConDefault,
-})
+const postBodySchema = z.object({})
 
 const patchBodySchema = z.object({
-  parent_id: zParentIdConDefault,
   // code/expiry arrivano dal client anche come numero: il codice li normalizza
   // già con String()/Number() prima della verifica HMAC.
   code: z.union([z.string(), z.number()]),
@@ -43,9 +37,12 @@ const patchBodySchema = z.object({
 // ── POST: genera e invia il codice OTP via email, ritorna il ticket firmato ──
 export async function POST(request: NextRequest) {
   try {
+    const auth = await requireUser(request)
+    if (auth.response) return auth.response
+    const parentId = auth.user.id
+
     const b = await parseBody(request, postBodySchema)
     if ('response' in b) return b.response
-    const parentId = b.data.parent_id
 
     const supabase = await createAdminClient()
     const res = await sendOtp(supabase, parentId, {
@@ -65,9 +62,13 @@ export async function POST(request: NextRequest) {
 // ── PATCH: verifica l'OTP e finalizza la firma (FES) persistendo la submission ──
 export async function PATCH(request: NextRequest) {
   try {
+    const auth = await requireUser(request)
+    if (auth.response) return auth.response
+    const parentId = auth.user.id
+
     const b = await parseBody(request, patchBodySchema)
     if ('response' in b) return b.response
-    const { code, expiry, ticket, form_id, student_id, answers, parent_id: parentId } = b.data
+    const { code, expiry, ticket, form_id, student_id, answers } = b.data
 
     const supabase = await createAdminClient()
     const email = await getUserEmail(supabase, parentId)

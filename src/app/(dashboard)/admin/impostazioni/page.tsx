@@ -21,9 +21,9 @@ import { GalleriaSettings } from '@/components/features/admin/settings/GalleriaS
 import { ArmadiettoSettings } from '@/components/features/admin/settings/ArmadiettoSettings';
 import { ModulisticaSettings } from '@/components/features/admin/settings/ModulisticaSettings';
 import { PageHeader } from '@/components/ui/cockpit';
+import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 
 const SCUOLA_ID = '11111111-1111-1111-1111-111111111111';
-const DEV_ADMIN = '22222222-2222-2222-2222-555555555555';
 
 type Sezione =
     | 'moduli'
@@ -79,7 +79,7 @@ const SEZIONI_VALIDE = new Set<string>(GRUPPI.flatMap((g) => g.voci.map((v) => v
 function Inner() {
     const params = useSearchParams();
     const router = useRouter();
-    const userId = params.get('userId') || DEV_ADMIN;
+    const { userId } = useSessionIdentity();
     const fromUrl = params.get('sezione');
     const [sezione, setSezione] = useState<Sezione>(
         fromUrl && SEZIONI_VALIDE.has(fromUrl) ? (fromUrl as Sezione) : 'pagamenti'
@@ -87,7 +87,8 @@ function Inner() {
 
     const vai = (id: Sezione) => {
         setSezione(id);
-        router.replace(`?userId=${userId}&sezione=${id}`, { scroll: false });
+        // Identità non risolta: si omette ?userId= (mai 'userId=null'), la sezione resta.
+        router.replace(userId ? `?userId=${userId}&sezione=${id}` : `?sezione=${id}`, { scroll: false });
     };
 
     const voceAttiva = GRUPPI.flatMap((g) => g.voci).find((v) => v.id === sezione);
@@ -156,19 +157,19 @@ function Inner() {
                         <h2 className="md:hidden font-barlow font-black text-lg text-kidville-green uppercase tracking-wide mb-3 flex items-center gap-2">
                             {voceAttiva?.icon} {voceAttiva?.label}
                         </h2>
-                        {sezione === 'moduli' && <FunzioniMatricePanel userId={userId} />}
-                        {sezione === 'pagamenti' && <SettingsPanel userId={userId} scuolaId={SCUOLA_ID} />}
-                        {sezione === 'modulistica' && <ModulisticaSettings userId={userId} />}
-                        {sezione === 'didattica' && <DidatticaPrimariaPanel scuolaId={SCUOLA_ID} userId={userId} />}
-                        {sezione === 'pagelle' && <PagelleScrutinioPanel scuolaId={SCUOLA_ID} userId={userId} />}
-                        {sezione === 'diario' && <DiarioSettings userId={userId} />}
-                        {sezione === 'presenze' && <PresenzeSettings userId={userId} />}
-                        {sezione === 'note' && <NoteSettings userId={userId} />}
-                        {sezione === 'mensa' && <MensaSettings userId={userId} scuolaId={SCUOLA_ID} />}
-                        {sezione === 'armadietto' && <ArmadiettoSettings userId={userId} />}
-                        {sezione === 'avvisi' && <AvvisiSettings userId={userId} />}
-                        {sezione === 'chat' && <ChatSettings userId={userId} />}
-                        {sezione === 'galleria' && <GalleriaSettings userId={userId} />}
+                        {userId && sezione === 'moduli' && <FunzioniMatricePanel userId={userId} />}
+                        {userId && sezione === 'pagamenti' && <SettingsPanel userId={userId} scuolaId={SCUOLA_ID} />}
+                        {userId && sezione === 'modulistica' && <ModulisticaSettings userId={userId} />}
+                        {userId && sezione === 'didattica' && <DidatticaPrimariaPanel scuolaId={SCUOLA_ID} userId={userId} />}
+                        {userId && sezione === 'pagelle' && <PagelleScrutinioPanel scuolaId={SCUOLA_ID} userId={userId} />}
+                        {userId && sezione === 'diario' && <DiarioSettings userId={userId} />}
+                        {userId && sezione === 'presenze' && <PresenzeSettings userId={userId} />}
+                        {userId && sezione === 'note' && <NoteSettings userId={userId} />}
+                        {userId && sezione === 'mensa' && <MensaSettings userId={userId} scuolaId={SCUOLA_ID} />}
+                        {userId && sezione === 'armadietto' && <ArmadiettoSettings userId={userId} />}
+                        {userId && sezione === 'avvisi' && <AvvisiSettings userId={userId} />}
+                        {userId && sezione === 'chat' && <ChatSettings userId={userId} />}
+                        {userId && sezione === 'galleria' && <GalleriaSettings userId={userId} />}
                     </main>
                 </div>
             </div>

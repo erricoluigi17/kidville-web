@@ -43,10 +43,9 @@ const postBodySchema = z.object({
 //     deadline, compiti[], target_scope, target_role, student_id,
 //     resolved_by, resolution_notes, resolved_at }
 //
-// In the DB we always use a known-valid proxy ID for author_id and null for assigned_to.
-// target_class is kept as a real column for class-based SQL pre-filtering.
-
-const PROXY_AUTHOR_ID = '22222222-2222-2222-2222-222222222222'; // Anna Verdi — only valid FK
+// In the DB author_id is the AUTHENTICATED actor (FK-safe: requireDocente
+// garantisce una riga in `utenti`) and assigned_to stays null; real assignees
+// live in JSON. target_class is kept as a real column for SQL pre-filtering.
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface Attachment {
@@ -111,9 +110,9 @@ function decodeContenuto(contenuto: string | null): Partial<TaskJsonPayload> {
     }
 }
 
-function encodeContenuto(payload: Partial<TaskJsonPayload>): string {
+function encodeContenuto(payload: Partial<TaskJsonPayload> & { real_author_id: string }): string {
     return JSON.stringify({
-        real_author_id: payload.real_author_id ?? PROXY_AUTHOR_ID,
+        real_author_id: payload.real_author_id,
         assignees: payload.assignees ?? [],
         descrizione: payload.descrizione ?? '',
         status: payload.status ?? 'todo',
@@ -455,7 +454,7 @@ export async function POST(request: Request) {
         const { data, error } = await supabase
             .from('task_interni')
             .insert({
-                author_id: PROXY_AUTHOR_ID, // FK-safe proxy
+                author_id: auth.user.id, // attore autenticato (FK utenti)
                 assigned_to: null,          // FK-safe null; real assignees in JSON
                 target_class: target_class ?? null,
                 titolo,

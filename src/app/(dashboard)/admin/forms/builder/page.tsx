@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { Suspense, useState } from 'react'
 import {
   DndContext,
   DragEndEvent,
@@ -20,6 +20,7 @@ import {
 } from 'lucide-react'
 import { motion } from 'framer-motion'
 import Link from 'next/link'
+import { useSessionIdentity } from '@/lib/auth/use-session-identity'
 import { FormBuilderCanvas } from '@/components/features/admin/forms/builder/FormBuilderCanvas'
 import { PropertiesPanel } from '@/components/features/admin/forms/builder/PropertiesPanel'
 import type { FormSchemaConfig, FormField, FormFieldType, FormPage } from '@/types/database.types'
@@ -197,7 +198,9 @@ function AnagraficaGroupSection({
 }
 
 // ── Page ─────────────────────────────────────────────────────
-export default function FormBuilderPage() {
+function FormBuilderInner() {
+  // Identità staff (M4): session-only, nessun fallback demo.
+  const { userId } = useSessionIdentity()
   const [schema, setSchema] = useState<FormSchemaConfig>(() => ({
     version: '1.0',
     pages: [
@@ -359,21 +362,18 @@ export default function FormBuilderPage() {
     })
   }
 
-  // Identità staff (modello app-level): da ?userId= o admin dev di default.
-  function getUserId(): string {
-    if (typeof window !== 'undefined') {
-      const u = new URLSearchParams(window.location.search).get('userId')
-      if (u) return u
-    }
-    return '22222222-2222-2222-2222-555555555555'
-  }
-
   async function handleSave() {
+    if (!userId) {
+      // Identità non risolta: segnala con lo stato di errore già previsto.
+      setSaveState('error')
+      setTimeout(() => setSaveState('idle'), 3000)
+      return
+    }
     setSaveState('saving')
     try {
       const res = await fetch('/api/admin/form-models', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-user-id': getUserId() },
+        headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
         body: JSON.stringify({
           title: formTitle,
           schema,
@@ -396,12 +396,12 @@ export default function FormBuilderPage() {
 
   // Pubblica / ritira il modello salvato (DL-030).
   async function handlePublish(action: 'publish' | 'unpublish') {
-    if (!savedModelId) return
+    if (!savedModelId || !userId) return
     setPublishing(true)
     try {
       const res = await fetch('/api/admin/form-models/publish', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-user-id': getUserId() },
+        headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
         body: JSON.stringify({ id: savedModelId, action, access_mode: accessMode }),
       })
       const json = await res.json()
@@ -614,7 +614,8 @@ export default function FormBuilderPage() {
                       onToggle={() =>
                         setCollapsedGroups(prev => {
                           const next = new Set(prev)
-                          next.has(group.groupId) ? next.delete(group.groupId) : next.add(group.groupId)
+                          if (next.has(group.groupId)) next.delete(group.groupId)
+                          else next.add(group.groupId)
                           return next
                         })
                       }
@@ -688,5 +689,13 @@ export default function FormBuilderPage() {
         })()}
       </DragOverlay>
     </DndContext>
+  )
+}
+
+export default function FormBuilderPage() {
+  return (
+    <Suspense fallback={null}>
+      <FormBuilderInner />
+    </Suspense>
   )
 }

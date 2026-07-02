@@ -1,19 +1,17 @@
 'use client';
 
 import { Suspense } from 'react';
-import { useSearchParams } from 'next/navigation';
 import { Users } from 'lucide-react';
+import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { StaffPanel } from '@/components/features/admin/settings/StaffPanel';
 import { CockpitPage, PageHeader } from '@/components/ui/cockpit';
 
-const DEV_ADMIN = '22222222-2222-2222-2222-555555555555';
-
 function StaffInner() {
-  const userId = useSearchParams().get('userId') || DEV_ADMIN;
+  const { userId } = useSessionIdentity();
   return (
     <CockpitPage max={1100}>
       <PageHeader icon={Users} title="Gestione Staff" subtitle="Ruoli, sede e classi del personale. Azione riservata alla Direzione." />
-      <StaffPanel userId={userId} />
+      {userId && <StaffPanel userId={userId} />}
     </CockpitPage>
   );
 }

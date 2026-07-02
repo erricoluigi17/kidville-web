@@ -1,27 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
+import { requireUser } from '@/lib/auth/require-staff';
 import { parseQuery } from '@/lib/validation/http';
-import { zUuid } from '@/lib/validation/common';
 
-const DEFAULT_PARENT_ID = '33333333-3333-3333-3333-333333333333';
-
-// parent_id opzionale: ogni valore falsy (assente, stringa vuota) ricade sul
-// genitore demo, come il pre-esistente `searchParams.get('parent_id') || DEFAULT_PARENT_ID`.
-const zParentIdConDefault = z.preprocess(
-  (v) => (v ? v : undefined),
-  zUuid.default(DEFAULT_PARENT_ID)
-);
-
-const getQuerySchema = z.object({
-  parent_id: zParentIdConDefault,
-});
+// ─── Schemi di validazione input (M3/M4) ─────────────────────────────────────
+// L'identità viene dal gate (requireUser: sessione, o header legacy finché
+// ALLOW_HEADER_IDENTITY≠false). Il `parent_id` legacy in query è ignorato:
+// nessun fallback demo (M4).
+const getQuerySchema = z.object({});
 
 export async function GET(request: NextRequest) {
   try {
+    const auth = await requireUser(request);
+    if (auth.response) return auth.response;
+    const parentId = auth.user.id;
+
     const q = parseQuery(request, getQuerySchema);
     if ('response' in q) return q.response;
-    const parentId = q.data.parent_id;
 
     const supabase = await createAdminClient();
 

@@ -3,11 +3,18 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Euro, Users2, FileText } from 'lucide-react';
 
-// Default dev admin (coerente col pattern userId del progetto)
-const DEV_ADMIN = '22222222-2222-2222-2222-555555555555';
-function currentUserId(): string {
-    if (typeof window === 'undefined') return DEV_ADMIN;
-    return new URLSearchParams(window.location.search).get('userId') || DEV_ADMIN;
+// Identità app-level (M4, session-only): userId da query param, poi sessione
+// persistita da useSessionIdentity (kv_user_id). Nessun fallback demo:
+// null = identità non risolta. Vedi getCurrentTeacherId in lib/auth/current-teacher.ts.
+function currentUserId(): string | null {
+    if (typeof window === 'undefined') return null;
+    try {
+        const fromUrl = new URLSearchParams(window.location.search).get('userId');
+        if (fromUrl) return fromUrl;
+        return window.localStorage.getItem('kv_user_id');
+    } catch {
+        return null;
+    }
 }
 
 interface QuotaConfig { adult_id?: string; nome?: string; importo: number }
@@ -50,8 +57,10 @@ export function StudentEconomicSection({ alunnoId, form, updateForm, parents }: 
     // Carica i tutori (account) per il default delle quote split
     useEffect(() => {
         if (!separati || !alunnoId) return;
-        fetch(`/api/pagamenti/tutori?alunno_id=${alunnoId}&userId=${currentUserId()}`, {
-            headers: { 'x-user-id': currentUserId() },
+        const uid = currentUserId();
+        if (!uid) return;
+        fetch(`/api/pagamenti/tutori?alunno_id=${alunnoId}&userId=${uid}`, {
+            headers: { 'x-user-id': uid },
         })
             .then((r) => r.json())
             .then((d) => { if (d?.success) setTutori(d.data); })
@@ -60,9 +69,9 @@ export function StudentEconomicSection({ alunnoId, form, updateForm, parents }: 
 
     // Inizializza split di default quando si attiva "genitori separati"
     const seedSplit = useCallback(() => {
-        const base = tutori.length >= 2 ? tutori.slice(0, 2) : tutori;
+        const base: Partial<Tutore>[] = tutori.length >= 2 ? tutori.slice(0, 2) : tutori;
         const half = Math.round((importo / 2) * 100) / 100;
-        const quote: QuotaConfig[] = (base.length ? base : [{}, {}] as unknown as Tutore[]).map((t: any, i: number) => ({
+        const quote: QuotaConfig[] = (base.length ? base : ([{}, {}] as Partial<Tutore>[])).map((t, i) => ({
             adult_id: t.adult_id,
             nome: t.nome ? `${t.nome} ${t.cognome}`.trim() : i === 0 ? 'Genitore 1' : 'Genitore 2',
             importo: t.percentuale != null ? Math.round((importo * t.percentuale) / 100 * 100) / 100 : half,
@@ -108,7 +117,7 @@ export function StudentEconomicSection({ alunnoId, form, updateForm, parents }: 
                     className={inputCls}
                 />
                 <p className="font-maven text-[11px] text-kidville-muted mt-1">
-                    Per lo sconto fratelli, assegna l'intero importo familiare a un solo figlio (gli altri a 0).
+                    Per lo sconto fratelli, assegna l&apos;intero importo familiare a un solo figlio (gli altri a 0).
                 </p>
             </div>
 

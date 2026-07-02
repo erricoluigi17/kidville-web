@@ -1,18 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
+import { requireUser } from '@/lib/auth/require-staff';
 import { persistSignedSubmission } from '@/lib/forms/persist-submission';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 
-const DEFAULT_PARENT_ID = '33333333-3333-3333-3333-333333333333';
-
-// parent_id opzionale: ogni valore falsy (assente, null, stringa vuota) ricade
-// sul genitore demo, come il pre-esistente `parent_id || DEFAULT_PARENT_ID`.
-const zParentIdConDefault = z.preprocess(
-  (v) => (v ? v : undefined),
-  zUuid.default(DEFAULT_PARENT_ID)
-);
+// ─── Schemi di validazione input (M3/M4) ─────────────────────────────────────
+// L'identità viene dal gate (requireUser): il `parent_id` legacy in query/body
+// è ignorato, nessun fallback demo (M4).
 
 // student_id opzionale: stringa vuota trattata come assente
 // (persistSignedSubmission fa già `student_id || null`).
@@ -29,24 +25,24 @@ const postBodySchema = z.object({
   // is_signed è già coercito a boolean (`!!is_signed`) in persistSignedSubmission.
   is_signed: z.coerce.boolean().optional(),
   signature_log: z.unknown().optional(),
-  parent_id: zParentIdConDefault,
 });
 
-const getQuerySchema = z.object({
-  parent_id: zParentIdConDefault,
-});
+const getQuerySchema = z.object({});
 
 // POST: Sottoscrive e firma un modulo
 export async function POST(request: NextRequest) {
   try {
+    const auth = await requireUser(request);
+    if (auth.response) return auth.response;
+
     const b = await parseBody(request, postBodySchema);
     if ('response' in b) return b.response;
-    const { form_id, student_id, answers, is_signed, signature_log, parent_id } = b.data;
+    const { form_id, student_id, answers, is_signed, signature_log } = b.data;
 
     const supabase = await createAdminClient();
     const result = await persistSignedSubmission(supabase, {
       form_id,
-      parent_id,
+      parent_id: auth.user.id,
       student_id,
       answers: answers as Record<string, unknown>,
       is_signed,
@@ -68,9 +64,12 @@ export async function POST(request: NextRequest) {
 // GET: Recupera tutte le sottomissioni per l'archivio genitore
 export async function GET(request: NextRequest) {
   try {
+    const auth = await requireUser(request);
+    if (auth.response) return auth.response;
+    const parentId = auth.user.id;
+
     const q = parseQuery(request, getQuerySchema);
     if ('response' in q) return q.response;
-    const parentId = q.data.parent_id;
 
     const supabase = await createAdminClient();
 

@@ -2,15 +2,14 @@
 
 import { Suspense, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
 import { ClipboardList, CalendarDays, FolderLock, DoorOpen, GraduationCap } from 'lucide-react';
 import { RegistriClassePanel } from '@/components/features/admin/primaria/RegistriClassePanel';
 import { OrarioManager } from '@/components/features/admin/primaria/OrarioManager';
 import { FascicoloAuditViewer } from '@/components/features/admin/primaria/FascicoloAuditViewer';
 import { CockpitPage, PageHeader, Tabs } from '@/components/ui/cockpit';
+import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 
 const SCUOLA_ID = '11111111-1111-1111-1111-111111111111';
-const DEV_ADMIN = '22222222-2222-2222-2222-555555555555';
 
 type Tab = 'registri' | 'orario' | 'fascicoli' | 'classi';
 
@@ -24,8 +23,7 @@ interface Section {
 interface ClasseOp { id: string; name: string; numAlunni?: number }
 
 function PrimariaAdminInner() {
-  const params = useSearchParams();
-  const userId = params.get('userId') || DEV_ADMIN;
+  const { userId } = useSessionIdentity();
   const [tab, setTab] = useState<Tab>('registri');
   const [sezioni, setSezioni] = useState<Section[]>([]);
   const [sezioneId, setSezioneId] = useState<string>('');
@@ -37,14 +35,15 @@ function PrimariaAdminInner() {
       .then((d) => {
         const list: Section[] = Array.isArray(d) ? d.filter((s: Section) => s.school_type === 'primaria') : [];
         setSezioni(list);
-        if (list.length && !sezioneId) setSezioneId(list[0].id);
+        // Update funzionale: nessuna dipendenza da sezioneId, deps [] pulite.
+        if (list.length) setSezioneId((cur) => cur || list[0].id);
       })
       .catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Classi operative scoped per ruolo/plesso (stesso endpoint del flusso docente).
   useEffect(() => {
+    if (!userId) return; // identità non risolta: nessuna fetch
     fetch(`/api/primaria/classi?userId=${userId}`)
       .then((r) => r.json())
       .then((d) => { if (d.success) setClassiOp(d.data ?? []); })
@@ -90,11 +89,11 @@ function PrimariaAdminInner() {
       />
 
       <div className="rounded-card bg-kidville-white p-4 md:p-6 shadow-sm">
-          {tab === 'registri' && <RegistriClassePanel scuolaId={SCUOLA_ID} userId={userId} />}
-          {tab === 'orario' && (
+          {userId && tab === 'registri' && <RegistriClassePanel scuolaId={SCUOLA_ID} userId={userId} />}
+          {userId && tab === 'orario' && (
             <OrarioManager sectionId={sezioneId} scuolaId={SCUOLA_ID} userId={userId} />
           )}
-          {tab === 'fascicoli' && <FascicoloAuditViewer scuolaId={SCUOLA_ID} userId={userId} />}
+          {userId && tab === 'fascicoli' && <FascicoloAuditViewer scuolaId={SCUOLA_ID} userId={userId} />}
           {tab === 'classi' && (
             <div>
               <p className="font-maven mb-4 text-sm text-kidville-muted">
@@ -107,7 +106,7 @@ function PrimariaAdminInner() {
                   {classiOp.map((c) => (
                     <Link
                       key={c.id}
-                      href={`/admin/primaria/${c.id}/registro?userId=${userId}`}
+                      href={userId ? `/admin/primaria/${c.id}/registro?userId=${userId}` : `/admin/primaria/${c.id}/registro`}
                       className="flex items-center justify-between rounded-card border border-kidville-line p-4 transition hover:border-kidville-green/40 hover:bg-kidville-green/5"
                     >
                       <span>

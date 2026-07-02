@@ -114,18 +114,18 @@ export default function ParentModulisticaPage() {
   const fetchData = useCallback(async () => {
     if (!parentId) return; // identità non risolta: lo spinner resta
     try {
-      // 1. Fetch assigned forms (errore di rete ⇒ stato invariato)
-      const fRes = await fetch(`/api/parent/forms?parent_id=${parentId}`).catch(() => null);
+      // 1. Fetch assigned forms (gate requireUser: identità da sessione/header)
+      const fRes = await fetch('/api/parent/forms', { headers: { 'x-user-id': parentId } }).catch(() => null);
       const fData = await fRes?.json().catch(() => null);
       if (Array.isArray(fData)) setAssignedForms(fData);
 
       // 2. Fetch signed archive
-      const aRes = await fetch(`/api/parent/submissions?parent_id=${parentId}`).catch(() => null);
+      const aRes = await fetch('/api/parent/submissions', { headers: { 'x-user-id': parentId } }).catch(() => null);
       const aData = await aRes?.json().catch(() => null);
       if (Array.isArray(aData)) setArchive(aData);
 
       // 3. Fetch medical certificates
-      const mRes = await fetch(`/api/parent/medical-certificates?parent_id=${parentId}`).catch(() => null);
+      const mRes = await fetch('/api/parent/medical-certificates', { headers: { 'x-user-id': parentId } }).catch(() => null);
       const mData = await mRes?.json().catch(() => null);
       if (Array.isArray(mData)) setMedCerts(mData);
 
@@ -211,13 +211,12 @@ export default function ParentModulisticaPage() {
     try {
       const res = await fetch('/api/parent/submissions', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-user-id': parentId },
         body: JSON.stringify({
           form_id: compilingForm.form_id,
           student_id: compilingForm.student.id,
           answers: formAnswers,
           is_signed: false,
-          parent_id: parentId,
         }),
       });
       if (!res.ok) {
@@ -239,8 +238,8 @@ export default function ParentModulisticaPage() {
     try {
       const res = await fetch('/api/parent/forms/otp', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ parent_id: parentId }),
+        headers: { 'Content-Type': 'application/json', 'x-user-id': parentId },
+        body: JSON.stringify({}),
       });
       const json = await res.json();
       if (!res.ok) {
@@ -263,9 +262,8 @@ export default function ParentModulisticaPage() {
     try {
       const res = await fetch('/api/parent/forms/otp', {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-user-id': parentId },
         body: JSON.stringify({
-          parent_id: parentId,
           code,
           expiry: otpSession.expiry,
           ticket: otpSession.ticket,

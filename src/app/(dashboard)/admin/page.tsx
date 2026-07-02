@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState, Suspense } from 'react';
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
 import { motion } from 'framer-motion';
 import {
   Users,
@@ -26,8 +25,7 @@ import { AuroraHeader } from '@/components/features/admin/motion/AuroraHeader';
 import { TrendIncassiChart, StudentiPerClasseChart } from '@/components/features/admin/DashboardCharts';
 import { Donut, SectionTitle } from '@/components/ui/cockpit';
 import { Badge } from '@/components/ui/Badge';
-
-const DEMO_ADMIN_ID = '22222222-2222-2222-2222-555555555555';
+import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 
 interface DashboardData {
   studenti: { iscritti: number; perClasse: { classe: string; count: number }[] };
@@ -45,17 +43,18 @@ interface DashboardData {
 const euroFmt = new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 });
 
 function AdminDashboardInner() {
-  const searchParams = useSearchParams();
-  const userId = searchParams.get('userId') || DEMO_ADMIN_ID;
-  const withUser = (href: string) => `${href}?userId=${userId}`;
+  const { userId } = useSessionIdentity();
+  // Identità di sessione (M4): con identità non risolta il parametro viene
+  // omesso (href invariato), mai `userId=null`.
+  const withUser = (href: string) => (userId ? `${href}?userId=${userId}` : href);
 
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!userId) return; // identità non risolta: lo skeleton (loading=true) resta attivo
     let active = true;
-    setLoading(true);
     fetch(`/api/admin/dashboard?userId=${userId}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error('Errore caricamento'))))
       .then((d) => {

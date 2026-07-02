@@ -54,17 +54,21 @@ interface Props {
 }
 
 export function StudentDetailPanel({ student, onClose, onSave, onDelete }: Props) {
-    const [form, setForm] = useState<Partial<Student>>({});
+    // Il pannello è montato per-alunno ({selectedStudent && <StudentDetailPanel/>}):
+    // form inizializzato dal prop, niente state+effect (react-hooks/set-state-in-effect).
+    const [form, setForm] = useState<Partial<Student>>(() => (student ? { ...student } : {}));
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     const [activeAdultTab, setActiveAdultTab] = useState<string | null>(null);
     const [sections, setSections] = useState<{id: string, name: string, school_type: string}[]>([]);
     const [siblings, setSiblings] = useState<Sibling[]>([]);
-    const [siblingsLoading, setSiblingsLoading] = useState(false);
+    // NB: niente setLoading(true) sincrono negli effect (react-hooks/set-state-in-effect):
+    // i loading partono già true al mount, i loader li spengono in finally.
+    const [siblingsLoading, setSiblingsLoading] = useState(true);
 
     // Complaints / Reports states
     const [studentTasks, setStudentTasks] = useState<Task[]>([]);
-    const [tasksLoading, setTasksLoading] = useState(false);
+    const [tasksLoading, setTasksLoading] = useState(true);
 
     useEffect(() => {
         fetch('/api/admin/sections').then(r => r.json()).then(d => { if (Array.isArray(d)) setSections(d); }).catch(() => {});
@@ -72,34 +76,36 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete }: Props
 
     useEffect(() => {
         if (!student?.id) return;
-        setSiblingsLoading(true);
-        fetch(`/api/admin/students/${student.id}`)
-            .then(r => r.json())
-            .then(d => {
-                if (Array.isArray(d.siblings)) setSiblings(d.siblings);
-            })
-            .catch(() => {})
-            .finally(() => setSiblingsLoading(false));
+        const sid = student.id;
+        const load = async () => {
+            try {
+                const res = await fetch(`/api/admin/students/${sid}`).catch(() => null);
+                const d = res?.ok ? await res.json().catch(() => null) : null;
+                if (Array.isArray(d?.siblings)) setSiblings(d.siblings);
+            } finally {
+                setSiblingsLoading(false);
+            }
+        };
+        load();
     }, [student?.id]);
 
     useEffect(() => {
         if (!student?.id) return;
-        setTasksLoading(true);
-        fetch(`/api/tasks?studentId=${student.id}&userId=${getCurrentTeacherId(null)}`)
-            .then(r => r.json())
-            .then(d => {
+        const sid = student.id;
+        const load = async () => {
+            try {
+                // Identità session-only (M4): senza id risolto non si interroga l'API.
+                const uid = getCurrentTeacherId(null);
+                if (!uid) return;
+                const res = await fetch(`/api/tasks?studentId=${sid}&userId=${uid}`).catch(() => null);
+                const d = res?.ok ? await res.json().catch(() => null) : null;
                 if (Array.isArray(d)) setStudentTasks(d);
-            })
-            .catch(err => console.error('Errore caricamento task alunno:', err))
-            .finally(() => setTasksLoading(false));
+            } finally {
+                setTasksLoading(false);
+            }
+        };
+        load();
     }, [student?.id]);
-
-    useEffect(() => {
-        if (student) {
-            setForm({ ...student });
-            setShowDeleteConfirm(false);
-        }
-    }, [student]);
 
     if (!student) return null;
 
@@ -469,7 +475,7 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete }: Props
                                                 <div className="mt-1.5 space-y-1">
                                                     <p className="text-[8px] font-bold text-kidville-muted uppercase tracking-wider">Allegati:</p>
                                                     <div className="flex flex-col gap-1">
-                                                        {task.attachments.map((att: any, attIdx: number) => (
+                                                        {task.attachments.map((att: { name: string; url: string; fileUrl?: string }, attIdx: number) => (
                                                             <a
                                                                 key={attIdx}
                                                                 href={att.fileUrl || att.url}

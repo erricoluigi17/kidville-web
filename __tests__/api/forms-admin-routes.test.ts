@@ -8,7 +8,7 @@ import { NextResponse } from 'next/server'
 const h = vi.hoisted(() => ({
   requireStaff: vi.fn(),
   logScrittura: vi.fn(),
-  rows: [{ id: 's-1', model_id: 'm-1', score: 10, status: 'completed', manual_adjustments: [] }] as Record<string, unknown>[],
+  rows: [{ id: '51515151-5151-4515-8515-515151515151', model_id: 'm-1', score: 10, status: 'completed', manual_adjustments: [] }] as Record<string, unknown>[],
   models: [{ id: 'm-1', title: 'Iscrizione' }] as Record<string, unknown>[],
   updates: [] as unknown[],
 }))
@@ -31,7 +31,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.single = async () => ({ data: result[0] ?? null, error: null })
       b.update = (row: unknown) => {
         h.updates.push(row)
-        return { eq: () => ({ select: () => ({ single: async () => ({ data: { id: 's-1', ...(row as object) }, error: null }) }) }) }
+        return { eq: () => ({ select: () => ({ single: async () => ({ data: { id: '51515151-5151-4515-8515-515151515151', ...(row as object) }, error: null }) }) }) }
       }
       return b
     },
@@ -49,7 +49,7 @@ const ctx = (id: string) => ({ params: Promise.resolve({ id }) })
 beforeEach(() => {
   vi.clearAllMocks()
   h.requireStaff.mockResolvedValue({ user: { id: 'seg-1', role: 'segreteria', scuola_id: 'sc-1' } })
-  h.rows = [{ id: 's-1', model_id: 'm-1', score: 10, status: 'completed', manual_adjustments: [] }]
+  h.rows = [{ id: '51515151-5151-4515-8515-515151515151', model_id: 'm-1', score: 10, status: 'completed', manual_adjustments: [] }]
   h.models = [{ id: 'm-1', title: 'Iscrizione' }]
   h.updates = []
 })
@@ -94,7 +94,7 @@ describe('PATCH /api/admin/forms/submissions/[id]', () => {
     h.requireStaff.mockResolvedValue(denied())
     const res = await submissionPATCH(
       new Request('http://localhost/x', { method: 'PATCH', body: '{}' }),
-      ctx('s-1'),
+      ctx('51515151-5151-4515-8515-515151515151'),
     )
     expect(res.status).toBe(403)
   })
@@ -102,13 +102,13 @@ describe('PATCH /api/admin/forms/submissions/[id]', () => {
     const body = { manual_adjustments: [{ delta: 2, reason: 'fratello', at: '2026-01-01' }] }
     const res = await submissionPATCH(
       new Request('http://localhost/x', { method: 'PATCH', body: JSON.stringify(body) }),
-      ctx('s-1'),
+      ctx('51515151-5151-4515-8515-515151515151'),
     )
     expect(res.status).toBe(200)
     expect(h.updates[0]).toMatchObject({ manual_adjustments: body.manual_adjustments })
     expect(h.logScrittura).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ entitaTipo: 'graduatoria', azione: 'update', entitaId: 's-1' }),
+      expect.objectContaining({ entitaTipo: 'graduatoria', azione: 'update', entitaId: '51515151-5151-4515-8515-515151515151' }),
     )
   })
 })

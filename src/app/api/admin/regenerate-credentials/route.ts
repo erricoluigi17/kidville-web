@@ -1,10 +1,20 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { z } from 'zod';
 import { requireStaff } from '@/lib/auth/require-staff';
 import { requireEnv } from '@/lib/security/require-env';
 import { sendEmail, credentialsEmailBody } from '@/lib/email/send';
 import { randomPassword } from '@/lib/auth/backfill';
 import { logScrittura } from '@/lib/audit/scrittura';
+import { parseBody } from '@/lib/validation/http';
+import { zUuid } from '@/lib/validation/common';
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+// targetId è sempre un UUID: parents.id (PK uuid) oppure utenti.id (= auth.users id).
+const postBodySchema = z.object({
+  targetKind: z.enum(['parent', 'staff']),
+  targetId: zUuid,
+});
 
 /**
  * POST /api/admin/regenerate-credentials  (DL-005)  — staff (incl. Segreteria)
@@ -27,11 +37,9 @@ export async function POST(request: Request) {
   const auth = await requireStaff(request);
   if (auth.response) return auth.response;
 
-  const body = (await request.json().catch(() => ({}))) as { targetKind?: string; targetId?: string };
-  const { targetKind, targetId } = body;
-  if (!targetId || (targetKind !== 'parent' && targetKind !== 'staff')) {
-    return NextResponse.json({ error: 'targetKind (parent|staff) e targetId sono obbligatori' }, { status: 400 });
-  }
+  const b = await parseBody(request, postBodySchema);
+  if ('response' in b) return b.response;
+  const { targetKind, targetId } = b.data;
 
   const missingEnv = requireEnv('NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY');
   if (missingEnv) return missingEnv;

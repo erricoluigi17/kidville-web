@@ -53,18 +53,18 @@ describe('POST /api/admin/regenerate-credentials (DL-005)', () => {
 
   it('nega ai non-staff (403)', async () => {
     h.requireStaff.mockResolvedValue({ response: NextResponse.json({ error: 'x' }, { status: 403 }) });
-    const res = await POST(req({ targetKind: 'parent', targetId: 'p1' }));
+    const res = await POST(req({ targetKind: 'parent', targetId: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1' }));
     expect(res.status).toBe(403);
   });
 
   it('400 se mancano targetKind/targetId', async () => {
-    const res = await POST(req({ targetId: 'p1' }));
+    const res = await POST(req({ targetId: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1' }));
     expect(res.status).toBe(400);
   });
 
   it('genitore: setta una nuova password, conferma email e la invia', async () => {
     h.adminRow = { data: { auth_user_id: 'auth-p', emails: ['p@x.it'], first_name: 'Mario' }, error: null };
-    const res = await POST(req({ targetKind: 'parent', targetId: 'p1' }));
+    const res = await POST(req({ targetKind: 'parent', targetId: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1' }));
     const data = await res.json();
     expect(res.status).toBe(200);
     expect(data.ok).toBe(true);
@@ -84,7 +84,7 @@ describe('POST /api/admin/regenerate-credentials (DL-005)', () => {
   it('email non inviata → esito propagato con warning (mai perdita silenziosa)', async () => {
     h.sendEmail.mockResolvedValue(false);
     h.adminRow = { data: { auth_user_id: 'auth-p', emails: ['p@x.it'], first_name: 'Mario' }, error: null };
-    const res = await POST(req({ targetKind: 'parent', targetId: 'p1' }));
+    const res = await POST(req({ targetKind: 'parent', targetId: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1' }));
     const data = await res.json();
     expect(res.status).toBe(200);
     expect(data.email_inviata).toBe(false);
@@ -93,23 +93,23 @@ describe('POST /api/admin/regenerate-credentials (DL-005)', () => {
 
   it('genitore senza account auth → 409', async () => {
     h.adminRow = { data: { auth_user_id: null, emails: ['p@x.it'], first_name: 'Mario' }, error: null };
-    const res = await POST(req({ targetKind: 'parent', targetId: 'p1' }));
+    const res = await POST(req({ targetKind: 'parent', targetId: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1' }));
     expect(res.status).toBe(409);
     expect(h.updates).toHaveLength(0);
   });
 
   it('target senza email → 400 (niente reset)', async () => {
     h.adminRow = { data: { auth_user_id: 'auth-p', emails: [], first_name: 'Mario' }, error: null };
-    const res = await POST(req({ targetKind: 'parent', targetId: 'p1' }));
+    const res = await POST(req({ targetKind: 'parent', targetId: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1' }));
     expect(res.status).toBe(400);
     expect(h.updates).toHaveLength(0);
   });
 
   it('staff: usa utenti.id come auth id', async () => {
-    h.adminRow = { data: { id: 'u-1', email: 'staff@x.it', nome: 'Anna' }, error: null };
-    const res = await POST(req({ targetKind: 'staff', targetId: 'u-1' }));
+    h.adminRow = { data: { id: 'e1e1e1e1-e1e1-4e1e-8e1e-e1e1e1e1e1e1', email: 'staff@x.it', nome: 'Anna' }, error: null };
+    const res = await POST(req({ targetKind: 'staff', targetId: 'e1e1e1e1-e1e1-4e1e-8e1e-e1e1e1e1e1e1' }));
     expect(res.status).toBe(200);
-    expect(h.updates[0].id).toBe('u-1');
+    expect(h.updates[0].id).toBe('e1e1e1e1-e1e1-4e1e-8e1e-e1e1e1e1e1e1');
     expect(h.sendEmail).toHaveBeenCalledWith(expect.objectContaining({ to: 'staff@x.it' }));
   });
 });

@@ -1,15 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
+import { parseQuery } from '@/lib/validation/http';
+import { zUuid } from '@/lib/validation/common';
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+// form_id è forms_templates.id (PK uuid); class_name è la sezione (testo libero).
+const getQuerySchema = z.object({
+  form_id: zUuid,
+  class_name: z.string().min(1, 'class_name è obbligatorio'),
+});
 
 export async function GET(request: NextRequest) {
   try {
-    const { searchParams } = new URL(request.url);
-    const formId = searchParams.get('form_id');
-    const className = searchParams.get('class_name');
-
-    if (!formId || !className) {
-      return NextResponse.json({ error: 'form_id e class_name sono obbligatori' }, { status: 400 });
-    }
+    const q = parseQuery(request, getQuerySchema);
+    if ('response' in q) return q.response;
+    const { form_id: formId, class_name: className } = q.data;
 
     const supabase = await createAdminClient();
 

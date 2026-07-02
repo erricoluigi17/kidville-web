@@ -1,31 +1,37 @@
 import { NextResponse } from 'next/server'
 import { randomUUID } from 'crypto'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { publicFormUrl } from '@/lib/forms/publish'
+import { parseBody } from '@/lib/validation/http'
 
 // Pubblica / ritira un modello del Form Builder (DL-030). Gated alla Segreteria.
 // publish: genera (o riusa) il public_token e imposta published_at → link /m/{token}.
 // unpublish: azzera published_at (link disattivato) preservando il token.
 
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+// Sostituisce il 400 manuale 'id e action (publish|unpublish) sono obbligatori'.
+// `id` resta stringa libera come il truthy check odierno (nei test circolano
+// id non-UUID tipo 'm-1'). `access_mode` oggi non ha validazione runtime
+// (solo cast TS): resta libero, il fallback (modello → 'public') resta nel codice.
+const postBodySchema = z.object({
+  id: z.string().min(1, 'id obbligatorio'),
+  action: z.enum(['publish', 'unpublish'], {
+    error: "action deve essere 'publish' o 'unpublish'",
+  }),
+  access_mode: z.unknown().optional(),
+})
+
 export async function POST(request: Request) {
   const auth = await requireStaff(request)
   if (auth.response) return auth.response
 
-  try {
-    const body = (await request.json()) as {
-      id?: string
-      action?: 'publish' | 'unpublish'
-      access_mode?: 'public' | 'authenticated'
-    }
-    const { id, action, access_mode } = body
-    if (!id || (action !== 'publish' && action !== 'unpublish')) {
-      return NextResponse.json(
-        { error: 'id e action (publish|unpublish) sono obbligatori' },
-        { status: 400 }
-      )
-    }
+  const b = await parseBody(request, postBodySchema)
+  if ('response' in b) return b.response
+  const { id, action, access_mode } = b.data
 
+  try {
     const supabase = await createAdminClient()
     const { data: model, error: loadErr } = await supabase
       .from('form_models')

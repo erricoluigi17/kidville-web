@@ -1,6 +1,23 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { parseQuery } from '@/lib/validation/http'
+import { zUuid, zDataYMD } from '@/lib/validation/common'
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+// Filtri tutti opzionali; la stringa vuota equivale a filtro assente (come il
+// vecchio `if (searchParams.get(...))`), quindi si normalizza a undefined
+// PRIMA di validare il formato.
+const getQuerySchema = z.object({
+    // Nessun vincolo sui valori nel codice attuale (l'enum esiste solo a DB).
+    status: z.string().optional(),
+    // uuid di form_models
+    modelId: z.preprocess((v) => (v === '' ? undefined : v), zUuid.optional()),
+    // giorno YYYY-MM-DD (input type=date); prima una data non parsabile
+    // faceva crashare toISOString() → 500
+    date: z.preprocess((v) => (v === '' ? undefined : v), zDataYMD.optional()),
+})
 
 // GET /api/admin/forms/submissions?status=&modelId=&date= — compilazioni con
 // filtri. Gated; sostituisce la lettura anon di `form_submissions`.
@@ -8,10 +25,9 @@ export async function GET(request: Request) {
   const auth = await requireStaff(request)
   if (auth.response) return auth.response
 
-  const { searchParams } = new URL(request.url)
-  const status = searchParams.get('status')
-  const modelId = searchParams.get('modelId')
-  const date = searchParams.get('date')
+  const q = parseQuery(request, getQuerySchema)
+  if ('response' in q) return q.response
+  const { status, modelId, date } = q.data
 
   const supabase = await createAdminClient()
   let query = supabase

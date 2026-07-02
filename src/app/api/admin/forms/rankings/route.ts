@@ -1,6 +1,15 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { parseQuery } from '@/lib/validation/http'
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+// modelId resta stringa libera (niente zUuid): oggi il codice non impone alcun
+// formato e nei test/dati seed circolano id non-UUID (es. 'm-1').
+const getQuerySchema = z.object({
+  modelId: z.string().optional(), // ''/assente → nessun filtro (come oggi)
+})
 
 // GET /api/admin/forms/rankings?modelId= — graduatoria (compilazioni completate
 // ordinate per punteggio). Gated; sostituisce la lettura anon di `form_submissions`.
@@ -8,8 +17,9 @@ export async function GET(request: Request) {
   const auth = await requireStaff(request)
   if (auth.response) return auth.response
 
-  const { searchParams } = new URL(request.url)
-  const modelId = searchParams.get('modelId')
+  const q = parseQuery(request, getQuerySchema)
+  if ('response' in q) return q.response
+  const { modelId } = q.data
 
   const supabase = await createAdminClient()
   let query = supabase

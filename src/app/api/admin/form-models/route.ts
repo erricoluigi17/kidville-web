@@ -1,18 +1,40 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { parseBody } from '@/lib/validation/http'
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+// POST — sostituisce il 400 manuale 'title e schema sono obbligatori'.
+// `schema` è il JSON libero del Form Builder: oggi basta che sia truthy.
+// I campi con fallback nel codice (`?? false`, confronto === 'joint')
+// restano liberi: oggi accettano qualunque valore.
+const postBodySchema = z.object({
+  title: z.string().min(1, 'title obbligatorio'),
+  schema: z.unknown().refine((v) => Boolean(v), 'schema obbligatorio'),
+  description: z.unknown().optional(),
+  is_active: z.unknown().optional(),
+  requires_signature: z.unknown().optional(),
+  signature_mode: z.unknown().optional(),
+})
+
+// PATCH — il resto del body viene spalmato nell'update (...updates):
+// .loose() preserva le chiavi extra. `id` resta stringa libera come il
+// truthy check odierno (nei test circolano id non-UUID tipo 'm-1').
+const patchBodySchema = z
+  .object({
+    id: z.string().min(1, 'id obbligatorio'),
+  })
+  .loose()
 
 // POST: crea un nuovo modello form (bypassa RLS via service-role)
 export async function POST(request: Request) {
   const auth = await requireStaff(request)
   if (auth.response) return auth.response
+  const b = await parseBody(request, postBodySchema)
+  if ('response' in b) return b.response
   try {
-    const body = await request.json()
-    const { title, schema, is_active, requires_signature, description, signature_mode } = body
-
-    if (!title || !schema) {
-      return NextResponse.json({ error: 'title e schema sono obbligatori' }, { status: 400 })
-    }
+    const { title, schema, is_active, requires_signature, description, signature_mode } = b.data
 
     const supabase = await createAdminClient()
     const { data, error } = await supabase
@@ -45,13 +67,10 @@ export async function POST(request: Request) {
 export async function PATCH(request: Request) {
   const auth = await requireStaff(request)
   if (auth.response) return auth.response
+  const b = await parseBody(request, patchBodySchema)
+  if ('response' in b) return b.response
   try {
-    const body = await request.json()
-    const { id, ...updates } = body
-
-    if (!id) {
-      return NextResponse.json({ error: 'id obbligatorio' }, { status: 400 })
-    }
+    const { id, ...updates } = b.data
 
     const supabase = await createAdminClient()
     const { data, error } = await supabase

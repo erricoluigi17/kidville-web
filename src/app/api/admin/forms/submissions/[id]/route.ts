@@ -1,7 +1,18 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { logScrittura } from '@/lib/audit/scrittura'
+import { parseBody, parseData } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+// Solo manual_adjustments è aggiornabile; le altre chiavi del body erano e
+// restano ignorate. Valore jsonb libero (il trigger DB ricalcola lo score).
+// NB zod v4: z.unknown() nudo rende la chiave obbligatoria → serve .optional().
+const patchBodySchema = z.object({
+    manual_adjustments: z.unknown().optional(),
+})
 
 // PATCH /api/admin/forms/submissions/[id] — modifica manuale del punteggio
 // (manual_adjustments → il trigger DB ricalcola lo score). Gated + audit.
@@ -12,11 +23,18 @@ export async function PATCH(
   const auth = await requireStaff(request)
   if (auth.response) return auth.response
 
-  const { id } = await ctx.params
+  // Param dinamico: id submission, usato come uuid nelle query (M3).
+  const { id: rawId } = await ctx.params
+  const idParsed = parseData(zUuid, rawId)
+  if ('response' in idParsed) return idParsed.response
+  const id = idParsed.data
+
+  const b = await parseBody(request, patchBodySchema)
+  if ('response' in b) return b.response
+
   try {
-    const body = await request.json()
     const updates: Record<string, unknown> = {}
-    if (body.manual_adjustments !== undefined) updates.manual_adjustments = body.manual_adjustments
+    if (b.data.manual_adjustments !== undefined) updates.manual_adjustments = b.data.manual_adjustments
     if (Object.keys(updates).length === 0) {
       return NextResponse.json({ error: 'Nessun campo da aggiornare' }, { status: 400 })
     }

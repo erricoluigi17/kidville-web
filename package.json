@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "vitest"
+    "test": "vitest",
+    "typecheck": "tsc --noEmit",
+    "gate": "tsc --noEmit && vitest run"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.106.0",

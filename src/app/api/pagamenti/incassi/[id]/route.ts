@@ -14,7 +14,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     const body = await request.json()
 
     const supabase = await createAdminClient()
-    const { data: old } = await supabase.from('incassi').select('*').eq('id', id).single()
+    const { data: old } = await supabase.from('incassi').select('*').eq('id', id).maybeSingle()
     if (!old) return NextResponse.json({ error: 'Incasso non trovato' }, { status: 404 })
 
     const allowed = ['importo', 'data_incasso', 'metodo', 'note']
@@ -45,7 +45,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     // stato pagamento ricalcolato dal trigger
     const { data: pagamento } = await supabase
       .from('pagamenti').select('id, importo, importo_pagato, stato, data_incasso')
-      .eq('id', incasso.pagamento_id).single()
+      .eq('id', incasso.pagamento_id).maybeSingle()
 
     return NextResponse.json({ success: true, data: { incasso, pagamento } })
   } catch (err) {
@@ -63,7 +63,8 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
     const { id } = await context.params
 
     const supabase = await createAdminClient()
-    const { data: old } = await supabase.from('incassi').select('*').eq('id', id).single()
+    const { data: old } = await supabase.from('incassi').select('*').eq('id', id).maybeSingle()
+    if (!old) return NextResponse.json({ error: 'Incasso non trovato' }, { status: 404 })
     const { error } = await supabase.from('incassi').delete().eq('id', id)
     if (error) return NextResponse.json({ error: 'Errore nello storno', details: error.message }, { status: 500 })
 

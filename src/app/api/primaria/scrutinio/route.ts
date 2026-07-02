@@ -32,7 +32,7 @@ export async function GET(request: NextRequest) {
       .from('sections')
       .select('id, name, school_type, scuola_id')
       .eq('id', sectionId)
-      .single()
+      .maybeSingle()
     const scuolaId = sezione?.scuola_id ?? null
 
     // Senza periodoId: restituisci la lista dei periodi configurati (per il selettore).
@@ -76,7 +76,7 @@ export async function GET(request: NextRequest) {
       if (cErr) {
         // Race: rileggi.
         const { data: again } = await supabase
-          .from('scrutini').select('*').eq('section_id', sectionId).eq('periodo_id', periodoId).single()
+          .from('scrutini').select('*').eq('section_id', sectionId).eq('periodo_id', periodoId).maybeSingle()
         scrutinio = again
       } else {
         scrutinio = created
@@ -135,7 +135,7 @@ export async function POST(request: NextRequest) {
     const supabase = await createAdminClient()
 
     // Scrutinio + sezione (per scope + risoluzione titolare).
-    const { data: scr } = await supabase.from('scrutini').select('id, stato, section_id').eq('id', scrutinioId).single()
+    const { data: scr } = await supabase.from('scrutini').select('id, stato, section_id').eq('id', scrutinioId).maybeSingle()
     if (!scr) return NextResponse.json({ error: 'Scrutinio non trovato' }, { status: 404 })
     if (scr.stato === 'chiuso') return NextResponse.json({ error: 'Scrutinio chiuso: modifiche non consentite', locked: true }, { status: 423 })
 
@@ -251,7 +251,7 @@ export async function PATCH(request: NextRequest) {
     }
 
     const supabase = await createAdminClient()
-    const { data: scr } = await supabase.from('scrutini').select('id, stato, section_id').eq('id', scrutinioId).single()
+    const { data: scr } = await supabase.from('scrutini').select('id, stato, section_id').eq('id', scrutinioId).maybeSingle()
     if (!scr) return NextResponse.json({ error: 'Scrutinio non trovato' }, { status: 404 })
     if (scr.stato === 'chiuso') return NextResponse.json({ error: 'Scrutinio chiuso: modifiche non consentite', locked: true }, { status: 423 })
 

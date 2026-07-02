@@ -59,7 +59,7 @@ export async function POST(request: Request) {
       .from('pagamenti')
       .select('id, importo, importo_pagato, parent_payment_id')
       .eq('id', pagamento_id)
-      .single()
+      .maybeSingle()
     if (pErr || !pag) {
       return NextResponse.json({ error: 'Pagamento non trovato' }, { status: 404 })
     }
@@ -103,7 +103,7 @@ export async function POST(request: Request) {
       .from('pagamenti')
       .select('id, importo, importo_pagato, stato, data_incasso')
       .eq('id', pagamento_id)
-      .single()
+      .maybeSingle()
 
     return NextResponse.json({ success: true, data: { incasso, pagamento: aggiornato, spills } }, { status: 201 })
   } catch (err) {
@@ -124,7 +124,8 @@ export async function DELETE(request: Request) {
     if (!id) return NextResponse.json({ error: 'id è obbligatorio' }, { status: 400 })
 
     const supabase = await createAdminClient()
-    const { data: old } = await supabase.from('incassi').select('*').eq('id', id).single()
+    const { data: old } = await supabase.from('incassi').select('*').eq('id', id).maybeSingle()
+    if (!old) return NextResponse.json({ error: 'Incasso non trovato' }, { status: 404 })
     const { error } = await supabase.from('incassi').delete().eq('id', id)
     if (error) {
       return NextResponse.json({ error: 'Errore nello storno', details: error.message }, { status: 500 })

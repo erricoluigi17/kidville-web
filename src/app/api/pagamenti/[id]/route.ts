@@ -20,7 +20,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     const { id } = await context.params
 
     const supabase = await createAdminClient()
-    const { data, error } = await supabase.from('pagamenti').select(SELECT).eq('id', id).single()
+    const { data, error } = await supabase.from('pagamenti').select(SELECT).eq('id', id).maybeSingle()
     if (error || !data) return NextResponse.json({ error: 'Pagamento non trovato' }, { status: 404 })
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const pag = data as any
@@ -135,7 +135,8 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
     const { id } = await context.params
 
     const supabase = await createAdminClient()
-    const { data: old } = await supabase.from('pagamenti').select('*').eq('id', id).single()
+    const { data: old } = await supabase.from('pagamenti').select('*').eq('id', id).maybeSingle()
+    if (!old) return NextResponse.json({ error: 'Pagamento non trovato' }, { status: 404 })
     const { error } = await supabase.from('pagamenti').delete().eq('id', id)
     if (error) return NextResponse.json({ error: 'Errore eliminazione', details: error.message }, { status: 500 })
 

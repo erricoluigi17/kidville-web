@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
       .from('materie')
       .select('codice, scuola_id, section_id')
       .eq('id', materiaId)
-      .single()
+      .maybeSingle()
     if (!materia) return NextResponse.json({ error: 'Materia non trovata' }, { status: 404 })
 
     // Scope sulla sezione della materia (tenant + assegnazione educator): protegge

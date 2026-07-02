@@ -89,8 +89,9 @@ export async function POST(request: Request) {
     }
 
     // scuola dell'alunno + nome (per notifiche)
-    const { data: al } = await supabase.from('alunni').select('scuola_id, nome, cognome, classe_sezione, section_id, allergies, allergeni').eq('id', alunnoId).single()
-    const scuolaId = al?.scuola_id ?? DEFAULT_SCUOLA
+    const { data: al } = await supabase.from('alunni').select('scuola_id, nome, cognome, classe_sezione, section_id, allergies, allergeni').eq('id', alunnoId).maybeSingle()
+    if (!al) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
+    const scuolaId = al.scuola_id ?? DEFAULT_SCUOLA
     const config = await loadMensaConfig(supabase, scuolaId)
     // Usa la prima data richiesta per determinare il menu attivo (approx per range)
     const primaData = dates[0]
@@ -182,8 +183,9 @@ export async function DELETE(request: Request) {
       return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
     }
 
-    const { data: al } = await supabase.from('alunni').select('scuola_id').eq('id', alunnoId).single()
-    const scuolaId = al?.scuola_id ?? DEFAULT_SCUOLA
+    const { data: al } = await supabase.from('alunni').select('scuola_id').eq('id', alunnoId).maybeSingle()
+    if (!al) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
+    const scuolaId = al.scuola_id ?? DEFAULT_SCUOLA
     const config = await loadMensaConfig(supabase, scuolaId)
 
     if (!entroCutoff(data, config.cutoffOra)) {

@@ -28,7 +28,8 @@ export async function GET(request: Request) {
     if (!modelId) return NextResponse.json({ error: 'modelId è obbligatorio' }, { status: 400 })
 
     const supabase = await createAdminClient()
-    const { data: model } = await supabase.from('form_models').select('title').eq('id', modelId).single()
+    const { data: model } = await supabase.from('form_models').select('title').eq('id', modelId).maybeSingle()
+    if (!model) return NextResponse.json({ error: 'Modello non trovato' }, { status: 404 })
     const { data: subs } = await supabase
       .from('form_submissions')
       .select('id, score, esito_ammissione, data')

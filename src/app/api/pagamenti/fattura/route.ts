@@ -59,7 +59,7 @@ export async function GET(request: Request) {
         'id, descrizione, fattura_causale, importo, fattura_stato, fattura_aruba_id, fattura_pdf_path, fattura_emessa_il, alunno_id, alunni:alunno_id ( nome, cognome )'
       )
       .eq('id', pagamentoId)
-      .single()
+      .maybeSingle()
     if (!pag) return NextResponse.json({ error: 'Pagamento non trovato' }, { status: 404 })
 
     // scoping genitore

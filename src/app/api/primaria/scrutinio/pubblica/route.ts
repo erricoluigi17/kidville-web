@@ -25,7 +25,7 @@ export async function POST(request: NextRequest) {
       .from('scrutini')
       .select('id, section_id, stato, pubblicato')
       .eq('id', scrutinioId)
-      .single()
+      .maybeSingle()
     if (!scrutinio) return NextResponse.json({ error: 'Scrutinio non trovato' }, { status: 404 })
     if (scrutinio.stato !== 'chiuso') return NextResponse.json({ error: 'Pubblicabile solo a scrutinio chiuso' }, { status: 409 })
 

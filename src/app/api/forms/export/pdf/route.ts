@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
     .from('form_submissions')
     .select('*, form_model:form_models(id, title, schema)')
     .eq('id', id)
-    .single()
+    .maybeSingle()
 
   if (error || !submission) {
     return NextResponse.json({ error: 'Compilazione non trovata' }, { status: 404 })

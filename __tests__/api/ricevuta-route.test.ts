@@ -15,7 +15,10 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.select = () => b
       b.eq = () => b
       b.single = async () => ({ data: table === 'pagamenti' ? h.pagamento : null, error: null })
-      b.maybeSingle = async () => ({ data: table === 'legame_genitori_alunni' ? h.legame : null, error: null })
+      b.maybeSingle = async () => ({
+        data: table === 'pagamenti' ? h.pagamento : table === 'legame_genitori_alunni' ? h.legame : null,
+        error: null,
+      })
       return b
     },
   }),

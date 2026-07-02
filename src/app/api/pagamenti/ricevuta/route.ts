@@ -20,7 +20,7 @@ export async function GET(request: Request) {
       .from('pagamenti')
       .select('id, descrizione, importo, importo_pagato, stato, scadenza, alunno_id, alunni:alunno_id ( nome, cognome )')
       .eq('id', pagamentoId)
-      .single()
+      .maybeSingle()
     if (!pag) return NextResponse.json({ error: 'Pagamento non trovato' }, { status: 404 })
 
     const isStaff = user.role === 'admin' || user.role === 'coordinator' || user.role === 'segreteria'

@@ -127,7 +127,7 @@ export async function PUT(
             .from('task_interni')
             .select('id, author_id, assigned_to, target_class, titolo, contenuto, completato, created_at, scuola_id')
             .eq('id', id)
-            .single();
+            .maybeSingle();
 
         if (getErr || !currentRow) {
             return NextResponse.json({ error: 'Task non trovato' }, { status: 404 });

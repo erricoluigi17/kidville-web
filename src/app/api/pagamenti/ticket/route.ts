@@ -52,8 +52,9 @@ export async function POST(request: Request) {
     const supabase = await createAdminClient()
     let scuolaId = body.scuola_id as string | undefined
     if (!scuolaId) {
-      const { data: al } = await supabase.from('alunni').select('scuola_id').eq('id', alunno_id).single()
-      scuolaId = al?.scuola_id
+      const { data: al } = await supabase.from('alunni').select('scuola_id').eq('id', alunno_id).maybeSingle()
+      if (!al) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
+      scuolaId = al.scuola_id
     }
 
     // 1) incrementa saldo ticket (upsert)
@@ -66,7 +67,7 @@ export async function POST(request: Request) {
 
     // 2) categoria mensa
     const { data: cat } = await supabase
-      .from('payment_categories').select('id').eq('slug', 'mensa').is('scuola_id', null).single()
+      .from('payment_categories').select('id').eq('slug', 'mensa').is('scuola_id', null).maybeSingle()
 
     // 3) crea pagamento Mensa
     const { data: pag, error: pErr } = await supabase.from('pagamenti').insert({

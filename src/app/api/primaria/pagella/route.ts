@@ -33,7 +33,7 @@ export async function GET(request: NextRequest) {
       const coerenzaErr = await assertAlunniInSezione(supabase, [alunnoId], scr.section_id as string)
       if (coerenzaErr) return coerenzaErr
     } else {
-      const { data: scr } = await supabase.from('scrutini').select('pubblicato').eq('id', scrutinioId).single()
+      const { data: scr } = await supabase.from('scrutini').select('pubblicato').eq('id', scrutinioId).maybeSingle()
       if (!scr?.pubblicato) return NextResponse.json({ error: 'Pagella non ancora pubblicata' }, { status: 403 })
       const { data: firma } = await supabase
         .from('pagella_ricezioni')

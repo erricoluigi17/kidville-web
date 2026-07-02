@@ -33,10 +33,10 @@ export async function GET(request: NextRequest) {
     if (scopeErr) return scopeErr
 
     // Recupera scala giudizi una sola volta (serve sia per materia singola sia per panoramica).
-    const { data: alunno } = await supabase.from('alunni').select('section_id').eq('id', alunnoId).single()
+    const { data: alunno } = await supabase.from('alunni').select('section_id').eq('id', alunnoId).maybeSingle()
     let scala: ScalaVoce[] = []
     if (alunno?.section_id) {
-      const { data: sez } = await supabase.from('sections').select('scuola_id').eq('id', alunno.section_id).single()
+      const { data: sez } = await supabase.from('sections').select('scuola_id').eq('id', alunno.section_id).maybeSingle()
       if (sez?.scuola_id) {
         const { data: s } = await supabase
           .from('giudizi_sintetici_scala')

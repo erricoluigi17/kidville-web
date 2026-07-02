@@ -113,7 +113,7 @@ export async function POST(request: NextRequest) {
       .from('materie')
       .select('nome, codice, scuola_id, section_id')
       .eq('id', materiaId)
-      .single()
+      .maybeSingle()
     if (!materia) return NextResponse.json({ error: 'Materia non trovata' }, { status: 404 })
     // La materia deve essere del catalogo della sezione asserita: il suo scuola_id
     // pilota timelock, template giudizio e audit — mai da un tenant estraneo.

@@ -39,7 +39,7 @@ export async function GET(request: Request) {
 
     const supabase = await createAdminClient()
     const { data: cat } = await supabase
-      .from('payment_categories').select('id').eq('slug', 'retta').is('scuola_id', null).single()
+      .from('payment_categories').select('id').eq('slug', 'retta').is('scuola_id', null).maybeSingle()
 
     // retta default globale della scuola
     let settQuery = supabase.from('admin_settings').select('retta_default_importo, scuola_id')

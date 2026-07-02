@@ -24,7 +24,7 @@ export async function POST(request: NextRequest) {
       .from('scrutini')
       .select('id, section_id, stato')
       .eq('id', scrutinioId)
-      .single()
+      .maybeSingle()
     if (!scrutinio) return NextResponse.json({ error: 'Scrutinio non trovato' }, { status: 404 })
     if (scrutinio.stato === 'chiuso') return NextResponse.json({ error: 'Scrutinio chiuso: import non consentito', locked: true }, { status: 423 })
 
@@ -36,7 +36,7 @@ export async function POST(request: NextRequest) {
     const [{ data: alunni }, { data: materie }, { data: sez }] = await Promise.all([
       supabase.from('alunni').select('id, nome, cognome').eq('section_id', scrutinio.section_id),
       supabase.from('materie').select('id, nome, codice').eq('section_id', scrutinio.section_id),
-      supabase.from('sections').select('scuola_id').eq('id', scrutinio.section_id).single(),
+      supabase.from('sections').select('scuola_id').eq('id', scrutinio.section_id).maybeSingle(),
     ])
 
     // Scala valida (etichette consentite).

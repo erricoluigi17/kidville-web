@@ -88,7 +88,7 @@ export async function GET(request: Request) {
                     .from('utenti')
                     .select('nome, cognome, first_name, last_name')
                     .eq('id', media.uploaded_by)
-                    .single();
+                    .maybeSingle();
 
                 return {
                     ...media,
@@ -451,7 +451,7 @@ export async function PATCH(request: Request) {
             }
         }
 
-        const updateData: Record<string, any> = {};
+        const updateData: Record<string, unknown> = {};
         if (tag_students !== undefined) updateData.tag_students = tag_students;
         if (is_broadcast !== undefined) updateData.is_broadcast = is_broadcast;
         if (target_classes !== undefined) updateData.target_classes = target_classes;

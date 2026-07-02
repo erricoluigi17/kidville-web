@@ -22,7 +22,7 @@ async function upsertQuote(request: Request) {
 
   const supabase = await createAdminClient()
   const { data: pag, error: pErr } = await supabase
-    .from('pagamenti').select('id, importo, tipo').eq('id', pagamento_id).single()
+    .from('pagamenti').select('id, importo, tipo').eq('id', pagamento_id).maybeSingle()
   if (pErr || !pag) return NextResponse.json({ error: 'Pagamento non trovato' }, { status: 404 })
 
   const somma = quote.reduce((s: number, q: { importo: number }) => s + Number(q.importo), 0)

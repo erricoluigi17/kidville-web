@@ -124,8 +124,9 @@ export async function POST(request: Request) {
     // scuola_id: dal body o derivata dall'alunno
     let scuolaId = body.scuola_id as string | undefined
     if (!scuolaId) {
-      const { data: al } = await supabase.from('alunni').select('scuola_id').eq('id', alunno_id).single()
-      scuolaId = al?.scuola_id
+      const { data: al } = await supabase.from('alunni').select('scuola_id').eq('id', alunno_id).maybeSingle()
+      if (!al) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
+      scuolaId = al.scuola_id
     }
 
     const record: Record<string, unknown> = {

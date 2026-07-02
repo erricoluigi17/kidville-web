@@ -35,10 +35,11 @@ export async function GET(
     }
 
     const [{ data: section }, { data: alunni }] = await Promise.all([
-      supabase.from('sections').select('id, name, school_type, scuola_id').eq('id', sectionId).single(),
+      supabase.from('sections').select('id, name, school_type, scuola_id').eq('id', sectionId).maybeSingle(),
       // Alunni attivi della sezione (fonte unica: alunni.section_id, sincronizzato dal trigger).
       supabase.from('alunni').select('id, nome, cognome, allergies, allergeni').eq('section_id', sectionId).eq('stato', 'iscritto').order('cognome'),
     ])
+    if (!section) return NextResponse.json({ error: 'Sezione non trovata' }, { status: 404 })
 
     // Materie: il docente vede SOLO le proprie (contitolarità/isolamento disciplina);
     // staff/segreteria operano sull'intera classe → tutte le materie attive della sezione.

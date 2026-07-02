@@ -1,14 +1,21 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { scuoleDiUtente } from '@/lib/auth/scope';
+import { parseQuery } from '@/lib/validation/http';
 
 export const dynamic = 'force-dynamic';
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+const getQuerySchema = z.object({}); // nessun parametro in ingresso
 
 export async function GET(request: Request) {
     try {
         const auth = await requireDocente(request);
         if (auth.response) return auth.response;
+        const q = parseQuery(request, getQuerySchema);
+        if ('response' in q) return q.response;
         const supabase = await createAdminClient();
         const plessi = await scuoleDiUtente(supabase, auth.user);
         if (plessi.length === 0) return NextResponse.json({ staff: [], students: [], classes: [] });

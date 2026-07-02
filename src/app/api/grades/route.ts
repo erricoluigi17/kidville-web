@@ -4,8 +4,31 @@
 // /api/primaria/valutazioni e /api/primaria/prospetto. Conservato come storico.
 
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
+import { parseBody, parseQuery } from '@/lib/validation/http';
+import { zUuid } from '@/lib/validation/common';
+
+// '' è ammesso per retro-compatibilità: ?alunnoId= (vuoto) equivale ad assente (nessun filtro).
+const getQuerySchema = z.object({
+    alunnoId: zUuid.or(z.literal('')).optional(),
+    materia: z.string().optional(),
+});
+
+const postBodySchema = z
+    .object({
+        alunnoId: zUuid,
+        materia: z.string().min(1, 'materia è obbligatoria'),
+        tipo: z.string().nullish(),
+        // Legacy: il voto può arrivare come numero o stringa numerica (il DB lo casta).
+        votoNumerico: z.union([z.number(), z.string()]).nullish(),
+        giudizioTesto: z.string().nullish(),
+    })
+    .refine((b) => Boolean(b.votoNumerico) || Boolean(b.giudizioTesto), {
+        message: 'Serve almeno votoNumerico o giudizioTesto',
+        path: ['votoNumerico'],
+    });
 
 // GET /api/grades?alunnoId=xxx&materia=Italiano
 // Recupera i voti di un alunno (opzionalmente filtrati per materia)
@@ -14,9 +37,9 @@ export async function GET(request: Request) {
         const auth = await requireDocente(request);
         if (auth.response) return auth.response;
 
-        const { searchParams } = new URL(request.url);
-        const alunnoId = searchParams.get('alunnoId');
-        const materia = searchParams.get('materia');
+        const q = parseQuery(request, getQuerySchema);
+        if ('response' in q) return q.response;
+        const { alunnoId, materia } = q.data;
 
         const supabase = await createAdminClient();
 
@@ -62,12 +85,9 @@ export async function POST(request: Request) {
         const auth = await requireDocente(request);
         if (auth.response) return auth.response;
 
-        const body = await request.json();
-        const { alunnoId, materia, tipo, votoNumerico, giudizioTesto } = body;
-
-        if (!alunnoId || !materia || (!votoNumerico && !giudizioTesto)) {
-            return NextResponse.json({ error: 'Dati incompleti' }, { status: 400 });
-        }
+        const b = await parseBody(request, postBodySchema);
+        if ('response' in b) return b.response;
+        const { alunnoId, materia, tipo, votoNumerico, giudizioTesto } = b.data;
 
         // Admin client per bypassare RLS
         const supabase = await createAdminClient();
@@ -86,7 +106,7 @@ export async function POST(request: Request) {
                 tipo,
                 voto_numerico: votoNumerico,
                 giudizio_testo: giudizioTesto,
-                pubblicato: false 
+                pubblicato: false
             })
             .select()
             .single();

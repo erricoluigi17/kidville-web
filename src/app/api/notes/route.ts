@@ -1,6 +1,21 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
+import { parseBody, parseQuery } from '@/lib/validation/http';
+import { zUuid } from '@/lib/validation/common';
+
+// '' è ammesso per retro-compatibilità: ?alunnoId= (vuoto) equivale ad assente (nessun filtro).
+const getQuerySchema = z.object({
+    alunnoId: zUuid.or(z.literal('')).optional(),
+});
+
+const postBodySchema = z.object({
+    alunnoIds: z.array(zUuid).min(1, 'alunnoIds è obbligatorio e non può essere vuoto'),
+    categoria: z.string().min(1, 'categoria è obbligatoria'),
+    testo: z.string().min(1, 'testo è obbligatorio'),
+    richiedeFirma: z.boolean().nullish(),
+});
 
 // GET /api/notes?alunnoId=xxx
 // Recupera le note disciplinari di un alunno
@@ -9,8 +24,9 @@ export async function GET(request: Request) {
         const auth = await requireDocente(request);
         if (auth.response) return auth.response;
 
-        const { searchParams } = new URL(request.url);
-        const alunnoId = searchParams.get('alunnoId');
+        const q = parseQuery(request, getQuerySchema);
+        if ('response' in q) return q.response;
+        const { alunnoId } = q.data;
 
         const supabase = await createAdminClient();
 
@@ -56,16 +72,9 @@ export async function POST(request: Request) {
         const auth = await requireDocente(request);
         if (auth.response) return auth.response;
 
-        const body = await request.json();
-        const { alunnoIds, categoria, testo, richiedeFirma } = body;
-
-        if (!alunnoIds || !Array.isArray(alunnoIds) || alunnoIds.length === 0) {
-            return NextResponse.json({ error: 'alunnoIds è obbligatorio e non può essere vuoto' }, { status: 400 });
-        }
-
-        if (!categoria || !testo) {
-            return NextResponse.json({ error: 'categoria e testo sono obbligatori' }, { status: 400 });
-        }
+        const b = await parseBody(request, postBodySchema);
+        if ('response' in b) return b.response;
+        const { alunnoIds, categoria, testo, richiedeFirma } = b.data;
 
         // Admin client per bypassare RLS
         const supabase = await createAdminClient();
@@ -74,7 +83,7 @@ export async function POST(request: Request) {
         const maestraId = auth.user.id;
 
         // Crea una nota per ogni alunno selezionato
-        const noteRows = alunnoIds.map((alunnoId: string) => ({
+        const noteRows = alunnoIds.map((alunnoId) => ({
             alunno_id: alunnoId,
             maestra_id: maestraId,
             categoria,

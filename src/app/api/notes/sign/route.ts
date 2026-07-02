@@ -1,14 +1,18 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createClient, createAdminClient } from '@/lib/supabase/server-client';
+import { parseBody } from '@/lib/validation/http';
+import { zUuid } from '@/lib/validation/common';
+
+const postBodySchema = z.object({
+    notaId: zUuid,
+});
 
 export async function POST(request: Request) {
     try {
-        const body = await request.json();
-        const { notaId } = body;
-
-        if (!notaId) {
-            return NextResponse.json({ error: 'notaId è obbligatorio' }, { status: 400 });
-        }
+        const b = await parseBody(request, postBodySchema);
+        if ('response' in b) return b.response;
+        const { notaId } = b.data;
 
         // Admin client per bypassare RLS
         const supabase = await createAdminClient();

@@ -32,7 +32,8 @@ vi.mock('@/lib/supabase/server-client', () => ({
 
 import { GET } from '@/app/api/diary/entries/route'
 
-const req = (qs: string) => ({ nextUrl: { searchParams: new URLSearchParams(qs) }, headers: new Headers() }) as never
+// url richiesta da parseQuery (M3); alunno_id GUID-shaped per zUuid
+const req = (qs: string) => ({ url: `http://test/api/diary/entries?${qs}`, nextUrl: { searchParams: new URLSearchParams(qs) }, headers: new Headers() }) as never
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -41,7 +42,7 @@ beforeEach(() => {
 
 describe('GET /api/diary/entries', () => {
   it('ramo genitore: 200 con eventi mappati (service-role, nota inclusa)', async () => {
-    const res = await GET(req('alunno_id=mine&from=2026-06-27&to=2026-06-27'))
+    const res = await GET(req('alunno_id=11111111-1111-1111-1111-111111111111&from=2026-06-27&to=2026-06-27'))
     expect(res.status).toBe(200)
     const j = await res.json()
     expect(Array.isArray(j)).toBe(true)

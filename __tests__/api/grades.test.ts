@@ -31,7 +31,8 @@ describe('API Route: Grades (Inserimento Voti)', () => {
 
     const request = new Request('http://localhost', {
       method: 'POST',
-      body: JSON.stringify({ alunnoId: 'std-1', materia: 'Matematica', tipo: 'scritto', votoNumerico: 8 }),
+      // GUID-shaped: il postBodySchema (M3) valida alunnoId con zUuid
+      body: JSON.stringify({ alunnoId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1', materia: 'Matematica', tipo: 'scritto', votoNumerico: 8 }),
     });
 
     const response = await POST(request);
@@ -41,7 +42,7 @@ describe('API Route: Grades (Inserimento Voti)', () => {
     expect(data.success).toBe(true);
     expect(mocks.mockInsert).toHaveBeenCalledWith(
       expect.objectContaining({
-        alunno_id: 'std-1',
+        alunno_id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1',
         voto_numerico: 8,
         maestra_id: 'educator-1', // identità dal gate, non spoofabile
         pubblicato: false, // tassativo dal PRD (buffer notifica)

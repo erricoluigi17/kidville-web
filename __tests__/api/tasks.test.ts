@@ -76,6 +76,10 @@ describe('API Route: Tasks Staff (gated)', () => {
     const data = await response.json();
 
     expect(response.status).toBe(400);
-    expect(data.error).toContain('author_id');
+    // Shape standard M3: { error: 'Dati non validi', details: [{ path, message }] }
+    expect(data.error).toBe('Dati non validi');
+    expect(data.details).toEqual(
+      expect.arrayContaining([expect.objectContaining({ path: 'author_id' })])
+    );
   });
 });

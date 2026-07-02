@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
+import { parseBody, parseQuery } from '@/lib/validation/http';
+import { zDataYMD, zUuid } from '@/lib/validation/common';
 
 /**
  * GET /api/attendance/daily?data=YYYY-MM-DD&sezione=Girasoli
@@ -11,13 +14,31 @@ import { requireDocente } from '@/lib/auth/require-staff';
  * Upsert diretto su Supabase — bypassa Dexie per dati live nel registro mensile.
  */
 
+const getQuerySchema = z.object({
+    // default dinamico (oggi) calcolato nell'handler
+    data: zDataYMD.optional(),
+    sezione: z.string().default('Girasoli'),
+});
+
+const STATI_VALIDI = ['presente', 'assente', 'ritardo', 'uscita_anticipata'] as const;
+
+const postBodySchema = z.object({
+    alunno_id: zUuid,
+    data: zDataYMD,
+    stato: z.enum(STATI_VALIDI),
+    orario_entrata: z.string().nullable().optional(),
+    orario_uscita: z.string().nullable().optional(),
+});
+
 export async function GET(request: NextRequest) {
     const auth = await requireDocente(request);
     if (auth.response) return auth.response;
 
-    const { searchParams } = new URL(request.url);
-    const data = searchParams.get('data') ?? new Date().toISOString().split('T')[0];
-    const sezione = searchParams.get('sezione') ?? 'Girasoli';
+    const q = parseQuery(request, getQuerySchema);
+    if ('response' in q) return q.response;
+
+    const data = q.data.data ?? new Date().toISOString().split('T')[0];
+    const sezione = q.data.sezione;
 
     try {
         const supabase = await createClient();
@@ -57,23 +78,9 @@ export async function POST(request: NextRequest) {
         const auth = await requireDocente(request);
         if (auth.response) return auth.response;
 
-        const body = await request.json();
-        const { alunno_id, data, stato, orario_entrata, orario_uscita } = body;
-
-        if (!alunno_id || !data || !stato) {
-            return NextResponse.json(
-                { error: 'Campi obbligatori: alunno_id, data, stato' },
-                { status: 400 }
-            );
-        }
-
-        const STATI_VALIDI = ['presente', 'assente', 'ritardo', 'uscita_anticipata'];
-        if (!STATI_VALIDI.includes(stato)) {
-            return NextResponse.json(
-                { error: `Stato non valido. Valori ammessi: ${STATI_VALIDI.join(', ')}` },
-                { status: 400 }
-            );
-        }
+        const b = await parseBody(request, postBodySchema);
+        if ('response' in b) return b.response;
+        const { alunno_id, data, stato, orario_entrata, orario_uscita } = b.data;
 
         const supabase = await createClient();
 

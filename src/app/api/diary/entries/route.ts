@@ -1,9 +1,41 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { assertAlunnoInScope, scuoleDiUtente } from '@/lib/auth/scope';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { notificaTitolariScrittura, enqueueDiarioGenitori } from '@/lib/primaria/notifiche';
+import { parseBody, parseQuery } from '@/lib/validation/http';
+import { zUuid, zDataYMD } from '@/lib/validation/common';
+
+// Modalità genitore: default from = 14 giorni fa, to = oggi (dinamici, calcolati nel codice).
+const getParentQuerySchema = z.object({
+    alunno_id: zUuid,
+    from: zDataYMD.optional(),
+    to: zDataYMD.optional(),
+});
+
+// Modalità insegnante/staff: default date = oggi (dinamico, calcolato nel codice).
+const getTeacherQuerySchema = z.object({
+    sezione: z.string().default('Girasoli'),
+    date: zDataYMD.optional(),
+});
+
+// Un evento diario: campi pass-through verso il DB lasciati permissivi
+// (il comportamento attuale non impone vincoli su orari/dettagli/nota).
+const entrySchema = z.object({
+    alunno_id: zUuid,
+    // Nessun vincolo di non-vuoto: il codice attuale non lo impone su questa route.
+    tipo_evento: z.string(),
+    // Default dinamico (adesso) calcolato nel codice.
+    orario_inizio: z.unknown(),
+    orario_fine: z.unknown(),
+    dettagli: z.unknown(),
+    nota_libera: z.unknown(),
+});
+
+// Il body può essere un singolo evento o un array di eventi.
+const postBodySchema = z.union([z.array(entrySchema), entrySchema]);
 
 // GET /api/diary/entries
 // Modalità insegnante: ?sezione=Girasoli&date=2026-05-12
@@ -20,19 +52,18 @@ export async function GET(request: NextRequest) {
     const params = request.nextUrl.searchParams;
 
     // ── Modalità genitore: per singolo alunno in un range di date ──
-    const alunnoId = params.get('alunno_id');
-    const from = params.get('from');
-    const to   = params.get('to');
-    if (alunnoId) {
-        const fromDate = from ?? (() => {
+    if (params.get('alunno_id')) {
+        const q = parseQuery(request, getParentQuerySchema);
+        if ('response' in q) return q.response;
+        const fromDate = q.data.from ?? (() => {
             const d = new Date(); d.setDate(d.getDate() - 14); return d.toISOString().split('T')[0];
         })();
-        const toDate = to ?? new Date().toISOString().split('T')[0];
+        const toDate = q.data.to ?? new Date().toISOString().split('T')[0];
 
         const { data, error } = await admin
             .from('eventi_diario')
             .select('id, tipo_evento, orario_inizio, dettagli, nota_libera')
-            .eq('alunno_id', alunnoId)
+            .eq('alunno_id', q.data.alunno_id)
             .gte('orario_inizio', `${fromDate}T00:00:00.000Z`)
             .lte('orario_inizio', `${toDate}T23:59:59.999Z`)
             .order('orario_inizio', { ascending: false });
@@ -57,8 +88,10 @@ export async function GET(request: NextRequest) {
     const plessi = await scuoleDiUtente(admin, auth.user);
     if (plessi.length === 0) return NextResponse.json([]);
 
-    const sezione = params.get('sezione') ?? 'Girasoli';
-    const date = params.get('date') ?? new Date().toISOString().split('T')[0];
+    const q = parseQuery(request, getTeacherQuerySchema);
+    if ('response' in q) return q.response;
+    const sezione = q.data.sezione;
+    const date = q.data.date ?? new Date().toISOString().split('T')[0];
 
     const { data: alunni } = await admin
         .from('alunni')
@@ -91,10 +124,11 @@ export async function POST(request: NextRequest) {
     const auth = await requireDocente(request);
     if (auth.response) return auth.response;
 
-    const body = await request.json();
+    const b = await parseBody(request, postBodySchema);
+    if ('response' in b) return b.response;
     const admin = await createAdminClient();
 
-    const entries = Array.isArray(body) ? body : [body];
+    const entries = Array.isArray(b.data) ? b.data : [b.data];
 
     // Scope: ogni alunno deve essere nello scope dell'attore (tenant + classe).
     const alunnoIds = [...new Set(entries.map((e) => e.alunno_id).filter(Boolean))];

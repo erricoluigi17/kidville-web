@@ -9,7 +9,15 @@ import path from 'node:path';
  * Lista incrementale: ogni batch M3.x aggiunge i propri prefissi
  * (path relativi a src/app/api; coprono ogni route.ts sottostante).
  */
-const GRUPPI_COPERTI: string[] = [];
+const GRUPPI_COPERTI: string[] = [
+    // M3.2 (zod 1/14)
+    'attendance',
+    'avvisi',
+    'diary',
+    'grades',
+    'notes',
+    'tasks',
+];
 
 const API_ROOT = path.join(process.cwd(), 'src', 'app', 'api');
 

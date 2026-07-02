@@ -1,7 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { scuoleDiUtente } from '@/lib/auth/scope';
+import { parseQuery } from '@/lib/validation/http';
+import { zUuid, zDataYMD } from '@/lib/validation/common';
+
+// Singolo alunno per id.
+const getByIdQuerySchema = z.object({
+    id: zUuid,
+});
+
+// Lista per sezione: default sezione/classeSezione→'Girasoli' e date→oggi calcolati nel
+// codice; onlyPresent resta stringa confrontata con 'true' (semantica attuale preservata).
+const getBySezioneQuerySchema = z.object({
+    sezione: z.string().optional(),
+    classeSezione: z.string().optional(),
+    onlyPresent: z.string().optional(),
+    date: zDataYMD.optional(),
+});
 
 // GET /api/diary/students?sezione=Girasoli                    → lista classe (tutti)
 // GET /api/diary/students?sezione=Girasoli&onlyPresent=true   → solo presenti oggi
@@ -11,12 +28,13 @@ export async function GET(request: NextRequest) {
     const supabase = await createAdminClient();
     const params = request.nextUrl.searchParams;
 
-    const id = params.get('id');
-    if (id) {
+    if (params.get('id')) {
+        const q = parseQuery(request, getByIdQuerySchema);
+        if ('response' in q) return q.response;
         const { data: alunno, error } = await supabase
             .from('alunni')
             .select('id, nome, cognome, note_mediche, classe_sezione, consenso_privacy')
-            .eq('id', id)
+            .eq('id', q.data.id)
             .maybeSingle();
 
         if (error) return NextResponse.json({ error: error.message }, { status: 500 });
@@ -51,10 +69,12 @@ export async function GET(request: NextRequest) {
     const plessi = await scuoleDiUtente(admin, auth.user);
     if (plessi.length === 0) return NextResponse.json([]);
 
+    const q = parseQuery(request, getBySezioneQuerySchema);
+    if ('response' in q) return q.response;
     // Supporta sia "sezione" (Girasoli) che "classeSezione" (3A)
-    const sezione = params.get('sezione') ?? params.get('classeSezione') ?? 'Girasoli';
-    const onlyPresent = params.get('onlyPresent') === 'true';
-    const date = params.get('date') ?? new Date().toISOString().split('T')[0];
+    const sezione = q.data.sezione ?? q.data.classeSezione ?? 'Girasoli';
+    const onlyPresent = q.data.onlyPresent === 'true';
+    const date = q.data.date ?? new Date().toISOString().split('T')[0];
 
     const { data: alunni, error } = await admin
         .from('alunni')

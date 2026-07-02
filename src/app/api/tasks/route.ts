@@ -1,8 +1,36 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { scuoleDiUtente } from '@/lib/auth/scope';
 import { logScrittura } from '@/lib/audit/scrittura';
+import { parseBody, parseQuery } from '@/lib/validation/http';
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+// Gli id (userId, studentId, author_id, assignees) restano stringhe libere:
+// nel payload JSON di task_interni circolano anche id non-UUID (dati legacy),
+// quindi zUuid sarebbe più severo del comportamento attuale.
+const getQuerySchema = z.object({
+    userId: z.string().optional(),
+    status: z.string().optional(), // lista separata da virgole, split in handler
+    filter: z.string().default('all'),
+    studentId: z.string().optional(),
+});
+
+const postBodySchema = z.object({
+    titolo: z.string().min(1),
+    contenuto: z.string().nullable().optional(),
+    priority: z.string().nullable().optional(),
+    category: z.string().nullable().optional(),
+    deadline: z.string().nullable().optional(),
+    assigned_to: z.union([z.string(), z.array(z.string())]).nullable().optional(),
+    target_class: z.string().nullable().optional(),
+    target_role: z.string().nullable().optional(),
+    target_scope: z.string().nullable().optional(),
+    student_id: z.string().nullable().optional(),
+    author_id: z.string().min(1),
+    compiti: z.array(z.unknown()).nullable().optional(),
+});
 
 // ─── Schema note ─────────────────────────────────────────────────────────────
 // task_interni actual columns: id, author_id(*FK adults), assigned_to(*FK adults),
@@ -229,19 +257,17 @@ async function enrichTask(
 // ─── GET /api/tasks ───────────────────────────────────────────────────────────
 export async function GET(request: Request) {
     try {
-        const { searchParams } = new URL(request.url);
-        const userId = searchParams.get('userId');
-        const statusParam = searchParams.get('status');
-        const filter = searchParams.get('filter') || 'all';
-        const studentId = searchParams.get('studentId');
+        // tasks = compiti INTERNI staff: gate ruolo + isolamento per plesso. Nessun flusso genitore.
+        const auth = await requireDocente(request);
+        if (auth.response) return auth.response;
+
+        const q = parseQuery(request, getQuerySchema);
+        if ('response' in q) return q.response;
+        const { userId, status: statusParam, filter, studentId } = q.data;
 
         if (!userId && !studentId) {
             return NextResponse.json({ error: 'userId o studentId è richiesto' }, { status: 400 });
         }
-
-        // tasks = compiti INTERNI staff: gate ruolo + isolamento per plesso. Nessun flusso genitore.
-        const auth = await requireDocente(request);
-        if (auth.response) return auth.response;
 
         const supabase = await createAdminClient();
         const plessi = await scuoleDiUtente(supabase, auth.user);
@@ -249,7 +275,7 @@ export async function GET(request: Request) {
 
         // Determine role
         let role = 'educator';
-        const { data: uEntry } = await supabase.from('utenti').select('ruolo, role').eq('id', userId).maybeSingle();
+        const { data: uEntry } = await supabase.from('utenti').select('ruolo, role').eq('id', userId ?? null).maybeSingle();
         if (uEntry) {
             const rawRole = uEntry.role || uEntry.ruolo;
             if (rawRole === 'admin') role = 'admin';
@@ -266,7 +292,7 @@ export async function GET(request: Request) {
             const { data: myMedia } = await supabase
                 .from('galleria_media_v2')
                 .select('tag_students')
-                .eq('uploaded_by', userId!)
+                .eq('uploaded_by', userId ?? null)
                 .not('tag_students', 'is', null);
 
             const myTaggedIds = (myMedia ?? [])
@@ -286,7 +312,7 @@ export async function GET(request: Request) {
             // Fallback: use email-to-section mapping for known educators
             if (sectionNames.length === 0) {
                 const { data: utEntryForSection } = await supabase
-                    .from('utenti').select('email').eq('id', userId!).maybeSingle();
+                    .from('utenti').select('email').eq('id', userId ?? null).maybeSingle();
                 const emailToSection: Record<string, string> = {
                     'maestra.anna@kidville.it': 'Girasoli',
                     'maestra.chiara@kidville.it': 'Tulipani',
@@ -388,19 +414,13 @@ export async function POST(request: Request) {
         const auth = await requireDocente(request);
         if (auth.response) return auth.response;
 
-        const body = await request.json();
+        const b = await parseBody(request, postBodySchema);
+        if ('response' in b) return b.response;
         const {
             titolo, contenuto: rawDescrizione, priority, category, deadline,
             assigned_to, target_class, target_role, target_scope,
             student_id, author_id, compiti
-        } = body;
-
-        if (!titolo || !author_id) {
-            return NextResponse.json(
-                { error: 'titolo e author_id sono richiesti' },
-                { status: 400 }
-            );
-        }
+        } = b.data;
 
         const supabase = await createAdminClient();
 
@@ -423,7 +443,7 @@ export async function POST(request: Request) {
             priority: priority ?? 'medium',
             category: category ?? 'generale',
             deadline: deadline ?? null,
-            compiti: compiti ?? [],
+            compiti: (compiti ?? []) as SubTask[],
             target_scope: target_scope ?? 'single',
             target_role: target_role ?? null,
             student_id: student_id ?? null,

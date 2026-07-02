@@ -1,7 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { logScrittura } from '@/lib/audit/scrittura';
+import { parseData, parseQuery } from '@/lib/validation/http';
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+// GET: entrambi i filtri sono obbligatori (il vecchio check manuale rifiutava
+// anche la stringa vuota → min(1)); nessun vincolo di formato aggiuntivo.
+const getQuerySchema = z.object({
+  form_id: z.string().min(1, 'form_id è obbligatorio'),
+  class_name: z.string().min(1, 'class_name è obbligatorio'),
+});
+
+// POST (FormData): valida i campi testuali estratti. Il file è controllato a
+// parte come presenza/istanza; dimensione ed estensione restano check dedicati.
+const postFormSchema = z.object({
+  form_id: z.string().min(1, 'form_id è obbligatorio'),
+  student_id: z.string().min(1, 'student_id è obbligatorio'),
+});
 
 const ALLOWED_EXT = new Set(['pdf', 'jpg', 'jpeg', 'png', 'webp', 'heic']);
 const ALLOWED_MIME = new Set([
@@ -11,13 +28,9 @@ const ALLOWED_MIME = new Set([
 // GET: Semaforo autorizzazioni per una classe e un modulo
 export async function GET(request: NextRequest) {
   try {
-    const { searchParams } = new URL(request.url);
-    const formId = searchParams.get('form_id');
-    const className = searchParams.get('class_name');
-
-    if (!formId || !className) {
-      return NextResponse.json({ error: 'form_id e class_name sono obbligatori' }, { status: 400 });
-    }
+    const q = parseQuery(request, getQuerySchema);
+    if ('response' in q) return q.response;
+    const { form_id: formId, class_name: className } = q.data;
 
     const supabase = await createAdminClient();
 
@@ -73,13 +86,16 @@ export async function POST(request: Request) {
 
   try {
     const form = await request.formData();
-    const file = form.get('file') as File | null;
-    const formId = form.get('form_id') as string | null;
-    const studentId = form.get('student_id') as string | null;
+    const fileEntry = form.get('file');
+    const file = fileEntry instanceof File ? fileEntry : null;
 
-    if (!formId || !studentId) {
-      return NextResponse.json({ error: 'form_id e student_id sono obbligatori' }, { status: 400 });
-    }
+    const parsed = parseData(postFormSchema, {
+      form_id: form.get('form_id'),
+      student_id: form.get('student_id'),
+    });
+    if ('response' in parsed) return parsed.response;
+    const { form_id: formId, student_id: studentId } = parsed.data;
+
     if (!file) {
       return NextResponse.json({ error: 'Nessun file ricevuto' }, { status: 400 });
     }

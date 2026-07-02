@@ -1,15 +1,22 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
+import { parseQuery } from '@/lib/validation/http'
 
 // GET /api/me — profilo dell'utente corrente (gated, service-role server-side).
 // Sostituisce le letture anon dirette di `utenti` (gallery docente, modulistica
 // genitore). Non espone mai segreti (password_segreta/password).
 const SECRETS = ['password_segreta', 'password', 'auth_user_id']
 
+const getQuerySchema = z.object({}) // nessun parametro in ingresso
+
 export async function GET(request: Request) {
   const auth = await requireUser(request)
   if (auth.response) return auth.response
+
+  const q = parseQuery(request, getQuerySchema)
+  if ('response' in q) return q.response
 
   const supabase = await createAdminClient()
 

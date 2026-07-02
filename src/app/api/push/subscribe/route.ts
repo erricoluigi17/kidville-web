@@ -1,7 +1,30 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
 import { vapidConfigured } from '@/lib/push/web-push'
+import { parseBody, parseQuery } from '@/lib/validation/http'
+
+// L'eventuale `userId` nel body è ignorato: si usa sempre l'utente autenticato.
+const postBodySchema = z.object({
+  subscription: z.object(
+    {
+      endpoint: z.string().min(1, 'subscription non valida'),
+      keys: z.object(
+        {
+          p256dh: z.string().min(1, 'subscription non valida'),
+          auth: z.string().min(1, 'subscription non valida'),
+        },
+        { error: 'subscription non valida' }
+      ),
+    },
+    { error: 'subscription non valida' }
+  ),
+})
+
+const deleteQuerySchema = z.object({
+  endpoint: z.string({ error: 'endpoint è obbligatorio' }).min(1, 'endpoint è obbligatorio'),
+})
 
 // POST /api/push/subscribe  — registra la subscription Web Push dell'utente
 // Body: { userId, subscription: { endpoint, keys: { p256dh, auth } } }
@@ -20,11 +43,9 @@ export async function POST(request: Request) {
       )
     }
 
-    const body = await request.json()
-    const sub = body.subscription
-    if (!sub?.endpoint || !sub?.keys?.p256dh || !sub?.keys?.auth) {
-      return NextResponse.json({ error: 'subscription non valida' }, { status: 400 })
-    }
+    const b = await parseBody(request, postBodySchema)
+    if ('response' in b) return b.response
+    const sub = b.data.subscription
 
     const supabase = await createAdminClient()
     const { error } = await supabase.from('push_subscriptions').upsert(
@@ -50,9 +71,9 @@ export async function DELETE(request: Request) {
   try {
     const auth = await requireUser(request)
     if (auth.response) return auth.response
-    const { searchParams } = new URL(request.url)
-    const endpoint = searchParams.get('endpoint')
-    if (!endpoint) return NextResponse.json({ error: 'endpoint è obbligatorio' }, { status: 400 })
+    const q = parseQuery(request, deleteQuerySchema)
+    if ('response' in q) return q.response
+    const { endpoint } = q.data
 
     const supabase = await createAdminClient()
     await supabase.from('push_subscriptions').delete().eq('endpoint', endpoint).eq('utente_id', auth.user.id)

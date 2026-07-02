@@ -1,16 +1,25 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { sealDangerous } from '@/lib/security/seal';
+import { parseQuery } from '@/lib/validation/http';
+
+const getQuerySchema = z.object({}); // nessun parametro in ingresso
+const postQuerySchema = z.object({}); // nessun parametro in ingresso (il body non viene letto)
 
 export async function GET(request: Request) {
     const sealed = await sealDangerous(request);
     if (sealed) return sealed;
+    const q = parseQuery(request, getQuerySchema);
+    if ('response' in q) return q.response;
     return seed();
 }
 
 export async function POST(request: Request) {
     const sealed = await sealDangerous(request);
     if (sealed) return sealed;
+    const q = parseQuery(request, postQuerySchema);
+    if ('response' in q) return q.response;
     return seed();
 }
 

@@ -1,10 +1,16 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createClient } from '@/lib/supabase/server-client';
 import { sealDangerous } from '@/lib/security/seal';
+import { parseQuery } from '@/lib/validation/http';
+
+const getQuerySchema = z.object({}); // nessun parametro in ingresso
 
 export async function GET(request: Request) {
     const sealed = await sealDangerous(request);
     if (sealed) return sealed;
+    const q = parseQuery(request, getQuerySchema);
+    if ('response' in q) return q.response;
     const supabase = await createClient();
 
     // Prova query diretta senza filtri

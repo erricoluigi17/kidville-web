@@ -45,6 +45,15 @@ const GRUPPI_COPERTI: string[] = [
     'public',
     'register',
     'panic-alert',
+    // M3.10 (zod 9/14 — infra)
+    'me',
+    'educator-sections',
+    'notifiche',
+    'push',
+    'teacher',
+    'seed-db',
+    'debug-supabase',
+    'debug',
 ];
 
 const API_ROOT = path.join(process.cwd(), 'src', 'app', 'api');

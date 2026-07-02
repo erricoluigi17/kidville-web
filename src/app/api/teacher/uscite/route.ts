@@ -1,6 +1,17 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
+import { parseQuery } from '@/lib/validation/http'
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+// `gruppo` e `alunno_ids` (CSV di id, split nel codice) sono entrambi opzionali
+// ma almeno uno dei due deve essere valorizzato: il check incrociato resta nel
+// codice con il suo 400 dedicato. Niente zUuid: gli id sono usati solo in .in().
+const getQuerySchema = z.object({
+  gruppo: z.string().optional(),
+  alunno_ids: z.string().optional(),
+})
 
 // GET /api/teacher/uscite?userId=&alunno_ids=a,b,c  (oppure &gruppo=)
 //   Semaforo gite/uscite per l'insegnante. Ritorna SOLO { alunno_id, autorizzato, quota_ok }.
@@ -14,9 +25,9 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
     }
 
-    const { searchParams } = new URL(request.url)
-    const gruppo = searchParams.get('gruppo')
-    const alunnoIdsParam = searchParams.get('alunno_ids')
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+    const { gruppo, alunno_ids: alunnoIdsParam } = q.data
     const alunnoIds = alunnoIdsParam ? alunnoIdsParam.split(',').map((x) => x.trim()).filter(Boolean) : []
 
     if (!gruppo && alunnoIds.length === 0) {

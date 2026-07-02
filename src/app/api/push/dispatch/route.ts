@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { sendPush, vapidConfigured } from '@/lib/push/web-push'
+import { parseQuery } from '@/lib/validation/http'
+
+const postQuerySchema = z.object({}) // nessun parametro in ingresso (il body eventuale del cron non viene letto)
 
 // POST /api/push/dispatch — invio Web Push delle notifiche non ancora inviate.
 // SERVICE-TO-SERVICE: richiede header `x-cron-secret`. NON chiamabile dal browser.
@@ -11,6 +15,9 @@ export async function POST(request: Request) {
     if (!secret || secret !== process.env.CRON_SECRET) {
       return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
     }
+
+    const q = parseQuery(request, postQuerySchema)
+    if ('response' in q) return q.response
 
     // Senza chiavi VAPID il push web non può partire: esito visibile (non_configurato)
     // e notifiche NON marcate come inviate, così partiranno appena configurato.

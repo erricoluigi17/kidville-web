@@ -8,6 +8,7 @@ import { SospensioneToggle } from './SospensioneToggle';
 import { QuickAcquistoModal } from './QuickAcquistoModal';
 import { ModificaPagamentoModal } from './ModificaPagamentoModal';
 import { RateizzaModal } from './RateizzaModal';
+import { Badge } from '@/components/ui/Badge';
 
 interface Categoria { id: string; nome: string; slug: string; colore?: string; icona?: string }
 interface Pagamento extends PagamentoRow {
@@ -56,6 +57,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
     const [rateizza, setRateizza] = useState<{ alunno: Alunno; pagamento: Pagamento } | null>(null);
     const [quick, setQuick] = useState<{ alunno: Alunno; categoria: Categoria } | null>(null);
     const [generando, setGenerando] = useState(false);
+    const [arubaGated, setArubaGated] = useState(false);
 
     // Anno scolastico corrente (set->ago = anno corrente, gen->giu = anno-1)
     const now = new Date();
@@ -67,8 +69,9 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
         return periodiAnno(annoScolasticoCorrente).some((p) => p.periodo === cur) ? cur : `${annoScolasticoCorrente}-09-01`;
     });
 
+    // NB: niente setLoading(true) sincrono qui dentro (react-hooks/set-state-in-effect):
+    // al mount loading parte già true; il refresh manuale lo imposta nel suo handler.
     const load = useCallback(async () => {
-        setLoading(true);
         try {
             const [pagRes, alRes] = await Promise.all([
                 fetch(`/api/pagamenti?userId=${userId}&scuola_id=${scuolaId}`, { headers: { 'x-user-id': userId } }).then((r) => r.json()),
@@ -94,6 +97,15 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                 }
             }).catch(() => {});
     }, [userId]);
+
+    // Gating Aruba/SDI visibile (M2.4): l'integrazione non configurata non deve
+    // restare invisibile alla Segreteria.
+    useEffect(() => {
+        fetch(`/api/admin/settings/aruba?userId=${userId}&scuola_id=${scuolaId}`, { headers: { 'x-user-id': userId } })
+            .then((r) => r.json())
+            .then((d) => { if (d.success) setArubaGated(!d.data?.abilitato); })
+            .catch(() => {});
+    }, [userId, scuolaId]);
 
     const rettaCat = useMemo(() => categorie.find((c) => c.slug === 'retta'), [categorie]);
     const categoriaSel = useMemo(() => categorie.find((c) => c.id === fCategoria), [categorie, fCategoria]);
@@ -173,6 +185,16 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
 
     return (
         <div>
+            {/* Gating Aruba/SDI (M2.4): segnale visibile quando la fatturazione non è configurata */}
+            {arubaGated && (
+                <div className="mb-4 flex items-center gap-2 flex-wrap">
+                    <Badge tone="warn">Integrazione non configurata</Badge>
+                    <span className="font-maven text-xs text-kidville-muted">
+                        Fatturazione elettronica Aruba/SDI non attiva: le fatture non vengono trasmesse.
+                    </span>
+                </div>
+            )}
+
             {/* Banner scarti SDI (DL-020): fatture rifiutate da correggere e reinviare */}
             {fattureScartate > 0 && (
                 <div className="mb-4 flex items-center gap-2 rounded-xl border-2 border-kidville-error-soft bg-kidville-error-soft px-4 py-3 text-kidville-error">
@@ -224,7 +246,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                         </button>
                     </>
                 )}
-                <button onClick={load} className="py-2 px-3 rounded-full border-2 border-kidville-line text-kidville-muted hover:text-kidville-green">
+                <button onClick={() => { setLoading(true); load(); }} className="py-2 px-3 rounded-full border-2 border-kidville-line text-kidville-muted hover:text-kidville-green">
                     <RefreshCw size={14} />
                 </button>
             </div>

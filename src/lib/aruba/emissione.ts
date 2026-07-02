@@ -65,13 +65,17 @@ export async function emettiFatturaPagamento(
   const cfg = (settings?.aruba_config ?? {}) as ArubaConfig
   const fiscal = (cfg.fiscal ?? {}) as Record<string, unknown>
   const creds = resolveArubaCredentials(cfg)
-  if (!cfg.abilitato || !creds)
+  if (!cfg.abilitato || !creds) {
+    console.warn(
+      `[ARUBA] emissione fattura gated per scuola ${pag.scuola_id}: credenziali_non_configurate (abilitato=${Boolean(cfg.abilitato)})`
+    )
     return {
       ok: false,
       motivo: 'non_configurato',
       messaggio: 'Fatturazione Aruba non configurata o credenziali mancanti',
       httpStatus: 503,
     }
+  }
 
   // 3. intestatario (persona fisica) dai parents
   const alunno = (Array.isArray(pag.alunni) ? pag.alunni[0] : pag.alunni) as AlunnoNested | null

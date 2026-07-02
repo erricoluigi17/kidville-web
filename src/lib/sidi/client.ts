@@ -61,11 +61,14 @@ export function resolveSidiCredentials(config: SidiConfig): SidiCredentials | nu
  */
 export async function sidiTransmit(
   config: SidiConfig,
-  _flusso: SidiFlusso,
-  _payload: string
+  flusso: SidiFlusso,
+  payload: string
 ): Promise<SidiTransmitResult> {
   const creds = resolveSidiCredentials(config)
   if (!config.abilitato || !creds) {
+    console.warn(
+      `[SIDI] trasmissione ${flusso} gated: non_configurato (abilitato=${Boolean(config.abilitato)})`
+    )
     return {
       ok: false,
       motivo: 'non_configurato',
@@ -74,6 +77,7 @@ export async function sidiTransmit(
     }
   }
   // Accreditamento ministeriale non ancora ottenuto → egress gated.
+  console.warn(`[SIDI] trasmissione ${flusso} gated: non_accreditato (payload ${payload.length} byte)`)
   return {
     ok: false,
     motivo: 'non_accreditato',

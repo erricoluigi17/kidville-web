@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { UploadCloud, RefreshCw, CheckCircle2, AlertTriangle, ArrowRight } from 'lucide-react'
+import { Badge } from '@/components/ui/Badge'
 
 interface SyncState {
   fase_a_stato: string
@@ -37,16 +38,29 @@ export function SidiPanel({ userId }: { userId: string }) {
   const [preview, setPreview] = useState<Preview | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [msg, setMsg] = useState<{ kind: 'ok' | 'gated' | 'err'; text: string } | null>(null)
+  const [sidiGated, setSidiGated] = useState(false)
 
   const loadSync = useCallback(async () => {
-    try {
-      const r = await fetch(`/api/admin/sidi/sync-state?userId=${userId}`, { headers: hdr() })
-      const d = await r.json()
-      if (d.success) setSync(d.data)
-    } catch { /* no-op */ }
+    const d = await fetch(`/api/admin/sidi/sync-state?userId=${userId}`, { headers: hdr() })
+      .then((r) => r.json())
+      .catch(() => null)
+    if (d?.success) setSync(d.data)
   }, [userId, hdr])
 
-  useEffect(() => { loadSync() }, [loadSync])
+  useEffect(() => {
+    fetch(`/api/admin/sidi/sync-state?userId=${userId}`, { headers: hdr() })
+      .then((r) => r.json())
+      .then((d) => { if (d.success) setSync(d.data) })
+      .catch(() => { /* no-op */ })
+  }, [userId, hdr])
+
+  // Gating SIDI visibile (M2.4): badge quando l'integrazione non è configurata.
+  useEffect(() => {
+    fetch(`/api/admin/settings/sidi?userId=${userId}`, { headers: hdr() })
+      .then((r) => r.json())
+      .then((d) => { if (d.success) setSidiGated(!d.data?.abilitato) })
+      .catch(() => { /* no-op */ })
+  }, [userId, hdr])
 
   async function upload() {
     if (!file) return
@@ -121,7 +135,10 @@ export function SidiPanel({ userId }: { userId: string }) {
       {/* Indicatore stato sincronizzazione */}
       <section className="bg-white rounded-2xl border border-kidville-line p-5">
         <div className="flex items-center justify-between mb-3">
-          <h2 className="font-barlow font-black text-kidville-green uppercase text-sm">Stato sincronizzazione SIDI</h2>
+          <div className="flex items-center gap-2 flex-wrap">
+            <h2 className="font-barlow font-black text-kidville-green uppercase text-sm">Stato sincronizzazione SIDI</h2>
+            {sidiGated && <Badge tone="warn">Integrazione non configurata</Badge>}
+          </div>
           <button onClick={loadSync} className="text-kidville-muted hover:text-kidville-green" aria-label="Aggiorna"><RefreshCw size={16} /></button>
         </div>
         <div className="flex items-center gap-2 flex-wrap">

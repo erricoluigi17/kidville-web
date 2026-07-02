@@ -38,10 +38,15 @@ export async function POST(request: Request) {
       aruba_filename: string
       sdi_stato: number
     }[]
-    if (righe.length === 0) return NextResponse.json({ success: true, data: { processate: 0, scartate: 0 } })
+    if (righe.length === 0) {
+      return NextResponse.json({ success: true, data: { processate: 0, scartate: 0, skipped: 0 } })
+    }
 
     const configCache = new Map<string, ArubaConfig | null>()
     const tokenCache = new Map<string, string>()
+    // Scuole saltate per gating credenziali: MAI in silenzio (M2.4) — contate,
+    // loggate e riportate nella risposta con il motivo.
+    const scuoleSkipped = new Set<string>()
     let processate = 0
     let scartate = 0
 
@@ -57,7 +62,15 @@ export async function POST(request: Request) {
       }
       const cfg = configCache.get(f.scuola_id)
       const creds = cfg ? resolveArubaCredentials(cfg) : null
-      if (!cfg?.abilitato || !creds) continue
+      if (!cfg?.abilitato || !creds) {
+        if (!scuoleSkipped.has(f.scuola_id)) {
+          scuoleSkipped.add(f.scuola_id)
+          console.warn(
+            `[ARUBA] sync fatture saltato per scuola ${f.scuola_id}: credenziali_non_configurate (abilitato=${Boolean(cfg?.abilitato)})`
+          )
+        }
+        continue
+      }
 
       // token (uno per scuola)
       let token = tokenCache.get(f.scuola_id)
@@ -134,7 +147,15 @@ export async function POST(request: Request) {
       }
     }
 
-    return NextResponse.json({ success: true, data: { processate, scartate } })
+    return NextResponse.json({
+      success: true,
+      data: {
+        processate,
+        scartate,
+        skipped: scuoleSkipped.size,
+        ...(scuoleSkipped.size > 0 ? { motivo: 'credenziali_non_configurate' } : {}),
+      },
+    })
   } catch (err) {
     console.error('Errore API POST fattura/sync:', err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })

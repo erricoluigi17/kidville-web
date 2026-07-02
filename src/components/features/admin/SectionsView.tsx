@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { LayoutGrid, Users, User, GraduationCap, Baby, BookOpen, Building2, Plus, Settings, ChevronRight, Loader2, X } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { LayoutGrid, User, GraduationCap, Baby, BookOpen, Building2, Plus, Settings, ChevronRight, Loader2, X } from 'lucide-react';
 
 interface Section {
     id: string;
@@ -42,27 +42,26 @@ export function SectionsView({ onStudentClick }: SectionsViewProps) {
     const [newSectionType, setNewSectionType] = useState<'nido' | 'infanzia' | 'primaria'>('infanzia');
     const [isCreating, setIsCreating] = useState(false);
 
-    useEffect(() => {
-        fetchData();
-    }, []);
-
-    const fetchData = async () => {
-        setIsLoading(true);
+    // Niente setIsLoading(true) sincrono qui (react-hooks/set-state-in-effect):
+    // al mount isLoading parte già true; i refetch da handler lo impostano loro.
+    const fetchData = useCallback(async () => {
         try {
             const [secRes, stuRes] = await Promise.all([
                 fetch(`/api/admin/sections?scuola_id=${SCUOLA_ID}`),
-                fetch(`/api/admin/students?scuola_id=${SCUOLA_ID}`)
+                fetch(`/api/admin/students?scuola_id=${SCUOLA_ID}&limit=1000`)
             ]);
             const secData = await secRes.json();
             const stuData = await stuRes.json();
             if (Array.isArray(secData)) setSections(secData);
             if (Array.isArray(stuData)) setStudents(stuData);
-        } catch (err) {
-            console.error('Errore caricamento sezioni:', err);
         } finally {
             setIsLoading(false);
         }
-    };
+    }, []);
+
+    useEffect(() => {
+        fetchData();
+    }, [fetchData]);
 
     const handleCreateSection = async () => {
         if (!newSectionName.trim()) return;
@@ -135,7 +134,7 @@ export function SectionsView({ onStudentClick }: SectionsViewProps) {
                             <label className="block text-sm font-bold text-kidville-ink mb-1">Tipo</label>
                             <select
                                 value={newSectionType}
-                                onChange={e => setNewSectionType(e.target.value as any)}
+                                onChange={e => setNewSectionType(e.target.value as 'nido' | 'infanzia' | 'primaria')}
                                 className="w-full p-3 border-2 border-kidville-line rounded-xl font-maven text-sm focus:outline-none focus:border-kidville-green bg-white"
                             >
                                 <option value="nido">Nido</option>
@@ -196,7 +195,7 @@ export function SectionsView({ onStudentClick }: SectionsViewProps) {
                     <div className="col-span-full text-center py-12 bg-white rounded-2xl border-2 border-dashed border-kidville-line">
                         <LayoutGrid size={40} className="mx-auto text-kidville-muted mb-3" />
                         <p className="font-maven text-kidville-muted">Nessuna sezione configurata</p>
-                        <p className="font-maven text-sm text-kidville-muted mt-1">Clicca "Nuova Sezione" per iniziare</p>
+                        <p className="font-maven text-sm text-kidville-muted mt-1">Clicca &ldquo;Nuova Sezione&rdquo; per iniziare</p>
                     </div>
                 )}
             </div>
@@ -268,7 +267,7 @@ export function SectionsView({ onStudentClick }: SectionsViewProps) {
                                             headers: { 'Content-Type': 'application/json' },
                                             body: JSON.stringify({ id: selectedSection.id, school_type: newType })
                                         });
-                                        setSelectedSection({ ...selectedSection, school_type: newType as any });
+                                        setSelectedSection({ ...selectedSection, school_type: newType as 'nido' | 'infanzia' | 'primaria' });
                                         fetchData();
                                     }}
                                     className="w-full p-2.5 border-2 border-kidville-line rounded-xl font-maven text-sm bg-white focus:border-kidville-green focus:outline-none"

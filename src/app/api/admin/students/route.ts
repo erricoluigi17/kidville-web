@@ -95,13 +95,22 @@ export async function GET(request: NextRequest) {
         const scuolaId = searchParams.get('scuola_id');
         const classeSezione = searchParams.get('classe_sezione');
         const stato = searchParams.get('stato');
+        // Paginazione: limit clampato 1..1000 (default 200) + offset; shape array nudo invariata.
+        const limit = Math.min(Math.max(Number(searchParams.get('limit') ?? 200) || 200, 1), 1000);
+        const offset = Math.max(Number(searchParams.get('offset') ?? 0) || 0, 0);
 
         const supabase = await createAdminClient();
 
         let query = supabase
             .from('alunni')
             .select(`
-                *,
+                id, scuola_id, nome, cognome, data_nascita, codice_fiscale, classe_sezione, stato,
+                note_mediche, consenso_privacy, creato_il, gender, citizenship, birth_nation,
+                birth_province, birth_city, residence_address, residence_city, zip_code, allergies,
+                invoice_holder_type, invoice_holder_details, is_bes_dsa, fiscal_code, section_id,
+                documento_path, importo_retta_mensile, genitori_separati, retta_split_config,
+                intestatario_fatture, allergeni, usa_pannolino, sospeso, sospeso_motivo, sospeso_il,
+                sospeso_da, anonimizzato_il, gruppo_mensa_id, numero_domanda_sidi,
                 student_parents (
                     relation_type,
                     is_primary,
@@ -109,7 +118,8 @@ export async function GET(request: NextRequest) {
                 ),
                 delegates (*)
             `)
-            .order('cognome', { ascending: true });
+            .order('cognome', { ascending: true })
+            .range(offset, offset + limit - 1);
 
         if (scuolaId) query = query.eq('scuola_id', scuolaId);
         if (classeSezione) query = query.eq('classe_sezione', classeSezione);

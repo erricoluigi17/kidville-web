@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { Search, Filter, UserPlus, Users, LayoutGrid, List, FileDown, MoreHorizontal, CheckCircle2, GraduationCap, Briefcase, AlertTriangle } from 'lucide-react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
+import { Search, Filter, UserPlus, Users, FileDown, CheckCircle2, GraduationCap, Briefcase, AlertTriangle } from 'lucide-react';
 import { StudentTable } from '@/components/features/admin/StudentTable';
 import { StudentDetailPanel } from '@/components/features/admin/StudentDetailPanel';
 import { ParentDetailPanel } from '@/components/features/admin/ParentDetailPanel';
@@ -34,7 +34,6 @@ interface Student {
 
 export default function AdminStudentsPage() {
   const [students, setStudents] = useState<Student[]>([]);
-  const [filteredStudents, setFilteredStudents] = useState<Student[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterClass, setFilterClass] = useState('all');
@@ -58,6 +57,45 @@ export default function AdminStudentsPage() {
     fetch('/api/admin/gruppi-mensa').then(r => r.json()).then(d => { if (d?.success) setMensaGroups(d.data ?? []); }).catch(() => {});
   }, []);
 
+  const fetchStudents = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/admin/students?scuola_id=${SCUOLA_ID}&limit=1000`);
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        setStudents(data);
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  const fetchParents = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/admin/parents`);
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        setStudents(data);
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  const fetchStaff = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/admin/parents`);
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        // Filtra solo educatori e coordinatori (memorizzati in citizenship come workaround)
+        setStudents(data.filter((d: { citizenship?: string }) => ['educator', 'coordinator', 'admin'].includes(d.citizenship ?? '')));
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  // NB: lo spinner viene attivato dal cambio tab (onChange dei Tabs), non qui:
+  // setState sincrono negli effect è vietato (react-hooks/set-state-in-effect).
   useEffect(() => {
     if (viewType === 'child') {
       fetchStudents();
@@ -67,15 +105,16 @@ export default function AdminStudentsPage() {
       fetchStaff();
     }
     // sections tab handles its own loading
-  }, [viewType]);
+  }, [viewType, fetchStudents, fetchParents, fetchStaff]);
 
-  useEffect(() => {
+  // Lista filtrata derivata (niente state+effect: stessa resa, zero cascading render)
+  const filteredStudents = useMemo(() => {
     let result = [...students];
-    
+
     if (searchTerm) {
       const search = searchTerm.toLowerCase();
-      result = result.filter(s => 
-        (s.nome && s.nome.toLowerCase().includes(search)) || 
+      result = result.filter(s =>
+        (s.nome && s.nome.toLowerCase().includes(search)) ||
         (s.cognome && s.cognome.toLowerCase().includes(search)) ||
         (s.first_name && s.first_name.toLowerCase().includes(search)) ||
         (s.last_name && s.last_name.toLowerCase().includes(search)) ||
@@ -83,65 +122,19 @@ export default function AdminStudentsPage() {
         (s.fiscal_code && s.fiscal_code.toLowerCase().includes(search))
       );
     }
-    
+
     if (viewType === 'child') {
       if (filterClass !== 'all') {
         result = result.filter(s => s.classe_sezione === filterClass);
       }
-      
+
       if (filterStatus !== 'all') {
         result = result.filter(s => s.stato === filterStatus);
       }
     }
-    
-    setFilteredStudents(result);
+
+    return result;
   }, [searchTerm, filterClass, filterStatus, students, viewType]);
-
-  const fetchStudents = async () => {
-    setIsLoading(true);
-    try {
-      const res = await fetch(`/api/admin/students?scuola_id=${SCUOLA_ID}`);
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        setStudents(data);
-      }
-    } catch (err) {
-      console.error('Errore caricamento alunni:', err);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const fetchParents = async () => {
-    setIsLoading(true);
-    try {
-      const res = await fetch(`/api/admin/parents`);
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        setStudents(data);
-      }
-    } catch (err) {
-      console.error('Errore caricamento genitori:', err);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const fetchStaff = async () => {
-    setIsLoading(true);
-    try {
-      const res = await fetch(`/api/admin/parents`);
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        // Filtra solo educatori e coordinatori (memorizzati in citizenship come workaround)
-        setStudents(data.filter((d: any) => ['educator', 'coordinator', 'admin'].includes(d.citizenship)));
-      }
-    } catch (err) {
-      console.error('Errore caricamento staff:', err);
-    } finally {
-      setIsLoading(false);
-    }
-  };
 
   const handleToggleSelect = (id: string) => {
     const next = new Set(selectedIds);
@@ -176,7 +169,7 @@ export default function AdminStudentsPage() {
     }
   };
 
-  const handleSaveParent = async (data: Partial<any> & { id: string }) => {
+  const handleSaveParent = async (data: Record<string, unknown> & { id: string }) => {
     try {
       const res = await fetch('/api/admin/parents', {
         method: 'PATCH',
@@ -331,7 +324,10 @@ export default function AdminStudentsPage() {
       {/* Tipo Vista (Tabs) */}
       <Tabs
         value={viewType}
-        onChange={(id) => setViewType(id as 'child' | 'adult' | 'sections' | 'staff')}
+        onChange={(id) => {
+          if (id !== 'sections') setIsLoading(true);
+          setViewType(id as 'child' | 'adult' | 'sections' | 'staff');
+        }}
         options={[
           { id: 'child', label: 'Alunni', icon: Users },
           { id: 'adult', label: 'Genitori', icon: Users },
@@ -443,7 +439,7 @@ export default function AdminStudentsPage() {
               />
           ) : (
               <ParentDetailPanel
-                parentBasicInfo={selectedStudent as any}
+                parentBasicInfo={selectedStudent as never}
                 onClose={() => setSelectedStudent(null)}
                 onSave={handleSaveParent}
               />

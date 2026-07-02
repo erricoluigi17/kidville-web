@@ -20,7 +20,7 @@ export function TicketMensaPanel({ userId, scuolaId }: Props) {
     const [done, setDone] = useState<string | null>(null);
 
     useEffect(() => {
-        fetch(`/api/admin/students?scuola_id=${scuolaId}`).then(r => r.json())
+        fetch(`/api/admin/students?scuola_id=${scuolaId}&limit=1000`).then(r => r.json())
             .then(d => { if (Array.isArray(d)) setAlunni(d.map((a: Alunno) => ({ id: a.id, nome: a.nome, cognome: a.cognome, classe_sezione: a.classe_sezione }))); });
         fetch(`/api/admin/settings?userId=${userId}`, { headers: hdr(userId) }).then(r => r.json())
             .then(d => { if (d.success) setPacchetti(d.data.ticket_pacchetti || []); });

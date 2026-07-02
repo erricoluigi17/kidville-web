@@ -75,7 +75,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
         try {
             const [pagRes, alRes] = await Promise.all([
                 fetch(`/api/pagamenti?userId=${userId}&scuola_id=${scuolaId}`, { headers: { 'x-user-id': userId } }).then((r) => r.json()),
-                fetch(`/api/admin/students?stato=iscritto&scuola_id=${scuolaId}`, { headers: { 'x-user-id': userId } }).then((r) => r.json()),
+                fetch(`/api/admin/students?stato=iscritto&scuola_id=${scuolaId}&limit=1000`, { headers: { 'x-user-id': userId } }).then((r) => r.json()),
             ]);
             if (pagRes.success) setPagamenti(pagRes.data);
             const lista: Alunno[] = Array.isArray(alRes) ? alRes : (alRes.data || []);

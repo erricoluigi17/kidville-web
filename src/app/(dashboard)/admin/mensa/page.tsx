@@ -21,7 +21,7 @@ function MensaInner() {
   const [sezioni, setSezioni] = useState<string[]>([]);
 
   useEffect(() => {
-    fetch(`/api/admin/students?scuola_id=${SCUOLA_ID}`).then(r => r.json()).then(d => {
+    fetch(`/api/admin/students?scuola_id=${SCUOLA_ID}&limit=1000`).then(r => r.json()).then(d => {
       if (Array.isArray(d)) {
         const set = Array.from(new Set(d.map((a: { classe_sezione?: string }) => a.classe_sezione).filter(Boolean))) as string[];
         setSezioni(set.sort());

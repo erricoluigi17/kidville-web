@@ -3,48 +3,28 @@ import { createClient, createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { alunniSenzaConsenso } from '@/lib/gallery/privacy';
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 // GET /api/gallery?studentId=xxx&classe=xxx&date=YYYY-MM-DD&limit=30&offset=0
-// Lista media con filtri (studentId per genitore, classe per insegnante)
+// Lista media con filtri (studentId per genitore, classe per insegnante).
+// Filtri e paginazione applicati in SQL (.or + .range): niente scarico dell'intera
+// tabella con filtro/slice in memoria. Contratto risposta invariato: { media, total }.
 export async function GET(request: Request) {
     try {
         const { searchParams } = new URL(request.url);
         const studentId = searchParams.get('studentId');
         const classe = searchParams.get('classe');
         const date = searchParams.get('date');
-        const limit = parseInt(searchParams.get('limit') ?? '30');
-        const offset = parseInt(searchParams.get('offset') ?? '0');
+        const limit = Math.min(Math.max(parseInt(searchParams.get('limit') ?? '30') || 30, 1), 100);
+        const offset = Math.max(parseInt(searchParams.get('offset') ?? '0') || 0, 0);
+
+        if (studentId && !UUID_RE.test(studentId)) {
+            return NextResponse.json({ error: 'studentId non valido' }, { status: 400 });
+        }
 
         const supabase = await createAdminClient();
 
-        let query = supabase
-            .from('galleria_media_v2')
-            .select('*', { count: 'exact' })
-            .order('created_at', { ascending: false });
-
-        if (date) {
-            query = query
-                .gte('created_at', `${date}T00:00:00.000Z`)
-                .lte('created_at', `${date}T23:59:59.999Z`);
-        }
-
-        const { data: allMedia, error } = await query;
-
-        if (error) {
-            console.error('Errore GET gallery:', error);
-            return NextResponse.json({ error: error.message }, { status: 500 });
-        }
-
-        let filtered = allMedia ?? [];
-
-        // Filtro per genitore: mostra solo media dove il figlio è taggato o broadcast
-        if (studentId) {
-            filtered = filtered.filter(m =>
-                m.is_broadcast ||
-                (m.tag_students && m.tag_students.includes(studentId))
-            );
-        }
-
-        // Validazione genitore-studente: verifica che il chiamante sia effettivamente il genitore
+        // Validazione genitore-studente PRIMA di leggere i media
         if (studentId) {
             const parentId = searchParams.get('parentId');
             if (parentId) {
@@ -64,42 +44,67 @@ export async function GET(request: Request) {
             }
         }
 
-        // Filtro per classe/sezione: mostra media della classe (broadcast o taggati con studenti della classe)
+        let query = supabase
+            .from('galleria_media_v2')
+            .select('*', { count: 'exact' })
+            .order('created_at', { ascending: false });
+
+        if (date) {
+            query = query
+                .gte('created_at', `${date}T00:00:00.000Z`)
+                .lte('created_at', `${date}T23:59:59.999Z`);
+        }
+
+        // Genitore: media broadcast (qualunque, semantica storica) o con il figlio taggato
+        if (studentId) {
+            query = query.or(`is_broadcast.eq.true,tag_students.cs.{${studentId}}`);
+        }
+
+        // Insegnante: broadcast destinati alla classe o media con alunni della classe taggati
         if (classe) {
             const { data: students } = await supabase
                 .from('alunni')
                 .select('id')
                 .eq('classe_sezione', classe);
-            const studentIds = students?.map(s => s.id) ?? [];
-
-            filtered = filtered.filter(m =>
-                (m.is_broadcast && m.target_classes && m.target_classes.includes(classe)) ||
-                (m.tag_students && m.tag_students.some((sId: string) => studentIds.includes(sId)))
+            const studentIds = (students?.map(s => s.id) ?? []).filter(id => UUID_RE.test(id));
+            const classeSafe = classe.replace(/[(){}",\\]/g, '');
+            const broadcastCond = `and(is_broadcast.eq.true,target_classes.cs.{"${classeSafe}"})`;
+            query = query.or(
+                studentIds.length > 0
+                    ? `${broadcastCond},tag_students.ov.{${studentIds.join(',')}}`
+                    : broadcastCond
             );
         }
 
-        // Paginazione in memoria post-filtro
-        const paginated = filtered.slice(offset, offset + limit);
+        const { data: pageMedia, count, error } = await query.range(offset, offset + limit - 1);
 
-        // Arricchisci con info uploader (usa utenti)
-        const enriched = await Promise.all(
-            paginated.map(async (media) => {
-                const { data: uploader } = await supabase
-                    .from('utenti')
-                    .select('nome, cognome, first_name, last_name')
-                    .eq('id', media.uploaded_by)
-                    .maybeSingle();
+        if (error) {
+            console.error('Errore GET gallery:', error);
+            return NextResponse.json({ error: error.message }, { status: 500 });
+        }
 
-                return {
-                    ...media,
-                    uploader_name: uploader
-                        ? `${uploader.first_name || uploader.nome} ${uploader.last_name || uploader.cognome}`
-                        : 'Sconosciuto',
-                };
-            })
-        );
+        // Arricchisci con info uploader in blocco (niente N+1 sulla pagina)
+        const page = pageMedia ?? [];
+        const uploaderIds = [...new Set(page.map(m => m.uploaded_by).filter(Boolean))];
+        const { data: uploaders } = uploaderIds.length > 0
+            ? await supabase
+                .from('utenti')
+                .select('id, nome, cognome, first_name, last_name')
+                .in('id', uploaderIds)
+            : { data: [] };
+        const uploaderById = new Map((uploaders ?? []).map(u => [u.id, u]));
 
-        return NextResponse.json({ media: enriched, total: filtered.length });
+        const enriched = page.map((media) => {
+            const uploader = uploaderById.get(media.uploaded_by);
+            return {
+                ...media,
+                uploader_name: uploader
+                    ? `${uploader.first_name || uploader.nome} ${uploader.last_name || uploader.cognome}`
+                    : 'Sconosciuto',
+            };
+        });
+
+        return NextResponse.json({ media: enriched, total: count ?? 0 });
     } catch (error) {
         console.error('Errore API GET gallery:', error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });

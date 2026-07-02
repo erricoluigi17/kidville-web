@@ -51,7 +51,7 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
                     if (cats[0]) applyCategoria(cats[0]);
                 }
             }).catch(() => {});
-        fetch(`/api/admin/students?stato=iscritto&scuola_id=${scuolaId}`, { headers: hdr(userId) })
+        fetch(`/api/admin/students?stato=iscritto&scuola_id=${scuolaId}&limit=1000`, { headers: hdr(userId) })
             .then((r) => r.json())
             .then((d) => {
                 const lista: Alunno[] = Array.isArray(d) ? d : (d.data || []);

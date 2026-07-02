@@ -35,7 +35,9 @@ export async function GET(request: NextRequest) {
                 alunni!inner ( id, nome, cognome, classe_sezione )
             `)
             .eq('data', data)
-            .eq('alunni.classe_sezione', sezione);
+            .eq('alunni.classe_sezione', sezione)
+            // bound difensivo: 1 riga per alunno/giorno, una sezione non supera mai 500
+            .limit(500);
 
         if (error) {
             console.error('[GET /api/attendance/daily]', JSON.stringify(error));

@@ -20,7 +20,7 @@ interface MenuItem {
   label: string;
   sub: string;
   icon: typeof Home;
-  href: string | null; // null = funzione in arrivo (non navigabile)
+  href: string | null; // null = funzione non ancora navigabile
   tint: string;
   grado: Grado;
   soon?: boolean;

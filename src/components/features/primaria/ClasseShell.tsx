@@ -110,7 +110,7 @@ export function ClasseShell({ basePrefix, children }: { basePrefix: string; chil
         <div className="max-w-5xl mx-auto px-4 pt-3">
           <p className="font-maven flex items-start gap-2 rounded-card bg-kidville-warn-soft px-3 py-2 text-xs text-kidville-warn">
             <Info size={14} className="mt-0.5 shrink-0" />
-            Modalità operativa Segreteria/Direzione: per registrare, seleziona il docente per cui stai operando — in arrivo. Le scritture restano attribuite al docente titolare.
+            Modalità operativa Segreteria/Direzione: il selettore del docente per cui operare non è ancora disponibile. Le scritture restano attribuite al docente titolare.
           </p>
         </div>
       )}

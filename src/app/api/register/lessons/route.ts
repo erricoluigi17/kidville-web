@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { createClient, createAdminClient } from '@/lib/supabase/server-client';
+import { createAdminClient } from '@/lib/supabase/server-client';
+import { requireDocente } from '@/lib/auth/require-staff';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zDataYMD, zUuid } from '@/lib/validation/common';
 
@@ -23,7 +24,11 @@ const postBodySchema = z.object({
 });
 
 // GET /api/register/lessons?classeSezione=3A&data=2026-05-13
+// Gate docente (M5.6): la route era raggiungibile senza identità post-M4.
 export async function GET(request: Request) {
+    const auth = await requireDocente(request);
+    if (auth.response) return auth.response;
+
     try {
         const q = parseQuery(request, getQuerySchema);
         if ('response' in q) return q.response;
@@ -67,7 +72,12 @@ export async function GET(request: Request) {
 
 // POST /api/register/lessons
 // Body: { classeSezione, scuolaId, data, oraLezione, materia, argomento, compiti, dataConsegnaCompiti }
+// Gate docente (M5.6): scrittura su registro_orario; la firma usa l'identità
+// risolta dal gate (niente fallback dev post-M4).
 export async function POST(request: Request) {
+    const auth = await requireDocente(request);
+    if (auth.response) return auth.response;
+
     try {
         const b = await parseBody(request, postBodySchema);
         if ('response' in b) return b.response;
@@ -76,10 +86,7 @@ export async function POST(request: Request) {
         // Admin client per bypassare RLS (stesso pattern delle altre API del progetto)
         const supabase = await createAdminClient();
 
-        // Recupera l'utente dalla sessione se disponibile, altrimenti usa ID fallback per dev
-        const sessionClient = await createClient();
-        const { data: { user } } = await sessionClient.auth.getUser();
-        const maestraId = user?.id ?? '00000000-0000-0000-0000-000000000001';
+        const maestraId = auth.user.id;
 
         // Recupera scuola_id se non fornito (prende il primo disponibile dal DB)
         let finalScuolaId = scuolaId;

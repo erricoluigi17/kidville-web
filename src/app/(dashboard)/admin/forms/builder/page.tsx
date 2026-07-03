@@ -1,6 +1,6 @@
 'use client'
 
-import { Suspense, useState } from 'react'
+import { Suspense, useRef, useState } from 'react'
 import {
   DndContext,
   DragEndEvent,
@@ -223,6 +223,7 @@ function FormBuilderInner() {
   const [pub, setPub] = useState<{ token: string; url: string; access_mode: string } | null>(null)
   const [publishing, setPublishing] = useState(false)
   const [copied, setCopied] = useState(false)
+  const linkInputRef = useRef<HTMLInputElement>(null)
   // Modalità firma (DL-031): joint = firma congiunta dei due genitori.
   const [signatureMode, setSignatureMode] = useState<'single' | 'joint'>('single')
   const [draggingPaletteId, setDraggingPaletteId] = useState<string | null>(null)
@@ -421,7 +422,10 @@ function FormBuilderInner() {
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     } catch {
-      /* clipboard non disponibile */
+      // Fallback senza Clipboard API (es. contesto non sicuro): seleziona il
+      // link nell'input readonly così si copia con Cmd/Ctrl+C (M5.6).
+      linkInputRef.current?.focus()
+      linkInputRef.current?.select()
     }
   }
 
@@ -547,9 +551,16 @@ function FormBuilderInner() {
               </button>
             ) : (
               <div className="flex items-center gap-2 flex-wrap">
-                <code className="text-xs text-kidville-success bg-kidville-success-soft border border-kidville-success/20 px-2.5 py-1 rounded-lg">
-                  {pub.url}
-                </code>
+                {/* Input readonly selezionabile: mostra il link completo ed è il
+                    fallback quando la Clipboard API non è disponibile (M5.6). */}
+                <input
+                  ref={linkInputRef}
+                  readOnly
+                  value={`${window.location.origin}${pub.url}`}
+                  onFocus={e => e.currentTarget.select()}
+                  aria-label="Link pubblico del modello"
+                  className="w-64 text-xs text-kidville-success bg-kidville-success-soft border border-kidville-success/20 px-2.5 py-1 rounded-lg focus:outline-none focus:border-kidville-success/50"
+                />
                 <button
                   onClick={copyLink}
                   className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-kidville-line text-kidville-ink hover:bg-kidville-cream text-xs transition-all"

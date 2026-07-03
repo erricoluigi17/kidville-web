@@ -24,7 +24,7 @@ interface MenuItem {
   label: string;
   sub: string;
   icon: typeof Home;
-  href: string | null; // null = funzione in arrivo (no rotta reale)
+  href: string | null; // null = funzione non ancora navigabile (no rotta reale)
   tint: string;
   soon?: boolean;
 }

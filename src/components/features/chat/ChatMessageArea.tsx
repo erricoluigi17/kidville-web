@@ -76,7 +76,7 @@ function UnreadSeparator() {
     );
 }
 
-/** Bolla messaggio + traduzione automatica (DL-042) per i messaggi in arrivo. */
+/** Bolla messaggio + traduzione automatica (DL-042) per i messaggi in ingresso. */
 function MessageBubble({ msg, isMine, currentUserId }: { msg: ChatMessage; isMine: boolean; currentUserId: string }) {
     const [translated, setTranslated] = useState<string | null>(null);
     const [translating, setTranslating] = useState(false);
@@ -128,7 +128,7 @@ function MessageBubble({ msg, isMine, currentUserId }: { msg: ChatMessage; isMin
                 {msg.content}
             </p>
 
-            {/* Traduzione (solo messaggi in arrivo) */}
+            {/* Traduzione (solo messaggi in ingresso) */}
             {!isMine && msg.content?.trim() && !unavailable && (
                 <>
                     {translated && (
@@ -210,7 +210,7 @@ export function ChatMessageArea({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [messages.length > 0 ? messages[0]?.thread_id : null]);
 
-    // Scroll al fondo per nuovi messaggi in arrivo (non al caricamento iniziale)
+    // Scroll al fondo per nuovi messaggi in ingresso (non al caricamento iniziale)
     const prevLengthRef = useRef(messages.length);
     useEffect(() => {
         const prev = prevLengthRef.current;

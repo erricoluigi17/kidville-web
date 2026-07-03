@@ -39,7 +39,7 @@ export function DiarioSettings({ userId }: { userId: string }) {
     return (
         <section className={card}>
             <h3 className={h3}><NotebookPen size={16} /> Diario (nido/infanzia) <ComingSoonBadge /></h3>
-            <p className="font-maven text-xs text-kidville-muted mb-4">Configurazione del diario giornaliero. Le regole vengono salvate ora e applicate al diario nelle prossime versioni.</p>
+            <p className="font-maven text-xs text-kidville-muted mb-4">Configurazione del diario giornaliero. La routine Umore è già applicata al diario della maestra; le altre regole verranno applicate nelle prossime versioni.</p>
 
             <label className={label}>Routine attive nel diario</label>
             <PillMultiSelect options={ROUTINE} selected={cfg.routine_attive ?? []} onChange={(v) => set({ routine_attive: v })} />

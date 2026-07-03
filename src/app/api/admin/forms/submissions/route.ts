@@ -32,7 +32,7 @@ export async function GET(request: Request) {
   const supabase = await createAdminClient()
   let query = supabase
     .from('form_submissions')
-    .select('id, model_id, user_id, data, status, signed_at, created_at, form_model:form_models(id, title, schema)')
+    .select('id, model_id, user_id, data, status, signed_at, created_at, gestita_il, gestita_da, form_model:form_models(id, title, schema)')
     .order('created_at', { ascending: false })
 
   if (status) query = query.eq('status', status)

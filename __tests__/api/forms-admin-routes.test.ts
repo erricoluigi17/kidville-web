@@ -111,4 +111,34 @@ describe('PATCH /api/admin/forms/submissions/[id]', () => {
       expect.objectContaining({ entitaTipo: 'graduatoria', azione: 'update', entitaId: '51515151-5151-4515-8515-515151515151' }),
     )
   })
+
+  // M5.2: "Segna gestita" — il server deriva gestita_il/gestita_da, mai dal body
+  it('200 gestita=true imposta gestita_il e gestita_da dall’utente autenticato', async () => {
+    const res = await submissionPATCH(
+      new Request('http://localhost/x', { method: 'PATCH', body: JSON.stringify({ gestita: true }) }),
+      ctx('51515151-5151-4515-8515-515151515151'),
+    )
+    expect(res.status).toBe(200)
+    const upd = h.updates[0] as { gestita_il: string | null; gestita_da: string | null }
+    expect(typeof upd.gestita_il).toBe('string')
+    expect(upd.gestita_da).toBe('seg-1')
+    expect(h.logScrittura).toHaveBeenCalled()
+  })
+
+  it('200 gestita=false azzera gestita_il e gestita_da', async () => {
+    const res = await submissionPATCH(
+      new Request('http://localhost/x', { method: 'PATCH', body: JSON.stringify({ gestita: false }) }),
+      ctx('51515151-5151-4515-8515-515151515151'),
+    )
+    expect(res.status).toBe(200)
+    expect(h.updates[0]).toMatchObject({ gestita_il: null, gestita_da: null })
+  })
+
+  it('400 gestita non booleano', async () => {
+    const res = await submissionPATCH(
+      new Request('http://localhost/x', { method: 'PATCH', body: JSON.stringify({ gestita: 'sì' }) }),
+      ctx('51515151-5151-4515-8515-515151515151'),
+    )
+    expect(res.status).toBe(400)
+  })
 })

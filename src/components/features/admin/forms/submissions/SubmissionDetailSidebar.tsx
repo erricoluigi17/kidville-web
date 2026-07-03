@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   X, FileText, Download, Clock, CheckCircle2, Hash, CheckCheck,
@@ -14,6 +15,9 @@ export interface SubmissionRow {
   status: FormSubmissionStatus
   signed_at: string | null
   created_at: string
+  /** Presa in carico dallo staff (M5.2) */
+  gestita_il: string | null
+  gestita_da: string | null
   form_model: {
     id: string
     title: string
@@ -24,6 +28,8 @@ export interface SubmissionRow {
 interface Props {
   submission: SubmissionRow | null
   onClose: () => void
+  /** PATCH gestita: ritorna false se il salvataggio fallisce (rollback a monte) */
+  onToggleGestita: (id: string, gestita: boolean) => Promise<boolean>
 }
 
 const STATUS_MAP: Record<FormSubmissionStatus, { label: string; cls: string }> = {
@@ -39,7 +45,9 @@ function renderValue(value: unknown): string {
   return String(value)
 }
 
-export function SubmissionDetailSidebar({ submission, onClose }: Props) {
+export function SubmissionDetailSidebar({ submission, onClose, onToggleGestita }: Props) {
+  const [savingGestita, setSavingGestita] = useState(false)
+
   const fieldMap: Record<string, { label: string; type: string }> = {}
   if (submission?.form_model?.schema?.pages) {
     for (const page of submission.form_model.schema.pages) {
@@ -194,16 +202,29 @@ export function SubmissionDetailSidebar({ submission, onClose }: Props) {
               className="px-6 py-4 flex flex-col gap-3"
               style={{ borderTop: '1px solid #EFE7DC' }}
             >
-              {/* "Segna gestita": nessuno stato "gestita" nel backend (il PATCH
-                  submissions/[id] regola solo il punteggio) → placeholder in arrivo. */}
+              {/* "Segna gestita" (M5.2): PATCH gestita con stato ottimista —
+                  la riga viene aggiornata a monte in SubmissionsTable e questa
+                  sidebar la rilegge da props; rollback se il PATCH fallisce. */}
               <button
                 type="button"
-                title="Funzione in arrivo"
-                onClick={() => alert('“Segna gestita” — funzione in arrivo.')}
-                className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-kidville-yellow font-barlow text-sm font-extrabold uppercase tracking-[0.03em] text-kidville-green"
+                title={submission.gestita_il ? 'Riporta a non gestita' : 'Segna come gestita'}
+                disabled={savingGestita}
+                onClick={async () => {
+                  setSavingGestita(true)
+                  try {
+                    await onToggleGestita(submission.id, !submission.gestita_il)
+                  } finally {
+                    setSavingGestita(false)
+                  }
+                }}
+                className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-kidville-yellow font-barlow text-sm font-extrabold uppercase tracking-[0.03em] text-kidville-green disabled:opacity-60"
               >
-                <CheckCheck className="w-4 h-4" /> Segna gestita
-                <span className="rounded-pill bg-kidville-green/[0.12] px-2 py-0.5 font-maven text-[10px] font-semibold normal-case tracking-normal text-kidville-green">in arrivo</span>
+                <CheckCheck className="w-4 h-4" /> {submission.gestita_il ? 'Gestita' : 'Segna gestita'}
+                {submission.gestita_il && (
+                  <span className="rounded-pill bg-kidville-green/[0.12] px-2 py-0.5 font-maven text-[10px] font-semibold normal-case tracking-normal text-kidville-green">
+                    {new Date(submission.gestita_il).toLocaleDateString('it-IT', { day: '2-digit', month: 'short' })}
+                  </span>
+                )}
               </button>
 
               <div className="flex gap-3">

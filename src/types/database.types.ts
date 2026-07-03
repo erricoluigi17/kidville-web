@@ -503,6 +503,9 @@ export interface Database {
           /** Hash SHA-256 del segreto OTP — mai memorizzato in chiaro */
           otp_secret: string | null
           signed_at: string | null
+          /** Presa in carico dallo staff ("Segna gestita", migr. 20260760) */
+          gestita_il: string | null
+          gestita_da: string | null
           created_at: string
           updated_at: string
         }
@@ -516,6 +519,8 @@ export interface Database {
           manual_adjustments?: { delta: number; reason: string; by?: string | null; at: string }[]
           otp_secret?: string | null
           signed_at?: string | null
+          gestita_il?: string | null
+          gestita_da?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -526,6 +531,8 @@ export interface Database {
           manual_adjustments?: { delta: number; reason: string; by?: string | null; at: string }[]
           otp_secret?: string | null
           signed_at?: string | null
+          gestita_il?: string | null
+          gestita_da?: string | null
           updated_at?: string
         }
       }

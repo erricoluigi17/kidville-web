@@ -7,15 +7,17 @@ import { parseBody, parseData } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
-// Solo manual_adjustments è aggiornabile; le altre chiavi del body erano e
-// restano ignorate. Valore jsonb libero (il trigger DB ricalcola lo score).
+// Aggiornabili: manual_adjustments (jsonb libero, il trigger DB ricalcola lo
+// score) e gestita (M5.2: il server deriva gestita_il/gestita_da, mai dal body).
 // NB zod v4: z.unknown() nudo rende la chiave obbligatoria → serve .optional().
 const patchBodySchema = z.object({
     manual_adjustments: z.unknown().optional(),
+    gestita: z.boolean().optional(),
 })
 
 // PATCH /api/admin/forms/submissions/[id] — modifica manuale del punteggio
-// (manual_adjustments → il trigger DB ricalcola lo score). Gated + audit.
+// (manual_adjustments → il trigger DB ricalcola lo score) e presa in carico
+// ("Segna gestita" → gestita_il/gestita_da). Gated + audit.
 export async function PATCH(
   request: Request,
   ctx: { params: Promise<{ id: string }> },
@@ -35,6 +37,10 @@ export async function PATCH(
   try {
     const updates: Record<string, unknown> = {}
     if (b.data.manual_adjustments !== undefined) updates.manual_adjustments = b.data.manual_adjustments
+    if (b.data.gestita !== undefined) {
+      updates.gestita_il = b.data.gestita ? new Date().toISOString() : null
+      updates.gestita_da = b.data.gestita ? auth.user.id : null
+    }
     if (Object.keys(updates).length === 0) {
       return NextResponse.json({ error: 'Nessun campo da aggiornare' }, { status: 400 })
     }

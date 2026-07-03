@@ -39,8 +39,9 @@ export function SubmissionsTable() {
 
   const selectedSubmission = submissions.find(s => s.id === selectedId) ?? null
 
+  // Loader chiamato da useEffect: niente setState sincrono pre-await, nessun
+  // catch top-level, corpo in try/finally (pattern PagamentiSummary).
   const fetchSubmissions = useCallback(async () => {
-    setLoading(true)
     try {
       const params = new URLSearchParams()
       if (filterStatus) params.set('status', filterStatus)
@@ -48,13 +49,41 @@ export function SubmissionsTable() {
       if (filterDate) params.set('date', filterDate)
       const res = await fetch(`/api/admin/forms/submissions?${params.toString()}`, {
         headers: userId ? { 'x-user-id': userId } : {},
-      })
-      const data = res.ok ? await res.json() : []
+      }).catch(() => null)
+      const data = res?.ok ? await res.json().catch(() => []) : []
       if (Array.isArray(data)) setSubmissions(data as SubmissionRow[])
     } finally {
       setLoading(false)
     }
   }, [filterStatus, filterFormId, filterDate, userId])
+
+  // "Segna gestita" con stato ottimista: aggiorna subito la riga (la sidebar
+  // la deriva da submissions), rollback se il PATCH fallisce.
+  const toggleGestita = useCallback(async (id: string, gestita: boolean) => {
+    let rollback: SubmissionRow[] = []
+    setSubmissions(cur => {
+      rollback = cur
+      return cur.map(s => (s.id === id
+        ? { ...s, gestita_il: gestita ? new Date().toISOString() : null }
+        : s))
+    })
+    const res = await fetch(`/api/admin/forms/submissions/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...(userId ? { 'x-user-id': userId } : {}) },
+      body: JSON.stringify({ gestita }),
+    }).catch(() => null)
+    if (!res?.ok) {
+      setSubmissions(rollback)
+      return false
+    }
+    const row = (await res.json().catch(() => null)) as SubmissionRow | null
+    if (row?.id) {
+      setSubmissions(cur => cur.map(s => (s.id === id
+        ? { ...s, gestita_il: row.gestita_il ?? null, gestita_da: row.gestita_da ?? null }
+        : s)))
+    }
+    return true
+  }, [userId])
 
   useEffect(() => {
     fetch('/api/admin/forms/models', { headers: userId ? { 'x-user-id': userId } : {} })
@@ -293,13 +322,18 @@ export function SubmissionsTable() {
                 )}
               </div>
 
-              {/* Status badge */}
-              <div className="px-4 py-4">
+              {/* Status badge (+ badge "Gestita", M5.2) */}
+              <div className="px-4 py-4 flex flex-wrap items-center gap-1.5">
                 <span
                   className={`inline-flex px-2.5 py-0.5 rounded-full text-[11px] font-medium border ${STATUS_COLORS[sub.status]}`}
                 >
                   {STATUS_LABELS[sub.status]}
                 </span>
+                {sub.gestita_il && (
+                  <span className="inline-flex px-2.5 py-0.5 rounded-full text-[11px] font-medium border bg-kidville-success-soft text-kidville-success border-kidville-success/30">
+                    Gestita
+                  </span>
+                )}
               </div>
 
               {/* Signed at */}
@@ -368,6 +402,7 @@ export function SubmissionsTable() {
       <SubmissionDetailSidebar
         submission={selectedSubmission}
         onClose={() => setSelectedId(null)}
+        onToggleGestita={toggleGestita}
       />
     </>
   )

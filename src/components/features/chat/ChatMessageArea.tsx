@@ -113,9 +113,14 @@ function MessageBubble({ msg, isMine, currentUserId }: { msg: ChatMessage; isMin
                 </div>
             )}
             {msg.attachment_url && msg.attachment_type === 'document' && (
-                <div className={`mb-2 px-3 py-2 rounded-xl text-xs font-maven flex items-center gap-2 ${isMine ? 'bg-white/20' : 'bg-kidville-neutral-soft'}`}>
+                <a
+                    href={msg.attachment_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={`mb-2 px-3 py-2 rounded-xl text-xs font-maven flex items-center gap-2 underline-offset-2 hover:underline ${isMine ? 'bg-white/20' : 'bg-kidville-neutral-soft'}`}
+                >
                     📎 Documento allegato
-                </div>
+                </a>
             )}
 
             {/* Text */}
@@ -284,7 +289,6 @@ export function ChatMessageArea({
     }
 
     const groups = groupByDate(messages);
-    let separatorInserted = false;
 
     return (
         <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
@@ -303,13 +307,9 @@ export function ChatMessageArea({
                             const isMine = msg.sender_id === currentUserId;
                             const isUnread = !isMine && msg.read_at === null;
 
-                            // Inserisci separatore prima del primo messaggio non letto
-                            const showSeparator =
-                                !separatorInserted &&
-                                firstUnreadId &&
-                                msg.id === firstUnreadId;
-
-                            if (showSeparator) separatorInserted = true;
+                            // Separatore prima del primo messaggio non letto:
+                            // gli id sono unici, il confronto è già esaustivo.
+                            const showSeparator = firstUnreadId !== null && msg.id === firstUnreadId;
 
                             return (
                                 <div key={msg.id}>

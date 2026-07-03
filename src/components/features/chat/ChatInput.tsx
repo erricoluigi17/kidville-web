@@ -12,7 +12,10 @@ interface Props {
 export function ChatInput({ onSend, disabled, placeholder }: Props) {
     const [text, setText] = useState('');
     const [attachment, setAttachment] = useState<{ name: string; url: string; type: string } | null>(null);
+    const [uploading, setUploading] = useState(false);
+    const [uploadError, setUploadError] = useState('');
     const inputRef = useRef<HTMLTextAreaElement>(null);
+    const fileRef = useRef<HTMLInputElement>(null);
 
     const handleSend = useCallback(() => {
         const trimmed = text.trim();
@@ -35,11 +38,33 @@ export function ChatInput({ onSend, disabled, placeholder }: Props) {
         }
     };
 
-    // Placeholder file pick — In produzione userà Supabase Storage
+    // Upload reale su Supabase Storage via POST /api/chat/upload (M5.5):
+    // bucket privato chat-allegati, max 10MB, PDF o immagini; la route
+    // risponde con URL firmato + tipo ('image' | 'document').
     const handleAttachClick = () => {
-        // TODO: Implementare upload su Supabase Storage
-        // Per ora, simula un allegato
-        alert('Upload file: verrà implementato con Supabase Storage.');
+        if (uploading) return;
+        fileRef.current?.click();
+    };
+
+    const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        e.target.value = ''; // permette di riselezionare lo stesso file
+        if (!file) return;
+        setUploading(true);
+        setUploadError('');
+        try {
+            const fd = new FormData();
+            fd.append('file', file);
+            const res = await fetch('/api/chat/upload', { method: 'POST', body: fd }).catch(() => null);
+            const data = res ? await res.json().catch(() => null) : null;
+            if (res?.ok && data?.url) {
+                setAttachment({ name: data.name ?? file.name, url: data.url, type: data.attachment_type ?? 'document' });
+            } else {
+                setUploadError(data?.error ?? 'Caricamento non riuscito. Riprova.');
+            }
+        } finally {
+            setUploading(false);
+        }
     };
 
     return (
@@ -60,15 +85,34 @@ export function ChatInput({ onSend, disabled, placeholder }: Props) {
                 </div>
             )}
 
+            {/* Errore upload */}
+            {uploadError && (
+                <div className="px-4 pt-2">
+                    <p className="font-maven text-xs text-kidville-error">{uploadError}</p>
+                </div>
+            )}
+
             {/* Input area */}
             <div className="flex items-end gap-2 px-4 py-3">
-                {/* Attachment button */}
+                {/* Attachment button (file input nascosto, upload M5.5) */}
+                <input
+                    ref={fileRef}
+                    type="file"
+                    accept="application/pdf,image/jpeg,image/png,image/webp,image/heic,image/gif"
+                    onChange={handleFileChange}
+                    className="hidden"
+                    aria-hidden="true"
+                    tabIndex={-1}
+                />
                 <button
                     onClick={handleAttachClick}
-                    className="w-10 h-10 rounded-full flex-shrink-0 flex items-center justify-center bg-gray-50 hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
-                    aria-label="Allega file"
+                    disabled={disabled || uploading}
+                    className="w-10 h-10 rounded-full flex-shrink-0 flex items-center justify-center bg-gray-50 hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-50"
+                    aria-label={uploading ? 'Caricamento in corso' : 'Allega file'}
                 >
-                    <Paperclip size={18} strokeWidth={1.5} />
+                    {uploading
+                        ? <span className="w-4 h-4 border-2 border-kidville-green/30 border-t-kidville-green rounded-full animate-spin" />
+                        : <Paperclip size={18} strokeWidth={1.5} />}
                 </button>
 
                 {/* Text input */}

@@ -22,13 +22,14 @@ const SOGLIA_ROSSA = 2
  * barra di livello e segnalazione bassa. Dato esistente (sola lettura):
  * GET /api/locker/inventory?alunno_id=&mode=stock → [{materiale, stock}].
  *
- * Il pulsante "Avvisa" del mockup non ha un endpoint dedicato (DR usava un toast):
- * è reso come placeholder con avviso "funzione in arrivo".
+ * Il pulsante "Avvisa" (M5.3) invia POST /api/locker/notify: notifica lo staff
+ * della scuola e i docenti della sezione (tipo `locker_scorte`).
  */
 export function LockerTodayCard({ studentId }: Props) {
   const [items, setItems] = useState<StockItem[]>([])
   const [loaded, setLoaded] = useState(false)
   const [toast, setToast] = useState('')
+  const [sending, setSending] = useState(false)
 
   useEffect(() => {
     if (!studentId) return
@@ -47,9 +48,22 @@ export function LockerTodayCard({ studentId }: Props) {
     }
   }, [studentId])
 
-  const notifyComingSoon = (nome: string) => {
-    setToast(`Funzione in arrivo: avviseremo la scuola per ${nome.toLowerCase()}.`)
-    setTimeout(() => setToast(''), 2600)
+  const notifyScuola = async (nome: string) => {
+    if (sending) return
+    setSending(true)
+    try {
+      const res = await fetch('/api/locker/notify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ alunno_id: studentId, materiale: nome }),
+      }).catch(() => null)
+      setToast(res?.ok
+        ? `Avviso inviato alla scuola per ${nome.toLowerCase()}.`
+        : 'Invio non riuscito. Riprova tra poco.')
+    } finally {
+      setSending(false)
+      setTimeout(() => setToast(''), 2600)
+    }
   }
 
   if (!loaded) {
@@ -110,8 +124,9 @@ export function LockerTodayCard({ studentId }: Props) {
               {basso && (
                 <button
                   type="button"
-                  onClick={() => notifyComingSoon(it.materiale)}
-                  className="flex flex-shrink-0 items-center gap-1 rounded-pill bg-kidville-cream-dark px-3 py-1.5 font-barlow text-[11.5px] font-extrabold uppercase tracking-wide text-kidville-green active:scale-95"
+                  disabled={sending}
+                  onClick={() => notifyScuola(it.materiale)}
+                  className="flex flex-shrink-0 items-center gap-1 rounded-pill bg-kidville-cream-dark px-3 py-1.5 font-barlow text-[11.5px] font-extrabold uppercase tracking-wide text-kidville-green active:scale-95 disabled:opacity-60"
                 >
                   <Bell size={13} /> Avvisa
                 </button>

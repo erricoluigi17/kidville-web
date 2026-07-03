@@ -39,7 +39,12 @@ serve(async (req: Request) => {
         }
 
         // Create notifications for staff
-        const notifications = expiringDocs.map((doc: any) => ({
+        type ExpiringDoc = {
+            document_type: string
+            expiry_date: string
+            alunni: { nome?: string | null; cognome?: string | null } | null
+        }
+        const notifications = expiringDocs.map((doc: ExpiringDoc) => ({
             titolo: `Documento in scadenza: ${doc.document_type.toUpperCase()}`,
             messaggio: `Il documento dell'alunno ${doc.alunni?.nome} ${doc.alunni?.cognome} scade il ${doc.expiry_date}.`,
             letto: false,
@@ -64,8 +69,9 @@ serve(async (req: Request) => {
         }), {
             headers: { "Content-Type": "application/json" },
         });
-    } catch (error: any) {
-        return new Response(JSON.stringify({ error: error.message }), {
+    } catch (error) {
+        const message = (error as { message?: string } | null)?.message ?? 'Errore sconosciuto'
+        return new Response(JSON.stringify({ error: message }), {
             status: 500,
             headers: { "Content-Type": "application/json" },
         });

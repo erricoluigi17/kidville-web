@@ -35,10 +35,10 @@ verificata con il comando indicato sull'albero del commit finale.
 
 ## Fuori dal gate web (tracciati, non bloccanti)
 
-- [ ] **Backfill DB produzione**: 63 presenze storiche con `scuola_id NULL`
-      (10 anche senza `section_id`) — script pronto e committato
-      (`scripts/backfill_presenze_scuola.mjs`, dry-run verificato), applicazione
-      via `--apply` SOLO dopo conferma esplicita del committente
+- [x] **Backfill DB produzione**: 63 presenze storiche con `scuola_id NULL`
+      (10 anche senza `section_id`) — APPLICATO il 2026-07-03 previa conferma
+      esplicita del committente (`scripts/backfill_presenze_scuola.mjs --apply`,
+      verifica post: 0 righe residue)
 - [ ] Verifica live SDI (gated su credenziali Aruba del committente)
 - [ ] Egress reale SIDI/Piattaforma Unica (gated su accreditamento ministeriale)
 - [ ] Email reali (gated su `RESEND_API_KEY`), push reali (gated su chiavi VAPID)

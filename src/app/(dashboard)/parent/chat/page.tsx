@@ -405,8 +405,11 @@ function ParentChatContent() {
                             currentUserId={parentId} onSelect={handleSelectThread} />
                     </motion.div>
                 ) : selectedThread && (
+                    // Conversazione a schermo intero su mobile: si adatta a qualsiasi
+                    // dispositivo (100dvh reale), il campo resta sempre visibile in fondo
+                    // sopra la safe-area; si esce con il tasto indietro in alto.
                     <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }}
-                        className="bg-white rounded-3xl border border-kidville-line shadow-sm overflow-hidden flex flex-col h-[calc(100vh-180px)]">
+                        className="fixed inset-0 z-[60] bg-white flex flex-col overflow-hidden pb-[env(safe-area-inset-bottom)]">
                         <div className="flex items-center gap-3 px-4 py-3 border-b border-kidville-line">
                             <button onClick={() => setShowMobile('list')}
                                 className="w-8 h-8 rounded-xl bg-gray-50 hover:bg-gray-100 flex items-center justify-center text-gray-500 transition-colors">

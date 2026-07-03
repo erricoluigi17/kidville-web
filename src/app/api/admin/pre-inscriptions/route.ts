@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
+import { requireStaff } from '@/lib/auth/require-staff';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 
@@ -37,6 +38,12 @@ const patchBodySchema = z.object({
 // GET: Recupera tutte le pre-iscrizioni (Sala d'attesa)
 export async function GET(request: NextRequest) {
   try {
+    // Gap auth segnalato in M3, chiuso in M9: la sala d'attesa (PII dei
+    // richiedenti) è dello staff. Il POST resta PUBBLICO: è la sottomissione
+    // del portale onboarding.
+    const auth = await requireStaff(request);
+    if (auth.response) return auth.response;
+
     const q = parseQuery(request, getQuerySchema);
     if ('response' in q) return q.response;
 
@@ -105,6 +112,9 @@ export async function POST(request: NextRequest) {
 // PATCH: Approvazione (Sala d'attesa) o Rifiuto
 export async function PATCH(request: NextRequest) {
   try {
+    const auth = await requireStaff(request);
+    if (auth.response) return auth.response;
+
     const b = await parseBody(request, patchBodySchema);
     if ('response' in b) return b.response;
     const { id, status, assigned_class } = b.data;

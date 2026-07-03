@@ -1,22 +1,28 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
+import { requireUser } from '@/lib/auth/require-staff';
 import { parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 
-// userId è usato come uuid nelle query (eq su utenti.id, interpolato nel filtro .or).
+// Gap auth chiuso in M9: il legacy `?userId=` in query resta ACCETTATO dallo
+// schema per compatibilità coi client ma viene IGNORATO — l'identità è quella
+// del gate (sessione; pattern M4 "parent_id legacy strippato").
 const getQuerySchema = z.object({
-    userId: zUuid,
+    userId: zUuid.optional(),
 });
 
-// GET /api/chat/contacts?userId=xxx
+// GET /api/chat/contacts
 // Restituisce i contatti disponibili per iniziare una nuova chat
 // - Se l'utente è maestra: restituisce i genitori dei suoi studenti
 // - Se l'utente è genitore: restituisce le maestre della sezione dei suoi figli
 export async function GET(request: Request) {
+    const auth = await requireUser(request);
+    if (auth.response) return auth.response;
+
     const q = parseQuery(request, getQuerySchema);
     if ('response' in q) return q.response;
-    const { userId } = q.data;
+    const userId = auth.user.id;
 
     try {
         const supabase = await createAdminClient();

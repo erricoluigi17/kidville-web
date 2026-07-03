@@ -5,6 +5,7 @@ import { jsPDF } from 'jspdf'
 import type { FormSchemaConfig, FormSubmissionStatus } from '@/types/database.types'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { requireStaff } from '@/lib/auth/require-staff'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({
@@ -18,6 +19,11 @@ const STATUS_LABELS: Record<FormSubmissionStatus, string> = {
 }
 
 export async function GET(request: NextRequest) {
+  // Gap auth segnalato in M3, chiuso in M9: il PDF contiene i dati della
+  // compilazione (PII) — riservato allo staff di gestione.
+  const auth = await requireStaff(request)
+  if (auth.response) return auth.response
+
   const q = parseQuery(request, getQuerySchema)
   if ('response' in q) return q.response
   const { id } = q.data

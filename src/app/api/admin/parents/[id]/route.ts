@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server-client';
+import { requireStaff } from '@/lib/auth/require-staff';
 import { parseData } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 
@@ -11,6 +12,11 @@ export async function GET(
     context: { params: Promise<{ id: string }> }
 ) {
     try {
+        // Gap auth segnalato in M3, chiuso in M9: fascicolo completo del
+        // genitore (PII + figli + co-genitori) riservato allo staff.
+        const auth = await requireStaff(request);
+        if (auth.response) return auth.response;
+
         const { id: rawId } = await context.params;
         const idParsed = parseData(zUuid, rawId);
         if ('response' in idParsed) return idParsed.response;

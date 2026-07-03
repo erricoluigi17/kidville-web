@@ -5,6 +5,7 @@ import * as XLSX from 'xlsx'
 import type { FormSchemaConfig, FormSubmissionStatus } from '@/types/database.types'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { requireStaff } from '@/lib/auth/require-staff'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({
@@ -25,6 +26,11 @@ const STATUS_LABELS: Record<FormSubmissionStatus, string> = {
 }
 
 export async function GET(request: NextRequest) {
+  // Gap auth segnalato in M3, chiuso in M9: export massivo delle compilazioni
+  // riservato allo staff di gestione (gate prima del parse, convenzione M3).
+  const auth = await requireStaff(request)
+  if (auth.response) return auth.response
+
   const q = parseQuery(request, getQuerySchema)
   if ('response' in q) return q.response
   const { ids, form_id: formId, status: statusFilter } = q.data

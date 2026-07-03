@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
+import { requireDocente, requireStaff } from '@/lib/auth/require-staff';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 
 const DEFAULT_SCUOLA_ID = '11111111-1111-1111-1111-111111111111';
@@ -44,6 +45,11 @@ const deleteBodySchema = z.object({
 
 // GET: Recupera tutti i moduli creati
 export async function GET(request: NextRequest) {
+  // Gap auth segnalato in M3, chiuso in M9. La lista è letta anche dalla
+  // modulistica DOCENTE (semaforo autorizzazioni) → requireDocente, non Staff.
+  const auth = await requireDocente(request);
+  if (auth.response) return auth.response;
+
   const q = parseQuery(request, getQuerySchema);
   if ('response' in q) return q.response;
 
@@ -70,6 +76,10 @@ export async function GET(request: NextRequest) {
 
 // POST: Crea un nuovo modulo
 export async function POST(request: NextRequest) {
+  // Gap auth segnalato in M3, chiuso in M9: mutazioni riservate allo staff.
+  const auth = await requireStaff(request);
+  if (auth.response) return auth.response;
+
   const b = await parseBody(request, postBodySchema);
   if ('response' in b) return b.response;
 
@@ -108,6 +118,9 @@ export async function POST(request: NextRequest) {
 
 // PATCH: Aggiorna la data di scadenza o altri campi
 export async function PATCH(request: NextRequest) {
+  const auth = await requireStaff(request);
+  if (auth.response) return auth.response;
+
   const b = await parseBody(request, patchBodySchema);
   if ('response' in b) return b.response;
 
@@ -142,6 +155,9 @@ export async function PATCH(request: NextRequest) {
 
 // DELETE: Elimina un modulo
 export async function DELETE(request: NextRequest) {
+  const auth = await requireStaff(request);
+  if (auth.response) return auth.response;
+
   const b = await parseBody(request, deleteBodySchema);
   if ('response' in b) return b.response;
 

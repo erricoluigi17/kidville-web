@@ -1,12 +1,14 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
+import { requireUser } from '@/lib/auth/require-staff';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 
-// userId è usato come uuid nelle query (interpolato nel filtro .or, neq su sender_id).
+// Gap auth chiuso in M9: `?userId=` legacy accettato dallo schema ma IGNORATO,
+// l'identità è quella del gate (pattern M4 "parent_id legacy strippato").
 const getQuerySchema = z.object({
-    userId: zUuid,
+    userId: zUuid.optional(),
 });
 
 const postBodySchema = z.object({
@@ -15,12 +17,15 @@ const postBodySchema = z.object({
     student_id: zUuid,
 });
 
-// GET /api/chat/threads?userId=xxx
-// Lista thread per un utente (insegnante o genitore)
+// GET /api/chat/threads
+// Lista thread per l'utente autenticato (insegnante o genitore)
 export async function GET(request: Request) {
+    const auth = await requireUser(request);
+    if (auth.response) return auth.response;
+
     const q = parseQuery(request, getQuerySchema);
     if ('response' in q) return q.response;
-    const { userId } = q.data;
+    const userId = auth.user.id;
 
     try {
         const supabase = await createAdminClient();
@@ -97,9 +102,21 @@ export async function GET(request: Request) {
 // POST /api/chat/threads
 // Body: { teacher_id, parent_id, student_id }
 export async function POST(request: Request) {
+    const auth = await requireUser(request);
+    if (auth.response) return auth.response;
+
     const b = await parseBody(request, postBodySchema);
     if ('response' in b) return b.response;
     const { teacher_id, parent_id, student_id } = b.data;
+
+    // Gap auth chiuso in M9: il chiamante deve essere uno dei due partecipanti
+    // del thread che sta creando (niente thread per conto di terzi).
+    if (auth.user.id !== teacher_id && auth.user.id !== parent_id) {
+        return NextResponse.json(
+            { error: 'Accesso negato: non sei un partecipante del thread' },
+            { status: 403 }
+        );
+    }
 
     try {
         const supabase = await createAdminClient();

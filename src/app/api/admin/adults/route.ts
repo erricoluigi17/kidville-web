@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
+import { requireStaff } from '@/lib/auth/require-staff';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
@@ -21,6 +22,11 @@ const postBodySchema = z.object({
 // GET /api/admin/adults?role=educator
 // Returns staff from utenti table (adults table not available in public schema)
 export async function GET(request: NextRequest) {
+    // Gap auth segnalato in M3, chiuso in M9: anagrafica staff (nomi+email)
+    // riservata allo staff di gestione.
+    const auth = await requireStaff(request);
+    if (auth.response) return auth.response;
+
     const q = parseQuery(request, getQuerySchema);
     if ('response' in q) return q.response;
     const role = q.data.role;
@@ -69,6 +75,12 @@ export async function GET(request: NextRequest) {
 // POST /api/admin/adults
 // Creates a new staff user in auth + utenti
 export async function POST(request: NextRequest) {
+    // Gap auth segnalato in M3, chiuso in M9: creava utenze staff (auth+utenti)
+    // SENZA gate — privilege escalation. Riservato allo staff di gestione
+    // (la creazione staff con RBAC completo resta su /api/admin/staff, P3.4a).
+    const auth = await requireStaff(request);
+    if (auth.response) return auth.response;
+
     const b = await parseBody(request, postBodySchema);
     if ('response' in b) return b.response;
     const { emails, first_name, last_name, role, scuola_id } = b.data;

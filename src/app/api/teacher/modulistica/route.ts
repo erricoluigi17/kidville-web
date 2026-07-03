@@ -28,6 +28,11 @@ const ALLOWED_MIME = new Set([
 // GET: Semaforo autorizzazioni per una classe e un modulo
 export async function GET(request: NextRequest) {
   try {
+    // Gap auth segnalato in M3, chiuso in M9: stesso gate del POST (il
+    // semaforo espone nomi alunni e stato firme della classe).
+    const auth = await requireDocente(request);
+    if (auth.response) return auth.response;
+
     const q = parseQuery(request, getQuerySchema);
     if ('response' in q) return q.response;
     const { form_id: formId, class_name: className } = q.data;

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
+import { requireUser } from '@/lib/auth/require-staff';
 import { getModuleConfig } from '@/lib/settings/module-config';
 import { parseQuery } from '@/lib/validation/http';
 
@@ -13,6 +14,11 @@ const getQuerySchema = z.object({
 // GET /api/chat/config — config chat per il client (banner fuori orario, abilitazione).
 // Leggibile da genitori e docenti: contiene solo parametri non sensibili.
 export async function GET(request: Request) {
+    // Gap auth segnalato in M3, chiuso in M9: leggibile da qualsiasi utente
+    // AUTENTICATO (genitori e docenti), mai in anonimo.
+    const auth = await requireUser(request);
+    if (auth.response) return auth.response;
+
     const q = parseQuery(request, getQuerySchema);
     if ('response' in q) return q.response;
     const scuolaId = q.data.scuola_id ?? null;

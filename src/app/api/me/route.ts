@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { resolveIdentity } from '@/lib/auth/require-staff'
-import { areaDiRuolo, getSessionProfili, type Profilo } from '@/lib/auth/profili'
+import { areaForRole } from '@/lib/auth/active-role'
+import { getSessionProfili, type Profilo } from '@/lib/auth/profili'
 import { parseQuery } from '@/lib/validation/http'
 
 // GET /api/me — profilo dell'utente corrente (gated, service-role server-side).
@@ -54,7 +55,7 @@ export async function GET(request: Request) {
   const sessione = await getSessionProfili()
   let profili: Profilo[] = sessione?.profili ?? []
   if (!profili.length && role) {
-    profili = [{ ruolo: role as Profilo['ruolo'], area: areaDiRuolo(role) }]
+    profili = [{ ruolo: role as Profilo['ruolo'], area: areaForRole(role) }]
   }
 
   return NextResponse.json({ ...safe, role, profili })

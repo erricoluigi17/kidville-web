@@ -1,4 +1,5 @@
 import { createAdminClient, createClient } from '@/lib/supabase/server-client'
+import { areaForRole, type Area } from './active-role'
 import type { AppRole } from './require-staff'
 
 /**
@@ -11,28 +12,9 @@ import type { AppRole } from './require-staff'
  * profilo (es. docente che è anche genitore) è la presenza di entrambe le righe.
  */
 
-/** Aree di navigazione dell'app: prefissi rotta `/admin`, `/teacher`, `/parent`. */
-export type Area = 'admin' | 'teacher' | 'parent'
-
 export interface Profilo {
   ruolo: AppRole
   area: Area
-}
-
-// Area "casa" di ogni ruolo. La cuoca vive sotto /admin (report cucina in
-// /admin/mensa/cucina, gate API requireKitchenRead). In M4B.2 la mappa diventa
-// il helper puro `areaForRole()`.
-const AREA_BY_ROLE: Record<AppRole, Area> = {
-  admin: 'admin',
-  coordinator: 'admin',
-  segreteria: 'admin',
-  cuoca: 'admin',
-  educator: 'teacher',
-  genitore: 'parent',
-}
-
-export function areaDiRuolo(ruolo: string): Area {
-  return AREA_BY_ROLE[ruolo as AppRole] ?? 'parent'
 }
 
 /**
@@ -50,7 +32,7 @@ export async function getProfiliForAuthUid(authUid: string): Promise<Profilo[]> 
     .eq('id', authUid)
     .maybeSingle()
   const ruoloStaff = (staff?.role || staff?.ruolo) as AppRole | undefined
-  if (ruoloStaff) profili.push({ ruolo: ruoloStaff, area: areaDiRuolo(ruoloStaff) })
+  if (ruoloStaff) profili.push({ ruolo: ruoloStaff, area: areaForRole(ruoloStaff) })
 
   const { data: parent } = await supabase
     .from('parents')

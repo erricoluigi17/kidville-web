@@ -28,26 +28,11 @@ vi.mock('@/lib/supabase/server-client', () => ({
   }),
 }))
 
-import { areaDiRuolo, getProfiliForAuthUid } from '@/lib/auth/profili'
+import { getProfiliForAuthUid } from '@/lib/auth/profili'
 
 beforeEach(() => {
   h.utenti = null
   h.parentsByAuth = null
-})
-
-describe('areaDiRuolo — area "casa" di ogni ruolo', () => {
-  it('staff di gestione → admin (cuoca inclusa: report in /admin/mensa/cucina)', () => {
-    expect(areaDiRuolo('admin')).toBe('admin')
-    expect(areaDiRuolo('coordinator')).toBe('admin')
-    expect(areaDiRuolo('segreteria')).toBe('admin')
-    expect(areaDiRuolo('cuoca')).toBe('admin')
-  })
-
-  it('educator → teacher, genitore → parent, ignoto → parent (area meno privilegiata)', () => {
-    expect(areaDiRuolo('educator')).toBe('teacher')
-    expect(areaDiRuolo('genitore')).toBe('parent')
-    expect(areaDiRuolo('ruolo-ignoto')).toBe('parent')
-  })
 })
 
 describe('getProfiliForAuthUid', () => {

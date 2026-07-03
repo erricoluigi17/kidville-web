@@ -47,6 +47,8 @@ export function CheckoutModal({ studentName, delegates, onClose, onConfirmChecko
                                 <div key={delegate.id} className="border border-kidville-line rounded-lg p-3 flex items-center gap-3">
                                     <div className="w-12 h-12 bg-kidville-cream rounded-full overflow-hidden flex-shrink-0 flex items-center justify-center text-kidville-green">
                                         {delegate.foto_url ? (
+                                            /* Media utente (foto delegato da URL runtime): resta <img> come da M9.5 */
+                                            // eslint-disable-next-line @next/next/no-img-element
                                             <img src={delegate.foto_url} alt={delegate.nome} className="w-full h-full object-cover" />
                                         ) : (
                                             <User size={24} />

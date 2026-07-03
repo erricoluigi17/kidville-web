@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState, Suspense } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import {
   BookOpen, ClipboardCheck, NotebookPen, Images, Megaphone, ListTodo,
   Bell, ChevronRight, Check, AlertTriangle, Eye, Users,
@@ -148,9 +149,10 @@ function TeacherDashboardInner() {
         >
           <Bell size={18} />
         </Link>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/mascot.png" alt="" draggable={false}
-          className="pointer-events-none absolute -bottom-2 right-[-6px] z-0 h-36 select-none" />
+        {/* M9.5: mascotte statica su next/image (intrinseco 792×1040 in scala);
+            w-auto esplicito = width auto già computata prima, resa identica */}
+        <Image src="/mascot.png" alt="" width={198} height={260} priority draggable={false}
+          className="pointer-events-none absolute -bottom-2 right-[-6px] z-0 h-36 w-auto select-none" />
       </div>
 
       {/* ── GRADE WORLD SWITCH (solo docenti misti) ─────── */}

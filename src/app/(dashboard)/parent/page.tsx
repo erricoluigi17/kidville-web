@@ -2,6 +2,7 @@
 
 import { useState, useEffect, Suspense } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { motion } from 'framer-motion';
 import { Bell, MessageCircle, BookOpen, Camera, CalendarX2 } from 'lucide-react';
 import { withIdentity } from '@/lib/auth/current-user';
@@ -88,8 +89,8 @@ function ParentHomeContent() {
         >
           {/* top row: logo + campanella → avvisi */}
           <div className="relative z-[2] flex items-center justify-between px-5 pt-5">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/logo_green.png" alt="Kidville" style={{ height: 18, display: 'block' }} />
+            {/* M9.5: logo statico su next/image; resa identica (height 18, width auto dal rapporto intrinseco) */}
+            <Image src="/logo_green.png" alt="Kidville" width={192} height={108} priority style={{ height: 18, width: 'auto', display: 'block' }} />
             <Link
               href={wi('/parent/avvisi')}
               aria-label="Avvisi"
@@ -121,11 +122,14 @@ function ParentHomeContent() {
           {/* mascotte */}
           <div className="pointer-events-none absolute bottom-0 right-0 z-[1] flex items-end justify-end" style={{ width: 150, height: '100%' }}>
             {!mascotFailed ? (
-              /* Salva la mascotte in /public/mascot.png per visualizzarla */
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
+              /* Salva la mascotte in /public/mascot.png per visualizzarla.
+                 M9.5: next/image (intrinseco 792×1040 in scala), resa identica. */
+              <Image
                 src="/mascot.png"
                 alt="Mascotte Kidville"
+                width={198}
+                height={260}
+                priority
                 onError={() => setMascotFailed(true)}
                 className="select-none object-contain object-bottom drop-shadow-xl"
                 style={{ height: 152, width: 'auto' }}

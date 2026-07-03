@@ -10,6 +10,7 @@ import { EventTypeButton } from '@/components/features/teacher/diary/EventTypeBu
 import { EVENT_CONFIG } from '@/components/features/teacher/diary/eventConfig';
 import { MealDetailInline } from '@/components/features/teacher/diary/MealDetailInline';
 import { ActivityDetailInline, ActivityItem } from '@/components/features/teacher/diary/ActivityDetailInline';
+import { UMORE_VALUES, UMORE_CONFIG, umoreFromDettagli, umoreAttivo } from '@/lib/diary/umore';
 
 interface Student { id: string; firstName: string; lastName: string; allergie: string[]; }
 
@@ -17,6 +18,7 @@ const SEZIONE = 'Girasoli';
 
 // Entrata rimossa — gestita dal modulo Presenze
 // Nanna e Sveglia sono DUE pulsanti distinti (PRD §3.1.1): Nanna = orario inizio, Sveglia = orario fine.
+// 'umore' (M5.4) si aggiunge in coda solo se attivo in diario_config.routine_attive.
 const ALL_EVENT_TYPES: DiaryEventType[] = ['attivita', 'merenda', 'pranzo', 'nanna_inizio', 'nanna_fine', 'bagno'];
 
 function now() {
@@ -44,6 +46,8 @@ function buildInitialState(type: DiaryEventType, students: Student[]) {
             state[s.id] = { orario_fine: '' };
         } else if (type === 'bagno') {
             state[s.id] = { pipi: 0, cacca: 0, vasino: 0 };
+        } else if (type === 'umore') {
+            state[s.id] = { umore: null };
         } else {
             state[s.id] = {};
         }
@@ -99,6 +103,19 @@ function TeacherDiaryInner() {
     const [notaLibera, setNotaLibera] = useState('');
     // Filtro presenze (incongruenza #7): default = solo presenti; toggle per mostrare tutti.
     const [showAll, setShowAll] = useState(false);
+    // 'umore' visibile solo se attivo in diario_config.routine_attive (M5.4).
+    const [umoreEnabled, setUmoreEnabled] = useState(false);
+
+    useEffect(() => {
+        let active = true;
+        fetch(`/api/diary/config?userId=${userId}`)
+            .then(r => (r.ok ? r.json() : null))
+            .then(d => { if (active && d) setUmoreEnabled(umoreAttivo(d.routine_attive)); })
+            .catch(() => {});
+        return () => { active = false; };
+    }, [userId]);
+
+    const eventTypes: DiaryEventType[] = umoreEnabled ? [...ALL_EVENT_TYPES, 'umore'] : ALL_EVENT_TYPES;
 
     // Listener connettività (una volta).
     useEffect(() => {
@@ -352,7 +369,7 @@ function TeacherDiaryInner() {
             <div className="mt-4 w-full rounded-3xl border border-kidville-line bg-white p-4 shadow-sm">
                 <p className="font-barlow font-bold text-kidville-green uppercase text-xs tracking-wide mb-3">Cosa vuoi registrare?</p>
                 <div className="grid grid-cols-3 gap-2">
-                    {ALL_EVENT_TYPES.map(type => (
+                    {eventTypes.map(type => (
                         <div
                             key={type}
                             className={`rounded-xl transition-all duration-200 ${
@@ -554,6 +571,56 @@ function TeacherDiaryInner() {
                                                         <Plus size={10} strokeWidth={1.5} />
                                                     </button>
                                                 </div>
+                                            </div>
+                                        </motion.div>
+                                    );
+                                })}
+
+                                {/* ── UMORE (M5.4): picker 5 valori per alunno → dettagli.umore ── */}
+                                {selectedEvent === 'umore' && students.map((student, idx) => {
+                                    const sel = umoreFromDettagli(studentStates[student.id]);
+                                    const isSaved = savedStudentIds.has(student.id);
+                                    return (
+                                        <motion.div
+                                            key={student.id}
+                                            custom={idx}
+                                            variants={itemVariants}
+                                            initial="hidden"
+                                            animate="visible"
+                                            className="rounded-2xl border border-kidville-line bg-white shadow-sm px-4 py-3"
+                                        >
+                                            <div className="flex items-center gap-3 mb-3">
+                                                <div className="w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center font-barlow font-bold text-xs bg-kidville-cream text-kidville-green">
+                                                    {student.firstName[0]}{student.lastName[0]}
+                                                </div>
+                                                <span className="font-maven font-medium text-sm text-kidville-green flex-1">
+                                                    {student.firstName} {student.lastName}
+                                                    {isSaved && <span className="ml-1.5 text-kidville-success">✅</span>}
+                                                </span>
+                                            </div>
+                                            <div className="grid grid-cols-5 gap-1.5">
+                                                {UMORE_VALUES.map(v => {
+                                                    const c = UMORE_CONFIG[v];
+                                                    const active = sel === v;
+                                                    return (
+                                                        <button
+                                                            key={v}
+                                                            onClick={() => updateStudent(student.id, { umore: active ? null : v })}
+                                                            className={`flex flex-col items-center gap-1 rounded-xl border px-1 py-2 transition-all ${
+                                                                active
+                                                                    ? 'border-kidville-yellow-dark/60 bg-kidville-yellow-soft scale-105 shadow-sm'
+                                                                    : 'border-kidville-line bg-white hover:bg-kidville-cream'
+                                                            }`}
+                                                            aria-pressed={active}
+                                                            aria-label={`${student.firstName}: ${c.label}`}
+                                                        >
+                                                            <span className="text-xl leading-none">{c.emoji}</span>
+                                                            <span className={`font-maven text-[10px] ${active ? 'font-bold text-kidville-yellow-dark' : 'text-kidville-muted'}`}>
+                                                                {c.label}
+                                                            </span>
+                                                        </button>
+                                                    );
+                                                })}
                                             </div>
                                         </motion.div>
                                     );

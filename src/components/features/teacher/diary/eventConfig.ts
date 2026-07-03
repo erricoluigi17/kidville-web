@@ -46,6 +46,12 @@ export const EVENT_CONFIG: Record<DiaryEventType, EventConfig> = {
         color: 'bg-kidville-info-soft',
         accentColor: 'text-kidville-info border-kidville-info/25',
     },
+    umore: {
+        label: 'Umore',
+        emoji: '🌈',
+        color: 'bg-kidville-yellow-soft',
+        accentColor: 'text-kidville-yellow-dark border-kidville-yellow-dark/25',
+    },
 };
 
 /** Fallback per tipi evento legacy (es. 'entrata') rimossi dal diario attivo */

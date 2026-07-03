@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronLeft, ChevronRight, Camera, ChevronDown } from 'lucide-react';
 import { getEventConfig } from '@/components/features/teacher/diary/eventConfig';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
+import { UMORE_CONFIG, umoreFromDettagli, umoreNarrative } from '@/lib/diary/umore';
 import { MediaGrid, MediaItem } from '@/components/features/gallery/MediaGrid';
 
 // ─── Tipi ─────────────────────────────────────────────────────────────────────
@@ -367,6 +368,13 @@ function ParentDiaryContent() {
 
     const isToday = dateKey === toDateKey(new Date());
 
+    // Umore del giorno (M5.4): entries è già deduplicato all'ultimo evento per
+    // tipo, quindi qui c'è al più l'umore più recente del giorno. L'evento vive
+    // nel banner giallo, non nella timeline.
+    const umore = umoreFromDettagli(entries.find(e => e.tipo_evento === 'umore')?.dettagli);
+    const umoreCfg = umore ? UMORE_CONFIG[umore] : null;
+    const timelineEntries = entries.filter(e => e.tipo_evento !== 'umore');
+
     const slideVariants = {
         enter: (dir: number) => ({ x: dir > 0 ? -40 : 40, opacity: 0 }),
         center: { x: 0, opacity: 1 },
@@ -473,17 +481,19 @@ function ParentDiaryContent() {
                     {/* Timeline eventi (con "Entrata" in cima, letta dalle Presenze) */}
                     {!loading && (checkIn || entries.length > 0) && (
                         <div className="space-y-3">
-                            {/* Banner umore (DR mood banner). Nessun backend "umore" disponibile
-                                (è solo un'opzione in DiarioSettings, non catturata): reso come
-                                placeholder onesto. Vedi LISTA 1 del piano. */}
+                            {/* Banner umore (DR mood banner, M5.4): legge l'evento 'umore' più
+                                recente del giorno (dettagli.umore); senza evento resta il testo
+                                di attesa. */}
                             <div className="flex items-center gap-3 rounded-[20px] bg-kidville-yellow px-4 py-3.5">
-                                <span className="text-[26px] leading-none">🙂</span>
+                                <span className="text-[26px] leading-none">{umoreCfg?.emoji ?? '🙂'}</span>
                                 <div className="min-w-0">
                                     <p className="font-barlow text-[15px] font-black uppercase leading-none tracking-wide text-kidville-green">
-                                        Umore della giornata
+                                        Umore della giornata{umoreCfg ? `: ${umoreCfg.label}` : ''}
                                     </p>
                                     <p className="mt-1 font-maven text-[12px] text-kidville-green/75">
-                                        Presto la maestra potrà segnalare come è andata{studentName ? ` per ${studentName.split(' ')[0]}` : ''}.
+                                        {umore
+                                            ? umoreNarrative(umore)
+                                            : `Presto la maestra potrà segnalare come è andata${studentName ? ` per ${studentName.split(' ')[0]}` : ''}.`}
                                     </p>
                                 </div>
                             </div>
@@ -509,7 +519,7 @@ function ParentDiaryContent() {
                                     </p>
                                 </motion.div>
                             )}
-                            {entries.map((entry, i) => (
+                            {timelineEntries.map((entry, i) => (
                                 <EventCard key={entry.id} entry={entry} index={i + (checkIn ? 1 : 0)} />
                             ))}
                             {/* Foto reali della giornata */}

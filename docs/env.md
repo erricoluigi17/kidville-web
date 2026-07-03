@@ -55,6 +55,17 @@ metterci segreti.
 |---|---|
 | `NEXT_PUBLIC_APP_URL` | URL pubblico dell'app (link nelle email/QR). |
 
+## Script di manutenzione ed E2E (fuori dall'app)
+
+| Variabile | Descrizione |
+|---|---|
+| `SUPABASE_URL` | Alias server-only dell'URL progetto usato da `scripts/*.mjs` e dalle edge function (fallback: `NEXT_PUBLIC_SUPABASE_URL`). |
+| `DATABASE_URL` | Connection string Postgres diretta, SOLO per lo script legacy `scripts/apply-enrollment-migration.mjs` (le migrazioni correnti passano da RPC `exec_sql`). **Segreto.** |
+
+La suite E2E (`npm run e2e`) legge `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY`
+da `.env.local` per il seed idempotente (scuola dedicata `e2e00000-*`);
+dettagli in `docs/e2e.md`.
+
 ## Note operative
 
 - Le route con dipendenze d'ambiente usano `src/lib/security/require-env.ts`

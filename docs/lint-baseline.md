@@ -34,3 +34,4 @@ deve essere ≤ del gate precedente, fino allo zero assoluto in M9 (`npx eslint 
 | M4B (smistamento per ruolo) | 2026-07-03 | 117 / 44 |
 | M5 (placeholder piccoli) | 2026-07-03 | 114 / 44 |
 | M6 (agenda condivisa) | 2026-07-03 | 114 / 44 |
+| M7 (search+notifiche+presenze) | 2026-07-03 | 113 / 44 |

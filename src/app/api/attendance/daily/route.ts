@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { createClient } from '@/lib/supabase/server-client';
+import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zDataYMD, zUuid } from '@/lib/validation/common';
@@ -41,7 +41,12 @@ export async function GET(request: NextRequest) {
     const sezione = q.data.sezione;
 
     try {
-        const supabase = await createClient();
+        // Pattern canonico delle route docente (cfr. diary/entries, agenda):
+        // gate applicativo requireDocente + client admin. Con i cookie di
+        // sessione il client SSR applicherebbe la RLS come utente, e le policy
+        // scolastiche su presenze dipendono da un self-read su `utenti` che la
+        // RLS nega → via sessione non funzionerebbero per nessuno.
+        const supabase = await createAdminClient();
 
         const { data: rows, error } = await supabase
             .from('presenze')
@@ -82,7 +87,18 @@ export async function POST(request: NextRequest) {
         if ('response' in b) return b.response;
         const { alunno_id, data, stato, orario_entrata, orario_uscita } = b.data;
 
-        const supabase = await createClient();
+        const supabase = await createAdminClient();
+
+        // Il record nasce completo di scuola/sezione (fonte: anagrafica alunno):
+        // le policy scolastiche su presenze e l'aggregato realtime li richiedono.
+        const { data: alunno } = await supabase
+            .from('alunni')
+            .select('scuola_id, section_id')
+            .eq('id', alunno_id)
+            .maybeSingle();
+        if (!alunno) {
+            return NextResponse.json({ error: 'Alunno non trovato.' }, { status: 404 });
+        }
 
         const record = {
             alunno_id,
@@ -90,6 +106,8 @@ export async function POST(request: NextRequest) {
             stato,
             orario_entrata: orario_entrata ?? null,
             orario_uscita: orario_uscita ?? null,
+            scuola_id: alunno.scuola_id,
+            section_id: alunno.section_id,
             aggiornato_il: new Date().toISOString(),
         };
 

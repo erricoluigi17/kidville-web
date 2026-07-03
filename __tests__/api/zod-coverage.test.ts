@@ -56,6 +56,8 @@ const GRUPPI_COPERTI: string[] = [
     'debug',
     // M3.11–M3.14 (zod 10-13/14 — chiude tutto admin/*)
     'admin',
+    // M6 (agenda condivisa — zod dal giorno 1)
+    'agenda',
 ];
 
 const API_ROOT = path.join(process.cwd(), 'src', 'app', 'api');

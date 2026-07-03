@@ -203,10 +203,10 @@ function ParentHomeContent() {
         </div>
       )}
 
-      {/* ── CALENDARIO · AGENDA (placeholder DR) ──── */}
+      {/* ── CALENDARIO · AGENDA (eventi_agenda M6) ── */}
       <div className="px-4 pt-5">
         <SectionHeader eyebrow="Calendario" title="Prossimi appuntamenti" />
-        <AgendaTodayCard />
+        <AgendaTodayCard studentId={studentId} />
       </div>
 
       {/* ── NOTA / FOOTER ─────────────────────────── */}

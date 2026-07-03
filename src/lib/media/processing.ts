@@ -203,7 +203,7 @@ export function processVideoWithWatermark(
                 let audioTrack: MediaStreamTrack | null = null;
                 let audioCtx: AudioContext | null = null;
                 try {
-                    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+                    const AudioContextClass = window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
                     if (AudioContextClass) {
                         audioCtx = new AudioContextClass();
                         const source = audioCtx.createMediaElementSource(video);
@@ -218,11 +218,12 @@ export function processVideoWithWatermark(
                 // Cattura lo stream video del canvas a 25 fps
                 let stream: MediaStream;
                 try {
-                    stream = (canvas as any).captureStream ? (canvas as any).captureStream(25) : (canvas as any).mozCaptureStream(25);
+                    const capturableCanvas = canvas as HTMLCanvasElement & { mozCaptureStream?: (fps?: number) => MediaStream };
+                    stream = capturableCanvas.captureStream ? capturableCanvas.captureStream(25) : capturableCanvas.mozCaptureStream!(25);
                     if (audioTrack) {
                         stream.addTrack(audioTrack); // Unisci la traccia audio originale
                     }
-                } catch (err) {
+                } catch {
                     URL.revokeObjectURL(video.src);
                     if (audioCtx) audioCtx.close().catch(() => {});
                     return resolve(file);
@@ -246,10 +247,10 @@ export function processVideoWithWatermark(
                         mimeType,
                         videoBitsPerSecond: bitrate
                     });
-                } catch (e) {
+                } catch {
                     try {
                         mediaRecorder = new MediaRecorder(stream);
-                    } catch (e2) {
+                    } catch {
                         URL.revokeObjectURL(video.src);
                         if (audioCtx) audioCtx.close().catch(() => {});
                         return resolve(file);

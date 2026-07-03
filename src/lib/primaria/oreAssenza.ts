@@ -133,7 +133,6 @@ export function calcolaOreAssenzaPerMateria(
   materie: MateriaInfo[],
 ): RiepilogoPerMateria {
   const materieMap = new Map(materie.map((m) => [m.id, m.nome]));
-  const campanelleMap = new Map(campanelle.map((c) => [c.id, c]));
 
   // orario indicizzato per (giorno, campanella_id) → materia_id
   const orarioIdx = new Map<string, string | null>();

@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   FileText, Plus, UserCheck, Settings, Calendar, Users,
-  Trash2, Download, CheckCircle, XCircle, ArrowRight, Eye, RefreshCw, Upload, Shield
+  Trash2, Download, CheckCircle, ArrowRight, Upload, Shield
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
@@ -58,6 +58,11 @@ function defaultFieldForType(formType: FormType): FormField {
   return { id: 'f_1', type: 'text', label: '', required: true };
 }
 
+// Hash FES di fallback per il report PDF quando il log firma non contiene l'hash reale
+function fallbackFesHash(): string {
+  return 'FES-OK-' + Math.random().toString(16).substring(2, 10).toUpperCase();
+}
+
 interface PreInscription {
   id: string;
   parent_first_name: string;
@@ -81,7 +86,7 @@ interface PreInscription {
 export default function AdminModulisticaPage() {
   const [activeTab, setActiveTab] = useState<'moduli-genitori' | 'moduli-esterni' | 'attesa' | 'odt'>('moduli-genitori');
   const [forms, setForms] = useState<FormTemplate[]>([]);
-  const [preInscriptions, setPreInscriptions] = useState<PreInscription[]>([]);
+  const [preInscriptions] = useState<PreInscription[]>([]);
   const [sections, setSections] = useState<{ id: string; name: string }[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -109,30 +114,27 @@ export default function AdminModulisticaPage() {
   // Notifications
   const [toast, setToast] = useState('');
 
-  useEffect(() => {
-    fetchInitialData();
-  }, []);
-
-  const fetchInitialData = async () => {
-    setIsLoading(true);
+  const fetchInitialData = useCallback(async () => {
     try {
       // 1. Fetch Forms
-      const fRes = await fetch(`/api/admin/forms?scuola_id=${SCUOLA_ID}`);
-      const fData = await fRes.json();
+      const fRes = await fetch(`/api/admin/forms?scuola_id=${SCUOLA_ID}`).catch(() => null);
+      const fData = fRes ? await fRes.json().catch(() => null) : null;
       if (Array.isArray(fData)) setForms(fData);
 
       // 2. Le pre-iscrizioni sono gestite nella nuova dashboard /admin/iscrizioni
 
       // 3. Fetch Classes/Sections
-      const sRes = await fetch('/api/admin/sections');
-      const sData = await sRes.json();
+      const sRes = await fetch('/api/admin/sections').catch(() => null);
+      const sData = sRes ? await sRes.json().catch(() => null) : null;
       if (Array.isArray(sData)) setSections(sData);
-    } catch (err) {
-      console.error(err);
     } finally {
       setIsLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    fetchInitialData();
+  }, [fetchInitialData]);
 
   const showToastMsg = (msg: string) => {
     setToast(msg);
@@ -151,7 +153,7 @@ export default function AdminModulisticaPage() {
     setFormFields(formFields.filter((_, i) => i !== index));
   };
 
-  const handleFieldChange = (index: number, key: keyof FormField, value: any) => {
+  const handleFieldChange = <K extends keyof FormField>(index: number, key: K, value: FormField[K]) => {
     const next = [...formFields];
     next[index] = { ...next[index], [key]: value };
     setFormFields(next);
@@ -226,7 +228,7 @@ export default function AdminModulisticaPage() {
       setFormFields([defaultFieldForType('autorizzazione')]);
 
       fetchInitialData();
-    } catch (err) {
+    } catch {
       showToastMsg('❌ Errore nel salvataggio del modulo');
     }
   };
@@ -243,7 +245,7 @@ export default function AdminModulisticaPage() {
         showToastMsg('✅ Modulo eliminato');
         fetchInitialData();
       }
-    } catch (err) {
+    } catch {
       showToastMsg('❌ Errore eliminazione');
     }
   };
@@ -276,8 +278,8 @@ export default function AdminModulisticaPage() {
       }
 
       fetchInitialData();
-    } catch (err: any) {
-      showToastMsg(`❌ ${err.message || 'Errore approvazione'}`);
+    } catch (err) {
+      showToastMsg(`❌ ${(err as { message?: string })?.message || 'Errore approvazione'}`);
       setShowConfirmApproval(false);
     }
   };
@@ -298,7 +300,7 @@ export default function AdminModulisticaPage() {
         fetchInitialData();
         setSelectedPre(null);
       }
-    } catch (err) {
+    } catch {
       showToastMsg('❌ Errore durante l\'azione');
     }
   };
@@ -320,7 +322,7 @@ export default function AdminModulisticaPage() {
         showToastMsg('✅ Scadenza aggiornata');
         fetchInitialData();
       }
-    } catch (err) {
+    } catch {
       showToastMsg('❌ Errore estensione scadenza');
     }
   };
@@ -381,7 +383,7 @@ export default function AdminModulisticaPage() {
           doc.text(`Timestamp: ${new Date(item.created_at).toLocaleString('it-IT', { timeZone: 'UTC' })}`, 20, yOffset + 12);
           doc.text(`IP del Client: ${item.signature_log?.ip || 'N.D.'}`, 20, yOffset + 18);
           doc.text(`User Agent: ${item.signature_log?.user_agent?.substring(0, 70) || 'N.D.'}...`, 20, yOffset + 24);
-          doc.text(`Hash FES (SHA-256): ${item.signature_log?.hash || 'FES-OK-' + Math.random().toString(16).substring(2, 10).toUpperCase()}`, 20, yOffset + 30);
+          doc.text(`Hash FES (SHA-256): ${item.signature_log?.hash || fallbackFesHash()}`, 20, yOffset + 30);
           
           yOffset += 40;
         } else {
@@ -402,8 +404,8 @@ export default function AdminModulisticaPage() {
 
       doc.save(`Cumulative_${form.title.replace(/\s+/g, '_')}_${className}.pdf`);
       showToastMsg('✅ Report cumulativo PDF scaricato!');
-    } catch (err: any) {
-      showToastMsg(`❌ ${err.message || 'Errore esportazione'}`);
+    } catch (err) {
+      showToastMsg(`❌ ${(err as { message?: string })?.message || 'Errore esportazione'}`);
     }
   };
 
@@ -567,7 +569,7 @@ export default function AdminModulisticaPage() {
                       </p>
                       
                       <div className="mt-3 flex items-center gap-1 text-xs text-kidville-green font-semibold">
-                        <Users size={14} /> Figli da iscrivere: {pre.students?.map((s: any) => `${s.cognome} ${s.nome}`).join(', ')}
+                        <Users size={14} /> Figli da iscrivere: {pre.students?.map(s => `${s.cognome} ${s.nome}`).join(', ')}
                       </div>
                     </div>
 
@@ -597,7 +599,7 @@ export default function AdminModulisticaPage() {
                   Carta Intestata Scuola
                 </h3>
                 <p className="font-maven text-xs text-kidville-muted mb-6 leading-relaxed">
-                  Trascina il file ODT della carta intestata contenente i loghi istituzionali e l'intestazione personalizzata.
+                  Trascina il file ODT della carta intestata contenente i loghi istituzionali e l&apos;intestazione personalizzata.
                 </p>
                 
                 {odtLetterhead ? (
@@ -742,7 +744,7 @@ export default function AdminModulisticaPage() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block font-maven text-sm font-semibold text-kidville-green mb-1.5">
-                    Ambito d'Uso (Scope)
+                    Ambito d&apos;Uso (Scope)
                   </label>
                   <div className="w-full border-2 border-kidville-green/15 rounded-xl px-3 py-2.5 font-maven text-sm text-kidville-green bg-kidville-cream flex items-center gap-2">
                     {formScope === 'external'
@@ -915,7 +917,7 @@ export default function AdminModulisticaPage() {
               <div>
                 <h4 className="font-barlow font-bold text-sm text-kidville-green uppercase tracking-wide mb-3">Figli da Registrare</h4>
                 <div className="space-y-3">
-                  {selectedPre.students?.map((s: any, idx: number) => (
+                  {selectedPre.students?.map((s, idx) => (
                     <div key={idx} className="p-3 bg-kidville-cream border border-kidville-line rounded-xl text-xs font-maven">
                       <div className="font-semibold text-kidville-ink text-sm">{s.cognome} {s.nome}</div>
                       <div className="text-kidville-muted mt-1">Data Nascita: {new Date(s.data_nascita).toLocaleDateString()} | CF: {s.codice_fiscale || 'N.D.'}</div>
@@ -981,7 +983,7 @@ export default function AdminModulisticaPage() {
           <div className="bg-white w-full max-w-sm rounded-card p-6 shadow-2xl text-center">
             <h3 className="font-barlow font-black text-xl text-kidville-green uppercase tracking-wide mb-3">Conferma Approvazione</h3>
             <p className="font-maven text-sm text-kidville-muted mb-6">
-              Stai per approvare l'onboarding di <strong>Famiglia {selectedPre.parent_last_name}</strong> e importare <strong>{selectedPre.students?.length}</strong> alunni nella sezione <strong>{assignedClass}</strong>. 
+              Stai per approvare l&apos;onboarding di <strong>Famiglia {selectedPre.parent_last_name}</strong> e importare <strong>{selectedPre.students?.length}</strong> alunni nella sezione <strong>{assignedClass}</strong>. 
               Questo creerà automaticamente gli account utente. Vuoi procedere?
             </p>
             <div className="flex gap-3 justify-center">

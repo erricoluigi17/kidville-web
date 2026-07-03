@@ -36,20 +36,22 @@ export default function ProspettoPage() {
   }, [sectionId, userId]);
 
   const load = useCallback(async () => {
-    if (!alunnoId) { setGruppi([]); setMedia(null); setPanoramica(null); return; }
-    if (!materiaId) {
-      // Panoramica tutte le materie
-      const r = await fetch(`/api/primaria/prospetto?alunnoId=${alunnoId}&userId=${userId}`);
-      const d = await r.json();
-      if (d.success) { setPanoramica(d.panoramica ?? []); setGruppi([]); setMedia(null); }
-      return;
+    try {
+      // Senza materia → panoramica tutte le materie; con materia → dettaglio per obiettivo.
+      const r = await fetch(`/api/primaria/prospetto?alunnoId=${alunnoId}${materiaId ? `&materiaId=${materiaId}` : ''}&userId=${userId}`).catch(() => null);
+      const d = r ? await r.json().catch(() => null) : null;
+      if (!d?.success) return;
+      if (materiaId) { setGruppi(d.data); setMedia(d.media ?? null); setPanoramica(null); }
+      else { setPanoramica(d.panoramica ?? []); setGruppi([]); setMedia(null); }
+    } finally {
+      // nessuno stato di caricamento da azzerare (pattern loader da useEffect)
     }
-    const r = await fetch(`/api/primaria/prospetto?alunnoId=${alunnoId}&materiaId=${materiaId}&userId=${userId}`);
-    const d = await r.json();
-    if (d.success) { setGruppi(d.data); setMedia(d.media ?? null); setPanoramica(null); }
   }, [alunnoId, materiaId, userId]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    if (!alunnoId) return;
+    void load();
+  }, [alunnoId, load]);
 
   return (
     <div className="rounded-card bg-white p-5 shadow-sm">
@@ -75,7 +77,7 @@ export default function ProspettoPage() {
       )}
 
       <div className="grid grid-cols-2 gap-2 mb-4">
-        <select value={alunnoId} onChange={(e) => { setAlunnoId(e.target.value); setMateriaId(''); }} className="font-maven rounded-pill border border-kidville-line px-3 py-2 text-sm">
+        <select value={alunnoId} onChange={(e) => { setAlunnoId(e.target.value); setMateriaId(''); if (!e.target.value) { setGruppi([]); setMedia(null); setPanoramica(null); } }} className="font-maven rounded-pill border border-kidville-line px-3 py-2 text-sm">
           <option value="">Alunno…</option>
           {alunni.map((a) => <option key={a.id} value={a.id}>{a.cognome} {a.nome}</option>)}
         </select>

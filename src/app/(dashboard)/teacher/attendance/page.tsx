@@ -193,10 +193,11 @@ function TodayView() {
     const [filter, setFilter] = useState<FilterKey>('tutti');
 
     // ── Fetch studenti reali dall'anagrafica Supabase ──
-    const fetchStudents = useCallback(async () => {
-        const res = await fetch(`/api/diary/students?sezione=${SEZIONE}`);
-        if (!res.ok) throw new Error('Errore caricamento alunni');
-        const data = await res.json();
+    // Restituisce null in caso di errore (rete o HTTP), mai eccezioni.
+    const fetchStudents = useCallback(async (): Promise<Student[] | null> => {
+        const res = await fetch(`/api/diary/students?sezione=${SEZIONE}`).catch(() => null);
+        if (!res?.ok) return null;
+        const data = await res.json().catch(() => null);
         if (Array.isArray(data)) {
             return data.map((a: { id: string; nome: string; cognome: string }) => ({
                 id: a.id,
@@ -209,12 +210,10 @@ function TodayView() {
 
     // ── Fetch presenze del giorno selezionato da Supabase ──
     const fetchTodayRecords = useCallback(async () => {
-        setRecords({});
-        const res = await fetch(`/api/attendance/daily?data=${selectedDate}&sezione=${SEZIONE}`);
-        if (!res.ok) return;
-        const rows = await res.json();
+        const res = await fetch(`/api/attendance/daily?data=${selectedDate}&sezione=${SEZIONE}`).catch(() => null);
+        const rows = res?.ok ? await res.json().catch(() => null) : null;
+        const map: Record<string, AttendanceRecord> = {};
         if (Array.isArray(rows)) {
-            const map: Record<string, AttendanceRecord> = {};
             rows.forEach((row: {
                 alunno_id: string;
                 id?: string;
@@ -232,8 +231,8 @@ function TodayView() {
                     orario_uscita: row.orario_uscita,
                 };
             });
-            setRecords(map);
         }
+        setRecords(map);
     }, [selectedDate]);
 
     // ── Fetch delegati ──
@@ -248,17 +247,18 @@ function TodayView() {
 
     // ── Caricamento iniziale ──
     const loadAll = useCallback(async () => {
-        setIsLoading(true);
-        setError(null);
         try {
             const [studs] = await Promise.all([
                 fetchStudents(),
                 fetchTodayRecords(),
                 fetchDelegates(),
             ]);
-            setStudents(studs);
-        } catch (err) {
-            setError(err instanceof Error ? err.message : 'Errore caricamento dati');
+            if (studs) {
+                setStudents(studs);
+                setError(null);
+            } else {
+                setError('Errore caricamento alunni');
+            }
         } finally {
             setIsLoading(false);
         }

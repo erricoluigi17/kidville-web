@@ -2,9 +2,9 @@
 
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { AlertTriangle, ChevronDown, Clock, Minus, Plus } from 'lucide-react';
-import { LocalDiaryEntry, DiaryEventType, DiaryEventTypeLegacy } from '@/lib/offline/db';
-import { EVENT_CONFIG, getEventConfig, MEAL_QUANTITIES, BATHROOM_TYPES } from './eventConfig';
+import { AlertTriangle, ChevronDown, Minus, Plus } from 'lucide-react';
+import { LocalDiaryEntry, DiaryEventType } from '@/lib/offline/db';
+import { getEventConfig, MEAL_QUANTITIES } from './eventConfig';
 
 // ─── Tipi ─────────────────────────────────────────────────────────────────────
 
@@ -184,7 +184,9 @@ function BagnoSectionContent({
     const pipi = (studentState?.pipi as number) ?? 0;
     const cacca = (studentState?.cacca as number) ?? 0;
 
-    const Counter = ({ field, emoji, bg, color }: { field: 'pipi' | 'cacca'; emoji: string; bg: string; color: string }) => {
+    // Funzione di render locale (non componente): chiude su state/handler,
+    // il JSX emesso è identico a prima.
+    const renderCounter = ({ field, emoji, bg, color }: { field: 'pipi' | 'cacca'; emoji: string; bg: string; color: string }) => {
         const val = field === 'pipi' ? pipi : cacca;
         return (
             <div className={`flex items-center gap-2 ${bg} rounded-xl px-3 py-2 flex-1`}>
@@ -208,8 +210,8 @@ function BagnoSectionContent({
 
     return (
         <motion.div variants={itemVariants} className="flex gap-3 px-4 py-3">
-            <Counter field="pipi" emoji="💧" bg="bg-kidville-info-soft" color="border-kidville-info text-kidville-info bg-kidville-info-soft0" />
-            <Counter field="cacca" emoji="💩" bg="bg-kidville-warn-soft" color="border-kidville-warn text-kidville-warn bg-kidville-warn-soft0" />
+            {renderCounter({ field: 'pipi', emoji: '💧', bg: 'bg-kidville-info-soft', color: 'border-kidville-info text-kidville-info bg-kidville-info-soft0' })}
+            {renderCounter({ field: 'cacca', emoji: '💩', bg: 'bg-kidville-warn-soft', color: 'border-kidville-warn text-kidville-warn bg-kidville-warn-soft0' })}
         </motion.div>
     );
 }

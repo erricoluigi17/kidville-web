@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { X, FileText, Tag, AlertTriangle, Calendar, Users, Save, CheckSquare } from 'lucide-react';
+import { X, FileText, Tag, AlertTriangle, Calendar, Save, CheckSquare } from 'lucide-react';
 import { Task } from './TaskCard';
 
 interface StaffMember {
@@ -31,36 +31,19 @@ interface TaskEditModalProps {
     currentUserId: string;
 }
 
-export function TaskEditModal({ task, open, onClose, onSave, staffMembers, currentUserId }: TaskEditModalProps) {
-    const [titolo, setTitolo] = useState('');
-    const [contenuto, setContenuto] = useState('');
-    const [priority, setPriority] = useState<string>('medium');
-    const [category, setCategory] = useState('generale');
-    const [deadline, setDeadline] = useState('');
-    const [deadlineTime, setDeadlineTime] = useState('');
-    const [status, setStatus] = useState<string>('todo');
-    const [resolutionNotes, setResolutionNotes] = useState('');
+export function TaskEditModal({ task, open, onClose, onSave, currentUserId }: TaskEditModalProps) {
+    // Il form si inizializza dal task al mount: il parent monta la modale
+    // solo quando c'è un task in modifica, quindi equivale alla vecchia
+    // useEffect di init (rimossa per la regola set-state-in-effect).
+    const [titolo, setTitolo] = useState(task.titolo || '');
+    const [contenuto, setContenuto] = useState(task.descrizione || task.contenuto || '');
+    const [priority, setPriority] = useState<string>(task.priority || 'medium');
+    const [category, setCategory] = useState(task.category || 'generale');
+    const [deadline, setDeadline] = useState(() => task.deadline ? new Date(task.deadline).toISOString().split('T')[0] : '');
+    const [deadlineTime, setDeadlineTime] = useState(() => task.deadline ? new Date(task.deadline).toTimeString().slice(0, 5) : '');
+    const [status, setStatus] = useState<string>(task.status || 'todo');
+    const [resolutionNotes, setResolutionNotes] = useState(task.resolution_notes || '');
     const [isSaving, setIsSaving] = useState(false);
-
-    // Init form from task
-    useEffect(() => {
-        if (task && open) {
-            setTitolo(task.titolo || '');
-            setContenuto(task.descrizione || task.contenuto || '');
-            setPriority(task.priority || 'medium');
-            setCategory(task.category || 'generale');
-            setStatus(task.status || 'todo');
-            setResolutionNotes(task.resolution_notes || '');
-            if (task.deadline) {
-                const d = new Date(task.deadline);
-                setDeadline(d.toISOString().split('T')[0]);
-                setDeadlineTime(d.toTimeString().slice(0, 5));
-            } else {
-                setDeadline('');
-                setDeadlineTime('');
-            }
-        }
-    }, [task, open]);
 
     if (!open) return null;
 

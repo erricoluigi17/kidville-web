@@ -17,9 +17,9 @@ interface Props {
     onLoad: () => void;
 }
 
-function getSemaforoColor(qty: number, gialla: any, rossa: any) {
-    const sogliaGialla = parseInt(gialla) || 5;
-    const sogliaRossa = parseInt(rossa) || 2;
+function getSemaforoColor(qty: number, gialla: number | string, rossa: number | string) {
+    const sogliaGialla = parseInt(String(gialla)) || 5;
+    const sogliaRossa = parseInt(String(rossa)) || 2;
 
     if (qty <= sogliaRossa) return { bg: 'bg-kidville-error-soft', border: 'border-kidville-error/25', text: 'text-kidville-error', bar: 'bg-kidville-error-soft0', label: '🔴 Esaurito' };
     if (qty <= sogliaGialla) return { bg: 'bg-kidville-warn-soft', border: 'border-kidville-warn/30', text: 'text-kidville-warn', bar: 'bg-kidville-warn', label: '🟡 In esaurimento' };

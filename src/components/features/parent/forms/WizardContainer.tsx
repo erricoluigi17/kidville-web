@@ -36,7 +36,6 @@ const slide = {
 export function WizardContainer({
   modelId,
   title,
-  description,
   schema,
   requiresSignature,
   signatureMode = 'single',

@@ -3,7 +3,6 @@
 import { useState } from 'react'
 import type {
   UseFormRegister,
-  FieldErrors,
   Control,
   FieldValues,
 } from 'react-hook-form'

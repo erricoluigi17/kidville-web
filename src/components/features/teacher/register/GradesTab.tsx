@@ -74,15 +74,14 @@ export default function GradesTab() {
             if (gradesJson.success && gradesJson.data) {
                 setValutazioni(gradesJson.data);
             }
-        } catch (err) {
-            console.error('Errore caricamento dati GradesTab:', err);
         } finally {
             setLoading(false);
         }
     }, []);
 
     useEffect(() => {
-        loadData();
+        // Errori di rete ingoiati al call-site (pattern set-state-in-effect).
+        loadData().catch(() => {});
     }, [loadData]);
 
     const openModal = () => {

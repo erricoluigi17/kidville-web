@@ -45,10 +45,14 @@ export function LoadStockModal({
     const [materiali,         setMateriali]         = useState<MaterialeConfig[]>(MATERIALI_FALLBACK);
 
     // Aggiorna i valori preselezionati quando cambiano le prop
-    useEffect(() => {
+    // (adeguamento dello stato durante il render, con guardia sul valore precedente:
+    // stesso effetto della vecchia useEffect ma senza setState-in-effect).
+    const [prevPreselected, setPrevPreselected] = useState({ preselectedStudent, preselectedMateriale });
+    if (prevPreselected.preselectedStudent !== preselectedStudent || prevPreselected.preselectedMateriale !== preselectedMateriale) {
+        setPrevPreselected({ preselectedStudent, preselectedMateriale });
         if (preselectedStudent)   setSelectedStudent(preselectedStudent);
         if (preselectedMateriale) setSelectedMateriale(preselectedMateriale);
-    }, [preselectedStudent, preselectedMateriale]);
+    }
 
     // Carica materiali configurati dall'API
     useEffect(() => {
@@ -60,7 +64,7 @@ export function LoadStockModal({
                 if (Array.isArray(data) && data.length > 0) {
                     setMateriali(data);
                     // Preseleziona il primo se non c'è una preselection
-                    if (!selectedMateriale) setSelectedMateriale(data[0].nome);
+                    setSelectedMateriale(prev => prev || data[0].nome);
                 }
             })
             .catch(() => {/* usa fallback */});
@@ -79,8 +83,8 @@ export function LoadStockModal({
             await onConfirm({ alunno_id: selectedStudent, materiale: selectedMateriale, quantita: quantity });
             onClose();
             setQuantity(10);
-        } catch (e: any) {
-            setError(e.message ?? 'Errore durante il salvataggio');
+        } catch (e) {
+            setError((e as { message?: string }).message ?? 'Errore durante il salvataggio');
         } finally {
             setIsSaving(false);
         }

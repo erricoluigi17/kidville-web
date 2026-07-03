@@ -23,11 +23,20 @@ export function OtpEmailModal({ open, email, devCode, onClose, onVerify }: Props
   const [success, setSuccess] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => {
+  // Reset dello stato a ogni apertura del modale
+  // (adjust-state-during-render, prior art: AvvisoForm.tsx / TaskForm.tsx)
+  const [prevOpen, setPrevOpen] = useState(false)
+  if (open !== prevOpen) {
+    setPrevOpen(open)
     if (open) {
       setCode('')
       setError(null)
       setSuccess(false)
+    }
+  }
+
+  useEffect(() => {
+    if (open) {
       setTimeout(() => inputRef.current?.focus(), 150)
     }
   }, [open])

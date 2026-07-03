@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { ChevronLeft, ChevronRight, RefreshCw, AlertCircle, Download } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import type { MonthlyAttendanceRecord } from '@/app/api/attendance/monthly/route';
@@ -118,7 +118,6 @@ function Cell({ record, isWeekend }: { record?: MonthlyAttendanceRecord; isWeeke
 
 async function exportPDF(students: StudentMonthData[], days: Date[], month: number, year: number, sezione: string) {
     const { default: jsPDF } = await import('jspdf');
-    // @ts-ignore autotable types
     const { default: autoTable } = await import('jspdf-autotable');
 
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
@@ -255,21 +254,26 @@ export function MonthlyAttendanceTable({ sezione = 'Girasoli' }: { sezione?: str
     const todayISO = toISO(now);
 
     const fetchData = useCallback(async () => {
-        setIsLoading(true);
-        setError(null);
         try {
             // Carica SEMPRE tutti gli studenti della sezione + presenze del mese in parallelo.
             // Così i mesi senza presenze mostrano comunque la lista completa con celle vuote.
             const [studRes, presRes] = await Promise.all([
-                fetch(`/api/diary/students?sezione=${sezione}`, { cache: 'no-store' }),
-                fetch(`/api/attendance/monthly?year=${year}&month=${month}&sezione=${sezione}`, { cache: 'no-store' }),
+                fetch(`/api/diary/students?sezione=${sezione}`, { cache: 'no-store' }).catch(() => null),
+                fetch(`/api/attendance/monthly?year=${year}&month=${month}&sezione=${sezione}`, { cache: 'no-store' }).catch(() => null),
             ]);
-            if (!studRes.ok) throw new Error('Errore caricamento studenti');
-            const allStudents: RawStudent[] = await studRes.json();
-            const records: MonthlyAttendanceRecord[] = presRes.ok ? await presRes.json() : [];
-            setStudents(mergeStudentsAndPresences(allStudents, records));
-        } catch (e) {
-            setError(e instanceof Error ? e.message : 'Errore caricamento');
+            if (studRes?.ok && presRes) {
+                const allStudents: unknown = await studRes.json().catch(() => null);
+                const recordsRaw: unknown = presRes.ok ? await presRes.json().catch(() => null) : [];
+                if (Array.isArray(allStudents)) {
+                    const records: MonthlyAttendanceRecord[] = Array.isArray(recordsRaw) ? recordsRaw : [];
+                    setStudents(mergeStudentsAndPresences(allStudents, records));
+                    setError(null);
+                } else {
+                    setError('Errore caricamento');
+                }
+            } else {
+                setError('Errore caricamento studenti');
+            }
         } finally {
             setIsLoading(false);
         }
@@ -277,8 +281,19 @@ export function MonthlyAttendanceTable({ sezione = 'Girasoli' }: { sezione?: str
 
     useEffect(() => { fetchData(); }, [fetchData]);
 
-    const prevMonth = () => month === 1 ? (setYear(y => y - 1), setMonth(12)) : setMonth(m => m - 1);
-    const nextMonth = () => month === 12 ? (setYear(y => y + 1), setMonth(1)) : setMonth(m => m + 1);
+    // Spinner + reset errore vivono negli handler degli eventi (non nell'effect):
+    // la resa visiva resta identica per ogni interazione utente.
+    const refresh = () => { setIsLoading(true); setError(null); fetchData(); };
+    const prevMonth = () => {
+        setIsLoading(true);
+        setError(null);
+        if (month === 1) { setYear(y => y - 1); setMonth(12); } else { setMonth(m => m - 1); }
+    };
+    const nextMonth = () => {
+        setIsLoading(true);
+        setError(null);
+        if (month === 12) { setYear(y => y + 1); setMonth(1); } else { setMonth(m => m + 1); }
+    };
 
     const handleExport = async () => {
         setIsExporting(true);
@@ -317,7 +332,7 @@ export function MonthlyAttendanceTable({ sezione = 'Girasoli' }: { sezione?: str
                             <span className="font-maven text-xs text-kidville-success font-medium">{todayPresenti}/{students.length} oggi</span>
                         </div>
                     )}
-                    <button onClick={fetchData} disabled={isLoading} className="w-9 h-9 rounded-xl border border-kidville-line bg-white hover:bg-kidville-cream flex items-center justify-center text-kidville-muted hover:text-kidville-green transition-all shadow-sm disabled:opacity-40">
+                    <button onClick={refresh} disabled={isLoading} className="w-9 h-9 rounded-xl border border-kidville-line bg-white hover:bg-kidville-cream flex items-center justify-center text-kidville-muted hover:text-kidville-green transition-all shadow-sm disabled:opacity-40">
                         <RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} />
                     </button>
                     <button
@@ -339,7 +354,7 @@ export function MonthlyAttendanceTable({ sezione = 'Girasoli' }: { sezione?: str
                         className="flex items-center gap-3 bg-kidville-error-soft border border-kidville-error/25 rounded-2xl px-4 py-3">
                         <AlertCircle size={16} className="text-kidville-error flex-shrink-0" />
                         <p className="font-maven text-sm text-kidville-error">{error}</p>
-                        <button onClick={fetchData} className="ml-auto font-maven text-xs text-kidville-error hover:text-kidville-error underline">Riprova</button>
+                        <button onClick={refresh} className="ml-auto font-maven text-xs text-kidville-error hover:text-kidville-error underline">Riprova</button>
                     </motion.div>
                 )}
             </AnimatePresence>

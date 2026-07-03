@@ -31,7 +31,10 @@ function nsFields(prefix: string, fields: FormField[]): FormField[] {
 }
 
 function resolveError(errors: FieldValues, path: string): unknown {
-  return path.split('.').reduce<any>((acc, k) => (acc == null ? acc : acc[k]), errors)
+  return path.split('.').reduce<unknown>(
+    (acc, k) => (acc == null ? acc : (acc as Record<string, unknown>)[k]),
+    errors,
+  )
 }
 
 export function EnrollmentWizard() {

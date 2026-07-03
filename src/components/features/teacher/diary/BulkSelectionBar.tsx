@@ -55,7 +55,7 @@ export function BulkSelectionBar({ selectedCount, onClearSelection, onEventSelec
                 </div>
 
                 <p className="font-maven text-white/60 text-xs mt-2 text-center">
-                    L'azione verrà applicata a tutti i bambini selezionati
+                    L&apos;azione verrà applicata a tutti i bambini selezionati
                 </p>
             </div>
         </div>

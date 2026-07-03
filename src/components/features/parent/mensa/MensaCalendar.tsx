@@ -40,21 +40,20 @@ export function MensaCalendar({ userId, studentId }: Props) {
   const today = ymd(new Date());
 
   const load = useCallback(async () => {
-    setLoading(true);
-    setAuthError(null);
     try {
       const [mRes, pRaw] = await Promise.all([
-        fetch(`/api/mensa/menu?userId=${userId}&from=${from}&to=${to}&alunno_id=${studentId}`, { headers: hdr(userId) }).then(r => r.json()),
-        fetch(`/api/mensa/prenotazioni?userId=${userId}&alunno_id=${studentId}&from=${from}&to=${to}`, { headers: hdr(userId) }).then(async r => ({ status: r.status, data: await r.json() })),
+        fetch(`/api/mensa/menu?userId=${userId}&from=${from}&to=${to}&alunno_id=${studentId}`, { headers: hdr(userId) }).then(r => r.json()).catch(() => null),
+        fetch(`/api/mensa/prenotazioni?userId=${userId}&alunno_id=${studentId}&from=${from}&to=${to}`, { headers: hdr(userId) }).then(async r => ({ status: r.status, data: await r.json() })).catch(() => null),
       ]);
-      if (mRes.success) {
+      setAuthError(null);
+      if (mRes?.success) {
         setMenu(mRes.data);
         setMenuNome(mRes.meta?.menuNome ?? null);
       }
-      if (pRaw.status === 401 || pRaw.status === 403) {
+      if (pRaw && (pRaw.status === 401 || pRaw.status === 403)) {
         setAuthError('Sessione non valida. Torna alla home e riapri la mensa dal menu principale.');
         setSaldo(null);
-      } else if (pRaw.data?.success) {
+      } else if (pRaw?.data?.success) {
         setSaldo(pRaw.data.saldo);
         const map: Record<string, Prenotazione> = {};
         for (const p of (pRaw.data.prenotazioni ?? []) as Prenotazione[]) map[p.data] = p;

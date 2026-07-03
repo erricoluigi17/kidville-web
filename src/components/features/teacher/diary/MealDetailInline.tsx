@@ -26,9 +26,9 @@ const EMPTY_MENU: DailyMenu = { primo: '', secondo: '', contorno: '', frutta: ''
 /**
  * Carica il menu del giorno configurato dalla scuola (modulo Mensa) per la data
  * indicata. Legge da /api/mensa/menu (override → rotazione). Il menu è school-wide,
- * quindi `_classId` non è usato. Mostra solo le portate effettivamente valorizzate.
+ * quindi la classe non serve. Mostra solo le portate effettivamente valorizzate.
  */
-export function useDailyMenu(date: string, _classId: string): {
+export function useDailyMenu(date: string): {
     menu: DailyMenu;
     courses: DailyMenuItem[];
     isLoading: boolean;
@@ -38,7 +38,6 @@ export function useDailyMenu(date: string, _classId: string): {
 
     useEffect(() => {
         let active = true;
-        setIsLoading(true);
         fetch(`/api/mensa/menu?from=${date}&to=${date}`)
             .then(r => r.ok ? r.json() : null)
             .then(d => {
@@ -100,11 +99,10 @@ export function MealDetailInline({
     studentStates,
     onMealSelect,
     date,
-    classId,
     savedStudentIds,
     isMerenda = false,
 }: MealDetailInlineProps) {
-    const { courses, isLoading } = useDailyMenu(date, classId);
+    const { courses, isLoading } = useDailyMenu(date);
 
     const merendaCourse = [{ id: 'merenda', nome: 'Merenda', portata: 'Merenda', icon: '🍎' }];
     const activeCourses = isMerenda ? merendaCourse : courses;

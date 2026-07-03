@@ -60,15 +60,14 @@ export default function LessonsTab() {
                 });
                 setRegistroEntries(byHour);
             }
-        } catch (err) {
-            console.error('Errore caricamento registro:', err);
         } finally {
             setLoading(false);
         }
     }, [oggi]);
 
     useEffect(() => {
-        loadRegistro();
+        // Errori di rete ingoiati al call-site (pattern set-state-in-effect).
+        loadRegistro().catch(() => {});
     }, [loadRegistro]);
 
     const openModal = (hour: number) => {

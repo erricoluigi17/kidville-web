@@ -57,15 +57,14 @@ export default function NotesTab() {
             if (noteJson.success && noteJson.data) {
                 setNote(noteJson.data);
             }
-        } catch (err) {
-            console.error('Errore caricamento NotesTab:', err);
         } finally {
             setLoading(false);
         }
     }, []);
 
     useEffect(() => {
-        loadData();
+        // Errori di rete ingoiati al call-site (pattern set-state-in-effect).
+        loadData().catch(() => {});
     }, [loadData]);
 
     const toggleStudent = (id: string) => {

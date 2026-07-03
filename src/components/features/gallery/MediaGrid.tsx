@@ -2,7 +2,7 @@
 
 import { motion } from 'framer-motion';
 import { Download, Share2, Play, ChevronLeft, ChevronRight } from 'lucide-react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 
 export interface Student {
     id: string;
@@ -53,7 +53,7 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
 
     const currentIndex = lightbox ? items.findIndex(item => item.id === lightbox.id) : -1;
 
-    const handlePrev = (e?: React.MouseEvent) => {
+    const handlePrev = useCallback((e?: React.MouseEvent) => {
         e?.stopPropagation();
         if (currentIndex > 0) {
             const prevItem = items[currentIndex - 1];
@@ -61,9 +61,9 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
             setEditMode(false);
             setTempTagged(prevItem.tag_students ?? []);
         }
-    };
+    }, [currentIndex, items]);
 
-    const handleNext = (e?: React.MouseEvent) => {
+    const handleNext = useCallback((e?: React.MouseEvent) => {
         e?.stopPropagation();
         if (currentIndex < items.length - 1) {
             const nextItem = items[currentIndex + 1];
@@ -71,7 +71,7 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
             setEditMode(false);
             setTempTagged(nextItem.tag_students ?? []);
         }
-    };
+    }, [currentIndex, items]);
 
     useEffect(() => {
         if (!lightbox) return;
@@ -86,7 +86,9 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
         };
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [lightbox, currentIndex, items]);
+        // handlePrev/handleNext sono memoizzate su [currentIndex, items] (già dipendenze):
+        // l'effect gira esattamente quando girava prima.
+    }, [lightbox, currentIndex, items, handlePrev, handleNext]);
 
     if (items.length === 0) {
         return (
@@ -155,7 +157,7 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                                             a.click();
                                             document.body.removeChild(a);
                                             window.URL.revokeObjectURL(blobUrl);
-                                        } catch (err) {
+                                        } catch {
                                             window.open(item.file_url, '_blank');
                                         }
                                     }}

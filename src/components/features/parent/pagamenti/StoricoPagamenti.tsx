@@ -39,17 +39,17 @@ export function StoricoPagamenti({ userId }: Props) {
 
     const load = useCallback(async () => {
         try {
-            const res = await fetch(`/api/pagamenti?userId=${userId}`, { headers: { 'x-user-id': userId } });
-            const j = await res.json();
-            if (j.success) {
+            const res = await fetch(`/api/pagamenti?userId=${userId}`, { headers: { 'x-user-id': userId } }).catch(() => null);
+            const j = res ? await res.json().catch(() => null) : null;
+            if (j?.success) {
                 setPagamenti(j.data);
                 idsRef.current = j.data.map((p: Pagamento) => p.id).join(',');
                 setError(null);
-            } else {
+            } else if (j) {
                 setError(j.error || 'Impossibile caricare i pagamenti');
+            } else {
+                setError('Errore di rete');
             }
-        } catch {
-            setError('Errore di rete');
         } finally { setLoading(false); }
     }, [userId]);
 

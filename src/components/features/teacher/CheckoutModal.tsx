@@ -78,7 +78,7 @@ export function CheckoutModal({ studentName, delegates, onClose, onConfirmChecko
                         {isPanicLoading ? 'Invio Allarme...' : 'PANIC ALERT - Ritiro Non Autorizzato'}
                     </button>
                     <p className="text-xs font-maven text-center text-kidville-muted mt-2">
-                        Blocca l'uscita e invia una notifica immediata alla Segreteria e al Genitore.
+                        Blocca l&apos;uscita e invia una notifica immediata alla Segreteria e al Genitore.
                     </p>
                 </div>
             </div>

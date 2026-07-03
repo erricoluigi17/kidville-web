@@ -21,10 +21,10 @@ export function PushOptIn({ userId }: Props) {
 
     useEffect(() => {
         const ok = typeof window !== 'undefined' && 'serviceWorker' in navigator && 'PushManager' in window;
-        setSupported(ok);
         if (ok) {
             navigator.serviceWorker.getRegistration().then(async (reg) => {
                 const sub = await reg?.pushManager.getSubscription();
+                setSupported(true);
                 setSubscribed(!!sub);
             });
         }

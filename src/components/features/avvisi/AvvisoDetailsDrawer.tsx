@@ -45,11 +45,27 @@ export function AvvisoDetailsDrawer({ open, avviso, onClose, availableClasses = 
     const [selectedResponse, setSelectedResponse] = useState<string>('given'); // 'given' | 'si' | 'no' | 'attesa'
     const [searchQuery, setSearchQuery] = useState('');
 
+    // Reset stati filtri e viste al cambio avviso
+    // (adjust-state-during-render, prior art: AvvisoForm.tsx / TaskForm.tsx)
+    const [prevOpen, setPrevOpen] = useState(false);
+    const [prevAvviso, setPrevAvviso] = useState<Avviso | null>(null);
+    if (open !== prevOpen || avviso !== prevAvviso) {
+        setPrevOpen(open);
+        setPrevAvviso(avviso);
+        if (open && avviso) {
+            setLoading(true);
+            setMainTab('letture');
+            setReadSubTab('letti');
+            setSelectedClass('all');
+            setSelectedResponse('given');
+            setSearchQuery('');
+        }
+    }
+
     useEffect(() => {
         if (!open || !avviso) return;
 
         const loadDetails = async () => {
-            setLoading(true);
             try {
                 // 1. Carica le risposte/letture reali registrate nel database
                 const risposteRes = await fetch(`/api/avvisi/${avviso.id}/risposte?userId=${getCurrentTeacherId(null)}`);
@@ -94,13 +110,6 @@ export function AvvisoDetailsDrawer({ open, avviso, onClose, availableClasses = 
         };
 
         loadDetails();
-        
-        // Reset stati filtri e viste al cambio avviso
-        setMainTab('letture');
-        setReadSubTab('letti');
-        setSelectedClass('all');
-        setSelectedResponse('given');
-        setSearchQuery('');
     }, [open, avviso, availableClasses]);
 
     if (!avviso) return null;

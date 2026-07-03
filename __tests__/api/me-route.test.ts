@@ -6,21 +6,22 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 // M4B.1: espone anche `profili: [{ ruolo, area }]` (doppio profilo da `utenti`
 // + ponte `parents.auth_user_id`) e non 401-a i genitori reali (solo `parents`).
 
+// M9 (dedup M4B): la route non usa più resolveIdentity/getSessionProfili —
+// 1 getUser + 2 query parallele in sessione, header legacy solo senza sessione.
+// getRequestUserId è la funzione REALE (pura): l'header si testa dalla Request.
 const h = vi.hoisted(() => ({
-  identity: { userId: 'u-1', source: 'session' } as { userId: string | null; source: string | null },
   sessionUid: 'u-1' as string | null,
   utenti: null as Record<string, unknown> | null, // riga `utenti` (per id o auth uid)
   parentsById: null as Record<string, unknown> | null, // riga `parents` .eq('id', …)
   parentsByAuth: null as Record<string, unknown> | null, // riga `parents` .eq('auth_user_id', …)
-}))
-
-vi.mock('@/lib/auth/require-staff', () => ({
-  resolveIdentity: vi.fn(async () => h.identity),
+  dbQueries: 0, // contatore round-trip DB (from() = 1 query in questa route)
+  getUserCalls: 0, // contatore chiamate auth.getUser
 }))
 
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
     from: (table: string) => {
+      h.dbQueries++
       let col = ''
       const b = {
         select: () => b,
@@ -41,7 +42,10 @@ vi.mock('@/lib/supabase/server-client', () => ({
   }),
   createClient: async () => ({
     auth: {
-      getUser: async () => ({ data: { user: h.sessionUid ? { id: h.sessionUid } : null } }),
+      getUser: async () => {
+        h.getUserCalls++
+        return { data: { user: h.sessionUid ? { id: h.sessionUid } : null } }
+      },
     },
   }),
 }))
@@ -58,16 +62,17 @@ const rigaEducator = {
 }
 
 beforeEach(() => {
-  h.identity = { userId: 'u-1', source: 'session' }
   h.sessionUid = 'u-1'
   h.utenti = { ...rigaEducator }
   h.parentsById = null
   h.parentsByAuth = null
+  h.dbQueries = 0
+  h.getUserCalls = 0
 })
 
 describe('GET /api/me', () => {
-  it('401 senza identità', async () => {
-    h.identity = { userId: null, source: null }
+  it('401 senza identità (né sessione né header)', async () => {
+    h.sessionUid = null
     const res = await GET(new Request('http://localhost/api/me'))
     expect(res.status).toBe(401)
   })
@@ -101,15 +106,15 @@ describe('GET /api/me', () => {
   })
 
   it('genitore reale (solo parents + ponte): 200 con profilo genitore', async () => {
-    h.identity = { userId: 'p-1', source: 'session' }
     h.sessionUid = 'auth-9'
     h.utenti = null
-    h.parentsById = { id: 'p-1', nome: 'Luca', auth_user_id: 'auth-9' }
-    h.parentsByAuth = { id: 'p-1' }
+    h.parentsByAuth = { id: 'p-1', nome: 'Luca', auth_user_id: 'auth-9' }
     const res = await GET(new Request('http://localhost/api/me'))
     expect(res.status).toBe(200)
     const j = await res.json()
     expect(j.role).toBe('genitore')
+    expect(j.nome).toBe('Luca')
+    expect(j.auth_user_id).toBeUndefined()
     expect(j.profili).toEqual([{ ruolo: 'genitore', area: 'parent' }])
   })
 
@@ -123,11 +128,39 @@ describe('GET /api/me', () => {
     ])
   })
 
-  it('percorso legacy senza sessione: profilo singolo dal ruolo della riga', async () => {
-    h.identity = { userId: 'u-1', source: 'header' }
-    h.sessionUid = null
+  it('dedup M9: percorso sessione = 1 getUser + 2 query DB (erano 6-8)', async () => {
+    h.parentsByAuth = { id: 'p-7' } // caso peggiore: doppio profilo
     const res = await GET(new Request('http://localhost/api/me'))
-    const j = await res.json()
-    expect(j.profili).toEqual([{ ruolo: 'educator', area: 'teacher' }])
+    expect(res.status).toBe(200)
+    expect(h.getUserCalls).toBe(1)
+    expect(h.dbQueries).toBe(2)
+  })
+
+  it('percorso legacy senza sessione: profilo singolo dal ruolo della riga', async () => {
+    h.sessionUid = null
+    vi.stubEnv('ALLOW_HEADER_IDENTITY', 'true')
+    try {
+      const res = await GET(
+        new Request('http://localhost/api/me', { headers: { 'x-user-id': 'u-1' } })
+      )
+      expect(res.status).toBe(200)
+      const j = await res.json()
+      expect(j.profili).toEqual([{ ruolo: 'educator', area: 'teacher' }])
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
+  it('percorso legacy sigillato (ALLOW_HEADER_IDENTITY=false): header ignorato → 401', async () => {
+    h.sessionUid = null
+    vi.stubEnv('ALLOW_HEADER_IDENTITY', 'false')
+    try {
+      const res = await GET(
+        new Request('http://localhost/api/me', { headers: { 'x-user-id': 'u-1' } })
+      )
+      expect(res.status).toBe(401)
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 })

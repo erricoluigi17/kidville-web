@@ -5,7 +5,6 @@ import {
   Clock, Archive, Award, HeartPulse, Shield,
   ArrowRight, Download, CheckCircle2, Upload, Mail
 } from 'lucide-react';
-import { jsPDF } from 'jspdf';
 import { OtpEmailModal } from '@/components/features/parent/forms/OtpEmailModal';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 
@@ -293,12 +292,15 @@ export default function ParentModulisticaPage() {
   };
 
   // Receipt PDF Generator
-  const generateReceiptPDF = (form: AssignedForm | SignedArchiveItem, answers: Record<string, unknown>, log: SignatureLogInfo | null) => {
+  // M9.4: async per caricare jsPDF on-demand; i chiamanti sono fire-and-forget
+  // (onClick e post-firma), nessuno dipende dal completamento sincrono.
+  const generateReceiptPDF = async (form: AssignedForm | SignedArchiveItem, answers: Record<string, unknown>, log: SignatureLogInfo | null) => {
     const isArchive = 'forms_templates' in form;
     const title = isArchive ? (form as SignedArchiveItem).forms_templates.title : (form as AssignedForm).title;
     const desc = isArchive ? (form as SignedArchiveItem).forms_templates.description : (form as AssignedForm).description;
     const studentName = isArchive ? `${(form as SignedArchiveItem).alunni.nome} ${(form as SignedArchiveItem).alunni.cognome}` : `${(form as AssignedForm).student.nome} ${(form as AssignedForm).student.cognome}`;
-    
+
+    const { jsPDF } = await import('jspdf');
     const doc = new jsPDF();
     
     // School Letterhead Simulation
@@ -381,7 +383,8 @@ export default function ParentModulisticaPage() {
     if (!parentInfo || children.length === 0) return;
     
     showToastMsg('⏳ Generazione certificato in corso...');
-    setTimeout(() => {
+    setTimeout(async () => {
+      const { jsPDF } = await import('jspdf');
       const doc = new jsPDF();
       const currentStudent = children[0];
 

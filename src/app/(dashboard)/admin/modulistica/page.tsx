@@ -5,8 +5,6 @@ import {
   FileText, Plus, UserCheck, Settings, Calendar, Users,
   Trash2, Download, CheckCircle, ArrowRight, Upload, Shield
 } from 'lucide-react';
-import { jsPDF } from 'jspdf';
-import 'jspdf-autotable';
 import { PageHeader } from '@/components/ui/cockpit';
 import { btnClass } from '@/components/ui/Btn';
 
@@ -336,6 +334,10 @@ export default function AdminModulisticaPage() {
       
       if (!res.ok) throw new Error(data.error || 'Errore caricamento dati per merge');
 
+      // M9.4: jsPDF caricato on-demand solo quando si esporta (fuori dal bundle
+      // della pagina). L'import statico di jspdf-autotable è stato RIMOSSO:
+      // autoTable non è mai usato in questo file.
+      const { jsPDF } = await import('jspdf');
       const doc = new jsPDF();
       const results = data.results || [];
 

@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import { GraduationCap, Check, Lock, Download, Upload, FileDown, FileText, Send } from 'lucide-react';
-import * as XLSX from 'xlsx';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 
 interface Alunno { id: string; nome: string; cognome: string }
@@ -160,7 +159,9 @@ export default function ScrutinioPage() {
   };
 
   // --- CSV: template + import massivo dei giudizi ---
-  const scaricaTemplate = () => {
+  // M9.4: xlsx caricato on-demand negli handler (fuori dal bundle della pagina).
+  const scaricaTemplate = async () => {
+    const XLSX = await import('xlsx');
     const editabili = materie.filter((m) => canEdit(m.id));
     const righe: Record<string, string>[] = [];
     alunni.forEach((a) => {
@@ -178,6 +179,7 @@ export default function ScrutinioPage() {
     if (!scrutinio || !userId) return;
     setSaving(true); setMsg('');
     try {
+      const XLSX = await import('xlsx');
       const buf = await file.arrayBuffer();
       const wb = XLSX.read(buf);
       const ws = wb.Sheets[wb.SheetNames[0]];

@@ -2,7 +2,6 @@
 
 import React, { useState } from 'react';
 import { Upload, Download, Loader2, CheckCircle, FileSpreadsheet } from 'lucide-react';
-import * as XLSX from 'xlsx';
 import { createBrowserClient } from '@supabase/ssr';
 
 export function ImportExportClient() {
@@ -21,6 +20,8 @@ export function ImportExportClient() {
             const { data, error } = await supabase.from('alunni').select('*');
             if (error) throw error;
 
+            // M9.4: xlsx caricato on-demand solo quando si esporta/importa.
+            const XLSX = await import('xlsx');
             const worksheet = XLSX.utils.json_to_sheet(data);
             const workbook = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(workbook, worksheet, "Alunni");
@@ -42,6 +43,7 @@ export function ImportExportClient() {
         setImportResult(null);
 
         try {
+            const XLSX = await import('xlsx');
             const data = await file.arrayBuffer();
             const workbook = XLSX.read(data);
             const worksheet = workbook.Sheets[workbook.SheetNames[0]];

@@ -31,6 +31,17 @@ const ALLOWED_MIME = new Set([
   'image/heic',
   'image/gif',
 ])
+// contentType per i file con MIME vuoto dal browser (es. .heic su Chrome):
+// il bucket ha allowed_mime_types, octet-stream verrebbe rifiutato dallo storage.
+const EXT_MIME: Record<string, string> = {
+  pdf: 'application/pdf',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+  heic: 'image/heic',
+  gif: 'image/gif',
+}
 
 export async function POST(request: Request) {
   // Autenticazione (qualsiasi ruolo): impedisce upload anonimi sul bucket privato.
@@ -74,7 +85,7 @@ export async function POST(request: Request) {
       .upload(path, await file.arrayBuffer(), {
         cacheControl: '3600',
         upsert: false,
-        contentType: file.type || 'application/octet-stream',
+        contentType: file.type || EXT_MIME[ext],
       })
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 })

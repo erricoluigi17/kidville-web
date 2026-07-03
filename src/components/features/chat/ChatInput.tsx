@@ -18,6 +18,9 @@ export function ChatInput({ onSend, disabled, placeholder }: Props) {
     const fileRef = useRef<HTMLInputElement>(null);
 
     const handleSend = useCallback(() => {
+        // Niente invio con upload in corso: il messaggio partirebbe senza
+        // allegato e il file, a upload finito, resterebbe agganciato al composer.
+        if (uploading) return;
         const trimmed = text.trim();
         if (!trimmed && !attachment) return;
 
@@ -29,7 +32,7 @@ export function ChatInput({ onSend, disabled, placeholder }: Props) {
         setText('');
         setAttachment(null);
         inputRef.current?.focus();
-    }, [text, attachment, onSend]);
+    }, [text, attachment, onSend, uploading]);
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === 'Enter' && !e.shiftKey) {
@@ -133,7 +136,7 @@ export function ChatInput({ onSend, disabled, placeholder }: Props) {
                 {/* Send button */}
                 <button
                     onClick={handleSend}
-                    disabled={disabled || (!text.trim() && !attachment)}
+                    disabled={disabled || uploading || (!text.trim() && !attachment)}
                     className="w-10 h-10 rounded-full flex-shrink-0 flex items-center justify-center bg-kidville-green text-kidville-yellow hover:opacity-90 active:scale-95 transition-all disabled:opacity-30 disabled:cursor-not-allowed shadow-lg shadow-kidville-green/20"
                     aria-label="Invia messaggio"
                 >

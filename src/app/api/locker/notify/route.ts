@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
+import { rateLimit, clientIp } from '@/lib/security/rate-limit'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { enqueueNotifiche } from '@/lib/push/enqueue'
@@ -22,6 +23,15 @@ export async function POST(request: Request) {
   const auth = await requireUser(request)
   if (auth.response) return auth.response
   const { user } = auth
+
+  // Anti-spam: ogni chiamata genera una notifica per TUTTO lo staff del plesso.
+  const rl = rateLimit(`locker-notify:${clientIp(request)}`, { limit: 10, windowMs: 10 * 60 * 1000 })
+  if (!rl.ok) {
+    return NextResponse.json(
+      { error: 'Troppi avvisi inviati. Riprova tra qualche minuto.' },
+      { status: 429, headers: { 'Retry-After': String(Math.ceil(rl.retryAfterMs / 1000)) } }
+    )
+  }
 
   const b = await parseBody(request, postBodySchema)
   if ('response' in b) return b.response

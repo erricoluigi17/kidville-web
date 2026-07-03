@@ -113,14 +113,22 @@ function MessageBubble({ msg, isMine, currentUserId }: { msg: ChatMessage; isMin
                 </div>
             )}
             {msg.attachment_url && msg.attachment_type === 'document' && (
-                <a
-                    href={msg.attachment_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className={`mb-2 px-3 py-2 rounded-xl text-xs font-maven flex items-center gap-2 underline-offset-2 hover:underline ${isMine ? 'bg-white/20' : 'bg-kidville-neutral-soft'}`}
-                >
-                    📎 Documento allegato
-                </a>
+                /^https?:\/\//i.test(msg.attachment_url) ? (
+                    <a
+                        href={msg.attachment_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className={`mb-2 px-3 py-2 rounded-xl text-xs font-maven flex items-center gap-2 underline-offset-2 hover:underline ${isMine ? 'bg-white/20' : 'bg-kidville-neutral-soft'}`}
+                    >
+                        📎 Documento allegato
+                    </a>
+                ) : (
+                    // URL con schema non-http (es. javascript:) salvato via API:
+                    // niente link, solo il chip inerte com'era prima.
+                    <div className={`mb-2 px-3 py-2 rounded-xl text-xs font-maven flex items-center gap-2 ${isMine ? 'bg-white/20' : 'bg-kidville-neutral-soft'}`}>
+                        📎 Documento allegato
+                    </div>
+                )
             )}
 
             {/* Text */}

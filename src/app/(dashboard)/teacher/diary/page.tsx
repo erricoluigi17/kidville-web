@@ -175,6 +175,9 @@ function TeacherDiaryInner() {
             const savedIds = new Set<string>();
             Object.entries(latestPerStudent).forEach(([studentId, entry]) => {
                 if (entry.dettagli && typeof entry.dettagli === 'object') {
+                    // Eventi umore senza valore (legacy {umore:null}) non contano
+                    // come compilati: niente ✅ né ripristino stato.
+                    if (eventType === 'umore' && !umoreFromDettagli(entry.dettagli)) return;
                     newState[studentId] = entry.dettagli;
                     savedIds.add(studentId);
                 }
@@ -264,7 +267,14 @@ function TeacherDiaryInner() {
         try {
             if (!selectedEvent || !userId) return;
             const nowIso = new Date().toISOString();
-            const payload = students.map(student => {
+            // Umore è opzionale per bambino: si salvano SOLO gli alunni con un
+            // valore scelto, altrimenti si upserterebbero eventi {umore:null}
+            // che marcano ✅ tutti e sopprimono lo stato vuoto lato genitore.
+            const targetStudents = selectedEvent === 'umore'
+                ? students.filter(s => umoreFromDettagli(studentStates[s.id]) !== null)
+                : students;
+            if (targetStudents.length === 0) return;
+            const payload = targetStudents.map(student => {
                 // dettagli specifico per tipo evento:
                 // - attività   → elenco attività con partecipazione per-studente
                 // - nanna/sveglia/bagno/pranzo/merenda → stato per-studente (orari, contatori, portate)
@@ -310,8 +320,8 @@ function TeacherDiaryInner() {
                     .map((r: { alunno_id?: string }) => r.alunno_id)
                     .filter(Boolean)
             );
-            // Se nessuno ha un alunno_id nel result, segna tutti come salvati (upsert silent)
-            setSavedStudentIds(savedIds.size > 0 ? savedIds : new Set(students.map(s => s.id)));
+            // Se nessuno ha un alunno_id nel result, segna come salvati i soli inviati (upsert silent)
+            setSavedStudentIds(savedIds.size > 0 ? savedIds : new Set(targetStudents.map(s => s.id)));
             setShowSavedToast(true);
             setTimeout(() => setShowSavedToast(false), 2500);
         } catch (err) {

@@ -58,22 +58,27 @@ export function SubmissionsTable() {
   }, [filterStatus, filterFormId, filterDate, userId])
 
   // "Segna gestita" con stato ottimista: aggiorna subito la riga (la sidebar
-  // la deriva da submissions), rollback se il PATCH fallisce.
+  // la deriva da submissions), rollback della SOLA riga se il PATCH fallisce
+  // (mai snapshot dell'intera lista: un refetch da cambio filtro in volo
+  // verrebbe sovrascritto da dati stantii).
   const toggleGestita = useCallback(async (id: string, gestita: boolean) => {
-    let rollback: SubmissionRow[] = []
-    setSubmissions(cur => {
-      rollback = cur
-      return cur.map(s => (s.id === id
-        ? { ...s, gestita_il: gestita ? new Date().toISOString() : null }
-        : s))
-    })
+    let prevIl: string | null = null
+    let prevDa: string | null = null
+    setSubmissions(cur => cur.map(s => {
+      if (s.id !== id) return s
+      prevIl = s.gestita_il
+      prevDa = s.gestita_da
+      return { ...s, gestita_il: gestita ? new Date().toISOString() : null }
+    }))
     const res = await fetch(`/api/admin/forms/submissions/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', ...(userId ? { 'x-user-id': userId } : {}) },
       body: JSON.stringify({ gestita }),
     }).catch(() => null)
     if (!res?.ok) {
-      setSubmissions(rollback)
+      setSubmissions(cur => cur.map(s => (s.id === id
+        ? { ...s, gestita_il: prevIl, gestita_da: prevDa }
+        : s)))
       return false
     }
     const row = (await res.json().catch(() => null)) as SubmissionRow | null

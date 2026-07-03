@@ -4,10 +4,11 @@ import { useEffect, useMemo, useState, Suspense } from 'react';
 import Link from 'next/link';
 import {
   BookOpen, ClipboardCheck, NotebookPen, Images, Megaphone, ListTodo,
-  Bell, ChevronRight, Check, AlertTriangle, CalendarDays, Eye, Users,
+  Bell, ChevronRight, Check, AlertTriangle, Eye, Users,
 } from 'lucide-react';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { GradeWorldSwitch } from '@/components/features/teacher/GradeWorldSwitch';
+import { TeacherAgendaCard } from '@/components/features/teacher/TeacherAgendaCard';
 
 // Scorciatoie del giorno (DR ScorciatoieBlock). Le voci didattiche sono gated
 // dalla matrice funzioni (admin_settings.funzioni_matrice); comunica/attività
@@ -364,22 +365,13 @@ function TeacherDashboardInner() {
         )}
       </section>
 
-      {/* ── AGENDA (DR AgendaCard · nessun backend → placeholder) ── */}
+      {/* ── AGENDA (DR AgendaCard · eventi_agenda M6) ── */}
       <section className="mt-6">
         <div className="mb-3 px-0.5">
           <Eyebrow>Agenda</Eyebrow>
           <h2 className="font-barlow text-xl font-black uppercase leading-none text-kidville-green">La giornata in sezione</h2>
         </div>
-        <div className="rounded-2xl border border-dashed border-kidville-line bg-white/60 p-5 text-center"
-          aria-label="Agenda in arrivo">
-          <span className="mx-auto mb-2 flex h-11 w-11 items-center justify-center rounded-xl bg-kidville-green-soft text-kidville-green">
-            <CalendarDays size={22} />
-          </span>
-          <div className="font-barlow text-base font-extrabold uppercase text-kidville-green">Agenda della giornata</div>
-          <p className="mx-auto mt-1 max-w-[260px] font-maven text-[12.5px] leading-snug text-kidville-muted">
-            Calendario eventi e impegni della sezione · <span className="font-semibold text-kidville-yellow-dark">in arrivo</span>.
-          </p>
-        </div>
+        <TeacherAgendaCard sezione={activeSection} userId={userId} />
       </section>
 
       {/* footer */}

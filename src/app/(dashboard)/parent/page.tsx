@@ -132,7 +132,7 @@ function ParentHomeContent() {
                 priority
                 onError={() => setMascotFailed(true)}
                 className="select-none object-contain object-bottom drop-shadow-xl"
-                style={{ height: 152, width: 'auto' }}
+                style={{ height: 128, width: 'auto' }}
               />
             ) : (
               <div className="flex select-none items-center justify-center text-[80px] opacity-30" style={{ width: 150, height: 150 }}>

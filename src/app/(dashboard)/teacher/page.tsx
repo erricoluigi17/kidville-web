@@ -149,10 +149,10 @@ function TeacherDashboardInner() {
         >
           <Bell size={18} />
         </Link>
-        {/* M9.5: mascotte statica su next/image (intrinseco 792×1040 in scala);
-            w-auto esplicito = width auto già computata prima, resa identica */}
+        {/* M9.5: mascotte statica su next/image (intrinseco 792×1040 in scala).
+            Rimpicciolita (h-36→h-28) per non finire sotto la campanella in alto a destra. */}
         <Image src="/mascot.png" alt="" width={198} height={260} priority draggable={false}
-          className="pointer-events-none absolute -bottom-2 right-[-6px] z-0 h-36 w-auto select-none" />
+          className="pointer-events-none absolute -bottom-2 right-[-6px] z-0 h-28 w-auto select-none" />
       </div>
 
       {/* ── GRADE WORLD SWITCH (solo docenti misti) ─────── */}

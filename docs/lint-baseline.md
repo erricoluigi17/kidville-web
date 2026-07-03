@@ -36,3 +36,12 @@ deve essere ≤ del gate precedente, fino allo zero assoluto in M9 (`npx eslint 
 | M6 (agenda condivisa) | 2026-07-03 | 114 / 44 |
 | M7 (search+notifiche+presenze) | 2026-07-03 | 113 / 44 |
 | M8 (suite E2E Playwright) | 2026-07-03 | 113 / 44 |
+| **M9 (lint zero + perf)** | 2026-07-03 | **0 / 0** |
+
+## Chiusura (M9, 2026-07-03)
+
+Obiettivo raggiunto: `npx eslint . --max-warnings 0` esce 0 sull'**intero
+repo** (`src`, `supabase`, `__tests__`, `scripts`, `e2e`, config), non solo su
+`src supabase`. Da qui in avanti il gate è binario: qualsiasi warning nuovo
+rompe `--max-warnings 0`. Unici disable residui: `@next/next/no-img-element`
+sui media utente (URL runtime da storage), tutti con motivazione inline.

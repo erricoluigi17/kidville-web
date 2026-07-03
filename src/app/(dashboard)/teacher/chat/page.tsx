@@ -292,8 +292,10 @@ function TeacherChatContent() {
                 </button>
             </div>
 
-            {/* Desktop Layout: sidebar + chat area */}
-            <div className="hidden md:flex gap-4 h-[calc(100vh-200px)] min-h-[500px]">
+            {/* Desktop Layout: sidebar + chat area. mb-24 = clearance sotto il
+                pannello ad altezza fissa, così lo scroll porta sempre il
+                composer sopra la bottom nav fissa (stesso fix del parent chat). */}
+            <div className="hidden md:flex gap-4 h-[calc(100vh-200px)] min-h-[500px] mb-24">
                 {/* Thread list */}
                 <div className="w-80 flex-shrink-0 bg-white rounded-3xl border border-kidville-line shadow-sm overflow-hidden flex flex-col">
                     <div className="px-4 py-3 border-b border-kidville-line">

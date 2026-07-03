@@ -340,8 +340,12 @@ function ParentChatContent() {
                 </div>
             )}
 
-            {/* Desktop */}
-            <div className="hidden md:flex gap-4 h-[calc(100vh-200px)] min-h-[500px]">
+            {/* Desktop. mb-24 = clearance sotto il pannello: l'altezza fissa
+                calc(100vh-200px) non tiene conto del banner fuori-orario, che
+                spingeva il composer SOTTO la bottom nav fissa (irraggiungibile
+                anche scrollando). Col margine lo scroll libera il composer;
+                senza banner la resa iniziale è identica (spazio sotto la fold). */}
+            <div className="hidden md:flex gap-4 h-[calc(100vh-200px)] min-h-[500px] mb-24">
                 <div className="w-80 flex-shrink-0 bg-white rounded-3xl border border-kidville-line shadow-sm overflow-hidden flex flex-col">
                     <div className="px-4 py-3 border-b border-kidville-line">
                         <p className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide">Insegnanti</p>

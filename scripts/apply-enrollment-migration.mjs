@@ -3,16 +3,16 @@
  * Script per applicare la migrazione enrollment_submissions + funzione exec_sql.
  * 
  * Uso:
- *   node scripts/apply-enrollment-migration.js <DATABASE_URL>
- * 
+ *   node scripts/apply-enrollment-migration.mjs <DATABASE_URL>
+ *
  * Dove DATABASE_URL è il connection string PostgreSQL dal Supabase Dashboard:
  *   Settings → Database → Connection string → URI
- * 
+ *
  * Esempio:
- *   node scripts/apply-enrollment-migration.js "postgresql://postgres.uimulkjyekgemjakmepp:PASSWORD@aws-0-eu-central-1.pooler.supabase.com:6543/postgres"
+ *   node scripts/apply-enrollment-migration.mjs "postgresql://postgres.uimulkjyekgemjakmepp:PASSWORD@aws-0-eu-central-1.pooler.supabase.com:6543/postgres"
  */
 
-const { Client } = require('pg')
+import { Client } from 'pg'
 
 const MIGRATION_SQL = `
 -- 0. Funzione helper exec_sql (usata da altre route)
@@ -66,7 +66,7 @@ async function main() {
   const dbUrl = process.argv[2]
   
   if (!dbUrl) {
-    console.error('❌ Usage: node scripts/apply-enrollment-migration.js <DATABASE_URL>')
+    console.error('❌ Usage: node scripts/apply-enrollment-migration.mjs <DATABASE_URL>')
     console.error('')
     console.error('   Trovi il DATABASE_URL nel Supabase Dashboard:')
     console.error('   Settings → Database → Connection string → URI')

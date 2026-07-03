@@ -23,13 +23,13 @@ vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
     storage: { from: () => ({ createSignedUrl: async () => ({ data: { signedUrl: 'https://signed/url' }, error: null }) }) },
     from(table: string) {
-      const q: any = {}
+      const q: Record<string, unknown> = {}
       q.select = () => q
       q.eq = () => q
       q.in = () => q
       q.order = () => q
       q.maybeSingle = async () => ({ data: h.owns ? { alunno_id: 'al1' } : null, error: null })
-      q.then = (r: any) => {
+      q.then = (r: (v: { data: unknown; error: null }) => unknown) => {
         if (table === 'legame_genitori_alunni' || table === 'student_parents') return r({ data: h.owns ? [{ alunno_id: 'al1', student_id: 'al1' }] : [], error: null })
         if (table === 'certificati_competenze') return r({ data: h.certs, error: null })
         return r({ data: [], error: null })

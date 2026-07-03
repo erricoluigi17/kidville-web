@@ -38,7 +38,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
 
 // Conta i figli iscritti di un parent (per la regola "orfano").
 vi.mock('@/lib/gdpr/orfano', () => ({
-  parentHaAltriFigliIscritti: vi.fn(async (_s: unknown, parentId: string, _exclude: string) => {
+  parentHaAltriFigliIscritti: vi.fn(async (_s: unknown, parentId: string) => {
     const kids = h.parentChildren[parentId] ?? []
     return kids.some((k) => k.stato === 'iscritto' && !k.anonimizzato_il)
   }),

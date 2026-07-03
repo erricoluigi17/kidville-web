@@ -5,20 +5,20 @@ import JSZip from 'jszip'
 const h = vi.hoisted(() => ({
   requireStaff: vi.fn(),
   applySidiBatch: vi.fn(),
-  inserted: null as any,
+  inserted: null as Record<string, unknown> | null,
 }))
 vi.mock('@/lib/auth/require-staff', async (orig) => ({ ...(await orig() as object), requireStaff: h.requireStaff }))
 vi.mock('@/lib/sidi/import-apply', () => ({ applySidiBatch: h.applySidiBatch }))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
     from() {
-      const q: any = {}
+      const q: Record<string, unknown> = {}
       q.select = () => q
       q.eq = () => q
       q.order = () => q
       q.limit = () => q
-      q.insert = (row: any) => { h.inserted = row; return { select: () => ({ single: async () => ({ data: { id: 'batch-1' }, error: null }) }) } }
-      q.then = (r: any) => r({ data: [], error: null })
+      q.insert = (row: Record<string, unknown>) => { h.inserted = row; return { select: () => ({ single: async () => ({ data: { id: 'batch-1' }, error: null }) }) } }
+      q.then = (r: (v: { data: unknown; error: null }) => unknown) => r({ data: [], error: null })
       return q
     },
   }),
@@ -61,8 +61,8 @@ describe('POST /api/admin/sidi/import — upload + parse', () => {
     const body = await res.json()
     expect(body.batchId).toBe('batch-1')
     expect(body.totale).toBe(1)
-    expect(h.inserted.stato).toBe('parsed')
-    expect(h.inserted.parsed_payload).toHaveLength(1)
+    expect(h.inserted?.stato).toBe('parsed')
+    expect(h.inserted?.parsed_payload).toHaveLength(1)
   })
 
   it('400 senza file', async () => {

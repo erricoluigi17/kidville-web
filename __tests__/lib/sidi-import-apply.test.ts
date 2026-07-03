@@ -5,6 +5,8 @@ vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: h.logScrittura }))
 
 import { applySidiRecords } from '@/lib/sidi/import-apply'
 import type { SidiDomandaRecord } from '@/lib/sidi/zip-parser'
+import type { SupabaseClient } from '@supabase/supabase-js'
+import type { AppUser } from '@/lib/auth/require-staff'
 
 interface Opts {
   alunniByNumero?: Record<string, { id: string }>
@@ -12,11 +14,11 @@ interface Opts {
   parentsByCF?: Record<string, { id: string }>
 }
 function makeSupabase(opts: Opts) {
-  const captures = { inserts: [] as { table: string; row: any }[], updates: [] as { table: string; payload: any }[], upserts: [] as { table: string; payload: any }[] }
-  const client: any = {
+  const captures = { inserts: [] as { table: string; row: Record<string, unknown> }[], updates: [] as { table: string; payload: Record<string, unknown> }[], upserts: [] as { table: string; payload: Record<string, unknown> }[] }
+  const client = {
     from(table: string) {
       const filters: [string, unknown][] = []
-      const q: any = {}
+      const q: Record<string, unknown> = {}
       q.select = () => q
       q.eq = (col: string, val: unknown) => { filters.push([col, val]); return q }
       q.maybeSingle = async () => {
@@ -33,13 +35,13 @@ function makeSupabase(opts: Opts) {
         }
         return { data: null, error: null }
       }
-      q.insert = (row: any) => { captures.inserts.push({ table, row }); return { select: () => ({ single: async () => ({ data: { id: `${table}-new` }, error: null }) }) } }
-      q.update = (payload: any) => { captures.updates.push({ table, payload }); return { eq: async () => ({ data: null, error: null }) } }
-      q.upsert = async (payload: any) => { captures.upserts.push({ table, payload }); return { data: null, error: null } }
+      q.insert = (row: Record<string, unknown>) => { captures.inserts.push({ table, row }); return { select: () => ({ single: async () => ({ data: { id: `${table}-new` }, error: null }) }) } }
+      q.update = (payload: Record<string, unknown>) => { captures.updates.push({ table, payload }); return { eq: async () => ({ data: null, error: null }) } }
+      q.upsert = async (payload: Record<string, unknown>) => { captures.upserts.push({ table, payload }); return { data: null, error: null } }
       return q
     },
   }
-  return { client, captures }
+  return { client: client as unknown as SupabaseClient, captures }
 }
 
 const rec = (over: Partial<SidiDomandaRecord> = {}): SidiDomandaRecord => ({
@@ -49,7 +51,7 @@ const rec = (over: Partial<SidiDomandaRecord> = {}): SidiDomandaRecord => ({
   classe_richiesta: null,
   ...over,
 })
-const attore = { id: 'seg1', role: 'segreteria', scuola_id: 'sc1' } as any
+const attore: AppUser = { id: 'seg1', role: 'segreteria', scuola_id: 'sc1' }
 
 beforeEach(() => vi.clearAllMocks())
 

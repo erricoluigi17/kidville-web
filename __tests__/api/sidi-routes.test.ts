@@ -1,25 +1,30 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { NextResponse } from 'next/server'
 
+type UpsertPayload = {
+  fase_a_stato?: unknown
+  sidi_config?: { password_ref?: unknown; abilitato?: unknown }
+}
+
 const h = vi.hoisted(() => ({
   requireStaff: vi.fn(),
   logScrittura: vi.fn(),
   single: {} as Record<string, unknown>,
   list: {} as Record<string, unknown[]>,
-  upserts: [] as { table: string; payload: any }[],
+  upserts: [] as { table: string; payload: UpsertPayload }[],
 }))
 vi.mock('@/lib/auth/require-staff', async (orig) => ({ ...(await orig() as object), requireStaff: h.requireStaff }))
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: h.logScrittura }))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
     from(table: string) {
-      const q: any = {}
+      const q: Record<string, unknown> = {}
       q.select = () => q
       q.eq = () => q
       q.order = () => q
       q.maybeSingle = async () => ({ data: h.single[table] ?? null, error: null })
-      q.then = (r: any) => r({ data: h.list[table] ?? [], error: null })
-      q.upsert = async (payload: any) => { h.upserts.push({ table, payload }); return { data: null, error: null } }
+      q.then = (r: (v: { data: unknown; error: null }) => unknown) => r({ data: h.list[table] ?? [], error: null })
+      q.upsert = async (payload: UpsertPayload) => { h.upserts.push({ table, payload }); return { data: null, error: null } }
       q.update = () => ({ eq: async () => ({ data: null, error: null }) })
       return q
     },
@@ -80,7 +85,7 @@ describe('/api/admin/settings/sidi — masking', () => {
     h.single['admin_settings'] = { sidi_config: { password_ref: 'REAL_ENV' } }
     await SIDI_SETTINGS_PATCH(new Request('http://localhost/api/admin/settings/sidi', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password_ref: '••••••', abilitato: true }) }) as never)
     const upsert = h.upserts.find((u) => u.table === 'admin_settings')
-    expect(upsert?.payload.sidi_config.password_ref).toBe('REAL_ENV')
-    expect(upsert?.payload.sidi_config.abilitato).toBe(true)
+    expect(upsert?.payload.sidi_config?.password_ref).toBe('REAL_ENV')
+    expect(upsert?.payload.sidi_config?.abilitato).toBe(true)
   })
 })

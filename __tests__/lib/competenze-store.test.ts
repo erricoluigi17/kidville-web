@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import type { SupabaseClient } from '@supabase/supabase-js'
 
 const h = vi.hoisted(() => ({
   recordSignerSlot: vi.fn(async () => ({ error: null })),
@@ -18,8 +19,8 @@ interface MockOpts {
   upsertId?: Record<string, string>
 }
 function makeSupabase(opts: MockOpts) {
-  const captures = { updates: [] as { table: string; payload: any }[] }
-  const client: any = {
+  const captures = { updates: [] as { table: string; payload: Record<string, unknown> }[] }
+  const client = {
     storage: {
       listBuckets: async () => ({ data: [{ name: 'certificati-competenze' }], error: null }),
       from: () => ({
@@ -31,26 +32,26 @@ function makeSupabase(opts: MockOpts) {
     from(table: string) {
       const single = opts.single?.[table] ?? null
       const list = opts.list?.[table] ?? []
-      const q: any = {}
+      const q: Record<string, unknown> = {}
       q.select = () => q
       q.eq = () => q
       q.order = () => q
       q.limit = () => q
       q.maybeSingle = async () => ({ data: single, error: null })
       q.single = async () => ({ data: single, error: null })
-      q.then = (res: any) => res({ data: list, error: null })
-      q.update = (payload: any) => {
+      q.then = (res: (v: { data: unknown; error: null }) => unknown) => res({ data: list, error: null })
+      q.update = (payload: Record<string, unknown>) => {
         captures.updates.push({ table, payload })
         return { eq: async () => ({ data: null, error: null }) }
       }
-      q.upsert = (payload: any) => ({
+      q.upsert = () => ({
         select: () => ({ single: async () => ({ data: { id: opts.upsertId?.[table] ?? `${table}-id` }, error: null }) }),
-        then: (r: any) => r({ data: null, error: null }),
+        then: (r: (v: { data: unknown; error: null }) => unknown) => r({ data: null, error: null }),
       })
       return q
     },
   }
-  return { client, captures }
+  return { client: client as unknown as SupabaseClient, captures }
 }
 
 beforeEach(() => vi.clearAllMocks())
@@ -114,7 +115,7 @@ describe('generaCertificato', () => {
     expect(upd?.payload.firma_applicativa).toBeTruthy()
     expect(upd?.payload.generato_da).toBe('dir1')
     expect(h.recordSignerSlot).toHaveBeenCalledTimes(1)
-    expect((h.recordSignerSlot.mock.calls[0] as any[])[1].entitaTipo).toBe('certificato_competenze')
+    expect((h.recordSignerSlot.mock.calls[0] as unknown as [unknown, { entitaTipo: string }])[1].entitaTipo).toBe('certificato_competenze')
     expect(h.logFeaEvent).toHaveBeenCalledTimes(1)
   })
 

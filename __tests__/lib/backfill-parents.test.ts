@@ -12,7 +12,7 @@ function makeAdmin(opts: {
   return {
     created,
     bound,
-    from: (_table: string) => ({
+    from: () => ({
       select: () => ({
         is: () => Promise.resolve({ data: opts.parents, error: null }),
       }),

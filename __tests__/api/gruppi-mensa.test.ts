@@ -4,14 +4,14 @@ import { NextResponse } from 'next/server'
 const h = vi.hoisted(() => ({
   requireStaff: vi.fn(),
   logScrittura: vi.fn(),
-  updateCapture: null as null | { table: string; payload: any; ids: string[] },
+  updateCapture: null as null | { table: string; payload: unknown; ids: string[] },
 }))
 vi.mock('@/lib/auth/require-staff', async (orig) => ({ ...(await orig() as object), requireStaff: h.requireStaff }))
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: h.logScrittura }))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
     from(table: string) {
-      const q: any = {}
+      const q: Record<string, unknown> = {}
       q.select = () => q
       q.eq = () => q
       q.order = () => q
@@ -19,12 +19,12 @@ vi.mock('@/lib/supabase/server-client', () => ({
         if (h.updateCapture) h.updateCapture.ids = ids
         return { select: async () => ({ data: ids.map((id) => ({ id })), error: null }) }
       }
-      q.update = (payload: any) => {
+      q.update = (payload: unknown) => {
         h.updateCapture = { table, payload, ids: [] }
         return q
       }
-      q.insert = (row: any) => ({ select: () => ({ single: async () => ({ data: { id: 'gm-new', ...row }, error: null }) }) })
-      q.then = (r: any) => r({ data: [], error: null })
+      q.insert = (row: Record<string, unknown>) => ({ select: () => ({ single: async () => ({ data: { id: 'gm-new', ...row }, error: null }) }) })
+      q.then = (r: (v: { data: unknown; error: null }) => unknown) => r({ data: [], error: null })
       return q
     },
   }),

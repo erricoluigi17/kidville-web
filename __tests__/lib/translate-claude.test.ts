@@ -5,7 +5,9 @@ import { translateText } from '@/lib/translate/claude'
 // Client iniettabile per testare senza rete.
 
 function fakeClient(text: string) {
-  const create = vi.fn(async (_args: unknown) => ({ content: [{ type: 'text', text }] }))
+  const create = vi.fn<(args: unknown) => Promise<{ content: { type: string; text: string }[] }>>(
+    async () => ({ content: [{ type: 'text', text }] })
+  )
   return { messages: { create }, _create: create }
 }
 

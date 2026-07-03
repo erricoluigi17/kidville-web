@@ -37,13 +37,12 @@ describe('Offline Sync Engine', () => {
   });
 
   afterEach(() => {
-    // @ts-ignore
     global.navigator = originalNavigator;
   });
 
   it('aborts synchronization if navigator is offline', async () => {
     // Simuliamo offline
-    // @ts-ignore
+    // @ts-expect-error — stub parziale di Navigator (solo onLine) per il test
     global.navigator = { onLine: false };
 
     await syncPendingLogs();
@@ -54,7 +53,7 @@ describe('Offline Sync Engine', () => {
 
   it('processes pending logs and syncs with supabase when online', async () => {
     // Simuliamo online
-    // @ts-ignore
+    // @ts-expect-error — stub parziale di Navigator (solo onLine) per il test
     global.navigator = { onLine: true };
 
     const fakePendingLog = {

@@ -53,7 +53,13 @@ const QUANTITY_NARRATIVE: Record<string, string> = {
 
 function buildFirstPersonNarrative(tipo: string, dettagli: Record<string, unknown> | null): { lines: string[], emoji: string } {
     if (tipo === 'entrata') {
-        const orario = (dettagli?.orario as string) ?? '';
+        const orarioRaw = (dettagli?.orario as string) ?? '';
+        // orarioRaw può essere un ISO (timestamp dell'appello) o già 'HH:MM':
+        // formatto l'ISO in ora leggibile, lascio invariato ciò che ISO non è.
+        const d = orarioRaw ? new Date(orarioRaw) : null;
+        const orario = d && !isNaN(d.getTime())
+            ? d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })
+            : orarioRaw;
         return {
             emoji: '👋',
             lines: orario

@@ -32,3 +32,4 @@ deve essere ≤ del gate precedente, fino allo zero assoluto in M9 (`npx eslint 
 | M3 (zod sweep) | 2026-07-03 | 208 / 79 |
 | M4 (identità session-only) | 2026-07-03 | 117 / 44 |
 | M4B (smistamento per ruolo) | 2026-07-03 | 117 / 44 |
+| M5 (placeholder piccoli) | 2026-07-03 | 114 / 44 |

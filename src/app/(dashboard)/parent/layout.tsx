@@ -1,8 +1,12 @@
 import { Suspense } from 'react';
 import BottomNav from '@/components/features/parent/BottomNav';
 import { ChildSwitcher } from '@/components/features/parent/ChildSwitcher';
+import { requireArea } from '@/lib/auth/area-guard';
 
-export default function ParentLayout({ children }: { children: React.ReactNode }) {
+export default async function ParentLayout({ children }: { children: React.ReactNode }) {
+  // Guardia d'area (M4B.4): solo ruolo attivo `genitore`; un docente che apre
+  // /parent finisce su /teacher, un doppio profilo senza scelta torna al login.
+  await requireArea('parent');
   return (
     <div className="min-h-screen bg-kidville-cream">
       <a

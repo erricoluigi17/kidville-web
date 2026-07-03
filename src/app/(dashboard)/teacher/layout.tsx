@@ -1,10 +1,14 @@
 import { Suspense } from 'react';
 import TeacherBottomNav from '@/components/features/teacher/TeacherBottomNav';
+import { requireArea } from '@/lib/auth/area-guard';
 
 // Cornice persistente dell'area Insegnante: monta la bottom nav del design (DR)
 // su tutte le rotte /teacher/**. Niente vincolo di larghezza globale: ogni pagina
 // mantiene la propria colonna (le pagine primaria condivise con /admin restano larghe).
-export default function TeacherLayout({ children }: { children: React.ReactNode }) {
+export default async function TeacherLayout({ children }: { children: React.ReactNode }) {
+  // Guardia d'area (M4B.4): educator + staff di gestione (eccezione preservata:
+  // lo staff ha già permessi di scrittura sulle funzioni docente lato API).
+  await requireArea('teacher');
   return (
     <div className="min-h-screen bg-kidville-cream">
       <a

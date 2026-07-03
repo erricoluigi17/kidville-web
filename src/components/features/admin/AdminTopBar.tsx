@@ -2,16 +2,15 @@
 
 /**
  * TopBar del cockpit Direzione/Segreteria (desktop). Barra verde persistente:
- * logo · ricerca (placeholder) · selettore sede (reale, /api/admin/schools) ·
- * campanella (placeholder) · avatar+ruolo. Mirror di DR `ds.css .kv-topbar`.
- *
- * Ricerca e campanella NON hanno backend → placeholder attivo con toast
- * "in arrivo" (vedi LISTA 1 del piano). Su mobile è nascosta: la topbar/drawer
+ * logo · ricerca globale (reale, /api/admin/search — M7.2) · selettore sede
+ * (reale, /api/admin/schools) · campanella (placeholder) · avatar+ruolo.
+ * Mirror di DR `ds.css .kv-topbar`. Su mobile è nascosta: la topbar/drawer
  * mobile vive già in AdminSidebar.
  */
 import { useEffect, useState } from 'react';
 import { Search, Bell } from 'lucide-react';
 import { SedeSelector } from '@/components/ui/cockpit';
+import { AdminSearchPanel } from './AdminSearchPanel';
 
 const ROLE_LABEL: Record<string, string> = {
   admin: 'Direzione',
@@ -19,13 +18,17 @@ const ROLE_LABEL: Record<string, string> = {
 };
 
 export function AdminTopBar() {
-  const [userId, setUserId] = useState<string | null>(null);
+  // Legge ?userId= LATO CLIENT senza useSearchParams (la shell non deve
+  // sospendere, vedi commento in admin/layout.tsx): lazy initializer, così
+  // niente setState sincrono nell'effect (react-hooks 7). In SSR è null e il
+  // markup non dipende da userId → nessun mismatch di hydration.
+  const [userId] = useState<string | null>(() =>
+    typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('userId')
+  );
   const [ruolo, setRuolo] = useState<string>('');
   const [toast, setToast] = useState<string | null>(null);
-
-  useEffect(() => {
-    setUserId(new URLSearchParams(window.location.search).get('userId'));
-  }, []);
+  const [search, setSearch] = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
 
   useEffect(() => {
     if (!userId) return;
@@ -52,17 +55,26 @@ export function AdminTopBar() {
           <span className="font-barlow text-[21px] font-black uppercase tracking-[0.02em] text-kidville-white">Kidville</span>
         </div>
 
-        {/* ricerca (placeholder) */}
+        {/* ricerca globale (reale, /api/admin/search — M7.2) */}
         <div className="relative min-w-0 max-w-[460px] flex-1">
           <span className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-kidville-white/60"><Search size={17} /></span>
           <input
-            readOnly
-            onFocus={() => setToast('Ricerca globale in arrivo')}
-            onClick={() => setToast('Ricerca globale in arrivo')}
+            value={search}
+            onChange={(e) => { setSearch(e.target.value); setSearchOpen(true); }}
+            onFocus={() => setSearchOpen(true)}
+            onBlur={() => setSearchOpen(false)}
+            onKeyDown={(e) => { if (e.key === 'Escape') { setSearchOpen(false); e.currentTarget.blur(); } }}
             placeholder="Cerca alunno, genitore, codice fiscale…"
-            aria-label="Ricerca globale (in arrivo)"
-            className="h-10 w-full cursor-pointer rounded-[11px] border-none bg-kidville-white/[0.14] pl-10 pr-3.5 font-maven text-[13.5px] text-kidville-white outline-none placeholder:text-kidville-white/60"
+            aria-label="Ricerca globale"
+            className="h-10 w-full rounded-[11px] border-none bg-kidville-white/[0.14] pl-10 pr-3.5 font-maven text-[13.5px] text-kidville-white outline-none placeholder:text-kidville-white/60"
           />
+          {searchOpen && (
+            <AdminSearchPanel
+              query={search}
+              userId={userId}
+              onNavigate={() => { setSearchOpen(false); setSearch(''); }}
+            />
+          )}
         </div>
 
         <div className="flex-1" />

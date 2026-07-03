@@ -65,4 +65,12 @@ describe('decideAreaAccess', () => {
     expect(decideAreaAccess(cuoca, null, 'admin')).toBeNull()
     expect(decideAreaAccess(cuoca, null, 'teacher')).toBe('/admin')
   })
+
+  it('anti-loop: ruolo fuori matrice non viene mai reindirizzato alla stessa area', () => {
+    const legacy = [{ ruolo: 'maestra', area: 'parent' }] as unknown as Profilo[]
+    // home di fallback = /parent: su /parent sarebbe un giro infinito → login
+    expect(decideAreaAccess(legacy, null, 'parent')).toBe('/auth/login')
+    expect(decideAreaAccess(legacy, null, 'teacher')).toBe('/parent')
+    expect(decideAreaAccess(legacy, null, 'admin')).toBe('/parent')
+  })
 })

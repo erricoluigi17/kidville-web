@@ -65,6 +65,9 @@ function LoginForm() {
   const [loading, setLoading] = useState(false);
   // ≥2 profili → step inline di scelta ruolo nella stessa card.
   const [profili, setProfili] = useState<ProfiloDisponibile[] | null>(null);
+  // Con ?scegli=1 il primo paint attende /api/me: niente flash del form
+  // credenziali prima del picker (resta la card con titolo e sottotitolo).
+  const [attesa, setAttesa] = useState(scegli);
 
   useEffect(() => {
     if (!scegli) return;
@@ -96,8 +99,13 @@ function LoginForm() {
             });
           } else if (profs && profs.length >= 2) {
             setProfili(profs);
+            setAttesa(false);
+          } else {
+            // Nessuna sessione/profilo: resta il form credenziali.
+            setAttesa(false);
           }
-          // Nessuna sessione/profilo: resta il form credenziali.
+          // NB: nel caso auto-riparazione (ruolo unico) attesa resta true:
+          // si sta già navigando via, niente flash del form.
         }
       }
     };
@@ -157,8 +165,10 @@ function LoginForm() {
         return;
       }
 
-      // Degrado graceful: profili non disponibili → comportamento precedente.
-      router.replace(next || '/');
+      // Degrado graceful: profili non disponibili. Mai next grezzo (open
+      // redirect): si onorano solo path interni alle aree; per il resto si va
+      // alla radice e le guardie server-side faranno il loro lavoro.
+      router.replace(next && areaFromPath(next) ? next : '/');
       router.refresh();
     } catch {
       setError('Errore di connessione. Riprova.');
@@ -204,7 +214,7 @@ function LoginForm() {
           </div>
         )}
 
-        {profili ? (
+        {attesa ? null : profili ? (
           <div role="group" aria-label="Scelta del ruolo">
             {profili.map((p) => (
               <button

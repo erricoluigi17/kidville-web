@@ -26,19 +26,23 @@ export async function getProfiliForAuthUid(authUid: string): Promise<Profilo[]> 
   const supabase = await createAdminClient()
   const profili: Profilo[] = []
 
-  const { data: staff } = await supabase
+  // NB: un errore DB transiente qui degrada in "meno profili" (fail-closed:
+  // al peggio si torna al login) — va comunque a log per l'osservabilità.
+  const { data: staff, error: errStaff } = await supabase
     .from('utenti')
     .select('id, role, ruolo')
     .eq('id', authUid)
     .maybeSingle()
+  if (errStaff) console.warn('[profili] lettura utenti fallita:', errStaff.message)
   const ruoloStaff = (staff?.role || staff?.ruolo) as AppRole | undefined
   if (ruoloStaff) profili.push({ ruolo: ruoloStaff, area: areaForRole(ruoloStaff) })
 
-  const { data: parent } = await supabase
+  const { data: parent, error: errParent } = await supabase
     .from('parents')
     .select('id')
     .eq('auth_user_id', authUid)
     .maybeSingle()
+  if (errParent) console.warn('[profili] lettura parents fallita:', errParent.message)
   if (parent && !profili.some((p) => p.ruolo === 'genitore')) {
     profili.push({ ruolo: 'genitore', area: 'parent' })
   }

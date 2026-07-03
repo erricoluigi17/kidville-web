@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
-import { resolveIdentity, loadAppUser } from '@/lib/auth/require-staff'
+import { resolveIdentity, loadAppUser, type AppRole } from '@/lib/auth/require-staff'
 import { getSessionProfili } from '@/lib/auth/profili'
-import { ACTIVE_ROLE_COOKIE, areaForRole } from '@/lib/auth/active-role'
+import { ACTIVE_ROLE_COOKIE, areaForRole, RUOLI_APP } from '@/lib/auth/active-role'
 import { parseBody } from '@/lib/validation/http'
 
 // POST /api/auth/active-role — setta SERVER-SIDE il cookie `kv-active-role`
@@ -12,7 +12,7 @@ import { parseBody } from '@/lib/validation/http'
 // Lo leggono le guardie d'area nei layout (M4B.4).
 
 const postSchema = z.object({
-  ruolo: z.enum(['admin', 'coordinator', 'segreteria', 'cuoca', 'educator', 'genitore']),
+  ruolo: z.enum(RUOLI_APP as [AppRole, ...AppRole[]]),
 })
 
 export async function POST(request: Request) {

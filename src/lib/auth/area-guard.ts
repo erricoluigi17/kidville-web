@@ -40,7 +40,13 @@ export function decideAreaAccess(
         : null
 
   if (!ruoloAttivo) return `/auth/login?scegli=1&next=/${area}`
-  if (!isAreaAllowed(ruoloAttivo, area)) return homePathForRole(ruoloAttivo)
+  if (!isAreaAllowed(ruoloAttivo, area)) {
+    const home = homePathForRole(ruoloAttivo)
+    // Anti-loop: un ruolo fuori matrice (es. legacy in `utenti`) ha home di
+    // fallback /parent ma nessuna area ammessa — reindirizzarlo alla stessa
+    // area che sta guardando sarebbe un giro infinito.
+    return home === `/${area}` ? '/auth/login' : home
+  }
   return null
 }
 

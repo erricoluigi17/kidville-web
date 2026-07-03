@@ -3,7 +3,6 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { UserPlus, Shield, Mail, Phone, Loader2, CheckCircle2, XCircle } from 'lucide-react';
-import { fetchFiscalCode } from '@/lib/utils/fiscalCodeApi';
 import { z } from 'zod';
 
 const adultSchema = z.object({
@@ -71,7 +70,7 @@ export function AdultRegistryForm() {
                 first_name: '', last_name: '', role: 'parent', email: '', fiscal_code: '', gender: 'M', birth_date: '', birth_place: '', phone: ''
             });
 
-        } catch (error: any) {
+        } catch (error) {
             if (error instanceof z.ZodError) {
                 const fieldErrors: Record<string, string> = {};
                 error.issues.forEach(err => {
@@ -80,7 +79,7 @@ export function AdultRegistryForm() {
                 setErrors(fieldErrors);
                 setToast({ type: 'error', message: 'Correggi gli errori.' });
             } else {
-                setToast({ type: 'error', message: error.message });
+                setToast({ type: 'error', message: (error as { message?: string })?.message ?? '' });
             }
         } finally {
             setIsSubmitting(false);

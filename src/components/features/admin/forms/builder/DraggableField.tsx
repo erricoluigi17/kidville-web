@@ -6,7 +6,7 @@ import { motion } from 'framer-motion'
 import {
   GripVertical, Trash2, Type, AlignLeft, ChevronDown,
   Paperclip, PenLine, Hash, CheckSquare, Calendar, Mail, Phone,
-  Heading, AlignCenter, FileSignature, ShieldCheck,
+  Heading, AlignCenter, ShieldCheck,
 } from 'lucide-react'
 import type { FormField, FormFieldType } from '@/types/database.types'
 

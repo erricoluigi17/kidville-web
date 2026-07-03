@@ -24,7 +24,7 @@ interface Props {
 
 export function MaterieManager({ sectionId, sezione, userId, scuolaId }: Props) {
   const [materie, setMaterie] = useState<Materia[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [livello, setLivello] = useState(1);
   const [nuova, setNuova] = useState({ nome: '', codice: '' });
   const [error, setError] = useState('');
@@ -33,7 +33,6 @@ export function MaterieManager({ sectionId, sezione, userId, scuolaId }: Props) 
 
   const load = useCallback(async () => {
     if (!sectionId) return;
-    setLoading(true);
     try {
       const r = await fetch(`/api/admin/primaria/materie?sectionId=${sectionId}`);
       const d = await r.json();
@@ -49,8 +48,16 @@ export function MaterieManager({ sectionId, sezione, userId, scuolaId }: Props) 
 
   // Prova a dedurre il livello dal nome sezione (es. "3A" → 3).
   useEffect(() => {
-    const m = sezione?.name?.match(/[1-5]/);
-    if (m) setLivello(Number(m[0]));
+    const syncLivello = () => {
+      let next: number | null = null;
+      try {
+        const m = sezione?.name?.match(/[1-5]/);
+        if (m) next = Number(m[0]);
+      } finally {
+        if (next !== null) setLivello(next);
+      }
+    };
+    syncLivello();
   }, [sezione]);
 
   // Obiettivi della scuola per il livello dedotto + associazioni materia→obiettivo.

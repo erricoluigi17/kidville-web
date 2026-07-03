@@ -25,20 +25,20 @@ interface Props {
     type: AdultType;
 }
 
+const Label = ({ children }: { children: React.ReactNode }) => (
+    <label className="block text-[10px] text-kidville-muted tracking-wider uppercase mb-1">
+        {children}
+    </label>
+);
+
+const Value = ({ children }: { children: React.ReactNode }) => (
+    <div className="text-kidville-line font-medium text-sm truncate" title={typeof children === 'string' ? children : ''}>
+        {children || '—'}
+    </div>
+);
+
 export function LinkedAdultProfile({ data, type }: Props) {
     const Icon = type === 'delegate' ? IdCard : User;
-
-    const Label = ({ children }: { children: React.ReactNode }) => (
-        <label className="block text-[10px] text-kidville-muted tracking-wider uppercase mb-1">
-            {children}
-        </label>
-    );
-
-    const Value = ({ children }: { children: React.ReactNode }) => (
-        <div className="text-kidville-line font-medium text-sm truncate" title={typeof children === 'string' ? children : ''}>
-            {children || '—'}
-        </div>
-    );
 
     const formatDate = (dateStr?: string) => {
         if (!dateStr) return '—';

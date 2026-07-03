@@ -113,14 +113,15 @@ export function AdminSidebar() {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [ruolo, setRuolo] = useState('');
-  const [userId, setUserId] = useState<string | null>(null);
 
   // Legge ?userId= (auth applicativa) LATO CLIENT, senza useSearchParams: così la
   // sidebar non "sospende" durante l'SSR delle route dinamiche (es. la classe), dove
   // veniva streamata in un template Suspense nascosto e non compariva. Resa inline.
-  useEffect(() => {
-    setUserId(new URLSearchParams(window.location.search).get('userId'));
-  }, []);
+  // Lazy initializer (stesso pattern di AdminTopBar): niente setState sincrono
+  // nell'effect (react-hooks 7). In SSR è null.
+  const [userId] = useState<string | null>(() =>
+    typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('userId')
+  );
   const withUser = (href: string) => (userId ? `${href}?userId=${userId}` : href);
 
   // Ruolo dell'utente per l'eventuale filtro voci (config-driven).

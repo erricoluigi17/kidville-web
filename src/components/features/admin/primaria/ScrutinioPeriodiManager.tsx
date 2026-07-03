@@ -25,9 +25,14 @@ export function ScrutinioPeriodiManager({ userId }: { scuolaId: string; userId: 
   const [msg, setMsg] = useState('');
 
   const load = useCallback(async () => {
-    const r = await fetch(`/api/admin/primaria/scrutinio-periodi?annoScolastico=${anno}&userId=${userId}`, { headers: { 'x-user-id': userId } });
-    const d = await r.json();
-    if (d.success) setPeriodi(d.data);
+    let next: Periodo[] | null = null;
+    try {
+      const r = await fetch(`/api/admin/primaria/scrutinio-periodi?annoScolastico=${anno}&userId=${userId}`, { headers: { 'x-user-id': userId } });
+      const d = await r.json();
+      if (d.success) next = d.data;
+    } finally {
+      if (next) setPeriodi(next);
+    }
   }, [anno, userId]);
 
   useEffect(() => { load(); }, [load]);

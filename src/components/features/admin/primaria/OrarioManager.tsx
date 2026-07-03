@@ -22,22 +22,35 @@ export function OrarioManager({ sectionId, scuolaId, userId }: { sectionId: stri
 
   const load = useCallback(async () => {
     if (!sectionId) return;
-    const [oRes, mRes, dRes] = await Promise.all([
-      fetch(`/api/admin/primaria/orario?sectionId=${sectionId}`).then((r) => r.json()),
-      fetch(`/api/admin/primaria/materie?sectionId=${sectionId}`).then((r) => r.json()),
-      fetch(`/api/admin/primaria/docente-gradi?scuolaId=${scuolaId}`).then((r) => r.json()),
-    ]);
-    if (oRes.success) {
-      setTempo(oRes.data.tempoScuola);
-      setCampanelle(oRes.data.campanelle);
-      setOrario(oRes.data.orario);
-      if (oRes.data.tempoScuola) {
-        setModello(oRes.data.tempoScuola.modello);
-        setGiorni(oRes.data.tempoScuola.giorni_settimana);
+    let res:
+      | [
+          { success: boolean; data: { tempoScuola: { modello: number; giorni_settimana: number } | null; campanelle: Campanella[]; orario: Cella[] } },
+          { success: boolean; data: Materia[] },
+          { success: boolean; data: Docente[] },
+        ]
+      | null = null;
+    try {
+      res = await Promise.all([
+        fetch(`/api/admin/primaria/orario?sectionId=${sectionId}`).then((r) => r.json()),
+        fetch(`/api/admin/primaria/materie?sectionId=${sectionId}`).then((r) => r.json()),
+        fetch(`/api/admin/primaria/docente-gradi?scuolaId=${scuolaId}`).then((r) => r.json()),
+      ]);
+    } finally {
+      if (res) {
+        const [oRes, mRes, dRes] = res;
+        if (oRes.success) {
+          setTempo(oRes.data.tempoScuola);
+          setCampanelle(oRes.data.campanelle);
+          setOrario(oRes.data.orario);
+          if (oRes.data.tempoScuola) {
+            setModello(oRes.data.tempoScuola.modello);
+            setGiorni(oRes.data.tempoScuola.giorni_settimana);
+          }
+        }
+        setMaterie(mRes.success ? mRes.data : []);
+        setDocenti((dRes.success ? dRes.data : []).filter((d: Docente) => (d.gradi ?? []).includes('primaria')));
       }
     }
-    setMaterie(mRes.success ? mRes.data : []);
-    setDocenti((dRes.success ? dRes.data : []).filter((d: Docente) => (d.gradi ?? []).includes('primaria')));
   }, [sectionId, scuolaId]);
 
   useEffect(() => {

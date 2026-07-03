@@ -27,19 +27,23 @@ export function MensaReport({ userId, scuolaId, sezione, sezioni }: Props) {
   const [data, setData] = useState(() => new Date().toISOString().slice(0, 10));
   const [filtroSezione, setFiltroSezione] = useState<string>(sezione ?? '');
   const [report, setReport] = useState<Report | null>(null);
-  const [loading, setLoading] = useState(false);
+  // loading parte true (niente setLoading(true) sincrono nel loader, react-hooks
+  // set-state-in-effect); i refetch (cambio data/sezione) avvengono senza spinner.
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    setLoading(true); setError(null);
-    const sez = sezione ?? filtroSezione;
-    const qs = new URLSearchParams({ userId, data });
-    if (scuolaId) qs.set('scuola_id', scuolaId);
-    if (sez) qs.set('sezione', sez);
-    const res = await fetch(`/api/mensa/report?${qs}`, { headers: hdr(userId) });
-    const j = await res.json();
-    setLoading(false);
-    if (j.success) setReport(j.data); else setError(j.error ?? 'Errore');
+    try {
+      const sez = sezione ?? filtroSezione;
+      const qs = new URLSearchParams({ userId, data });
+      if (scuolaId) qs.set('scuola_id', scuolaId);
+      if (sez) qs.set('sezione', sez);
+      const res = await fetch(`/api/mensa/report?${qs}`, { headers: hdr(userId) });
+      const j = await res.json();
+      if (j.success) { setReport(j.data); setError(null); } else setError(j.error ?? 'Errore');
+    } finally {
+      setLoading(false);
+    }
   }, [userId, scuolaId, data, sezione, filtroSezione]);
 
   useEffect(() => { load(); }, [load]);

@@ -3,9 +3,27 @@
 import { useState, useEffect } from 'react';
 import { X, Save, Users, User, ChevronRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { LinkedAdultProfile } from './LinkedAdultProfile'; // Riutilizziamo se serve, o facciamo mini blocchi
 
 // Strutture dati
+interface LinkedParentRef {
+    id: string;
+    first_name: string;
+    last_name: string;
+}
+
+interface ChildStudentParent {
+    relation_type: string;
+    parents: LinkedParentRef;
+}
+
+interface LinkedChild {
+    id: string;
+    nome: string;
+    cognome: string;
+    classe_sezione?: string | null;
+    student_parents?: ChildStudentParent[];
+}
+
 interface ParentProfile {
     id: string;
     first_name: string;
@@ -21,7 +39,7 @@ interface ParentProfile {
     zip_code: string;
     citizenship?: string;
     student_parents?: {
-        alunni: any;
+        alunni: LinkedChild | null;
         is_primary: boolean;
         relation_type: string;
     }[];
@@ -73,13 +91,13 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave }: Props) {
         }
     };
 
-    const updateForm = (field: string, value: any) => {
+    const updateForm = <K extends keyof ParentProfile>(field: K, value: ParentProfile[K]) => {
         setForm(prev => ({ ...prev, [field]: value }));
     };
 
-    const getChildrenTabs = () => {
+    const getChildrenTabs = (): LinkedChild[] => {
         if (!parent?.student_parents) return [];
-        return parent.student_parents.map(sp => sp.alunni).filter(Boolean);
+        return parent.student_parents.map(sp => sp.alunni).filter((c): c is LinkedChild => Boolean(c));
     };
 
     const children = getChildrenTabs();
@@ -229,8 +247,8 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave }: Props) {
                                 </h3>
 
                                 <div className="space-y-3">
-                                    {children.map((child: any) => {
-                                        const otherParents = child.student_parents?.filter((sp: any) => sp.parents?.id !== parent?.id) || [];
+                                    {children.map((child) => {
+                                        const otherParents = child.student_parents?.filter((sp) => sp.parents?.id !== parent?.id) || [];
                                         const isExpanded = expandedChild === child.id;
 
                                         return (
@@ -270,7 +288,7 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave }: Props) {
                                                                     <>
                                                                         <h5 className="font-maven text-[10px] text-kidville-muted uppercase tracking-wider mb-2 font-bold">Altri familiari collegati</h5>
                                                                         <div className="space-y-2">
-                                                                            {otherParents.map((sp: any) => (
+                                                                            {otherParents.map((sp) => (
                                                                                 <div key={sp.parents.id} className="flex items-center gap-3 p-3 bg-white border border-kidville-line rounded-lg shadow-sm">
                                                                                     <div className="w-8 h-8 rounded-full bg-kidville-info-soft text-kidville-info flex items-center justify-center">
                                                                                         <User size={14} />

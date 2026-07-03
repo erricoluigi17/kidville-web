@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Fingerprint, FileWarning, Users, Activity, Home, User, AlertTriangle, Loader2, CheckCircle2, XCircle } from 'lucide-react';
 import { fetchFiscalCode } from '@/lib/utils/fiscalCodeApi';
@@ -59,6 +59,10 @@ export function StudentRegistryForm() {
     const [errors, setErrors] = useState<Record<string, string>>({});
     const [toast, setToast] = useState<{ type: 'success' | 'error', message: string } | null>(null);
 
+    // Specchio dell'ultimo valore di formData.codice_fiscale: permette all'effect di
+    // confrontare il CF corrente senza dipendere da formData.codice_fiscale (deps invariate)
+    const codiceFiscaleRef = useRef('');
+
     // Auto calculate CF
     useEffect(() => {
         const timeoutId = setTimeout(async () => {
@@ -73,7 +77,8 @@ export function StudentRegistryForm() {
                         comune_nascita: formData.comune_nascita,
                         provincia_nascita: formData.provincia_nascita
                     });
-                    if (cf && cf !== formData.codice_fiscale) {
+                    if (cf && cf !== codiceFiscaleRef.current) {
+                        codiceFiscaleRef.current = cf;
                         setFormData(prev => ({ ...prev, codice_fiscale: cf }));
                         setIsCfAutoCalculated(true);
                         setTimeout(() => setIsCfAutoCalculated(false), 3000);
@@ -92,7 +97,9 @@ export function StudentRegistryForm() {
     const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
         const { name, value, type } = e.target as HTMLInputElement;
         const checked = (e.target as HTMLInputElement).checked;
-        
+
+        if (name === 'codice_fiscale') codiceFiscaleRef.current = value;
+
         if (name.startsWith('invoice_holder_details.')) {
             const field = name.split('.')[1];
             setFormData(prev => ({
@@ -135,10 +142,11 @@ export function StudentRegistryForm() {
             setToast({ type: 'success', message: 'Anagrafica salvata con successo!' });
             setTimeout(() => { setToast(null); setStep(1); }, 3000);
 
-        } catch (error: any) {
-            if (error instanceof z.ZodError || (error && Array.isArray(error.errors))) {
+        } catch (error) {
+            const zodLike = error as { errors?: { path?: (string | number)[]; message: string }[] };
+            if (error instanceof z.ZodError || (zodLike && Array.isArray(zodLike.errors))) {
                 const fieldErrors: Record<string, string> = {};
-                (error.errors || []).forEach((err: any) => {
+                (zodLike.errors || []).forEach((err) => {
                     if (err.path && err.path.length > 0) {
                         fieldErrors[err.path.join('.')] = err.message;
                     }
@@ -146,7 +154,7 @@ export function StudentRegistryForm() {
                 setErrors(fieldErrors);
                 setToast({ type: 'error', message: 'Correggi gli errori evidenziati nel form.' });
             } else {
-                setToast({ type: 'error', message: error.message });
+                setToast({ type: 'error', message: (error as Error).message });
             }
             setTimeout(() => setToast(null), 4000);
         }

@@ -145,7 +145,7 @@ export function RegistraIncassoModal({ pagamento, userId, onClose, onDone }: Pro
                         <label className="flex items-center gap-2 cursor-pointer">
                             <input type="checkbox" checked={spill} onChange={(e) => setSpill(e.target.checked)}
                                 className="w-4 h-4 rounded border-kidville-muted text-kidville-green focus:ring-kidville-green" />
-                            <span className="font-maven text-xs text-kidville-green">Riporta l'eccedenza sulla rata successiva</span>
+                            <span className="font-maven text-xs text-kidville-green">Riporta l&apos;eccedenza sulla rata successiva</span>
                         </label>
                     )}
 

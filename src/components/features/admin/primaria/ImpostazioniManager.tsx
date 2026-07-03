@@ -12,12 +12,23 @@ export function ImpostazioniManager({ scuolaId, userId }: { scuolaId: string; us
   const [msg, setMsg] = useState('');
 
   const load = useCallback(async () => {
-    const r = await fetch(`/api/admin/primaria/impostazioni?scuolaId=${scuolaId}`);
-    const d = await r.json();
-    if (d.success) {
-      setClasseOrale(d.data.timelock_giorni_classe_orale ?? 2);
-      setScrittoPratico(d.data.timelock_giorni_scritto_pratico ?? 15);
-      setBuffer(d.data.notif_buffer_valutazioni_min ?? 10);
+    let next: { classeOrale: number; scrittoPratico: number; buffer: number } | null = null;
+    try {
+      const r = await fetch(`/api/admin/primaria/impostazioni?scuolaId=${scuolaId}`);
+      const d = await r.json();
+      if (d.success) {
+        next = {
+          classeOrale: d.data.timelock_giorni_classe_orale ?? 2,
+          scrittoPratico: d.data.timelock_giorni_scritto_pratico ?? 15,
+          buffer: d.data.notif_buffer_valutazioni_min ?? 10,
+        };
+      }
+    } finally {
+      if (next) {
+        setClasseOrale(next.classeOrale);
+        setScrittoPratico(next.scrittoPratico);
+        setBuffer(next.buffer);
+      }
     }
   }, [scuolaId]);
 

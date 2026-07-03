@@ -1,9 +1,9 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Mail, Key, User, Shield } from 'lucide-react';
+import { Mail, Key, Shield } from 'lucide-react';
 
-export function ParentRegistryForm({ studentId }: { studentId?: string }) {
+export function ParentRegistryForm() {
     const [email, setEmail] = useState('');
     const [loading, setLoading] = useState(false);
     const [message, setMessage] = useState('');
@@ -24,7 +24,7 @@ export function ParentRegistryForm({ studentId }: { studentId?: string }) {
             } else {
                 setMessage('Errore: ' + data.error);
             }
-        } catch (error) {
+        } catch {
             setMessage('Errore di connessione');
         } finally {
             setLoading(false);

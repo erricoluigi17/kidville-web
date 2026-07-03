@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { UserPlus, Shield, Mail, Phone, Loader2, CheckCircle2, XCircle, MapPin, KeyRound, Save, Plus, Trash2, Fingerprint } from 'lucide-react';
 import { fetchFiscalCode } from '@/lib/utils/fiscalCodeApi';
@@ -24,7 +24,7 @@ const adultSchema = z.object({
     phones: z.array(z.string()).optional()
 });
 
-export function ScrollableAdultForm({ tabId, defaultRole, updateTabLabel, studentId }: { tabId?: string, defaultRole?: string, updateTabLabel?: (label: string) => void, studentId?: string | null }) {
+export function ScrollableAdultForm({ defaultRole, updateTabLabel, studentId }: { tabId?: string, defaultRole?: string, updateTabLabel?: (label: string) => void, studentId?: string | null }) {
     const initialRole = defaultRole || 'mother';
     const initialGender = (initialRole === 'mother' || initialRole === 'delegate') ? 'F' : 'M';
 
@@ -52,6 +52,10 @@ export function ScrollableAdultForm({ tabId, defaultRole, updateTabLabel, studen
     const [errors, setErrors] = useState<Record<string, string>>({});
     const [toast, setToast] = useState<{ type: 'success' | 'error', message: string } | null>(null);
 
+    // Specchio dell'ultimo valore di formData.fiscal_code: permette all'effect di
+    // confrontare il CF corrente senza dipendere da formData.fiscal_code (deps invariate)
+    const fiscalCodeRef = useRef('');
+
     // Auto CF Calc
     useEffect(() => {
         const timeoutId = setTimeout(async () => {
@@ -66,7 +70,8 @@ export function ScrollableAdultForm({ tabId, defaultRole, updateTabLabel, studen
                         comune_nascita: formData.birth_place,
                         provincia_nascita: formData.birth_province
                     });
-                    if (cf && cf !== formData.fiscal_code) {
+                    if (cf && cf !== fiscalCodeRef.current) {
+                        fiscalCodeRef.current = cf;
                         setFormData(prev => ({ ...prev, fiscal_code: cf }));
                         setIsCfAutoCalculated(true);
                         setTimeout(() => setIsCfAutoCalculated(false), 3000);
@@ -83,6 +88,7 @@ export function ScrollableAdultForm({ tabId, defaultRole, updateTabLabel, studen
 
     const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
         const { name, value } = e.target;
+        if (name === 'fiscal_code') fiscalCodeRef.current = value;
         setFormData(prev => ({ ...prev, [name]: value }));
         // Aggiorna l'etichetta della tab FUORI dall'updater (evita setState-in-render)
         if ((name === 'first_name' || name === 'last_name') && updateTabLabel) {
@@ -150,16 +156,17 @@ export function ScrollableAdultForm({ tabId, defaultRole, updateTabLabel, studen
 
             setToast({ type: 'success', message: 'Adulto salvato e credenziali inviate!' });
 
-        } catch (error: any) {
-            if (error && error.issues) {
+        } catch (error) {
+            const zodLike = error as { issues?: { path?: (string | number)[]; message: string }[] };
+            if (zodLike && zodLike.issues) {
                 const fieldErrors: Record<string, string> = {};
-                error.issues.forEach((err: any) => {
+                zodLike.issues.forEach((err) => {
                     if (err.path && err.path.length > 0) fieldErrors[err.path.join('.')] = err.message;
                 });
                 setErrors(fieldErrors);
                 setToast({ type: 'error', message: 'Correggi gli errori.' });
             } else {
-                setToast({ type: 'error', message: error.message });
+                setToast({ type: 'error', message: (error as Error).message });
             }
         } finally {
             setIsSubmitting(false);

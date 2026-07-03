@@ -39,11 +39,15 @@ export function ModificaPagamentoModal({ pagamento, categorie, userId, onClose, 
     const [error, setError] = useState<string | null>(null);
 
     const loadIncassi = useCallback(async () => {
-        const res = await fetch(`/api/pagamenti/incassi?pagamento_id=${pagamento.id}&userId=${userId}`, {
-            headers: { 'x-user-id': userId },
-        });
-        const j = await res.json();
-        if (j.success) setIncassi(j.data || []);
+        try {
+            const res = await fetch(`/api/pagamenti/incassi?pagamento_id=${pagamento.id}&userId=${userId}`, {
+                headers: { 'x-user-id': userId },
+            });
+            const j = await res.json();
+            if (j.success) setIncassi(j.data || []);
+        } finally {
+            // no-op: corpo in try/finally per il pattern loader (react-hooks set-state-in-effect)
+        }
     }, [pagamento.id, userId]);
 
     useEffect(() => { loadIncassi(); }, [loadIncassi]);

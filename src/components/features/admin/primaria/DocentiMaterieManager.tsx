@@ -29,16 +29,27 @@ export function DocentiMaterieManager({ sectionId, scuolaId, userId }: Props) {
 
   const load = useCallback(async () => {
     if (!sectionId) return;
-    const [aRes, mRes, dRes] = await Promise.all([
-      fetch(`/api/admin/primaria/docenti-materie?sectionId=${sectionId}`).then((r) => r.json()),
-      fetch(`/api/admin/primaria/materie?sectionId=${sectionId}`).then((r) => r.json()),
-      fetch(`/api/admin/primaria/docente-gradi?scuolaId=${scuolaId}`).then((r) => r.json()),
-    ]);
-    setAssegnazioni(aRes.success ? aRes.data : []);
-    setMaterie(mRes.success ? mRes.data : []);
-    // Solo docenti abilitati alla primaria
-    const docs: Docente[] = dRes.success ? dRes.data : [];
-    setDocenti(docs.filter((d) => (d.gradi ?? []).includes('primaria')));
+    let next: { assegnazioni: Assegnazione[]; materie: Materia[]; docenti: Docente[] } | null = null;
+    try {
+      const [aRes, mRes, dRes] = await Promise.all([
+        fetch(`/api/admin/primaria/docenti-materie?sectionId=${sectionId}`).then((r) => r.json()),
+        fetch(`/api/admin/primaria/materie?sectionId=${sectionId}`).then((r) => r.json()),
+        fetch(`/api/admin/primaria/docente-gradi?scuolaId=${scuolaId}`).then((r) => r.json()),
+      ]);
+      // Solo docenti abilitati alla primaria
+      const docs: Docente[] = dRes.success ? dRes.data : [];
+      next = {
+        assegnazioni: aRes.success ? aRes.data : [],
+        materie: mRes.success ? mRes.data : [],
+        docenti: docs.filter((d) => (d.gradi ?? []).includes('primaria')),
+      };
+    } finally {
+      if (next) {
+        setAssegnazioni(next.assegnazioni);
+        setMaterie(next.materie);
+        setDocenti(next.docenti);
+      }
+    }
   }, [sectionId, scuolaId]);
 
   useEffect(() => {

@@ -23,14 +23,16 @@ const AZIONE: Record<string, { l: string; cls: string }> = {
 
 export function FascicoloAuditViewer({ userId }: { scuolaId: string; userId: string }) {
   const [rows, setRows] = useState<AuditRow[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
-    setLoading(true);
-    const r = await fetch(`/api/admin/primaria/fascicolo-audit?limit=200&userId=${userId}`, { headers: { 'x-user-id': userId } });
-    const d = await r.json();
-    if (d.success) setRows(d.data);
-    setLoading(false);
+    try {
+      const r = await fetch(`/api/admin/primaria/fascicolo-audit?limit=200&userId=${userId}`, { headers: { 'x-user-id': userId } });
+      const d = await r.json();
+      if (d.success) setRows(d.data);
+    } finally {
+      setLoading(false);
+    }
   }, [userId]);
 
   useEffect(() => { load(); }, [load]);

@@ -45,24 +45,37 @@ export function ScrutinioGiudiziManager({ scuolaId, userId }: { scuolaId: string
   // Materie del livello: usa una sezione rappresentativa di quel livello.
   useEffect(() => {
     const sez = sezioni.find((s) => s.name?.match(/[1-5]/)?.[0] === String(livello));
-    if (!sez) { setMaterie([]); return; }
-    fetch(`/api/admin/primaria/materie?sectionId=${sez.id}`)
-      .then((r) => r.json())
-      .then((d) => { if (d.success) setMaterie((d.data as Materia[]).filter((m) => m.codice)); })
-      .catch(() => {});
+    const loadMaterie = async () => {
+      let next: Materia[] | null = null;
+      try {
+        if (!sez) { next = []; return; }
+        const d = await fetch(`/api/admin/primaria/materie?sectionId=${sez.id}`)
+          .then((r) => r.json())
+          .catch(() => null);
+        if (d?.success) next = (d.data as Materia[]).filter((m) => m.codice);
+      } finally {
+        if (next) setMaterie(next);
+      }
+    };
+    loadMaterie();
   }, [sezioni, livello]);
 
   const loadTesti = useCallback(async () => {
     if (!periodoId) return;
-    const r = await fetch(`/api/admin/primaria/scrutinio-giudizio?scuolaId=${scuolaId}&livello=${livello}&periodoId=${periodoId}`);
-    const d = await r.json();
-    if (!d.success) return;
-    const map: Record<string, Record<string, string>> = {};
-    (d.data as DescrRow[]).forEach((row) => {
-      map[row.materia_codice] = map[row.materia_codice] || {};
-      map[row.materia_codice][row.etichetta_voto] = row.giudizio_descrittivo;
-    });
-    setTesti(map);
+    let map: Record<string, Record<string, string>> | null = null;
+    try {
+      const r = await fetch(`/api/admin/primaria/scrutinio-giudizio?scuolaId=${scuolaId}&livello=${livello}&periodoId=${periodoId}`);
+      const d = await r.json();
+      if (!d.success) return;
+      const next: Record<string, Record<string, string>> = {};
+      (d.data as DescrRow[]).forEach((row) => {
+        next[row.materia_codice] = next[row.materia_codice] || {};
+        next[row.materia_codice][row.etichetta_voto] = row.giudizio_descrittivo;
+      });
+      map = next;
+    } finally {
+      if (map) setTesti(map);
+    }
   }, [scuolaId, livello, periodoId]);
 
   useEffect(() => { loadTesti(); }, [loadTesti]);

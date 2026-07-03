@@ -138,7 +138,8 @@ export function RankingTable() {
 
   /* ── fetch rankings (via route server gated) ── */
   const fetchRankings = useCallback(async () => {
-    setLoading(true)
+    // niente setLoading(true) sincrono: loading parte true da useState(true)
+    // (react-hooks set-state-in-effect); refetch senza spinner, accettato.
     try {
       const params = new URLSearchParams()
       if (filterFormId) params.set('modelId', filterFormId)

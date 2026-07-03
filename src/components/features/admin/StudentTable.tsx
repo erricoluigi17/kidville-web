@@ -61,7 +61,7 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
             if (aSec !== bSec) return aSec.localeCompare(bSec, 'it');
         }
 
-        const getSortVal = (obj: any, f: SortField) => {
+        const getSortVal = (obj: Student, f: SortField) => {
             if (f === 'cognome') return obj.cognome || obj.last_name || '';
             if (f === 'nome') return obj.nome || obj.first_name || '';
             return obj[f] || '';
@@ -82,7 +82,7 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
 
     const allSelected = students.length > 0 && selectedIds.size === students.length;
 
-    const SortHeader = ({ field, label }: { field: SortField; label: string }) => (
+    const renderSortHeader = (field: SortField, label: string) => (
         <th
             className="px-3 py-3 text-left cursor-pointer select-none group"
             onClick={() => handleSort(field)}
@@ -108,13 +108,13 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                                     className="w-4 h-4 rounded border-kidville-muted text-kidville-green focus:ring-kidville-green cursor-pointer"
                                 />
                             </th>
-                            <SortHeader field="cognome" label="Cognome" />
-                            <SortHeader field="nome" label="Nome" />
+                            {renderSortHeader('cognome', 'Cognome')}
+                            {renderSortHeader('nome', 'Nome')}
                             {currentTypeFilter === 'child' ? (
                                 <>
-                                    <SortHeader field="data_nascita" label="Nascita" />
-                                    <SortHeader field="classe_sezione" label="Classe" />
-                                    <SortHeader field="stato" label="Stato" />
+                                    {renderSortHeader('data_nascita', 'Nascita')}
+                                    {renderSortHeader('classe_sezione', 'Classe')}
+                                    {renderSortHeader('stato', 'Stato')}
                                     <th className="px-3 py-3 text-left">
                                         <span className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide">Info</span>
                                     </th>

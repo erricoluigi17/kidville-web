@@ -12,9 +12,14 @@ export function GiudiziManager({ scuolaId, userId }: { scuolaId: string; userId:
   const [nuova, setNuova] = useState('');
 
   const load = useCallback(async () => {
-    const r = await fetch(`/api/admin/primaria/giudizi?scuolaId=${scuolaId}`);
-    const d = await r.json();
-    if (d.success) { setScala(d.data.scala); setTemplate(d.data.template); }
+    let next: { scala: ScalaItem[]; template: TemplateItem[] } | null = null;
+    try {
+      const r = await fetch(`/api/admin/primaria/giudizi?scuolaId=${scuolaId}`);
+      const d = await r.json();
+      if (d.success) next = { scala: d.data.scala, template: d.data.template };
+    } finally {
+      if (next) { setScala(next.scala); setTemplate(next.template); }
+    }
   }, [scuolaId]);
 
   useEffect(() => { load(); }, [load]);

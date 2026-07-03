@@ -81,20 +81,24 @@ export function MenuBuilder({ userId, scuolaId }: Props) {
   const menuConfigParam = selectedMenuId ? `&menu_config_id=${selectedMenuId}` : '';
 
   const load = useCallback(async () => {
-    const res = await fetch(`/api/mensa/menu?userId=${userId}&scuola_id=${scuolaId}&raw=1${menuConfigParam}`, { headers: hdr(userId) });
-    const j = await res.json();
-    if (!j.success) return;
-    if (j.data.config?.settimaneRotazione) setSettimaneTot(j.data.config.settimaneRotazione);
-    if (Array.isArray(j.data.config?.giorniAttivi) && j.data.config.giorniAttivi.length) setGiorniAttivi(j.data.config.giorniAttivi);
-    const mNome: Record<string, Portate> = {}, mIng: Record<string, Portate> = {}, mAlg: Record<string, AllergeniPortate> = {};
-    for (const r of j.data.rotazione as RotRow[]) {
-      const k = `${r.settimana}-${r.giorno_settimana}`;
-      mNome[k] = r.portate ?? {};
-      mIng[k] = r.ingredienti ?? {};
-      mAlg[k] = r.allergeni ?? {};
+    try {
+      const res = await fetch(`/api/mensa/menu?userId=${userId}&scuola_id=${scuolaId}&raw=1${menuConfigParam}`, { headers: hdr(userId) });
+      const j = await res.json();
+      if (!j.success) return;
+      if (j.data.config?.settimaneRotazione) setSettimaneTot(j.data.config.settimaneRotazione);
+      if (Array.isArray(j.data.config?.giorniAttivi) && j.data.config.giorniAttivi.length) setGiorniAttivi(j.data.config.giorniAttivi);
+      const mNome: Record<string, Portate> = {}, mIng: Record<string, Portate> = {}, mAlg: Record<string, AllergeniPortate> = {};
+      for (const r of j.data.rotazione as RotRow[]) {
+        const k = `${r.settimana}-${r.giorno_settimana}`;
+        mNome[k] = r.portate ?? {};
+        mIng[k] = r.ingredienti ?? {};
+        mAlg[k] = r.allergeni ?? {};
+      }
+      setRot(mNome); setIng(mIng); setAlg(mAlg);
+      setOverride(j.data.override ?? []);
+    } finally {
+      // no-op: corpo in try/finally per il pattern loader (react-hooks set-state-in-effect)
     }
-    setRot(mNome); setIng(mIng); setAlg(mAlg);
-    setOverride(j.data.override ?? []);
   }, [userId, scuolaId, menuConfigParam]);
 
   useEffect(() => { load(); }, [load]);

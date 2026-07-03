@@ -24,7 +24,8 @@ export function SchoolsPanel({ userId }: { userId: string }) {
   const hdr = { 'Content-Type': 'application/json', 'x-user-id': userId };
 
   const load = useCallback(async () => {
-    setLoading(true);
+    // niente setLoading(true) sincrono: loading parte true da useState(true)
+    // (react-hooks set-state-in-effect); refetch senza spinner, accettato.
     try {
       const res = await fetch('/api/admin/schools', { headers: { 'x-user-id': userId } });
       const j = await res.json();

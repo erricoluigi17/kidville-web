@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Fingerprint, FileWarning, Users, Activity, Home, User, AlertTriangle, Loader2, CheckCircle2, XCircle, Save, ArrowRight, RefreshCw } from 'lucide-react';
+import { Fingerprint, FileWarning, User, AlertTriangle, Loader2, CheckCircle2, XCircle, Save, ArrowRight, RefreshCw } from 'lucide-react';
 import { fetchFiscalCode } from '@/lib/utils/fiscalCodeApi';
 import { z } from 'zod';
 import { AllergeniSelect } from '@/components/features/admin/AllergeniSelect';
@@ -60,7 +60,8 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
     });
 
     const [sections, setSections] = useState<{id: string, name: string, school_type: string}[]>([]);
-    const [schools, setSchools] = useState<{id: string, nome: string}[]>([]);
+    // Per ora usiamo la scuola hardcoded, ma prepariamo la struttura
+    const [schools] = useState<{id: string, nome: string}[]>([{ id: '11111111-1111-1111-1111-111111111111', nome: 'Kidville Roma' }]);
     const [isCfAutoCalculated, setIsCfAutoCalculated] = useState(false);
     const [isCfLoading, setIsCfLoading] = useState(false);
     const [errors, setErrors] = useState<Record<string, string>>({});
@@ -68,11 +69,13 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [savedStudent, setSavedStudent] = useState<{ id: string; nome: string; cognome: string } | null>(null);
 
-    // Carica sezioni e scuole all'avvio
+    // Specchio dell'ultimo valore di formData.codice_fiscale: permette all'effect di
+    // confrontare il CF corrente senza dipendere da formData.codice_fiscale (deps invariate)
+    const codiceFiscaleRef = useRef('');
+
+    // Carica sezioni all'avvio
     useEffect(() => {
         fetch('/api/admin/sections').then(r => r.json()).then(d => { if (Array.isArray(d)) setSections(d); }).catch(() => {});
-        // Per ora usiamo la scuola hardcoded, ma prepariamo la struttura
-        setSchools([{ id: '11111111-1111-1111-1111-111111111111', nome: 'Kidville Roma' }]);
     }, []);
 
     useEffect(() => {
@@ -88,7 +91,8 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
                         comune_nascita: formData.comune_nascita,
                         provincia_nascita: formData.provincia_nascita
                     });
-                    if (cf && cf !== formData.codice_fiscale) {
+                    if (cf && cf !== codiceFiscaleRef.current) {
+                        codiceFiscaleRef.current = cf;
                         setFormData(prev => ({ ...prev, codice_fiscale: cf }));
                         setIsCfAutoCalculated(true);
                         setTimeout(() => setIsCfAutoCalculated(false), 3000);
@@ -107,7 +111,9 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
     const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
         const { name, value, type } = e.target as HTMLInputElement;
         const checked = (e.target as HTMLInputElement).checked;
-        
+
+        if (name === 'codice_fiscale') codiceFiscaleRef.current = value;
+
         if (name.startsWith('invoice_holder_details.')) {
             const field = name.split('.')[1];
             setFormData(prev => ({
@@ -159,10 +165,11 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
                 onSaveSuccess(responseData.id);
             }
 
-        } catch (error: any) {
-            if (error && error.issues) {
+        } catch (error) {
+            const zodLike = error as { issues?: { path?: (string | number)[]; message: string }[] };
+            if (zodLike && zodLike.issues) {
                 const fieldErrors: Record<string, string> = {};
-                error.issues.forEach((err: any) => {
+                zodLike.issues.forEach((err) => {
                     if (err.path && err.path.length > 0) {
                         fieldErrors[err.path.join('.')] = err.message;
                     }
@@ -170,7 +177,7 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
                 setErrors(fieldErrors);
                 setToast({ type: 'error', message: 'Correggi gli errori evidenziati nel form.' });
             } else {
-                setToast({ type: 'error', message: error.message || 'Errore sconosciuto' });
+                setToast({ type: 'error', message: (error as Error).message || 'Errore sconosciuto' });
             }
             setTimeout(() => setToast(null), 5000);
         } finally {
@@ -217,6 +224,7 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
                         <button
                             onClick={() => {
                                 setSavedStudent(null);
+                                codiceFiscaleRef.current = '';
                                 setFormData({ nome: '', cognome: '', sesso: 'M', data_nascita: '', comune_nascita: '', provincia_nascita: '', codice_fiscale: '', indirizzo_residenza: '', comune_residenza: '', cap: '', classe_sezione: '', is_bes_dsa: false, note_bes: '', usa_pannolino: false, allergies: '', allergeni: [], invoice_holder_type: 'mom', invoice_holder_details: { nome: '', cognome: '', codice_fiscale: '', adult_id: '' } });
                             }}
                             className="flex items-center gap-2 px-5 py-2.5 bg-kidville-cream border border-kidville-green/15 text-kidville-green rounded-xl font-barlow font-bold uppercase text-sm hover:bg-kidville-green-light transition-all"
@@ -462,7 +470,7 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
                                             <input name="invoice_holder_details.codice_fiscale" value={formData.invoice_holder_details.codice_fiscale} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-white focus:ring-2 focus:ring-kidville-green outline-none uppercase" />
                                         </div>
                                         <div className="col-span-2 text-xs text-kidville-muted mt-2">
-                                            Nota: Salvando l'anagrafica, questo soggetto verrà registrato come intestatario della fattura per l'alunno.
+                                            Nota: Salvando l&apos;anagrafica, questo soggetto verrà registrato come intestatario della fattura per l&apos;alunno.
                                         </div>
                                     </div>
                                 </motion.div>

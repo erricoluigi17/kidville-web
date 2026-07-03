@@ -58,9 +58,9 @@ export function ImportExportClient() {
             if (error) throw error;
 
             setImportResult({ total: jsonData.length, success: resultData?.length || jsonData.length });
-        } catch (error: any) {
+        } catch (error) {
             console.error("Errore importazione:", error);
-            alert(`Errore importazione: ${error.message}`);
+            alert(`Errore importazione: ${(error as Error).message}`);
         } finally {
             setIsImporting(false);
             if (e.target) e.target.value = ''; // Reset input

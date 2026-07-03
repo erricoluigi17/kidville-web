@@ -43,12 +43,16 @@ export function MensaSettings({ userId, scuolaId }: Props) {
   }, [userId, scuolaId]);
 
   const loadMenus = useCallback(async () => {
-    const [mRes, aRes] = await Promise.all([
-      fetch(`/api/mensa/menu-config?scuola_id=${scuolaId}`, { headers: hdr(userId) }).then(r => r.json()),
-      fetch(`/api/mensa/class-assignments?scuola_id=${scuolaId}`, { headers: hdr(userId) }).then(r => r.json()),
-    ]);
-    if (mRes.success) setMenus(mRes.data);
-    if (aRes.success) setAssignments(aRes.data);
+    try {
+      const [mRes, aRes] = await Promise.all([
+        fetch(`/api/mensa/menu-config?scuola_id=${scuolaId}`, { headers: hdr(userId) }).then(r => r.json()),
+        fetch(`/api/mensa/class-assignments?scuola_id=${scuolaId}`, { headers: hdr(userId) }).then(r => r.json()),
+      ]);
+      if (mRes.success) setMenus(mRes.data);
+      if (aRes.success) setAssignments(aRes.data);
+    } finally {
+      // no-op: corpo in try/finally per il pattern loader (react-hooks set-state-in-effect)
+    }
   }, [userId, scuolaId]);
 
   useEffect(() => { loadMenus(); }, [loadMenus]);

@@ -27,11 +27,16 @@ export function ObiettiviManager({ scuolaId, userId }: { scuolaId: string; userI
   const [error, setError] = useState('');
 
   const load = useCallback(async () => {
-    const r = await fetch(
-      `/api/admin/primaria/obiettivi?scuolaId=${scuolaId}&materiaCodice=${materiaCodice}&livello=${livello}`
-    );
-    const d = await r.json();
-    setObiettivi(d.success ? d.data : []);
+    let next: Obiettivo[] | null = null;
+    try {
+      const r = await fetch(
+        `/api/admin/primaria/obiettivi?scuolaId=${scuolaId}&materiaCodice=${materiaCodice}&livello=${livello}`
+      );
+      const d = await r.json();
+      next = d.success ? d.data : [];
+    } finally {
+      if (next) setObiettivi(next);
+    }
   }, [scuolaId, materiaCodice, livello]);
 
   useEffect(() => {

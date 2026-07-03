@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState, Suspense } from 'react';
+import { useCallback, useEffect, useMemo, useState, Suspense } from 'react';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
 import {
@@ -23,9 +23,10 @@ import { TiltCard } from '@/components/features/admin/motion/TiltCard';
 import { RevealGroup, RevealItem } from '@/components/features/admin/motion/reveal';
 import { AuroraHeader } from '@/components/features/admin/motion/AuroraHeader';
 import { TrendIncassiChart, StudentiPerClasseChart } from '@/components/features/admin/DashboardCharts';
-import { Donut, SectionTitle } from '@/components/ui/cockpit';
+import { Donut, Live, SectionTitle } from '@/components/ui/cockpit';
 import { Badge } from '@/components/ui/Badge';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
+import type { PresenzeAggregate } from '@/lib/presenze/aggregate';
 
 interface DashboardData {
   studenti: { iscritti: number; perClasse: { classe: string; count: number }[] };
@@ -257,30 +258,9 @@ function AdminDashboardInner() {
         </div>
       )}
 
-      {/* Presenze in tempo reale — struttura DR, ma nessun endpoint aggregato
-          multi-sede/classe (vedi LISTA 1): placeholder onesto "in arrivo". */}
-      <div className="mt-6 rounded-2xl bg-kidville-white p-5 shadow-sm border border-kidville-line">
-        <SectionTitle
-          icon={Users}
-          title="Presenze in tempo reale"
-          sub="Monitoraggio multi-sede · per sede e per classe"
-          action={<Badge tone="warn">In arrivo</Badge>}
-        />
-        <div className="flex flex-col items-center gap-6 sm:flex-row">
-          <Donut value={0} max={1} tone="neutral" label="—" sub="in arrivo" />
-          <div className="grid flex-1 grid-cols-2 gap-3 sm:grid-cols-4">
-            {['Presenti oggi', 'Iscritti', 'Assenti', 'Appelli mancanti'].map((l) => (
-              <div key={l} className="rounded-xl bg-kidville-cream px-3 py-4 text-center">
-                <div className="font-barlow text-2xl font-black text-kidville-neutral">—</div>
-                <div className="mt-1 font-barlow text-[10.5px] font-bold uppercase tracking-[0.03em] text-kidville-muted">{l}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-        <p className="mt-3 font-maven text-xs text-kidville-muted">
-          Il monitoraggio presenze aggregato multi-sede sarà disponibile a breve.
-        </p>
-      </div>
+      {/* Presenze in tempo reale — struttura DR, dati reali da
+          /api/admin/presenze/realtime con poll 60s (M7.5). */}
+      <PresenzeRealtimeCard userId={userId} />
 
       {/* Alert / attività */}
       {data && (
@@ -340,6 +320,111 @@ function AdminDashboardInner() {
           })}
         </RevealGroup>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Card "Presenze in tempo reale" (M7.5): Donut presenti/iscritti, 4 tile e
+ * elenco per sede/classe da /api/admin/presenze/realtime, poll 60s (niente
+ * canali realtime). Stessa struttura DR del placeholder che sostituisce.
+ */
+function PresenzeRealtimeCard({ userId }: { userId: string | null }) {
+  const [dati, setDati] = useState<PresenzeAggregate | null>(null);
+  const [ready, setReady] = useState(false);
+
+  // Pattern PagamentiSummary (react-hooks 7): nessun setState sincrono
+  // pre-await, niente catch top-level, corpo in try/finally.
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/admin/presenze/realtime${userId ? `?userId=${userId}` : ''}`).catch(() => null);
+      const j = res?.ok ? await res.json().catch(() => null) : null;
+      if (j?.success) setDati(j.data);
+    } finally {
+      setReady(true);
+    }
+  }, [userId]);
+
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const t = setInterval(() => { load(); }, 60_000);
+    return () => clearInterval(t);
+  }, [load]);
+
+  const totale = dati?.totale;
+  const pct = totale && totale.iscritti > 0 ? Math.round((totale.presenti / totale.iscritti) * 100) : null;
+  const tiles = [
+    { label: 'Presenti oggi', value: totale?.presenti, cls: 'text-kidville-green' },
+    { label: 'Iscritti', value: totale?.iscritti, cls: 'text-kidville-green' },
+    { label: 'Assenti', value: totale?.assenti, cls: 'text-kidville-green' },
+    {
+      label: 'Appelli mancanti',
+      value: totale?.appelli_mancanti,
+      cls: (totale?.appelli_mancanti ?? 0) > 0 ? 'text-kidville-warn' : 'text-kidville-green',
+    },
+  ];
+
+  return (
+    <div className="mt-6 rounded-2xl bg-kidville-white p-5 shadow-sm border border-kidville-line">
+      <SectionTitle
+        icon={Users}
+        title="Presenze in tempo reale"
+        sub="Monitoraggio multi-sede · per sede e per classe"
+        action={<Live label="Live · 60s" />}
+      />
+      <div className="flex flex-col items-center gap-6 sm:flex-row">
+        <Donut
+          value={totale?.presenti ?? 0}
+          max={totale?.iscritti ?? 1}
+          tone={pct == null ? 'neutral' : 'green'}
+          label={pct == null ? '—' : `${pct}%`}
+          sub="presenti"
+        />
+        <div className="grid flex-1 grid-cols-2 gap-3 sm:grid-cols-4">
+          {tiles.map((t) => (
+            <div key={t.label} className="rounded-xl bg-kidville-cream px-3 py-4 text-center">
+              <div className={`font-barlow text-2xl font-black ${t.value == null ? 'text-kidville-neutral' : t.cls}`}>
+                {t.value ?? '—'}
+              </div>
+              <div className="mt-1 font-barlow text-[10.5px] font-bold uppercase tracking-[0.03em] text-kidville-muted">{t.label}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* elenco per sede e per classe */}
+      {ready && dati && dati.sedi.length === 0 && (
+        <p className="mt-3 font-maven text-xs text-kidville-muted">Nessun alunno iscritto nei plessi in gestione.</p>
+      )}
+      {dati && dati.sedi.length > 0 && (
+        <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
+          {dati.sedi.map((sede) => (
+            <div key={sede.scuola_id} className="rounded-xl border border-kidville-line p-3.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="truncate font-barlow text-[13.5px] font-extrabold uppercase text-kidville-green">{sede.scuola}</span>
+                <span className="shrink-0 font-maven text-xs font-semibold text-kidville-ink/70">
+                  {sede.presenti}/{sede.iscritti} presenti
+                </span>
+              </div>
+              {sede.classi.length > 0 && (
+                <ul className="mt-2 divide-y divide-kidville-line">
+                  {sede.classi.map((c) => (
+                    <li key={c.section_id} className="flex items-center justify-between gap-2 py-1.5">
+                      <span className="truncate font-maven text-sm font-semibold text-kidville-ink/80">{c.classe}</span>
+                      <span className="flex shrink-0 items-center gap-2">
+                        {!c.appello_fatto && <Badge tone="warn">Appello mancante</Badge>}
+                        <span className="font-barlow text-sm font-black text-kidville-ink/80">
+                          {c.presenti}/{c.iscritti}
+                        </span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

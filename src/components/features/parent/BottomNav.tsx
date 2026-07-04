@@ -8,7 +8,7 @@ import {
   Home, Bell, MessageCircle, BookOpen, LayoutGrid,
   Image, Package, FileText, BarChart3, X, Euro, UtensilsCrossed,
   GraduationCap, ClipboardList, AlertTriangle, Megaphone, CalendarX2, IdCard,
-  ChevronRight,
+  ChevronRight, Shirt,
 } from 'lucide-react';
 import { useChildSchoolType } from '@/lib/auth/use-child-school-type';
 
@@ -66,6 +66,7 @@ export default function BottomNav() {
       label: 'Servizi',
       items: [
         { id: 'mensa', label: 'Mensa', sub: 'Menu e ticket pasto', icon: UtensilsCrossed, href: '/parent/mensa', tint: '#1F8A5B', grado: 'comune' },
+        { id: 'divise', label: 'Divise', sub: 'Ordina la divisa', icon: Shirt, href: '/parent/divise', tint: '#2A6FDB', grado: 'comune' },
         { id: 'armadietto', label: 'Armadietto', sub: 'Scorte e materiale', icon: Package, href: '/parent/locker', tint: '#C9971A', grado: 'infanzia' },
         { id: 'pagamenti', label: 'Pagamenti', sub: 'Rette e scadenze', icon: Euro, href: '/parent/pagamenti', tint: '#7A3FD0', grado: 'comune' },
       ],

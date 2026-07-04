@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { LinkedAdultProfile, AdultProfileData, AdultType } from './LinkedAdultProfile';
 import { Task } from '../teacher/tasks/TaskCard';
 import { StudentEconomicSection } from './StudentEconomicSection';
+import { AllergeniSelect } from './AllergeniSelect';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 
 interface Student {
@@ -18,6 +19,8 @@ interface Student {
     classe_sezione?: string | null;
     stato?: string;
     note_mediche?: string | null;
+    allergeni?: string[] | null;
+    allergies?: string | null;
     codice_fiscale?: string | null;
     fiscal_code?: string | null;
     bes?: boolean;
@@ -278,23 +281,27 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete }: Props
                         </h3>
 
                         <div className="mb-3">
-                            <label className="font-maven text-xs text-kidville-muted mb-1 block">Allergie / Intolleranze</label>
+                            <label className="font-maven text-xs text-kidville-muted mb-1 block">Allergeni</label>
+                            <AllergeniSelect
+                                value={(form.allergeni as string[]) ?? []}
+                                onChange={next => updateForm('allergeni', next)}
+                            />
+                            {(form.allergies as string)?.trim() && (
+                                <p className="mt-2 rounded-lg bg-kidville-cream px-2.5 py-1.5 font-maven text-[11px] text-kidville-muted">
+                                    Testo storico (sola lettura): {form.allergies as string}
+                                </p>
+                            )}
+                        </div>
+
+                        <div className="mb-3">
+                            <label className="font-maven text-xs text-kidville-muted mb-1 block">Note mediche (uso interno)</label>
                             <textarea
                                 value={(form.note_mediche as string) ?? ''}
                                 onChange={e => updateForm('note_mediche', e.target.value)}
-                                placeholder="Es: Lattosio, Frutta secca"
+                                placeholder="Terapie, indicazioni cliniche, note per lo staff…"
                                 rows={2}
                                 className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green resize-none"
                             />
-                            {form.note_mediche && (
-                                <div className="mt-1 flex flex-wrap gap-1">
-                                    {(form.note_mediche as string).split(',').map((a, i) => (
-                                        <span key={i} className="bg-kidville-error-soft text-kidville-error text-xs font-maven font-bold px-2 py-0.5 rounded-full border border-kidville-error-soft">
-                                            {a.trim()}
-                                        </span>
-                                    ))}
-                                </div>
-                            )}
                         </div>
 
                         <div className="flex items-center gap-3 mb-2">

@@ -383,11 +383,12 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
                             <label className="block text-sm font-bold text-kidville-green/80 mb-1 flex items-center gap-2">
                                 <AlertTriangle size={16} className="text-kidville-error" /> Allergie e Intolleranze
                             </label>
-                            <textarea name="allergies" value={formData.allergies} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-white focus:ring-2 focus:ring-kidville-error outline-none" rows={3} placeholder="Es. Lattosio, Fragole..." />
-                        </div>
-
-                        <div>
                             <AllergeniSelect value={formData.allergeni} onChange={next => setFormData(prev => ({ ...prev, allergeni: next }))} />
+                            {formData.allergies?.trim() && (
+                                <p className="mt-2 rounded-xl bg-kidville-cream px-3 py-2 font-maven text-xs text-kidville-muted">
+                                    Testo storico (sola lettura): {formData.allergies}
+                                </p>
+                            )}
                         </div>
 
                         <div className="p-4 bg-kidville-warn-soft/10 rounded-2xl border border-kidville-warn">

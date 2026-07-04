@@ -14,10 +14,15 @@
 import { readFileSync } from 'node:fs';
 import { createClient } from '@supabase/supabase-js';
 
-// ── Env da .env.local (nessuna dipendenza da dotenv) ────────────────────────
+// ── Env: process.env (CI) con fallback a .env.local (dev locale) ────────────
 function loadEnvLocal() {
   const env = {};
-  const raw = readFileSync(new URL('../.env.local', import.meta.url), 'utf8');
+  let raw;
+  try {
+    raw = readFileSync(new URL('../.env.local', import.meta.url), 'utf8');
+  } catch {
+    return env; // in CI .env.local non esiste: si usano le env di processo
+  }
   for (const line of raw.split('\n')) {
     const m = line.match(/^([A-Z0-9_]+)=(.*)$/);
     if (m) env[m[1]] = m[2].trim();
@@ -25,11 +30,11 @@ function loadEnvLocal() {
   return env;
 }
 
-const env = loadEnvLocal();
-const URL_ = env.NEXT_PUBLIC_SUPABASE_URL;
-const SERVICE_KEY = env.SUPABASE_SERVICE_ROLE_KEY;
+const fileEnv = loadEnvLocal();
+const URL_ = process.env.NEXT_PUBLIC_SUPABASE_URL || fileEnv.NEXT_PUBLIC_SUPABASE_URL;
+const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || fileEnv.SUPABASE_SERVICE_ROLE_KEY;
 if (!URL_ || !SERVICE_KEY) {
-  console.error('Mancano NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY in .env.local');
+  console.error('Mancano NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY (env di processo o .env.local)');
   process.exit(1);
 }
 

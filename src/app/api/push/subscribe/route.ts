@@ -5,8 +5,9 @@ import { requireUser } from '@/lib/auth/require-staff'
 import { vapidConfigured } from '@/lib/push/web-push'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 
-// L'eventuale `userId` nel body è ignorato: si usa sempre l'utente autenticato.
-const postBodySchema = z.object({
+// L'eventuale `userId` nel body/header e' ignorato: si usa sempre l'utente autenticato.
+// Due varianti: Web Push (subscription VAPID) oppure token NATIVO (Capacitor iOS/Android).
+const webSchema = z.object({
   subscription: z.object(
     {
       endpoint: z.string().min(1, 'subscription non valida'),
@@ -21,21 +22,54 @@ const postBodySchema = z.object({
     { error: 'subscription non valida' }
   ),
 })
+const nativeSchema = z.object({
+  token: z.string().min(1, 'token non valido'),
+  platform: z.enum(['ios', 'android']),
+})
+const postBodySchema = z.union([webSchema, nativeSchema])
 
 const deleteQuerySchema = z.object({
   endpoint: z.string({ error: 'endpoint è obbligatorio' }).min(1, 'endpoint è obbligatorio'),
 })
 
-// POST /api/push/subscribe  — registra la subscription Web Push dell'utente
-// Body: { userId, subscription: { endpoint, keys: { p256dh, auth } } }
+// POST /api/push/subscribe  — registra la subscription push dell'utente autenticato.
+// Body web:    { subscription: { endpoint, keys: { p256dh, auth } } }
+// Body nativo: { token, platform: 'ios' | 'android' }
 export async function POST(request: Request) {
   try {
     const auth = await requireUser(request)
     if (auth.response) return auth.response
     const { user } = auth
 
-    // Registrare una subscription che non potrà mai ricevere push è fuorviante:
-    // meglio un 503 chiaro finché le chiavi VAPID non sono configurate.
+    const b = await parseBody(request, postBodySchema)
+    if ('response' in b) return b.response
+    const body = b.data
+
+    const supabase = await createAdminClient()
+    const userAgent = request.headers.get('user-agent') ?? null
+
+    if ('token' in body) {
+      // Token nativo (FCM/APNs). Il gating dell'INVIO e' a dispatch time: qui
+      // registriamo sempre il token, cosi' e' pronto quando FCM sara' configurato.
+      // Il token nativo occupa la colonna `endpoint` (chiave di upsert); p256dh/auth
+      // (specifici del Web Push) restano NULL.
+      const { error } = await supabase.from('push_subscriptions').upsert(
+        {
+          utente_id: user.id,
+          endpoint: body.token,
+          p256dh: null,
+          auth: null,
+          platform: body.platform,
+          user_agent: userAgent,
+        },
+        { onConflict: 'endpoint' }
+      )
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+      return NextResponse.json({ success: true, platform: body.platform }, { status: 201 })
+    }
+
+    // Web Push (VAPID). Registrare una subscription che non potra' mai ricevere
+    // push e' fuorviante: 503 chiaro finche' le chiavi VAPID non sono configurate.
     if (!vapidConfigured()) {
       return NextResponse.json(
         { error: 'configurazione mancante: VAPID (push web non configurato)' },
@@ -43,18 +77,15 @@ export async function POST(request: Request) {
       )
     }
 
-    const b = await parseBody(request, postBodySchema)
-    if ('response' in b) return b.response
-    const sub = b.data.subscription
-
-    const supabase = await createAdminClient()
+    const sub = body.subscription
     const { error } = await supabase.from('push_subscriptions').upsert(
       {
         utente_id: user.id,
         endpoint: sub.endpoint,
         p256dh: sub.keys.p256dh,
         auth: sub.keys.auth,
-        user_agent: request.headers.get('user-agent') ?? null,
+        platform: 'web',
+        user_agent: userAgent,
       },
       { onConflict: 'endpoint' }
     )
@@ -66,7 +97,8 @@ export async function POST(request: Request) {
   }
 }
 
-// DELETE /api/push/subscribe?endpoint=...&userId=  — rimuove la subscription
+// DELETE /api/push/subscribe?endpoint=...  — rimuove la subscription (web o nativa:
+// per i token nativi `endpoint` contiene il token stesso).
 export async function DELETE(request: Request) {
   try {
     const auth = await requireUser(request)

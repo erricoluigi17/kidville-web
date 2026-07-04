@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { Bell, BellOff } from 'lucide-react';
+import { isNativeApp, registerNativePush, unregisterNativePush } from '@/lib/push/native-register';
 
 interface Props { userId: string }
 
@@ -15,11 +16,14 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array {
 }
 
 export function PushOptIn({ userId }: Props) {
-    const [supported, setSupported] = useState(false);
+    // Nella shell nativa la push non usa il service worker: bottone sempre disponibile.
+    // Lazy initializer (non setState in effect) per non violare react-hooks set-state-in-effect.
+    const [supported, setSupported] = useState<boolean>(() => isNativeApp());
     const [subscribed, setSubscribed] = useState(false);
     const [busy, setBusy] = useState(false);
 
     useEffect(() => {
+        if (isNativeApp()) return; // nativo: nessun service worker da interrogare
         const ok = typeof window !== 'undefined' && 'serviceWorker' in navigator && 'PushManager' in window;
         if (ok) {
             navigator.serviceWorker.getRegistration().then(async (reg) => {
@@ -33,6 +37,11 @@ export function PushOptIn({ userId }: Props) {
     const enable = async () => {
         setBusy(true);
         try {
+            if (isNativeApp()) {
+                const r = await registerNativePush();
+                if (r.ok) setSubscribed(true);
+                return;
+            }
             const perm = await Notification.requestPermission();
             if (perm !== 'granted') { setBusy(false); return; }
             const reg = await navigator.serviceWorker.register('/sw.js');
@@ -58,6 +67,11 @@ export function PushOptIn({ userId }: Props) {
     const disable = async () => {
         setBusy(true);
         try {
+            if (isNativeApp()) {
+                await unregisterNativePush();
+                setSubscribed(false);
+                return;
+            }
             const reg = await navigator.serviceWorker.getRegistration();
             const sub = await reg?.pushManager.getSubscription();
             if (sub) {

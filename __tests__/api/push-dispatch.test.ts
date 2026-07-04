@@ -33,6 +33,8 @@ vi.mock('@/lib/supabase/server-client', () => ({
 }))
 const push = vi.hoisted(() => ({ sendPush: vi.fn(), vapidConfigured: vi.fn() }))
 vi.mock('@/lib/push/web-push', () => push)
+const native = vi.hoisted(() => ({ sendNativePush: vi.fn(), fcmConfigured: vi.fn() }))
+vi.mock('@/lib/push/native-push', () => native)
 
 import { POST } from '@/app/api/push/dispatch/route'
 
@@ -51,6 +53,8 @@ beforeEach(() => {
   process.env.CRON_SECRET = 'test-secret'
   push.sendPush.mockResolvedValue({ ok: true })
   push.vapidConfigured.mockReturnValue(true)
+  native.sendNativePush.mockResolvedValue({ ok: true })
+  native.fcmConfigured.mockReturnValue(false) // default: FCM non configurato
 })
 
 describe('POST /api/push/dispatch', () => {
@@ -119,6 +123,70 @@ describe('POST /api/push/dispatch', () => {
           { id: 's1', utente_id: 'u1', endpoint: 'e1', p256dh: 'p', auth: 'a' },
           { id: 's2', utente_id: 'u1', endpoint: 'e2', p256dh: 'p', auth: 'a' },
         ], error: null },
+        { data: null, error: null }, // delete
+      ],
+    }
+    const res = await POST(req('test-secret'))
+    const body = await res.json()
+    expect(body.data.subs_rimosse).toBe(1)
+    expect(h.state.calls.some((c) => c.table === 'push_subscriptions' && c.m === 'delete')).toBe(true)
+  })
+
+  it('instrada i token nativi a sendNativePush e i web a sendPush', async () => {
+    native.fcmConfigured.mockReturnValue(true)
+    h.state.queues = {
+      notifiche: [
+        { data: [{ id: 'n1', utente_id: 'u1', titolo: 't', corpo: null, link: '/x' }], error: null },
+        { data: null, error: null }, // update
+      ],
+      push_subscriptions: [
+        { data: [
+          { id: 's1', utente_id: 'u1', endpoint: 'webep', p256dh: 'p', auth: 'a', platform: 'web' },
+          { id: 's2', utente_id: 'u1', endpoint: 'fcmtok', p256dh: null, auth: null, platform: 'android' },
+        ], error: null },
+      ],
+    }
+    const res = await POST(req('test-secret'))
+    const body = await res.json()
+    expect(push.sendPush).toHaveBeenCalledTimes(1)
+    expect(native.sendNativePush).toHaveBeenCalledTimes(1)
+    expect(native.sendNativePush).toHaveBeenCalledWith(
+      'fcmtok',
+      'android',
+      expect.objectContaining({ title: 't', url: '/x' })
+    )
+    expect(body.data.inviate).toBe(1)
+    expect(body.data.native_inviate).toBe(1)
+  })
+
+  it('FCM non configurato → token nativi saltati (degrado pulito), notifica comunque marcata', async () => {
+    native.fcmConfigured.mockReturnValue(false) // web ok (beforeEach) → nessun early-return
+    h.state.queues = {
+      notifiche: [
+        { data: [{ id: 'n1', utente_id: 'u1', titolo: 't', corpo: null, link: null }], error: null },
+        { data: null, error: null }, // update
+      ],
+      push_subscriptions: [
+        { data: [{ id: 's2', utente_id: 'u1', endpoint: 'fcmtok', p256dh: null, auth: null, platform: 'ios' }], error: null },
+      ],
+    }
+    const res = await POST(req('test-secret'))
+    const body = await res.json()
+    expect(native.sendNativePush).not.toHaveBeenCalled()
+    expect(body.data.native_inviate).toBe(0)
+    expect(h.state.calls.some((c) => c.table === 'notifiche' && c.m === 'update')).toBe(true)
+  })
+
+  it('rimuove il token nativo "gone"', async () => {
+    native.fcmConfigured.mockReturnValue(true)
+    native.sendNativePush.mockResolvedValue({ ok: false, gone: true })
+    h.state.queues = {
+      notifiche: [
+        { data: [{ id: 'n1', utente_id: 'u1', titolo: 't', corpo: null, link: null }], error: null },
+        { data: null, error: null }, // update
+      ],
+      push_subscriptions: [
+        { data: [{ id: 's2', utente_id: 'u1', endpoint: 'fcmtok', p256dh: null, auth: null, platform: 'android' }], error: null },
         { data: null, error: null }, // delete
       ],
     }

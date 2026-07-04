@@ -40,6 +40,18 @@ metterci segreti.
 | `VAPID_PRIVATE_KEY` | Chiave privata VAPID (server, invio). **Segreto.** |
 | `VAPID_SUBJECT` | Subject VAPID (es. `mailto:info@kidville.it`). |
 
+## App native / Push nativa (Capacitor, M10 — vedi `docs/mobile.md`)
+
+| Variabile | Dove | Descrizione |
+|---|---|---|
+| `CAP_SERVER_URL` | build Capacitor | URL che la WebView nativa carica (`server.url`). Dev: `http://<ip-locale>:3000`; store: URL HTTPS pubblico del deploy. Assente → la shell usa il fallback locale `mobile/www`. |
+| `FCM_PROJECT_ID` | solo server | Project id Firebase per l'invio push nativa (FCM HTTP v1). Assente → `sendNativePush` degrada con `fcm_non_configurato`. **Segreto/gated.** |
+| `FCM_CLIENT_EMAIL` | solo server | Email del service-account Firebase. **Segreto/gated.** |
+| `FCM_PRIVATE_KEY` | solo server | Chiave privata del service-account (PEM; `\n` accettati). **Segreto/gated.** |
+
+APNs (iOS) è configurato dentro Firebase (APNs Auth Key nella console): l'invio
+a iOS passa da FCM, quindi lato server bastano le `FCM_*`.
+
 ## Integrazioni esterne (gated: assenti → degrado pulito, mai crash)
 
 | Variabile | Descrizione |

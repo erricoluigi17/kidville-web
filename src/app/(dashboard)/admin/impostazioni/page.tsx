@@ -22,8 +22,7 @@ import { ArmadiettoSettings } from '@/components/features/admin/settings/Armadie
 import { ModulisticaSettings } from '@/components/features/admin/settings/ModulisticaSettings';
 import { PageHeader } from '@/components/ui/cockpit';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
-
-const SCUOLA_ID = '11111111-1111-1111-1111-111111111111';
+import { SedeRequired } from '@/lib/context/sede-context';
 
 type Sezione =
     | 'moduli'
@@ -158,14 +157,14 @@ function Inner() {
                             {voceAttiva?.icon} {voceAttiva?.label}
                         </h2>
                         {userId && sezione === 'moduli' && <FunzioniMatricePanel userId={userId} />}
-                        {userId && sezione === 'pagamenti' && <SettingsPanel userId={userId} scuolaId={SCUOLA_ID} />}
+                        {userId && sezione === 'pagamenti' && <SedeRequired cosa="pagamenti & fatturazione">{(sid) => <SettingsPanel userId={userId} scuolaId={sid} />}</SedeRequired>}
                         {userId && sezione === 'modulistica' && <ModulisticaSettings userId={userId} />}
-                        {userId && sezione === 'didattica' && <DidatticaPrimariaPanel scuolaId={SCUOLA_ID} userId={userId} />}
-                        {userId && sezione === 'pagelle' && <PagelleScrutinioPanel scuolaId={SCUOLA_ID} userId={userId} />}
+                        {userId && sezione === 'didattica' && <SedeRequired cosa="la didattica primaria">{(sid) => <DidatticaPrimariaPanel scuolaId={sid} userId={userId} />}</SedeRequired>}
+                        {userId && sezione === 'pagelle' && <SedeRequired cosa="pagelle & scrutinio">{(sid) => <PagelleScrutinioPanel scuolaId={sid} userId={userId} />}</SedeRequired>}
                         {userId && sezione === 'diario' && <DiarioSettings userId={userId} />}
                         {userId && sezione === 'presenze' && <PresenzeSettings userId={userId} />}
                         {userId && sezione === 'note' && <NoteSettings userId={userId} />}
-                        {userId && sezione === 'mensa' && <MensaSettings userId={userId} scuolaId={SCUOLA_ID} />}
+                        {userId && sezione === 'mensa' && <SedeRequired cosa="la mensa">{(sid) => <MensaSettings userId={userId} scuolaId={sid} />}</SedeRequired>}
                         {userId && sezione === 'armadietto' && <ArmadiettoSettings userId={userId} />}
                         {userId && sezione === 'avvisi' && <AvvisiSettings userId={userId} />}
                         {userId && sezione === 'chat' && <ChatSettings userId={userId} />}

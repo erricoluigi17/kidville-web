@@ -6,6 +6,7 @@ import { Fingerprint, FileWarning, User, AlertTriangle, Loader2, CheckCircle2, X
 import { fetchFiscalCode } from '@/lib/utils/fiscalCodeApi';
 import { z } from 'zod';
 import { AllergeniSelect } from '@/components/features/admin/AllergeniSelect';
+import { useSediAttive } from '@/lib/context/sede-context';
 
 const studentSchema = z.object({
     nome: z.string().min(2, "Il nome deve avere almeno 2 caratteri"),
@@ -50,6 +51,7 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
         comune_residenza: '',
         cap: '',
         classe_sezione: '',
+        scuola_id: '',
         is_bes_dsa: false,
         note_bes: '',
         usa_pannolino: false,
@@ -60,8 +62,10 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
     });
 
     const [sections, setSections] = useState<{id: string, name: string, school_type: string}[]>([]);
-    // Per ora usiamo la scuola hardcoded, ma prepariamo la struttura
-    const [schools] = useState<{id: string, nome: string}[]>([{ id: '11111111-1111-1111-1111-111111111111', nome: 'Kidville Roma' }]);
+    // Sedi reali accessibili all'utente (contesto multi-sede). La sede attiva
+    // (sedeCorrente) fa da default; con >1 sedi accessibili si può scegliere.
+    const { sedi, sedeCorrente } = useSediAttive();
+    const scuolaSelezionata = formData.scuola_id || sedeCorrente || (sedi[0]?.id ?? '');
     const [isCfAutoCalculated, setIsCfAutoCalculated] = useState(false);
     const [isCfLoading, setIsCfLoading] = useState(false);
     const [errors, setErrors] = useState<Record<string, string>>({});
@@ -145,7 +149,9 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
             const res = await fetch('/api/admin/students', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(parsedData)
+                // scuola_id: sede scelta (default = sede attiva). Il server la valida
+                // via resolveScuolaScrittura contro le sedi accessibili.
+                body: JSON.stringify({ ...parsedData, scuola_id: scuolaSelezionata })
             });
 
             if (!res.ok) {
@@ -225,7 +231,7 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
                             onClick={() => {
                                 setSavedStudent(null);
                                 codiceFiscaleRef.current = '';
-                                setFormData({ nome: '', cognome: '', sesso: 'M', data_nascita: '', comune_nascita: '', provincia_nascita: '', codice_fiscale: '', indirizzo_residenza: '', comune_residenza: '', cap: '', classe_sezione: '', is_bes_dsa: false, note_bes: '', usa_pannolino: false, allergies: '', allergeni: [], invoice_holder_type: 'mom', invoice_holder_details: { nome: '', cognome: '', codice_fiscale: '', adult_id: '' } });
+                                setFormData({ nome: '', cognome: '', sesso: 'M', data_nascita: '', comune_nascita: '', provincia_nascita: '', codice_fiscale: '', indirizzo_residenza: '', comune_residenza: '', cap: '', classe_sezione: '', scuola_id: '', is_bes_dsa: false, note_bes: '', usa_pannolino: false, allergies: '', allergeni: [], invoice_holder_type: 'mom', invoice_holder_details: { nome: '', cognome: '', codice_fiscale: '', adult_id: '' } });
                             }}
                             className="flex items-center gap-2 px-5 py-2.5 bg-kidville-cream border border-kidville-green/15 text-kidville-green rounded-xl font-barlow font-bold uppercase text-sm hover:bg-kidville-green-light transition-all"
                         >
@@ -325,8 +331,15 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
                     <div className="grid grid-cols-2 gap-6">
                         <div>
                             <label className="block text-sm font-bold text-kidville-green/80 mb-1">Sede</label>
-                            <select className="w-full p-3 rounded-xl border border-kidville-green/15 bg-white text-kidville-green outline-none focus:ring-2 focus:ring-kidville-green">
-                                {schools.map(s => (
+                            <select
+                                name="scuola_id"
+                                value={scuolaSelezionata}
+                                onChange={handleInputChange}
+                                disabled={sedi.length <= 1}
+                                className="w-full p-3 rounded-xl border border-kidville-green/15 bg-white text-kidville-green outline-none focus:ring-2 focus:ring-kidville-green disabled:opacity-70"
+                            >
+                                {sedi.length === 0 && <option value="">Nessuna sede disponibile</option>}
+                                {sedi.map(s => (
                                     <option key={s.id} value={s.id}>{s.nome}</option>
                                 ))}
                             </select>

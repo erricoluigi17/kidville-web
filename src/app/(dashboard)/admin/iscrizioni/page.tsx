@@ -8,6 +8,7 @@ import {
 import { ADULT_ROLE_LABELS } from '@/lib/forms/enrollment-template'
 import type { EnrollmentSubmissionData, EnrollmentChild, EnrollmentAdult } from '@/types/database.types'
 import { CockpitPage, PageHeader, StatCard } from '@/components/ui/cockpit'
+import { useSediAttive } from '@/lib/context/sede-context'
 
 interface SubmissionRow {
   id: string
@@ -30,14 +31,22 @@ export default function IscrizioniPage() {
   const [working, setWorking] = useState(false)
   const [result, setResult] = useState<{ credentials?: { email: string; password: string } | null; credentialsEmailSent?: boolean; warnings?: string[] } | null>(null)
 
-  useEffect(() => { load() }, [])
+  const { reFetchKey } = useSediAttive()
 
-  async function load() {
-    setLoading(true)
+  // Fetch iniziale + re-fetch al cambio sedi attive. `load` è una function
+  // semplice (non tracciata da react-hooks/set-state-in-effect) e riceve la
+  // chiave sedi come argomento, così reFetchKey è referenziato nell'effect.
+  useEffect(() => { load(reFetchKey) }, [reFetchKey])
+
+  async function load(sediKey: string) {
+    // Nessun setLoading(true) sincrono qui: lo stato parte già a `true`; al
+    // re-fetch i dati si aggiornano senza rimettere lo spinner.
     try {
+      // `x-sedi`: chiave di re-fetch (il server scopa dal cookie).
+      const hdr = { 'x-sedi': sediKey }
       const [r, s] = await Promise.all([
-        fetch('/api/admin/iscrizioni').then(x => x.json()),
-        fetch('/api/admin/sections').then(x => x.json()),
+        fetch('/api/admin/iscrizioni', { headers: hdr }).then(x => x.json()),
+        fetch('/api/admin/sections', { headers: hdr }).then(x => x.json()),
       ])
       if (Array.isArray(r)) setRows(r)
       if (Array.isArray(s)) setSections(s)
@@ -75,7 +84,7 @@ export default function IscrizioniPage() {
       const json = await res.json()
       if (!res.ok) { alert(json.error ?? 'Import fallito'); return }
       setResult({ credentials: json.credentials, credentialsEmailSent: json.credentialsEmailSent, warnings: json.warnings })
-      await load()
+      await load(reFetchKey)
     } catch (e) {
       console.error(e)
       alert('Errore durante l\'import')
@@ -94,7 +103,7 @@ export default function IscrizioniPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: selected.id, action: 'reject' }),
       })
-      await load()
+      await load(reFetchKey)
       setSelected(null)
     } finally {
       setWorking(false)

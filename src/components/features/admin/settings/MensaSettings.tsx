@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Settings, Save, CheckCircle2, Plus, Trash2, ChevronDown, ChevronUp, UtensilsCrossed, BookOpen } from 'lucide-react';
+import { Settings, Save, Plus, Trash2, ChevronDown, ChevronUp, UtensilsCrossed, BookOpen } from 'lucide-react';
+import { SaveCheck } from '@/components/ui/SaveConfirmation';
 
 interface Props { userId: string; scuolaId: string }
 interface MenuConfig { id: string; nome: string; ordine: number }
@@ -169,7 +170,7 @@ export function MensaSettings({ userId, scuolaId }: Props) {
           <button onClick={salva} className="px-4 py-2 rounded-full bg-kidville-green text-white font-maven font-bold text-sm flex items-center gap-1">
             <Save size={15} /> Salva impostazioni
           </button>
-          {done && <p className="font-maven text-xs text-kidville-success flex items-center gap-1"><CheckCircle2 size={13} /> Impostazioni salvate.</p>}
+          {done && <p className="font-maven text-xs text-kidville-success flex items-center gap-1"><SaveCheck size={14} /> Impostazioni salvate.</p>}
         </div>
       </div>
 

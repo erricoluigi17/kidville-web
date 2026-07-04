@@ -1,10 +1,11 @@
 'use client';
 
 import { useState } from 'react';
-import { X, ShoppingBag, CheckCircle2 } from 'lucide-react';
+import { X, ShoppingBag } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { FatturaButton } from './FatturaButton';
 import { RateizzaModal } from './RateizzaModal';
+import { SaveCheck } from '@/components/ui/SaveConfirmation';
 
 interface Alunno { id: string; nome?: string; cognome?: string; classe_sezione?: string | null }
 interface Categoria { id: string; nome: string; slug?: string }
@@ -119,7 +120,7 @@ export function QuickAcquistoModal({ alunno, categoria, userId, scuolaId, onClos
 
                 {creato ? (
                     <div className="text-center py-4">
-                        <CheckCircle2 size={40} className="text-kidville-green mx-auto mb-2" />
+                        <span className="mx-auto mb-2 flex w-10 justify-center text-kidville-green"><SaveCheck size={40} /></span>
                         <p className="font-maven text-sm text-kidville-green font-bold mb-1">
                             Acquisto registrato{giaPagato ? ' e saldato' : ''}.
                         </p>

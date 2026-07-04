@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { Ticket, ChevronLeft, ChevronRight, Check, X, Lock, CalendarOff, UtensilsCrossed, RefreshCw, AlertTriangle } from 'lucide-react';
 import { allergeniDelGiorno, allergeneLabel, allergeneEmoji, type AllergeniPortate } from '@/lib/mensa/allergeni';
+import { SaveCelebration } from '@/components/ui/SaveConfirmation';
 
 interface Props { userId: string; studentId: string }
 
@@ -34,6 +35,8 @@ export function MensaCalendar({ userId, studentId }: Props) {
   const [msg, setMsg] = useState<string | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
   const [menuNome, setMenuNome] = useState<string | null>(null);
+  // Celebrazione festosa (spunta + coriandoli) su prenota/disdici riuscita.
+  const [celebra, setCelebra] = useState<string | null>(null);
 
   const from = ymd(weekStart);
   const to = ymd(addDays(weekStart, 6));
@@ -75,6 +78,7 @@ export function MensaCalendar({ userId, studentId }: Props) {
     if (j.success) {
       const esito = j.data.esiti?.[0];
       if (esito && !esito.ok) { setMsg(esito.motivo ?? 'Operazione non riuscita'); }
+      else { setCelebra('Pranzo prenotato!'); }
       await load();
     } else { setMsg(j.error ?? 'Errore'); }
   };
@@ -86,7 +90,7 @@ export function MensaCalendar({ userId, studentId }: Props) {
     });
     const j = await res.json();
     setBusy(null);
-    if (j.success) { await load(); } else { setMsg(j.error ?? 'Errore'); }
+    if (j.success) { setCelebra('Prenotazione disdetta'); await load(); } else { setMsg(j.error ?? 'Errore'); }
   };
 
   const giorni = menu.filter(g => {
@@ -96,6 +100,8 @@ export function MensaCalendar({ userId, studentId }: Props) {
 
   return (
     <div>
+      <SaveCelebration show={!!celebra} message={celebra ?? ''} onDone={() => setCelebra(null)} />
+
       {/* Saldo + navigazione settimana */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">

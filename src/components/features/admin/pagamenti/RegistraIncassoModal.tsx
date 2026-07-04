@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { X, Euro } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { FatturaButton } from './FatturaButton';
+import { SaveCheck } from '@/components/ui/SaveConfirmation';
 
 export interface PagamentoRow {
     id: string;
@@ -155,7 +156,9 @@ export function RegistraIncassoModal({ pagamento, userId, onClose, onDone }: Pro
                 {saldato ? (
                     <div className="mt-5">
                         <div className="flex items-center justify-between gap-2 bg-kidville-success-soft rounded-xl px-3 py-2.5 mb-3">
-                            <span className="font-maven text-sm text-kidville-success font-bold">Pagamento saldato ✓</span>
+                            <span className="flex items-center gap-1.5 font-maven text-sm text-kidville-success font-bold">
+                                <SaveCheck size={17} /> Pagamento saldato
+                            </span>
                             <FatturaButton pagamentoId={pagamento.id} userId={userId} fatturaStato={pagamento.fattura_stato} descrizione={pagamento.descrizione} />
                         </div>
                         <button onClick={onDone}

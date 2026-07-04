@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { CalendarRange, Save, Plus, Trash2, CheckCircle2, CalendarOff, UtensilsCrossed } from 'lucide-react';
+import { CalendarRange, Save, Plus, Trash2, CalendarOff, UtensilsCrossed } from 'lucide-react';
+import { SaveCheck } from '@/components/ui/SaveConfirmation';
 import { ALLERGENI } from '@/lib/mensa/allergeni';
 
 interface Props { userId: string; scuolaId: string }
@@ -244,7 +245,7 @@ export function MenuBuilder({ userId, scuolaId }: Props) {
         <button onClick={salvaRotazione} className="mt-3 px-4 py-2 rounded-full bg-kidville-green text-white font-maven font-bold text-sm flex items-center gap-1">
           <Save size={15} /> Salva settimana {settimana}
         </button>
-        {done && <span className="ml-2 font-maven text-xs text-kidville-success inline-flex items-center gap-1"><CheckCircle2 size={13} /> Salvato.</span>}
+        {done && <span className="ml-2 font-maven text-xs text-kidville-success inline-flex items-center gap-1"><SaveCheck size={14} /> Salvato.</span>}
       </div>
 
       {/* ── Override per data ── */}

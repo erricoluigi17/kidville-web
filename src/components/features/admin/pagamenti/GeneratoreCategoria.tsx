@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { Layers, CheckCircle2, RefreshCw } from 'lucide-react';
+import { Layers, RefreshCw } from 'lucide-react';
+import { SaveCheck } from '@/components/ui/SaveConfirmation';
 
 interface Categoria { id: string; nome: string; slug: string }
 interface Alunno { id: string; nome?: string; cognome?: string; classe_sezione?: string | null; section_id?: string | null }
@@ -172,7 +173,7 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
 
             {done && (
                 <div className="bg-kidville-success-soft text-kidville-success rounded-xl p-4 font-maven text-sm flex items-center gap-2">
-                    <CheckCircle2 size={18} /> {done}
+                    <SaveCheck size={18} /> {done}
                 </div>
             )}
             {error && <p className="font-maven text-xs text-kidville-error">{error}</p>}

@@ -1,7 +1,8 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff, requireUser } from '@/lib/auth/require-staff'
+import { resolveScuoleAttive, resolveScuolaScrittura } from '@/lib/auth/scope'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 
@@ -28,7 +29,7 @@ const deleteQuerySchema = z.object({
 })
 
 // GET /api/mensa/menu-config?scuola_id=  — tutti i menu della scuola
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   try {
     const auth = await requireUser(request)
     if (auth.response) return auth.response
@@ -37,10 +38,13 @@ export async function GET(request: Request) {
     const scuolaId = q.data.scuola_id
 
     const supabase = await createAdminClient()
+    const accessibili = await resolveScuoleAttive(request, supabase, auth.user)
+    // scuola_id dal client SOLO per restringere dentro le sedi accessibili
+    const plessi = accessibili.includes(scuolaId) ? [scuolaId] : accessibili
     const { data, error } = await supabase
       .from('mensa_menu_config')
       .select('id, nome, ordine, created_at')
-      .eq('scuola_id', scuolaId)
+      .in('scuola_id', plessi)
       .order('ordine', { ascending: true })
     if (error) throw error
     return NextResponse.json({ success: true, data: data ?? [] })
@@ -51,7 +55,7 @@ export async function GET(request: Request) {
 }
 
 // POST /api/mensa/menu-config  { scuola_id, nome, ordine? }
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -59,9 +63,13 @@ export async function POST(request: Request) {
     if ('response' in b) return b.response
     const { scuola_id, nome, ordine = 0 } = b.data
     const supabase = await createAdminClient()
+    // sede derivata server-side (valida scuola_id client ∈ sedi dell'utente)
+    const sw = await resolveScuolaScrittura(request, supabase, auth.user, scuola_id)
+    if (sw.response) return sw.response
+    const sede = sw.scuolaId as string
     const { data, error } = await supabase
       .from('mensa_menu_config')
-      .insert({ scuola_id, nome, ordine })
+      .insert({ scuola_id: sede, nome, ordine })
       .select('id, nome, ordine')
       .single()
     if (error) throw error

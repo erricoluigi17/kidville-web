@@ -1,10 +1,10 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { requireStaff } from '@/lib/auth/require-staff'
+import { requireStaff, requireUser } from '@/lib/auth/require-staff'
 import { loadMensaConfig, loadResolveOptions, resolveMenuConfigId } from '@/lib/mensa/server'
 import { resolveMenuRange } from '@/lib/mensa/resolveMenu'
-import { resolveScuolaScrittura } from '@/lib/auth/scope'
+import { resolveScuolaScrittura, scuoleDiUtente } from '@/lib/auth/scope'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zDataYMD, zUuid } from '@/lib/validation/common'
 
@@ -91,26 +91,63 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ success: true, data: { rotazione: rotazione ?? [], override: override ?? [], config } })
     }
 
+    // Ramo consultazione: usato da staff/cuoca (report cucina), docenti (diario)
+    // e GENITORI (calendario mensa) → gate largo requireUser, scoping per ruolo.
+    const auth = await requireUser(request)
+    if (auth.response) return auth.response
+    const user = auth.user
     const q = parseQuery(request, getQuerySchema)
     if ('response' in q) return q.response
-    const scuolaId = q.data.scuola_id || undefined
+    const alunnoId = q.data.alunno_id || undefined
+    let scuolaId = q.data.scuola_id || undefined
+    let classeAlunno: string | null = null
+
+    if (alunnoId) {
+      // Flusso per-alunno: la scuola è quella DELL'ALUNNO (server-derived, mai
+      // dal client). Il genitore può vedere solo i propri figli (stesso pattern
+      // di mensa/prenotazioni: legame_genitori_alunni).
+      const { data: al } = await supabase.from('alunni').select('classe_sezione, scuola_id').eq('id', alunnoId).maybeSingle()
+      if (!al) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
+      if (user.role === 'genitore') {
+        const { data: leg } = await supabase
+          .from('legame_genitori_alunni').select('alunno_id')
+          .eq('genitore_id', user.id).eq('alunno_id', alunnoId).maybeSingle()
+        if (!leg) return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
+      }
+      classeAlunno = (al.classe_sezione as string | null) ?? null
+      scuolaId = (al.scuola_id as string | null) ?? scuolaId
+    } else if (user.role === 'genitore') {
+      // Un genitore consulta il menu solo tramite un proprio figlio.
+      return NextResponse.json({ error: 'alunno_id obbligatorio' }, { status: 400 })
+    }
+
+    if (user.role !== 'genitore') {
+      // Personale scolastico: MAI fidarsi dello scuola_id dal client — la sede
+      // (indicata o derivata dall'alunno) dev'essere tra i plessi accessibili;
+      // se assente (report cucina, diario docente) si risolve dal proprio scope.
+      const scuoleOk = await scuoleDiUtente(supabase, user)
+      if (scuolaId) {
+        if (!scuoleOk.includes(scuolaId)) {
+          return NextResponse.json({ error: 'Sede non consentita' }, { status: 403 })
+        }
+      } else if (scuoleOk.length === 1) {
+        scuolaId = scuoleOk[0]
+      } else if (user.scuola_id && scuoleOk.includes(user.scuola_id)) {
+        scuolaId = user.scuola_id
+      }
+    }
     if (!scuolaId) {
       return NextResponse.json({ error: 'Specificare la sede (scuola_id)' }, { status: 400 })
     }
+
     const today = new Date().toISOString().slice(0, 10)
     const from = q.data.from ?? today
     const to = q.data.to ?? from
 
     // Determina menu_config_id: esplicito → dall'alunno → null (legacy)
     let menuConfigId: string | null = q.data.menu_config_id || null
-    if (!menuConfigId) {
-      const alunnoId = q.data.alunno_id
-      if (alunnoId) {
-        const { data: al } = await supabase.from('alunni').select('classe_sezione, scuola_id').eq('id', alunnoId).maybeSingle()
-        if (al) {
-          menuConfigId = await resolveMenuConfigId(supabase, al.scuola_id ?? scuolaId, al.classe_sezione, from)
-        }
-      }
+    if (!menuConfigId && alunnoId) {
+      menuConfigId = await resolveMenuConfigId(supabase, scuolaId, classeAlunno, from)
     }
 
     const options = await loadResolveOptions(supabase, scuolaId, undefined, menuConfigId)

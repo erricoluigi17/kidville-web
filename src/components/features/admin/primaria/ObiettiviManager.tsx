@@ -30,14 +30,15 @@ export function ObiettiviManager({ scuolaId, userId }: { scuolaId: string; userI
     let next: Obiettivo[] | null = null;
     try {
       const r = await fetch(
-        `/api/admin/primaria/obiettivi?scuolaId=${scuolaId}&materiaCodice=${materiaCodice}&livello=${livello}`
+        `/api/admin/primaria/obiettivi?scuolaId=${scuolaId}&materiaCodice=${materiaCodice}&livello=${livello}`,
+        { headers: { 'x-user-id': userId } }
       );
       const d = await r.json();
       next = d.success ? d.data : [];
     } finally {
       if (next) setObiettivi(next);
     }
-  }, [scuolaId, materiaCodice, livello]);
+  }, [scuolaId, materiaCodice, livello, userId]);
 
   useEffect(() => {
     load();

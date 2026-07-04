@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff, type AppRole } from '@/lib/auth/require-staff'
+import { scuoleDiUtente } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { RUOLI_VALIDI } from '@/lib/auth/ruoli'
 import { parseBody, parseQuery } from '@/lib/validation/http'
@@ -76,12 +77,22 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ error: 'Non puoi modificare il tuo stesso ruolo' }, { status: 403 })
     }
 
+    const supabase = await createAdminClient()
+
     const patch: Record<string, unknown> = {}
     if (body.ruolo !== undefined) patch.ruolo = body.ruolo
-    if (body.scuola_id !== undefined) patch.scuola_id = body.scuola_id
+    if (body.scuola_id !== undefined) {
+      // MAI fidarsi dello scuola_id dal client: la sede destinazione deve
+      // essere tra i plessi della Direzione. (null resta consentito e passa.)
+      if (body.scuola_id !== null) {
+        const plessi = await scuoleDiUtente(supabase, auth.user)
+        if (!plessi.includes(body.scuola_id)) {
+          return NextResponse.json({ error: 'Sede non consentita' }, { status: 403 })
+        }
+      }
+      patch.scuola_id = body.scuola_id
+    }
     if (Array.isArray(body.gradi)) patch.gradi = body.gradi
-
-    const supabase = await createAdminClient()
 
     if (Object.keys(patch).length > 0) {
       const { error } = await supabase.from('utenti').update(patch).eq('id', id)

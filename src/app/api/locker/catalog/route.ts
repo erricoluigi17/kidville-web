@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createClient, createAdminClient } from '@/lib/supabase/server-client';
-import { requireDocente } from '@/lib/auth/require-staff';
+import { requireDocente, requireUser } from '@/lib/auth/require-staff';
 import { scuoleDiUtente } from '@/lib/auth/scope';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody, parseQuery } from '@/lib/validation/http';
@@ -27,16 +27,24 @@ const postBodySchema = z.object({
 // ============================================================
 export async function GET(request: NextRequest) {
     try {
+        const auth = await requireUser(request);
+        if (auth.response) return auth.response;
+
         const q = parseQuery(request, getQuerySchema);
         if ('response' in q) return q.response;
         const scuolaId = q.data.scuola_id;
 
         const supabase = await createClient();
 
+        // Isolamento per tenant: filtra sui plessi accessibili all'utente;
+        // usa lo scuola_id del client SOLO per restringere dentro quell'insieme.
+        const plessi = await scuoleDiUtente(supabase, auth.user);
+        const target = scuolaId && plessi.includes(scuolaId) ? [scuolaId] : plessi;
+
         const { data, error } = await supabase
             .from('locker_catalog')
             .select('*')
-            .eq('scuola_id', scuolaId)
+            .in('scuola_id', target)
             .eq('attivo', true)
             .order('ordinamento', { ascending: true });
 

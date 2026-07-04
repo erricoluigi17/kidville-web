@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { requireStaff } from '@/lib/auth/require-staff'
+import { requireDocente, requireStaff } from '@/lib/auth/require-staff'
+import { resolveScuolaScrittura } from '@/lib/auth/scope'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 
@@ -33,15 +34,22 @@ const postBodySchema = z.object({
 // Ritorna le righe (materia_codice × etichetta_voto → testo) per livello+periodo.
 export async function GET(request: NextRequest) {
   try {
+    const auth = await requireDocente(request)
+    if (auth.response) return auth.response
+
     const q = parseQuery(request, getQuerySchema)
     if ('response' in q) return q.response
     const { scuolaId, livello, periodoId } = q.data
 
     const supabase = await createAdminClient()
+
+    const sede = await resolveScuolaScrittura(request, supabase, auth.user, scuolaId)
+    if (sede.response) return sede.response
+
     const { data, error } = await supabase
       .from('scrutinio_giudizio_descrittivo')
       .select('materia_codice, etichetta_voto, giudizio_descrittivo')
-      .eq('scuola_id', scuolaId)
+      .eq('scuola_id', sede.scuolaId)
       .eq('livello', Number(livello))
       .eq('periodo_id', periodoId)
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
@@ -66,12 +74,15 @@ export async function POST(request: NextRequest) {
 
     const supabase = await createAdminClient()
 
+    const sede = await resolveScuolaScrittura(request, supabase, auth.user, scuolaId)
+    if (sede.response) return sede.response
+
     const testoPulito = typeof testo === 'string' ? testo.trim() : ''
     if (!testoPulito) {
       const { error } = await supabase
         .from('scrutinio_giudizio_descrittivo')
         .delete()
-        .eq('scuola_id', scuolaId)
+        .eq('scuola_id', sede.scuolaId)
         .eq('livello', Number(livello))
         .eq('materia_codice', materiaCodice)
         .eq('periodo_id', periodoId)
@@ -84,7 +95,7 @@ export async function POST(request: NextRequest) {
       .from('scrutinio_giudizio_descrittivo')
       .upsert(
         {
-          scuola_id: scuolaId,
+          scuola_id: sede.scuolaId,
           livello: Number(livello),
           materia_codice: materiaCodice,
           periodo_id: periodoId,

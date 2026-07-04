@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { requireStaff } from '@/lib/auth/require-staff'
+import { requireStaff, requireDocente } from '@/lib/auth/require-staff'
+import { resolveScuolaScrittura } from '@/lib/auth/scope'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 
@@ -40,15 +41,22 @@ const deleteQuerySchema = z.object({
 
 // GET /api/admin/primaria/obiettivi?scuolaId=&materiaCodice=&livello=
 export async function GET(request: NextRequest) {
+  const auth = await requireDocente(request)
+  if (auth.response) return auth.response
+
   const q = parseQuery(request, getQuerySchema)
   if ('response' in q) return q.response
   const { scuolaId, materiaCodice, livello } = q.data
   try {
     const supabase = await createAdminClient()
+    // Deriva/valida la sede server-side: lo scuolaId del client è solo `preferita`
+    // e viene accettato SOLO se rientra nei plessi accessibili all'utente.
+    const sede = await resolveScuolaScrittura(request, supabase, auth.user, scuolaId)
+    if (sede.response) return sede.response
     let query = supabase
       .from('obiettivi_apprendimento')
       .select('*')
-      .eq('scuola_id', scuolaId)
+      .eq('scuola_id', sede.scuolaId!)
       .order('livello', { ascending: true })
       .order('materia_codice', { ascending: true })
     if (materiaCodice) query = query.eq('materia_codice', materiaCodice)
@@ -75,10 +83,14 @@ export async function POST(request: NextRequest) {
     const { scuolaId, materiaCodice, livello, codice, descrizione } = b.data
 
     const supabase = await createAdminClient()
+    // Deriva la sede server-side: lo scuolaId del client è solo `preferita`,
+    // accettato SOLO se rientra nei plessi scrivibili dall'utente.
+    const sede = await resolveScuolaScrittura(request, supabase, auth.user, scuolaId)
+    if (sede.response) return sede.response
     const { data, error } = await supabase
       .from('obiettivi_apprendimento')
       .insert({
-        scuola_id: scuolaId,
+        scuola_id: sede.scuolaId!,
         materia_codice: materiaCodice,
         livello,
         codice: codice ?? null,

@@ -31,9 +31,9 @@ export function OrarioManager({ sectionId, scuolaId, userId }: { sectionId: stri
       | null = null;
     try {
       res = await Promise.all([
-        fetch(`/api/admin/primaria/orario?sectionId=${sectionId}`).then((r) => r.json()),
-        fetch(`/api/admin/primaria/materie?sectionId=${sectionId}`).then((r) => r.json()),
-        fetch(`/api/admin/primaria/docente-gradi?scuolaId=${scuolaId}`).then((r) => r.json()),
+        fetch(`/api/admin/primaria/orario?sectionId=${sectionId}`, { headers: { 'x-user-id': userId } }).then((r) => r.json()),
+        fetch(`/api/admin/primaria/materie?sectionId=${sectionId}`, { headers: { 'x-user-id': userId } }).then((r) => r.json()),
+        fetch(`/api/admin/primaria/docente-gradi?scuolaId=${scuolaId}`, { headers: { 'x-user-id': userId } }).then((r) => r.json()),
       ]);
     } finally {
       if (res) {
@@ -51,7 +51,7 @@ export function OrarioManager({ sectionId, scuolaId, userId }: { sectionId: stri
         setDocenti((dRes.success ? dRes.data : []).filter((d: Docente) => (d.gradi ?? []).includes('primaria')));
       }
     }
-  }, [sectionId, scuolaId]);
+  }, [sectionId, scuolaId, userId]);
 
   useEffect(() => {
     load();

@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { requireStaff } from '@/lib/auth/require-staff'
+import { requireStaff, requireDocente } from '@/lib/auth/require-staff'
+import { resolveScuolaScrittura } from '@/lib/auth/scope'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 
@@ -34,15 +35,21 @@ const patchBodySchema = z.object({
 // GET /api/admin/primaria/impostazioni?scuolaId=
 export async function GET(request: NextRequest) {
   try {
+    const auth = await requireDocente(request)
+    if (auth.response) return auth.response
+
     const q = parseQuery(request, getQuerySchema)
     if ('response' in q) return q.response
     const { scuolaId } = q.data
 
     const supabase = await createAdminClient()
+    const { scuolaId: sede, response } = await resolveScuolaScrittura(request, supabase, auth.user, scuolaId)
+    if (response) return response
+
     const { data, error } = await supabase
       .from('admin_settings')
       .select(FIELDS.join(', '))
-      .eq('scuola_id', scuolaId)
+      .eq('scuola_id', sede)
       .maybeSingle()
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json({ success: true, data: data ?? {} })
@@ -67,9 +74,12 @@ export async function PATCH(request: NextRequest) {
     if (Object.keys(updates).length === 0) return NextResponse.json({ error: 'Nessun campo da aggiornare' }, { status: 400 })
 
     const supabase = await createAdminClient()
+    const { scuolaId: sede, response } = await resolveScuolaScrittura(request, supabase, auth.user, scuolaId)
+    if (response) return response
+
     const { data, error } = await supabase
       .from('admin_settings')
-      .upsert({ scuola_id: scuolaId, ...updates }, { onConflict: 'scuola_id' })
+      .upsert({ scuola_id: sede, ...updates }, { onConflict: 'scuola_id' })
       .select(FIELDS.join(', '))
       .single()
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })

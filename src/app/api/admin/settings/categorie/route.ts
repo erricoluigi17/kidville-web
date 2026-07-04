@@ -1,7 +1,8 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { resolveScuolaScrittura } from '@/lib/auth/scope'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 
@@ -46,16 +47,21 @@ function slugify(s: string): string {
 
 // GET /api/admin/settings/categorie?userId=&scuola_id=  (staff)
 // Ritorna le categorie globali + quelle della scuola.
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
 
     const q = parseQuery(request, getQuerySchema)
     if ('response' in q) return q.response
-    const scuolaId = q.data.scuola_id || auth.user.scuola_id
 
     const supabase = await createAdminClient()
+    // Sede risolta server-side: lo scuola_id del client è SOLO una preferenza,
+    // validata contro i plessi accessibili (mai fidarsi del client).
+    const sw = await resolveScuolaScrittura(request, supabase, auth.user, q.data.scuola_id ?? undefined)
+    if (sw.response) return sw.response
+    const scuolaId = sw.scuolaId
+
     let query = supabase.from('payment_categories').select('*').order('ordine', { ascending: true })
     // globali (scuola_id NULL) + della scuola
     if (scuolaId) query = query.or(`scuola_id.is.null,scuola_id.eq.${scuolaId}`)
@@ -72,7 +78,7 @@ export async function GET(request: Request) {
 
 // POST /api/admin/settings/categorie  (staff) — crea categoria personalizzata
 // Body: { userId, nome, scuola_id?, colore?, icona?, ordine? }
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -82,8 +88,12 @@ export async function POST(request: Request) {
     const body = b.data
 
     const supabase = await createAdminClient()
+    // Sede derivata server-side: mai usare lo scuola_id del body per la scrittura.
+    const sw = await resolveScuolaScrittura(request, supabase, auth.user, body.scuola_id ?? undefined)
+    if (sw.response) return sw.response
+
     const record = {
-      scuola_id: body.scuola_id || auth.user.scuola_id || null,
+      scuola_id: sw.scuolaId ?? null,
       nome: body.nome,
       slug: body.slug || slugify(body.nome),
       colore: body.colore ?? '#006A5F',

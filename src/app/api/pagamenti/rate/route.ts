@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { assertAlunnoInScope } from '@/lib/auth/scope'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const postBodySchema = z.object({
@@ -45,12 +46,15 @@ export async function POST(request: Request) {
     }
 
     const supabase = await createAdminClient()
-    let scuolaId = body.scuola_id ?? undefined
-    if (!scuolaId) {
-      const { data: al } = await supabase.from('alunni').select('scuola_id').eq('id', alunno_id).maybeSingle()
-      if (!al) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
-      scuolaId = al.scuola_id
-    }
+
+    // Scope: l'alunno deve appartenere ai plessi dell'utente (403/404 se fuori scope)
+    const scopeRes = await assertAlunnoInScope(supabase, user, alunno_id)
+    if (scopeRes) return scopeRes
+
+    // La sede è SEMPRE derivata dall'alunno: MAI fidarsi dello scuola_id del client
+    const { data: al } = await supabase.from('alunni').select('scuola_id').eq('id', alunno_id).maybeSingle()
+    if (!al) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
+    const scuolaId = al.scuola_id
 
     const scadenze = rate.map((r) => r.scadenza).sort()
     const ultimaScadenza = scadenze[scadenze.length - 1]

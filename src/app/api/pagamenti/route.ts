@@ -1,9 +1,10 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff, requireUser } from '@/lib/auth/require-staff'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { resolveScuoleAttive, assertAlunnoInScope } from '@/lib/auth/scope'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // Uuid opzionale da query string: stringa vuota trattata come assente
@@ -52,7 +53,7 @@ const SELECT = `
 //   staff  -> tutti i pagamenti (filtri: alunno_id, stato, categoria_id, scuola_id, gruppo, periodo)
 //   parent -> solo i pagamenti dei propri figli; per gli split, solo se ha una quota
 // Query: ?userId=<id> (modello auth app-level) + filtri opzionali
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   try {
     const auth = await requireUser(request)
     if (auth.response) return auth.response
@@ -69,10 +70,14 @@ export async function GET(request: Request) {
       const q = parseQuery(request, getQuerySchema)
       if ('response' in q) return q.response
       const { alunno_id: alunnoId, stato, categoria_id: categoriaId, scuola_id: scuolaId, gruppo, periodo } = q.data
+      // Scoping multi-tenant: limita SEMPRE ai plessi accessibili; lo scuola_id
+      // del client serve solo a restringere DENTRO quell'insieme, mai ad allargarlo.
+      const sediAttive = await resolveScuoleAttive(request, supabase, user)
+      query = query.in('scuola_id', sediAttive)
       if (alunnoId) query = query.eq('alunno_id', alunnoId)
       if (stato) query = query.eq('stato', stato)
       if (categoriaId) query = query.eq('categoria_id', categoriaId)
-      if (scuolaId) query = query.eq('scuola_id', scuolaId)
+      if (scuolaId && sediAttive.includes(scuolaId)) query = query.eq('scuola_id', scuolaId)
       if (gruppo) query = query.eq('gruppo', gruppo)
       if (periodo) query = query.eq('periodo_competenza', periodo)
     } else {
@@ -151,13 +156,14 @@ export async function POST(request: Request) {
 
     const supabase = await createAdminClient()
 
-    // scuola_id: dal body o derivata dall'alunno
-    let scuolaId = body.scuola_id ?? undefined
-    if (!scuolaId) {
-      const { data: al } = await supabase.from('alunni').select('scuola_id').eq('id', alunno_id).maybeSingle()
-      if (!al) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
-      scuolaId = al.scuola_id
-    }
+    // L'alunno deve essere nel plesso dello staff (403/404 altrimenti).
+    const scopeErr = await assertAlunnoInScope(supabase, user, alunno_id)
+    if (scopeErr) return scopeErr
+
+    // scuola_id SEMPRE derivata dall'alunno: lo scuola_id del client viene ignorato.
+    const { data: al } = await supabase.from('alunni').select('scuola_id').eq('id', alunno_id).maybeSingle()
+    if (!al) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
+    const scuolaId = al.scuola_id
 
     const record: Record<string, unknown> = {
       alunno_id,

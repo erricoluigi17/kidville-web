@@ -271,13 +271,13 @@ function FirmaModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-kidville-ink/40 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-md rounded-card bg-white shadow-xl">
+    <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-kidville-ink/40 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] backdrop-blur-sm">
+      <div className="flex max-h-[85dvh] w-full max-w-md flex-col rounded-card bg-white shadow-xl">
         <div className="flex items-center gap-2 rounded-t-card bg-kidville-green p-4 text-kidville-yellow">
           <BookOpen size={18} />
           <h3 className="font-barlow text-lg font-bold">{ordine}ª ora — Firma lezione</h3>
         </div>
-        <div className="max-h-[70vh] space-y-3 overflow-y-auto p-4">
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
           {error && <div className="rounded-card bg-kidville-error/10 text-kidville-error px-3 py-2 text-sm font-maven">{error}</div>}
 
           {/* Classe: di default la corrente, ma è possibile firmare in un'altra (supplenza). */}

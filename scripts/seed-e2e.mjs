@@ -115,9 +115,22 @@ async function ensureAuthUser(id, email) {
   throw new Error(`auth create ${email}: ${error.message}`);
 }
 
+// Bucket Storage privati usati dall'app ma NON auto-creati dalle route
+// (form_attachments, chat-allegati, fatture): senza questi gli upload E2E
+// falliscono con "Bucket not found". Idempotente.
+async function ensureBuckets() {
+  for (const name of ['form_attachments', 'chat-allegati', 'fatture']) {
+    const { error } = await db.storage.createBucket(name, { public: false });
+    if (error && !/exist|already|duplicate/i.test(error.message ?? '')) {
+      console.error(`bucket ${name}:`, error.message);
+    }
+  }
+}
+
 async function main() {
   console.log('🌱 Seed E2E — scuola dedicata', IDS.SCUOLA);
   const oggi = ymdUTC(0);
+  await ensureBuckets();
 
   // 1. Scuola (schools = tabella referenziata dalle FK; scuole = registry admin)
   must('schools', await db.from('schools').upsert(

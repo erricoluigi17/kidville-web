@@ -7,7 +7,8 @@ import { ClipboardList, CheckSquare, Star, AlertTriangle, CalendarDays, BarChart
 interface Section { id: string; name: string; school_type: string; scholastic_year?: string | null }
 
 // Voci = stesse funzioni del docente. Admin/segreteria accedono in modifica a
-// qualsiasi classe riusando le viste docente (deep-link con il proprio userId).
+// qualsiasi classe dalle rotte /admin/primaria/[sectionId]/* (ClasseShell),
+// così restano dentro il cockpit (sidebar+header) invece del layout mobile docente.
 const FUNZIONI = [
   { seg: 'registro', label: 'Registro di classe', icon: ClipboardList, desc: 'Lezioni svolte, argomenti, compiti, firme' },
   { seg: 'appello', label: 'Appello / Presenze', icon: CheckSquare, desc: 'Presenze, ritardi, uscite, giustifiche' },
@@ -63,7 +64,7 @@ export function RegistriClassePanel({ scuolaId, userId }: { scuolaId: string; us
           {FUNZIONI.map(({ seg, label, icon: Icon, desc }) => (
             <Link
               key={seg}
-              href={`/teacher/primaria/${sezioneId}/${seg}?userId=${userId}`}
+              href={`/admin/primaria/${sezioneId}/${seg}?userId=${userId}`}
               className="flex items-start gap-3 rounded-card border border-kidville-line bg-white p-3 transition hover:border-kidville-green/40 hover:bg-kidville-green/5"
             >
               <span className="mt-0.5 text-kidville-green"><Icon size={18} /></span>

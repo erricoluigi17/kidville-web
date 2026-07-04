@@ -1,8 +1,7 @@
 'use client';
 
 import { Suspense, useEffect, useState } from 'react';
-import Link from 'next/link';
-import { ClipboardList, CalendarDays, FolderLock, DoorOpen, GraduationCap } from 'lucide-react';
+import { ClipboardList, CalendarDays, FolderLock, GraduationCap } from 'lucide-react';
 import { RegistriClassePanel } from '@/components/features/admin/primaria/RegistriClassePanel';
 import { OrarioManager } from '@/components/features/admin/primaria/OrarioManager';
 import { FascicoloAuditViewer } from '@/components/features/admin/primaria/FascicoloAuditViewer';
@@ -11,7 +10,7 @@ import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 
 const SCUOLA_ID = '11111111-1111-1111-1111-111111111111';
 
-type Tab = 'registri' | 'orario' | 'fascicoli' | 'classi';
+type Tab = 'registri' | 'orario' | 'fascicoli';
 
 interface Section {
   id: string;
@@ -20,14 +19,11 @@ interface Section {
   scholastic_year?: string | null;
 }
 
-interface ClasseOp { id: string; name: string; numAlunni?: number }
-
 function PrimariaAdminInner() {
   const { userId } = useSessionIdentity();
   const [tab, setTab] = useState<Tab>('registri');
   const [sezioni, setSezioni] = useState<Section[]>([]);
   const [sezioneId, setSezioneId] = useState<string>('');
-  const [classiOp, setClassiOp] = useState<ClasseOp[]>([]);
 
   useEffect(() => {
     fetch(`/api/admin/sections?scuola_id=${SCUOLA_ID}`)
@@ -40,15 +36,6 @@ function PrimariaAdminInner() {
       })
       .catch(() => {});
   }, []);
-
-  // Classi operative scoped per ruolo/plesso (stesso endpoint del flusso docente).
-  useEffect(() => {
-    if (!userId) return; // identità non risolta: nessuna fetch
-    fetch(`/api/primaria/classi?userId=${userId}`)
-      .then((r) => r.json())
-      .then((d) => { if (d.success) setClassiOp(d.data ?? []); })
-      .catch(() => {});
-  }, [userId]);
 
   return (
     <CockpitPage max={1100}>
@@ -84,7 +71,6 @@ function PrimariaAdminInner() {
           { id: 'registri', label: 'Registri di classe', icon: ClipboardList },
           { id: 'orario', label: 'Orario', icon: CalendarDays },
           { id: 'fascicoli', label: 'Fascicoli/Accessi', icon: FolderLock },
-          { id: 'classi', label: 'Entra in classe', icon: DoorOpen },
         ]}
       />
 
@@ -94,34 +80,6 @@ function PrimariaAdminInner() {
             <OrarioManager sectionId={sezioneId} scuolaId={SCUOLA_ID} userId={userId} />
           )}
           {userId && tab === 'fascicoli' && <FascicoloAuditViewer scuolaId={SCUOLA_ID} userId={userId} />}
-          {tab === 'classi' && (
-            <div>
-              <p className="font-maven mb-4 text-sm text-kidville-muted">
-                Entra nella classe per operare (registro, appello, valutazioni, note, scrutinio, fascicolo) come fa il docente. La cornice resta sempre presente; le scritture vengono attribuite al docente titolare.
-              </p>
-              {classiOp.length === 0 ? (
-                <p className="font-maven text-sm text-kidville-muted">Nessuna classe disponibile nel tuo plesso.</p>
-              ) : (
-                <div className="grid gap-3 sm:grid-cols-2">
-                  {classiOp.map((c) => (
-                    <Link
-                      key={c.id}
-                      href={userId ? `/admin/primaria/${c.id}/registro?userId=${userId}` : `/admin/primaria/${c.id}/registro`}
-                      className="flex items-center justify-between rounded-card border border-kidville-line p-4 transition hover:border-kidville-green/40 hover:bg-kidville-green/5"
-                    >
-                      <span>
-                        <span className="font-maven block text-sm font-semibold text-kidville-ink">{c.name}</span>
-                        {typeof c.numAlunni === 'number' && (
-                          <span className="font-maven block text-xs text-kidville-muted">{c.numAlunni} alunni</span>
-                        )}
-                      </span>
-                      <DoorOpen size={18} className="text-kidville-green" />
-                    </Link>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
         </div>
     </CockpitPage>
   );

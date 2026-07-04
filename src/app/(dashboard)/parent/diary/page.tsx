@@ -1,10 +1,12 @@
 'use client';
 
 import { useState, useEffect, useCallback, Suspense } from 'react';
+import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronLeft, ChevronRight, Camera, ChevronDown } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Camera, ChevronDown, GraduationCap } from 'lucide-react';
 import { getEventConfig } from '@/components/features/teacher/diary/eventConfig';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
+import { useChildSchoolType } from '@/lib/auth/use-child-school-type';
 import { UMORE_CONFIG, umoreFromDettagli, umoreNarrative } from '@/lib/diary/umore';
 import { MediaGrid, MediaItem } from '@/components/features/gallery/MediaGrid';
 
@@ -297,6 +299,8 @@ function PhotosSection({ photos }: { photos: MediaItem[] }) {
 // Identità dalla sessione (URL → localStorage → /api/me), senza fallback demo (M4).
 function ParentDiaryContent() {
     const { parentId, studentId: alunnoId, ready } = useParentIdentity();
+    // Guardia grado: il diario giornaliero esiste solo per nido/infanzia.
+    const { schoolType, ready: schoolTypeReady } = useChildSchoolType();
 
     const [dateKey, setDateKey] = useState<string>(toDateKey(new Date()));
     const [entries, setEntries] = useState<DiaryEntry[]>([]);
@@ -386,6 +390,19 @@ function ParentDiaryContent() {
         center: { x: 0, opacity: 1 },
         exit:  (dir: number) => ({ x: dir > 0 ? 40 : -40, opacity: 0 }),
     };
+
+    if (schoolTypeReady && schoolType === 'primaria') {
+        return (
+            <div className="min-h-screen bg-kidville-cream/40 p-6">
+                <div className="max-w-md mx-auto rounded-card bg-white p-8 text-center shadow-sm">
+                    <GraduationCap className="mx-auto mb-3 text-kidville-green" size={40} />
+                    <h2 className="font-barlow text-xl font-bold text-kidville-ink">Sezione non disponibile</h2>
+                    <p className="font-maven text-sm text-kidville-muted mt-1 mb-4">Il diario giornaliero riguarda solo nido e infanzia.</p>
+                    <Link href="/parent/primaria" className="font-maven inline-block rounded-pill bg-kidville-green px-5 py-2 text-sm text-kidville-yellow">Vai alla sezione Primaria</Link>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="w-full max-w-lg mx-auto p-4 sm:p-6 pb-16">

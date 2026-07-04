@@ -4,7 +4,7 @@ import { useState, useEffect, Suspense } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { motion } from 'framer-motion';
-import { Bell, MessageCircle, BookOpen, Camera, CalendarX2 } from 'lucide-react';
+import { Bell, MessageCircle, BookOpen, Camera, CalendarX2, GraduationCap } from 'lucide-react';
 import { withIdentity } from '@/lib/auth/current-user';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 import { useChildSchoolType } from '@/lib/auth/use-child-school-type';
@@ -65,14 +65,11 @@ function ParentHomeContent() {
     },
     { id: 'chat', label: 'Scrivi\nmaestra', icon: MessageCircle, href: wi('/parent/chat'), bg: '#E2EEEC', fg: '#006A5F' },
     { id: 'foto', label: 'Vedi\nfoto', icon: Camera, href: wi('/parent/gallery'), bg: '#FBF0DD', fg: '#E6B100' },
-    {
-      id: 'diario',
-      label: 'Diario\ndi oggi',
-      icon: BookOpen,
-      href: wi(isPrimaria ? '/parent/primaria' : '/parent/diary'),
-      bg: '#EAF3EC',
-      fg: '#43A047',
-    },
+    // Il diario giornaliero è solo nido/infanzia: per la primaria l'azione
+    // diventa l'area Scuola (lezioni, compiti, voti), senza la parola "Diario".
+    isPrimaria
+      ? { id: 'scuola', label: 'Scuola\nprimaria', icon: GraduationCap, href: wi('/parent/primaria'), bg: '#EAF3EC', fg: '#43A047' }
+      : { id: 'diario', label: 'Diario\ndi oggi', icon: BookOpen, href: wi('/parent/diary'), bg: '#EAF3EC', fg: '#43A047' },
   ];
 
   return (

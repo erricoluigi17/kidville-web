@@ -33,6 +33,7 @@ const LEVEL_DOT: Record<string, string> = {
 export function CompetenzePanel({ userId }: { userId: string }) {
   const hdr = useCallback(() => ({ 'Content-Type': 'application/json', 'x-user-id': userId }), [userId])
   const [sezioni, setSezioni] = useState<Sezione[]>([])
+  const [sezioniLoaded, setSezioniLoaded] = useState(false)
   const [sectionId, setSectionId] = useState('')
   const [certs, setCerts] = useState<Cert[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -48,6 +49,7 @@ export function CompetenzePanel({ userId }: { userId: string }) {
         setSezioni(arr.filter((s) => s.school_type === 'primaria' && /5/.test(s.name ?? '')))
       })
       .catch(() => { /* no-op */ })
+      .finally(() => setSezioniLoaded(true))
   }, [userId, hdr])
 
   const loadCerts = useCallback(async (sec: string) => {
@@ -122,6 +124,22 @@ export function CompetenzePanel({ userId }: { userId: string }) {
   const selected = certs.find((c) => c.id === selectedId) ?? null
   const nomeOf = (c: Cert) => { const a = one(c.alunni); return `${a?.cognome ?? ''} ${a?.nome ?? ''}`.trim() || 'Alunno' }
   const ini = (c: Cert) => { const a = one(c.alunni); return `${a?.cognome?.[0] ?? ''}${a?.nome?.[0] ?? ''}`.toUpperCase() || 'AL' }
+
+  // Nessuna classe quinta nei plessi consentiti: il Certificato delle Competenze
+  // si compila solo a fine 5ª primaria, quindi non c'è nulla da mostrare.
+  if (sezioniLoaded && sezioni.length === 0) {
+    return (
+      <section className="rounded-2xl border border-dashed border-kidville-line bg-kidville-white/60 p-10 text-center">
+        <Award size={30} className="mx-auto text-kidville-muted" />
+        <h3 className="mt-3 font-barlow text-lg font-black uppercase text-kidville-green">Nessuna classe quinta</h3>
+        <p className="mx-auto mt-2 max-w-md font-maven text-sm text-kidville-muted">
+          Il Certificato delle Competenze (D.M. 14/2024) si rilascia a fine classe quinta di primaria.
+          Nei tuoi plessi non risultano classi quinte: quando ce ne sarà una, comparirà qui per creare
+          le bozze dallo scrutinio finale, assegnare i livelli A/B/C/D e firmare.
+        </p>
+      </section>
+    )
+  }
 
   return (
     <div className="space-y-5">

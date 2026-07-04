@@ -75,6 +75,20 @@ body {
 }
 
 /* =============================================================================
+   Shell nativa Capacitor (M10.5) — safe-area TOP. Si attiva SOLO quando il
+   documento ha la classe `.cap-native`, aggiunta esclusivamente dalla shell
+   nativa (mai nel browser) insieme a viewport-fit=cover; è il flag che rende
+   effettive anche le safe-area-inset-bottom già presenti nel codice (bottom nav,
+   chat, registro). Nel browser web env(safe-area-inset-*) resta 0 e questa regola
+   non si applica: resa web identica. Additiva, non tocca layout/animazioni.
+   iOS: spinge il contenuto sotto il notch/Dynamic Island. Android (status bar
+   solida, overlay off): inset-top = 0, nessuno spostamento.
+   ============================================================================= */
+.cap-native body {
+  padding-top: env(safe-area-inset-top);
+}
+
+/* =============================================================================
    Cockpit Direzione/Segreteria — la cornice persistente (sidebar) non deve MAI
    essere coperta da un overlay/modal a tutto schermo. Su desktop (>=1024px) gli
    overlay `fixed inset-0` dentro l'area contenuto partono DOPO la sidebar (16rem),

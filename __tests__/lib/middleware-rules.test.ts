@@ -3,9 +3,8 @@ import { isPublicPath, isApiPath, shouldRedirect } from '@/lib/auth/middleware-r
 
 describe('middleware-rules', () => {
   describe('isPublicPath', () => {
-    it('treats the landing, auth, public enrollment and form links as public', () => {
+    it('treats auth, public enrollment and form links as public', () => {
       for (const p of [
-        '/',
         '/auth/login',
         '/auth/join',
         '/auth/reset',
@@ -25,8 +24,9 @@ describe('middleware-rules', () => {
       }
     });
 
-    it('treats dashboard areas and data APIs as NOT public', () => {
-      for (const p of ['/parent', '/admin', '/teacher', '/segreteria', '/api/grades', '/api/pagamenti']) {
+    it('treats the root, dashboard areas and data APIs as NOT public', () => {
+      // La radice `/` è un instradatore autenticato, non una landing pubblica.
+      for (const p of ['/', '/parent', '/admin', '/teacher', '/segreteria', '/api/grades', '/api/pagamenti']) {
         expect(isPublicPath(p), p).toBe(false);
       }
     });
@@ -48,16 +48,17 @@ describe('middleware-rules', () => {
   });
 
   describe('shouldRedirect', () => {
-    it('redirects anonymous page navigations to protected areas', () => {
+    it('redirects anonymous page navigations to protected areas (root included)', () => {
+      expect(shouldRedirect('/', false)).toBe(true);
       expect(shouldRedirect('/parent', false)).toBe(true);
       expect(shouldRedirect('/admin/pagamenti', false)).toBe(true);
     });
     it('never redirects when a session exists', () => {
+      expect(shouldRedirect('/', true)).toBe(false);
       expect(shouldRedirect('/parent', true)).toBe(false);
     });
     it('never redirects public pages', () => {
       expect(shouldRedirect('/auth/login', false)).toBe(false);
-      expect(shouldRedirect('/', false)).toBe(false);
     });
     it('never redirects API routes (the gate returns 401 JSON instead)', () => {
       expect(shouldRedirect('/api/grades', false)).toBe(false);

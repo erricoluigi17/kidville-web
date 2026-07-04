@@ -3,8 +3,11 @@
  * unit-testabili senza costruire un `NextRequest` reale.
  *
  * Principi P0:
- *  - Le rotte PUBBLICHE (landing, auth, iscrizione pubblica, link form, panic) non
- *    richiedono sessione e non vengono mai reindirizzate.
+ *  - Le rotte PUBBLICHE (auth, iscrizione pubblica, link form, panic, onboarding)
+ *    non richiedono sessione e non vengono mai reindirizzate.
+ *  - La radice `/` NON è più una landing pubblica: è un instradatore che richiede
+ *    l'accesso (come la dashboard). Da anonimo va al login; da autenticato la
+ *    server component `app/page.tsx` smista sulla home del ruolo.
  *  - Le API protette NON vengono reindirizzate: l'eventuale 401 è compito del gate
  *    (`requireStaff`/`requireDocente`/...), non del middleware.
  *  - Le navigazioni di PAGINA verso aree protette, da anonimo, vanno a `/auth/login`.
@@ -24,7 +27,8 @@ const PUBLIC_PREFIXES = [
 ];
 
 export function isPublicPath(pathname: string): boolean {
-  if (pathname === '/') return true;
+  // La radice `/` è intenzionalmente ASSENTE: richiede l'accesso e va al login
+  // da anonimo (poi `app/page.tsx` smista per ruolo da autenticato).
   return PUBLIC_PREFIXES.some(
     (p) => pathname === p || pathname.startsWith(p + '/')
   );

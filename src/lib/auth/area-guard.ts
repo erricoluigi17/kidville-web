@@ -51,6 +51,31 @@ export function decideAreaAccess(
 }
 
 /**
+ * Decisione PURA per la radice `/`: dove atterra chi apre l'app dalla home.
+ * È lo stesso smistamento della guardia d'area ma SENZA un'area di destinazione:
+ * si va sempre alla home del proprio ruolo (o al login).
+ *  - anonimo/nessun profilo → login;
+ *  - ruolo attivo risolto (cookie valido, oppure profilo unico) → home del ruolo;
+ *  - doppio profilo senza ruolo attivo → login con scelta ruolo (`?scegli=1`).
+ */
+export function decideRootLanding(
+  profili: Profilo[] | null,
+  cookieRuolo: string | null
+): string {
+  if (!profili || profili.length === 0) return '/auth/login'
+
+  const ruoloAttivo =
+    cookieRuolo && profili.some((p) => p.ruolo === cookieRuolo)
+      ? cookieRuolo
+      : profili.length === 1
+        ? profili[0].ruolo
+        : null
+
+  if (!ruoloAttivo) return '/auth/login?scegli=1'
+  return homePathForRole(ruoloAttivo)
+}
+
+/**
  * Wrapper server per i layout: `await requireArea('parent')`.
  * NB: `cookies()` è chiamata PRIMA e FUORI da try/catch — in build l'errore di
  * bailout deve propagarsi (la rotta diventa dynamic, niente redirect "cotto"

@@ -4,7 +4,7 @@ import { describe, it, expect } from 'vitest'
 // + area richiesta → null (ok) oppure path di redirect. Copre i casi smoke
 // del MILESTONE GATE M4B (docente su /parent → /teacher; doppio → picker).
 
-import { decideAreaAccess } from '@/lib/auth/area-guard'
+import { decideAreaAccess, decideRootLanding } from '@/lib/auth/area-guard'
 import type { Profilo } from '@/lib/auth/profili'
 
 const educator: Profilo[] = [{ ruolo: 'educator', area: 'teacher' }]
@@ -72,5 +72,39 @@ describe('decideAreaAccess', () => {
     expect(decideAreaAccess(legacy, null, 'parent')).toBe('/auth/login')
     expect(decideAreaAccess(legacy, null, 'teacher')).toBe('/parent')
     expect(decideAreaAccess(legacy, null, 'admin')).toBe('/parent')
+  })
+})
+
+describe('decideRootLanding', () => {
+  it('anonimo o nessun profilo → login', () => {
+    expect(decideRootLanding(null, null)).toBe('/auth/login')
+    expect(decideRootLanding([], null)).toBe('/auth/login')
+  })
+
+  it('profilo unico → home del ruolo (anche senza cookie)', () => {
+    expect(decideRootLanding(educator, null)).toBe('/teacher')
+    expect(decideRootLanding(genitore, null)).toBe('/parent')
+    expect(decideRootLanding(segreteria, null)).toBe('/admin')
+  })
+
+  it('doppio profilo con ruolo attivo valido → home di QUEL ruolo', () => {
+    expect(decideRootLanding(doppio, 'educator')).toBe('/teacher')
+    expect(decideRootLanding(doppio, 'genitore')).toBe('/parent')
+  })
+
+  it('doppio profilo senza ruolo attivo → login per la scelta', () => {
+    expect(decideRootLanding(doppio, null)).toBe('/auth/login?scegli=1')
+  })
+
+  it('cookie con ruolo NON tra i profili è ignorato (niente escalation)', () => {
+    // profilo unico: si ricade sul proprio ruolo, non su quello del cookie
+    expect(decideRootLanding(genitore, 'admin')).toBe('/parent')
+    // doppio profilo: cookie estraneo → resta ambiguo → scelta
+    expect(decideRootLanding(doppio, 'admin')).toBe('/auth/login?scegli=1')
+  })
+
+  it('cuoca (home sotto /admin) → /admin', () => {
+    const cuoca: Profilo[] = [{ ruolo: 'cuoca', area: 'admin' }]
+    expect(decideRootLanding(cuoca, null)).toBe('/admin')
   })
 })

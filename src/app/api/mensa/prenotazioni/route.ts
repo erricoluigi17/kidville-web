@@ -1,10 +1,31 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
-import { loadMensaConfig, loadResolveOptions, resolveMenuConfigId, entroCutoff, DEFAULT_SCUOLA } from '@/lib/mensa/server'
+import { loadMensaConfig, loadResolveOptions, resolveMenuConfigId, entroCutoff } from '@/lib/mensa/server'
 import { resolveMenuGiorno } from '@/lib/mensa/resolveMenu'
 import { notificaSaldoBasso } from '@/lib/mensa/notify'
 import { controllaAllergie } from '@/lib/mensa/allergie-check'
+import { parseBody, parseQuery } from '@/lib/validation/http'
+import { zUuid, zDataYMD } from '@/lib/validation/common'
+
+const getQuerySchema = z.object({
+  alunno_id: zUuid,
+  // default dinamico (oggi) calcolato nell'handler
+  from: zDataYMD.optional(),
+  to: zDataYMD.optional(),
+})
+
+const postBodySchema = z.object({
+  alunno_id: zUuid,
+  // string singola o array non vuoto (comportamento attuale)
+  date: z.union([zDataYMD, z.array(zDataYMD).min(1, 'date è obbligatorio')]),
+})
+
+const deleteQuerySchema = z.object({
+  alunno_id: zUuid,
+  data: zDataYMD,
+})
 
 // Verifica che un genitore sia legato all'alunno.
 async function genitoreDiAlunno(supabase: Awaited<ReturnType<typeof createAdminClient>>, genitoreId: string, alunnoId: string) {
@@ -34,9 +55,9 @@ export async function GET(request: Request) {
     const auth = await requireUser(request)
     if (auth.response) return auth.response
     const { user } = auth
-    const { searchParams } = new URL(request.url)
-    const alunnoId = searchParams.get('alunno_id')
-    if (!alunnoId) return NextResponse.json({ error: 'alunno_id è obbligatorio' }, { status: 400 })
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+    const alunnoId = q.data.alunno_id
 
     const supabase = await createAdminClient()
     const isStaff = user.role === 'admin' || user.role === 'coordinator'
@@ -45,8 +66,8 @@ export async function GET(request: Request) {
     }
 
     const today = new Date().toISOString().slice(0, 10)
-    const from = searchParams.get('from') ?? today
-    const to = searchParams.get('to') ?? today
+    const from = q.data.from ?? today
+    const to = q.data.to ?? today
 
     const [{ data: pren }, saldo] = await Promise.all([
       supabase
@@ -74,12 +95,10 @@ export async function POST(request: Request) {
     const auth = await requireUser(request)
     if (auth.response) return auth.response
     const { user } = auth
-    const body = await request.json()
-    const alunnoId = body.alunno_id as string
-    const dates: string[] = Array.isArray(body.date) ? body.date : body.date ? [body.date] : []
-    if (!alunnoId || dates.length === 0) {
-      return NextResponse.json({ error: 'alunno_id e date sono obbligatori' }, { status: 400 })
-    }
+    const b = await parseBody(request, postBodySchema)
+    if ('response' in b) return b.response
+    const alunnoId = b.data.alunno_id
+    const dates: string[] = Array.isArray(b.data.date) ? b.data.date : [b.data.date]
 
     const supabase = await createAdminClient()
     const isStaff = user.role === 'admin' || user.role === 'coordinator'
@@ -89,8 +108,9 @@ export async function POST(request: Request) {
     }
 
     // scuola dell'alunno + nome (per notifiche)
-    const { data: al } = await supabase.from('alunni').select('scuola_id, nome, cognome, classe_sezione, section_id, allergies, allergeni').eq('id', alunnoId).single()
-    const scuolaId = al?.scuola_id ?? DEFAULT_SCUOLA
+    const { data: al } = await supabase.from('alunni').select('scuola_id, nome, cognome, classe_sezione, section_id, allergies, allergeni').eq('id', alunnoId).maybeSingle()
+    if (!al) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
+    const scuolaId = al.scuola_id as string
     const config = await loadMensaConfig(supabase, scuolaId)
     // Usa la prima data richiesta per determinare il menu attivo (approx per range)
     const primaData = dates[0]
@@ -171,10 +191,9 @@ export async function DELETE(request: Request) {
     const auth = await requireUser(request)
     if (auth.response) return auth.response
     const { user } = auth
-    const { searchParams } = new URL(request.url)
-    const alunnoId = searchParams.get('alunno_id')
-    const data = searchParams.get('data')
-    if (!alunnoId || !data) return NextResponse.json({ error: 'alunno_id e data sono obbligatori' }, { status: 400 })
+    const q = parseQuery(request, deleteQuerySchema)
+    if ('response' in q) return q.response
+    const { alunno_id: alunnoId, data } = q.data
 
     const supabase = await createAdminClient()
     const isStaff = user.role === 'admin' || user.role === 'coordinator'
@@ -182,8 +201,9 @@ export async function DELETE(request: Request) {
       return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
     }
 
-    const { data: al } = await supabase.from('alunni').select('scuola_id').eq('id', alunnoId).single()
-    const scuolaId = al?.scuola_id ?? DEFAULT_SCUOLA
+    const { data: al } = await supabase.from('alunni').select('scuola_id').eq('id', alunnoId).maybeSingle()
+    if (!al) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
+    const scuolaId = al.scuola_id as string
     const config = await loadMensaConfig(supabase, scuolaId)
 
     if (!entroCutoff(data, config.cutoffOra)) {

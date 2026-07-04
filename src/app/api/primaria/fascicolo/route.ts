@@ -1,21 +1,45 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { getRequestUserId } from '@/lib/auth/require-staff'
+import { resolveIdentity, loadAppUser } from '@/lib/auth/require-staff'
 import { puoAccedereFascicolo, logAccessoFascicolo } from '@/lib/primaria/fascicolo-rbac'
+import { logScrittura } from '@/lib/audit/scrittura'
+import { notificaTitolariScrittura } from '@/lib/primaria/notifiche'
+import { parseData, parseQuery } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
 
 const BUCKET = 'sensitive_documents'
 const MAX_SIZE = 15 * 1024 * 1024 // 15MB
 const ALLOWED = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp']
-const TIPI = ['diagnosi', 'pei', 'pdp', '104']
+const TIPI = ['diagnosi', 'pei', 'pdp', '104'] as const
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+const getQuerySchema = z.object({
+  alunnoId: zUuid,
+  finalita: z.string().optional(),
+})
+
+// Campi multipart: il file si valida come istanza (mime/size restano check manuali
+// dedicati); documentType default 'diagnosi' come nel comportamento storico.
+const postFormSchema = z.object({
+  file: z.instanceof(File, { error: 'file e alunnoId obbligatori' }),
+  alunnoId: zUuid,
+  documentType: z.enum(TIPI).default('diagnosi'),
+  descrizione: z.string().nullable(),
+  expiryDate: z.string().nullable(),
+  finalita: z.string().nullable(),
+})
 
 // GET /api/primaria/fascicolo?alunnoId=&userId=
 // Lista dei documenti del fascicolo (RBAC ristretto + audit).
 export async function GET(request: NextRequest) {
   try {
-    const alunnoId = new URL(request.url).searchParams.get('alunnoId')
-    const userId = getRequestUserId(request)
+    const { userId } = await resolveIdentity(request)
     if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
-    if (!alunnoId) return NextResponse.json({ error: 'alunnoId obbligatorio' }, { status: 400 })
+
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+    const { alunnoId, finalita } = q.data
 
     const supabase = await createAdminClient()
     const access = await puoAccedereFascicolo(supabase, userId, alunnoId)
@@ -30,7 +54,7 @@ export async function GET(request: NextRequest) {
       .order('created_at', { ascending: false })
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-    await logAccessoFascicolo(supabase, { alunnoId, utenteId: userId, azione: 'list', request })
+    await logAccessoFascicolo(supabase, { alunnoId, utenteId: userId, azione: 'list', finalita, request })
 
     return NextResponse.json({ success: true, data: data ?? [] })
   } catch (err) {
@@ -43,16 +67,22 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData()
-    const file = formData.get('file') as File | null
-    const alunnoId = formData.get('alunnoId') as string | null
-    const documentType = (formData.get('documentType') as string | null) ?? 'diagnosi'
-    const descrizione = (formData.get('descrizione') as string | null) ?? null
-    const expiryDate = (formData.get('expiryDate') as string | null) ?? null
-    const userId = (formData.get('userId') as string | null) ?? getRequestUserId(request)
-
+    // Identità dalla richiesta (sessione o header/query legacy), MAI dal formData:
+    // il campo multipart 'userId' permetterebbe di impersonare chiunque.
+    const { userId } = await resolveIdentity(request)
     if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
-    if (!file || !alunnoId) return NextResponse.json({ error: 'file e alunnoId obbligatori' }, { status: 400 })
-    if (!TIPI.includes(documentType)) return NextResponse.json({ error: 'documentType non valido' }, { status: 400 })
+
+    const parsed = parseData(postFormSchema, {
+      file: formData.get('file'),
+      alunnoId: formData.get('alunnoId'),
+      documentType: formData.get('documentType') ?? undefined,
+      descrizione: formData.get('descrizione'),
+      expiryDate: formData.get('expiryDate'),
+      finalita: formData.get('finalita'),
+    })
+    if ('response' in parsed) return parsed.response
+    const { file, alunnoId, documentType, descrizione, expiryDate, finalita } = parsed.data
+
     if (!ALLOWED.includes(file.type)) return NextResponse.json({ error: 'Formato non ammesso (PDF o immagine)' }, { status: 400 })
     if (file.size > MAX_SIZE) return NextResponse.json({ error: 'File oltre 15MB' }, { status: 400 })
 
@@ -99,7 +129,23 @@ export async function POST(request: NextRequest) {
       .single()
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-    await logAccessoFascicolo(supabase, { alunnoId, utenteId: userId, azione: 'upload', documentoId: data.id, request })
+    await logAccessoFascicolo(supabase, { alunnoId, utenteId: userId, azione: 'upload', documentoId: data.id, finalita, request })
+
+    // Audit unificato delle scritture + notifica al titolare se carica la segreteria.
+    const attore = await loadAppUser(userId)
+    if (attore) {
+      await logScrittura(supabase, {
+        attore,
+        entitaTipo: 'fascicolo',
+        entitaId: data.id,
+        azione: 'insert',
+        sectionId: alunno?.section_id ?? null,
+        valoreDopo: { id: data.id, document_type: documentType, file_name: file.name },
+      })
+      if (alunno?.section_id) {
+        await notificaTitolariScrittura(supabase, { attore, sectionId: alunno.section_id, area: 'fascicolo' })
+      }
+    }
 
     return NextResponse.json({ success: true, data }, { status: 201 })
   } catch (err) {

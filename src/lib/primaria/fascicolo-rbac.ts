@@ -1,10 +1,13 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import type { AppRole } from '@/lib/auth/require-staff'
+import { scuoleDiUtente } from '@/lib/auth/scope'
 
 /**
  * RBAC ristretto per il Fascicolo personale (PEI/PDP/documenti sanitari).
  *
  * Accesso ammesso a:
- *  - Dirigenza/segreteria autorizzata: ruoli 'admin' / 'coordinator';
+ *  - Dirigenza/Segreteria: ruoli 'admin' / 'coordinator' / 'segreteria', MA solo
+ *    per gli alunni del proprio plesso (Direzione: dei plessi associati). Mai cross-tenant.
  *  - Docenti CONTITOLARI della sezione dell'alunno (utenti_sezioni / utenti_sezioni_materie).
  * Vietato ai docenti di altre classi e a chiunque altro.
  *
@@ -15,7 +18,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 export interface AccessoFascicolo {
   consentito: boolean
   ruolo: string | null
-  motivo: 'staff' | 'contitolare' | 'negato' | 'no-section'
+  motivo: 'staff' | 'contitolare' | 'negato' | 'no-section' | 'cross-tenant'
 }
 
 export async function puoAccedereFascicolo(
@@ -23,26 +26,34 @@ export async function puoAccedereFascicolo(
   utenteId: string,
   alunnoId: string
 ): Promise<AccessoFascicolo> {
-  // Ruolo utente.
+  // Ruolo + plesso dell'utente.
   const { data: u } = await supabase
     .from('utenti')
-    .select('id, ruolo, role')
+    .select('id, ruolo, role, scuola_id')
     .eq('id', utenteId)
     .maybeSingle()
   const ruolo = (u?.role || u?.ruolo) as string | null
   if (!u) return { consentito: false, ruolo: null, motivo: 'negato' }
 
-  // Dirigenza / segreteria autorizzata.
-  if (ruolo === 'admin' || ruolo === 'coordinator') {
-    return { consentito: true, ruolo, motivo: 'staff' }
-  }
-
-  // Sezione dell'alunno.
+  // Sezione + plesso dell'alunno.
   const { data: alunno } = await supabase
     .from('alunni')
-    .select('section_id')
+    .select('section_id, scuola_id')
     .eq('id', alunnoId)
     .maybeSingle()
+
+  // Dirigenza / Segreteria: ammessa solo entro il proprio/i plesso/i (no cross-tenant).
+  if (ruolo === 'admin' || ruolo === 'coordinator' || ruolo === 'segreteria') {
+    if (!alunno) return { consentito: false, ruolo, motivo: 'negato' }
+    const plessi = await scuoleDiUtente(supabase, {
+      id: u.id, role: ruolo as AppRole, scuola_id: u.scuola_id,
+    })
+    if (alunno.scuola_id && plessi.includes(alunno.scuola_id as string)) {
+      return { consentito: true, ruolo, motivo: 'staff' }
+    }
+    return { consentito: false, ruolo, motivo: 'cross-tenant' }
+  }
+
   const sectionId = alunno?.section_id
   if (!sectionId) return { consentito: false, ruolo, motivo: 'no-section' }
 

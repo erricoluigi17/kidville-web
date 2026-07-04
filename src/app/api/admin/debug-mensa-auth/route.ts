@@ -1,10 +1,25 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
+import { sealDangerous } from '@/lib/security/seal';
+import { parseQuery } from '@/lib/validation/http';
+import { zUuid } from '@/lib/validation/common';
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+const getQuerySchema = z.object({
+  // Sostituisce il 400 manuale 'userId obbligatorio'; usato come uuid nelle query.
+  userId: zUuid,
+});
 
 export async function GET(request: Request) {
+  const sealed = await sealDangerous(request);
+  if (sealed) return sealed;
+
+  const q = parseQuery(request, getQuerySchema);
+  if ('response' in q) return q.response;
+  const { userId } = q.data;
+
   const supabase = await createAdminClient();
-  const { searchParams } = new URL(request.url);
-  const userId = searchParams.get('userId') || '33333333-3333-3333-3333-333333333333';
 
   const [
     { data: utente },

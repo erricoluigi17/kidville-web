@@ -1,19 +1,33 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
+import { requireDocente } from '@/lib/auth/require-staff';
+import { scuoleDiUtente } from '@/lib/auth/scope';
+import { parseQuery } from '@/lib/validation/http';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+const getQuerySchema = z.object({}); // nessun parametro in ingresso
+
+export async function GET(request: Request) {
     try {
+        const auth = await requireDocente(request);
+        if (auth.response) return auth.response;
+        const q = parseQuery(request, getQuerySchema);
+        if ('response' in q) return q.response;
         const supabase = await createAdminClient();
+        const plessi = await scuoleDiUtente(supabase, auth.user);
+        if (plessi.length === 0) return NextResponse.json({ staff: [], students: [], classes: [] });
 
         let staff: Array<{ id: string; first_name: string; last_name: string; role: string }> = [];
 
-        // Leggi staff da utenti (educator, coordinator, admin)
+        // Leggi staff da utenti (educator, coordinator, admin) del/i proprio/i plesso/i
         const { data: utentiData, error: utentiErr } = await supabase
             .from('utenti')
             .select('id, nome, cognome, ruolo, first_name, last_name')
-            .in('ruolo', ['maestra', 'educator', 'admin', 'coordinator', 'coordinatore', 'insegnante']);
+            .in('ruolo', ['maestra', 'educator', 'admin', 'coordinator', 'coordinatore', 'insegnante'])
+            .in('scuola_id', plessi);
 
         if (!utentiErr && utentiData) {
             staff = utentiData.map(u => {
@@ -35,6 +49,7 @@ export async function GET() {
             .from('alunni')
             .select('id, nome, cognome, classe_sezione')
             .eq('stato', 'iscritto')
+            .in('scuola_id', plessi)
             .order('cognome', { ascending: true });
 
         if (!studErr && studentsData) {
@@ -47,6 +62,7 @@ export async function GET() {
         const { data: sections, error: secErr } = await supabase
             .from('sections')
             .select('name')
+            .in('scuola_id', plessi)
             .order('name', { ascending: true });
 
         let classes = ['Girasoli', 'Margherite', 'Tulipani', 'Coccinelle'];

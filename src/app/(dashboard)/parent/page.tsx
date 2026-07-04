@@ -4,144 +4,17 @@ import { useState, useEffect, Suspense } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { motion } from 'framer-motion';
-import {
-  Bell, MessageCircle, BookOpen, Image as ImageIcon,
-  Package, FileText, BarChart3, CheckSquare, ChevronRight, Euro, UtensilsCrossed,
-  GraduationCap, ClipboardList,
-} from 'lucide-react';
+import { Bell, MessageCircle, BookOpen, Camera, CalendarX2, GraduationCap } from 'lucide-react';
 import { withIdentity } from '@/lib/auth/current-user';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 import { useChildSchoolType } from '@/lib/auth/use-child-school-type';
 import { PagamentiSummary } from '@/components/features/parent/pagamenti/PagamentiSummary';
-
-const tiles = [
-  {
-    id: 'pagamenti',
-    label: 'Pagamenti',
-    desc: 'Rette & quote',
-    icon: Euro,
-    href: '/parent/pagamenti',
-    bg: '#E8F5F3',
-    fg: '#006A5F',
-    sub: '#A0A0A0',
-  },
-  {
-    id: 'mensa',
-    label: 'Mensa',
-    desc: 'Prenota il pranzo',
-    icon: UtensilsCrossed,
-    href: '/parent/mensa',
-    bg: '#006A5F',
-    fg: '#FDC400',
-    sub: 'rgba(253,196,0,0.55)',
-  },
-  {
-    id: 'avvisi',
-    label: 'Avvisi',
-    desc: 'Comunicazioni',
-    icon: Bell,
-    href: '/parent/avvisi',
-    bg: '#FDC400',
-    fg: '#006A5F',
-    sub: 'rgba(0,106,95,0.55)',
-  },
-  {
-    id: 'chat',
-    label: 'Chat',
-    desc: 'Messaggi',
-    icon: MessageCircle,
-    href: '/parent/chat',
-    bg: '#FDC400',
-    fg: '#006A5F',
-    sub: 'rgba(0,106,95,0.55)',
-  },
-  {
-    id: 'diario',
-    label: 'Diario',
-    desc: 'Giornata scolastica',
-    icon: BookOpen,
-    href: '/parent/diary',
-    bg: '#FFF8E1',
-    fg: '#006A5F',
-    sub: '#A0A0A0',
-    grado: 'infanzia',
-  },
-  {
-    id: 'gallery',
-    label: 'Galleria',
-    desc: 'Foto & video',
-    icon: ImageIcon,
-    href: '/parent/gallery',
-    bg: '#E8F5F3',
-    fg: '#006A5F',
-    sub: '#A0A0A0',
-  },
-  {
-    id: 'modulistica',
-    label: 'Moduli',
-    desc: 'Documenti firmati',
-    icon: FileText,
-    href: '/parent/modulistica',
-    bg: '#006A5F',
-    fg: '#FDC400',
-    sub: 'rgba(253,196,0,0.55)',
-  },
-  {
-    id: 'register',
-    label: 'Registro',
-    desc: 'Voti & note',
-    icon: BarChart3,
-    href: '/parent/primaria',
-    bg: '#FDC400',
-    fg: '#006A5F',
-    sub: 'rgba(0,106,95,0.55)',
-    grado: 'primaria',
-  },
-  {
-    id: 'lezioni',
-    label: 'Lezioni',
-    desc: 'Argomenti svolti',
-    icon: GraduationCap,
-    href: '/parent/lezioni',
-    bg: '#E8F5F3',
-    fg: '#006A5F',
-    sub: '#A0A0A0',
-    grado: 'primaria',
-  },
-  {
-    id: 'compiti',
-    label: 'Compiti',
-    desc: 'Da svolgere',
-    icon: ClipboardList,
-    href: '/parent/compiti',
-    bg: '#FDC400',
-    fg: '#006A5F',
-    sub: 'rgba(0,106,95,0.55)',
-    grado: 'primaria',
-  },
-  {
-    id: 'locker',
-    label: 'Armadietto',
-    desc: 'Materiali scolastici',
-    icon: Package,
-    href: '/parent/locker',
-    bg: '#FFF8E1',
-    fg: '#006A5F',
-    sub: '#A0A0A0',
-    grado: 'infanzia',
-  },
-  {
-    id: 'attendance',
-    label: 'Presenze',
-    desc: 'Gestione assenze',
-    icon: CheckSquare,
-    href: '/parent/attendance',
-    bg: '#E8F5F3',
-    fg: '#006A5F',
-    sub: '#A0A0A0',
-    grado: 'infanzia',
-  },
-] as const;
+import { SectionHeader } from '@/components/features/parent/home/SectionHeader';
+import { DiaryTodayCard } from '@/components/features/parent/home/DiaryTodayCard';
+import { AvvisiPreview } from '@/components/features/parent/home/AvvisiPreview';
+import { GalleryTodayCard } from '@/components/features/parent/home/GalleryTodayCard';
+import { LockerTodayCard } from '@/components/features/parent/home/LockerTodayCard';
+import { AgendaTodayCard } from '@/components/features/parent/home/AgendaTodayCard';
 
 function greetingByHour() {
   const h = new Date().getHours();
@@ -150,19 +23,21 @@ function greetingByHour() {
   return 'Buonasera';
 }
 
+interface QuickAction {
+  id: string;
+  label: string;
+  icon: typeof Bell;
+  href: string;
+  bg: string;
+  fg: string;
+}
+
 function ParentHomeContent() {
   const { parentId, studentId } = useParentIdentity();
   const { schoolType } = useChildSchoolType();
   const isPrimaria = schoolType === 'primaria';
-  // Gating per grado: la primaria non vede le tile infanzia e viceversa.
-  const visibleTiles = tiles.filter((t) => {
-    const g = (t as { grado?: string }).grado;
-    return !g || (isPrimaria ? g === 'primaria' : g === 'infanzia');
-  });
 
-  const [studentName, setStudentName] = useState('');
   const [firstName, setFirstName] = useState('');
-  const [classe, setClasse] = useState('');
   const [mascotFailed, setMascotFailed] = useState(false);
 
   useEffect(() => {
@@ -171,238 +46,174 @@ function ParentHomeContent() {
       .then(r => r.ok ? r.json() : null)
       .then(d => {
         if (!d) return;
-        const full = `${d.nome ?? ''} ${d.cognome ?? ''}`.trim();
-        setStudentName(full);
         setFirstName(d.nome ?? '');
-        if (d.classe_sezione) setClasse(d.classe_sezione);
       })
       .catch(() => {});
   }, [studentId]);
 
-  const initials = studentName
-    ? studentName.split(' ').map((w: string) => w[0]).filter(Boolean).slice(0, 2).join('').toUpperCase()
-    : '';
+  // Azioni rapide (DR QuickActions): solo navigazione verso pagine reali.
+  // "Segnala assenza" porta alla pagina assenze (dove vive il submit reale).
+  const wi = (href: string) => withIdentity(href, parentId, studentId);
+  const quickActions: QuickAction[] = [
+    {
+      id: 'absence',
+      label: 'Segnala\nassenza',
+      icon: CalendarX2,
+      href: wi(isPrimaria ? '/parent/primaria/assenze' : '/parent/attendance'),
+      bg: '#FDE8E7',
+      fg: '#E53935',
+    },
+    { id: 'chat', label: 'Scrivi\nmaestra', icon: MessageCircle, href: wi('/parent/chat'), bg: '#E2EEEC', fg: '#006A5F' },
+    { id: 'foto', label: 'Vedi\nfoto', icon: Camera, href: wi('/parent/gallery'), bg: '#FBF0DD', fg: '#E6B100' },
+    // Il diario giornaliero è solo nido/infanzia: per la primaria l'azione
+    // diventa l'area Scuola (lezioni, compiti, voti), senza la parola "Diario".
+    isPrimaria
+      ? { id: 'scuola', label: 'Scuola\nprimaria', icon: GraduationCap, href: wi('/parent/primaria'), bg: '#EAF3EC', fg: '#43A047' }
+      : { id: 'diario', label: 'Diario\ndi oggi', icon: BookOpen, href: wi('/parent/diary'), bg: '#EAF3EC', fg: '#43A047' },
+  ];
 
   return (
     <div className="min-h-screen bg-kidville-cream pb-[100px]">
 
-      {/* ── TOP BAR ───────────────────────────────── */}
-      <div className="flex items-center gap-3 px-5 pt-12 pb-3">
-        <div className="flex-1 min-w-0">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src="/logo_green.png"
-            alt="Kidville"
-            style={{ width: '100%', height: 'auto', display: 'block' }}
-          />
-        </div>
-        {initials && (
-          <motion.div
-            initial={{ scale: 0, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            transition={{ delay: 0.3, type: 'spring', stiffness: 400, damping: 20 }}
-            className="w-10 h-10 rounded-full bg-kidville-green flex items-center justify-center shadow-sm"
-          >
-            <span className="font-barlow font-black text-xs text-kidville-yellow">{initials}</span>
-          </motion.div>
-        )}
-      </div>
-
-      {/* ── HERO CARD ─────────────────────────────── */}
-      <div className="px-4 mb-4">
+      {/* ── HERO (DR warm) ─────────────────────────── */}
+      <div className="px-4 pt-4">
         <motion.div
-          initial={{ opacity: 0, y: 20, scale: 0.96 }}
+          initial={{ opacity: 0, y: 16, scale: 0.97 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
-          transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
+          transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
           className="relative overflow-hidden rounded-[28px]"
-          style={{ backgroundColor: '#FDC400', minHeight: 166 }}
+          style={{ backgroundColor: '#FDC400', minHeight: 150 }}
         >
-          {/* Testo */}
-          <div className="px-6 pt-6 pb-6" style={{ paddingRight: 160 }}>
-            <p className="font-maven text-sm font-medium mb-1" style={{ color: 'rgba(0,106,95,0.65)' }}>
+          {/* top row: logo + campanella → avvisi */}
+          <div className="relative z-[2] flex items-center justify-between px-5 pt-5">
+            {/* M9.5: logo statico su next/image; resa identica (height 18, width auto dal rapporto intrinseco) */}
+            <Image src="/logo_green.png" alt="Kidville" width={192} height={108} priority style={{ height: 18, width: 'auto', display: 'block' }} />
+            <Link
+              href={wi('/parent/avvisi')}
+              aria-label="Avvisi"
+              className="relative flex h-[38px] w-[38px] items-center justify-center rounded-full"
+              style={{ background: 'rgba(0,106,95,0.12)', color: '#006A5F' }}
+            >
+              <Bell size={19} />
+            </Link>
+          </div>
+
+          {/* greeting */}
+          <div className="relative z-[2] px-5 pb-6 pt-3" style={{ maxWidth: '64%' }}>
+            <p className="mb-0.5 font-maven text-xs font-semibold capitalize" style={{ color: 'rgba(0,84,75,0.7)' }}>
               {greetingByHour()}!
             </p>
             <h1
-              className="font-barlow font-black uppercase leading-[1.0] tracking-tight"
-              style={{ fontSize: 38, color: '#006A5F' }}
+              className="whitespace-pre-line font-barlow font-black uppercase leading-[0.98] tracking-tight"
+              style={{ fontSize: 30, color: '#006A5F' }}
             >
               {firstName ? `Ciao,\n${firstName}!` : 'Benvenuta!'}
             </h1>
             {firstName && (
-              <p className="font-maven text-sm mt-2 leading-snug" style={{ color: 'rgba(0,106,95,0.6)' }}>
-                La giornata di {firstName}<br />è già iniziata ✨
+              <p className="mt-1.5 font-maven text-[13px]" style={{ color: 'rgba(0,84,75,0.78)' }}>
+                Ecco le novità di oggi 🌈
               </p>
             )}
           </div>
 
-          {/* Mascotte */}
-          <div className="absolute right-0 bottom-0 flex items-end justify-end pointer-events-none"
-            style={{ width: 155, height: '100%' }}>
+          {/* mascotte */}
+          <div className="pointer-events-none absolute bottom-0 right-0 z-[1] flex items-end justify-end" style={{ width: 150, height: '100%' }}>
             {!mascotFailed ? (
-              /* Salva la mascotte in /public/mascot.png per visualizzarla */
-              <img
+              /* Salva la mascotte in /public/mascot.png per visualizzarla.
+                 M9.5: next/image (intrinseco 792×1040 in scala), resa identica. */
+              <Image
                 src="/mascot.png"
                 alt="Mascotte Kidville"
+                width={198}
+                height={260}
+                priority
                 onError={() => setMascotFailed(true)}
-                className="object-contain object-bottom drop-shadow-xl select-none"
-                style={{ height: 162, width: 'auto' }}
+                className="select-none object-contain object-bottom drop-shadow-xl"
+                style={{ height: 128, width: 'auto' }}
               />
             ) : (
-              <div
-                className="flex items-center justify-center text-[80px] opacity-30 select-none"
-                style={{ width: 155, height: 155 }}
-              >
+              <div className="flex select-none items-center justify-center text-[80px] opacity-30" style={{ width: 150, height: 150 }}>
                 🎩
               </div>
             )}
           </div>
-
-          {/* Cerchi decorativi */}
-          <div
-            className="absolute rounded-full pointer-events-none"
-            style={{
-              width: 120, height: 120,
-              top: -30, right: -30,
-              backgroundColor: 'rgba(255,255,255,0.12)',
-            }}
-          />
-          <div
-            className="absolute rounded-full pointer-events-none"
-            style={{
-              width: 70, height: 70,
-              bottom: -20, right: 90,
-              backgroundColor: 'rgba(255,255,255,0.12)',
-            }}
-          />
         </motion.div>
       </div>
 
-      {/* ── STUDENT BADGE ─────────────────────────── */}
-      {studentName && (
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.18, duration: 0.4 }}
-          className="mx-4 mb-5"
-        >
-          <div
-            className="flex items-center gap-3 px-4 py-3 rounded-2xl border"
-            style={{ backgroundColor: 'rgba(255,255,255,0.80)', borderColor: 'rgba(255,255,255,0.5)' }}
-          >
-            <div
-              className="w-11 h-11 rounded-full flex items-center justify-center flex-shrink-0"
-              style={{ backgroundColor: '#006A5F' }}
-            >
-              <span className="font-barlow font-black text-sm" style={{ color: '#FDC400' }}>
-                {initials}
-              </span>
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="font-barlow font-black text-base uppercase tracking-wide truncate leading-tight text-kidville-green">
-                {studentName}
-              </p>
-              {classe && (
-                <p className="font-maven text-xs text-gray-400 mt-0.5">Classe {classe}</p>
-              )}
-            </div>
-            <div
-              className="flex items-center gap-1.5 rounded-full px-2.5 py-1 flex-shrink-0"
-              style={{ backgroundColor: 'rgba(253,196,0,0.18)' }}
-            >
-              <div className="w-1.5 h-1.5 rounded-full bg-kidville-success" />
-              <span className="font-maven text-[10px] font-semibold text-kidville-green">
-                A scuola
-              </span>
-            </div>
-          </div>
-        </motion.div>
-      )}
-
-      {/* ── RIEPILOGO PAGAMENTI ───────────────────── */}
-      <PagamentiSummary userId={parentId} href={withIdentity('/parent/pagamenti', parentId, studentId)} />
-
-      {/* ── SECTION HEADER ────────────────────────── */}
-      <div className="flex items-center gap-3 px-4 mb-3">
-        <h2 className="font-barlow font-black text-lg text-kidville-green uppercase tracking-wide whitespace-nowrap">
-          Sezioni
-        </h2>
-        <div className="h-px flex-1 bg-gradient-to-r from-kidville-green/25 to-transparent" />
-      </div>
-
-      {/* ── TILE GRID ─────────────────────────────── */}
-      <div className="px-4 grid grid-cols-2 gap-3">
-        {visibleTiles.map((tile, i) => {
-          const Icon = tile.icon;
+      {/* ── QUICK ACTIONS ──────────────────────────── */}
+      <div className="grid grid-cols-4 gap-[9px] px-4 pt-4">
+        {quickActions.map((a) => {
+          const Icon = a.icon;
           return (
-            <motion.div
-              key={tile.id}
-              initial={{ opacity: 0, y: 18, scale: 0.94 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              transition={{
-                delay: 0.08 + i * 0.045,
-                duration: 0.38,
-                ease: [0.22, 1, 0.36, 1],
-              }}
-              whileHover={{ scale: 1.03, y: -2 }}
-              whileTap={{ scale: 0.96 }}
+            <Link
+              key={a.id}
+              href={a.href}
+              className="flex flex-col items-center gap-[7px] rounded-[18px] bg-white px-1 py-3 active:scale-95"
+              style={{ boxShadow: '0 4px 12px -8px rgba(0,0,0,0.18)' }}
             >
-              <Link href={withIdentity(tile.href, parentId, studentId)} className="block h-full">
-                <div
-                  className="relative overflow-hidden rounded-[20px] p-4 h-full min-h-[110px] flex flex-col"
-                  style={{ backgroundColor: tile.bg }}
-                >
-                  {/* Cerchio decorativo */}
-                  <div
-                    className="absolute -top-4 -right-4 rounded-full pointer-events-none"
-                    style={{
-                      width: 64, height: 64,
-                      backgroundColor: tile.fg === '#FDC400'
-                        ? 'rgba(253,196,0,0.12)'
-                        : 'rgba(0,106,95,0.07)',
-                    }}
-                  />
-
-                  <div className="flex-1">
-                    <Icon
-                      className="mb-3"
-                      style={{ color: tile.fg, width: 22, height: 22 }}
-                      strokeWidth={1.8}
-                    />
-                    <p
-                      className="font-barlow font-black text-xl uppercase leading-tight tracking-tight"
-                      style={{ color: tile.fg }}
-                    >
-                      {tile.label}
-                    </p>
-                    <p
-                      className="font-maven text-[11px] mt-0.5 leading-tight"
-                      style={{ color: tile.sub }}
-                    >
-                      {tile.desc}
-                    </p>
-                  </div>
-
-                  <ChevronRight
-                    className="absolute bottom-3 right-3 opacity-35"
-                    style={{ color: tile.fg, width: 15, height: 15 }}
-                  />
-                </div>
-              </Link>
-            </motion.div>
+              <span
+                className="flex h-[42px] w-[42px] items-center justify-center rounded-[14px]"
+                style={{ background: a.bg, color: a.fg }}
+              >
+                <Icon size={21} strokeWidth={1.9} />
+              </span>
+              <span className="whitespace-pre-line text-center font-barlow text-[11.5px] font-bold uppercase leading-[1.05] tracking-[0.02em] text-kidville-green">
+                {a.label}
+              </span>
+            </Link>
           );
         })}
       </div>
 
-      {/* ── FOOTER ────────────────────────────────── */}
-      <div className="px-4 mt-8 mb-2">
-        <div className="flex items-center gap-3">
-          <div className="h-px flex-1 bg-kidville-green/15" />
-          <span className="font-barlow font-bold text-[10px] text-kidville-green/30 uppercase tracking-[0.2em]">
-            Kidville ®
-          </span>
-          <div className="h-px flex-1 bg-kidville-green/15" />
+      {/* ── RIEPILOGO PAGAMENTI ───────────────────── */}
+      {parentId && (
+        <div className="pt-4">
+          <PagamentiSummary userId={parentId} href={wi('/parent/pagamenti')} />
         </div>
+      )}
+
+      {/* ── DIARIO OGGI (solo infanzia) ───────────── */}
+      {!isPrimaria && studentId && (
+        <div className="px-4 pt-5">
+          <SectionHeader eyebrow="Diario" title={firstName ? `La giornata di ${firstName}` : 'Il diario'} />
+          <DiaryTodayCard studentId={studentId} href={wi('/parent/diary')} />
+        </div>
+      )}
+
+      {/* ── AVVISI (top 2, sola lettura) ──────────── */}
+      {parentId && studentId && (
+        <div className="px-4 pt-5">
+          <SectionHeader eyebrow="Comunicazioni" title="Avvisi" actionLabel="Tutti" actionHref={wi('/parent/avvisi')} />
+          <AvvisiPreview parentId={parentId} studentId={studentId} />
+        </div>
+      )}
+
+      {/* ── GALLERIA OGGI ─────────────────────────── */}
+      {parentId && studentId && (
+        <div className="px-4 pt-5">
+          <SectionHeader eyebrow="Galleria" title="Foto di oggi" actionLabel="Tutte" actionHref={wi('/parent/gallery')} />
+          <GalleryTodayCard studentId={studentId} parentId={parentId} href={wi('/parent/gallery')} />
+        </div>
+      )}
+
+      {/* ── ARMADIETTO · SCORTE (teaser DR) ───────── */}
+      {studentId && (
+        <div className="px-4 pt-5">
+          <SectionHeader eyebrow="Armadietto" title="Scorte" actionLabel="Gestisci" actionHref={wi('/parent/locker')} />
+          <LockerTodayCard studentId={studentId} />
+        </div>
+      )}
+
+      {/* ── CALENDARIO · AGENDA (eventi_agenda M6) ── */}
+      <div className="px-4 pt-5">
+        <SectionHeader eyebrow="Calendario" title="Prossimi appuntamenti" />
+        <AgendaTodayCard studentId={studentId} />
       </div>
+
+      {/* ── NOTA / FOOTER ─────────────────────────── */}
+      <p className="px-4 pt-6 text-center font-maven text-[11px] text-kidville-muted">
+        Le informazioni restano visibili per 14 giorni · Kidville
+      </p>
     </div>
   );
 }

@@ -20,7 +20,7 @@ export function PresenzeSettings({ userId }: { userId: string }) {
     const [draft, setDraft] = useState<PresenzeConfig | null>(null);
     const [msg, setMsg] = useState('');
 
-    if (!settings) return <p className="font-maven text-sm text-gray-400">Caricamento…</p>;
+    if (!settings) return <p className="font-maven text-sm text-kidville-muted">Caricamento…</p>;
     const cfg = draft ?? ((settings.presenze_config ?? {}) as PresenzeConfig);
     const set = (patch: Partial<PresenzeConfig>) => { setMsg(''); setDraft({ ...cfg, ...patch }); };
 

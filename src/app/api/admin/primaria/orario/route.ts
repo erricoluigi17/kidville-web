@@ -1,10 +1,42 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { parseBody, parseQuery } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
 
 // ============================================================
 // Orario: tempo scuola (27/29/40h) → campanelle → griglia settimanale.
 // ============================================================
+
+const getQuerySchema = z.object({
+  sectionId: zUuid,
+})
+
+const postQuerySchema = z.object({
+  action: z.enum(['set-tempo', 'genera-campanelle', 'set-cell']),
+})
+
+const setTempoBodySchema = z.object({
+  sectionId: zUuid,
+  modello: z.coerce.number().refine((v) => [27, 29, 40].includes(v), 'modello deve essere 27, 29 o 40'),
+  // default dinamico (5) applicato nell'handler come oggi
+  giorniSettimana: z.coerce.number().nullish(),
+})
+
+const generaCampanelleBodySchema = z.object({
+  sectionId: zUuid,
+})
+
+const setCellBodySchema = z.object({
+  sectionId: zUuid,
+  // oggi: check truthy sul valore grezzo, poi Number() — replicato con refine
+  giorno: z.union([z.number(), z.string()]).refine((v) => !!v, 'giorno obbligatorio'),
+  campanellaId: zUuid,
+  materiaId: zUuid.nullish(),
+  docenteId: zUuid.nullish(),
+  note: z.string().nullish(),
+})
 
 interface CampanellaGen {
   giorno_settimana: number
@@ -56,8 +88,9 @@ function generaCampanelle(modello: number, giorni: number): CampanellaGen[] {
 // GET /api/admin/primaria/orario?sectionId=
 export async function GET(request: NextRequest) {
   try {
-    const sectionId = new URL(request.url).searchParams.get('sectionId')
-    if (!sectionId) return NextResponse.json({ error: 'sectionId obbligatorio' }, { status: 400 })
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+    const { sectionId } = q.data
 
     const supabase = await createAdminClient()
     const [{ data: tempoScuola }, { data: campanelle }, { data: orario }] = await Promise.all([
@@ -85,18 +118,16 @@ export async function POST(request: NextRequest) {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
 
-    const action = new URL(request.url).searchParams.get('action')
-    const body = await request.json()
+    const q = parseQuery(request, postQuerySchema)
+    if ('response' in q) return q.response
+    const action = q.data.action
     const supabase = await createAdminClient()
-    const sectionId: string | undefined = body.sectionId
-    if (!sectionId) return NextResponse.json({ error: 'sectionId obbligatorio' }, { status: 400 })
 
     if (action === 'set-tempo') {
-      const modello = Number(body.modello)
-      const giorni = Number(body.giorniSettimana ?? 5)
-      if (![27, 29, 40].includes(modello)) {
-        return NextResponse.json({ error: 'modello deve essere 27, 29 o 40' }, { status: 400 })
-      }
+      const b = await parseBody(request, setTempoBodySchema)
+      if ('response' in b) return b.response
+      const { sectionId, modello } = b.data
+      const giorni = b.data.giorniSettimana ?? 5
       // Disattiva eventuali modelli precedenti e inserisce il nuovo come attivo.
       await supabase.from('tempo_scuola').update({ attivo: false }).eq('section_id', sectionId).eq('attivo', true)
       const { data: tempo, error } = await supabase
@@ -112,6 +143,9 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === 'genera-campanelle') {
+      const b = await parseBody(request, generaCampanelleBodySchema)
+      if ('response' in b) return b.response
+      const { sectionId } = b.data
       const { data: tempo } = await supabase
         .from('tempo_scuola')
         .select('modello, giorni_settimana')
@@ -124,10 +158,9 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === 'set-cell') {
-      const { giorno, campanellaId, materiaId, docenteId, note } = body
-      if (!giorno || !campanellaId) {
-        return NextResponse.json({ error: 'giorno e campanellaId obbligatori' }, { status: 400 })
-      }
+      const b = await parseBody(request, setCellBodySchema)
+      if ('response' in b) return b.response
+      const { sectionId, giorno, campanellaId, materiaId, docenteId, note } = b.data
       const { data, error } = await supabase
         .from('orario_settimanale')
         .upsert(

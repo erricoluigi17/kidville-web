@@ -25,20 +25,20 @@ interface Props {
     type: AdultType;
 }
 
+const Label = ({ children }: { children: React.ReactNode }) => (
+    <label className="block text-[10px] text-kidville-muted tracking-wider uppercase mb-1">
+        {children}
+    </label>
+);
+
+const Value = ({ children }: { children: React.ReactNode }) => (
+    <div className="text-kidville-line font-medium text-sm truncate" title={typeof children === 'string' ? children : ''}>
+        {children || '—'}
+    </div>
+);
+
 export function LinkedAdultProfile({ data, type }: Props) {
     const Icon = type === 'delegate' ? IdCard : User;
-
-    const Label = ({ children }: { children: React.ReactNode }) => (
-        <label className="block text-[10px] text-gray-500 tracking-wider uppercase mb-1">
-            {children}
-        </label>
-    );
-
-    const Value = ({ children }: { children: React.ReactNode }) => (
-        <div className="text-gray-100 font-medium text-sm truncate" title={typeof children === 'string' ? children : ''}>
-            {children || '—'}
-        </div>
-    );
 
     const formatDate = (dateStr?: string) => {
         if (!dateStr) return '—';
@@ -59,7 +59,7 @@ export function LinkedAdultProfile({ data, type }: Props) {
                     <h4 className="font-barlow font-bold text-lg text-kidville-green uppercase tracking-wide leading-tight">
                         {data.first_name} {data.last_name}
                     </h4>
-                    <p className="text-xs text-gray-500 capitalize font-maven">
+                    <p className="text-xs text-kidville-muted capitalize font-maven">
                         {type === 'mother' ? 'Madre' : type === 'father' ? 'Padre' : 'Delegato'}
                     </p>
                 </div>
@@ -93,21 +93,21 @@ export function LinkedAdultProfile({ data, type }: Props) {
                     <div>
                         <Label>Email</Label>
                         <div className="flex items-center gap-2">
-                            <Mail size={14} className="text-gray-500 flex-shrink-0" />
+                            <Mail size={14} className="text-kidville-muted flex-shrink-0" />
                             <Value>{data.emails?.[0]}</Value>
                         </div>
                     </div>
                     <div>
                         <Label>Cellulare</Label>
                         <div className="flex items-center gap-2">
-                            <Phone size={14} className="text-gray-500 flex-shrink-0" />
+                            <Phone size={14} className="text-kidville-muted flex-shrink-0" />
                             <Value>{data.phone_numbers?.[0]}</Value>
                         </div>
                     </div>
                     <div>
                         <Label>Residenza</Label>
                         <div className="flex items-start gap-2">
-                            <MapPin size={14} className="text-gray-500 flex-shrink-0 mt-0.5" />
+                            <MapPin size={14} className="text-kidville-muted flex-shrink-0 mt-0.5" />
                             <Value>
                                 {data.residence_address ? `${data.residence_address}, ${data.residence_city || ''}` : '—'}
                             </Value>
@@ -122,11 +122,11 @@ export function LinkedAdultProfile({ data, type }: Props) {
                             <Label>Documento d&apos;Identità</Label>
                             <div className="mt-2 space-y-3">
                                 <div>
-                                    <div className="text-xs text-gray-500 mb-0.5">Tipo:</div>
+                                    <div className="text-xs text-kidville-muted mb-0.5">Tipo:</div>
                                     <Value>{data.document_type || 'Non specificato'}</Value>
                                 </div>
                                 <div>
-                                    <div className="text-xs text-gray-500 mb-0.5">Numero:</div>
+                                    <div className="text-xs text-kidville-muted mb-0.5">Numero:</div>
                                     <Value>{data.document_number || 'Non specificato'}</Value>
                                 </div>
                                 

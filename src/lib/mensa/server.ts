@@ -1,8 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { resolveMenuGiorno, type ResolveOptions, type RotazioneRow, type OverrideRow } from './resolveMenu'
 
-export const DEFAULT_SCUOLA = '11111111-1111-1111-1111-111111111111'
-
 export interface MensaConfig {
   cutoffOra: string            // 'HH:MM' o 'HH:MM:SS'
   giorniAttivi: number[]       // 1=lun … 7=dom

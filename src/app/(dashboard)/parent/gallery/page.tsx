@@ -2,19 +2,17 @@
 
 import { useState, useEffect, useCallback, Suspense } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Camera, Download, ChevronDown, ImageOff } from 'lucide-react';
+import { ChevronDown, ImageOff, Info } from 'lucide-react';
 import { MediaGrid, MediaItem } from '@/components/features/gallery/MediaGrid';
-import { useSearchParams } from 'next/navigation';
+import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 
+// Identità dalla sessione (URL → localStorage → /api/me), senza fallback demo (M4).
 function ParentGalleryContent() {
-    const searchParams = useSearchParams();
-    const studentId = searchParams.get('id') || 'dc617529-e80d-4084-9041-fb28e864089f';
-    const parentId = searchParams.get('parentId') || null;
+    const { parentId, studentId, ready } = useParentIdentity();
 
     const [media, setMedia] = useState<MediaItem[]>([]);
     const [loading, setLoading] = useState(true);
     const [loadingMore, setLoadingMore] = useState(false);
-    const [offset, setOffset] = useState(0);
     const [hasMore, setHasMore] = useState(true);
     const [studentName, setStudentName] = useState<string | null>(null);
     const [totalCount, setTotalCount] = useState(0);
@@ -22,22 +20,17 @@ function ParentGalleryContent() {
     const LIMIT = 12;
 
     const loadMedia = useCallback(async (currentOffset: number, append: boolean) => {
-        if (currentOffset === 0) {
-            setLoading(true);
-        } else {
-            setLoadingMore(true);
-        }
-
+        if (!ready || !studentId) return; // identità non risolta: lo spinner resta
         try {
             let url = `/api/gallery?studentId=${studentId}&limit=${LIMIT}&offset=${currentOffset}`;
             if (parentId) url += `&parentId=${parentId}`;
-            
-            const res = await fetch(url);
-            if (res.ok) {
+
+            const res = await fetch(url).catch(() => null);
+            if (res?.ok) {
                 const data = await res.json();
                 const fetchedMedia = data.media ?? [];
                 const total = data.total ?? 0;
-                
+
                 setTotalCount(total);
 
                 if (append) {
@@ -51,26 +44,24 @@ function ParentGalleryContent() {
                     setHasMore(fetchedMedia.length < total);
                 }
             }
-        } catch (err) {
-            console.error('Errore caricamento media:', err);
         } finally {
             setLoading(false);
             setLoadingMore(false);
         }
-    }, [studentId, parentId]);
+    }, [ready, studentId, parentId]);
 
     useEffect(() => {
-        setOffset(0);
         loadMedia(0, false);
-    }, [studentId, loadMedia]);
+    }, [loadMedia]);
 
     const handleLoadMore = () => {
-        const nextOffset = offset + LIMIT;
-        setOffset(nextOffset);
-        loadMedia(nextOffset, true);
+        setLoadingMore(true);
+        // L'offset successivo è derivato da quanto già caricato (niente stato offset).
+        loadMedia(media.length, true);
     };
 
     useEffect(() => {
+        if (!studentId) return;
         fetch(`/api/diary/students?id=${studentId}`)
             .then(r => r.ok ? r.json() : null)
             .then(d => { if (d?.nome) setStudentName(`${d.nome} ${d.cognome ?? ''}`.trim()); })
@@ -87,10 +78,13 @@ function ParentGalleryContent() {
                 className="flex items-start justify-between mb-6"
             >
                 <div>
-                    <h1 className="font-barlow font-black text-3xl text-kidville-green uppercase tracking-wide">
-                        📸 Le mie foto
+                    <p className="font-barlow font-bold text-[11px] uppercase tracking-[0.14em] text-kidville-yellow-dark">
+                        Galleria
+                    </p>
+                    <h1 className="font-barlow font-black text-3xl text-kidville-green uppercase tracking-wide leading-none">
+                        Le mie foto
                     </h1>
-                    <p className="font-maven text-gray-400 mt-1 text-sm">
+                    <p className="font-maven text-kidville-muted mt-1 text-sm">
                         {studentName ? `Le foto di ${studentName} a scuola` : 'Foto dalla scuola'} 🌈
                     </p>
                     {totalCount > 0 && (
@@ -129,7 +123,7 @@ function ParentGalleryContent() {
                         className="flex flex-col items-center justify-center py-20 gap-3"
                     >
                         <div className="w-7 h-7 border-[3px] border-kidville-green/20 border-t-kidville-green rounded-full animate-spin" />
-                        <p className="font-maven text-sm text-gray-400">Caricamento foto...</p>
+                        <p className="font-maven text-sm text-kidville-muted">Caricamento foto...</p>
                     </motion.div>
                 )}
             </AnimatePresence>
@@ -155,7 +149,7 @@ function ParentGalleryContent() {
                                 <p className="font-barlow font-bold text-kidville-green/60 text-sm uppercase tracking-wide">
                                     Nessuna foto disponibile
                                 </p>
-                                <p className="font-maven text-xs text-gray-400 mt-1">
+                                <p className="font-maven text-xs text-kidville-muted mt-1">
                                     Le foto appariranno qui quando gli insegnanti le condivideranno
                                 </p>
                             </div>
@@ -184,16 +178,19 @@ function ParentGalleryContent() {
                 </motion.div>
             )}
 
-            {/* Footer con glassmorphism */}
+            {/* Info banner privacy (DR FotoScreen) */}
             <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 transition={{ delay: 0.6 }}
-                className="mt-8 p-4 bg-white rounded-2xl border border-kidville-green/10 text-center shadow-sm"
+                className="mt-8 flex items-start gap-3 rounded-[18px] bg-kidville-green-soft p-4"
             >
-                <p className="font-maven text-xs text-gray-450">
-                    📷 Qui trovi solo le foto in cui {studentName ?? 'il tuo bambino'} è stato taggato.<br />
-                    Puoi scaricarle e condividerle liberamente.
+                <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-[12px] bg-kidville-white text-kidville-green">
+                    <Info size={18} />
+                </span>
+                <p className="font-maven text-[12.5px] leading-snug text-kidville-green/80">
+                    Trovi solo le foto in cui {studentName ?? 'il tuo bambino'} è taggato/a. Sono visibili ai
+                    genitori della sezione e restano disponibili per 14 giorni; puoi scaricarle e condividerle.
                 </p>
             </motion.div>
         </div>

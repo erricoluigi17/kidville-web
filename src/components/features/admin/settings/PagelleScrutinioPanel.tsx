@@ -27,7 +27,7 @@ export function PagelleScrutinioPanel({ scuolaId, userId }: { scuolaId: string; 
                         key={t.id}
                         onClick={() => setTab(t.id)}
                         className={`font-maven inline-flex items-center gap-2 rounded-pill px-4 py-2 text-sm transition ${
-                            tab === t.id ? 'bg-kidville-green text-kidville-yellow' : 'bg-white text-gray-600 hover:bg-kidville-green/10'
+                            tab === t.id ? 'bg-kidville-green text-kidville-yellow' : 'bg-white text-kidville-ink hover:bg-kidville-green/10'
                         }`}
                     >
                         {t.icon}

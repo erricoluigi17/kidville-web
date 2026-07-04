@@ -2,7 +2,7 @@
 
 import { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Upload, X, Image } from 'lucide-react';
+import { Upload, X, Image as ImageIcon } from 'lucide-react';
 
 interface Props {
     onUpload: (files: { file: File; preview: string }[]) => void;
@@ -49,7 +49,7 @@ export function MediaUploader({ onUpload, uploading }: Props) {
                     onChange={e => { if (e.target.files) addFiles(e.target.files); e.target.value = ''; }} />
                 <div className="flex flex-col items-center gap-3">
                     <div className="w-14 h-14 rounded-2xl bg-kidville-cream flex items-center justify-center">
-                        <Image size={24} className="text-kidville-green" strokeWidth={1.5} />
+                        <ImageIcon size={24} className="text-kidville-green" strokeWidth={1.5} />
                     </div>
                     <div>
                         <p className="font-barlow font-bold text-sm text-kidville-green uppercase">

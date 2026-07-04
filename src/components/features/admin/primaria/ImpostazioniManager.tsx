@@ -12,14 +12,25 @@ export function ImpostazioniManager({ scuolaId, userId }: { scuolaId: string; us
   const [msg, setMsg] = useState('');
 
   const load = useCallback(async () => {
-    const r = await fetch(`/api/admin/primaria/impostazioni?scuolaId=${scuolaId}`);
-    const d = await r.json();
-    if (d.success) {
-      setClasseOrale(d.data.timelock_giorni_classe_orale ?? 2);
-      setScrittoPratico(d.data.timelock_giorni_scritto_pratico ?? 15);
-      setBuffer(d.data.notif_buffer_valutazioni_min ?? 10);
+    let next: { classeOrale: number; scrittoPratico: number; buffer: number } | null = null;
+    try {
+      const r = await fetch(`/api/admin/primaria/impostazioni?scuolaId=${scuolaId}`, { headers: { 'x-user-id': userId } });
+      const d = await r.json();
+      if (d.success) {
+        next = {
+          classeOrale: d.data.timelock_giorni_classe_orale ?? 2,
+          scrittoPratico: d.data.timelock_giorni_scritto_pratico ?? 15,
+          buffer: d.data.notif_buffer_valutazioni_min ?? 10,
+        };
+      }
+    } finally {
+      if (next) {
+        setClasseOrale(next.classeOrale);
+        setScrittoPratico(next.scrittoPratico);
+        setBuffer(next.buffer);
+      }
     }
-  }, [scuolaId]);
+  }, [scuolaId, userId]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -42,22 +53,22 @@ export function ImpostazioniManager({ scuolaId, userId }: { scuolaId: string; us
   return (
     <div className="space-y-6">
       <section>
-        <h3 className="font-barlow text-base font-bold text-gray-800 mb-2">Vincoli temporali e notifiche</h3>
-        <p className="font-maven text-xs text-gray-400 mb-3">
+        <h3 className="font-barlow text-base font-bold text-kidville-ink mb-2">Vincoli temporali e notifiche</h3>
+        <p className="font-maven text-xs text-kidville-muted mb-3">
           Finestre di modifica del registro e buffer di invio notifiche valutazioni. L&apos;attivazione dei moduli per grado si gestisce da Impostazioni → Funzioni &amp; moduli.
         </p>
         <div className="flex flex-wrap gap-4">
-          <label className="font-maven text-sm text-gray-600">
+          <label className="font-maven text-sm text-kidville-ink">
             Registro/orali (giorni)
-            <input type="number" value={classeOrale} onChange={(e) => setClasseOrale(Number(e.target.value))} className="ml-2 w-16 rounded-pill border border-gray-200 px-2 py-1" />
+            <input type="number" value={classeOrale} onChange={(e) => setClasseOrale(Number(e.target.value))} className="ml-2 w-16 rounded-pill border border-kidville-line px-2 py-1" />
           </label>
-          <label className="font-maven text-sm text-gray-600">
+          <label className="font-maven text-sm text-kidville-ink">
             Scritti/pratici (giorni)
-            <input type="number" value={scrittoPratico} onChange={(e) => setScrittoPratico(Number(e.target.value))} className="ml-2 w-16 rounded-pill border border-gray-200 px-2 py-1" />
+            <input type="number" value={scrittoPratico} onChange={(e) => setScrittoPratico(Number(e.target.value))} className="ml-2 w-16 rounded-pill border border-kidville-line px-2 py-1" />
           </label>
-          <label className="font-maven text-sm text-gray-600">
+          <label className="font-maven text-sm text-kidville-ink">
             Buffer notifiche (min)
-            <input type="number" value={buffer} onChange={(e) => setBuffer(Number(e.target.value))} className="ml-2 w-16 rounded-pill border border-gray-200 px-2 py-1" />
+            <input type="number" value={buffer} onChange={(e) => setBuffer(Number(e.target.value))} className="ml-2 w-16 rounded-pill border border-kidville-line px-2 py-1" />
           </label>
         </div>
       </section>

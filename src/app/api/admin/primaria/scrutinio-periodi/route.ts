@@ -1,6 +1,34 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { parseBody, parseQuery } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
+
+const getQuerySchema = z.object({
+  annoScolastico: z.string().optional(),
+})
+
+const postBodySchema = z.object({
+  annoScolastico: z.string().min(1),
+  nome: z.string().min(1),
+  ordine: z.union([z.number(), z.string()]).nullish(),
+  dataInizio: z.string().nullish(),
+  dataFine: z.string().nullish(),
+})
+
+const patchBodySchema = z.object({
+  id: zUuid,
+  nome: z.string().nullish(),
+  ordine: z.union([z.number(), z.string()]).nullish(),
+  dataInizio: z.string().nullish(),
+  dataFine: z.string().nullish(),
+  attivo: z.boolean().nullish(),
+})
+
+const deleteQuerySchema = z.object({
+  id: zUuid,
+})
 
 // GET /api/admin/primaria/scrutinio-periodi?annoScolastico=&userId=
 // Elenca i periodi di scrutinio configurati per la scuola dello staff.
@@ -10,7 +38,9 @@ export async function GET(request: NextRequest) {
     if (auth.response) return auth.response
     if (!auth.user.scuola_id) return NextResponse.json({ error: 'Scuola non associata' }, { status: 400 })
 
-    const anno = new URL(request.url).searchParams.get('annoScolastico')
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+    const anno = q.data.annoScolastico
 
     const supabase = await createAdminClient()
     let query = supabase
@@ -37,10 +67,9 @@ export async function POST(request: NextRequest) {
     if (auth.response) return auth.response
     if (!auth.user.scuola_id) return NextResponse.json({ error: 'Scuola non associata' }, { status: 400 })
 
-    const { annoScolastico, nome, ordine, dataInizio, dataFine } = await request.json()
-    if (!annoScolastico || !nome) {
-      return NextResponse.json({ error: 'annoScolastico e nome obbligatori' }, { status: 400 })
-    }
+    const b = await parseBody(request, postBodySchema)
+    if ('response' in b) return b.response
+    const { annoScolastico, nome, ordine, dataInizio, dataFine } = b.data
 
     const supabase = await createAdminClient()
     const { data, error } = await supabase
@@ -70,8 +99,9 @@ export async function PATCH(request: NextRequest) {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
 
-    const { id, nome, ordine, dataInizio, dataFine, attivo } = await request.json()
-    if (!id) return NextResponse.json({ error: 'id obbligatorio' }, { status: 400 })
+    const b = await parseBody(request, patchBodySchema)
+    if ('response' in b) return b.response
+    const { id, nome, ordine, dataInizio, dataFine, attivo } = b.data
 
     const patch: Record<string, unknown> = {}
     if (nome !== undefined) patch.nome = nome
@@ -102,8 +132,9 @@ export async function DELETE(request: NextRequest) {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
 
-    const id = new URL(request.url).searchParams.get('id')
-    if (!id) return NextResponse.json({ error: 'id obbligatorio' }, { status: 400 })
+    const q = parseQuery(request, deleteQuerySchema)
+    if ('response' in q) return q.response
+    const { id } = q.data
 
     const supabase = await createAdminClient()
     const { error } = await supabase

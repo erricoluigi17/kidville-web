@@ -2,7 +2,6 @@
 
 import React, { useState } from 'react';
 import { Upload, Download, Loader2, CheckCircle, FileSpreadsheet } from 'lucide-react';
-import * as XLSX from 'xlsx';
 import { createBrowserClient } from '@supabase/ssr';
 
 export function ImportExportClient() {
@@ -21,6 +20,8 @@ export function ImportExportClient() {
             const { data, error } = await supabase.from('alunni').select('*');
             if (error) throw error;
 
+            // M9.4: xlsx caricato on-demand solo quando si esporta/importa.
+            const XLSX = await import('xlsx');
             const worksheet = XLSX.utils.json_to_sheet(data);
             const workbook = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(workbook, worksheet, "Alunni");
@@ -42,6 +43,7 @@ export function ImportExportClient() {
         setImportResult(null);
 
         try {
+            const XLSX = await import('xlsx');
             const data = await file.arrayBuffer();
             const workbook = XLSX.read(data);
             const worksheet = workbook.Sheets[workbook.SheetNames[0]];
@@ -58,9 +60,9 @@ export function ImportExportClient() {
             if (error) throw error;
 
             setImportResult({ total: jsonData.length, success: resultData?.length || jsonData.length });
-        } catch (error: any) {
+        } catch (error) {
             console.error("Errore importazione:", error);
-            alert(`Errore importazione: ${error.message}`);
+            alert(`Errore importazione: ${(error as Error).message}`);
         } finally {
             setIsImporting(false);
             if (e.target) e.target.value = ''; // Reset input
@@ -81,7 +83,7 @@ export function ImportExportClient() {
                     </div>
                     <div>
                         <h3 className="font-bold text-lg">Esporta Anagrafiche</h3>
-                        <p className="text-sm text-gray-500 mt-1">Scarica i dati completi in formato Excel.</p>
+                        <p className="text-sm text-kidville-muted mt-1">Scarica i dati completi in formato Excel.</p>
                     </div>
                     <button 
                         onClick={handleExport}
@@ -94,28 +96,28 @@ export function ImportExportClient() {
 
                 {/* Import Card */}
                 <div className="bg-kidville-cream border border-kidville-green/15 p-6 rounded-2xl flex flex-col items-center justify-center text-center gap-4">
-                    <div className="p-4 bg-blue-500/20 rounded-full text-blue-400">
+                    <div className="p-4 bg-kidville-info-soft0/20 rounded-full text-kidville-info">
                         <Upload size={32} />
                     </div>
                     <div>
                         <h3 className="font-bold text-lg">Importa e Sincronizza</h3>
-                        <p className="text-sm text-gray-500 mt-1">Carica un file Excel per aggiornare o inserire record.</p>
+                        <p className="text-sm text-kidville-muted mt-1">Carica un file Excel per aggiornare o inserire record.</p>
                     </div>
                     
-                    <label className={`mt-4 px-6 py-2 bg-blue-600 hover:bg-blue-500 rounded-full font-medium transition-all cursor-pointer flex items-center gap-2 ${isImporting ? 'opacity-50 pointer-events-none' : ''}`}>
+                    <label className={`mt-4 px-6 py-2 bg-kidville-info hover:bg-kidville-info-soft0 rounded-full font-medium transition-all cursor-pointer flex items-center gap-2 ${isImporting ? 'opacity-50 pointer-events-none' : ''}`}>
                         {isImporting ? <Loader2 size={18} className="animate-spin" /> : "Scegli File .xlsx"}
                         <input type="file" accept=".xlsx, .xls, .csv" onChange={handleImport} className="hidden" />
                     </label>
 
                     {importResult && (
-                        <div className="mt-4 p-3 bg-green-500/20 border border-green-500/30 rounded-xl flex items-center gap-2 text-green-400 text-sm font-bold">
+                        <div className="mt-4 p-3 bg-kidville-success/20 border border-kidville-success/30 rounded-xl flex items-center gap-2 text-kidville-success text-sm font-bold">
                             <CheckCircle size={16} /> Importati {importResult.success} su {importResult.total} record!
                         </div>
                     )}
                 </div>
             </div>
             
-            <div className="mt-6 text-xs text-gray-500 bg-kidville-cream p-4 rounded-xl border border-kidville-green/10">
+            <div className="mt-6 text-xs text-kidville-muted bg-kidville-cream p-4 rounded-xl border border-kidville-green/10">
                 <strong>Nota Tecnica:</strong> Questa operazione viene eseguita interamente lato browser utilizzando <code>xlsx</code> e il client Supabase. Questo approccio aggira i limiti di timeout di esecuzione dei serverless function di Next.js su Vercel, ideali per elaborazioni massive di dati.
             </div>
         </div>

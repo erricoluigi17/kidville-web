@@ -1,8 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useState, Suspense } from 'react';
+import { useCallback, useEffect, useMemo, useState, Suspense } from 'react';
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
 import { motion } from 'framer-motion';
 import {
   Users,
@@ -24,8 +23,10 @@ import { TiltCard } from '@/components/features/admin/motion/TiltCard';
 import { RevealGroup, RevealItem } from '@/components/features/admin/motion/reveal';
 import { AuroraHeader } from '@/components/features/admin/motion/AuroraHeader';
 import { TrendIncassiChart, StudentiPerClasseChart } from '@/components/features/admin/DashboardCharts';
-
-const DEMO_ADMIN_ID = '22222222-2222-2222-2222-555555555555';
+import { Donut, Live, SectionTitle } from '@/components/ui/cockpit';
+import { Badge } from '@/components/ui/Badge';
+import { useSessionIdentity } from '@/lib/auth/use-session-identity';
+import type { PresenzeAggregate } from '@/lib/presenze/aggregate';
 
 interface DashboardData {
   studenti: { iscritti: number; perClasse: { classe: string; count: number }[] };
@@ -43,17 +44,18 @@ interface DashboardData {
 const euroFmt = new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 });
 
 function AdminDashboardInner() {
-  const searchParams = useSearchParams();
-  const userId = searchParams.get('userId') || DEMO_ADMIN_ID;
-  const withUser = (href: string) => `${href}?userId=${userId}`;
+  const { userId } = useSessionIdentity();
+  // Identità di sessione (M4): con identità non risolta il parametro viene
+  // omesso (href invariato), mai `userId=null`.
+  const withUser = (href: string) => (userId ? `${href}?userId=${userId}` : href);
 
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!userId) return; // identità non risolta: lo skeleton (loading=true) resta attivo
     let active = true;
-    setLoading(true);
     fetch(`/api/admin/dashboard?userId=${userId}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error('Errore caricamento'))))
       .then((d) => {
@@ -86,8 +88,8 @@ function AdminDashboardInner() {
         format: 'euro' as const,
         sub: `${data.pagamenti.scadutoCount} posizioni`,
         icon: AlertTriangle,
-        accent: 'border-red-500',
-        iconBg: 'bg-red-50 text-red-500',
+        accent: 'border-kidville-error',
+        iconBg: 'bg-kidville-error-soft text-kidville-error',
         href: '/admin/pagamenti',
       },
       {
@@ -96,8 +98,8 @@ function AdminDashboardInner() {
         value: data.pagamenti.incassatoMese,
         format: 'euro' as const,
         icon: TrendingUp,
-        accent: 'border-emerald-500',
-        iconBg: 'bg-emerald-50 text-emerald-600',
+        accent: 'border-kidville-success',
+        iconBg: 'bg-kidville-success-soft text-kidville-success',
         href: '/admin/pagamenti',
       },
       {
@@ -106,8 +108,8 @@ function AdminDashboardInner() {
         value: data.iscrizioni.pending,
         format: 'int' as const,
         icon: ClipboardList,
-        accent: 'border-amber-500',
-        iconBg: 'bg-amber-50 text-amber-600',
+        accent: 'border-kidville-warn',
+        iconBg: 'bg-kidville-warn-soft text-kidville-warn',
         href: '/admin/iscrizioni',
       },
       {
@@ -126,8 +128,8 @@ function AdminDashboardInner() {
         value: data.pagamenti.fattureInAttesa,
         format: 'int' as const,
         icon: ReceiptText,
-        accent: 'border-indigo-400',
-        iconBg: 'bg-indigo-50 text-indigo-500',
+        accent: 'border-kidville-info',
+        iconBg: 'bg-kidville-info-soft text-kidville-info',
         href: '/admin/pagamenti',
       },
     ];
@@ -176,7 +178,7 @@ function AdminDashboardInner() {
       </AuroraHeader>
 
       {error && (
-        <div className="mt-6 rounded-2xl border border-red-200 bg-red-50 p-4 font-maven text-sm text-red-600">
+        <div className="mt-6 rounded-2xl border border-kidville-error/30 bg-kidville-error-soft p-4 font-maven text-sm text-kidville-error">
           {error}. Verifica di essere autenticato come staff (parametro <code>userId</code>).
         </div>
       )}
@@ -185,7 +187,7 @@ function AdminDashboardInner() {
       {loading ? (
         <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="h-32 rounded-2xl bg-white/60 animate-pulse border border-gray-100" />
+            <div key={i} className="h-32 rounded-2xl bg-kidville-white/60 animate-pulse border border-kidville-line" />
           ))}
         </div>
       ) : (
@@ -196,18 +198,18 @@ function AdminDashboardInner() {
               return (
                 <RevealItem key={kpi.key}>
                   <Link href={withUser(kpi.href)} className="block group h-full">
-                    <TiltCard className={`h-full rounded-2xl bg-white p-5 shadow-sm border-l-4 ${kpi.accent} border-y border-r border-gray-100`}>
+                    <TiltCard className={`h-full rounded-2xl bg-kidville-white p-5 shadow-sm border-l-4 ${kpi.accent} border-y border-r border-kidville-line`}>
                       <div className="flex items-start justify-between">
                         <div className={`flex h-11 w-11 items-center justify-center rounded-xl ${kpi.iconBg}`}>
                           <Icon size={22} strokeWidth={2.2} />
                         </div>
-                        <ArrowRight size={18} className="text-gray-300 group-hover:text-kidville-green group-hover:translate-x-1 transition-all" />
+                        <ArrowRight size={18} className="text-kidville-neutral/50 group-hover:text-kidville-green group-hover:translate-x-1 transition-all" />
                       </div>
                       <p className="font-barlow font-black text-3xl text-kidville-green mt-4">
                         <AnimatedNumber value={kpi.value} format={kpi.format} />
                       </p>
-                      <p className="font-maven text-sm text-gray-500 font-semibold">{kpi.label}</p>
-                      {kpi.sub && <p className="font-maven text-xs text-gray-400 mt-0.5">{kpi.sub}</p>}
+                      <p className="font-maven text-sm text-kidville-ink/70 font-semibold">{kpi.label}</p>
+                      {kpi.sub && <p className="font-maven text-xs text-kidville-muted mt-0.5">{kpi.sub}</p>}
                     </TiltCard>
                   </Link>
                 </RevealItem>
@@ -224,13 +226,13 @@ function AdminDashboardInner() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.2, type: 'spring', stiffness: 200, damping: 24 }}
-            className="rounded-2xl bg-white p-5 shadow-sm border border-gray-100"
+            className="rounded-2xl bg-kidville-white p-5 shadow-sm border border-kidville-line"
           >
             <div className="flex items-center justify-between mb-3">
               <h2 className="font-barlow font-black uppercase tracking-wide text-kidville-green">
                 Incassi · ultimi 6 mesi
               </h2>
-              <TrendingUp size={18} className="text-emerald-500" />
+              <TrendingUp size={18} className="text-kidville-success" />
             </div>
             <TrendIncassiChart data={data.trend} />
           </motion.div>
@@ -239,7 +241,7 @@ function AdminDashboardInner() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.3, type: 'spring', stiffness: 200, damping: 24 }}
-            className="rounded-2xl bg-white p-5 shadow-sm border border-gray-100"
+            className="rounded-2xl bg-kidville-white p-5 shadow-sm border border-kidville-line"
           >
             <div className="flex items-center justify-between mb-3">
               <h2 className="font-barlow font-black uppercase tracking-wide text-kidville-green">
@@ -250,11 +252,15 @@ function AdminDashboardInner() {
             {data.studenti.perClasse.length ? (
               <StudentiPerClasseChart data={data.studenti.perClasse} />
             ) : (
-              <p className="font-maven text-sm text-gray-400 py-12 text-center">Nessun alunno iscritto</p>
+              <p className="font-maven text-sm text-kidville-muted py-12 text-center">Nessun alunno iscritto</p>
             )}
           </motion.div>
         </div>
       )}
+
+      {/* Presenze in tempo reale — struttura DR, dati reali da
+          /api/admin/presenze/realtime con poll 60s (M7.5). */}
+      <PresenzeRealtimeCard userId={userId} />
 
       {/* Alert / attività */}
       {data && (
@@ -302,18 +308,123 @@ function AdminDashboardInner() {
               <RevealItem key={m.href}>
                 <Link
                   href={withUser(m.href)}
-                  className="flex flex-col items-center gap-2 rounded-2xl bg-white p-4 shadow-sm border border-gray-100 hover:border-kidville-green hover:shadow-md transition-all text-center"
+                  className="flex flex-col items-center gap-2 rounded-2xl bg-kidville-white p-4 shadow-sm border border-kidville-line hover:border-kidville-green hover:shadow-md transition-all text-center"
                 >
                   <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-kidville-green/10 text-kidville-green">
                     <Icon size={24} strokeWidth={2} />
                   </div>
-                  <span className="font-maven text-sm font-semibold text-gray-700">{m.label}</span>
+                  <span className="font-maven text-sm font-semibold text-kidville-ink/80">{m.label}</span>
                 </Link>
               </RevealItem>
             );
           })}
         </RevealGroup>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Card "Presenze in tempo reale" (M7.5): Donut presenti/iscritti, 4 tile e
+ * elenco per sede/classe da /api/admin/presenze/realtime, poll 60s (niente
+ * canali realtime). Stessa struttura DR del placeholder che sostituisce.
+ */
+function PresenzeRealtimeCard({ userId }: { userId: string | null }) {
+  const [dati, setDati] = useState<PresenzeAggregate | null>(null);
+  const [ready, setReady] = useState(false);
+
+  // Pattern PagamentiSummary (react-hooks 7): nessun setState sincrono
+  // pre-await, niente catch top-level, corpo in try/finally.
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/admin/presenze/realtime${userId ? `?userId=${userId}` : ''}`).catch(() => null);
+      const j = res?.ok ? await res.json().catch(() => null) : null;
+      if (j?.success) setDati(j.data);
+    } finally {
+      setReady(true);
+    }
+  }, [userId]);
+
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const t = setInterval(() => { load(); }, 60_000);
+    return () => clearInterval(t);
+  }, [load]);
+
+  const totale = dati?.totale;
+  const pct = totale && totale.iscritti > 0 ? Math.round((totale.presenti / totale.iscritti) * 100) : null;
+  const tiles = [
+    { label: 'Presenti oggi', value: totale?.presenti, cls: 'text-kidville-green' },
+    { label: 'Iscritti', value: totale?.iscritti, cls: 'text-kidville-green' },
+    { label: 'Assenti', value: totale?.assenti, cls: 'text-kidville-green' },
+    {
+      label: 'Appelli mancanti',
+      value: totale?.appelli_mancanti,
+      cls: (totale?.appelli_mancanti ?? 0) > 0 ? 'text-kidville-warn' : 'text-kidville-green',
+    },
+  ];
+
+  return (
+    <div className="mt-6 rounded-2xl bg-kidville-white p-5 shadow-sm border border-kidville-line">
+      <SectionTitle
+        icon={Users}
+        title="Presenze in tempo reale"
+        sub="Monitoraggio multi-sede · per sede e per classe"
+        action={<Live label="Live · 60s" />}
+      />
+      <div className="flex flex-col items-center gap-6 sm:flex-row">
+        <Donut
+          value={totale?.presenti ?? 0}
+          max={totale?.iscritti ?? 1}
+          tone={pct == null ? 'neutral' : 'green'}
+          label={pct == null ? '—' : `${pct}%`}
+          sub="presenti"
+        />
+        <div className="grid flex-1 grid-cols-2 gap-3 sm:grid-cols-4">
+          {tiles.map((t) => (
+            <div key={t.label} className="rounded-xl bg-kidville-cream px-3 py-4 text-center">
+              <div className={`font-barlow text-2xl font-black ${t.value == null ? 'text-kidville-neutral' : t.cls}`}>
+                {t.value ?? '—'}
+              </div>
+              <div className="mt-1 font-barlow text-[10.5px] font-bold uppercase tracking-[0.03em] text-kidville-muted">{t.label}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* elenco per sede e per classe */}
+      {ready && dati && dati.sedi.length === 0 && (
+        <p className="mt-3 font-maven text-xs text-kidville-muted">Nessun alunno iscritto nei plessi in gestione.</p>
+      )}
+      {dati && dati.sedi.length > 0 && (
+        <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
+          {dati.sedi.map((sede) => (
+            <div key={sede.scuola_id} className="rounded-xl border border-kidville-line p-3.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="truncate font-barlow text-[13.5px] font-extrabold uppercase text-kidville-green">{sede.scuola}</span>
+                <span className="shrink-0 font-maven text-xs font-semibold text-kidville-ink/70">
+                  {sede.presenti}/{sede.iscritti} presenti
+                </span>
+              </div>
+              {sede.classi.length > 0 && (
+                <ul className="mt-2 divide-y divide-kidville-line">
+                  {sede.classi.map((c) => (
+                    <li key={c.section_id} className="flex items-center justify-between gap-2 py-1.5">
+                      <span className="truncate font-maven text-sm font-semibold text-kidville-ink/80">{c.classe}</span>
+                      <span className="flex shrink-0 items-center gap-2">
+                        {!c.appello_fatto && <Badge tone="warn">Appello mancante</Badge>}
+                        <span className="font-barlow text-sm font-black text-kidville-ink/80">
+                          {c.presenti}/{c.iscritti}
+                        </span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -342,12 +453,12 @@ function AlertPanel({
   rows: AlertRow[];
   empty: string;
 }) {
-  const toneCls = tone === 'red' ? 'bg-red-500' : 'bg-amber-500';
+  const toneCls = tone === 'red' ? 'bg-kidville-error' : 'bg-kidville-warn';
   return (
-    <div className="rounded-2xl bg-white p-5 shadow-sm border border-gray-100">
+    <div className="rounded-2xl bg-kidville-white p-5 shadow-sm border border-kidville-line">
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
-          <Icon size={18} className={tone === 'red' ? 'text-red-500' : 'text-amber-500'} />
+          <Icon size={18} className={tone === 'red' ? 'text-kidville-error' : 'text-kidville-warn'} />
           <h2 className="font-barlow font-black uppercase tracking-wide text-kidville-green">{title}</h2>
           {count > 0 && (
             <motion.span
@@ -364,13 +475,13 @@ function AlertPanel({
         </Link>
       </div>
       {rows.length === 0 ? (
-        <p className="font-maven text-sm text-gray-400 py-6 text-center">{empty}</p>
+        <p className="font-maven text-sm text-kidville-muted py-6 text-center">{empty}</p>
       ) : (
         <motion.ul
           initial="hidden"
           animate="show"
           variants={{ show: { transition: { staggerChildren: 0.07 } } }}
-          className="divide-y divide-gray-50"
+          className="divide-y divide-kidville-line"
         >
           {rows.map((row) => (
             <motion.li
@@ -379,10 +490,10 @@ function AlertPanel({
               className="flex items-center justify-between py-2.5"
             >
               <div className="min-w-0">
-                <p className="font-maven text-sm font-semibold text-gray-700 truncate">{row.left}</p>
-                {row.meta && <p className="font-maven text-xs text-gray-400">{row.meta}</p>}
+                <p className="font-maven text-sm font-semibold text-kidville-ink/80 truncate">{row.left}</p>
+                {row.meta && <p className="font-maven text-xs text-kidville-muted">{row.meta}</p>}
               </div>
-              <span className="font-barlow font-black text-sm text-gray-600 shrink-0">{row.right}</span>
+              <span className="font-barlow font-black text-sm text-kidville-ink/80 shrink-0">{row.right}</span>
             </motion.li>
           ))}
         </motion.ul>
@@ -393,7 +504,7 @@ function AlertPanel({
 
 export default function AdminDashboardPage() {
   return (
-    <Suspense fallback={<div className="p-8 font-maven text-gray-400">Caricamento…</div>}>
+    <Suspense fallback={<div className="p-8 font-maven text-kidville-muted">Caricamento…</div>}>
       <AdminDashboardInner />
     </Suspense>
   );

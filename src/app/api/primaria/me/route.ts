@@ -1,13 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getRequestUserId, loadAppUser } from '@/lib/auth/require-staff'
+import { z } from 'zod'
+import { resolveIdentity, loadAppUser } from '@/lib/auth/require-staff'
 import { loadGradoContext } from '@/lib/auth/require-grado'
+import { parseQuery } from '@/lib/validation/http'
 
-// GET /api/primaria/me?userId=
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+// `userId` in query è consumato dal gate identità (resolveIdentity), non dall'handler.
+const getQuerySchema = z.object({}) // nessun parametro in ingresso
+
+// GET /api/primaria/me
 // Riepilogo del contesto docente: gradi + funzioni abilitate (per gating UI).
+// Identità session-first (resolveIdentity); header/query solo come fallback legacy.
 export async function GET(request: NextRequest) {
   try {
-    const userId = getRequestUserId(request)
+    const { userId } = await resolveIdentity(request)
     if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
+
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+
     const ctx = await loadGradoContext(userId)
     if (!ctx) return NextResponse.json({ error: 'Utente non trovato' }, { status: 401 })
 

@@ -36,7 +36,7 @@ export function GradeWorldSwitch() {
       <button
         onClick={() => router.push(`/teacher${suffix}`)}
         className={`font-maven inline-flex items-center gap-1.5 rounded-pill px-3 py-1.5 text-sm transition ${
-          !inPrimaria ? 'bg-kidville-green text-kidville-yellow' : 'text-gray-500'
+          !inPrimaria ? 'bg-kidville-green text-kidville-yellow' : 'text-kidville-muted'
         }`}
       >
         <Baby size={14} /> Infanzia
@@ -44,7 +44,7 @@ export function GradeWorldSwitch() {
       <button
         onClick={() => router.push(`/teacher/primaria${suffix}`)}
         className={`font-maven inline-flex items-center gap-1.5 rounded-pill px-3 py-1.5 text-sm transition ${
-          inPrimaria ? 'bg-kidville-green text-kidville-yellow' : 'text-gray-500'
+          inPrimaria ? 'bg-kidville-green text-kidville-yellow' : 'text-kidville-muted'
         }`}
       >
         <BookOpen size={14} /> Primaria

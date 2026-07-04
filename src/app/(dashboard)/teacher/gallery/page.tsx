@@ -6,10 +6,9 @@ import { Upload, Tag, WifiOff } from 'lucide-react';
 import { MediaGrid, MediaItem } from '@/components/features/gallery/MediaGrid';
 import { MediaUploader } from '@/components/features/gallery/MediaUploader';
 import { StudentTagger } from '@/components/features/gallery/StudentTagger';
-import { getSupabase } from '@/lib/supabase/browser-client';
 import { saveLocalGalleryMedia, syncPendingGalleryMedia } from '@/lib/offline/syncEngine';
 import { processImageWithWatermark, validateVideoFile, processVideoWithWatermark } from '@/lib/media/processing';
-import { useSearchParams } from 'next/navigation';
+import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 
 interface Student {
     id: string;
@@ -22,8 +21,7 @@ interface Student {
 type Step = 'gallery' | 'upload' | 'tag';
 
 function TeacherGalleryContent() {
-    const searchParams = useSearchParams();
-    const teacherId = searchParams.get('userId') || '22222222-2222-2222-2222-222222222222';
+    const { userId: teacherId } = useSessionIdentity();
 
     const [media, setMedia] = useState<MediaItem[]>([]);
     const [students, setStudents] = useState<Student[]>([]);
@@ -38,23 +36,20 @@ function TeacherGalleryContent() {
     const [activeFileIndex, setActiveFileIndex] = useState<number>(0);
     const [uploading, setUploading] = useState(false);
     const [userRole, setUserRole] = useState<string>('educator');
-    const [isOnline, setIsOnline] = useState(true);
+    const [isOnline, setIsOnline] = useState(() => typeof navigator === 'undefined' || navigator.onLine);
 
     const [sezione, setSezione] = useState<string>('Girasoli');
     const [availableSections, setAvailableSections] = useState<string[]>([]);
 
     const loadMedia = useCallback(async () => {
         if (!sezione) return;
-        setLoading(true);
         try {
             // Seleziona media per la sezione del docente
-            const res = await fetch(`/api/gallery?classe=${sezione}`);
-            if (res.ok) {
-                const data = await res.json();
-                setMedia(data.media ?? []);
+            const res = await fetch(`/api/gallery?classe=${sezione}`).catch(() => null);
+            if (res?.ok) {
+                const data = await res.json().catch(() => null);
+                setMedia(data?.media ?? []);
             }
-        } catch (err) {
-            console.error('Errore caricamento media:', err);
         } finally {
             setLoading(false);
         }
@@ -63,27 +58,28 @@ function TeacherGalleryContent() {
     const loadStudents = useCallback(async () => {
         if (!sezione) return;
         try {
-            const res = await fetch(`/api/diary/students?sezione=${sezione}`);
-            if (res.ok) {
-                const data = await res.json();
+            const res = await fetch(`/api/diary/students?sezione=${sezione}`).catch(() => null);
+            if (res?.ok) {
+                const data = await res.json().catch(() => null);
                 if (Array.isArray(data)) {
-                    setStudents(data.map((s: { id: string; nome: string; cognome: string; consenso_privacy?: boolean; parents?: any[] }) => ({
+                    setStudents(data.map((s: { id: string; nome: string; cognome: string; consenso_privacy?: boolean; parents?: Student['parents'] }) => ({
                         id: s.id,
-                        nome: s.nome, 
+                        nome: s.nome,
                         cognome: s.cognome,
                         consenso_privacy: s.consenso_privacy !== false,
                         parents: s.parents || [],
                     })));
                 }
             }
-        } catch (err) {
-            console.error('Errore caricamento studenti:', err);
+        } finally {
+            // Nessuno stato di loading dedicato: l'errore di rete lascia lo stato invariato.
         }
     }, [sezione]);
 
     // Carica sezioni educatore
     useEffect(() => {
         const fetchSections = async () => {
+            if (!teacherId) return;
             try {
                 const res = await fetch(`/api/educator-sections?userId=${teacherId}`);
                 if (res.ok) {
@@ -104,7 +100,6 @@ function TeacherGalleryContent() {
     // Gestione connettività
     useEffect(() => {
         if (typeof window !== 'undefined') {
-            setIsOnline(navigator.onLine);
             const handleOnline = () => {
                 setIsOnline(true);
                 // Prova a sincronizzare i file in sospeso
@@ -121,17 +116,16 @@ function TeacherGalleryContent() {
         }
     }, [loadMedia]);
 
-    // Carica ruolo utente corrente
+    // Carica ruolo utente corrente (via /api/me gated, niente lettura anon di `utenti`)
     useEffect(() => {
         const fetchUserRole = async () => {
+            if (!teacherId) return;
             try {
-                const supabase = getSupabase();
-                const { data: ut } = await supabase
-                    .from('utenti')
-                    .select('ruolo')
-                    .eq('id', teacherId)
-                    .maybeSingle();
-                if (ut?.ruolo) setUserRole(ut.ruolo);
+                const res = await fetch('/api/me', { headers: { 'x-user-id': teacherId } });
+                if (!res.ok) return;
+                const me = await res.json().catch(() => null);
+                const ruolo = me?.ruolo ?? me?.role;
+                if (ruolo) setUserRole(ruolo);
             } catch (err) {
                 console.error('Errore fetch ruolo:', err);
             }
@@ -215,6 +209,7 @@ function TeacherGalleryContent() {
     const activeIsBroadcast = activeFile ? activeFile.is_broadcast : false;
 
     const handleConfirmUpload = async () => {
+        if (!teacherId) return;
         setUploading(true);
         try {
             const offlineMode = !isOnline;
@@ -321,6 +316,7 @@ function TeacherGalleryContent() {
     };
 
     const handleDeleteMedia = async (id: string) => {
+        if (!teacherId) return;
         if (!confirm('Sei sicuro di voler eliminare questo media?')) return;
         try {
             const res = await fetch(`/api/gallery?id=${id}&userId=${teacherId}`, {
@@ -340,6 +336,7 @@ function TeacherGalleryContent() {
     };
 
     const handleUpdateTags = async (mediaId: string, newTags: string[]) => {
+        if (!teacherId) return;
         try {
             const res = await fetch('/api/gallery', {
                 method: 'PATCH',
@@ -364,55 +361,52 @@ function TeacherGalleryContent() {
     };
 
     return (
-        <div className="max-w-3xl mx-auto p-4 sm:p-6 pb-32">
+        <div className="mx-auto max-w-[460px] px-4 pt-5">
             {/* Offline Alert Bar */}
             {!isOnline && (
-                <div className="flex items-center gap-2 mb-4 p-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-2xl text-xs font-medium">
-                    <WifiOff size={14} className="text-amber-500 flex-shrink-0" />
+                <div className="flex items-center gap-2 mb-4 p-3 bg-kidville-warn-soft border border-kidville-warn/30 text-kidville-warn rounded-2xl text-xs font-medium">
+                    <WifiOff size={14} className="text-kidville-warn flex-shrink-0" />
                     <span>Sei offline. Puoi comunque caricare foto: verranno salvate in locale e caricate appena tornerai online.</span>
                 </div>
             )}
 
-            {/* Header */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-                <div>
-                    <h1 className="font-barlow font-black text-3xl text-kidville-green uppercase tracking-wide">
-                        📸 Galleria
-                    </h1>
-                    <p className="font-maven text-gray-500 mt-1">Foto e video della sezione {sezione}</p>
-                </div>
-                
-                <div className="flex items-center gap-3">
-                    {/* Selettore sezione se ce n'è più di una */}
-                    {availableSections.length > 1 && (
-                        <div className="flex items-center gap-2">
-                            <label htmlFor="section-select" className="font-barlow font-bold text-xs text-gray-500 uppercase tracking-wide">
-                                Sezione:
-                            </label>
-                            <select
-                                id="section-select"
-                                value={sezione}
-                                onChange={(e) => setSezione(e.target.value)}
-                                className="bg-white/80 border border-gray-200 text-kidville-green font-barlow font-bold text-sm uppercase rounded-xl px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-kidville-green shadow-sm"
-                            >
-                                {availableSections.map((sec) => (
-                                    <option key={sec} value={sec}>
-                                        {sec}
-                                    </option>
-                                ))}
-                            </select>
-                        </div>
-                    )}
+            {/* Header verde (DR) */}
+            <div className="rounded-3xl bg-kidville-green px-5 py-5" style={{ boxShadow: '0 16px 34px -18px rgba(0,60,52,.6)' }}>
+                <p className="font-barlow text-[11px] font-bold uppercase tracking-[0.14em] text-kidville-yellow">Momenti</p>
+                <h1 className="font-barlow text-3xl font-black uppercase tracking-wide text-white">Galleria</h1>
+                <p className="mt-1.5 font-maven text-xs text-white/80">Foto e video della sezione {sezione}</p>
+            </div>
 
+            {/* Controlli (sezione + step) */}
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+                {availableSections.length > 1 && (
+                    <div className="flex items-center gap-2">
+                        <label htmlFor="section-select" className="font-barlow font-bold text-xs text-kidville-muted uppercase tracking-wide">
+                            Sezione:
+                        </label>
+                        <select
+                            id="section-select"
+                            value={sezione}
+                            onChange={(e) => setSezione(e.target.value)}
+                            className="rounded-xl border border-kidville-line bg-white px-3 py-1.5 font-barlow text-sm font-bold uppercase text-kidville-green shadow-sm focus:outline-none focus:ring-1 focus:ring-kidville-green"
+                        >
+                            {availableSections.map((sec) => (
+                                <option key={sec} value={sec}>{sec}</option>
+                            ))}
+                        </select>
+                    </div>
+                )}
+
+                <div className="ml-auto flex items-center gap-2">
                     {step === 'gallery' && (
                         <button onClick={() => setStep('upload')}
-                            className="flex items-center gap-2 px-4 py-2.5 bg-kidville-green text-kidville-yellow font-barlow font-bold text-sm uppercase rounded-2xl hover:opacity-90 active:scale-[0.98] transition-all shadow-lg shadow-kidville-green/20">
+                            className="flex items-center gap-2 rounded-pill bg-kidville-green px-4 py-2.5 font-barlow text-sm font-bold uppercase text-kidville-yellow transition-all active:scale-[0.98]">
                             <Upload size={16} strokeWidth={1.5} /> Carica
                         </button>
                     )}
                     {step !== 'gallery' && (
                         <button onClick={() => { setStep('gallery'); setUploadedFiles([]); setActiveFileIndex(0); }}
-                            className="px-4 py-2.5 bg-gray-100 text-gray-600 font-maven font-semibold text-sm rounded-2xl hover:bg-gray-200 transition-all">
+                            className="rounded-pill bg-kidville-green-soft px-4 py-2.5 font-maven text-sm font-semibold text-kidville-green transition-all hover:bg-kidville-cream-dark">
                             Annulla
                         </button>
                     )}
@@ -422,11 +416,11 @@ function TeacherGalleryContent() {
             <AnimatePresence mode="wait">
                 {/* Step: Gallery */}
                 {step === 'gallery' && (
-                    <motion.div key="gallery" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                    <motion.div key="gallery" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="mt-5">
                         {loading ? (
                             <div className="flex flex-col items-center justify-center py-20 gap-3">
                                 <div className="w-7 h-7 border-[3px] border-kidville-green/20 border-t-kidville-green rounded-full animate-spin" />
-                                <p className="font-maven text-sm text-gray-400">Caricamento galleria...</p>
+                                <p className="font-maven text-sm text-kidville-muted">Caricamento galleria...</p>
                             </div>
                         ) : (
                             <MediaGrid items={media} onDelete={handleDeleteMedia} students={students} onUpdateTags={handleUpdateTags} />
@@ -437,7 +431,7 @@ function TeacherGalleryContent() {
                 {/* Step: Upload */}
                 {step === 'upload' && (
                     <motion.div key="upload" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-                        className="bg-white/80 backdrop-blur-xl rounded-3xl border border-white/40 shadow-sm p-5">
+                        className="mt-5 rounded-3xl border border-kidville-line bg-white shadow-sm p-5">
                         <h2 className="font-barlow font-bold text-base text-kidville-green uppercase tracking-wide mb-4">
                             1. Seleziona foto e video
                         </h2>
@@ -448,9 +442,9 @@ function TeacherGalleryContent() {
                 {/* Step: Tag */}
                 {step === 'tag' && (
                     <motion.div key="tag" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-                        className="space-y-4">
+                        className="mt-5 space-y-4">
                         {/* Preview delle foto selezionate */}
-                        <div className="bg-white/80 backdrop-blur-xl rounded-3xl border border-white/40 shadow-sm p-5">
+                        <div className="rounded-3xl border border-kidville-line bg-white shadow-sm p-5">
                             <div className="flex items-center gap-2 mb-3">
                                 <Tag size={14} className="text-kidville-green" strokeWidth={1.5} />
                                 <h2 className="font-barlow font-bold text-base text-kidville-green uppercase tracking-wide">
@@ -464,10 +458,10 @@ function TeacherGalleryContent() {
                                     <div 
                                         key={i} 
                                         onClick={() => setActiveFileIndex(i)}
-                                        className={`relative w-16 h-16 sm:w-20 sm:h-20 rounded-2xl overflow-hidden flex-shrink-0 bg-gray-100 cursor-pointer transition-all ${
+                                        className={`relative w-16 h-16 sm:w-20 sm:h-20 rounded-2xl overflow-hidden flex-shrink-0 bg-kidville-cream cursor-pointer transition-all ${
                                             activeFileIndex === i 
                                                 ? 'ring-4 ring-kidville-green scale-95 shadow-md' 
-                                                : 'opacity-65 hover:opacity-100 border border-gray-200'
+                                                : 'opacity-65 hover:opacity-100 border border-kidville-line'
                                         }`}
                                     >
                                         {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -482,7 +476,7 @@ function TeacherGalleryContent() {
                                                     {f.tag_students.length}
                                                 </span>
                                             ) : (
-                                                <span className="bg-red-500 text-white text-[8px] sm:text-[9px] font-bold px-1 rounded uppercase">!</span>
+                                                <span className="bg-kidville-error text-white text-[8px] sm:text-[9px] font-bold px-1 rounded uppercase">!</span>
                                             )}
                                         </div>
                                     </div>
@@ -493,7 +487,7 @@ function TeacherGalleryContent() {
                             {activeFile && (
                                 <div className="mb-4 p-3 bg-kidville-cream/35 border border-kidville-green/10 rounded-2xl flex items-center justify-between gap-4">
                                     <div className="flex items-center gap-2.5 min-w-0">
-                                        <div className="w-10 h-10 rounded-xl overflow-hidden bg-gray-100 flex-shrink-0">
+                                        <div className="w-10 h-10 rounded-xl overflow-hidden bg-kidville-cream flex-shrink-0">
                                             {/* eslint-disable-next-line @next/next/no-img-element */}
                                             <img src={activeFile.preview} alt="" className="w-full h-full object-cover" />
                                         </div>
@@ -501,7 +495,7 @@ function TeacherGalleryContent() {
                                             <p className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide">
                                                 Foto {activeFileIndex + 1} di {uploadedFiles.length}
                                             </p>
-                                            <p className="font-maven text-[10px] text-gray-400 truncate">
+                                            <p className="font-maven text-[10px] text-kidville-muted truncate">
                                                 {activeFile.file.name}
                                             </p>
                                         </div>
@@ -527,7 +521,7 @@ function TeacherGalleryContent() {
                                         id="broadcast"
                                         checked={activeIsBroadcast} 
                                         onChange={(e) => handleToggleBroadcast(e.target.checked)}
-                                        className="w-4 h-4 text-kidville-green focus:ring-kidville-green rounded border-gray-300"
+                                        className="w-4 h-4 text-kidville-green focus:ring-kidville-green rounded border-kidville-line"
                                     />
                                     <label htmlFor="broadcast" className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide cursor-pointer select-none">
                                         Caricamento in Broadcast (invia a tutta la classe)

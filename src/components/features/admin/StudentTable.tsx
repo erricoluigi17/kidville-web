@@ -34,10 +34,10 @@ type SortField = 'cognome' | 'nome' | 'classe_sezione' | 'stato' | 'data_nascita
 
 function getStatoBadge(stato: string) {
     switch (stato) {
-        case 'iscritto': return 'bg-emerald-100 text-emerald-700 border-emerald-200';
-        case 'ritirato': return 'bg-gray-100 text-gray-500 border-gray-200';
-        case 'sospeso': return 'bg-orange-100 text-orange-700 border-orange-200';
-        default: return 'bg-gray-100 text-gray-500 border-gray-200';
+        case 'iscritto': return 'bg-kidville-success-soft text-kidville-success border-kidville-success/30';
+        case 'ritirato': return 'bg-kidville-line text-kidville-muted border-kidville-line';
+        case 'sospeso': return 'bg-kidville-warn-soft text-kidville-warn border-kidville-warn/30';
+        default: return 'bg-kidville-line text-kidville-muted border-kidville-line';
     }
 }
 
@@ -61,7 +61,7 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
             if (aSec !== bSec) return aSec.localeCompare(bSec, 'it');
         }
 
-        const getSortVal = (obj: any, f: SortField) => {
+        const getSortVal = (obj: Student, f: SortField) => {
             if (f === 'cognome') return obj.cognome || obj.last_name || '';
             if (f === 'nome') return obj.nome || obj.first_name || '';
             return obj[f] || '';
@@ -82,14 +82,14 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
 
     const allSelected = students.length > 0 && selectedIds.size === students.length;
 
-    const SortHeader = ({ field, label }: { field: SortField; label: string }) => (
+    const renderSortHeader = (field: SortField, label: string) => (
         <th
             className="px-3 py-3 text-left cursor-pointer select-none group"
             onClick={() => handleSort(field)}
         >
             <div className="flex items-center gap-1 font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide">
                 {label}
-                <ArrowUpDown size={12} className={`transition-colors ${sortField === field ? 'text-kidville-green' : 'text-gray-300 group-hover:text-gray-400'}`} />
+                <ArrowUpDown size={12} className={`transition-colors ${sortField === field ? 'text-kidville-green' : 'text-kidville-muted group-hover:text-kidville-muted'}`} />
             </div>
         </th>
     );
@@ -98,23 +98,23 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
         <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
             <div className="overflow-x-auto">
                 <table className="w-full">
-                    <thead className="bg-kidville-cream/50 border-b border-gray-100">
+                    <thead className="bg-kidville-cream/50 border-b border-kidville-line">
                         <tr>
                             <th className="px-3 py-3 w-10">
                                 <input
                                     type="checkbox"
                                     checked={allSelected}
                                     onChange={onToggleSelectAll}
-                                    className="w-4 h-4 rounded border-gray-300 text-kidville-green focus:ring-kidville-green cursor-pointer"
+                                    className="w-4 h-4 rounded border-kidville-muted text-kidville-green focus:ring-kidville-green cursor-pointer"
                                 />
                             </th>
-                            <SortHeader field="cognome" label="Cognome" />
-                            <SortHeader field="nome" label="Nome" />
+                            {renderSortHeader('cognome', 'Cognome')}
+                            {renderSortHeader('nome', 'Nome')}
                             {currentTypeFilter === 'child' ? (
                                 <>
-                                    <SortHeader field="data_nascita" label="Nascita" />
-                                    <SortHeader field="classe_sezione" label="Classe" />
-                                    <SortHeader field="stato" label="Stato" />
+                                    {renderSortHeader('data_nascita', 'Nascita')}
+                                    {renderSortHeader('classe_sezione', 'Classe')}
+                                    {renderSortHeader('stato', 'Stato')}
                                     <th className="px-3 py-3 text-left">
                                         <span className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide">Info</span>
                                     </th>
@@ -128,13 +128,13 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                             )}
                         </tr>
                     </thead>
-                    <tbody className="divide-y divide-gray-50">
+                    <tbody className="divide-y divide-kidville-cream">
                         {Object.entries(groupedStudents).map(([section, sectionStudents]) => (
                             <React.Fragment key={section}>
                                 {/* Group By Header */}
                                 <tr className="bg-kidville-cream/20">
                                     <td colSpan={7} className="px-4 py-2 font-maven font-bold text-kidville-green">
-                                        Sezione: {section} <span className="text-xs font-normal text-gray-500">({sectionStudents.length} alunni)</span>
+                                        Sezione: {section} <span className="text-xs font-normal text-kidville-muted">({sectionStudents.length} alunni)</span>
                                     </td>
                                 </tr>
                                 {sectionStudents.map(student => {
@@ -146,7 +146,7 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                                         <tr
                                             key={student.id}
                                             className={`transition-colors cursor-pointer ${
-                                                isSelected ? 'bg-kidville-green/5' : 'hover:bg-gray-50'
+                                                isSelected ? 'bg-kidville-green/5' : 'hover:bg-kidville-cream'
                                             }`}
                                             onClick={() => onStudentClick(student)}
                                         >
@@ -155,7 +155,7 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                                                     type="checkbox"
                                                     checked={isSelected}
                                                     onChange={() => onToggleSelect(student.id)}
-                                                    className="w-4 h-4 rounded border-gray-300 text-kidville-green focus:ring-kidville-green cursor-pointer"
+                                                    className="w-4 h-4 rounded border-kidville-muted text-kidville-green focus:ring-kidville-green cursor-pointer"
                                                 />
                                             </td>
                                             <td className="px-3 py-3 font-maven font-bold text-sm text-kidville-green">
@@ -166,7 +166,7 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                                             </td>
                                             {currentTypeFilter === 'child' ? (
                                                 <>
-                                                    <td className="px-3 py-3 font-maven text-sm text-gray-500">
+                                                    <td className="px-3 py-3 font-maven text-sm text-kidville-muted">
                                                         {student.data_nascita
                                                             ? new Date(student.data_nascita).toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: '2-digit' })
                                                             : '—'
@@ -190,7 +190,7 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                                                                 </span>
                                                             )}
                                                             {hasBes && (
-                                                                <span className="text-amber-600 text-xs font-maven font-bold bg-amber-50 px-1.5 py-0.5 rounded">
+                                                                <span className="text-kidville-warn text-xs font-maven font-bold bg-kidville-warn-soft px-1.5 py-0.5 rounded">
                                                                     BES
                                                                 </span>
                                                             )}
@@ -199,13 +199,13 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                                                 </>
                                             ) : (
                                                 <>
-                                                    <td className="px-3 py-3 font-maven text-sm text-gray-500">
+                                                    <td className="px-3 py-3 font-maven text-sm text-kidville-muted">
                                                         {student.emails && student.emails.length > 0 ? student.emails[0] : '—'}
                                                     </td>
-                                                    <td className="px-3 py-3 font-maven text-sm text-gray-500">
+                                                    <td className="px-3 py-3 font-maven text-sm text-kidville-muted">
                                                         {student.phone_numbers && student.phone_numbers.length > 0 ? student.phone_numbers[0] : '—'}
                                                     </td>
-                                                    <td className="px-3 py-3 font-maven text-sm text-gray-500 uppercase">
+                                                    <td className="px-3 py-3 font-maven text-sm text-kidville-muted uppercase">
                                                         {student.fiscal_code || student.codice_fiscale || '—'}
                                                     </td>
                                                 </>
@@ -221,7 +221,7 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
 
             {students.length === 0 && (
                 <div className="text-center py-12">
-                    <p className="font-maven text-gray-400">Nessun alunno trovato</p>
+                    <p className="font-maven text-kidville-muted">Nessun alunno trovato</p>
                 </div>
             )}
         </div>

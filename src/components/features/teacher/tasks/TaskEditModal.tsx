@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { X, FileText, Tag, AlertTriangle, Calendar, Users, Save, CheckSquare } from 'lucide-react';
+import { X, FileText, Tag, AlertTriangle, Calendar, Save, CheckSquare } from 'lucide-react';
 import { Task } from './TaskCard';
 
 interface StaffMember {
@@ -31,36 +31,19 @@ interface TaskEditModalProps {
     currentUserId: string;
 }
 
-export function TaskEditModal({ task, open, onClose, onSave, staffMembers, currentUserId }: TaskEditModalProps) {
-    const [titolo, setTitolo] = useState('');
-    const [contenuto, setContenuto] = useState('');
-    const [priority, setPriority] = useState<string>('medium');
-    const [category, setCategory] = useState('generale');
-    const [deadline, setDeadline] = useState('');
-    const [deadlineTime, setDeadlineTime] = useState('');
-    const [status, setStatus] = useState<string>('todo');
-    const [resolutionNotes, setResolutionNotes] = useState('');
+export function TaskEditModal({ task, open, onClose, onSave, currentUserId }: TaskEditModalProps) {
+    // Il form si inizializza dal task al mount: il parent monta la modale
+    // solo quando c'è un task in modifica, quindi equivale alla vecchia
+    // useEffect di init (rimossa per la regola set-state-in-effect).
+    const [titolo, setTitolo] = useState(task.titolo || '');
+    const [contenuto, setContenuto] = useState(task.descrizione || task.contenuto || '');
+    const [priority, setPriority] = useState<string>(task.priority || 'medium');
+    const [category, setCategory] = useState(task.category || 'generale');
+    const [deadline, setDeadline] = useState(() => task.deadline ? new Date(task.deadline).toISOString().split('T')[0] : '');
+    const [deadlineTime, setDeadlineTime] = useState(() => task.deadline ? new Date(task.deadline).toTimeString().slice(0, 5) : '');
+    const [status, setStatus] = useState<string>(task.status || 'todo');
+    const [resolutionNotes, setResolutionNotes] = useState(task.resolution_notes || '');
     const [isSaving, setIsSaving] = useState(false);
-
-    // Init form from task
-    useEffect(() => {
-        if (task && open) {
-            setTitolo(task.titolo || '');
-            setContenuto(task.descrizione || task.contenuto || '');
-            setPriority(task.priority || 'medium');
-            setCategory(task.category || 'generale');
-            setStatus(task.status || 'todo');
-            setResolutionNotes(task.resolution_notes || '');
-            if (task.deadline) {
-                const d = new Date(task.deadline);
-                setDeadline(d.toISOString().split('T')[0]);
-                setDeadlineTime(d.toTimeString().slice(0, 5));
-            } else {
-                setDeadline('');
-                setDeadlineTime('');
-            }
-        }
-    }, [task, open]);
 
     if (!open) return null;
 
@@ -99,9 +82,9 @@ export function TaskEditModal({ task, open, onClose, onSave, staffMembers, curre
     };
 
     const statusOptions = [
-        { value: 'todo', label: 'Da Fare', color: 'text-zinc-600' },
-        { value: 'in_progress', label: 'In Corso', color: 'text-amber-600' },
-        { value: 'completed', label: 'Completato', color: 'text-emerald-600' },
+        { value: 'todo', label: 'Da Fare', color: 'text-kidville-ink' },
+        { value: 'in_progress', label: 'In Corso', color: 'text-kidville-warn' },
+        { value: 'completed', label: 'Completato', color: 'text-kidville-success' },
     ];
 
     return (
@@ -117,19 +100,19 @@ export function TaskEditModal({ task, open, onClose, onSave, staffMembers, curre
                 initial={{ opacity: 0, y: 40, scale: 0.96 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{ opacity: 0, y: 30, scale: 0.96 }}
-                className="fixed inset-4 sm:inset-auto sm:top-1/2 sm:left-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 sm:w-full sm:max-w-lg bg-white dark:bg-zinc-950 rounded-3xl shadow-2xl z-50 flex flex-col max-h-[90vh] overflow-hidden border border-white/20 dark:border-zinc-800"
+                className="fixed inset-4 sm:inset-auto sm:top-1/2 sm:left-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 sm:w-full sm:max-w-lg bg-white rounded-3xl shadow-2xl z-50 flex flex-col max-h-[90vh] overflow-hidden border border-white/20"
             >
                 {/* Header */}
-                <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 dark:border-zinc-900 bg-kidville-cream/30 dark:bg-zinc-900/30">
+                <div className="flex items-center justify-between px-6 py-4 border-b border-kidville-line bg-kidville-cream/30">
                     <div className="flex items-center gap-2">
                         <FileText className="text-kidville-green" size={18} />
-                        <h2 className="font-barlow font-black text-lg text-kidville-green dark:text-zinc-50 uppercase tracking-wide">
+                        <h2 className="font-barlow font-black text-lg text-kidville-green uppercase tracking-wide">
                             Modifica Task
                         </h2>
                     </div>
                     <button
                         onClick={onClose}
-                        className="w-8 h-8 rounded-xl bg-gray-100 dark:bg-zinc-900 hover:bg-gray-200 dark:hover:bg-zinc-800 flex items-center justify-center text-gray-400"
+                        className="w-8 h-8 rounded-xl bg-kidville-cream hover:bg-kidville-cream-dark flex items-center justify-center text-kidville-muted"
                     >
                         <X size={14} />
                     </button>
@@ -138,7 +121,7 @@ export function TaskEditModal({ task, open, onClose, onSave, staffMembers, curre
                 <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-6 space-y-4">
                     {/* Status */}
                     <div>
-                        <label className="block text-xs font-bold text-kidville-green dark:text-zinc-400 uppercase tracking-wider mb-2 flex items-center gap-1">
+                        <label className="block text-xs font-bold text-kidville-green uppercase tracking-wider mb-2 flex items-center gap-1">
                             <CheckSquare size={12} /> Stato del Task
                         </label>
                         <div className="flex gap-2">
@@ -149,10 +132,10 @@ export function TaskEditModal({ task, open, onClose, onSave, staffMembers, curre
                                     onClick={() => setStatus(opt.value)}
                                     className={`flex-1 py-2.5 rounded-2xl text-xs font-bold font-barlow uppercase tracking-wider border-2 transition-all
                                         ${status === opt.value
-                                            ? opt.value === 'todo' ? 'border-zinc-400 bg-zinc-50 text-zinc-700'
-                                            : opt.value === 'in_progress' ? 'border-amber-400 bg-amber-50 text-amber-700'
-                                            : 'border-emerald-400 bg-emerald-50 text-emerald-700'
-                                        : 'border-gray-100 dark:border-zinc-800 text-zinc-400 hover:border-gray-300'}`}
+                                            ? opt.value === 'todo' ? 'border-kidville-line bg-kidville-cream text-kidville-ink'
+                                            : opt.value === 'in_progress' ? 'border-kidville-warn bg-kidville-warn-soft text-kidville-warn'
+                                            : 'border-kidville-success bg-kidville-success-soft text-kidville-success'
+                                        : 'border-kidville-line text-kidville-muted hover:border-kidville-line'}`}
                                 >
                                     {opt.label}
                                 </button>
@@ -162,7 +145,7 @@ export function TaskEditModal({ task, open, onClose, onSave, staffMembers, curre
 
                     {/* Titolo */}
                     <div>
-                        <label className="block text-xs font-bold text-kidville-green dark:text-zinc-400 uppercase tracking-wider mb-1">
+                        <label className="block text-xs font-bold text-kidville-green uppercase tracking-wider mb-1">
                             Titolo
                         </label>
                         <input
@@ -170,33 +153,33 @@ export function TaskEditModal({ task, open, onClose, onSave, staffMembers, curre
                             required
                             value={titolo}
                             onChange={e => setTitolo(e.target.value)}
-                            className="w-full border-2 border-gray-200/60 dark:border-zinc-800 rounded-xl px-4 py-2.5 font-maven text-sm text-kidville-green dark:text-zinc-200 bg-white/60 dark:bg-zinc-900/60 focus:outline-none focus:ring-2 focus:ring-kidville-green transition-all"
+                            className="w-full border-2 border-kidville-line rounded-xl px-4 py-2.5 font-maven text-sm text-kidville-green bg-white/60 focus:outline-none focus:ring-2 focus:ring-kidville-green transition-all"
                         />
                     </div>
 
                     {/* Contenuto */}
                     <div>
-                        <label className="block text-xs font-bold text-kidville-green dark:text-zinc-400 uppercase tracking-wider mb-1">
+                        <label className="block text-xs font-bold text-kidville-green uppercase tracking-wider mb-1">
                             Istruzioni / Descrizione
                         </label>
                         <textarea
                             rows={3}
                             value={contenuto}
                             onChange={e => setContenuto(e.target.value)}
-                            className="w-full border-2 border-gray-200/60 dark:border-zinc-800 rounded-xl px-4 py-2.5 font-maven text-sm text-kidville-green dark:text-zinc-200 bg-white/60 dark:bg-zinc-900/60 focus:outline-none focus:ring-2 focus:ring-kidville-green transition-all"
+                            className="w-full border-2 border-kidville-line rounded-xl px-4 py-2.5 font-maven text-sm text-kidville-green bg-white/60 focus:outline-none focus:ring-2 focus:ring-kidville-green transition-all"
                         />
                     </div>
 
                     {/* Categoria e Priorità */}
                     <div className="grid grid-cols-2 gap-3">
                         <div>
-                            <label className="block text-xs font-bold text-kidville-green dark:text-zinc-400 uppercase tracking-wider mb-1 flex items-center gap-1">
+                            <label className="block text-xs font-bold text-kidville-green uppercase tracking-wider mb-1 flex items-center gap-1">
                                 <Tag size={11} /> Categoria
                             </label>
                             <select
                                 value={category}
                                 onChange={e => setCategory(e.target.value)}
-                                className="w-full border-2 border-gray-200/60 dark:border-zinc-800 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green dark:text-zinc-200 bg-white/60 dark:bg-zinc-900/60 focus:outline-none focus:ring-2 focus:ring-kidville-green transition-all"
+                                className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white/60 focus:outline-none focus:ring-2 focus:ring-kidville-green transition-all"
                             >
                                 <option value="generale">Generale</option>
                                 <option value="genitore">Messaggio Genitore</option>
@@ -207,13 +190,13 @@ export function TaskEditModal({ task, open, onClose, onSave, staffMembers, curre
                             </select>
                         </div>
                         <div>
-                            <label className="block text-xs font-bold text-kidville-green dark:text-zinc-400 uppercase tracking-wider mb-1 flex items-center gap-1">
+                            <label className="block text-xs font-bold text-kidville-green uppercase tracking-wider mb-1 flex items-center gap-1">
                                 <AlertTriangle size={11} /> Priorità
                             </label>
                             <select
                                 value={priority}
                                 onChange={e => setPriority(e.target.value)}
-                                className="w-full border-2 border-gray-200/60 dark:border-zinc-800 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green dark:text-zinc-200 bg-white/60 dark:bg-zinc-900/60 focus:outline-none focus:ring-2 focus:ring-kidville-green transition-all"
+                                className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white/60 focus:outline-none focus:ring-2 focus:ring-kidville-green transition-all"
                             >
                                 <option value="low">Bassa</option>
                                 <option value="medium">Media</option>
@@ -225,7 +208,7 @@ export function TaskEditModal({ task, open, onClose, onSave, staffMembers, curre
 
                     {/* Scadenza */}
                     <div>
-                        <label className="block text-xs font-bold text-kidville-green dark:text-zinc-400 uppercase tracking-wider mb-1 flex items-center gap-1">
+                        <label className="block text-xs font-bold text-kidville-green uppercase tracking-wider mb-1 flex items-center gap-1">
                             <Calendar size={11} /> Scadenza
                         </label>
                         <div className="grid grid-cols-2 gap-2">
@@ -233,21 +216,21 @@ export function TaskEditModal({ task, open, onClose, onSave, staffMembers, curre
                                 type="date"
                                 value={deadline}
                                 onChange={e => setDeadline(e.target.value)}
-                                className="w-full border-2 border-gray-200/60 dark:border-zinc-800 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green dark:text-zinc-200 bg-white/60 dark:bg-zinc-900/60 focus:outline-none focus:ring-2 focus:ring-kidville-green transition-all"
+                                className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white/60 focus:outline-none focus:ring-2 focus:ring-kidville-green transition-all"
                             />
                             <input
                                 type="time"
                                 value={deadlineTime}
                                 onChange={e => setDeadlineTime(e.target.value)}
-                                className="w-full border-2 border-gray-200/60 dark:border-zinc-800 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green dark:text-zinc-200 bg-white/60 dark:bg-zinc-900/60 focus:outline-none focus:ring-2 focus:ring-kidville-green transition-all"
+                                className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white/60 focus:outline-none focus:ring-2 focus:ring-kidville-green transition-all"
                             />
                         </div>
                     </div>
 
                     {/* Resolution notes when marking completed */}
                     {status === 'completed' && (
-                        <div className="p-4 bg-emerald-50/30 dark:bg-emerald-950/10 rounded-2xl border border-emerald-100 dark:border-emerald-900/20">
-                            <label className="block text-xs font-bold text-emerald-700 uppercase tracking-wider mb-2">
+                        <div className="p-4 bg-kidville-success-soft/30 rounded-2xl border border-kidville-success/30">
+                            <label className="block text-xs font-bold text-kidville-success uppercase tracking-wider mb-2">
                                 ✅ Note di Verifica / Completamento
                             </label>
                             <textarea
@@ -255,17 +238,17 @@ export function TaskEditModal({ task, open, onClose, onSave, staffMembers, curre
                                 placeholder="Indica come è stato risolto il task o le note di verifica..."
                                 value={resolutionNotes}
                                 onChange={e => setResolutionNotes(e.target.value)}
-                                className="w-full border border-emerald-200 dark:border-emerald-900/50 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green dark:text-zinc-200 bg-white dark:bg-zinc-900 focus:outline-none focus:ring-2 focus:ring-emerald-400 transition-all"
+                                className="w-full border border-kidville-success/30 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:ring-2 focus:ring-kidville-success transition-all"
                             />
                         </div>
                     )}
 
                     {/* Actions */}
-                    <div className="flex gap-3 pt-2 border-t border-gray-100 dark:border-zinc-900">
+                    <div className="flex gap-3 pt-2 border-t border-kidville-line">
                         <button
                             type="button"
                             onClick={onClose}
-                            className="flex-1 py-3 border-2 border-gray-200 dark:border-zinc-800 hover:bg-gray-50 dark:hover:bg-zinc-900 rounded-2xl font-barlow font-black uppercase text-sm text-gray-500 tracking-wider transition-all"
+                            className="flex-1 py-3 border-2 border-kidville-line hover:bg-kidville-cream rounded-2xl font-barlow font-black uppercase text-sm text-kidville-muted tracking-wider transition-all"
                         >
                             Annulla
                         </button>

@@ -1,7 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import * as XLSX from 'xlsx'
 import type { FormSchemaConfig, FormSubmissionStatus } from '@/types/database.types'
+import { parseQuery } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
+import { requireStaff } from '@/lib/auth/require-staff'
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+const getQuerySchema = z.object({
+  // lista di id separati da virgola; voci vuote tollerate (split+trim+filter come prima)
+  ids: z
+    .string()
+    .transform((s) => s.split(',').map((x) => x.trim()).filter(Boolean))
+    .pipe(z.array(zUuid))
+    .optional(),
+  form_id: zUuid.or(z.literal('')).optional(), // '' tollerato: filtro saltato (comportamento invariato)
+  status: z.string().optional(), // passato com'è alla query (oggi nessun enum imposto)
+})
 
 const STATUS_LABELS: Record<FormSubmissionStatus, string> = {
   draft: 'Bozza',
@@ -10,10 +26,14 @@ const STATUS_LABELS: Record<FormSubmissionStatus, string> = {
 }
 
 export async function GET(request: NextRequest) {
-  const { searchParams } = new URL(request.url)
-  const idsParam = searchParams.get('ids')
-  const formId = searchParams.get('form_id')
-  const statusFilter = searchParams.get('status')
+  // Gap auth segnalato in M3, chiuso in M9: export massivo delle compilazioni
+  // riservato allo staff di gestione (gate prima del parse, convenzione M3).
+  const auth = await requireStaff(request)
+  if (auth.response) return auth.response
+
+  const q = parseQuery(request, getQuerySchema)
+  if ('response' in q) return q.response
+  const { ids, form_id: formId, status: statusFilter } = q.data
 
   const supabase = await createAdminClient()
 
@@ -22,10 +42,7 @@ export async function GET(request: NextRequest) {
     .select('*, form_model:form_models(id, title, schema)')
     .order('created_at', { ascending: false })
 
-  if (idsParam) {
-    const ids = idsParam.split(',').map(s => s.trim()).filter(Boolean)
-    if (ids.length > 0) query = query.in('id', ids)
-  }
+  if (ids && ids.length > 0) query = query.in('id', ids)
   if (formId) query = query.eq('model_id', formId)
   if (statusFilter) query = query.eq('status', statusFilter as FormSubmissionStatus)
 

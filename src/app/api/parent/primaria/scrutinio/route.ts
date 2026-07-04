@@ -1,6 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { getRequestUserId } from '@/lib/auth/require-staff'
+import { parseQuery } from '@/lib/validation/http'
+
+// Id laschi (non zUuid): il comportamento attuale accetta qualsiasi stringa non
+// vuota (il lookup su `scrutini` fa da gate con 404; uno studentId inesistente
+// ricade nel ramo { firmato: false }).
+const getQuerySchema = z.object({
+  scrutinioId: z.string({ error: 'scrutinioId obbligatorio' }).min(1, 'scrutinioId obbligatorio'),
+  studentId: z.string({ error: 'studentId obbligatorio' }).min(1, 'studentId obbligatorio'),
+})
 
 // GET /api/parent/primaria/scrutinio?scrutinioId=&studentId=&userId=
 // Vista a schermo dello scrutinio per il genitore: giudizi per materia +
@@ -9,14 +19,12 @@ import { getRequestUserId } from '@/lib/auth/require-staff'
 // { firmato: false } (la UI mostra il flusso di firma).
 export async function GET(request: NextRequest) {
   try {
-    const sp = new URL(request.url).searchParams
-    const scrutinioId = sp.get('scrutinioId')
-    const studentId = sp.get('studentId')
     const userId = getRequestUserId(request)
     if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
-    if (!scrutinioId || !studentId) {
-      return NextResponse.json({ error: 'scrutinioId e studentId obbligatori' }, { status: 400 })
-    }
+
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+    const { scrutinioId, studentId } = q.data
 
     const supabase = await createAdminClient()
 
@@ -24,7 +32,7 @@ export async function GET(request: NextRequest) {
       .from('scrutini')
       .select('id, section_id, periodo_id, stato, pubblicato')
       .eq('id', scrutinioId)
-      .single()
+      .maybeSingle()
     if (!scrutinio) return NextResponse.json({ error: 'Scrutinio non trovato' }, { status: 404 })
     if (scrutinio.stato !== 'chiuso' || !scrutinio.pubblicato) {
       return NextResponse.json({ error: 'Pagella non ancora pubblicata' }, { status: 403 })
@@ -43,7 +51,7 @@ export async function GET(request: NextRequest) {
     }
 
     const [{ data: periodo }, { data: materie }, { data: giudizi }, { data: comp }] = await Promise.all([
-      supabase.from('scrutinio_periodi').select('nome, anno_scolastico').eq('id', scrutinio.periodo_id).single(),
+      supabase.from('scrutinio_periodi').select('nome, anno_scolastico').eq('id', scrutinio.periodo_id).maybeSingle(),
       supabase.from('materie').select('id, nome, ordine').eq('section_id', scrutinio.section_id).eq('attiva', true).order('ordine'),
       supabase.from('scrutinio_giudizi').select('materia_id, giudizio_sintetico').eq('scrutinio_id', scrutinioId).eq('alunno_id', studentId),
       supabase.from('scrutinio_comportamento').select('giudizio_testo, giudizio_globale').eq('scrutinio_id', scrutinioId).eq('alunno_id', studentId).maybeSingle(),

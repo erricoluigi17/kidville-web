@@ -1,0 +1,36 @@
+name: DB migrate (prod)
+
+# Applica le migrazioni Supabase in PRODUZIONE quando su main cambiano
+# i file in supabase/migrations/**.
+#
+# ORDINE (modello additivo): le migrazioni devono essere retro-compatibili
+# (disciplina expand/contract — non droppare nella stessa release colonne che
+# il codice ancora in produzione legge). Vercel deploya il codice in parallelo
+# al merge; con migrazioni additive l'ordine relativo è sicuro.
+#
+# GATE: l'environment `production` deve avere "Required reviewers" abilitato
+# → il job resta in attesa di approvazione manuale prima di toccare il DB.
+#
+# ⚠️  ATTIVARE SOLO DOPO IL BASELINE dello storico migrazioni (vedi docs/cicd.md).
+#     Prima del baseline `supabase db push` proverebbe a ri-applicare i file
+#     già installati a mano → errori "already exists".
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/migrations/**'
+  workflow_dispatch: {}
+
+jobs:
+  migrate:
+    name: supabase db push
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Applica le migrazioni pendenti in produzione
+        run: supabase db push --db-url "${{ secrets.PROD_SUPABASE_DB_URL }}"

@@ -25,7 +25,7 @@ export function ChatSettings({ userId }: { userId: string }) {
     const [draft, setDraft] = useState<ChatConfig | null>(null);
     const [msg, setMsg] = useState('');
 
-    if (!settings) return <p className="font-maven text-sm text-gray-400">Caricamento…</p>;
+    if (!settings) return <p className="font-maven text-sm text-kidville-muted">Caricamento…</p>;
     const cfg = draft ?? ((settings.chat_config ?? {}) as ChatConfig);
     const set = (patch: Partial<ChatConfig>) => { setMsg(''); setDraft({ ...cfg, ...patch }); };
     const giorni = (cfg.giorni_attivi ?? [1, 2, 3, 4, 5]).map(String);

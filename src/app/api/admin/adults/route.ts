@@ -1,13 +1,38 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
+import { requireStaff } from '@/lib/auth/require-staff';
+import { resolveScuoleAttive, resolveScuolaScrittura } from '@/lib/auth/scope';
+import { parseBody, parseQuery } from '@/lib/validation/http';
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+const getQuerySchema = z.object({
+    role: z.string().optional(),
+});
+
+const postBodySchema = z.object({
+    // La presenza della prima email resta verificata nell'handler (400 dedicato);
+    // nessun vincolo di formato, come oggi.
+    emails: z.array(z.string()).optional(),
+    first_name: z.string().nullable().optional(),
+    last_name: z.string().nullable().optional(),
+    role: z.string().nullable().optional(),
+    scuola_id: z.string().nullable().optional(),
+});
 
 // GET /api/admin/adults?role=educator
 // Returns staff from utenti table (adults table not available in public schema)
 export async function GET(request: NextRequest) {
+    // Gap auth segnalato in M3, chiuso in M9: anagrafica staff (nomi+email)
+    // riservata allo staff di gestione.
+    const auth = await requireStaff(request);
+    if (auth.response) return auth.response;
+
+    const q = parseQuery(request, getQuerySchema);
+    if ('response' in q) return q.response;
+    const role = q.data.role;
+
     try {
-        const { searchParams } = new URL(request.url);
-        const role = searchParams.get('role');
-        
         const supabase = await createAdminClient();
 
         let query = supabase
@@ -28,6 +53,9 @@ export async function GET(request: NextRequest) {
                 .select('id, first_name, last_name, nome, cognome, ruolo, email, scuola_id')
                 .in('ruolo', ruoloValues);
         }
+
+        // Scope multi-sede: mai lista cross-tenant — filtra per i plessi attivi.
+        query = query.in('scuola_id', await resolveScuoleAttive(request, supabase, auth.user));
 
         const { data, error } = await query;
         if (error) return NextResponse.json({ error: error.message }, { status: 500 });
@@ -51,10 +79,17 @@ export async function GET(request: NextRequest) {
 // POST /api/admin/adults
 // Creates a new staff user in auth + utenti
 export async function POST(request: NextRequest) {
+    // Gap auth segnalato in M3, chiuso in M9: creava utenze staff (auth+utenti)
+    // SENZA gate — privilege escalation. Riservato allo staff di gestione
+    // (la creazione staff con RBAC completo resta su /api/admin/staff, P3.4a).
+    const auth = await requireStaff(request);
+    if (auth.response) return auth.response;
+
+    const b = await parseBody(request, postBodySchema);
+    if ('response' in b) return b.response;
+    const { emails, first_name, last_name, role, scuola_id } = b.data;
+
     try {
-        const body = await request.json();
-        const { emails, first_name, last_name, role, scuola_id, ...otherData } = body;
-        
         const primaryEmail = emails && emails.length > 0 ? emails[0] : null;
 
         if (!primaryEmail) {
@@ -62,6 +97,10 @@ export async function POST(request: NextRequest) {
         }
 
         const supabase = await createAdminClient();
+
+        // scuola_id: risolto dallo scope dell'admin (una sola sede per la scrittura).
+        const sw = await resolveScuolaScrittura(request, supabase, auth.user, scuola_id ?? undefined);
+        if (sw.response) return sw.response;
 
         // 1. Crea l'utente in Auth
         const { data: authData, error: authError } = await supabase.auth.admin.inviteUserByEmail(primaryEmail, {
@@ -85,7 +124,7 @@ export async function POST(request: NextRequest) {
                 first_name,
                 last_name,
                 ruolo: role || 'educator',
-                scuola_id: scuola_id || '11111111-1111-1111-1111-111111111111',
+                scuola_id: sw.scuolaId,
                 attivo: true,
             })
             .select()

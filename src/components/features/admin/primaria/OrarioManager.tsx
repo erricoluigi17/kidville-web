@@ -22,23 +22,36 @@ export function OrarioManager({ sectionId, scuolaId, userId }: { sectionId: stri
 
   const load = useCallback(async () => {
     if (!sectionId) return;
-    const [oRes, mRes, dRes] = await Promise.all([
-      fetch(`/api/admin/primaria/orario?sectionId=${sectionId}`).then((r) => r.json()),
-      fetch(`/api/admin/primaria/materie?sectionId=${sectionId}`).then((r) => r.json()),
-      fetch(`/api/admin/primaria/docente-gradi?scuolaId=${scuolaId}`).then((r) => r.json()),
-    ]);
-    if (oRes.success) {
-      setTempo(oRes.data.tempoScuola);
-      setCampanelle(oRes.data.campanelle);
-      setOrario(oRes.data.orario);
-      if (oRes.data.tempoScuola) {
-        setModello(oRes.data.tempoScuola.modello);
-        setGiorni(oRes.data.tempoScuola.giorni_settimana);
+    let res:
+      | [
+          { success: boolean; data: { tempoScuola: { modello: number; giorni_settimana: number } | null; campanelle: Campanella[]; orario: Cella[] } },
+          { success: boolean; data: Materia[] },
+          { success: boolean; data: Docente[] },
+        ]
+      | null = null;
+    try {
+      res = await Promise.all([
+        fetch(`/api/admin/primaria/orario?sectionId=${sectionId}`, { headers: { 'x-user-id': userId } }).then((r) => r.json()),
+        fetch(`/api/admin/primaria/materie?sectionId=${sectionId}`, { headers: { 'x-user-id': userId } }).then((r) => r.json()),
+        fetch(`/api/admin/primaria/docente-gradi?scuolaId=${scuolaId}`, { headers: { 'x-user-id': userId } }).then((r) => r.json()),
+      ]);
+    } finally {
+      if (res) {
+        const [oRes, mRes, dRes] = res;
+        if (oRes.success) {
+          setTempo(oRes.data.tempoScuola);
+          setCampanelle(oRes.data.campanelle);
+          setOrario(oRes.data.orario);
+          if (oRes.data.tempoScuola) {
+            setModello(oRes.data.tempoScuola.modello);
+            setGiorni(oRes.data.tempoScuola.giorni_settimana);
+          }
+        }
+        setMaterie(mRes.success ? mRes.data : []);
+        setDocenti((dRes.success ? dRes.data : []).filter((d: Docente) => (d.gradi ?? []).includes('primaria')));
       }
     }
-    setMaterie(mRes.success ? mRes.data : []);
-    setDocenti((dRes.success ? dRes.data : []).filter((d: Docente) => (d.gradi ?? []).includes('primaria')));
-  }, [sectionId, scuolaId]);
+  }, [sectionId, scuolaId, userId]);
 
   useEffect(() => {
     load();
@@ -76,7 +89,7 @@ export function OrarioManager({ sectionId, scuolaId, userId }: { sectionId: stri
     });
   };
 
-  if (!sectionId) return <p className="font-maven text-gray-500">Seleziona una sezione primaria.</p>;
+  if (!sectionId) return <p className="font-maven text-kidville-muted">Seleziona una sezione primaria.</p>;
 
   const giorniPresenti = Array.from(new Set(campanelle.map((c) => c.giorno_settimana))).sort();
   const ordini = Array.from(new Set(campanelle.map((c) => c.ordine))).sort((a, b) => a - b);
@@ -86,32 +99,32 @@ export function OrarioManager({ sectionId, scuolaId, userId }: { sectionId: stri
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2 rounded-card bg-kidville-cream/50 p-3">
-        <span className="font-maven text-sm text-gray-600">Tempo scuola</span>
-        <select value={modello} onChange={(e) => setModello(Number(e.target.value))} className="font-maven rounded-pill border border-gray-200 bg-white px-3 py-1.5 text-sm">
+        <span className="font-maven text-sm text-kidville-ink">Tempo scuola</span>
+        <select value={modello} onChange={(e) => setModello(Number(e.target.value))} className="font-maven rounded-pill border border-kidville-line bg-white px-3 py-1.5 text-sm">
           <option value={27}>27 ore</option>
           <option value={29}>29 ore</option>
           <option value={40}>40 ore (tempo pieno)</option>
         </select>
-        <select value={giorni} onChange={(e) => setGiorni(Number(e.target.value))} className="font-maven rounded-pill border border-gray-200 bg-white px-3 py-1.5 text-sm">
+        <select value={giorni} onChange={(e) => setGiorni(Number(e.target.value))} className="font-maven rounded-pill border border-kidville-line bg-white px-3 py-1.5 text-sm">
           <option value={5}>5 giorni</option>
           <option value={6}>6 giorni</option>
         </select>
         <button onClick={setTempoScuola} disabled={busy} className="font-maven inline-flex items-center gap-1.5 rounded-pill bg-kidville-green px-4 py-1.5 text-sm text-kidville-yellow disabled:opacity-50">
           <Sparkles size={14} /> {tempo ? 'Rigenera campanelle' : 'Genera orario'}
         </button>
-        {tempo && <span className="font-maven text-xs text-gray-400">Attivo: {tempo.modello}h / {tempo.giorni_settimana}gg</span>}
+        {tempo && <span className="font-maven text-xs text-kidville-muted">Attivo: {tempo.modello}h / {tempo.giorni_settimana}gg</span>}
       </div>
 
       {campanelle.length === 0 ? (
-        <p className="font-maven text-sm text-gray-400">Imposta il tempo scuola per generare la griglia.</p>
+        <p className="font-maven text-sm text-kidville-muted">Imposta il tempo scuola per generare la griglia.</p>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-xs font-maven">
             <thead>
               <tr>
-                <th className="p-1.5 text-left text-gray-400">Ora</th>
+                <th className="p-1.5 text-left text-kidville-muted">Ora</th>
                 {giorniPresenti.map((g) => (
-                  <th key={g} className="p-1.5 text-center text-gray-600">{GIORNI[g - 1]}</th>
+                  <th key={g} className="p-1.5 text-center text-kidville-ink">{GIORNI[g - 1]}</th>
                 ))}
               </tr>
             </thead>
@@ -119,13 +132,13 @@ export function OrarioManager({ sectionId, scuolaId, userId }: { sectionId: stri
               {ordini.map((ord) => {
                 const ref = campanelle.find((c) => c.ordine === ord);
                 return (
-                  <tr key={ord} className="border-t border-gray-100">
-                    <td className="p-1.5 text-gray-400 whitespace-nowrap">{ref?.ora_inizio?.slice(0, 5)}</td>
+                  <tr key={ord} className="border-t border-kidville-line">
+                    <td className="p-1.5 text-kidville-muted whitespace-nowrap">{ref?.ora_inizio?.slice(0, 5)}</td>
                     {giorniPresenti.map((g) => {
                       const camp = campanellaDi(g, ord);
                       if (!camp) return <td key={g} className="p-1.5" />;
                       if (camp.tipo !== 'lezione') {
-                        return <td key={g} className="p-1.5 text-center text-gray-300">{camp.tipo === 'mensa' ? '🍽' : '☕'}</td>;
+                        return <td key={g} className="p-1.5 text-center text-kidville-muted">{camp.tipo === 'mensa' ? '🍽' : '☕'}</td>;
                       }
                       const cell = cellDi(camp.id, g);
                       return (
@@ -133,7 +146,7 @@ export function OrarioManager({ sectionId, scuolaId, userId }: { sectionId: stri
                           <select
                             value={cell?.materia_id ?? ''}
                             onChange={(e) => setCell(g, camp.id, 'materiaId', e.target.value)}
-                            className="mb-1 w-full rounded border border-gray-200 px-1 py-0.5"
+                            className="mb-1 w-full rounded border border-kidville-line px-1 py-0.5"
                           >
                             <option value="">—</option>
                             {materie.map((m) => <option key={m.id} value={m.id}>{m.nome}</option>)}
@@ -141,7 +154,7 @@ export function OrarioManager({ sectionId, scuolaId, userId }: { sectionId: stri
                           <select
                             value={cell?.docente_id ?? ''}
                             onChange={(e) => setCell(g, camp.id, 'docenteId', e.target.value)}
-                            className="w-full rounded border border-gray-200 px-1 py-0.5 text-gray-500"
+                            className="w-full rounded border border-kidville-line px-1 py-0.5 text-kidville-muted"
                           >
                             <option value="">docente…</option>
                             {docenti.map((d) => <option key={d.id} value={d.id}>{d.cognome}</option>)}

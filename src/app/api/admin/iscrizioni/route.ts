@@ -1,15 +1,36 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
+import { requireStaff } from '@/lib/auth/require-staff'
+import { resolveScuoleAttive, resolveScuolaScrittura } from '@/lib/auth/scope'
+import { logScrittura } from '@/lib/audit/scrittura'
 import { sendEmail, credentialsEmailBody } from '@/lib/email/send'
+import { parseBody, parseQuery } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
+import { z } from 'zod'
 import type { EnrollmentSubmissionData, EnrollmentAdult, EnrollmentChild } from '@/types/database.types'
 
-const DEFAULT_SCUOLA_ID = '11111111-1111-1111-1111-111111111111'
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+const getQuerySchema = z.object({
+  doc: z.string().optional(), // path storage → signed URL
+})
+
+// referenteIndex resta unknown: il codice accetta qualsiasi valore e usa 0
+// quando non è un numero (fallback pre-esistente da preservare, niente 400).
+const patchBodySchema = z.object({
+  id: zUuid,
+  action: z.enum(['reject', 'import']),
+  assignments: z.record(z.string(), z.string()).nullish(),
+  referenteIndex: z.unknown().optional(),
+})
 
 // GET: lista invii, oppure ?doc=<path> per ottenere una signed URL del documento.
 export async function GET(request: NextRequest) {
+  const auth = await requireStaff(request)
+  if (auth.response) return auth.response
   try {
-    const { searchParams } = new URL(request.url)
-    const docPath = searchParams.get('doc')
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+    const docPath = q.data.doc
     const supabase = await createAdminClient()
 
     if (docPath) {
@@ -23,11 +44,12 @@ export async function GET(request: NextRequest) {
     const { data, error } = await supabase
       .from('enrollment_submissions')
       .select('*')
+      .in('scuola_id', await resolveScuoleAttive(request, supabase, auth.user))
       .order('created_at', { ascending: false })
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json(data)
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message || 'Errore interno' }, { status: 500 })
+  } catch (err) {
+    return NextResponse.json({ error: err instanceof Error ? err.message : 'Errore interno' }, { status: 500 })
   }
 }
 
@@ -35,12 +57,12 @@ export async function GET(request: NextRequest) {
 // Body import: { id, action:'import', assignments: { [childIndex]: classe }, referenteIndex }
 // Body reject: { id, action:'reject' }
 export async function PATCH(request: NextRequest) {
+  const auth = await requireStaff(request)
+  if (auth.response) return auth.response
   try {
-    const body = await request.json()
-    const { id, action } = body
-    if (!id || !action) {
-      return NextResponse.json({ error: 'id e action obbligatori' }, { status: 400 })
-    }
+    const b = await parseBody(request, patchBodySchema)
+    if ('response' in b) return b.response
+    const { id, action } = b.data
 
     const supabase = await createAdminClient()
 
@@ -52,28 +74,36 @@ export async function PATCH(request: NextRequest) {
         .select()
         .single()
       if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+      await logScrittura(supabase, {
+        attore: auth.user,
+        entitaTipo: 'iscrizione',
+        entitaId: id,
+        azione: 'update',
+        valoreDopo: { status: 'rejected' },
+      })
       return NextResponse.json(data)
     }
 
-    if (action !== 'import') {
-      return NextResponse.json({ error: 'Azione non valida' }, { status: 400 })
-    }
-
-    const assignments: Record<string, string> = body.assignments || {}
-    const referenteIndex: number = typeof body.referenteIndex === 'number' ? body.referenteIndex : 0
+    // action === 'import' garantito dallo schema (enum reject|import)
+    const assignments: Record<string, string> = b.data.assignments || {}
+    const referenteIndex: number = typeof b.data.referenteIndex === 'number' ? b.data.referenteIndex : 0
 
     // 1. Carica l'invio
     const { data: sub, error: subErr } = await supabase
       .from('enrollment_submissions')
       .select('*')
       .eq('id', id)
-      .single()
+      .maybeSingle()
     if (subErr || !sub) {
       return NextResponse.json({ error: 'Invio non trovato' }, { status: 404 })
     }
 
     const data = sub.data as EnrollmentSubmissionData
-    const scuolaId = sub.scuola_id || DEFAULT_SCUOLA_ID
+    // scuola_id: risolto dallo scope dell'admin (una sola sede), preferendo
+    // quella dell'invio se accessibile.
+    const sw = await resolveScuolaScrittura(request, supabase, auth.user, sub.scuola_id ?? undefined)
+    if (sw.response) return sw.response
+    const scuolaId = sw.scuolaId as string
     const children = data.children || []
     const adults = data.adults || []
 
@@ -134,6 +164,14 @@ export async function PATCH(request: NextRequest) {
           continue
         }
         parentId = newParent.id
+        await logScrittura(supabase, {
+          attore: auth.user,
+          entitaTipo: 'genitori',
+          entitaId: parentId,
+          azione: 'insert',
+          scuolaId,
+          valoreDopo: parentRecord,
+        })
       }
 
       // Account di accesso per il referente (se ha email)
@@ -206,6 +244,14 @@ export async function PATCH(request: NextRequest) {
         if (existing) {
           studentId = existing.id
           await supabase.from('alunni').update({ classe_sezione: classe }).eq('id', studentId)
+          await logScrittura(supabase, {
+            attore: auth.user,
+            entitaTipo: 'alunni',
+            entitaId: studentId,
+            azione: 'update',
+            scuolaId,
+            valoreDopo: { classe_sezione: classe },
+          })
         }
       }
 
@@ -239,6 +285,14 @@ export async function PATCH(request: NextRequest) {
         }
         studentId = newChild.id
         createdStudents.push({ id: newChild.id, nome: newChild.nome })
+        await logScrittura(supabase, {
+          attore: auth.user,
+          entitaTipo: 'alunni',
+          entitaId: studentId,
+          azione: 'insert',
+          scuolaId,
+          valoreDopo: childRecord,
+        })
       }
 
       // Collega tutti gli adulti a questo figlio
@@ -252,6 +306,14 @@ export async function PATCH(request: NextRequest) {
           },
           { onConflict: 'student_id,parent_id', ignoreDuplicates: false }
         )
+        await logScrittura(supabase, {
+          attore: auth.user,
+          entitaTipo: 'legame',
+          entitaId: `${studentId}:${link.parentId}`,
+          azione: 'insert',
+          scuolaId,
+          valoreDopo: { student_id: studentId, parent_id: link.parentId, relation_type: link.role },
+        })
       }
     }
 
@@ -268,6 +330,15 @@ export async function PATCH(request: NextRequest) {
       .eq('id', id)
     if (updErr) warnings.push(`Aggiornamento invio: ${updErr.message}`)
 
+    await logScrittura(supabase, {
+      attore: auth.user,
+      entitaTipo: 'iscrizione',
+      entitaId: id,
+      azione: 'update',
+      scuolaId,
+      valoreDopo: { status: 'approved', created_students: createdStudents.length, linked_parents: parentLinks.length },
+    })
+
     return NextResponse.json({
       success: true,
       credentials,
@@ -276,8 +347,8 @@ export async function PATCH(request: NextRequest) {
       linked_parents: parentLinks.length,
       warnings,
     })
-  } catch (err: any) {
+  } catch (err) {
     console.error('Errore PATCH /api/admin/iscrizioni:', err)
-    return NextResponse.json({ error: err.message || 'Errore interno' }, { status: 500 })
+    return NextResponse.json({ error: err instanceof Error ? err.message : 'Errore interno' }, { status: 500 })
   }
 }

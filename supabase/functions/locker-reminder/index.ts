@@ -1,6 +1,6 @@
-// @ts-ignore: Deno imports
+// @ts-expect-error: import remoto Deno (supabase/ è fuori dal perimetro tsc)
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
-// @ts-ignore: Deno imports
+// @ts-expect-error: import remoto Deno (supabase/ è fuori dal perimetro tsc)
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.105.1"
 
 const corsHeaders = {
@@ -15,9 +15,9 @@ serve(async (req: Request) => {
 
   try {
     const supabaseClient = createClient(
-      // @ts-ignore: Deno global is available in Supabase Edge Functions
+      // @ts-expect-error: globale Deno disponibile nelle Edge Functions Supabase
       Deno.env.get('SUPABASE_URL') ?? '',
-      // @ts-ignore: Deno global is available in Supabase Edge Functions
+      // @ts-expect-error: globale Deno disponibile nelle Edge Functions Supabase
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     )
 
@@ -51,7 +51,7 @@ serve(async (req: Request) => {
     const results = []
 
     for (const req of requests) {
-      const { alunni, locker_catalog, livello_alert, quantita_residua } = req
+      const { alunni, locker_catalog, quantita_residua } = req
       
       // Simula invio notifica push
       console.log(`[SIMULAZIONE NOTIFICA] Inviato reminder a genitore ${alunni.genitore_id} per ${alunni.nome}: ${locker_catalog.icona} ${locker_catalog.nome} in esaurimento (${quantita_residua} ${locker_catalog.unita} rimasti).`)
@@ -78,9 +78,10 @@ serve(async (req: Request) => {
       status: 200,
     })
 
-  } catch (err: any) {
+  } catch (err) {
     console.error('Errore locker-reminder:', err)
-    return new Response(JSON.stringify({ error: err.message || 'Errore sconosciuto' }), {
+    const message = (err as { message?: string } | null)?.message || 'Errore sconosciuto'
+    return new Response(JSON.stringify({ error: message }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       status: 500,
     })

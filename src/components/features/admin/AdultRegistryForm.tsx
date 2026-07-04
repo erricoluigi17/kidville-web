@@ -3,7 +3,6 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { UserPlus, Shield, Mail, Phone, Loader2, CheckCircle2, XCircle } from 'lucide-react';
-import { fetchFiscalCode } from '@/lib/utils/fiscalCodeApi';
 import { z } from 'zod';
 
 const adultSchema = z.object({
@@ -71,7 +70,7 @@ export function AdultRegistryForm() {
                 first_name: '', last_name: '', role: 'parent', email: '', fiscal_code: '', gender: 'M', birth_date: '', birth_place: '', phone: ''
             });
 
-        } catch (error: any) {
+        } catch (error) {
             if (error instanceof z.ZodError) {
                 const fieldErrors: Record<string, string> = {};
                 error.issues.forEach(err => {
@@ -80,7 +79,7 @@ export function AdultRegistryForm() {
                 setErrors(fieldErrors);
                 setToast({ type: 'error', message: 'Correggi gli errori.' });
             } else {
-                setToast({ type: 'error', message: error.message });
+                setToast({ type: 'error', message: (error as { message?: string })?.message ?? '' });
             }
         } finally {
             setIsSubmitting(false);
@@ -94,7 +93,7 @@ export function AdultRegistryForm() {
                 {toast && (
                     <motion.div 
                         initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}
-                        className={`absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-2 px-6 py-3 rounded-full font-bold shadow-lg z-50 ${toast.type === 'success' ? 'bg-kidville-green text-white' : 'bg-red-500 text-white'}`}
+                        className={`absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-2 px-6 py-3 rounded-full font-bold shadow-lg z-50 ${toast.type === 'success' ? 'bg-kidville-green text-white' : 'bg-kidville-error text-white'}`}
                     >
                         {toast.type === 'success' ? <CheckCircle2 size={18} /> : <XCircle size={18} />}
                         {toast.message}
@@ -109,11 +108,11 @@ export function AdultRegistryForm() {
             <div className="grid grid-cols-2 gap-6">
                 <div>
                     <label className="block text-sm font-bold text-kidville-green/80 mb-1">Nome</label>
-                    <input name="first_name" value={formData.first_name} onChange={handleInputChange} className={`w-full p-3 rounded-xl border bg-white outline-none focus:ring-2 focus:ring-kidville-green ${errors.first_name ? 'border-red-500' : 'border-kidville-green/15'}`} />
+                    <input name="first_name" value={formData.first_name} onChange={handleInputChange} className={`w-full p-3 rounded-xl border bg-white outline-none focus:ring-2 focus:ring-kidville-green ${errors.first_name ? 'border-kidville-error' : 'border-kidville-green/15'}`} />
                 </div>
                 <div>
                     <label className="block text-sm font-bold text-kidville-green/80 mb-1">Cognome</label>
-                    <input name="last_name" value={formData.last_name} onChange={handleInputChange} className={`w-full p-3 rounded-xl border bg-white outline-none focus:ring-2 focus:ring-kidville-green ${errors.last_name ? 'border-red-500' : 'border-kidville-green/15'}`} />
+                    <input name="last_name" value={formData.last_name} onChange={handleInputChange} className={`w-full p-3 rounded-xl border bg-white outline-none focus:ring-2 focus:ring-kidville-green ${errors.last_name ? 'border-kidville-error' : 'border-kidville-green/15'}`} />
                 </div>
                 <div>
                     <label className="block text-sm font-bold text-kidville-green/80 mb-1 flex items-center gap-2"><Shield size={14}/> Ruolo</label>
@@ -126,7 +125,7 @@ export function AdultRegistryForm() {
                 </div>
                 <div>
                     <label className="block text-sm font-bold text-kidville-green/80 mb-1 flex items-center gap-2"><Mail size={14}/> Email (Genera Credenziali)</label>
-                    <input type="email" name="email" value={formData.email} onChange={handleInputChange} className={`w-full p-3 rounded-xl border bg-white outline-none focus:ring-2 focus:ring-kidville-green ${errors.email ? 'border-red-500' : 'border-kidville-green/15'}`} placeholder="mario.rossi@email.com" />
+                    <input type="email" name="email" value={formData.email} onChange={handleInputChange} className={`w-full p-3 rounded-xl border bg-white outline-none focus:ring-2 focus:ring-kidville-green ${errors.email ? 'border-kidville-error' : 'border-kidville-green/15'}`} placeholder="mario.rossi@email.com" />
                 </div>
                 <div>
                     <label className="block text-sm font-bold text-kidville-green/80 mb-1">Codice Fiscale</label>

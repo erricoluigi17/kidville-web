@@ -1,12 +1,32 @@
 import { NextResponse } from 'next/server';
-import { createClient, createAdminClient } from '@/lib/supabase/server-client';
+import { z } from 'zod';
+import { createAdminClient } from '@/lib/supabase/server-client';
+import { requireDocente } from '@/lib/auth/require-staff';
+import { parseBody, parseQuery } from '@/lib/validation/http';
+import { zUuid } from '@/lib/validation/common';
+
+// '' è ammesso per retro-compatibilità: ?alunnoId= (vuoto) equivale ad assente (nessun filtro).
+const getQuerySchema = z.object({
+    alunnoId: zUuid.or(z.literal('')).optional(),
+});
+
+const postBodySchema = z.object({
+    alunnoIds: z.array(zUuid).min(1, 'alunnoIds è obbligatorio e non può essere vuoto'),
+    categoria: z.string().min(1, 'categoria è obbligatoria'),
+    testo: z.string().min(1, 'testo è obbligatorio'),
+    richiedeFirma: z.boolean().nullish(),
+});
 
 // GET /api/notes?alunnoId=xxx
 // Recupera le note disciplinari di un alunno
 export async function GET(request: Request) {
     try {
-        const { searchParams } = new URL(request.url);
-        const alunnoId = searchParams.get('alunnoId');
+        const auth = await requireDocente(request);
+        if (auth.response) return auth.response;
+
+        const q = parseQuery(request, getQuerySchema);
+        if ('response' in q) return q.response;
+        const { alunnoId } = q.data;
 
         const supabase = await createAdminClient();
 
@@ -49,27 +69,21 @@ export async function GET(request: Request) {
 // Body: { alunnoIds: string[], categoria, testo, richiedeFirma }
 export async function POST(request: Request) {
     try {
-        const body = await request.json();
-        const { alunnoIds, categoria, testo, richiedeFirma } = body;
+        const auth = await requireDocente(request);
+        if (auth.response) return auth.response;
 
-        if (!alunnoIds || !Array.isArray(alunnoIds) || alunnoIds.length === 0) {
-            return NextResponse.json({ error: 'alunnoIds è obbligatorio e non può essere vuoto' }, { status: 400 });
-        }
-
-        if (!categoria || !testo) {
-            return NextResponse.json({ error: 'categoria e testo sono obbligatori' }, { status: 400 });
-        }
+        const b = await parseBody(request, postBodySchema);
+        if ('response' in b) return b.response;
+        const { alunnoIds, categoria, testo, richiedeFirma } = b.data;
 
         // Admin client per bypassare RLS
         const supabase = await createAdminClient();
 
-        // Recupera l'utente dalla sessione se disponibile, altrimenti usa ID fallback per dev
-        const sessionClient = await createClient();
-        const { data: { user } } = await sessionClient.auth.getUser();
-        const maestraId = user?.id ?? '00000000-0000-0000-0000-000000000001';
+        // L'autore della nota è l'utente del gate (identità risolta server-side).
+        const maestraId = auth.user.id;
 
         // Crea una nota per ogni alunno selezionato
-        const noteRows = alunnoIds.map((alunnoId: string) => ({
+        const noteRows = alunnoIds.map((alunnoId) => ({
             alunno_id: alunnoId,
             maestra_id: maestraId,
             categoria,

@@ -1,22 +1,51 @@
 import { NextResponse } from 'next/server';
-import { createClient, createAdminClient } from '@/lib/supabase/server-client';
+import { z } from 'zod';
+import { createAdminClient } from '@/lib/supabase/server-client';
+import { requireUser } from '@/lib/auth/require-staff';
+import { parseBody } from '@/lib/validation/http';
+import { zUuid } from '@/lib/validation/common';
+
+const postBodySchema = z.object({
+    notaId: zUuid,
+});
 
 export async function POST(request: Request) {
     try {
-        const body = await request.json();
-        const { notaId } = body;
+        // Gap auth segnalato in M3, chiuso in M9: prima firmava con un
+        // FALLBACK DEMO senza sessione. Ora: utente autenticato + legame
+        // genitore↔alunno della nota (solo il genitore dell'alunno firma).
+        const auth = await requireUser(request);
+        if (auth.response) return auth.response;
+        const userId = auth.user.id;
 
-        if (!notaId) {
-            return NextResponse.json({ error: 'notaId è obbligatorio' }, { status: 400 });
-        }
+        const b = await parseBody(request, postBodySchema);
+        if ('response' in b) return b.response;
+        const { notaId } = b.data;
 
         // Admin client per bypassare RLS
         const supabase = await createAdminClient();
 
-        // Recupera l'utente dalla sessione se disponibile
-        const sessionClient = await createClient();
-        const { data: { user } } = await sessionClient.auth.getUser();
-        const userId = user?.id ?? '00000000-0000-0000-0000-000000000002'; // fallback genitore
+        const { data: nota } = await supabase
+            .from('note_disciplinari')
+            .select('id, alunno_id')
+            .eq('id', notaId)
+            .maybeSingle();
+        if (!nota) {
+            return NextResponse.json({ error: 'Nota non trovata' }, { status: 404 });
+        }
+
+        const { data: legame } = await supabase
+            .from('legame_genitori_alunni')
+            .select('alunno_id')
+            .eq('genitore_id', userId)
+            .eq('alunno_id', nota.alunno_id)
+            .maybeSingle();
+        if (!legame) {
+            return NextResponse.json(
+                { error: 'Accesso negato: la nota non riguarda i tuoi figli' },
+                { status: 403 }
+            );
+        }
 
         // Recuperiamo l'IP per validità legale della firma (semplificata)
         const ip = request.headers.get('x-forwarded-for') || request.headers.get('remote-addr') || 'unknown';

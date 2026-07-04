@@ -1,40 +1,15 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, Suspense } from 'react';
 import {
-    ShoppingBag, CheckCircle2, Clock, ChevronDown, Package, Bell,
+    CheckCircle2, Clock, ChevronDown, Package, Bell,
     Table2, ChevronLeft, ChevronRight, RefreshCw, Zap,
 } from 'lucide-react';
 import {
     MonthlyLockerTable,
     type StudentInfo,
 } from '@/components/features/teacher/locker/MonthlyLockerTable';
-
-// In produzione, questi verranno dal contesto auth
-const ALUNNO_ID   = '28dbe4fc-a231-4b57-ab03-c7f205644205'; // Francesca Russo (ID corretto)
-const CHILD_NAME  = 'Francesca';
-
-interface InventoryItem {
-    id?: string;
-    alunno_id?: string;
-    materiale: string;
-    quantita: number;
-    quantita_residua?: number;
-    livello_allerta?: number;
-    livello_emergenza?: number;
-    nome_oggetto?: string;
-    date?: string;
-    portato?: boolean;
-    // Legacy join structure (potrebbe non essere presente nello schema flat)
-    locker_catalog?: {
-        id: string;
-        nome: string;
-        icona: string;
-        unita: string;
-        soglia_gialla: number;
-        soglia_rossa: number;
-    };
-}
+import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 
 interface LockerRequest {
     id: string;
@@ -53,28 +28,28 @@ interface LockerRequest {
 
 function getSemaforoUI(qty: number, gialla: number, rossa: number) {
     if (qty <= rossa) return {
-        bg: 'bg-gradient-to-br from-red-50 to-red-100',
-        border: 'border-red-200',
-        text: 'text-red-700',
+        bg: 'bg-kidville-error-soft',
+        border: 'border-kidville-error/30',
+        text: 'text-kidville-error',
         icon: '🔴',
         label: 'Esaurito!',
-        barColor: 'bg-red-500',
+        barColor: 'bg-kidville-error',
     };
     if (qty <= gialla) return {
-        bg: 'bg-gradient-to-br from-amber-50 to-amber-100',
-        border: 'border-amber-200',
-        text: 'text-amber-700',
+        bg: 'bg-kidville-warn-soft',
+        border: 'border-kidville-warn/30',
+        text: 'text-kidville-warn',
         icon: '🟡',
         label: 'In esaurimento',
-        barColor: 'bg-amber-400',
+        barColor: 'bg-kidville-warn',
     };
     return {
-        bg: 'bg-gradient-to-br from-emerald-50 to-emerald-100',
-        border: 'border-emerald-200',
-        text: 'text-emerald-700',
+        bg: 'bg-kidville-success-soft',
+        border: 'border-kidville-success/30',
+        text: 'text-kidville-success',
         icon: '🟢',
         label: 'Ok',
-        barColor: 'bg-emerald-500',
+        barColor: 'bg-kidville-success',
     };
 }
 
@@ -97,7 +72,18 @@ function nextMonth(ym: string): string {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function ParentLockerPage() {
+function LockerInner() {
+    // Identità reale (niente ID/nome hardcoded): come le altre pagine genitore.
+    const { studentId } = useParentIdentity();
+    const [childName, setChildName] = useState('');
+    useEffect(() => {
+        if (!studentId) return;
+        fetch(`/api/diary/students?id=${studentId}`)
+            .then(r => (r.ok ? r.json() : null))
+            .then(d => { if (d?.nome) setChildName(d.nome); })
+            .catch(() => {});
+    }, [studentId]);
+
     const [activeTab, setActiveTab] = useState<'overview' | 'monthly'>('overview');
     const [month, setMonth]         = useState(currentYearMonth());
 
@@ -106,7 +92,7 @@ export default function ParentLockerPage() {
     const [monthlyData, setMonthlyData] = useState<StudentInfo[]>([]);
 
     const [isLoading, setIsLoading]               = useState(true);
-    const [isMonthlyLoading, setIsMonthlyLoading] = useState(false);
+    const [isMonthlyLoading, setIsMonthlyLoading] = useState(true);
     const [showHistory, setShowHistory]           = useState(false);
     const [savingId, setSavingId]                 = useState<string | null>(null);
     const [showToast, setShowToast]               = useState(false);
@@ -117,12 +103,11 @@ export default function ParentLockerPage() {
 
     // ── Fetch overview (usa mode=stock per numeri precisi) ──────────────────────────────
     const fetchData = useCallback(async (silent = false) => {
-        if (!silent) setIsLoading(true);
         try {
             // mode=stock: ritorna [{materiale, stock}] con stock aggregato reale
             const [stockRes, reqRes] = await Promise.all([
-                fetch(`/api/locker/inventory?alunno_id=${ALUNNO_ID}&mode=stock`),
-                fetch(`/api/locker/requests?alunno_id=${ALUNNO_ID}`),
+                fetch(`/api/locker/inventory?alunno_id=${studentId}&mode=stock`),
+                fetch(`/api/locker/requests?alunno_id=${studentId}`),
             ]);
             
             const stockJson = await stockRes.json();
@@ -140,31 +125,29 @@ export default function ParentLockerPage() {
                 setStockData(stockJson);
             }
             if (Array.isArray(reqData)) setRequests(reqData);
-        } catch (err) {
-            console.error('Errore caricamento:', err);
         } finally {
             if (!silent) setIsLoading(false);
         }
-    }, []);
+    }, [studentId]);
 
     // ── Fetch tabella mensile (solo per il figlio corrente) ───────────────────
-    const fetchMonthly = async (ym: string) => {
-        setIsMonthlyLoading(true);
+    const fetchMonthly = useCallback(async (ym: string) => {
+        if (!studentId) return; // identità non risolta
         try {
             // mode=carico → solo giorni in cui il genitore ha consegnato
             const res = await fetch(
-                `/api/locker/inventory?alunno_id=${ALUNNO_ID}&mode=carico&month=${ym}`
+                `/api/locker/inventory?alunno_id=${studentId}&mode=carico&month=${ym}`
             );
             const data = await res.json();
             if (Array.isArray(data)) {
                 setMonthlyData([
                     {
-                        id: ALUNNO_ID,
-                        nome: CHILD_NAME,
+                        id: studentId,
+                        nome: childName,
                         cognome: '',
-                        inventario: data.map((item: any) => ({
+                        inventario: data.map((item: { nome_oggetto: string; date: string; materiale?: string; quantita?: number }) => ({
                             id:        item.nome_oggetto + item.date,
-                            alunno_id: ALUNNO_ID,
+                            alunno_id: studentId,
                             materiale: item.materiale ?? item.nome_oggetto ?? '',
                             quantita:  item.quantita ?? 0,
                             date:      item.date ?? '',
@@ -173,17 +156,15 @@ export default function ParentLockerPage() {
                     },
                 ]);
             }
-        } catch (err) {
-            console.error('Errore caricamento mensile:', err);
         } finally {
             setIsMonthlyLoading(false);
         }
-    };
+    }, [studentId, childName]);
 
     useEffect(() => { fetchData(); }, [fetchData]);
     useEffect(() => {
         if (activeTab === 'monthly') fetchMonthly(month);
-    }, [activeTab, month]);
+    }, [activeTab, month, fetchMonthly]);
 
     // ── Polling: aggiornamento ogni 20 secondi (affidabile, funziona sempre) ─────────
     useEffect(() => {
@@ -192,7 +173,7 @@ export default function ParentLockerPage() {
             if (activeTab === 'monthly') fetchMonthly(month);
         }, 20_000); // ogni 20 secondi
         return () => clearInterval(interval);
-    }, [fetchData, activeTab, month]);
+    }, [fetchData, fetchMonthly, activeTab, month]);
 
     const handleAcknowledge = async (requestId: string) => {
         setSavingId(requestId);
@@ -227,7 +208,7 @@ export default function ParentLockerPage() {
         return (
             <div className="max-w-lg mx-auto p-4 flex flex-col items-center justify-center min-h-[60vh] gap-4">
                 <div className="w-10 h-10 border-4 border-kidville-green/30 border-t-kidville-green rounded-full animate-spin" />
-                <p className="font-maven text-gray-500">Caricamento armadietto...</p>
+                <p className="font-maven text-kidville-muted">Caricamento armadietto...</p>
             </div>
         );
     }
@@ -236,41 +217,46 @@ export default function ParentLockerPage() {
         <div className="max-w-2xl mx-auto p-4 sm:p-6">
             {/* ── Header ── */}
             <div className="flex items-center justify-between mb-2">
-                <h1 className="font-barlow font-black text-3xl text-kidville-green uppercase tracking-wide flex items-center gap-2">
-                    <ShoppingBag size={28} /> Armadietto
-                </h1>
+                <div>
+                    <p className="font-barlow font-bold text-[11px] uppercase tracking-[0.14em] text-kidville-yellow-dark">
+                        Servizi
+                    </p>
+                    <h1 className="font-barlow font-black text-3xl text-kidville-green uppercase tracking-wide leading-none">
+                        Armadietto
+                    </h1>
+                </div>
                 <div className="flex items-center gap-2">
                     {/* Badge LIVE */}
                     <span className={`flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-bold transition-all
-                        ${realtimePulse ? 'bg-emerald-500 text-white scale-110' : 'bg-emerald-100 text-emerald-600'}`}>
+                        ${realtimePulse ? 'bg-kidville-success text-white scale-110' : 'bg-kidville-success-soft text-kidville-success'}`}>
                         <Zap size={10} className={realtimePulse ? 'animate-bounce' : ''} /> LIVE
                     </span>
                     <button
                         onClick={() => { fetchData(); if (activeTab === 'monthly') fetchMonthly(month); }}
-                        className="p-2 rounded-xl text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+                        className="p-2 rounded-xl text-kidville-muted hover:text-kidville-green hover:bg-kidville-neutral-soft transition-colors"
                         title="Aggiorna">
                         <RefreshCw size={16} />
                     </button>
                 </div>
             </div>
             <div className="flex items-center justify-between mb-5">
-                <p className="font-maven text-gray-500">Materiale scolastico di {CHILD_NAME}</p>
+                <p className="font-maven text-kidville-muted">Materiale scolastico di {childName}</p>
                 {lastUpdated && (
-                    <p className="text-[10px] text-emerald-500 font-maven">
+                    <p className="text-[10px] text-kidville-success font-maven">
                         Aggiornato alle {lastUpdated.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                     </p>
                 )}
             </div>
 
             {/* ── Tab switcher ── */}
-            <div className="flex bg-zinc-100 rounded-xl p-1 gap-1 mb-6 self-start w-fit">
+            <div className="flex bg-kidville-neutral-soft rounded-xl p-1 gap-1 mb-6 self-start w-fit">
                 <button
                     id="tab-overview-btn"
                     onClick={() => setActiveTab('overview')}
                     className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold transition-all duration-200
                                 ${activeTab === 'overview'
                                     ? 'bg-white shadow text-kidville-green'
-                                    : 'text-gray-500 hover:text-kidville-green'}`}
+                                    : 'text-kidville-muted hover:text-kidville-green'}`}
                 >
                     <Package size={14} /> Panoramica
                 </button>
@@ -280,7 +266,7 @@ export default function ParentLockerPage() {
                     className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold transition-all duration-200
                                 ${activeTab === 'monthly'
                                     ? 'bg-white shadow text-kidville-green'
-                                    : 'text-gray-500 hover:text-kidville-green'}`}
+                                    : 'text-kidville-muted hover:text-kidville-green'}`}
                 >
                     <Table2 size={14} /> Andamento Mensile
                 </button>
@@ -295,11 +281,11 @@ export default function ParentLockerPage() {
                     {pendingRequests.length > 0 && (
                         <div className="mb-6">
                             <div className="flex items-center gap-2 mb-3">
-                                <Bell size={16} className="text-red-500" />
+                                <Bell size={16} className="text-kidville-error" />
                                 <h2 className="font-barlow font-bold text-kidville-green uppercase text-sm tracking-wide">
                                     Da portare a scuola
                                 </h2>
-                                <span className="bg-red-500 text-white text-xs font-bold w-5 h-5 rounded-full flex items-center justify-center">
+                                <span className="bg-kidville-error text-white text-xs font-bold w-5 h-5 rounded-full flex items-center justify-center">
                                     {pendingRequests.length}
                                 </span>
                             </div>
@@ -309,8 +295,8 @@ export default function ParentLockerPage() {
                                         key={req.id}
                                         className={`rounded-2xl border-2 p-4 ${
                                             req.livello_alert === 'rosso'
-                                                ? 'bg-red-50 border-red-200'
-                                                : 'bg-amber-50 border-amber-200'
+                                                ? 'bg-kidville-error-soft border-kidville-error/30'
+                                                : 'bg-kidville-warn-soft border-kidville-warn/30'
                                         }`}
                                     >
                                         <div className="flex items-center gap-3">
@@ -322,11 +308,11 @@ export default function ParentLockerPage() {
                                                     {req.locker_catalog.nome}
                                                 </p>
                                                 <p className={`font-maven text-sm ${
-                                                    req.livello_alert === 'rosso' ? 'text-red-600' : 'text-amber-600'
+                                                    req.livello_alert === 'rosso' ? 'text-kidville-error' : 'text-kidville-warn'
                                                 }`}>
                                                     {req.livello_alert === 'rosso' ? '🔴 Esaurito!' : '🟡 In esaurimento'} — Rimasti: {req.quantita_residua} {req.locker_catalog.unita}
                                                 </p>
-                                                <p className="font-maven text-xs text-gray-400 mt-0.5 flex items-center gap-1">
+                                                <p className="font-maven text-xs text-kidville-muted mt-0.5 flex items-center gap-1">
                                                     <Clock size={10} />
                                                     {new Date(req.creato_il).toLocaleDateString('it-IT', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
                                                 </p>
@@ -357,16 +343,16 @@ export default function ParentLockerPage() {
                     {acknowledgedRequests.length > 0 && (
                         <div className="mb-6">
                             <h2 className="font-barlow font-bold text-kidville-green uppercase text-sm tracking-wide mb-3 flex items-center gap-2">
-                                <CheckCircle2 size={14} className="text-emerald-500" />
+                                <CheckCircle2 size={14} className="text-kidville-success" />
                                 Preso in carico
                             </h2>
                             <div className="space-y-2">
                                 {acknowledgedRequests.map(req => (
-                                    <div key={req.id} className="rounded-2xl border-2 border-emerald-200 bg-emerald-50 p-3 flex items-center gap-3">
+                                    <div key={req.id} className="rounded-2xl border-2 border-kidville-success/30 bg-kidville-success-soft p-3 flex items-center gap-3">
                                         <span className="text-xl">{req.locker_catalog.icona}</span>
                                         <div className="flex-1">
                                             <p className="font-maven font-bold text-sm text-kidville-green">{req.locker_catalog.nome}</p>
-                                            <p className="font-maven text-xs text-emerald-600">
+                                            <p className="font-maven text-xs text-kidville-success">
                                                 ✅ Portare a scuola — Preso il {new Date(req.preso_in_carico_il!).toLocaleDateString('it-IT', { day: 'numeric', month: 'short' })}
                                             </p>
                                         </div>
@@ -399,7 +385,7 @@ export default function ParentLockerPage() {
                                             <div className="text-3xl mb-2">{icona}</div>
                                             <p className="font-maven font-bold text-sm text-kidville-green mb-1">{item.materiale}</p>
                                             <p className={`font-barlow font-black text-3xl ${sem.text}`}>{qty}</p>
-                                            <p className="font-maven text-xs text-gray-400 mb-2">pz</p>
+                                            <p className="font-maven text-xs text-kidville-muted mb-2">pz</p>
                                             <div className="h-2 bg-white/60 rounded-full overflow-hidden">
                                                 <div className={`h-full ${sem.barColor} rounded-full transition-all duration-700`}
                                                     style={{ width: `${pct}%` }} />
@@ -411,8 +397,8 @@ export default function ParentLockerPage() {
                             </div>
                         ) : (
                             <div className="text-center py-8 bg-white rounded-2xl">
-                                <Package size={40} className="mx-auto text-gray-300 mb-2" />
-                                <p className="font-maven text-gray-400 text-sm">Nessun materiale in stock</p>
+                                <Package size={40} className="mx-auto text-kidville-muted mb-2" />
+                                <p className="font-maven text-kidville-muted text-sm">Nessun materiale in stock</p>
                             </div>
                         )}
                     </div>
@@ -425,20 +411,20 @@ export default function ParentLockerPage() {
                                 onClick={() => setShowHistory(!showHistory)}
                                 className="flex items-center gap-2 mb-2"
                             >
-                                <h2 className="font-barlow font-bold text-gray-400 uppercase text-sm tracking-wide">
+                                <h2 className="font-barlow font-bold text-kidville-muted uppercase text-sm tracking-wide">
                                     Storico richieste ({completedRequests.length})
                                 </h2>
-                                <ChevronDown size={14} className={`text-gray-400 transition-transform ${showHistory ? 'rotate-180' : ''}`} />
+                                <ChevronDown size={14} className={`text-kidville-muted transition-transform ${showHistory ? 'rotate-180' : ''}`} />
                             </button>
                             {showHistory && (
                                 <div className="space-y-1.5">
                                     {completedRequests.map(req => (
-                                        <div key={req.id} className="rounded-xl bg-gray-50 px-3 py-2 flex items-center gap-3 opacity-60">
+                                        <div key={req.id} className="rounded-xl bg-kidville-neutral-soft px-3 py-2 flex items-center gap-3 opacity-60">
                                             <span className="text-lg">{req.locker_catalog.icona}</span>
                                             <div className="flex-1">
-                                                <p className="font-maven text-sm text-gray-500">{req.locker_catalog.nome}</p>
+                                                <p className="font-maven text-sm text-kidville-muted">{req.locker_catalog.nome}</p>
                                             </div>
-                                            <span className="font-maven text-xs text-gray-400">
+                                            <span className="font-maven text-xs text-kidville-muted">
                                                 {new Date(req.creato_il).toLocaleDateString('it-IT', { day: 'numeric', month: 'short' })}
                                             </span>
                                         </div>
@@ -460,15 +446,15 @@ export default function ParentLockerPage() {
                         <button
                             id="parent-prev-month-btn"
                             onClick={() => setMonth(m => prevMonth(m))}
-                            className="p-2 rounded-xl text-gray-500 hover:text-kidville-green hover:bg-kidville-cream transition-all"
+                            className="p-2 rounded-xl text-kidville-muted hover:text-kidville-green hover:bg-kidville-cream transition-all"
                         >
                             <ChevronLeft size={18} />
                         </button>
-                        <span className="text-sm font-semibold text-kidville-green/70">Andamento mensile di {CHILD_NAME}</span>
+                        <span className="text-sm font-semibold text-kidville-green/70">Andamento mensile di {childName}</span>
                         <button
                             id="parent-next-month-btn"
                             onClick={() => setMonth(m => nextMonth(m))}
-                            className="p-2 rounded-xl text-gray-500 hover:text-kidville-green hover:bg-kidville-cream transition-all"
+                            className="p-2 rounded-xl text-kidville-muted hover:text-kidville-green hover:bg-kidville-cream transition-all"
                         >
                             <ChevronRight size={18} />
                         </button>
@@ -476,8 +462,8 @@ export default function ParentLockerPage() {
 
                     {isMonthlyLoading ? (
                         <div className="flex items-center justify-center py-16 gap-3">
-                            <div className="w-6 h-6 border-2 border-violet-500/30 border-t-violet-500 rounded-full animate-spin" />
-                            <span className="text-gray-500 text-sm">Caricamento...</span>
+                            <div className="w-6 h-6 border-2 border-kidville-green/30 border-t-kidville-green rounded-full animate-spin" />
+                            <span className="text-kidville-muted text-sm">Caricamento...</span>
                         </div>
                     ) : (
                         <MonthlyLockerTable
@@ -491,10 +477,18 @@ export default function ParentLockerPage() {
 
             {/* Toast */}
             {showToast && (
-                <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[60] bg-emerald-600 text-white font-maven font-semibold px-6 py-3 rounded-2xl shadow-xl flex items-center gap-2 animate-bounce">
+                <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[60] bg-kidville-green text-white font-maven font-semibold px-6 py-3 rounded-2xl shadow-xl flex items-center gap-2 animate-bounce">
                     {toastMessage}
                 </div>
             )}
         </div>
+    );
+}
+
+export default function ParentLockerPage() {
+    return (
+        <Suspense fallback={<div className="p-8 font-maven text-kidville-muted">Caricamento…</div>}>
+            <LockerInner />
+        </Suspense>
     );
 }

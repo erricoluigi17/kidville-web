@@ -1,31 +1,68 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
+import { rateLimit, clientIp } from '@/lib/security/rate-limit'
+import { parseBody } from '@/lib/validation/http'
 import type { EnrollmentSubmissionData } from '@/types/database.types'
 
-const DEFAULT_SCUOLA_ID = '11111111-1111-1111-1111-111111111111'
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+// `data` viene inserito INTERO nella colonna JSONB enrollment_submissions.data:
+// .loose() preserva le chiavi extra del wizard. Gli elementi di children/adults
+// restano liberi (oggi nessun vincolo sulla loro forma).
+// `scuola_id` resta unknown: oggi QUALSIASI valore falsy (assente, '', null, …)
+// ricade sul default, gestito nel codice con || come prima.
+const postBodySchema = z.object({
+  scuola_id: z.unknown().optional(),
+  data: z
+    .object(
+      {
+        children: z
+          .array(z.unknown(), { error: 'Dati iscrizione non validi' })
+          .min(1, 'Inserire almeno un bambino'),
+        adults: z
+          .array(z.unknown(), { error: 'Dati iscrizione non validi' })
+          .min(1, 'Inserire almeno un adulto'),
+      },
+      { error: 'Dati iscrizione non validi' }
+    )
+    .loose(),
+})
 
 // POST: il genitore invia l'iscrizione dal form pubblico (service-role).
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json()
-    const data = body.data as EnrollmentSubmissionData | undefined
+    // Rotta pubblica → rate-limit anti-abuso (5 invii / 10 min per IP).
+    const rl = rateLimit(`iscrizione:${clientIp(request)}`, { limit: 5, windowMs: 10 * 60 * 1000 })
+    if (!rl.ok) {
+      return NextResponse.json(
+        { error: 'Troppe richieste. Riprova tra qualche minuto.' },
+        { status: 429, headers: { 'Retry-After': String(Math.ceil(rl.retryAfterMs / 1000)) } }
+      )
+    }
 
-    if (!data || !Array.isArray(data.children) || !Array.isArray(data.adults)) {
-      return NextResponse.json({ error: 'Dati iscrizione non validi' }, { status: 400 })
-    }
-    if (data.children.length === 0) {
-      return NextResponse.json({ error: 'Inserire almeno un bambino' }, { status: 400 })
-    }
-    if (data.adults.length === 0) {
-      return NextResponse.json({ error: 'Inserire almeno un adulto' }, { status: 400 })
-    }
+    const b = await parseBody(request, postBodySchema)
+    if ('response' in b) return b.response
+    const { data } = b.data
 
     const supabase = await createAdminClient()
+
+    // Scuola dell'iscrizione: dal form se indicata; altrimenti l'unica scuola
+    // esistente (deployment mono-scuola). Se ce n'è più d'una, va indicata (il
+    // link pubblico è per-scuola).
+    let scuolaId = (b.data.scuola_id as string | undefined) || undefined
+    if (!scuolaId) {
+      const { data: scuole } = await supabase.from('schools').select('id').limit(2)
+      if (scuole && scuole.length === 1) scuolaId = scuole[0].id as string
+    }
+    if (!scuolaId) {
+      return NextResponse.json({ error: 'Specificare la scuola per l\'iscrizione' }, { status: 400 })
+    }
+
     const { data: row, error } = await supabase
       .from('enrollment_submissions')
       .insert({
-        scuola_id: body.scuola_id || DEFAULT_SCUOLA_ID,
-        data,
+        scuola_id: scuolaId,
+        data: data as EnrollmentSubmissionData,
         status: 'pending',
       })
       .select('id')
@@ -36,7 +73,8 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.json({ id: row.id }, { status: 201 })
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message || 'Errore interno' }, { status: 500 })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Errore interno'
+    return NextResponse.json({ error: msg || 'Errore interno' }, { status: 500 })
   }
 }

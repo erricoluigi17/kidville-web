@@ -1,21 +1,51 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { getRequestUserId } from '@/lib/auth/require-staff'
+import { requireDocente } from '@/lib/auth/require-staff'
+import { assertSezioneInScope, assertAlunniInSezione } from '@/lib/auth/scope'
+import { logScrittura } from '@/lib/audit/scrittura'
+import { notificaTitolariScrittura } from '@/lib/primaria/notifiche'
+import { parseBody, parseData, parseQuery } from '@/lib/validation/http'
+import { zDataYMD, zUuid } from '@/lib/validation/common'
 
-const DEV_TEACHER = '22222222-2222-2222-2222-222222222222'
 const STATI = ['presente', 'assente', 'ritardo', 'uscita_anticipata'] as const
+
+const getQuerySchema = z.object({
+  sectionId: zUuid,
+  data: zDataYMD,
+})
+
+// Base loose: il dispatch singolo/bulk legge dal body campi diversi (records
+// oppure alunnoId/stato/... top-level), poi validati con recordsSchema.
+const postBaseSchema = z.object({
+  sectionId: zUuid,
+  data: zDataYMD,
+}).loose()
+
+const recordSchema = z.object({
+  alunnoId: zUuid,
+  stato: z.enum(STATI),
+  noteAppello: z.string().nullish(),
+  // 'HH:MM'; altri formati ricadono su null (toTs) come oggi: nessun vincolo qui.
+  orarioEntrata: z.string().nullish(),
+  orarioUscita: z.string().nullish(),
+})
+const recordsSchema = z.array(recordSchema)
 
 // GET /api/primaria/appello?sectionId=&data=&userId=
 // Alunni della classe + stato presenza del giorno.
 export async function GET(request: NextRequest) {
   try {
-    const sp = new URL(request.url).searchParams
-    const sectionId = sp.get('sectionId')
-    const data = sp.get('data')
-    if (!sectionId || !data) return NextResponse.json({ error: 'sectionId e data obbligatori' }, { status: 400 })
-    if (!getRequestUserId(request)) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
+    const auth = await requireDocente(request)
+    if (auth.response) return auth.response
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+    const { sectionId, data } = q.data
 
     const supabase = await createAdminClient()
+    const scopeErr = await assertSezioneInScope(supabase, auth.user, sectionId)
+    if (scopeErr) return scopeErr
+
     const [{ data: alunni }, { data: presenze }] = await Promise.all([
       supabase.from('alunni').select('id, nome, cognome').eq('section_id', sectionId).order('cognome'),
       supabase
@@ -53,26 +83,42 @@ export async function GET(request: NextRequest) {
 //   bulk:    { sectionId, data, records: [{ alunnoId, stato, noteAppello? }] }
 export async function POST(request: NextRequest) {
   try {
-    const userId = getRequestUserId(request) ?? DEV_TEACHER
-    const body = await request.json()
-    const { sectionId, data } = body
-    if (!sectionId || !data) return NextResponse.json({ error: 'sectionId e data obbligatori' }, { status: 400 })
-
-    const records: { alunnoId: string; stato: string; noteAppello?: string; orarioEntrata?: string; orarioUscita?: string }[] = Array.isArray(body.records)
-      ? body.records
-      : [{ alunnoId: body.alunnoId, stato: body.stato, noteAppello: body.noteAppello, orarioEntrata: body.orarioEntrata, orarioUscita: body.orarioUscita }]
-
-    for (const r of records) {
-      if (!r.alunnoId || !STATI.includes(r.stato as typeof STATI[number])) {
-        return NextResponse.json({ error: `Record non valido (stato in ${STATI.join('/')})` }, { status: 400 })
-      }
-    }
-
-    // Compone un timestamp completo da data (YYYY-MM-DD) + orario (HH:MM).
-    const toTs = (orario?: string) =>
-      orario && /^\d{2}:\d{2}$/.test(orario) ? `${data}T${orario}:00` : null
+    const auth = await requireDocente(request)
+    if (auth.response) return auth.response
+    const userId = auth.user.id
+    const b = await parseBody(request, postBaseSchema)
+    if ('response' in b) return b.response
+    const { sectionId, data } = b.data
 
     const supabase = await createAdminClient()
+    const scopeErr = await assertSezioneInScope(supabase, auth.user, sectionId)
+    if (scopeErr) return scopeErr
+
+    // Dispatch singolo/bulk come oggi: records array → bulk, altrimenti campi top-level.
+    const rawRecords = Array.isArray(b.data.records)
+      ? b.data.records
+      : [{ alunnoId: b.data.alunnoId, stato: b.data.stato, noteAppello: b.data.noteAppello, orarioEntrata: b.data.orarioEntrata, orarioUscita: b.data.orarioUscita }]
+    const rec = parseData(recordsSchema, rawRecords)
+    if ('response' in rec) return rec.response
+    const records = rec.data
+
+    // Compone un timestamp completo da data (YYYY-MM-DD) + orario (HH:MM).
+    const toTs = (orario?: string | null) =>
+      orario && /^\d{2}:\d{2}$/.test(orario) ? `${data}T${orario}:00` : null
+
+    // Gli alunni dei record devono appartenere alla sezione asserita (no upsert cross-sezione).
+    const alunniErr = await assertAlunniInSezione(supabase, records.map((r) => r.alunnoId), sectionId)
+    if (alunniErr) return alunniErr
+
+    // Stato PRIMA (per audit diff).
+    const alunnoIds = records.map((r) => r.alunnoId)
+    const { data: prima } = await supabase
+      .from('presenze')
+      .select('*')
+      .eq('section_id', sectionId)
+      .eq('data', data)
+      .in('alunno_id', alunnoIds)
+
     const rows = records.map((r) => ({
       alunno_id: r.alunnoId,
       section_id: sectionId,
@@ -82,6 +128,7 @@ export async function POST(request: NextRequest) {
       // Orario di entrata solo per ritardo, orario di uscita solo per uscita anticipata.
       orario_entrata: r.stato === 'ritardo' ? toTs(r.orarioEntrata) : null,
       orario_uscita: r.stato === 'uscita_anticipata' ? toTs(r.orarioUscita) : null,
+      // Provenienza operativa: chi ha registrato (può essere la segreteria). NON è una firma.
       registrato_da: userId,
     }))
 
@@ -90,6 +137,17 @@ export async function POST(request: NextRequest) {
       .upsert(rows, { onConflict: 'alunno_id,data' })
       .select()
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+    // Audit (diff prima/dopo) + notifica al docente titolare (se segreteria/direzione).
+    await logScrittura(supabase, {
+      attore: auth.user,
+      entitaTipo: 'presenze',
+      azione: 'update',
+      sectionId,
+      valorePrima: prima ?? [],
+      valoreDopo: saved ?? [],
+    })
+    await notificaTitolariScrittura(supabase, { attore: auth.user, sectionId, area: 'appello', link: `/teacher/primaria/${sectionId}/appello` })
 
     return NextResponse.json({ success: true, data: saved ?? [] })
   } catch (err) {

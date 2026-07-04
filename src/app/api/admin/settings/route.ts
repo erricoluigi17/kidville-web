@@ -1,22 +1,75 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { resolveScuolaScrittura } from '@/lib/auth/scope'
+import { parseBody, parseQuery } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
 
-const DEFAULT_SCUOLA = '11111111-1111-1111-1111-111111111111'
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+/**
+ * scuola_id opzionale: qualunque valore falsy ('', null, assente) viene trattato
+ * come "non fornito" così la scuola viene risolta dallo scope reale dell'admin
+ * (resolveScuolaScrittura), usando l'eventuale scuola_id come sede preferita.
+ */
+const zScuolaId = z.preprocess((v) => v || undefined, zUuid.optional())
 
-function scuolaIdFrom(request: Request, fallback?: string | null): string {
-  const { searchParams } = new URL(request.url)
-  return searchParams.get('scuola_id') || fallback || DEFAULT_SCUOLA
-}
+const getQuerySchema = z.object({ scuola_id: zScuolaId })
+
+// Campi ammessi nel PATCH (upsert selettivo). Oggi sono accettati senza vincoli
+// di tipo (tipi/CHECK li fa rispettare il DB): schema volutamente permissivo
+// (z.unknown().optional() — l'.optional() è OBBLIGATORIO: in zod v4 z.unknown()
+// nudo renderebbe la chiave required a runtime).
+const ALLOWED_FIELDS = [
+  'retta_default_importo',
+  'retta_giorno_scadenza',
+  'retta_giorno_visibilita',
+  'retta_auto_enabled',
+  'insoluto_tolleranza_giorni',
+  'ticket_pacchetti',
+  'fattura_causale_template',
+  'mensa_cutoff_ora',
+  'mensa_giorni_attivi',
+  'mensa_settimane_rotazione',
+  'mensa_soglia_saldo_basso',
+  'timelock_giorni_classe_orale',
+  'timelock_giorni_scritto_pratico',
+  'notif_buffer_valutazioni_min',
+  'funzioni_matrice',
+  'diario_config',
+  'presenze_config',
+  'note_config',
+  'avvisi_config',
+  'chat_config',
+  'galleria_config',
+  'armadietto_config',
+  'modulistica_config',
+  'segreteria_config',
+] as const
+
+const patchBodySchema = z.object({
+  scuola_id: zScuolaId,
+  ...Object.fromEntries(ALLOWED_FIELDS.map((f) => [f, z.unknown().optional()])),
+})
 
 // GET /api/admin/settings?userId=&scuola_id=  (staff) — impostazioni della scuola
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
 
-    const scuolaId = scuolaIdFrom(request, auth.user.scuola_id)
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+
     const supabase = await createAdminClient()
+    const sw = await resolveScuolaScrittura(
+      request,
+      supabase,
+      auth.user,
+      (q.data.scuola_id as string | undefined) ?? undefined,
+    )
+    if (sw.response) return sw.response
+    const scuolaId = sw.scuolaId as string
 
     const { data, error } = await supabase
       .from('admin_settings')
@@ -52,39 +105,25 @@ export async function GET(request: Request) {
 // Body: { userId, scuola_id?, retta_default_importo?, retta_giorno_scadenza?,
 //         retta_auto_enabled?, insoluto_tolleranza_giorni?, ticket_pacchetti? }
 // NB: aruba_config si gestisce dalla route dedicata /api/admin/settings/aruba
-export async function PATCH(request: Request) {
+export async function PATCH(request: NextRequest) {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
 
-    const body = await request.json()
-    const scuolaId = body.scuola_id || auth.user.scuola_id || DEFAULT_SCUOLA
+    const b = await parseBody(request, patchBodySchema)
+    if ('response' in b) return b.response
+    const body = b.data as Record<string, unknown>
 
-    const allowed = [
-      'retta_default_importo',
-      'retta_giorno_scadenza',
-      'retta_giorno_visibilita',
-      'retta_auto_enabled',
-      'insoluto_tolleranza_giorni',
-      'ticket_pacchetti',
-      'fattura_causale_template',
-      'mensa_cutoff_ora',
-      'mensa_giorni_attivi',
-      'mensa_settimane_rotazione',
-      'mensa_soglia_saldo_basso',
-      'timelock_giorni_classe_orale',
-      'timelock_giorni_scritto_pratico',
-      'notif_buffer_valutazioni_min',
-      'funzioni_matrice',
-      'diario_config',
-      'presenze_config',
-      'note_config',
-      'avvisi_config',
-      'chat_config',
-      'galleria_config',
-      'armadietto_config',
-      'modulistica_config',
-    ]
+    const supabase = await createAdminClient()
+    const sw = await resolveScuolaScrittura(
+      request,
+      supabase,
+      auth.user,
+      (body.scuola_id as string | undefined) ?? undefined,
+    )
+    if (sw.response) return sw.response
+    const scuolaId = sw.scuolaId as string
+
     // Chiavi JSONB salvate in shallow-merge con l'esistente, così pannelli
     // diversi possono salvare indipendentemente senza sovrascriversi.
     const mergedKeys = [
@@ -97,11 +136,10 @@ export async function PATCH(request: Request) {
       'galleria_config',
       'armadietto_config',
       'modulistica_config',
+      'segreteria_config',
     ]
     const updates: Record<string, unknown> = { scuola_id: scuolaId }
-    for (const f of allowed) if (body[f] !== undefined) updates[f] = body[f]
-
-    const supabase = await createAdminClient()
+    for (const f of ALLOWED_FIELDS) if (body[f] !== undefined) updates[f] = body[f]
 
     const incomingMerged = mergedKeys.filter((k) => updates[k] !== undefined)
     if (incomingMerged.length > 0) {

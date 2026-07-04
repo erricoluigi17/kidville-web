@@ -1,12 +1,21 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
+import { parseQuery } from '@/lib/validation/http'
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+// `userId` in query è consumato dal gate identità (requireUser), non dall'handler.
+const getQuerySchema = z.object({}) // nessun parametro in ingresso
 
 // GET /api/parent/students?userId=  — lista degli alunni collegati al genitore.
 export async function GET(request: Request) {
   try {
     const auth = await requireUser(request)
     if (auth.response) return auth.response
+
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
 
     const supabase = await createAdminClient()
     const { data, error } = await supabase

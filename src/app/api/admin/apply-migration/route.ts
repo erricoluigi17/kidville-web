@@ -1,5 +1,11 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
+import { sealDangerous } from '@/lib/security/seal';
 import { createAdminClient } from '@/lib/supabase/server-client';
+import { parseQuery } from '@/lib/validation/http';
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+const querySchema = z.object({}); // nessun parametro in ingresso
 
 /**
  * POST/GET /api/admin/apply-migration
@@ -35,7 +41,7 @@ async function runMigration() {
   }
 
   // Verify columns now exist by reading table structure
-  const { data: testRow, error: readError } = await supabase
+  const { error: readError } = await supabase
     .from('task_interni')
     .select('id, status, priority, category, deadline, student_id, resolved_by, resolution_notes, resolved_at, target_role, target_scope, compiti')
     .limit(1);
@@ -51,7 +57,11 @@ async function runMigration() {
   };
 }
 
-export async function POST() {
+export async function POST(request: Request) {
+  const sealed = await sealDangerous(request);
+  if (sealed) return sealed;
+  const q = parseQuery(request, querySchema);
+  if ('response' in q) return q.response;
   try {
     const result = await runMigration();
     return NextResponse.json(result);
@@ -60,7 +70,11 @@ export async function POST() {
   }
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const sealed = await sealDangerous(request);
+  if (sealed) return sealed;
+  const q = parseQuery(request, querySchema);
+  if ('response' in q) return q.response;
   try {
     const result = await runMigration();
     return NextResponse.json(result);

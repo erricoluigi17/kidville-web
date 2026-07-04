@@ -1,11 +1,10 @@
 // Service Worker — Web Push notifiche Kidville (modulo Pagamenti)
-/* eslint-disable no-restricted-globals */
 
 self.addEventListener('push', function (event) {
   let data = {};
   try {
     data = event.data ? event.data.json() : {};
-  } catch (e) {
+  } catch {
     data = { title: 'Kidville', body: event.data ? event.data.text() : '' };
   }
 

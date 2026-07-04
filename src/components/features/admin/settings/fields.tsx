@@ -53,7 +53,7 @@ export function PillMultiSelect({ options, selected, onChange }: { options: { id
                     type="button"
                     onClick={() => toggle(o.id)}
                     className={`font-maven rounded-full px-3 py-1.5 text-sm transition ${
-                        selected.includes(o.id) ? 'bg-kidville-green text-kidville-yellow' : 'bg-gray-100 text-gray-500 hover:bg-kidville-green/10'
+                        selected.includes(o.id) ? 'bg-kidville-green text-kidville-yellow' : 'bg-kidville-line text-kidville-muted hover:bg-kidville-green/10'
                     }`}
                 >
                     {o.label}
@@ -76,5 +76,5 @@ export function SaveRow({ onSave, saving, msg, error }: { onSave: () => void; sa
 }
 
 export function ComingSoonBadge() {
-    return <span className="ml-1 text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full align-middle">in arrivo</span>;
+    return <span className="ml-1 text-[10px] bg-kidville-warn-soft text-kidville-warn px-2 py-0.5 rounded-full align-middle">prossimamente</span>;
 }

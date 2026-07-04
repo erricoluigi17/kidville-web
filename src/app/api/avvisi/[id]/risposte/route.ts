@@ -1,15 +1,30 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
+import { requireDocente } from '@/lib/auth/require-staff';
+import { parseBody, parseData } from '@/lib/validation/http';
+import { zUuid } from '@/lib/validation/common';
 
 interface RouteParams {
     params: Promise<{ id: string }>;
 }
 
+const postBodySchema = z.object({
+    parent_id: zUuid,
+    student_id: zUuid,
+    risposta: z.unknown().optional(),
+});
+
 // GET /api/avvisi/[id]/risposte
-// Lista risposte per un avviso specifico (dashboard monitoraggio)
+// Lista risposte per un avviso specifico (dashboard monitoraggio = staff). Gatato.
 export async function GET(request: Request, { params }: RouteParams) {
     try {
-        const { id: avvisoId } = await params;
+        const auth = await requireDocente(request);
+        if (auth.response) return auth.response;
+        const rawParams = await params;
+        const pId = parseData(zUuid, rawParams.id);
+        if ('response' in pId) return pId.response;
+        const avvisoId = pId.data;
 
         const supabase = await createAdminClient();
 
@@ -37,13 +52,13 @@ export async function GET(request: Request, { params }: RouteParams) {
                     .from('utenti')
                     .select('nome, cognome, first_name, last_name')
                     .eq('id', r.parent_id)
-                    .single();
+                    .maybeSingle();
 
                 const { data: student } = await supabase
                     .from('alunni')
                     .select('nome, cognome')
                     .eq('id', r.student_id)
-                    .single();
+                    .maybeSingle();
 
                 return {
                     ...r,
@@ -65,16 +80,14 @@ export async function GET(request: Request, { params }: RouteParams) {
 // Registra presa visione o adesione
 export async function POST(request: Request, { params }: RouteParams) {
     try {
-        const { id: avvisoId } = await params;
-        const body = await request.json();
-        const { parent_id, student_id, risposta } = body;
+        const rawParams = await params;
+        const pId = parseData(zUuid, rawParams.id);
+        if ('response' in pId) return pId.response;
+        const avvisoId = pId.data;
 
-        if (!parent_id || !student_id) {
-            return NextResponse.json(
-                { error: 'parent_id e student_id sono obbligatori' },
-                { status: 400 }
-            );
-        }
+        const b = await parseBody(request, postBodySchema);
+        if ('response' in b) return b.response;
+        const { parent_id, student_id, risposta } = b.data;
 
         const supabase = await createAdminClient();
         const now = new Date().toISOString();
@@ -88,7 +101,7 @@ export async function POST(request: Request, { params }: RouteParams) {
             .eq('student_id', student_id)
             .maybeSingle();
 
-        const insertPayload: any = {
+        const insertPayload: Record<string, unknown> = {
             avviso_id: avvisoId,
             parent_id,
             student_id,

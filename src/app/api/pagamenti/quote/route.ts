@@ -1,6 +1,30 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { parseBody, parseQuery } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+const upsertBodySchema = z.object({
+  pagamento_id: zUuid,
+  quote: z
+    .array(
+      z.object({
+        adult_id: zUuid,
+        // numero o stringa numerica (Postgres casta la stringa); la coerenza
+        // con l'importo del pagamento resta il check sotto
+        importo: z.union([z.number(), z.string()], { error: 'Ogni quota richiede adult_id e importo' }),
+        etichetta: z.string().nullish(),
+      }),
+      { error: 'pagamento_id e almeno 2 quote sono obbligatori' }
+    )
+    .min(2, 'pagamento_id e almeno 2 quote sono obbligatori'),
+})
+
+const getQuerySchema = z.object({
+  pagamento_id: zUuid,
+})
 
 // POST/PATCH /api/pagamenti/quote  (staff) — crea/aggiorna le quote split
 // Body: { userId, pagamento_id, quote: [{adult_id, importo, etichetta?}] }
@@ -9,23 +33,16 @@ async function upsertQuote(request: Request) {
   const auth = await requireStaff(request)
   if (auth.response) return auth.response
 
-  const body = await request.json()
-  const { pagamento_id, quote } = body
-  if (!pagamento_id || !Array.isArray(quote) || quote.length < 2) {
-    return NextResponse.json({ error: 'pagamento_id e almeno 2 quote sono obbligatori' }, { status: 400 })
-  }
-  for (const q of quote) {
-    if (!q.adult_id || q.importo == null) {
-      return NextResponse.json({ error: 'Ogni quota richiede adult_id e importo' }, { status: 400 })
-    }
-  }
+  const b = await parseBody(request, upsertBodySchema)
+  if ('response' in b) return b.response
+  const { pagamento_id, quote } = b.data
 
   const supabase = await createAdminClient()
   const { data: pag, error: pErr } = await supabase
-    .from('pagamenti').select('id, importo, tipo').eq('id', pagamento_id).single()
+    .from('pagamenti').select('id, importo, tipo').eq('id', pagamento_id).maybeSingle()
   if (pErr || !pag) return NextResponse.json({ error: 'Pagamento non trovato' }, { status: 404 })
 
-  const somma = quote.reduce((s: number, q: { importo: number }) => s + Number(q.importo), 0)
+  const somma = quote.reduce((s, q) => s + Number(q.importo), 0)
   if (Math.abs(somma - Number(pag.importo)) > 0.01) {
     return NextResponse.json(
       { error: `La somma delle quote (${somma}) deve coincidere con l'importo (${pag.importo})` },
@@ -35,7 +52,7 @@ async function upsertQuote(request: Request) {
 
   // sostituisce le quote esistenti
   await supabase.from('pagamenti_quote').delete().eq('pagamento_id', pagamento_id)
-  const rows = quote.map((q: { adult_id: string; importo: number; etichetta?: string }) => ({
+  const rows = quote.map((q) => ({
     pagamento_id, adult_id: q.adult_id, importo: q.importo, etichetta: q.etichetta ?? null,
   }))
   const { data: created, error: qErr } = await supabase.from('pagamenti_quote').insert(rows).select()
@@ -66,9 +83,9 @@ export async function GET(request: Request) {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
-    const { searchParams } = new URL(request.url)
-    const pagamentoId = searchParams.get('pagamento_id')
-    if (!pagamentoId) return NextResponse.json({ error: 'pagamento_id è obbligatorio' }, { status: 400 })
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+    const pagamentoId = q.data.pagamento_id
 
     const supabase = await createAdminClient()
     const { data, error } = await supabase

@@ -35,7 +35,7 @@ const LINKS = [
     },
 ];
 
-async function supabaseRpc(path: string, method: string, body?: any) {
+async function supabaseRpc(path: string, method: string, body?: unknown) {
     const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
         method,
         headers: {
@@ -64,8 +64,8 @@ async function main() {
                 alunno_id: link.student_id,
             });
             console.log('  ✅ Legame creato');
-        } catch (e: any) {
-            console.log(`  ⚠️ ${e.message}`);
+        } catch (e) {
+            console.log(`  ⚠️ ${(e as { message?: string })?.message}`);
         }
         console.log('');
     }

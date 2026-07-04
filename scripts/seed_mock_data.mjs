@@ -105,11 +105,10 @@ async function seed() {
     if (totalSkipped > 0) console.log(`⚠️  Saltati: ${totalSkipped}`);
 
     // Verifica finale
-    const { data: finalCount, error: countErr } = await supabase
+    await supabase
         .from('armadietto')
         .select('id', { count: 'exact', head: true });
 
-    const count = finalCount === null ? '?' : countErr ? 'N/A' : 'ok';
     const { count: total } = await supabase
         .from('armadietto')
         .select('*', { count: 'exact', head: true });

@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server-client';
+import { z } from 'zod';
+import { createAdminClient } from '@/lib/supabase/server-client';
+import { requireDocente } from '@/lib/auth/require-staff';
+import { parseQuery } from '@/lib/validation/http';
 
 export interface MonthlyAttendanceRecord {
     student_id: string;
@@ -18,24 +21,36 @@ export interface MonthlyAttendanceRecord {
  * Strategia: due query separate (no join PostgREST) per massima compatibilità
  * con lo schema anche senza FK riconosciuta dalla schema cache.
  */
+
+/** Intero da query string con la semantica storica di parseInt ('' → NaN → 400). */
+const zIntParseInt = (inner: z.ZodNumber) =>
+    z.preprocess((v) => (typeof v === 'string' ? parseInt(v, 10) : v), inner);
+
+const getQuerySchema = z.object({
+    // default dinamici (anno/mese correnti) calcolati nell'handler
+    year: zIntParseInt(z.number().int()).optional(),
+    month: zIntParseInt(z.number().int().min(1).max(12)).optional(),
+    sezione: z.string().default('Girasoli'),
+});
+
 export async function GET(request: NextRequest) {
     try {
-        const { searchParams } = new URL(request.url);
+        const auth = await requireDocente(request);
+        if (auth.response) return auth.response;
+
+        const q = parseQuery(request, getQuerySchema);
+        if ('response' in q) return q.response;
 
         const now = new Date();
-        const year  = parseInt(searchParams.get('year')  ?? String(now.getFullYear()), 10);
-        const month = parseInt(searchParams.get('month') ?? String(now.getMonth() + 1), 10);
-        const sezione = searchParams.get('sezione') ?? 'Girasoli';
-
-        if (isNaN(year) || isNaN(month) || month < 1 || month > 12) {
-            return NextResponse.json({ error: 'Parametri year/month non validi.' }, { status: 400 });
-        }
+        const year  = q.data.year  ?? now.getFullYear();
+        const month = q.data.month ?? now.getMonth() + 1;
+        const sezione = q.data.sezione;
 
         const startDate = `${year}-${String(month).padStart(2, '0')}-01`;
         const lastDay   = new Date(year, month, 0).getDate();
         const endDate   = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
 
-        const supabase = await createClient();
+        const supabase = await createAdminClient();
 
         // ── Query 1: alunni della sezione ──────────────────────────────────────
         const { data: alunniData, error: alunniError } = await supabase

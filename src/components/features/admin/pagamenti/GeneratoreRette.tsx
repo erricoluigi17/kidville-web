@@ -64,10 +64,10 @@ export function GeneratoreRette({ userId, scuolaId }: Props) {
     return (
         <div>
             {/* Switch modalità */}
-            <div className="inline-flex bg-gray-100 rounded-full p-1 mb-5">
+            <div className="inline-flex bg-kidville-line rounded-full p-1 mb-5">
                 {([['anno', 'Anno scolastico'], ['mese', 'Mese singolo']] as [Mode, string][]).map(([m, l]) => (
                     <button key={m} onClick={() => { setMode(m); reset(); }}
-                        className={`px-4 py-1.5 rounded-full font-maven text-sm font-bold ${mode === m ? 'bg-white text-kidville-green shadow-sm' : 'text-gray-500'}`}>
+                        className={`px-4 py-1.5 rounded-full font-maven text-sm font-bold ${mode === m ? 'bg-white text-kidville-green shadow-sm' : 'text-kidville-muted'}`}>
                         {l}
                     </button>
                 ))}
@@ -76,9 +76,9 @@ export function GeneratoreRette({ userId, scuolaId }: Props) {
             <div className="flex flex-wrap items-end gap-3 mb-5">
                 {mode === 'anno' ? (
                     <div>
-                        <label className="font-maven text-xs text-gray-500 mb-1 block">Anno scolastico (set → giu)</label>
+                        <label className="font-maven text-xs text-kidville-muted mb-1 block">Anno scolastico (set → giu)</label>
                         <select value={anno} onChange={e => { setAnno(Number(e.target.value)); reset(); }}
-                            className="border-2 border-gray-200 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:border-kidville-green">
+                            className="border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:border-kidville-green">
                             {[annoScolasticoCorrente() - 1, annoScolasticoCorrente(), annoScolasticoCorrente() + 1].map(y => (
                                 <option key={y} value={y}>{y}/{y + 1}</option>
                             ))}
@@ -86,9 +86,9 @@ export function GeneratoreRette({ userId, scuolaId }: Props) {
                     </div>
                 ) : (
                     <div>
-                        <label className="font-maven text-xs text-gray-500 mb-1 block">Mese di competenza</label>
+                        <label className="font-maven text-xs text-kidville-muted mb-1 block">Mese di competenza</label>
                         <input type="month" value={periodo} onChange={e => { setPeriodo(e.target.value); reset(); }}
-                            className="border-2 border-gray-200 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
+                            className="border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
                     </div>
                 )}
                 <button onClick={loadPreview} disabled={loading}
@@ -98,7 +98,7 @@ export function GeneratoreRette({ userId, scuolaId }: Props) {
             </div>
 
             {done !== null && (
-                <div className="bg-green-50 text-green-700 rounded-xl p-4 font-maven text-sm flex items-center gap-2">
+                <div className="bg-kidville-success-soft text-kidville-success rounded-xl p-4 font-maven text-sm flex items-center gap-2">
                     <CheckCircle2 size={18} /> {done}
                 </div>
             )}
@@ -108,22 +108,22 @@ export function GeneratoreRette({ userId, scuolaId }: Props) {
                 <div>
                     <div className="flex flex-wrap gap-4 mb-3 font-maven text-sm">
                         <span className="text-kidville-green font-bold">{previewAnno.alunni_attivi} alunni attivi</span>
-                        <span className="text-gray-500">Retta default: € {Number(previewAnno.retta_default ?? 150).toFixed(2)}</span>
+                        <span className="text-kidville-muted">Retta default: € {Number(previewAnno.retta_default ?? 150).toFixed(2)}</span>
                         <span className="text-kidville-green font-bold">Totale previsto: € {Number(previewAnno.totale_previsto).toFixed(2)}</span>
                     </div>
-                    <div className="max-h-80 overflow-y-auto border border-gray-100 rounded-xl mb-4">
+                    <div className="max-h-80 overflow-y-auto border border-kidville-line rounded-xl mb-4">
                         <table className="w-full text-left">
-                            <thead className="sticky top-0 bg-white"><tr className="font-maven text-xs text-gray-400 uppercase">
+                            <thead className="sticky top-0 bg-white"><tr className="font-maven text-xs text-kidville-muted uppercase">
                                 <th className="py-2 px-3">Mese</th><th className="py-2 px-3 text-right">Da generare</th>
                                 <th className="py-2 px-3 text-right">Già generati</th><th className="py-2 px-3 text-right">Importo</th>
                             </tr></thead>
                             <tbody>
                                 {previewAnno.mesi.map(m => (
-                                    <tr key={m.periodo} className="border-t border-gray-100 font-maven text-sm">
+                                    <tr key={m.periodo} className="border-t border-kidville-line font-maven text-sm">
                                         <td className="py-2 px-3 text-kidville-green font-semibold">{m.periodo.slice(0, 7)}</td>
                                         <td className="py-2 px-3 text-right text-kidville-green">{m.candidati}</td>
-                                        <td className="py-2 px-3 text-right text-gray-400">{m.gia_generati}</td>
-                                        <td className="py-2 px-3 text-right text-gray-500">€ {Number(m.importo).toFixed(2)}</td>
+                                        <td className="py-2 px-3 text-right text-kidville-muted">{m.gia_generati}</td>
+                                        <td className="py-2 px-3 text-right text-kidville-muted">€ {Number(m.importo).toFixed(2)}</td>
                                     </tr>
                                 ))}
                             </tbody>
@@ -137,25 +137,25 @@ export function GeneratoreRette({ userId, scuolaId }: Props) {
                 <div>
                     <div className="flex flex-wrap gap-4 mb-3 font-maven text-sm">
                         <span className="text-kidville-green font-bold">{previewMese.candidati.length} alunni candidati</span>
-                        <span className="text-gray-500">Già generati: {previewMese.gia_generati}</span>
+                        <span className="text-kidville-muted">Già generati: {previewMese.gia_generati}</span>
                         <span className="text-kidville-green font-bold">Totale previsto: € {Number(previewMese.totale_previsto).toFixed(2)}</span>
                     </div>
                     {previewMese.candidati.length === 0 ? (
-                        <p className="font-maven text-sm text-gray-400 py-6 text-center">Nessun alunno da generare per questo mese (rette già create).</p>
+                        <p className="font-maven text-sm text-kidville-muted py-6 text-center">Nessun alunno da generare per questo mese (rette già create).</p>
                     ) : (
-                        <div className="max-h-80 overflow-y-auto border border-gray-100 rounded-xl mb-4">
+                        <div className="max-h-80 overflow-y-auto border border-kidville-line rounded-xl mb-4">
                             <table className="w-full text-left">
-                                <thead className="sticky top-0 bg-white"><tr className="font-maven text-xs text-gray-400 uppercase">
+                                <thead className="sticky top-0 bg-white"><tr className="font-maven text-xs text-kidville-muted uppercase">
                                     <th className="py-2 px-3">Alunno</th><th className="py-2 px-3">Classe</th>
                                     <th className="py-2 px-3 text-right">Retta</th><th className="py-2 px-3">Tipo</th>
                                 </tr></thead>
                                 <tbody>
                                     {previewMese.candidati.map(c => (
-                                        <tr key={c.id} className="border-t border-gray-100 font-maven text-sm">
+                                        <tr key={c.id} className="border-t border-kidville-line font-maven text-sm">
                                             <td className="py-2 px-3 text-kidville-green font-semibold">{c.nome} {c.cognome}</td>
-                                            <td className="py-2 px-3 text-gray-500">{c.classe_sezione ?? '—'}</td>
+                                            <td className="py-2 px-3 text-kidville-muted">{c.classe_sezione ?? '—'}</td>
                                             <td className="py-2 px-3 text-right text-kidville-green">€ {Number(c.importo_previsto ?? c.importo_retta_mensile ?? 0).toFixed(2)}</td>
-                                            <td className="py-2 px-3 text-xs">{c.genitori_separati ? <span className="text-amber-600">split</span> : 'singolo'}</td>
+                                            <td className="py-2 px-3 text-xs">{c.genitori_separati ? <span className="text-kidville-warn">split</span> : 'singolo'}</td>
                                         </tr>
                                     ))}
                                 </tbody>

@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import { GraduationCap, Check, Lock, Download, Upload, FileDown, FileText, Send } from 'lucide-react';
-import * as XLSX from 'xlsx';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 
 interface Alunno { id: string; nome: string; cognome: string }
@@ -59,25 +58,32 @@ export default function ScrutinioPage() {
 
   const loadScrutinio = useCallback(async () => {
     if (!periodoId) return;
-    const r = await fetch(`/api/primaria/scrutinio?sectionId=${sectionId}&periodoId=${periodoId}&userId=${userId}`);
-    const d = await r.json();
-    if (!d.success) { setMsg(d.error || 'Errore'); return; }
-    setScrutinio(d.data.scrutinio);
-    setAlunni(d.data.alunni);
-    setMaterie(d.data.materie);
-    setMieMaterieIds(d.data.mieMaterieIds);
-    setScala(d.data.scala);
-    const g: Record<string, Record<string, string>> = {};
-    (d.data.giudizi as Giudizio[]).forEach((x) => {
-      g[x.alunno_id] = g[x.alunno_id] || {};
-      g[x.alunno_id][x.materia_id] = x.giudizio_sintetico || '';
-    });
-    setGiudizi(g);
-    const c: Record<string, { testo: string; globale: string }> = {};
-    (d.data.comportamento as Comportamento[]).forEach((x) => {
-      c[x.alunno_id] = { testo: x.giudizio_testo || '', globale: x.giudizio_globale || '' };
-    });
-    setComp(c);
+    try {
+      const r = await fetch(`/api/primaria/scrutinio?sectionId=${sectionId}&periodoId=${periodoId}&userId=${userId}`);
+      const d = await r.json();
+      if (!d.success) {
+        setMsg(d.error || 'Errore');
+      } else {
+        setScrutinio(d.data.scrutinio);
+        setAlunni(d.data.alunni);
+        setMaterie(d.data.materie);
+        setMieMaterieIds(d.data.mieMaterieIds);
+        setScala(d.data.scala);
+        const g: Record<string, Record<string, string>> = {};
+        (d.data.giudizi as Giudizio[]).forEach((x) => {
+          g[x.alunno_id] = g[x.alunno_id] || {};
+          g[x.alunno_id][x.materia_id] = x.giudizio_sintetico || '';
+        });
+        setGiudizi(g);
+        const c: Record<string, { testo: string; globale: string }> = {};
+        (d.data.comportamento as Comportamento[]).forEach((x) => {
+          c[x.alunno_id] = { testo: x.giudizio_testo || '', globale: x.giudizio_globale || '' };
+        });
+        setComp(c);
+      }
+    } finally {
+      // nessuno stato di caricamento da azzerare
+    }
   }, [periodoId, sectionId, userId]);
 
   useEffect(() => { loadScrutinio(); }, [loadScrutinio]);
@@ -89,7 +95,7 @@ export default function ScrutinioPage() {
   };
 
   const salvaGiudizi = async () => {
-    if (!scrutinio) return;
+    if (!scrutinio || !userId) return;
     setSaving(true); setMsg('');
     const payload: { alunnoId: string; materiaId: string; giudizioSintetico: string }[] = [];
     alunni.forEach((a) => {
@@ -110,7 +116,7 @@ export default function ScrutinioPage() {
   };
 
   const salvaComportamento = async () => {
-    if (!scrutinio) return;
+    if (!scrutinio || !userId) return;
     setSaving(true); setMsg('');
     const payload = alunni.map((a) => ({
       alunnoId: a.id,
@@ -128,7 +134,7 @@ export default function ScrutinioPage() {
   };
 
   const chiudiScrutinio = async () => {
-    if (!scrutinio) return;
+    if (!scrutinio || !userId) return;
     if (!confirm('Chiudere lo scrutinio? Dopo la chiusura i giudizi non saranno più modificabili. Potrai poi generare le pagelle e pubblicarle ai genitori.')) return;
     setSaving(true); setMsg('');
     const r = await fetch(`/api/primaria/scrutinio/chiudi?userId=${userId}`, {
@@ -153,7 +159,9 @@ export default function ScrutinioPage() {
   };
 
   // --- CSV: template + import massivo dei giudizi ---
-  const scaricaTemplate = () => {
+  // M9.4: xlsx caricato on-demand negli handler (fuori dal bundle della pagina).
+  const scaricaTemplate = async () => {
+    const XLSX = await import('xlsx');
     const editabili = materie.filter((m) => canEdit(m.id));
     const righe: Record<string, string>[] = [];
     alunni.forEach((a) => {
@@ -168,9 +176,10 @@ export default function ScrutinioPage() {
   };
 
   const importaCsv = async (file: File) => {
-    if (!scrutinio) return;
+    if (!scrutinio || !userId) return;
     setSaving(true); setMsg('');
     try {
+      const XLSX = await import('xlsx');
       const buf = await file.arrayBuffer();
       const wb = XLSX.read(buf);
       const ws = wb.Sheets[wb.SheetNames[0]];
@@ -202,7 +211,7 @@ export default function ScrutinioPage() {
 
   // --- Dirigente: generazione batch + pubblicazione ai genitori ---
   const generaTutte = async () => {
-    if (!scrutinio) return;
+    if (!scrutinio || !userId) return;
     setSaving(true); setMsg('');
     const r = await fetch(`/api/primaria/pagella/batch?userId=${userId}`, {
       method: 'POST',
@@ -215,7 +224,7 @@ export default function ScrutinioPage() {
   };
 
   const togglePubblica = async () => {
-    if (!scrutinio) return;
+    if (!scrutinio || !userId) return;
     const nuovo = !pubblicato;
     if (nuovo && !confirm('Pubblicare i voti? I genitori potranno vedere le pagelle e riceveranno una notifica.')) return;
     setSaving(true); setMsg('');
@@ -233,15 +242,23 @@ export default function ScrutinioPage() {
 
   return (
     <div className="space-y-4">
+      {/* Banner conformità O.M. 3/2025 (DR) */}
+      <div className="flex items-start gap-2.5 rounded-xl border border-kidville-warn/25 bg-kidville-warn-soft px-3.5 py-3">
+        <FileText size={16} className="mt-0.5 shrink-0 text-kidville-warn" />
+        <span className="font-maven text-[12px] leading-snug text-kidville-warn">
+          <strong>Documento ufficiale.</strong> Solo giudizi sintetici testuali — nessun voto numerico, nessuna media. Chiusura e pubblicazione sono riservate al Dirigente.
+        </span>
+      </div>
+
       <div className="rounded-card bg-white p-5 shadow-sm">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-          <h2 className="font-barlow text-lg font-bold text-gray-800 flex items-center gap-2">
+          <h2 className="font-barlow text-lg font-bold text-kidville-ink flex items-center gap-2">
             <GraduationCap size={18} className="text-kidville-green" /> Scrutinio
           </h2>
           <select
             value={periodoId}
             onChange={(e) => setPeriodoId(e.target.value)}
-            className="font-maven rounded-pill border border-gray-200 px-3 py-2 text-sm"
+            className="font-maven rounded-pill border border-kidville-line px-3 py-2 text-sm"
           >
             <option value="">Periodo…</option>
             {periodi.map((p) => <option key={p.id} value={p.id}>{p.nome} ({p.anno_scolastico})</option>)}
@@ -249,11 +266,11 @@ export default function ScrutinioPage() {
         </div>
 
         {periodi.length === 0 && (
-          <p className="font-maven text-sm text-amber-600">Nessun periodo di scrutinio configurato. Chiedi alla segreteria di crearne uno.</p>
+          <p className="font-maven text-sm text-kidville-warn">Nessun periodo di scrutinio configurato. Chiedi alla segreteria di crearne uno.</p>
         )}
 
         {scrutinio && (
-          <div className={`mb-3 inline-flex items-center gap-2 rounded-pill px-3 py-1 text-xs font-maven ${chiuso ? 'bg-gray-100 text-gray-600' : 'bg-green-100 text-green-700'}`}>
+          <div className={`mb-3 inline-flex items-center gap-2 rounded-pill px-3 py-1 text-xs font-maven ${chiuso ? 'bg-kidville-neutral-soft text-kidville-ink' : 'bg-kidville-yellow-soft text-kidville-yellow-dark'}`}>
             {chiuso ? <Lock size={13} /> : null}
             {chiuso ? `Chiuso il ${scrutinio.chiuso_il ? new Date(scrutinio.chiuso_il).toLocaleDateString('it-IT') : ''}` : 'Aperto — proposta giudizi'}
           </div>
@@ -266,9 +283,9 @@ export default function ScrutinioPage() {
             <table className="w-full border-collapse text-sm">
               <thead>
                 <tr>
-                  <th className="sticky left-0 bg-white px-2 py-2 text-left font-maven text-xs text-gray-500">Alunno</th>
+                  <th className="sticky left-0 bg-white px-2 py-2 text-left font-maven text-xs text-kidville-muted">Alunno</th>
                   {materie.map((m) => (
-                    <th key={m.id} className="px-2 py-2 text-left font-maven text-xs text-gray-500 whitespace-nowrap">
+                    <th key={m.id} className="px-2 py-2 text-left font-maven text-xs text-kidville-muted whitespace-nowrap">
                       {m.nome}{m.e_civica ? ' *' : ''}
                     </th>
                   ))}
@@ -276,15 +293,15 @@ export default function ScrutinioPage() {
               </thead>
               <tbody>
                 {alunni.map((a) => (
-                  <tr key={a.id} className="border-t border-gray-100">
-                    <td className="sticky left-0 bg-white px-2 py-1.5 font-maven text-gray-800 whitespace-nowrap">{a.cognome} {a.nome}</td>
+                  <tr key={a.id} className="border-t border-kidville-line">
+                    <td className="sticky left-0 bg-white px-2 py-1.5 font-maven text-kidville-ink whitespace-nowrap">{a.cognome} {a.nome}</td>
                     {materie.map((m) => (
                       <td key={m.id} className="px-1 py-1.5">
                         <select
                           value={giudizi[a.id]?.[m.id] || ''}
                           disabled={!canEdit(m.id)}
                           onChange={(e) => setGiudizio(a.id, m.id, e.target.value)}
-                          className="font-maven rounded-md border border-gray-200 px-1.5 py-1 text-xs disabled:bg-gray-50 disabled:text-gray-400"
+                          className="font-maven rounded-lg border border-kidville-line px-1.5 py-1 text-xs disabled:bg-kidville-cream disabled:text-kidville-muted"
                         >
                           <option value="">—</option>
                           {scala.map((g) => <option key={g} value={g}>{g}</option>)}
@@ -322,11 +339,11 @@ export default function ScrutinioPage() {
 
       {scrutinio && alunni.length > 0 && (
         <div className="rounded-card bg-white p-5 shadow-sm">
-          <h3 className="font-barlow text-base font-bold text-gray-800 mb-3">Comportamento e giudizio globale</h3>
+          <h3 className="font-barlow text-base font-bold text-kidville-ink mb-3">Comportamento e giudizio globale</h3>
           <div className="space-y-3">
             {alunni.map((a) => (
               <div key={a.id} className="rounded-card bg-kidville-cream/30 p-3">
-                <p className="font-maven text-sm font-semibold text-gray-800 mb-1.5">{a.cognome} {a.nome}</p>
+                <p className="font-maven text-sm font-semibold text-kidville-ink mb-1.5">{a.cognome} {a.nome}</p>
                 <div className="grid gap-2 md:grid-cols-2">
                   <textarea
                     value={comp[a.id]?.testo || ''}
@@ -334,7 +351,7 @@ export default function ScrutinioPage() {
                     onChange={(e) => setComp((p) => ({ ...p, [a.id]: { testo: e.target.value, globale: p[a.id]?.globale || '' } }))}
                     rows={2}
                     placeholder="Giudizio del comportamento"
-                    className="font-maven w-full rounded-card border border-gray-200 px-3 py-2 text-sm disabled:bg-gray-50"
+                    className="font-maven w-full rounded-card border border-kidville-line px-3 py-2 text-sm disabled:bg-kidville-cream"
                   />
                   <textarea
                     value={comp[a.id]?.globale || ''}
@@ -342,7 +359,7 @@ export default function ScrutinioPage() {
                     onChange={(e) => setComp((p) => ({ ...p, [a.id]: { testo: p[a.id]?.testo || '', globale: e.target.value } }))}
                     rows={2}
                     placeholder="Giudizio globale (facoltativo)"
-                    className="font-maven w-full rounded-card border border-gray-200 px-3 py-2 text-sm disabled:bg-gray-50"
+                    className="font-maven w-full rounded-card border border-kidville-line px-3 py-2 text-sm disabled:bg-kidville-cream"
                   />
                 </div>
                 {chiuso && (
@@ -360,7 +377,7 @@ export default function ScrutinioPage() {
                 <Check size={15} /> Salva comportamento
               </button>
               {isDirigente && (
-                <button onClick={chiudiScrutinio} disabled={saving} className="font-maven inline-flex items-center gap-1.5 rounded-pill bg-amber-500 px-5 py-2 text-sm text-white disabled:opacity-50">
+                <button onClick={chiudiScrutinio} disabled={saving} className="font-maven inline-flex items-center gap-1.5 rounded-pill bg-kidville-warn px-5 py-2 text-sm text-white disabled:opacity-50">
                   <Lock size={15} /> Chiudi scrutinio
                 </button>
               )}
@@ -368,9 +385,9 @@ export default function ScrutinioPage() {
           )}
 
           {chiuso && isDirigente && (
-            <div className="mt-4 border-t border-gray-100 pt-4">
+            <div className="mt-4 border-t border-kidville-line pt-4">
               <div className="mb-2 flex items-center gap-2">
-                <span className={`inline-flex items-center gap-1.5 rounded-pill px-3 py-1 text-xs font-maven ${pubblicato ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
+                <span className={`inline-flex items-center gap-1.5 rounded-pill px-3 py-1 text-xs font-maven ${pubblicato ? 'bg-kidville-success-soft text-kidville-success' : 'bg-kidville-neutral-soft text-kidville-ink'}`}>
                   {pubblicato ? 'Pubblicato ai genitori' : 'Non pubblicato (visibile solo allo staff)'}
                 </span>
               </div>
@@ -378,7 +395,7 @@ export default function ScrutinioPage() {
                 <button onClick={generaTutte} disabled={saving} className="font-maven inline-flex items-center gap-1.5 rounded-pill bg-kidville-green px-5 py-2 text-sm text-kidville-yellow disabled:opacity-50">
                   <FileText size={15} /> Genera pagelle (tutte)
                 </button>
-                <button onClick={togglePubblica} disabled={saving} className={`font-maven inline-flex items-center gap-1.5 rounded-pill px-5 py-2 text-sm text-white disabled:opacity-50 ${pubblicato ? 'bg-gray-500' : 'bg-blue-600'}`}>
+                <button onClick={togglePubblica} disabled={saving} className={`font-maven inline-flex items-center gap-1.5 rounded-pill px-5 py-2 text-sm text-white disabled:opacity-50 ${pubblicato ? 'bg-kidville-neutral' : 'bg-kidville-green'}`}>
                   <Send size={15} /> {pubblicato ? 'Revoca pubblicazione' : 'Pubblica ai genitori'}
                 </button>
               </div>

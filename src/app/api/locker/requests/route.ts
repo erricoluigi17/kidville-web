@@ -1,5 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server-client';
+import { z } from 'zod';
+import { createAdminClient } from '@/lib/supabase/server-client';
+import { requireDocente } from '@/lib/auth/require-staff';
+import { scuoleDiUtente } from '@/lib/auth/scope';
+import { parseBody, parseQuery } from '@/lib/validation/http';
+import { zUuid } from '@/lib/validation/common';
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+/** '' nei query param equivale ad assente (i check truthy pre-esistenti restano invariati). */
+const vuotoComeAssente = (v: unknown) => (v === '' ? undefined : v);
+
+const getQuerySchema = z.object({
+    alunno_id: z.preprocess(vuotoComeAssente, zUuid.optional()),
+    classe_sezione: z.string().optional(),
+    stato: z.string().optional(), // filtro libero, come prima (nessun enum imposto sul GET)
+});
+
+// Stessi valori ammessi del check manuale pre-esistente.
+const patchBodySchema = z.object({
+    id: zUuid,
+    stato: z.enum(['acknowledged', 'fulfilled']),
+});
 
 // ============================================================
 // GET /api/locker/requests
@@ -10,12 +31,11 @@ import { createClient } from '@/lib/supabase/server-client';
 // ============================================================
 export async function GET(request: NextRequest) {
     try {
-        const { searchParams } = new URL(request.url);
-        const alunnoId = searchParams.get('alunno_id');
-        const classeSezione = searchParams.get('classe_sezione');
-        const stato = searchParams.get('stato');
+        const q = parseQuery(request, getQuerySchema);
+        if ('response' in q) return q.response;
+        const { alunno_id: alunnoId, classe_sezione: classeSezione, stato } = q.data;
 
-        const supabase = await createClient();
+        const supabase = await createAdminClient();
 
         if (alunnoId) {
             let query = supabase
@@ -35,12 +55,20 @@ export async function GET(request: NextRequest) {
             return NextResponse.json(data);
 
         } else if (classeSezione) {
-            // Ottieni gli alunni della sezione
+            // Ramo docente/staff: gate ruolo + isolamento per plesso.
+            const auth = await requireDocente(request);
+            if (auth.response) return auth.response;
+            const admin = await createAdminClient();
+            const plessi = await scuoleDiUtente(admin, auth.user);
+            if (plessi.length === 0) return NextResponse.json([]);
+
+            // Ottieni gli alunni della sezione (solo dei propri plessi)
             const { data: alunni } = await supabase
                 .from('alunni')
                 .select('id')
                 .eq('classe_sezione', classeSezione)
-                .eq('stato', 'iscritto');
+                .eq('stato', 'iscritto')
+                .in('scuola_id', plessi);
 
             if (!alunni || alunni.length === 0) return NextResponse.json([]);
             const ids = alunni.map(a => a.id);
@@ -78,25 +106,11 @@ export async function GET(request: NextRequest) {
 // ============================================================
 export async function PATCH(request: NextRequest) {
     try {
-        const body = await request.json();
-        const { id, stato } = body;
+        const b = await parseBody(request, patchBodySchema);
+        if ('response' in b) return b.response;
+        const { id, stato } = b.data;
 
-        if (!id || !stato) {
-            return NextResponse.json(
-                { error: 'Campi obbligatori: id, stato' },
-                { status: 400 }
-            );
-        }
-
-        const validStates = ['acknowledged', 'fulfilled'];
-        if (!validStates.includes(stato)) {
-            return NextResponse.json(
-                { error: `Stato non valido. Ammessi: ${validStates.join(', ')}` },
-                { status: 400 }
-            );
-        }
-
-        const supabase = await createClient();
+        const supabase = await createAdminClient();
 
         const updates: Record<string, unknown> = { stato };
         if (stato === 'acknowledged') {

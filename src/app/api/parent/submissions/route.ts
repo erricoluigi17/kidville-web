@@ -1,25 +1,50 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
+import { requireUser } from '@/lib/auth/require-staff';
 import { persistSignedSubmission } from '@/lib/forms/persist-submission';
+import { parseBody, parseQuery } from '@/lib/validation/http';
+import { zUuid } from '@/lib/validation/common';
 
-const DEFAULT_PARENT_ID = '33333333-3333-3333-3333-333333333333';
+// ─── Schemi di validazione input (M3/M4) ─────────────────────────────────────
+// L'identità viene dal gate (requireUser): il `parent_id` legacy in query/body
+// è ignorato, nessun fallback demo (M4).
+
+// student_id opzionale: stringa vuota trattata come assente
+// (persistSignedSubmission fa già `student_id || null`).
+const zStudentIdOpzionale = z.preprocess(
+  (v) => (v === '' ? undefined : v),
+  zUuid.nullish()
+);
+
+const postBodySchema = z.object({
+  form_id: zUuid,
+  student_id: zStudentIdOpzionale,
+  // answers è un pass-through jsonb: oggi è accettato qualsiasi valore truthy.
+  answers: z.unknown().refine((v) => !!v, 'form_id e risposte obbligatori'),
+  // is_signed è già coercito a boolean (`!!is_signed`) in persistSignedSubmission.
+  is_signed: z.coerce.boolean().optional(),
+  signature_log: z.unknown().optional(),
+});
+
+const getQuerySchema = z.object({});
 
 // POST: Sottoscrive e firma un modulo
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const { form_id, student_id, answers, is_signed, signature_log, parent_id } = body;
+    const auth = await requireUser(request);
+    if (auth.response) return auth.response;
 
-    if (!form_id || !answers) {
-      return NextResponse.json({ error: 'form_id e risposte obbligatori' }, { status: 400 });
-    }
+    const b = await parseBody(request, postBodySchema);
+    if ('response' in b) return b.response;
+    const { form_id, student_id, answers, is_signed, signature_log } = b.data;
 
     const supabase = await createAdminClient();
     const result = await persistSignedSubmission(supabase, {
       form_id,
-      parent_id: parent_id || DEFAULT_PARENT_ID,
+      parent_id: auth.user.id,
       student_id,
-      answers,
+      answers: answers as Record<string, unknown>,
       is_signed,
       signature_log,
     });
@@ -29,17 +54,22 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.json(result.submission, { status: 201 });
-  } catch (err: any) {
+  } catch (err) {
     console.error('Errore POST /api/parent/submissions:', err);
-    return NextResponse.json({ error: err.message || 'Errore interno' }, { status: 500 });
+    const message = err instanceof Error && err.message ? err.message : 'Errore interno';
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 
 // GET: Recupera tutte le sottomissioni per l'archivio genitore
 export async function GET(request: NextRequest) {
   try {
-    const { searchParams } = new URL(request.url);
-    const parentId = searchParams.get('parent_id') || DEFAULT_PARENT_ID;
+    const auth = await requireUser(request);
+    if (auth.response) return auth.response;
+    const parentId = auth.user.id;
+
+    const q = parseQuery(request, getQuerySchema);
+    if ('response' in q) return q.response;
 
     const supabase = await createAdminClient();
 
@@ -64,7 +94,8 @@ export async function GET(request: NextRequest) {
     }
 
     return NextResponse.json(data);
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message || 'Errore interno' }, { status: 500 });
+  } catch (err) {
+    const message = err instanceof Error && err.message ? err.message : 'Errore interno';
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

@@ -56,7 +56,7 @@ const MIGRATION_STEPS = [
 
 // ─── Esecuzione via Management API ───────────────────────────────────────────
 
-async function runSQL(sql, desc) {
+async function runSQL(sql) {
     const res = await fetch(
         `https://api.supabase.com/v1/projects/${PROJECT_REF}/database/query`,
         {
@@ -77,7 +77,7 @@ async function runSQL(sql, desc) {
 // ─── Fallback: crea la funzione exec_sql_kidville e la usa ───────────────────
 
 async function ensureExecSqlFunction() {
-    const { data, error } = await supabase.rpc('exec_sql_kidville', { sql_text: 'SELECT 1' }).maybeSingle();
+    const { error } = await supabase.rpc('exec_sql_kidville', { sql_text: 'SELECT 1' }).maybeSingle();
     if (!error) return true; // già esiste
 
     // Prova a crearla via Management API
@@ -92,7 +92,7 @@ async function ensureExecSqlFunction() {
         $$;
         GRANT EXECUTE ON FUNCTION public.exec_sql_kidville(TEXT) TO service_role;
     `;
-    const r = await runSQL(createFn, 'Crea exec_sql_kidville');
+    const r = await runSQL(createFn);
     return r.status < 300;
 }
 
@@ -105,7 +105,7 @@ async function main() {
     console.log('📡 Tentativo tramite Supabase Management API...');
     let mgmtWorks = false;
 
-    const testRes = await runSQL('SELECT 1 AS ok', 'Test Management API');
+    const testRes = await runSQL('SELECT 1 AS ok');
     if (testRes.status === 200) {
         mgmtWorks = true;
         console.log('✅ Management API disponibile\n');
@@ -117,7 +117,7 @@ async function main() {
     if (mgmtWorks) {
         for (const step of MIGRATION_STEPS) {
             process.stdout.write(`  ⏳ ${step.desc}...`);
-            const r = await runSQL(step.sql, step.desc);
+            const r = await runSQL(step.sql);
             if (r.status < 300 || JSON.stringify(r.body).includes('already exists')) {
                 console.log(' ✅');
             } else {
@@ -152,8 +152,7 @@ async function main() {
             `SELECT column_name, data_type, column_default, is_nullable
              FROM information_schema.columns
              WHERE table_schema='public' AND table_name='armadietto'
-             ORDER BY ordinal_position;`,
-            'Schema check'
+             ORDER BY ordinal_position;`
         );
         if (Array.isArray(r.body)) {
             r.body.forEach(col => {
@@ -163,7 +162,7 @@ async function main() {
             console.log('  Risposta:', JSON.stringify(r.body));
         }
     } else {
-        const { data, error } = await supabase
+        const { error } = await supabase
             .from('armadietto')
             .select('*')
             .limit(0);

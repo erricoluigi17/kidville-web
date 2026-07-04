@@ -1,50 +1,70 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createClient, createAdminClient } from '@/lib/supabase/server-client';
+import { requireDocente } from '@/lib/auth/require-staff';
+import { parseBody, parseQuery } from '@/lib/validation/http';
+import { zUuid } from '@/lib/validation/common';
+import { alunniSenzaConsenso } from '@/lib/gallery/privacy';
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const getQuerySchema = z.object({
+    studentId: zUuid.optional(),
+    // Fallback storico senza vincolo di formato: se il legame non esiste → 403.
+    parentId: z.string().optional(),
+    classe: z.string().optional(),
+    // Storicamente senza vincolo di formato (concatenata in un timestamp ISO).
+    date: z.string().optional(),
+    // Clamp storico preservato nell'handler (default 30, max 100, garbage → 30):
+    // NON zPaginazione, che cambierebbe default e limiti.
+    limit: z.string().optional(),
+    offset: z.string().optional(),
+});
+
+const postBodySchema = z.object({
+    // `uploaded_by` dal client è volutamente ignorato (si usa l'utente del gate).
+    file_url: z.string().min(1, 'file_url è obbligatorio'),
+    file_type: z.string().nullish(),
+    caption: z.string().nullish(),
+    // Lasco: oggi nessun vincolo uuid sugli id taggati.
+    tag_students: z.array(z.string()).nullish(),
+    is_broadcast: z.boolean().nullish(),
+    target_classes: z.array(z.string()).nullish(),
+});
+
+const deleteQuerySchema = z.object({
+    id: zUuid,
+    // Fallback quando non c'è sessione: la sessione, se presente, lo sovrascrive,
+    // quindi resta lasco (un valore non-uuid oggi non blocca la richiesta).
+    userId: z.string().optional(),
+});
+
+const patchBodySchema = z.object({
+    id: zUuid,
+    userId: zUuid,
+    tag_students: z.array(z.string()).nullish(),
+    is_broadcast: z.boolean().nullish(),
+    target_classes: z.array(z.string()).nullish(),
+    caption: z.string().nullish(),
+});
 
 // GET /api/gallery?studentId=xxx&classe=xxx&date=YYYY-MM-DD&limit=30&offset=0
-// Lista media con filtri (studentId per genitore, classe per insegnante)
+// Lista media con filtri (studentId per genitore, classe per insegnante).
+// Filtri e paginazione applicati in SQL (.or + .range): niente scarico dell'intera
+// tabella con filtro/slice in memoria. Contratto risposta invariato: { media, total }.
 export async function GET(request: Request) {
     try {
-        const { searchParams } = new URL(request.url);
-        const studentId = searchParams.get('studentId');
-        const classe = searchParams.get('classe');
-        const date = searchParams.get('date');
-        const limit = parseInt(searchParams.get('limit') ?? '30');
-        const offset = parseInt(searchParams.get('offset') ?? '0');
+        const q = parseQuery(request, getQuerySchema);
+        if ('response' in q) return q.response;
+        const { studentId, classe, date } = q.data;
+        const limit = Math.min(Math.max(parseInt(q.data.limit ?? '30') || 30, 1), 100);
+        const offset = Math.max(parseInt(q.data.offset ?? '0') || 0, 0);
 
         const supabase = await createAdminClient();
 
-        let query = supabase
-            .from('galleria_media_v2')
-            .select('*', { count: 'exact' })
-            .order('created_at', { ascending: false });
-
-        if (date) {
-            query = query
-                .gte('created_at', `${date}T00:00:00.000Z`)
-                .lte('created_at', `${date}T23:59:59.999Z`);
-        }
-
-        const { data: allMedia, error } = await query;
-
-        if (error) {
-            console.error('Errore GET gallery:', error);
-            return NextResponse.json({ error: error.message }, { status: 500 });
-        }
-
-        let filtered = allMedia ?? [];
-
-        // Filtro per genitore: mostra solo media dove il figlio è taggato o broadcast
+        // Validazione genitore-studente PRIMA di leggere i media
         if (studentId) {
-            filtered = filtered.filter(m =>
-                m.is_broadcast ||
-                (m.tag_students && m.tag_students.includes(studentId))
-            );
-        }
-
-        // Validazione genitore-studente: verifica che il chiamante sia effettivamente il genitore
-        if (studentId) {
-            const parentId = searchParams.get('parentId');
+            const parentId = q.data.parentId;
             if (parentId) {
                 const { data: link } = await supabase
                     .from('legame_genitori_alunni')
@@ -62,42 +82,67 @@ export async function GET(request: Request) {
             }
         }
 
-        // Filtro per classe/sezione: mostra media della classe (broadcast o taggati con studenti della classe)
+        let query = supabase
+            .from('galleria_media_v2')
+            .select('*', { count: 'exact' })
+            .order('created_at', { ascending: false });
+
+        if (date) {
+            query = query
+                .gte('created_at', `${date}T00:00:00.000Z`)
+                .lte('created_at', `${date}T23:59:59.999Z`);
+        }
+
+        // Genitore: media broadcast (qualunque, semantica storica) o con il figlio taggato
+        if (studentId) {
+            query = query.or(`is_broadcast.eq.true,tag_students.cs.{${studentId}}`);
+        }
+
+        // Insegnante: broadcast destinati alla classe o media con alunni della classe taggati
         if (classe) {
             const { data: students } = await supabase
                 .from('alunni')
                 .select('id')
                 .eq('classe_sezione', classe);
-            const studentIds = students?.map(s => s.id) ?? [];
-
-            filtered = filtered.filter(m =>
-                (m.is_broadcast && m.target_classes && m.target_classes.includes(classe)) ||
-                (m.tag_students && m.tag_students.some((sId: string) => studentIds.includes(sId)))
+            const studentIds = (students?.map(s => s.id) ?? []).filter(id => UUID_RE.test(id));
+            const classeSafe = classe.replace(/[(){}",\\]/g, '');
+            const broadcastCond = `and(is_broadcast.eq.true,target_classes.cs.{"${classeSafe}"})`;
+            query = query.or(
+                studentIds.length > 0
+                    ? `${broadcastCond},tag_students.ov.{${studentIds.join(',')}}`
+                    : broadcastCond
             );
         }
 
-        // Paginazione in memoria post-filtro
-        const paginated = filtered.slice(offset, offset + limit);
+        const { data: pageMedia, count, error } = await query.range(offset, offset + limit - 1);
 
-        // Arricchisci con info uploader (usa utenti)
-        const enriched = await Promise.all(
-            paginated.map(async (media) => {
-                const { data: uploader } = await supabase
-                    .from('utenti')
-                    .select('nome, cognome, first_name, last_name')
-                    .eq('id', media.uploaded_by)
-                    .single();
+        if (error) {
+            console.error('Errore GET gallery:', error);
+            return NextResponse.json({ error: error.message }, { status: 500 });
+        }
 
-                return {
-                    ...media,
-                    uploader_name: uploader
-                        ? `${uploader.first_name || uploader.nome} ${uploader.last_name || uploader.cognome}`
-                        : 'Sconosciuto',
-                };
-            })
-        );
+        // Arricchisci con info uploader in blocco (niente N+1 sulla pagina)
+        const page = pageMedia ?? [];
+        const uploaderIds = [...new Set(page.map(m => m.uploaded_by).filter(Boolean))];
+        const { data: uploaders } = uploaderIds.length > 0
+            ? await supabase
+                .from('utenti')
+                .select('id, nome, cognome, first_name, last_name')
+                .in('id', uploaderIds)
+            : { data: [] };
+        const uploaderById = new Map((uploaders ?? []).map(u => [u.id, u]));
 
-        return NextResponse.json({ media: enriched, total: filtered.length });
+        const enriched = page.map((media) => {
+            const uploader = uploaderById.get(media.uploaded_by);
+            return {
+                ...media,
+                uploader_name: uploader
+                    ? `${uploader.first_name || uploader.nome} ${uploader.last_name || uploader.cognome}`
+                    : 'Sconosciuto',
+            };
+        });
+
+        return NextResponse.json({ media: enriched, total: count ?? 0 });
     } catch (error) {
         console.error('Errore API GET gallery:', error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
@@ -108,25 +153,38 @@ export async function GET(request: Request) {
 // Body: { uploaded_by, file_url, file_type?, caption?, tag_students?, is_broadcast?, target_classes? }
 export async function POST(request: Request) {
     try {
-        const body = await request.json();
+        const auth = await requireDocente(request);
+        if (auth.response) return auth.response;
+
+        const b = await parseBody(request, postBodySchema);
+        if ('response' in b) return b.response;
         const {
-            uploaded_by,
             file_url,
             file_type,
             caption,
             tag_students,
             is_broadcast,
             target_classes,
-        } = body;
+        } = b.data;
 
-        if (!uploaded_by || !file_url) {
-            return NextResponse.json(
-                { error: 'uploaded_by e file_url sono obbligatori' },
-                { status: 400 }
-            );
-        }
+        // L'uploader è l'utente del gate (no spoofing del campo uploaded_by).
+        const uploaded_by = auth.user.id;
 
         const supabase = await createAdminClient();
+
+        // Privacy Lock (DL-041): inibisce il tagging di alunni senza consenso privacy
+        // (liberatoria foto), tranne nelle foto broadcast (istituzionali).
+        const senza = await alunniSenzaConsenso(supabase, tag_students, is_broadcast ?? false);
+        if (senza.length > 0) {
+            return NextResponse.json(
+                {
+                    error: 'Consenso privacy mancante: questi bambini non possono essere taggati nelle foto.',
+                    nomi: senza.map((s) => s.nome),
+                    ids: senza.map((s) => s.id),
+                },
+                { status: 422 }
+            );
+        }
 
         const { data, error } = await supabase
             .from('galleria_media_v2')
@@ -158,16 +216,13 @@ export async function POST(request: Request) {
 // Cancella un media con controllo granularizzato dei ruoli
 export async function DELETE(request: Request) {
     try {
-        const { searchParams } = new URL(request.url);
-        const id = searchParams.get('id');
-        const paramUserId = searchParams.get('userId');
-
-        if (!id) {
-            return NextResponse.json({ error: 'id è obbligatorio' }, { status: 400 });
-        }
+        const q = parseQuery(request, deleteQuerySchema);
+        if ('response' in q) return q.response;
+        const id = q.data.id;
+        const paramUserId = q.data.userId;
 
         // Recupera l'utente dalla sessione se disponibile
-        let userId = paramUserId;
+        let userId: string | undefined = paramUserId;
         try {
             const sessionClient = await createClient();
             const { data: { user } } = await sessionClient.auth.getUser();
@@ -305,16 +360,9 @@ export async function DELETE(request: Request) {
 // Body: { id, userId, tag_students, is_broadcast, target_classes, caption }
 export async function PATCH(request: Request) {
     try {
-        const body = await request.json();
-        const { id, userId, tag_students, is_broadcast, target_classes, caption } = body;
-
-        if (!id) {
-            return NextResponse.json({ error: 'id è obbligatorio' }, { status: 400 });
-        }
-
-        if (!userId) {
-            return NextResponse.json({ error: 'userId è obbligatorio' }, { status: 400 });
-        }
+        const b = await parseBody(request, patchBodySchema);
+        if ('response' in b) return b.response;
+        const { id, userId, tag_students, is_broadcast, target_classes, caption } = b.data;
 
         const supabase = await createAdminClient();
 
@@ -413,7 +461,24 @@ export async function PATCH(request: Request) {
         }
 
         // 3. Esegui l'aggiornamento
-        const updateData: Record<string, any> = {};
+        // Privacy Lock (DL-041): valida i tag EFFETTIVI quando si modificano tag/broadcast.
+        if (tag_students !== undefined || is_broadcast !== undefined) {
+            const effBroadcast = is_broadcast !== undefined ? is_broadcast : media.is_broadcast;
+            const effTags = tag_students !== undefined ? tag_students : media.tag_students;
+            const senza = await alunniSenzaConsenso(supabase, effTags, effBroadcast ?? false);
+            if (senza.length > 0) {
+                return NextResponse.json(
+                    {
+                        error: 'Consenso privacy mancante: questi bambini non possono essere taggati nelle foto.',
+                        nomi: senza.map((s) => s.nome),
+                        ids: senza.map((s) => s.id),
+                    },
+                    { status: 422 }
+                );
+            }
+        }
+
+        const updateData: Record<string, unknown> = {};
         if (tag_students !== undefined) updateData.tag_students = tag_students;
         if (is_broadcast !== undefined) updateData.is_broadcast = is_broadcast;
         if (target_classes !== undefined) updateData.target_classes = target_classes;

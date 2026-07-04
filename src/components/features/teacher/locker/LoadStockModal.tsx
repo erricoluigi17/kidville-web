@@ -45,10 +45,14 @@ export function LoadStockModal({
     const [materiali,         setMateriali]         = useState<MaterialeConfig[]>(MATERIALI_FALLBACK);
 
     // Aggiorna i valori preselezionati quando cambiano le prop
-    useEffect(() => {
+    // (adeguamento dello stato durante il render, con guardia sul valore precedente:
+    // stesso effetto della vecchia useEffect ma senza setState-in-effect).
+    const [prevPreselected, setPrevPreselected] = useState({ preselectedStudent, preselectedMateriale });
+    if (prevPreselected.preselectedStudent !== preselectedStudent || prevPreselected.preselectedMateriale !== preselectedMateriale) {
+        setPrevPreselected({ preselectedStudent, preselectedMateriale });
         if (preselectedStudent)   setSelectedStudent(preselectedStudent);
         if (preselectedMateriale) setSelectedMateriale(preselectedMateriale);
-    }, [preselectedStudent, preselectedMateriale]);
+    }
 
     // Carica materiali configurati dall'API
     useEffect(() => {
@@ -60,7 +64,7 @@ export function LoadStockModal({
                 if (Array.isArray(data) && data.length > 0) {
                     setMateriali(data);
                     // Preseleziona il primo se non c'è una preselection
-                    if (!selectedMateriale) setSelectedMateriale(data[0].nome);
+                    setSelectedMateriale(prev => prev || data[0].nome);
                 }
             })
             .catch(() => {/* usa fallback */});
@@ -79,8 +83,8 @@ export function LoadStockModal({
             await onConfirm({ alunno_id: selectedStudent, materiale: selectedMateriale, quantita: quantity });
             onClose();
             setQuantity(10);
-        } catch (e: any) {
-            setError(e.message ?? 'Errore durante il salvataggio');
+        } catch (e) {
+            setError((e as { message?: string }).message ?? 'Errore durante il salvataggio');
         } finally {
             setIsSaving(false);
         }
@@ -99,10 +103,10 @@ export function LoadStockModal({
                     <div className="flex items-center gap-2">
                         <Link href="/teacher/settings/locker" onClick={onClose}
                             title="Configura materiali"
-                            className="p-1.5 text-gray-300 hover:text-gray-500 transition-colors">
+                            className="p-1.5 text-kidville-muted hover:text-kidville-muted transition-colors">
                             <Settings size={16} />
                         </Link>
-                        <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+                        <button onClick={onClose} className="text-kidville-muted hover:text-kidville-ink">
                             <X size={20} />
                         </button>
                     </div>
@@ -114,7 +118,7 @@ export function LoadStockModal({
                     <select
                         value={selectedStudent}
                         onChange={e => setSelectedStudent(e.target.value)}
-                        className="w-full border-2 border-gray-100 rounded-xl p-2.5 text-sm focus:border-kidville-green outline-none"
+                        className="w-full border-2 border-kidville-line rounded-xl p-2.5 text-sm focus:border-kidville-green outline-none"
                     >
                         <option value="">Seleziona...</option>
                         {students.map(s => (
@@ -134,7 +138,7 @@ export function LoadStockModal({
                                 className={`p-3 rounded-xl border-2 text-sm font-bold transition-all
                                     ${selectedMateriale === m.nome
                                         ? 'border-kidville-green bg-kidville-green/5 text-kidville-green'
-                                        : 'border-gray-100 text-gray-600 hover:border-gray-200'}`}
+                                        : 'border-kidville-line text-kidville-ink hover:border-kidville-line'}`}
                             >
                                 <span className="text-lg mr-1">{m.icona}</span> {m.nome}
                             </button>
@@ -148,14 +152,14 @@ export function LoadStockModal({
                     <div className="flex items-center justify-center gap-4">
                         <button
                             onClick={() => setQuantity(q => Math.max(1, q - 5))}
-                            className="w-10 h-10 rounded-xl border-2 border-gray-100 flex items-center justify-center hover:border-gray-200 active:scale-95 transition-all"
+                            className="w-10 h-10 rounded-xl border-2 border-kidville-line flex items-center justify-center hover:border-kidville-line active:scale-95 transition-all"
                         >
                             <Minus size={16} />
                         </button>
                         <span className="text-4xl font-black text-kidville-green w-16 text-center">{quantity}</span>
                         <button
                             onClick={() => setQuantity(q => q + 5)}
-                            className="w-10 h-10 rounded-xl border-2 border-gray-100 flex items-center justify-center hover:border-gray-200 active:scale-95 transition-all"
+                            className="w-10 h-10 rounded-xl border-2 border-kidville-line flex items-center justify-center hover:border-kidville-line active:scale-95 transition-all"
                         >
                             <Plus size={16} />
                         </button>
@@ -164,7 +168,7 @@ export function LoadStockModal({
 
                 {/* Errore */}
                 {error && (
-                    <p className="text-red-500 text-xs text-center mb-3 bg-red-50 rounded-xl py-2">
+                    <p className="text-kidville-error text-xs text-center mb-3 bg-kidville-error-soft rounded-xl py-2">
                         ❌ {error}
                     </p>
                 )}

@@ -21,10 +21,17 @@ export function ClassificazioneDocenti({ scuolaId, userId }: { scuolaId: string;
   const [saving, setSaving] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const r = await fetch(`/api/admin/primaria/docente-gradi?scuolaId=${scuolaId}`);
-    const d = await r.json();
-    setDocenti(d.success ? d.data : []);
-  }, [scuolaId]);
+    let next: Docente[] | null = null;
+    try {
+      const r = await fetch(`/api/admin/primaria/docente-gradi?scuolaId=${scuolaId}`, {
+        headers: { 'x-user-id': userId },
+      });
+      const d = await r.json();
+      next = d.success ? d.data : [];
+    } finally {
+      if (next) setDocenti(next);
+    }
+  }, [scuolaId, userId]);
 
   useEffect(() => {
     load();
@@ -48,25 +55,25 @@ export function ClassificazioneDocenti({ scuolaId, userId }: { scuolaId: string;
 
   return (
     <div className="space-y-2">
-      <p className="font-maven text-sm text-gray-500">
+      <p className="font-maven text-sm text-kidville-muted">
         Imposta a quali gradi è abilitato ciascun docente. Le funzioni visibili (registro/valutazioni vs diario)
         dipendono da questa classificazione e dalla matrice funzioni.
       </p>
       <table className="w-full text-sm font-maven">
         <thead>
-          <tr className="text-left text-gray-400">
+          <tr className="text-left text-kidville-muted">
             <th className="py-2">Docente</th>
             {GRADI.map((g) => (
               <th key={g.key} className="py-2 text-center">{g.label}</th>
             ))}
           </tr>
         </thead>
-        <tbody className="divide-y divide-gray-100">
+        <tbody className="divide-y divide-kidville-line">
           {docenti.map((doc) => (
             <tr key={doc.id} className={saving === doc.id ? 'opacity-60' : ''}>
               <td className="py-2.5">
-                <span className="text-gray-800">{doc.nome} {doc.cognome}</span>
-                {doc.email && <span className="ml-2 text-xs text-gray-400">{doc.email}</span>}
+                <span className="text-kidville-ink">{doc.nome} {doc.cognome}</span>
+                {doc.email && <span className="ml-2 text-xs text-kidville-muted">{doc.email}</span>}
               </td>
               {GRADI.map((g) => (
                 <td key={g.key} className="py-2.5 text-center">
@@ -80,7 +87,7 @@ export function ClassificazioneDocenti({ scuolaId, userId }: { scuolaId: string;
             </tr>
           ))}
           {docenti.length === 0 && (
-            <tr><td colSpan={4} className="py-3 text-gray-400">Nessun docente trovato.</td></tr>
+            <tr><td colSpan={4} className="py-3 text-kidville-muted">Nessun docente trovato.</td></tr>
           )}
         </tbody>
       </table>

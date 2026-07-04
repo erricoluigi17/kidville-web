@@ -1,5 +1,36 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
+import { requireDocente } from '@/lib/auth/require-staff';
+import { scuoleDiUtente } from '@/lib/auth/scope';
+import { logScrittura } from '@/lib/audit/scrittura';
+import { parseBody, parseQuery } from '@/lib/validation/http';
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+// Gli id (userId, studentId, author_id, assignees) restano stringhe libere:
+// nel payload JSON di task_interni circolano anche id non-UUID (dati legacy),
+// quindi zUuid sarebbe più severo del comportamento attuale.
+const getQuerySchema = z.object({
+    userId: z.string().optional(),
+    status: z.string().optional(), // lista separata da virgole, split in handler
+    filter: z.string().default('all'),
+    studentId: z.string().optional(),
+});
+
+const postBodySchema = z.object({
+    titolo: z.string().min(1),
+    contenuto: z.string().nullable().optional(),
+    priority: z.string().nullable().optional(),
+    category: z.string().nullable().optional(),
+    deadline: z.string().nullable().optional(),
+    assigned_to: z.union([z.string(), z.array(z.string())]).nullable().optional(),
+    target_class: z.string().nullable().optional(),
+    target_role: z.string().nullable().optional(),
+    target_scope: z.string().nullable().optional(),
+    student_id: z.string().nullable().optional(),
+    author_id: z.string().min(1),
+    compiti: z.array(z.unknown()).nullable().optional(),
+});
 
 // ─── Schema note ─────────────────────────────────────────────────────────────
 // task_interni actual columns: id, author_id(*FK adults), assigned_to(*FK adults),
@@ -12,10 +43,9 @@ import { createAdminClient } from '@/lib/supabase/server-client';
 //     deadline, compiti[], target_scope, target_role, student_id,
 //     resolved_by, resolution_notes, resolved_at }
 //
-// In the DB we always use a known-valid proxy ID for author_id and null for assigned_to.
-// target_class is kept as a real column for class-based SQL pre-filtering.
-
-const PROXY_AUTHOR_ID = '22222222-2222-2222-2222-222222222222'; // Anna Verdi — only valid FK
+// In the DB author_id is the AUTHENTICATED actor (FK-safe: requireDocente
+// garantisce una riga in `utenti`) and assigned_to stays null; real assignees
+// live in JSON. target_class is kept as a real column for SQL pre-filtering.
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface Attachment {
@@ -80,9 +110,9 @@ function decodeContenuto(contenuto: string | null): Partial<TaskJsonPayload> {
     }
 }
 
-function encodeContenuto(payload: Partial<TaskJsonPayload>): string {
+function encodeContenuto(payload: Partial<TaskJsonPayload> & { real_author_id: string }): string {
     return JSON.stringify({
-        real_author_id: payload.real_author_id ?? PROXY_AUTHOR_ID,
+        real_author_id: payload.real_author_id,
         assignees: payload.assignees ?? [],
         descrizione: payload.descrizione ?? '',
         status: payload.status ?? 'todo',
@@ -226,21 +256,25 @@ async function enrichTask(
 // ─── GET /api/tasks ───────────────────────────────────────────────────────────
 export async function GET(request: Request) {
     try {
-        const { searchParams } = new URL(request.url);
-        const userId = searchParams.get('userId');
-        const statusParam = searchParams.get('status');
-        const filter = searchParams.get('filter') || 'all';
-        const studentId = searchParams.get('studentId');
+        // tasks = compiti INTERNI staff: gate ruolo + isolamento per plesso. Nessun flusso genitore.
+        const auth = await requireDocente(request);
+        if (auth.response) return auth.response;
+
+        const q = parseQuery(request, getQuerySchema);
+        if ('response' in q) return q.response;
+        const { userId, status: statusParam, filter, studentId } = q.data;
 
         if (!userId && !studentId) {
             return NextResponse.json({ error: 'userId o studentId è richiesto' }, { status: 400 });
         }
 
         const supabase = await createAdminClient();
+        const plessi = await scuoleDiUtente(supabase, auth.user);
+        if (plessi.length === 0) return NextResponse.json([]);
 
         // Determine role
         let role = 'educator';
-        const { data: uEntry } = await supabase.from('utenti').select('ruolo, role').eq('id', userId).maybeSingle();
+        const { data: uEntry } = await supabase.from('utenti').select('ruolo, role').eq('id', userId ?? null).maybeSingle();
         if (uEntry) {
             const rawRole = uEntry.role || uEntry.ruolo;
             if (rawRole === 'admin') role = 'admin';
@@ -257,7 +291,7 @@ export async function GET(request: Request) {
             const { data: myMedia } = await supabase
                 .from('galleria_media_v2')
                 .select('tag_students')
-                .eq('uploaded_by', userId!)
+                .eq('uploaded_by', userId ?? null)
                 .not('tag_students', 'is', null);
 
             const myTaggedIds = (myMedia ?? [])
@@ -277,7 +311,7 @@ export async function GET(request: Request) {
             // Fallback: use email-to-section mapping for known educators
             if (sectionNames.length === 0) {
                 const { data: utEntryForSection } = await supabase
-                    .from('utenti').select('email').eq('id', userId!).maybeSingle();
+                    .from('utenti').select('email').eq('id', userId ?? null).maybeSingle();
                 const emailToSection: Record<string, string> = {
                     'maestra.anna@kidville.it': 'Girasoli',
                     'maestra.chiara@kidville.it': 'Tulipani',
@@ -291,7 +325,8 @@ export async function GET(request: Request) {
         // Fetch rows (all tasks — filtering happens in JS since author/assignee are in JSON)
         const { data: rows, error: rowsErr } = await supabase
             .from('task_interni')
-            .select('id, author_id, assigned_to, target_class, titolo, contenuto, completato, created_at')
+            .select('id, author_id, assigned_to, target_class, titolo, contenuto, completato, created_at, scuola_id')
+            .in('scuola_id', plessi)
             .order('created_at', { ascending: false });
 
         if (rowsErr) {
@@ -375,19 +410,16 @@ export async function GET(request: Request) {
 // ─── POST /api/tasks ──────────────────────────────────────────────────────────
 export async function POST(request: Request) {
     try {
-        const body = await request.json();
+        const auth = await requireDocente(request);
+        if (auth.response) return auth.response;
+
+        const b = await parseBody(request, postBodySchema);
+        if ('response' in b) return b.response;
         const {
             titolo, contenuto: rawDescrizione, priority, category, deadline,
             assigned_to, target_class, target_role, target_scope,
             student_id, author_id, compiti
-        } = body;
-
-        if (!titolo || !author_id) {
-            return NextResponse.json(
-                { error: 'titolo e author_id sono richiesti' },
-                { status: 400 }
-            );
-        }
+        } = b.data;
 
         const supabase = await createAdminClient();
 
@@ -410,7 +442,7 @@ export async function POST(request: Request) {
             priority: priority ?? 'medium',
             category: category ?? 'generale',
             deadline: deadline ?? null,
-            compiti: compiti ?? [],
+            compiti: (compiti ?? []) as SubTask[],
             target_scope: target_scope ?? 'single',
             target_role: target_role ?? null,
             student_id: student_id ?? null,
@@ -422,12 +454,13 @@ export async function POST(request: Request) {
         const { data, error } = await supabase
             .from('task_interni')
             .insert({
-                author_id: PROXY_AUTHOR_ID, // FK-safe proxy
+                author_id: auth.user.id, // attore autenticato (FK utenti)
                 assigned_to: null,          // FK-safe null; real assignees in JSON
                 target_class: target_class ?? null,
                 titolo,
                 contenuto,
                 completato: false,
+                scuola_id: auth.user.scuola_id ?? null, // tenant: plesso dell'attore
             })
             .select()
             .single();
@@ -436,6 +469,11 @@ export async function POST(request: Request) {
             console.error('Errore creazione task:', error);
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
+
+        await logScrittura(supabase, {
+            attore: auth.user, entitaTipo: 'task', entitaId: (data as { id?: string })?.id ?? null,
+            azione: 'insert', scuolaId: auth.user.scuola_id ?? null, valoreDopo: { id: (data as { id?: string })?.id, titolo },
+        });
 
         return NextResponse.json(decodeRow(data as Record<string, unknown>), { status: 201 });
     } catch (error) {

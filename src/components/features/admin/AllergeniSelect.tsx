@@ -11,13 +11,13 @@ export function AllergeniSelect({ value, onChange }: { value: string[]; onChange
   };
   return (
     <div>
-      <p className="font-maven text-xs text-gray-500 mb-1.5">Allergeni (per match automatico col menu mensa)</p>
+      <p className="font-maven text-xs text-kidville-muted mb-1.5">Allergeni (per match automatico col menu mensa)</p>
       <div className="flex flex-wrap gap-1.5">
         {ALLERGENI.map(a => {
           const on = value.includes(a.key);
           return (
             <button key={a.key} type="button" onClick={() => toggle(a.key)} title={a.label}
-              className={`px-2.5 py-1 rounded-full font-maven text-[11px] font-bold border-2 transition-colors ${on ? 'bg-red-500 text-white border-red-500' : 'bg-white text-gray-400 border-gray-200'}`}>
+              className={`px-2.5 py-1 rounded-full font-maven text-[11px] font-bold border-2 transition-colors ${on ? 'bg-kidville-error text-white border-kidville-error' : 'bg-white text-kidville-muted border-kidville-line'}`}>
               {a.emoji} {a.label}
             </button>
           );

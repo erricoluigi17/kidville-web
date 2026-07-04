@@ -1,8 +1,12 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, type NextRequest } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { resolveScuoleAttive } from '@/lib/auth/scope'
+import { parseQuery } from '@/lib/validation/http'
 
-const SCUOLA_ID = '11111111-1111-1111-1111-111111111111'
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+const getQuerySchema = z.object({}) // nessun parametro in ingresso
 
 // Etichette mesi brevi (IT) per l'asse del grafico trend incassi.
 const MESI_IT = ['Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic']
@@ -18,11 +22,17 @@ function ymKey(d: Date) {
  * form_submissions). Riservato allo staff via requireStaff. Vedi piano in
  * .claude/plans per i contratti.
  */
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   const auth = await requireStaff(request)
   if (auth.response) return auth.response
 
+  const q = parseQuery(request, getQuerySchema)
+  if ('response' in q) return q.response
+
   const supabase = await createAdminClient()
+
+  // Scope multi-sede: aggreghiamo solo sui plessi attivi/accessibili (mai cross-tenant).
+  const sedi = await resolveScuoleAttive(request, supabase, auth.user)
 
   const now = new Date()
   const today = now.toISOString().slice(0, 10) // YYYY-MM-DD
@@ -46,13 +56,13 @@ export async function GET(request: Request) {
     supabase
       .from('alunni')
       .select('id, classe_sezione, stato')
-      .eq('scuola_id', SCUOLA_ID)
+      .in('scuola_id', sedi)
       .eq('stato', 'iscritto'),
     // Pagamenti scaduti (non saldati con scadenza passata) + dato per gli alert
     supabase
       .from('pagamenti')
       .select('id, importo, importo_pagato, scadenza, stato, alunni ( nome, cognome )')
-      .eq('scuola_id', SCUOLA_ID)
+      .in('scuola_id', sedi)
       .neq('stato', 'pagato')
       .lt('scadenza', today)
       .order('scadenza', { ascending: true }),
@@ -60,7 +70,7 @@ export async function GET(request: Request) {
     supabase
       .from('pagamenti')
       .select('id', { count: 'exact', head: true })
-      .eq('scuola_id', SCUOLA_ID)
+      .in('scuola_id', sedi)
       .eq('fattura_stato', 'in_attesa'),
     // Incassi ultimi 6 mesi (trend + incassato mese corrente)
     supabase
@@ -71,11 +81,13 @@ export async function GET(request: Request) {
     supabase
       .from('enrollment_submissions')
       .select('id', { count: 'exact', head: true })
+      .in('scuola_id', sedi)
       .eq('status', 'pending'),
     // Iscrizioni in attesa (lista per alert)
     supabase
       .from('enrollment_submissions')
       .select('id, data, status, created_at')
+      .in('scuola_id', sedi)
       .eq('status', 'pending')
       .order('created_at', { ascending: false })
       .limit(5),
@@ -83,6 +95,7 @@ export async function GET(request: Request) {
     supabase
       .from('mensa_prenotazioni')
       .select('id', { count: 'exact', head: true })
+      .in('scuola_id', sedi)
       .eq('data', today),
     // Submission moduli totali
     supabase.from('form_submissions').select('id', { count: 'exact', head: true }),

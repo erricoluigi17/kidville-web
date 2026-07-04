@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { Ticket, ChevronLeft, ChevronRight, Check, X, Lock, CalendarOff, UtensilsCrossed, RefreshCw, AlertTriangle } from 'lucide-react';
 import { allergeniDelGiorno, allergeneLabel, allergeneEmoji, type AllergeniPortate } from '@/lib/mensa/allergeni';
+import { SaveCelebration } from '@/components/ui/SaveConfirmation';
 
 interface Props { userId: string; studentId: string }
 
@@ -34,27 +35,28 @@ export function MensaCalendar({ userId, studentId }: Props) {
   const [msg, setMsg] = useState<string | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
   const [menuNome, setMenuNome] = useState<string | null>(null);
+  // Celebrazione festosa (spunta + coriandoli) su prenota/disdici riuscita.
+  const [celebra, setCelebra] = useState<string | null>(null);
 
   const from = ymd(weekStart);
   const to = ymd(addDays(weekStart, 6));
   const today = ymd(new Date());
 
   const load = useCallback(async () => {
-    setLoading(true);
-    setAuthError(null);
     try {
       const [mRes, pRaw] = await Promise.all([
-        fetch(`/api/mensa/menu?userId=${userId}&from=${from}&to=${to}&alunno_id=${studentId}`, { headers: hdr(userId) }).then(r => r.json()),
-        fetch(`/api/mensa/prenotazioni?userId=${userId}&alunno_id=${studentId}&from=${from}&to=${to}`, { headers: hdr(userId) }).then(async r => ({ status: r.status, data: await r.json() })),
+        fetch(`/api/mensa/menu?userId=${userId}&from=${from}&to=${to}&alunno_id=${studentId}`, { headers: hdr(userId) }).then(r => r.json()).catch(() => null),
+        fetch(`/api/mensa/prenotazioni?userId=${userId}&alunno_id=${studentId}&from=${from}&to=${to}`, { headers: hdr(userId) }).then(async r => ({ status: r.status, data: await r.json() })).catch(() => null),
       ]);
-      if (mRes.success) {
+      setAuthError(null);
+      if (mRes?.success) {
         setMenu(mRes.data);
         setMenuNome(mRes.meta?.menuNome ?? null);
       }
-      if (pRaw.status === 401 || pRaw.status === 403) {
+      if (pRaw && (pRaw.status === 401 || pRaw.status === 403)) {
         setAuthError('Sessione non valida. Torna alla home e riapri la mensa dal menu principale.');
         setSaldo(null);
-      } else if (pRaw.data?.success) {
+      } else if (pRaw?.data?.success) {
         setSaldo(pRaw.data.saldo);
         const map: Record<string, Prenotazione> = {};
         for (const p of (pRaw.data.prenotazioni ?? []) as Prenotazione[]) map[p.data] = p;
@@ -76,6 +78,7 @@ export function MensaCalendar({ userId, studentId }: Props) {
     if (j.success) {
       const esito = j.data.esiti?.[0];
       if (esito && !esito.ok) { setMsg(esito.motivo ?? 'Operazione non riuscita'); }
+      else { setCelebra('Pranzo prenotato!'); }
       await load();
     } else { setMsg(j.error ?? 'Errore'); }
   };
@@ -87,7 +90,7 @@ export function MensaCalendar({ userId, studentId }: Props) {
     });
     const j = await res.json();
     setBusy(null);
-    if (j.success) { await load(); } else { setMsg(j.error ?? 'Errore'); }
+    if (j.success) { setCelebra('Prenotazione disdetta'); await load(); } else { setMsg(j.error ?? 'Errore'); }
   };
 
   const giorni = menu.filter(g => {
@@ -97,6 +100,8 @@ export function MensaCalendar({ userId, studentId }: Props) {
 
   return (
     <div>
+      <SaveCelebration show={!!celebra} message={celebra ?? ''} onDone={() => setCelebra(null)} />
+
       {/* Saldo + navigazione settimana */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
@@ -133,7 +138,7 @@ export function MensaCalendar({ userId, studentId }: Props) {
       </div>
 
       {authError && (
-        <div className="mb-3 px-3 py-2.5 rounded-xl bg-orange-50 border border-orange-200 font-maven text-xs text-orange-700 flex items-start gap-2">
+        <div className="mb-3 px-3 py-2.5 rounded-xl bg-kidville-warn-soft border border-kidville-warn/30 font-maven text-xs text-orange-700 flex items-start gap-2">
           <AlertTriangle size={14} className="flex-shrink-0 mt-0.5" />
           <span>{authError}</span>
         </div>
@@ -144,7 +149,7 @@ export function MensaCalendar({ userId, studentId }: Props) {
         </div>
       )}
       {msg && (
-        <div className="mb-3 px-3 py-2 rounded-xl bg-amber-50 border border-amber-200 font-maven text-xs text-amber-700">{msg}</div>
+        <div className="mb-3 px-3 py-2 rounded-xl bg-kidville-warn-soft border border-kidville-warn/30 font-maven text-xs text-kidville-warn">{msg}</div>
       )}
 
       {loading ? (
@@ -169,7 +174,7 @@ export function MensaCalendar({ userId, studentId }: Props) {
                 key={g.data}
                 initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: idx * 0.03 }}
-                className={`rounded-2xl border p-3 ${prenotato ? 'bg-emerald-50/70 border-emerald-200' : 'bg-white border-gray-100'}`}
+                className={`rounded-2xl border p-3 ${prenotato ? 'bg-kidville-success-soft/70 border-kidville-success/30' : 'bg-white border-gray-100'}`}
               >
                 <div className="flex items-start gap-3">
                   <div className={`flex flex-col items-center justify-center w-12 h-12 rounded-xl flex-shrink-0 ${prenotato ? 'bg-kidville-green text-kidville-yellow' : 'bg-kidville-cream text-kidville-green'}`}>
@@ -196,7 +201,7 @@ export function MensaCalendar({ userId, studentId }: Props) {
                       <div className="flex flex-wrap gap-1 mt-1.5">
                         {allergeniDelGiorno(g.allergeni).map(k => (
                           <span key={k} title={allergeneLabel(k)}
-                            className="px-1.5 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-700 font-maven text-[10px] font-bold">
+                            className="px-1.5 py-0.5 rounded-full bg-kidville-warn-soft border border-kidville-warn/30 text-kidville-warn font-maven text-[10px] font-bold">
                             {allergeneEmoji(k)} {allergeneLabel(k)}
                           </span>
                         ))}
@@ -209,7 +214,7 @@ export function MensaCalendar({ userId, studentId }: Props) {
                           <button
                             disabled={busy === g.data || isPast}
                             onClick={() => disdici(g.data)}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white border-2 border-emerald-300 text-emerald-700 font-maven text-xs font-bold disabled:opacity-50"
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white border-2 border-kidville-success/30 text-kidville-success font-maven text-xs font-bold disabled:opacity-50"
                           >
                             {isPast ? <Lock size={13} /> : <X size={13} />}
                             {isPast ? 'Prenotato' : 'Disdici'}

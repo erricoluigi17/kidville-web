@@ -1,7 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { jsPDF } from 'jspdf'
 import type { FormSchemaConfig, FormSubmissionStatus } from '@/types/database.types'
+import { parseQuery } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
+import { requireStaff } from '@/lib/auth/require-staff'
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+const getQuerySchema = z.object({
+  id: zUuid,
+})
 
 const STATUS_LABELS: Record<FormSubmissionStatus, string> = {
   draft: 'Bozza',
@@ -10,12 +19,14 @@ const STATUS_LABELS: Record<FormSubmissionStatus, string> = {
 }
 
 export async function GET(request: NextRequest) {
-  const { searchParams } = new URL(request.url)
-  const id = searchParams.get('id')
+  // Gap auth segnalato in M3, chiuso in M9: il PDF contiene i dati della
+  // compilazione (PII) — riservato allo staff di gestione.
+  const auth = await requireStaff(request)
+  if (auth.response) return auth.response
 
-  if (!id) {
-    return NextResponse.json({ error: 'Parametro id obbligatorio' }, { status: 400 })
-  }
+  const q = parseQuery(request, getQuerySchema)
+  if ('response' in q) return q.response
+  const { id } = q.data
 
   const supabase = await createAdminClient()
 
@@ -23,7 +34,7 @@ export async function GET(request: NextRequest) {
     .from('form_submissions')
     .select('*, form_model:form_models(id, title, schema)')
     .eq('id', id)
-    .single()
+    .maybeSingle()
 
   if (error || !submission) {
     return NextResponse.json({ error: 'Compilazione non trovata' }, { status: 404 })

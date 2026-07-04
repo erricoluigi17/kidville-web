@@ -1,6 +1,41 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff, requireUser } from '@/lib/auth/require-staff'
+import { parseBody, parseData } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+// PATCH: merge parziale sui soli campi ammessi; i valori restano senza vincoli
+// aggiuntivi (come oggi: qualunque valore ≠ undefined viene passato al DB).
+// NB zod v4: z.unknown() nudo è required a runtime → serve .optional().
+const patchBodySchema = z.object({
+  descrizione: z.unknown().optional(),
+  importo: z.unknown().optional(),
+  scadenza: z.unknown().optional(),
+  categoria_id: z.unknown().optional(),
+  obbligatorio: z.unknown().optional(),
+  periodo_competenza: z.unknown().optional(),
+  gruppo: z.unknown().optional(),
+  tipo: z.unknown().optional(),
+  visibile_dal: z.unknown().optional(),
+})
+
+const CAMPI_EDITABILI = [
+  'descrizione', 'importo', 'scadenza', 'categoria_id', 'obbligatorio',
+  'periodo_competenza', 'gruppo', 'tipo', 'visibile_dal',
+] as const
+
+// Dettaglio pagamento: soli campi usati dalla logica di proiezione qui sotto
+// (il resto viaggia com'è nello spread finale).
+interface PagamentoDettaglio {
+  alunno_id: string
+  tipo: string
+  visibile_dal: string | null
+  importo: number
+  importo_totale_famiglia?: number
+  [key: string]: unknown
+}
 
 const SELECT = `
   id, alunno_id, scuola_id, descrizione, importo, importo_pagato, scadenza, stato,
@@ -17,13 +52,15 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     const auth = await requireUser(request)
     if (auth.response) return auth.response
     const { user } = auth
-    const { id } = await context.params
+    const { id: idGrezzo } = await context.params
+    const pid = parseData(zUuid, idGrezzo)
+    if ('response' in pid) return pid.response
+    const id = pid.data
 
     const supabase = await createAdminClient()
-    const { data, error } = await supabase.from('pagamenti').select(SELECT).eq('id', id).single()
+    const { data, error } = await supabase.from('pagamenti').select(SELECT).eq('id', id).maybeSingle()
     if (error || !data) return NextResponse.json({ error: 'Pagamento non trovato' }, { status: 404 })
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const pag = data as any
+    const pag = data as unknown as PagamentoDettaglio
 
     const isStaff = user.role === 'admin' || user.role === 'coordinator'
 
@@ -99,12 +136,17 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
-    const { id } = await context.params
-    const body = await request.json()
+    const { id: idGrezzo } = await context.params
+    const pid = parseData(zUuid, idGrezzo)
+    if ('response' in pid) return pid.response
+    const id = pid.data
 
-    const allowed = ['descrizione', 'importo', 'scadenza', 'categoria_id', 'obbligatorio', 'periodo_competenza', 'gruppo', 'tipo', 'visibile_dal']
+    const b = await parseBody(request, patchBodySchema)
+    if ('response' in b) return b.response
+    const body = b.data
+
     const updates: Record<string, unknown> = {}
-    for (const f of allowed) if (body[f] !== undefined) updates[f] = body[f]
+    for (const f of CAMPI_EDITABILI) if (body[f] !== undefined) updates[f] = body[f]
     if (Object.keys(updates).length === 0) {
       return NextResponse.json({ error: 'Nessun campo da aggiornare' }, { status: 400 })
     }
@@ -132,10 +174,14 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
     const { user } = auth
-    const { id } = await context.params
+    const { id: idGrezzo } = await context.params
+    const pid = parseData(zUuid, idGrezzo)
+    if ('response' in pid) return pid.response
+    const id = pid.data
 
     const supabase = await createAdminClient()
-    const { data: old } = await supabase.from('pagamenti').select('*').eq('id', id).single()
+    const { data: old } = await supabase.from('pagamenti').select('*').eq('id', id).maybeSingle()
+    if (!old) return NextResponse.json({ error: 'Pagamento non trovato' }, { status: 404 })
     const { error } = await supabase.from('pagamenti').delete().eq('id', id)
     if (error) return NextResponse.json({ error: 'Errore eliminazione', details: error.message }, { status: 500 })
 

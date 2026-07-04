@@ -27,12 +27,18 @@ export function ObiettiviManager({ scuolaId, userId }: { scuolaId: string; userI
   const [error, setError] = useState('');
 
   const load = useCallback(async () => {
-    const r = await fetch(
-      `/api/admin/primaria/obiettivi?scuolaId=${scuolaId}&materiaCodice=${materiaCodice}&livello=${livello}`
-    );
-    const d = await r.json();
-    setObiettivi(d.success ? d.data : []);
-  }, [scuolaId, materiaCodice, livello]);
+    let next: Obiettivo[] | null = null;
+    try {
+      const r = await fetch(
+        `/api/admin/primaria/obiettivi?scuolaId=${scuolaId}&materiaCodice=${materiaCodice}&livello=${livello}`,
+        { headers: { 'x-user-id': userId } }
+      );
+      const d = await r.json();
+      next = d.success ? d.data : [];
+    } finally {
+      if (next) setObiettivi(next);
+    }
+  }, [scuolaId, materiaCodice, livello, userId]);
 
   useEffect(() => {
     load();
@@ -70,7 +76,7 @@ export function ObiettiviManager({ scuolaId, userId }: { scuolaId: string; userI
         <select
           value={materiaCodice}
           onChange={(e) => setMateriaCodice(e.target.value)}
-          className="font-maven rounded-pill border border-gray-200 bg-white px-3 py-1.5 text-sm"
+          className="font-maven rounded-pill border border-kidville-line bg-white px-3 py-1.5 text-sm"
         >
           {MATERIE_STD.map(([c, l]) => (
             <option key={c} value={c}>{l}</option>
@@ -79,7 +85,7 @@ export function ObiettiviManager({ scuolaId, userId }: { scuolaId: string; userI
         <select
           value={livello}
           onChange={(e) => setLivello(Number(e.target.value))}
-          className="font-maven rounded-pill border border-gray-200 bg-white px-3 py-1.5 text-sm"
+          className="font-maven rounded-pill border border-kidville-line bg-white px-3 py-1.5 text-sm"
         >
           {[1, 2, 3, 4, 5].map((l) => (
             <option key={l} value={l}>{l}ª</option>
@@ -87,37 +93,37 @@ export function ObiettiviManager({ scuolaId, userId }: { scuolaId: string; userI
         </select>
       </div>
 
-      <ul className="divide-y divide-gray-100">
+      <ul className="divide-y divide-kidville-line">
         {obiettivi.map((o) => (
           <li key={o.id} className="flex items-start justify-between gap-3 py-2.5">
-            <div className="font-maven text-sm text-gray-800">
+            <div className="font-maven text-sm text-kidville-ink">
               {o.codice && <span className="mr-2 text-xs font-semibold text-kidville-green">{o.codice}</span>}
               {o.descrizione}
             </div>
-            <button onClick={() => remove(o.id)} className="text-gray-400 hover:text-kidville-error shrink-0">
+            <button onClick={() => remove(o.id)} className="text-kidville-muted hover:text-kidville-error shrink-0">
               <Trash2 size={16} />
             </button>
           </li>
         ))}
-        {obiettivi.length === 0 && <li className="py-3 font-maven text-gray-400 text-sm">Nessun obiettivo per questa materia/livello.</li>}
+        {obiettivi.length === 0 && <li className="py-3 font-maven text-kidville-muted text-sm">Nessun obiettivo per questa materia/livello.</li>}
       </ul>
 
-      <div className="flex flex-wrap items-end gap-2 border-t border-gray-100 pt-4">
+      <div className="flex flex-wrap items-end gap-2 border-t border-kidville-line pt-4">
         <div>
-          <label className="block font-maven text-xs text-gray-500">Codice (opz.)</label>
+          <label className="block font-maven text-xs text-kidville-muted">Codice (opz.)</label>
           <input
             value={nuovo.codice}
             onChange={(e) => setNuovo((s) => ({ ...s, codice: e.target.value }))}
-            className="font-maven w-24 rounded-pill border border-gray-200 px-3 py-1.5 text-sm"
+            className="font-maven w-24 rounded-pill border border-kidville-line px-3 py-1.5 text-sm"
             placeholder="ITA-1"
           />
         </div>
         <div className="flex-1 min-w-[200px]">
-          <label className="block font-maven text-xs text-gray-500">Descrizione obiettivo</label>
+          <label className="block font-maven text-xs text-kidville-muted">Descrizione obiettivo</label>
           <input
             value={nuovo.descrizione}
             onChange={(e) => setNuovo((s) => ({ ...s, descrizione: e.target.value }))}
-            className="font-maven w-full rounded-pill border border-gray-200 px-3 py-1.5 text-sm"
+            className="font-maven w-full rounded-pill border border-kidville-line px-3 py-1.5 text-sm"
             placeholder="Es. Legge e comprende testi di vario tipo"
           />
         </div>

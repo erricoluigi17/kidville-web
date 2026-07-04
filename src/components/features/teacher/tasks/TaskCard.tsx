@@ -2,12 +2,21 @@
 
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import {
     Clock, User, CheckCircle, Play, Trash2, Tag, Calendar,
     ChevronDown, ChevronUp, Edit2, Eye, AlertCircle, Lock,
-    Paperclip, MessageSquare, Send, Download, ExternalLink,
-    CheckSquare, RefreshCw, Undo, EyeOff
+    Paperclip, MessageSquare, Send, ExternalLink,
+    CheckSquare, EyeOff
 } from 'lucide-react';
+
+interface TaskAttachment {
+    name: string;
+    url: string;
+    fileUrl?: string;
+    size: number;
+    type: string;
+}
 
 export interface Task {
     id: string;
@@ -77,23 +86,23 @@ interface TaskCardProps {
     onComplete: (task: Task) => void;
     onDelete?: (id: string) => void;
     onEdit?: (task: Task) => void;
-    onResolveSubtask?: (taskId: string, subtaskId: string, notes: string, attachments?: any[]) => Promise<void>;
-    onUpdateSubtasks?: (taskId: string, updatedCompiti: any[], toastMessage?: string) => Promise<void>;
+    onResolveSubtask?: (taskId: string, subtaskId: string, notes: string, attachments?: TaskAttachment[]) => Promise<void>;
+    onUpdateSubtasks?: (taskId: string, updatedCompiti: NonNullable<Task['compiti']>, toastMessage?: string) => Promise<void>;
     onUpdateTaskFields?: (taskId: string, updates: Record<string, unknown>, toastMessage?: string) => Promise<void>;
 }
 
 const priorityConfig = {
-    low: { label: 'Bassa', style: 'bg-teal-100 text-teal-800 dark:bg-teal-900/30 dark:text-teal-400', dot: 'bg-teal-400' },
-    medium: { label: 'Media', style: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400', dot: 'bg-blue-400' },
-    high: { label: 'Alta', style: 'bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-400', dot: 'bg-orange-400' },
-    urgent: { label: 'Urgente', style: 'bg-red-500 text-white font-bold animate-pulse shadow-md shadow-red-500/20', dot: 'bg-red-500' }
+    low: { label: 'Bassa', style: 'bg-kidville-success-soft text-kidville-success', dot: 'bg-kidville-success' },
+    medium: { label: 'Media', style: 'bg-kidville-info-soft text-kidville-info', dot: 'bg-kidville-info' },
+    high: { label: 'Alta', style: 'bg-kidville-warn-soft text-kidville-warn', dot: 'bg-kidville-warn' },
+    urgent: { label: 'Urgente', style: 'bg-kidville-error text-white font-bold animate-pulse shadow-md shadow-kidville-error/20', dot: 'bg-kidville-error' }
 };
 
 const statusConfig = {
-    todo: { label: 'Da Fare', dot: 'bg-zinc-300', bar: 'bg-zinc-100 text-zinc-500' },
-    in_progress: { label: 'In Corso', dot: 'bg-amber-400', bar: 'bg-amber-55 text-amber-700 border-amber-200' },
-    completed: { label: 'Da Controllare', dot: 'bg-blue-400', bar: 'bg-blue-50 text-blue-700 border-blue-200' },
-    approved: { label: 'Completato', dot: 'bg-emerald-400', bar: 'bg-emerald-50 text-emerald-700 border-emerald-200' }
+    todo: { label: 'Da Fare', dot: 'bg-kidville-muted', bar: 'bg-kidville-cream text-kidville-muted' },
+    in_progress: { label: 'In Corso', dot: 'bg-kidville-warn', bar: 'bg-kidville-warn-soft text-kidville-warn border-kidville-warn/30' },
+    completed: { label: 'Da Controllare', dot: 'bg-kidville-info', bar: 'bg-kidville-info-soft text-kidville-info border-kidville-info/30' },
+    approved: { label: 'Completato', dot: 'bg-kidville-success', bar: 'bg-kidville-success-soft text-kidville-success border-kidville-success/30' }
 };
 
 export function TaskCard({
@@ -174,8 +183,11 @@ export function TaskCard({
         for (const file of files) {
             const formData = new FormData();
             formData.append('file', file);
-            const res = await fetch('/api/tasks/upload', {
+            // Identità nullable (M4): header vuoto → il server risponde 401,
+            // gestito dal throw sottostante (niente fallback demo).
+            const res = await fetch(`/api/tasks/upload?userId=${getCurrentTeacherId(null) ?? ''}`, {
                 method: 'POST',
+                headers: { 'x-user-id': getCurrentTeacherId(null) ?? '' },
                 body: formData
             });
             if (res.ok) {
@@ -189,32 +201,33 @@ export function TaskCard({
     };
 
     // Render attachments grid with file types
-    const renderAttachments = (attachmentsList?: any[] | null) => {
+    const renderAttachments = (attachmentsList?: TaskAttachment[] | null) => {
         if (!attachmentsList || attachmentsList.length === 0) return null;
         return (
             <div className="mt-2.5 grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {attachmentsList.map((att, idx) => {
                     const isImage = att.type?.startsWith('image/');
                     return (
-                        <div key={idx} className="flex items-center gap-2 p-2 bg-zinc-50/50 dark:bg-zinc-900/50 border border-gray-150 dark:border-zinc-800 rounded-xl text-xs truncate max-w-full">
+                        <div key={idx} className="flex items-center gap-2 p-2 bg-kidville-cream border border-kidville-line rounded-xl text-xs truncate max-w-full">
                             {isImage ? (
                                 <button
                                     type="button"
                                     onClick={() => setLightboxUrl(att.fileUrl || att.url)}
-                                    className="w-9 h-9 rounded-lg overflow-hidden bg-gray-100 dark:bg-zinc-800 flex-shrink-0 border border-gray-200 dark:border-zinc-700 hover:opacity-85 transition-opacity"
+                                    className="w-9 h-9 rounded-lg overflow-hidden bg-kidville-cream flex-shrink-0 border border-kidville-line hover:opacity-85 transition-opacity"
                                 >
+                                    {/* eslint-disable-next-line @next/next/no-img-element */}
                                     <img src={att.fileUrl || att.url} alt={att.name} className="w-full h-full object-cover" />
                                 </button>
                             ) : (
-                                <div className="w-9 h-9 rounded-lg bg-kidville-cream dark:bg-zinc-900 flex items-center justify-center text-kidville-green dark:text-zinc-300 font-barlow font-bold text-[10px] flex-shrink-0 uppercase border border-gray-200 dark:border-zinc-800">
+                                <div className="w-9 h-9 rounded-lg bg-kidville-cream flex items-center justify-center text-kidville-green font-barlow font-bold text-[10px] flex-shrink-0 uppercase border border-kidville-line">
                                     {att.name.split('.').pop() || 'doc'}
                                 </div>
                             )}
                             <div className="flex-1 min-w-0 pr-1 text-left">
-                                <p className="font-maven font-bold text-zinc-700 dark:text-zinc-300 truncate text-[11px]" title={att.name}>
+                                <p className="font-maven font-bold text-kidville-ink truncate text-[11px]" title={att.name}>
                                     {att.name}
                                 </p>
-                                <p className="text-[9px] text-zinc-400 font-medium">
+                                <p className="text-[9px] text-kidville-muted font-medium">
                                     {att.size ? `${(att.size / 1024).toFixed(0)} KB` : 'Dettagli non disponibili'}
                                 </p>
                             </div>
@@ -223,7 +236,7 @@ export function TaskCard({
                                 download={att.name}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="p-1.5 text-zinc-400 hover:text-kidville-green dark:hover:text-zinc-200 transition-colors"
+                                className="p-1.5 text-kidville-muted hover:text-kidville-green transition-colors"
                                 title="Scarica o apri in nuova scheda"
                             >
                                 <ExternalLink size={13} />
@@ -249,17 +262,17 @@ export function TaskCard({
             className={`w-full backdrop-blur-xl rounded-3xl border shadow-sm transition-all duration-200 overflow-hidden relative
                 ${task.status === 'approved' ? 'opacity-80' : ''}
                 ${isUpdated 
-                    ? 'bg-orange-50/70 dark:bg-orange-955/35 border-orange-500 dark:border-orange-400 ring-4 ring-orange-500/30 dark:ring-orange-400/30 shadow-lg shadow-orange-500/20' 
+                    ? 'bg-kidville-warn-soft/70 border-orange-500 ring-4 ring-orange-500/30 shadow-lg shadow-orange-500/20' 
                     : task.status === 'approved' 
-                        ? 'bg-white/90 dark:bg-zinc-950/90 border-zinc-100 dark:border-zinc-900' 
-                        : 'bg-white/90 dark:bg-zinc-950/90 border-white/60 dark:border-zinc-800'}
-                ${task.priority === 'urgent' && task.status !== 'approved' && !isUpdated ? 'ring-1 ring-red-400 dark:ring-red-900' : ''}`}
+                        ? 'bg-white border-kidville-line' 
+                        : 'bg-white border-white/60'}
+                ${task.priority === 'urgent' && task.status !== 'approved' && !isUpdated ? 'ring-1 ring-kidville-error' : ''}`}
         >
             {/* Top bar: status color */}
-            <div className={`h-0.5 w-full ${task.status === 'todo' ? 'bg-zinc-200' : task.status === 'in_progress' ? 'bg-amber-400' : task.status === 'completed' ? 'bg-blue-400' : 'bg-emerald-400'}`} />
+            <div className={`h-0.5 w-full ${task.status === 'todo' ? 'bg-kidville-cream-dark' : task.status === 'in_progress' ? 'bg-kidville-warn' : task.status === 'completed' ? 'bg-kidville-info' : 'bg-kidville-success'}`} />
 
             {isUpdated && (
-                <div className="absolute left-0 top-0 bottom-0 w-2.5 bg-gradient-to-b from-orange-400 via-orange-500 to-amber-500 animate-pulse z-10" />
+                <div className="absolute left-0 top-0 bottom-0 w-2.5 bg-gradient-to-b from-orange-400 via-orange-500 to-kidville-warn animate-pulse z-10" />
             )}
 
             <div className={`p-5 ${isUpdated ? 'pl-7' : ''}`}>
@@ -267,7 +280,7 @@ export function TaskCard({
                 <div className="flex items-start justify-between gap-3 mb-3">
                     <div className="flex items-center gap-2 flex-wrap">
                         {isUpdated && (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-orange-500 text-white rounded-full text-[10px] font-bold uppercase tracking-wider font-barlow animate-pulse">
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-kidville-warn text-white rounded-full text-[10px] font-bold uppercase tracking-wider font-barlow animate-pulse">
                                 ⚡ Aggiornato
                             </span>
                         )}
@@ -288,7 +301,7 @@ export function TaskCard({
                         {canEdit && (
                             <button
                                 onClick={() => onEdit!(task)}
-                                className="p-1.5 text-zinc-400 hover:text-kidville-green rounded-lg hover:bg-kidville-cream transition-colors"
+                                className="p-1.5 text-kidville-muted hover:text-kidville-green rounded-lg hover:bg-kidville-cream transition-colors"
                                 title="Modifica task"
                             >
                                 <Edit2 size={13} />
@@ -297,7 +310,7 @@ export function TaskCard({
                         {canDelete && (
                             <button
                                 onClick={() => onDelete!(task.id)}
-                                className="p-1.5 text-zinc-400 hover:text-red-500 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
+                                className="p-1.5 text-kidville-muted hover:text-kidville-error rounded-lg hover:bg-kidville-error-soft transition-colors"
                                 title="Elimina task"
                             >
                                 <Trash2 size={13} />
@@ -307,12 +320,12 @@ export function TaskCard({
                 </div>
 
                 {/* Title */}
-                <h3 className={`font-barlow font-bold text-left text-base text-kidville-green dark:text-zinc-50 uppercase tracking-wide mb-1 leading-snug ${task.status === 'approved' ? 'line-through text-gray-400 dark:text-zinc-600' : ''}`}>
+                <h3 className={`font-barlow font-bold text-left text-base text-kidville-green uppercase tracking-wide mb-1 leading-snug ${task.status === 'approved' ? 'line-through text-kidville-muted' : ''}`}>
                     {task.titolo}
                 </h3>
 
                 {/* Quick info line */}
-                <div className="flex items-center gap-3 text-[11px] text-zinc-400 mb-3">
+                <div className="flex items-center gap-3 text-[11px] text-kidville-muted mb-3">
                     <span className="flex items-center gap-1">
                         <User size={10} /> {task.author ? `${task.author.first_name} ${task.author.last_name}` : 'Segreteria'}
                     </span>
@@ -321,7 +334,7 @@ export function TaskCard({
                     {formattedDeadline && (
                         <>
                             <span>·</span>
-                            <span className={`flex items-center gap-1 ${isExpired && task.status !== 'approved' ? 'text-red-500 font-bold' : ''}`}>
+                            <span className={`flex items-center gap-1 ${isExpired && task.status !== 'approved' ? 'text-kidville-error font-bold' : ''}`}>
                                 <Calendar size={10} /> {formattedDeadline}
                             </span>
                         </>
@@ -332,10 +345,10 @@ export function TaskCard({
                 {hasCompiti && (
                     <div className="mb-3">
                         <div className="flex items-center justify-between mb-1">
-                            <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Compiti Approvati</span>
+                            <span className="text-[10px] font-bold text-kidville-muted uppercase tracking-wider">Compiti Approvati</span>
                             <span className="text-[10px] font-bold text-kidville-green">{approvedSubtasks}/{totalSubtasks} (Risolti: {completedSubtasks})</span>
                         </div>
-                        <div className="h-1.5 bg-zinc-100 dark:bg-zinc-900 rounded-full overflow-hidden">
+                        <div className="h-1.5 bg-kidville-cream rounded-full overflow-hidden">
                             <motion.div
                                 className="h-full bg-kidville-green rounded-full"
                                 initial={{ width: 0 }}
@@ -365,16 +378,16 @@ export function TaskCard({
                         animate={{ height: 'auto', opacity: 1 }}
                         exit={{ height: 0, opacity: 0 }}
                         transition={{ duration: 0.25 }}
-                        className="overflow-hidden border-t border-gray-100/60 dark:border-zinc-900"
+                        className="overflow-hidden border-t border-kidville-line"
                     >
                         <div className="p-5 space-y-4">
                             {/* Full description */}
                             {descrizione && (
-                                <div className="p-4 bg-zinc-50/80 dark:bg-zinc-900/40 rounded-2xl border border-gray-100 dark:border-zinc-800 text-left">
-                                    <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-2 flex items-center gap-1">
+                                <div className="p-4 bg-kidville-cream rounded-2xl border border-kidville-line text-left">
+                                    <p className="text-[10px] font-bold text-kidville-muted uppercase tracking-wider mb-2 flex items-center gap-1">
                                         📋 Istruzioni
                                     </p>
-                                    <p className="font-maven text-sm text-zinc-700 dark:text-zinc-300 whitespace-pre-line leading-relaxed">
+                                    <p className="font-maven text-sm text-kidville-ink whitespace-pre-line leading-relaxed">
                                         {descrizione}
                                     </p>
                                 </div>
@@ -384,18 +397,18 @@ export function TaskCard({
                             {task.student && (
                                 <div className={`p-3.5 rounded-2xl border flex items-start gap-2.5
                                     ${task.student.allergie.length > 0
-                                        ? 'bg-red-50/50 dark:bg-red-950/10 border-red-100 dark:border-red-900/30'
-                                        : 'bg-kidville-cream/20 dark:bg-zinc-900/30 border-gray-100 dark:border-zinc-800'}`}>
+                                        ? 'bg-kidville-error-soft border-kidville-error/20'
+                                        : 'bg-kidville-cream/20 border-kidville-line'}`}>
                                     <div className="w-9 h-9 rounded-full bg-kidville-cream flex-shrink-0 flex items-center justify-center font-barlow font-bold text-xs text-kidville-green">
                                         {task.student.nome[0]}{task.student.cognome[0]}
                                     </div>
                                     <div className="flex-1 min-w-0 text-left">
-                                        <p className="font-maven font-bold text-xs text-kidville-green dark:text-zinc-200">
+                                        <p className="font-maven font-bold text-xs text-kidville-green">
                                             👶 Alunno: {task.student.nome} {task.student.cognome}
                                         </p>
-                                        <p className="font-maven text-[10px] text-zinc-400">Sezione: {task.student.classe_sezione}</p>
+                                        <p className="font-maven text-[10px] text-kidville-muted">Sezione: {task.student.classe_sezione}</p>
                                         {task.student.allergie.length > 0 && (
-                                            <p className="font-maven text-[10px] text-red-600 dark:text-red-400 font-bold mt-0.5">
+                                            <p className="font-maven text-[10px] text-kidville-error font-bold mt-0.5">
                                                 ⚠️ Allergie: {task.student.allergie.join(', ')}
                                             </p>
                                         )}
@@ -405,19 +418,19 @@ export function TaskCard({
 
                             {/* Task level revision feedback if rejected */}
                             {!hasCompiti && task.revision_feedback && task.status !== 'approved' && (
-                                <div className="p-3 bg-red-50 dark:bg-red-950/15 border border-red-200 rounded-2xl text-[11px] text-red-700 dark:text-red-400 text-left leading-relaxed">
+                                <div className="p-3 bg-kidville-error-soft border border-kidville-error/20 rounded-2xl text-[11px] text-kidville-error text-left leading-relaxed">
                                     <strong>⚠️ Revisione Richiesta:</strong> &ldquo;{task.revision_feedback}&rdquo;
-                                    <p className="text-[9px] text-zinc-400 mt-1">Correggi e risolvi nuovamente il task allegando i file corretti.</p>
+                                    <p className="text-[9px] text-kidville-muted mt-1">Correggi e risolvi nuovamente il task allegando i file corretti.</p>
                                 </div>
                             )}
 
                             {/* Task-level comments thread for direct tasks */}
                             {!hasCompiti && (
-                                <div className="p-4 bg-zinc-50/50 dark:bg-zinc-900/20 rounded-2xl border border-gray-150 dark:border-zinc-850 text-left space-y-2">
+                                <div className="p-4 bg-kidville-cream rounded-2xl border border-kidville-line text-left space-y-2">
                                     <button
                                         type="button"
                                         onClick={() => setShowTaskComments(v => !v)}
-                                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-750 dark:text-zinc-300 rounded-xl text-[10px] font-bold uppercase transition-all border border-gray-250 dark:border-zinc-700 cursor-pointer"
+                                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-kidville-cream hover:bg-kidville-cream-dark text-kidville-ink rounded-xl text-[10px] font-bold uppercase transition-all border border-kidville-line cursor-pointer"
                                     >
                                         <MessageSquare size={11} />
                                         Chiarimenti ({(task.commenti || []).length})
@@ -428,32 +441,32 @@ export function TaskCard({
                                             {task.commenti && task.commenti.length > 0 ? (
                                                 <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
                                                     {task.commenti.map(comm => (
-                                                        <div key={comm.id} className="p-2.5 bg-white dark:bg-zinc-950 rounded-xl border border-gray-150 dark:border-zinc-900 text-xs text-left">
-                                                            <div className="flex items-center justify-between text-[9px] text-zinc-400 mb-1">
-                                                                <span className="font-bold text-kidville-green dark:text-zinc-300">{comm.author_name}</span>
+                                                        <div key={comm.id} className="p-2.5 bg-white rounded-xl border border-kidville-line text-xs text-left">
+                                                            <div className="flex items-center justify-between text-[9px] text-kidville-muted mb-1">
+                                                                <span className="font-bold text-kidville-green">{comm.author_name}</span>
                                                                 <span>{new Date(comm.created_at).toLocaleDateString('it-IT', {day: '2-digit', month: '2-digit', hour:'2-digit', minute:'2-digit'})}</span>
                                                             </div>
-                                                            <p className="font-maven text-zinc-700 dark:text-zinc-300 leading-relaxed whitespace-pre-line">{comm.testo}</p>
+                                                            <p className="font-maven text-kidville-ink leading-relaxed whitespace-pre-line">{comm.testo}</p>
                                                             {renderAttachments(comm.attachments)}
                                                         </div>
                                                     ))}
                                                 </div>
                                             ) : (
-                                                <p className="font-maven text-xs text-zinc-400 italic py-1">Nessun chiarimento presente per questo task.</p>
+                                                <p className="font-maven text-xs text-kidville-muted italic py-1">Nessun chiarimento presente per questo task.</p>
                                             )}
 
                                             {/* Form to submit task-level clarification */}
-                                            <div className="space-y-2 border-t border-dashed border-gray-200 dark:border-zinc-800 pt-2.5">
+                                            <div className="space-y-2 border-t border-dashed border-kidville-line pt-2.5">
                                                 <textarea
                                                     rows={2}
                                                     placeholder="Scrivi una domanda o chiedi chiarimenti su questo task..."
                                                     value={commentText}
                                                     onChange={e => setCommentText(e.target.value)}
-                                                    className="w-full border border-gray-250 dark:border-zinc-800 rounded-xl px-3 py-2 font-maven text-xs text-kidville-green dark:text-zinc-200 bg-white dark:bg-zinc-950 focus:outline-none focus:ring-1 focus:ring-kidville-green focus:border-transparent transition-all"
+                                                    className="w-full border border-kidville-line rounded-xl px-3 py-2 font-maven text-xs text-kidville-green bg-white focus:outline-none focus:ring-1 focus:ring-kidville-green focus:border-transparent transition-all"
                                                 />
                                                 <div className="flex items-center justify-between gap-1">
                                                     <div className="flex items-center gap-1.5 flex-wrap">
-                                                        <label className="p-1.5 border border-gray-200 dark:border-zinc-800 rounded-lg cursor-pointer hover:bg-gray-50 dark:hover:bg-zinc-900 text-zinc-400 hover:text-kidville-green transition-colors" title="Allega file">
+                                                        <label className="p-1.5 border border-kidville-line rounded-lg cursor-pointer hover:bg-kidville-cream text-kidville-muted hover:text-kidville-green transition-colors" title="Allega file">
                                                             <Paperclip size={13} />
                                                             <input 
                                                                 type="file" 
@@ -468,9 +481,9 @@ export function TaskCard({
                                                             />
                                                         </label>
                                                         {commentFiles.map((file, fIdx) => (
-                                                            <span key={fIdx} className="inline-flex items-center gap-0.5 px-2 py-0.5 bg-zinc-100 rounded text-[9px] text-zinc-500">
+                                                            <span key={fIdx} className="inline-flex items-center gap-0.5 px-2 py-0.5 bg-kidville-cream rounded text-[9px] text-kidville-muted">
                                                                 {file.name.substring(0, 10)}...
-                                                                <button type="button" onClick={() => setCommentFiles(prev => prev.filter((_, i) => i !== fIdx))} className="text-red-500 hover:text-red-700 ml-1 font-bold">✕</button>
+                                                                <button type="button" onClick={() => setCommentFiles(prev => prev.filter((_, i) => i !== fIdx))} className="text-kidville-error hover:text-kidville-error ml-1 font-bold">✕</button>
                                                             </span>
                                                         ))}
                                                     </div>
@@ -502,8 +515,8 @@ export function TaskCard({
                                                                     setCommentText('');
                                                                     setCommentFiles([]);
                                                                 }
-                                                            } catch (err: any) {
-                                                                alert(err.message || 'Errore');
+                                                            } catch (err) {
+                                                                alert(err instanceof Error && err.message ? err.message : 'Errore');
                                                             } finally {
                                                                 setIsUploadingCommentFile(false);
                                                             }
@@ -522,7 +535,7 @@ export function TaskCard({
                             {/* Compiti / Subtasks */}
                             {hasCompiti && (
                                 <div className="space-y-2 text-left">
-                                    <h4 className="font-barlow font-bold text-[10px] text-kidville-green dark:text-zinc-300 uppercase tracking-wider flex items-center gap-1.5">
+                                    <h4 className="font-barlow font-bold text-[10px] text-kidville-green uppercase tracking-wider flex items-center gap-1.5">
                                         📋 Compiti Suddivisi ({approvedSubtasks}/{totalSubtasks})
                                     </h4>
                                     <div className="space-y-2">
@@ -541,26 +554,26 @@ export function TaskCard({
                                                     key={compito.id}
                                                     className={`p-3.5 rounded-2xl border transition-all space-y-2
                                                         ${isCompitoApproved
-                                                            ? 'bg-emerald-50/20 dark:bg-emerald-950/5 border-emerald-150 dark:border-emerald-900/20'
+                                                            ? 'bg-kidville-success-soft/20 border-kidville-success/30'
                                                             : isCompitoPending
-                                                            ? 'bg-blue-50/10 dark:bg-blue-950/5 border-blue-200/50 dark:border-blue-900/20'
+                                                            ? 'bg-kidville-info-soft/10 border-kidville-info/50'
                                                             : isAssignedToMe
-                                                                ? 'bg-amber-50/30 dark:bg-amber-955/10 border-amber-200/50 dark:border-amber-900/20 shadow-sm'
-                                                                : 'bg-white dark:bg-zinc-950 border-gray-100 dark:border-zinc-900'}`}
+                                                                ? 'bg-kidville-warn-soft/30 border-kidville-warn/50 shadow-sm'
+                                                                : 'bg-white border-kidville-line'}`}
                                                 >
                                                     <div className="flex items-start justify-between gap-2">
                                                         <div className="flex items-start gap-2 min-w-0">
-                                                            <span className={`mt-0.5 flex-shrink-0 ${isCompitoApproved ? 'text-emerald-500' : isCompitoPending ? 'text-blue-500' : isAssignedToMe ? 'text-amber-500' : 'text-zinc-300'}`}>
+                                                            <span className={`mt-0.5 flex-shrink-0 ${isCompitoApproved ? 'text-kidville-success' : isCompitoPending ? 'text-kidville-info' : isAssignedToMe ? 'text-kidville-warn' : 'text-kidville-ink'}`}>
                                                                 {isCompitoApproved ? <CheckCircle size={14} /> : <CheckSquare size={14} />}
                                                             </span>
                                                             <div className="min-w-0">
-                                                                <p className={`font-maven text-xs font-semibold leading-snug ${isCompitoApproved ? 'line-through text-zinc-400' : 'text-zinc-700 dark:text-zinc-300'}`}>
+                                                                <p className={`font-maven text-xs font-semibold leading-snug ${isCompitoApproved ? 'line-through text-kidville-muted' : 'text-kidville-ink'}`}>
                                                                     {compito.titolo}
                                                                 </p>
-                                                                <p className="font-maven text-[10px] text-zinc-400 mt-0.5">
+                                                                <p className="font-maven text-[10px] text-kidville-muted mt-0.5">
                                                                     👤 {compito.assignee_name || 'Non specificato'}
                                                                     {isAssignedToMe && !isCompitoCompleted && (
-                                                                        <span className="ml-1 text-amber-600 font-bold">(tu)</span>
+                                                                        <span className="ml-1 text-kidville-warn font-bold">(tu)</span>
                                                                     )}
                                                                 </p>
                                                             </div>
@@ -568,7 +581,7 @@ export function TaskCard({
 
                                                         <div className="flex-shrink-0">
                                                             {!canResolve && !isCompitoCompleted && !isAssignedToMe && (
-                                                                <span className="text-zinc-300" title="Solo la persona assegnata può completare">
+                                                                <span className="text-kidville-ink" title="Solo la persona assegnata può completare">
                                                                     <Lock size={11} />
                                                                 </span>
                                                             )}
@@ -580,7 +593,7 @@ export function TaskCard({
                                                                         setSubtaskNotes(''); 
                                                                         setSelectedFiles([]);
                                                                     }}
-                                                                    className="px-2.5 py-1 bg-amber-400 hover:bg-amber-500 active:scale-[0.98] text-zinc-900 font-barlow font-bold text-[10px] uppercase rounded-lg tracking-wider transition-all shadow-sm cursor-pointer"
+                                                                    className="px-2.5 py-1 bg-kidville-warn hover:bg-kidville-warn active:scale-[0.98] text-kidville-green font-barlow font-bold text-[10px] uppercase rounded-lg tracking-wider transition-all shadow-sm cursor-pointer"
                                                                 >
                                                                     Completa Compito ✓
                                                                 </button>
@@ -589,7 +602,7 @@ export function TaskCard({
                                                                 <button
                                                                     type="button"
                                                                     onClick={() => { setResolvingSubtaskId(null); setSubtaskNotes(''); setSelectedFiles([]); }}
-                                                                    className="text-[10px] font-bold text-zinc-400 hover:text-zinc-600 uppercase tracking-wider"
+                                                                    className="text-[10px] font-bold text-kidville-muted hover:text-kidville-ink uppercase tracking-wider"
                                                                 >
                                                                     Annulla
                                                                 </button>
@@ -599,27 +612,27 @@ export function TaskCard({
 
                                                     {/* Revision Alert for Subtask */}
                                                     {!isCompitoCompleted && compito.revision_feedback && (
-                                                        <div className="bg-red-50 dark:bg-red-950/10 border border-red-100 dark:border-red-900/20 p-2.5 rounded-xl text-[10px] text-red-700 dark:text-red-400">
+                                                        <div className="bg-kidville-error-soft border border-kidville-error/20 p-2.5 rounded-xl text-[10px] text-kidville-error">
                                                             <strong>⚠️ Modifica richiesta:</strong> &ldquo;{compito.revision_feedback}&rdquo;
                                                         </div>
                                                     )}
 
                                                     {/* Inline resolution form with file uploader */}
                                                     {isResolvingThis && (
-                                                        <div className="mt-2 pt-2 border-t border-dashed border-gray-100 dark:border-zinc-800 space-y-3">
+                                                        <div className="mt-2 pt-2 border-t border-dashed border-kidville-line space-y-3">
                                                             <textarea
                                                                 rows={2}
                                                                 placeholder="Come hai completato questo compito? Spiega cosa hai fatto... *"
                                                                 value={subtaskNotes}
                                                                 onChange={e => setSubtaskNotes(e.target.value)}
-                                                                className="w-full border border-gray-200 dark:border-zinc-800 rounded-xl p-2 font-maven text-xs text-kidville-green dark:text-zinc-200 bg-zinc-50/50 dark:bg-zinc-900/50 focus:outline-none focus:ring-1 focus:ring-amber-400"
+                                                                className="w-full border border-kidville-line rounded-xl p-2 font-maven text-xs text-kidville-green bg-kidville-cream focus:outline-none focus:ring-1 focus:ring-kidville-warn"
                                                                 autoFocus
                                                             />
                                                             
                                                             {/* Styled File Upload */}
                                                             <div className="space-y-1.5">
                                                                 <div className="flex flex-wrap gap-1.5 items-center">
-                                                                    <label className="flex items-center gap-1 px-2.5 py-1.5 border border-dashed border-gray-300 dark:border-zinc-700 hover:border-kidville-green rounded-xl cursor-pointer font-maven text-[10px] font-bold text-zinc-500 hover:text-kidville-green transition-all uppercase">
+                                                                    <label className="flex items-center gap-1 px-2.5 py-1.5 border border-dashed border-kidville-line hover:border-kidville-green rounded-xl cursor-pointer font-maven text-[10px] font-bold text-kidville-muted hover:text-kidville-green transition-all uppercase">
                                                                         <Paperclip size={11} /> Allega File
                                                                         <input 
                                                                             type="file" 
@@ -634,12 +647,12 @@ export function TaskCard({
                                                                         />
                                                                     </label>
                                                                     {selectedFiles.map((file, fIdx) => (
-                                                                        <span key={fIdx} className="inline-flex items-center gap-0.5 px-2 py-1 bg-zinc-100 dark:bg-zinc-900 border border-gray-200 dark:border-zinc-850 rounded-lg text-[9px] text-zinc-500">
+                                                                        <span key={fIdx} className="inline-flex items-center gap-0.5 px-2 py-1 bg-kidville-cream border border-kidville-line rounded-lg text-[9px] text-kidville-muted">
                                                                             {file.name.substring(0, 15)}...
                                                                             <button
                                                                                 type="button"
                                                                                 onClick={() => setSelectedFiles(prev => prev.filter((_, i) => i !== fIdx))}
-                                                                                className="text-red-500 hover:text-red-700 ml-1 font-bold"
+                                                                                className="text-kidville-error hover:text-kidville-error ml-1 font-bold"
                                                                             >✕</button>
                                                                         </span>
                                                                     ))}
@@ -665,8 +678,8 @@ export function TaskCard({
                                                                                 setSubtaskNotes('');
                                                                                 setSelectedFiles([]);
                                                                             }
-                                                                        } catch (err: any) { 
-                                                                            alert(err.message || 'Errore durante il completamento');
+                                                                        } catch (err) {
+                                                                            alert(err instanceof Error && err.message ? err.message : 'Errore durante il completamento');
                                                                         } finally { 
                                                                             setIsResolvingSubtask(false); 
                                                                         }
@@ -681,31 +694,31 @@ export function TaskCard({
 
                                                     {/* Resolution notes & files */}
                                                     {isCompitoCompleted && compito.resolution_notes && (
-                                                        <div className="mt-1.5 p-2.5 bg-emerald-50/30 dark:bg-emerald-950/10 border border-emerald-100/50 dark:border-emerald-900/30 rounded-xl text-[10px] space-y-1">
+                                                        <div className="mt-1.5 p-2.5 bg-kidville-success-soft/30 border border-kidville-success/50 rounded-xl text-[10px] space-y-1">
                                                             <div className="flex items-center justify-between">
-                                                                <span className={`font-bold font-barlow uppercase text-[9px] ${isCompitoApproved ? 'text-emerald-700 dark:text-emerald-400' : 'text-blue-600 dark:text-blue-400'}`}>
+                                                                <span className={`font-bold font-barlow uppercase text-[9px] ${isCompitoApproved ? 'text-kidville-success' : 'text-kidville-info'}`}>
                                                                     {isCompitoApproved ? '✅ Approvato' : '⏳ In Attesa Di Approvazione'}
                                                                 </span>
                                                                 {compito.resolved_at && (
-                                                                    <span className="text-zinc-400 text-[8px]">
+                                                                    <span className="text-kidville-muted text-[8px]">
                                                                         {new Date(compito.resolved_at).toLocaleDateString('it-IT', {day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'})}
                                                                     </span>
                                                                 )}
                                                             </div>
-                                                            <p className="text-zinc-700 dark:text-zinc-300 italic font-maven text-left">&ldquo;{compito.resolution_notes}&rdquo;</p>
+                                                            <p className="text-kidville-ink italic font-maven text-left">&ldquo;{compito.resolution_notes}&rdquo;</p>
                                                             {renderAttachments(compito.attachments)}
                                                         </div>
                                                     )}
 
                                                     {/* Manager Approval / Rejection UI */}
                                                     {isManager && isCompitoPending && (
-                                                        <div className="mt-2.5 pt-2 border-t border-dashed border-gray-150 dark:border-zinc-800 flex flex-col gap-2">
+                                                        <div className="mt-2.5 pt-2 border-t border-dashed border-kidville-line flex flex-col gap-2">
                                                             {rejectingSubtaskId !== compito.id ? (
                                                                 <div className="flex gap-2 justify-end">
                                                                     <button
                                                                         type="button"
                                                                         onClick={() => setRejectingSubtaskId(compito.id)}
-                                                                        className="px-2 py-1 bg-red-50 hover:bg-red-100 text-red-600 dark:bg-red-955/20 dark:text-red-400 text-[9px] font-bold uppercase rounded-lg tracking-wider transition-colors"
+                                                                        className="px-2 py-1 bg-kidville-error-soft hover:bg-kidville-error-soft text-kidville-error text-[9px] font-bold uppercase rounded-lg tracking-wider transition-colors"
                                                                     >
                                                                         Richiedi Modifica
                                                                     </button>
@@ -726,7 +739,7 @@ export function TaskCard({
                                                                                 await onUpdateSubtasks(task.id, updatedCompiti, "Compito approvato! ✓");
                                                                             }
                                                                         }}
-                                                                        className="px-2.5 py-1 bg-emerald-500 hover:bg-emerald-600 text-white text-[9px] font-bold uppercase rounded-lg tracking-wider transition-colors"
+                                                                        className="px-2.5 py-1 bg-kidville-success hover:bg-kidville-success text-white text-[9px] font-bold uppercase rounded-lg tracking-wider transition-colors"
                                                                     >
                                                                         Approva Compito
                                                                     </button>
@@ -738,14 +751,14 @@ export function TaskCard({
                                                                         placeholder="Specifica cosa deve modificare l'insegnante... *"
                                                                         value={rejectFeedback}
                                                                         onChange={e => setRejectFeedback(e.target.value)}
-                                                                        className="w-full border border-red-200 dark:border-red-900 rounded-xl p-2 font-maven text-xs text-red-700 bg-red-50/20 focus:outline-none focus:ring-1 focus:ring-red-400"
+                                                                        className="w-full border border-kidville-error/20 rounded-xl p-2 font-maven text-xs text-kidville-error bg-kidville-error-soft/20 focus:outline-none focus:ring-1 focus:ring-kidville-error"
                                                                         autoFocus
                                                                     />
                                                                     <div className="flex justify-end gap-1">
                                                                         <button
                                                                             type="button"
                                                                             onClick={() => { setRejectingSubtaskId(null); setRejectFeedback(''); }}
-                                                                            className="px-2 py-1 text-[9px] font-bold text-zinc-400 uppercase"
+                                                                            className="px-2 py-1 text-[9px] font-bold text-kidville-muted uppercase"
                                                                         >
                                                                             Annulla
                                                                         </button>
@@ -772,7 +785,7 @@ export function TaskCard({
                                                                                     setRejectFeedback('');
                                                                                 }
                                                                             }}
-                                                                            className="px-2 py-1 bg-red-500 hover:bg-red-600 text-white text-[9px] font-bold uppercase rounded-lg"
+                                                                            className="px-2 py-1 bg-kidville-error hover:bg-kidville-error text-white text-[9px] font-bold uppercase rounded-lg"
                                                                         >
                                                                             Invia Feedback
                                                                         </button>
@@ -783,33 +796,33 @@ export function TaskCard({
                                                     )}
 
                                                     {/* Comments / Clarifications sub-thread */}
-                                                    <div className="mt-2 pt-2 border-t border-gray-50 dark:border-zinc-900">
+                                                    <div className="mt-2 pt-2 border-t border-kidville-line">
                                                         <button
                                                             type="button"
                                                             onClick={() => setShowCommentsSubtaskId(showCommentsSubtaskId === compito.id ? null : compito.id)}
-                                                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 rounded-xl text-[9px] font-bold uppercase transition-all border border-gray-200 dark:border-zinc-700 cursor-pointer"
+                                                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-kidville-cream hover:bg-kidville-cream-dark text-kidville-ink rounded-xl text-[9px] font-bold uppercase transition-all border border-kidville-line cursor-pointer"
                                                         >
                                                             <MessageSquare size={10} />
                                                             Chiarimenti ({(compito.commenti || []).length})
                                                         </button>
 
                                                         {showCommentsSubtaskId === compito.id && (
-                                                            <div className="mt-2 space-y-2 pl-2 border-l-2 border-zinc-100 dark:border-zinc-900">
+                                                            <div className="mt-2 space-y-2 pl-2 border-l-2 border-kidville-line">
                                                                 {compito.commenti && compito.commenti.length > 0 ? (
                                                                     <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
                                                                         {compito.commenti.map(comm => (
-                                                                            <div key={comm.id} className="p-2 bg-zinc-50/85 dark:bg-zinc-900/30 rounded-xl border border-gray-100/50 dark:border-zinc-850 text-[10px] text-left">
-                                                                                <div className="flex items-center justify-between text-[8px] text-zinc-400 mb-0.5">
-                                                                                    <span className="font-bold text-kidville-green dark:text-zinc-300">{comm.author_name}</span>
+                                                                            <div key={comm.id} className="p-2 bg-kidville-cream/85 rounded-xl border border-kidville-line/50 text-[10px] text-left">
+                                                                                <div className="flex items-center justify-between text-[8px] text-kidville-muted mb-0.5">
+                                                                                    <span className="font-bold text-kidville-green">{comm.author_name}</span>
                                                                                     <span>{new Date(comm.created_at).toLocaleDateString('it-IT', {hour:'2-digit', minute:'2-digit'})}</span>
                                                                                 </div>
-                                                                                <p className="font-maven text-zinc-700 dark:text-zinc-300 leading-snug">{comm.testo}</p>
+                                                                                <p className="font-maven text-kidville-ink leading-snug">{comm.testo}</p>
                                                                                 {renderAttachments(comm.attachments)}
                                                                             </div>
                                                                         ))}
                                                                     </div>
                                                                 ) : (
-                                                                    <p className="font-maven text-[9px] text-zinc-400 italic py-1">Nessun chiarimento presente.</p>
+                                                                    <p className="font-maven text-[9px] text-kidville-muted italic py-1">Nessun chiarimento presente.</p>
                                                                 )}
 
                                                                 {/* Form to submit clarification */}
@@ -819,11 +832,11 @@ export function TaskCard({
                                                                         placeholder="Chiedi o scrivi chiarimenti..."
                                                                         value={commentText}
                                                                         onChange={e => setCommentText(e.target.value)}
-                                                                        className="w-full border border-gray-200 dark:border-zinc-855 rounded-xl px-2 py-1.5 font-maven text-xs text-kidville-green dark:text-zinc-200 bg-white/50 focus:outline-none focus:ring-1 focus:ring-kidville-green focus:border-transparent transition-all"
+                                                                        className="w-full border border-kidville-line rounded-xl px-2 py-1.5 font-maven text-xs text-kidville-green bg-white/50 focus:outline-none focus:ring-1 focus:ring-kidville-green focus:border-transparent transition-all"
                                                                     />
                                                                     <div className="flex items-center justify-between gap-1">
                                                                         <div className="flex items-center gap-1 flex-wrap">
-                                                                            <label className="p-1 border border-gray-200 dark:border-zinc-805 rounded-lg cursor-pointer hover:bg-gray-50 text-zinc-400 hover:text-kidville-green transition-colors" title="Allega file">
+                                                                            <label className="p-1 border border-kidville-line rounded-lg cursor-pointer hover:bg-kidville-cream text-kidville-muted hover:text-kidville-green transition-colors" title="Allega file">
                                                                                 <Paperclip size={11} />
                                                                                 <input 
                                                                                     type="file" 
@@ -838,9 +851,9 @@ export function TaskCard({
                                                                                 />
                                                                             </label>
                                                                             {commentFiles.map((file, fIdx) => (
-                                                                                <span key={fIdx} className="inline-flex items-center gap-0.5 px-1 bg-zinc-150 rounded text-[8px] text-zinc-500">
+                                                                                <span key={fIdx} className="inline-flex items-center gap-0.5 px-1 bg-kidville-cream rounded text-[8px] text-kidville-muted">
                                                                                     {file.name.substring(0, 8)}...
-                                                                                    <button type="button" onClick={() => setCommentFiles(prev => prev.filter((_, i) => i !== fIdx))} className="text-red-500 hover:text-red-700">✕</button>
+                                                                                    <button type="button" onClick={() => setCommentFiles(prev => prev.filter((_, i) => i !== fIdx))} className="text-kidville-error hover:text-kidville-error">✕</button>
                                                                                 </span>
                                                                             ))}
                                                                         </div>
@@ -880,8 +893,8 @@ export function TaskCard({
                                                                                         setCommentText('');
                                                                                         setCommentFiles([]);
                                                                                     }
-                                                                                } catch (err: any) {
-                                                                                    alert(err.message || 'Errore');
+                                                                                } catch (err) {
+                                                                                    alert(err instanceof Error && err.message ? err.message : 'Errore');
                                                                                 } finally {
                                                                                     setIsUploadingCommentFile(false);
                                                                                 }
@@ -904,24 +917,24 @@ export function TaskCard({
 
                             {/* Main Task Completion Details */}
                             {(task.status === 'completed' || task.status === 'approved') && (
-                                <div className="p-4 bg-emerald-50/20 dark:bg-emerald-950/10 border border-emerald-100 dark:border-emerald-900/20 rounded-2xl text-left">
-                                    <p className="font-maven font-bold text-xs text-emerald-800 dark:text-emerald-400 flex items-center gap-1.5">
+                                <div className="p-4 bg-kidville-success-soft/20 border border-kidville-success/30 rounded-2xl text-left">
+                                    <p className="font-maven font-bold text-xs text-kidville-success flex items-center gap-1.5">
                                         <CheckCircle size={12} /> {task.status === 'approved' ? 'Risolto e Approvato da:' : 'Risolto da (in attesa di verifica):'} {task.resolver ? `${task.resolver.first_name} ${task.resolver.last_name}` : 'Staff'}
                                     </p>
                                     {task.resolved_at && (
-                                        <p className="font-maven text-[10px] text-zinc-400 mt-0.5">
+                                        <p className="font-maven text-[10px] text-kidville-muted mt-0.5">
                                             il {new Date(task.resolved_at).toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
                                         </p>
                                     )}
                                     {task.resolution_notes && (
-                                        <p className="font-maven text-xs text-zinc-600 dark:text-zinc-300 mt-2 bg-white/40 dark:bg-zinc-900/40 p-2.5 rounded-xl border border-gray-100/50 dark:border-zinc-800 italic leading-relaxed">
+                                        <p className="font-maven text-xs text-kidville-ink mt-2 bg-white/40 p-2.5 rounded-xl border border-kidville-line/50 italic leading-relaxed">
                                             &ldquo;{task.resolution_notes}&rdquo;
                                         </p>
                                     )}
                                     
                                     {/* Task Level Attachments */}
                                     {task.attachments && task.attachments.length > 0 && (
-                                        <div className="mt-3 border-t border-dashed border-emerald-100/50 dark:border-zinc-800 pt-3">
+                                        <div className="mt-3 border-t border-dashed border-kidville-success/50 pt-3">
                                             <p className="font-barlow font-bold text-[9px] text-kidville-green uppercase tracking-wider mb-1">📁 Documenti Allegati</p>
                                             {renderAttachments(task.attachments)}
                                         </div>
@@ -930,10 +943,10 @@ export function TaskCard({
                             )}
 
                             {/* Meta footer */}
-                            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] text-zinc-400 dark:text-zinc-500 pt-1 border-t border-gray-50 dark:border-zinc-900">
+                            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] text-kidville-muted pt-1 border-t border-kidville-line">
                                 <span className="flex items-center gap-1"><Clock size={9} /> {createdDate}</span>
                                 {isExpired && task.status !== 'approved' && (
-                                    <span className="flex items-center gap-1 text-red-500 font-bold animate-pulse">
+                                    <span className="flex items-center gap-1 text-kidville-error font-bold animate-pulse">
                                         <AlertCircle size={9} /> SCADUTO {formattedDeadline}
                                     </span>
                                 )}
@@ -945,11 +958,11 @@ export function TaskCard({
 
             {/* Actions footer (always visible when not approved) */}
             {task.status !== 'approved' && (
-                <div className={`flex flex-col sm:flex-row gap-2 px-5 pb-5 ${expanded ? '' : 'pt-0'} justify-between items-center border-t border-gray-50/50 dark:border-zinc-900/50 pt-4`}>
+                <div className={`flex flex-col sm:flex-row gap-2 px-5 pb-5 ${expanded ? '' : 'pt-0'} justify-between items-center border-t border-kidville-line pt-4`}>
                     {/* Status Badge left side */}
                     <div>
                         {task.status === 'completed' && (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider bg-blue-50 text-blue-700 border border-blue-200">
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider bg-kidville-info-soft text-kidville-info border border-kidville-info/30">
                                 ⏳ In Attesa di Approvazione
                             </span>
                         )}
@@ -960,7 +973,7 @@ export function TaskCard({
                         {task.status === 'todo' && isDirectAssignee && (
                             <button
                                 onClick={() => onTakeCharge(task.id)}
-                                className="flex items-center gap-1 px-3 py-2 border-2 border-amber-300 hover:bg-amber-50 dark:hover:bg-amber-955/15 text-amber-700 dark:text-amber-500 font-barlow font-bold text-[10px] uppercase rounded-xl active:scale-[0.98] transition-all"
+                                className="flex items-center gap-1 px-3 py-2 border-2 border-kidville-warn/30 hover:bg-kidville-warn-soft text-kidville-warn font-barlow font-bold text-[10px] uppercase rounded-xl active:scale-[0.98] transition-all"
                             >
                                 <Play size={11} /> Prendo in carico
                             </button>
@@ -983,7 +996,7 @@ export function TaskCard({
                                         <button
                                             type="button"
                                             onClick={() => setRejectingTaskId(task.id)}
-                                            className="flex items-center gap-1 px-3 py-2 border-2 border-red-200 hover:bg-red-50 text-red-600 font-barlow font-bold text-[10px] uppercase rounded-xl transition-all"
+                                            className="flex items-center gap-1 px-3 py-2 border-2 border-kidville-error/20 hover:bg-kidville-error-soft text-kidville-error font-barlow font-bold text-[10px] uppercase rounded-xl transition-all"
                                         >
                                             Richiedi Modifica
                                         </button>
@@ -997,12 +1010,12 @@ export function TaskCard({
                                                         await onUpdateTaskFields(task.id, { status: 'approved' }, "Task approvato e archiviato! 🎉");
                                                     }
                                                 }}
-                                                className="flex items-center gap-1 px-3 py-2 bg-emerald-500 text-white hover:bg-emerald-600 font-barlow font-bold text-[10px] uppercase rounded-xl transition-all shadow"
+                                                className="flex items-center gap-1 px-3 py-2 bg-kidville-success text-white hover:bg-kidville-success font-barlow font-bold text-[10px] uppercase rounded-xl transition-all shadow"
                                             >
                                                 Approva Task
                                             </button>
                                         ) : (
-                                            <span className="flex items-center gap-1 px-3 py-2 bg-zinc-100 dark:bg-zinc-900 text-zinc-400 dark:text-zinc-500 font-barlow font-bold text-[10px] uppercase rounded-xl border border-gray-200 dark:border-zinc-800 cursor-not-allowed" title="Approva prima tutti i compiti suddivisi">
+                                            <span className="flex items-center gap-1 px-3 py-2 bg-kidville-cream text-kidville-muted font-barlow font-bold text-[10px] uppercase rounded-xl border border-kidville-line cursor-not-allowed" title="Approva prima tutti i compiti suddivisi">
                                                 In attesa approvazione compiti
                                             </span>
                                         )}
@@ -1014,14 +1027,14 @@ export function TaskCard({
                                             placeholder="Motivo per la modifica del task... *"
                                             value={rejectFeedback}
                                             onChange={e => setRejectFeedback(e.target.value)}
-                                            className="w-full border border-red-200 dark:border-zinc-800 rounded-xl p-2 font-maven text-xs text-red-700 dark:text-red-400 bg-red-50/20 dark:bg-red-955/10 focus:outline-none focus:ring-1 focus:ring-red-400"
+                                            className="w-full border border-kidville-error/20 rounded-xl p-2 font-maven text-xs text-kidville-error bg-kidville-error-soft/20 focus:outline-none focus:ring-1 focus:ring-kidville-error"
                                             autoFocus
                                         />
                                         <div className="flex justify-end gap-1.5">
                                             <button
                                                 type="button"
                                                 onClick={() => { setRejectingTaskId(null); setRejectFeedback(''); }}
-                                                className="px-2.5 py-1 text-[9px] font-bold text-zinc-400 uppercase"
+                                                className="px-2.5 py-1 text-[9px] font-bold text-kidville-muted uppercase"
                                             >
                                                 Annulla
                                             </button>
@@ -1052,7 +1065,7 @@ export function TaskCard({
                                                         setRejectFeedback('');
                                                     }
                                                 }}
-                                                className="px-3 py-1 bg-red-500 text-white text-[9px] font-bold uppercase rounded-lg"
+                                                className="px-3 py-1 bg-kidville-error text-white text-[9px] font-bold uppercase rounded-lg"
                                             >
                                                 Invia
                                             </button>
@@ -1067,13 +1080,14 @@ export function TaskCard({
 
             {/* Image Lightbox Modal */}
             {lightboxUrl && (
-                <div className="fixed inset-0 bg-black/90 backdrop-blur-md z-[100] flex items-center justify-center p-4">
+                <div className="fixed inset-0 bg-kidville-ink/90 backdrop-blur-md z-[100] flex items-center justify-center p-4">
                     <button
                         onClick={() => setLightboxUrl(null)}
                         className="absolute top-6 right-6 w-10 h-10 bg-white/10 hover:bg-white/20 text-white rounded-full flex items-center justify-center transition-colors text-sm font-bold"
                     >
                         ✕
                     </button>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={lightboxUrl} alt="Allegato" className="max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl animate-fade-in" />
                 </div>
             )}

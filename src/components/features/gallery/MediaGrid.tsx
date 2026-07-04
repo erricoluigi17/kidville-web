@@ -2,7 +2,7 @@
 
 import { motion } from 'framer-motion';
 import { Download, Share2, Play, ChevronLeft, ChevronRight } from 'lucide-react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 
 export interface Student {
     id: string;
@@ -53,7 +53,7 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
 
     const currentIndex = lightbox ? items.findIndex(item => item.id === lightbox.id) : -1;
 
-    const handlePrev = (e?: React.MouseEvent) => {
+    const handlePrev = useCallback((e?: React.MouseEvent) => {
         e?.stopPropagation();
         if (currentIndex > 0) {
             const prevItem = items[currentIndex - 1];
@@ -61,9 +61,9 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
             setEditMode(false);
             setTempTagged(prevItem.tag_students ?? []);
         }
-    };
+    }, [currentIndex, items]);
 
-    const handleNext = (e?: React.MouseEvent) => {
+    const handleNext = useCallback((e?: React.MouseEvent) => {
         e?.stopPropagation();
         if (currentIndex < items.length - 1) {
             const nextItem = items[currentIndex + 1];
@@ -71,7 +71,7 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
             setEditMode(false);
             setTempTagged(nextItem.tag_students ?? []);
         }
-    };
+    }, [currentIndex, items]);
 
     useEffect(() => {
         if (!lightbox) return;
@@ -86,7 +86,9 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
         };
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [lightbox, currentIndex, items]);
+        // handlePrev/handleNext sono memoizzate su [currentIndex, items] (già dipendenze):
+        // l'effect gira esattamente quando girava prima.
+    }, [lightbox, currentIndex, items, handlePrev, handleNext]);
 
     if (items.length === 0) {
         return (
@@ -155,7 +157,7 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                                             a.click();
                                             document.body.removeChild(a);
                                             window.URL.revokeObjectURL(blobUrl);
-                                        } catch (err) {
+                                        } catch {
                                             window.open(item.file_url, '_blank');
                                         }
                                     }}
@@ -270,7 +272,7 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                                                         key={student.id}
                                                         className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs cursor-pointer select-none transition-all ${
                                                             isTagged
-                                                                ? 'bg-emerald-500/10 border-emerald-500 text-emerald-700 font-semibold shadow-sm'
+                                                                ? 'bg-kidville-success-soft border-kidville-success text-kidville-success font-semibold shadow-sm'
                                                                 : 'bg-white border-gray-200 text-gray-400 hover:bg-gray-50'
                                                         }`}
                                                     >
@@ -314,7 +316,7 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                                                     }
                                                 }}
                                                 disabled={savingTags}
-                                                className="px-3 py-1 bg-emerald-500 hover:bg-emerald-600 disabled:opacity-55 rounded-lg text-xs font-semibold text-white transition-colors"
+                                                className="px-3 py-1 bg-kidville-success hover:opacity-90 disabled:opacity-55 rounded-lg text-xs font-semibold text-white transition-colors"
                                             >
                                                 {savingTags ? 'Salvataggio...' : 'Salva'}
                                             </button>
@@ -396,7 +398,7 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                         {/* Delete (admin) */}
                         {onDelete && (
                             <button onClick={() => { onDelete(lightbox.id); handleCloseLightbox(); }}
-                                className="mt-4 mx-auto flex items-center gap-1 px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-full font-maven text-xs font-semibold transition-colors cursor-pointer">
+                                className="mt-4 mx-auto flex items-center gap-1 px-4 py-2 bg-kidville-error hover:opacity-90 text-white rounded-full font-maven text-xs font-semibold transition-colors cursor-pointer">
                                 🗑️ Elimina Media
                             </button>
                         )}

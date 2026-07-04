@@ -12,6 +12,10 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Progetti nativi Capacitor (M10): sorgenti native + shim Cordova vendorizzati
+    // (ios/**/public/cordova.js ecc.) non vanno lintati dal gate del repo.
+    "ios/**",
+    "android/**",
   ]),
 ]);
 

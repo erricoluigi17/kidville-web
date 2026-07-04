@@ -1,8 +1,40 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
+import { assertSezioneInScope, assertAlunniInSezione } from '@/lib/auth/scope'
+import { logScrittura } from '@/lib/audit/scrittura'
+import { risolviValutatore } from '@/lib/audit/valutatore'
 import { isOltreScadenza } from '@/lib/primaria/timelock'
-import { enqueueNotifichePerAlunni } from '@/lib/primaria/notifiche'
+import { enqueueNotifichePerAlunni, notificaTitolariScrittura } from '@/lib/primaria/notifiche'
+import { parseBody, parseQuery } from '@/lib/validation/http'
+import { zDataYMD, zUuid } from '@/lib/validation/common'
+
+const getQuerySchema = z.object({
+  sectionId: zUuid,
+  data: zDataYMD,
+})
+
+// oraLezione: i client inviano il numero d'ordine della campanella; storicamente
+// bastava un valore truthy (0/'' → 400), quindi union permissiva senza range.
+// dataConsegnaCompiti resta stringa libera: '' ricade su null via `||` come oggi.
+// tipoCompresenza senza enum: il codice attuale non lo vincola (confronta solo 'sostegno').
+const postBodySchema = z.object({
+  sectionId: zUuid,
+  data: zDataYMD,
+  oraLezione: z.union([z.number(), z.string()]).refine((v) => !!v, 'oraLezione obbligatoria'),
+  materiaId: zUuid.nullish(),
+  argomento: z.string().nullish(),
+  compiti: z.string().nullish(),
+  dataConsegnaCompiti: z.string().nullish(),
+  tipoCompresenza: z.string().default('principale'),
+  argomentoProprio: z.string().nullish(),
+  compitiPropri: z.string().nullish(),
+  destinatariIds: z.array(zUuid).nullish().transform((v) => v ?? []),
+  // Segreteria/Direzione: docente titolare a cui attribuire la firma (risolviValutatore).
+  docenteId: zUuid.nullish(),
+  daOrario: z.boolean().nullish(),
+})
 
 // ISO date → giorno_settimana 1..6 (Lun..Sab); domenica (0) → 7 (fuori range).
 function giornoSettimana(dataIso: string): number {
@@ -17,12 +49,13 @@ export async function GET(request: NextRequest) {
   try {
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
-    const sp = new URL(request.url).searchParams
-    const sectionId = sp.get('sectionId')
-    const data = sp.get('data')
-    if (!sectionId || !data) return NextResponse.json({ error: 'sectionId e data obbligatori' }, { status: 400 })
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+    const { sectionId, data } = q.data
 
     const supabase = await createAdminClient()
+    const scopeErr = await assertSezioneInScope(supabase, auth.user, sectionId)
+    if (scopeErr) return scopeErr
     const giorno = giornoSettimana(data)
 
     // NB: niente embed `utenti(...)` nei join — la relazione firme_docenti/
@@ -85,8 +118,8 @@ export async function POST(request: NextRequest) {
   try {
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
-    const userId = auth.user.id
-    const body = await request.json()
+    const b = await parseBody(request, postBodySchema)
+    if ('response' in b) return b.response
     const {
       sectionId,
       data,
@@ -95,24 +128,38 @@ export async function POST(request: NextRequest) {
       argomento,
       compiti,
       dataConsegnaCompiti,
-      tipoCompresenza = 'principale',
+      tipoCompresenza,
       argomentoProprio,
       compitiPropri,
-      destinatariIds = [],
-    } = body
-
-    if (!sectionId || !data || !oraLezione) {
-      return NextResponse.json({ error: 'sectionId, data, oraLezione obbligatori' }, { status: 400 })
-    }
+      destinatariIds,
+      docenteId,
+      daOrario,
+    } = b.data
 
     const supabase = await createAdminClient()
+
+    // Scope per tenant/classe (educator: solo sezioni assegnate; staff/segreteria: plesso).
+    const scopeErr = await assertSezioneInScope(supabase, auth.user, sectionId)
+    if (scopeErr) return scopeErr
+
+    // I destinatari (oscuramento firma indipendente) devono essere alunni della sezione.
+    if (destinatariIds.length > 0) {
+      const alunniErr = await assertAlunniInSezione(supabase, destinatariIds, sectionId)
+      if (alunniErr) return alunniErr
+    }
+
+    // La FIRMA del registro deve restare del docente (vincolo FEA). educator → sé
+    // stesso; segreteria → docente titolare indicato in body.docenteId, altrimenti 422.
+    const vr = await risolviValutatore(supabase, auth.user, sectionId, { docenteId, materiaId })
+    if (vr.response) return vr.response
+    const firmaUserId = vr.valutatoreId
 
     // Risolve scuola + nome classe (classe_sezione per compat con il vincolo unico).
     const { data: section } = await supabase
       .from('sections')
       .select('id, name, scuola_id')
       .eq('id', sectionId)
-      .single()
+      .maybeSingle()
     if (!section) return NextResponse.json({ error: 'Sezione non trovata' }, { status: 404 })
 
     // Riga registro esistente per questo slot?
@@ -147,7 +194,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const isIndipendente = tipoCompresenza === 'sostegno' && Array.isArray(destinatariIds) && destinatariIds.length > 0
+    const isIndipendente = tipoCompresenza === 'sostegno' && destinatariIds.length > 0
 
     // UPSERT della riga registro. I contenuti CONDIVISI (argomento/compiti) si
     // scrivono solo per firma principale/compresenza/cofirma, non per firma indipendente.
@@ -169,7 +216,7 @@ export async function POST(request: NextRequest) {
           classe_sezione: section.name,
           data,
           ora_lezione: oraLezione,
-          da_orario: body.daOrario ?? false,
+          da_orario: daOrario ?? false,
           ...sharedFields,
         },
         { onConflict: 'classe_sezione,data,ora_lezione' }
@@ -184,7 +231,7 @@ export async function POST(request: NextRequest) {
       .upsert(
         {
           registro_id: registroRow.id,
-          maestra_id: userId,
+          maestra_id: firmaUserId,
           tipo_compresenza: tipoCompresenza,
           argomento_proprio: isIndipendente ? argomentoProprio || null : null,
           compiti_propri: isIndipendente ? compitiPropri || null : null,
@@ -198,7 +245,7 @@ export async function POST(request: NextRequest) {
     // Destinatari (oscuramento): sostituisce quelli della firma.
     if (isIndipendente && firmaRow) {
       await supabase.from('registro_destinatari').delete().eq('firma_id', firmaRow.id)
-      const rows = destinatariIds.map((alunnoId: string) => ({
+      const rows = destinatariIds.map((alunnoId) => ({
         registro_id: registroRow.id,
         firma_id: firmaRow.id,
         alunno_id: alunnoId,
@@ -226,6 +273,17 @@ export async function POST(request: NextRequest) {
         })
       }
     } catch { /* non bloccare il salvataggio */ }
+
+    await logScrittura(supabase, {
+      attore: auth.user,
+      entitaTipo: 'registro',
+      entitaId: registroRow.id,
+      azione: 'update',
+      scuolaId: section.scuola_id,
+      sectionId,
+      valoreDopo: { registro: registroRow, firma: firmaRow },
+    })
+    await notificaTitolariScrittura(supabase, { attore: auth.user, sectionId, scuolaId: section.scuola_id, area: 'registro', link: `/teacher/primaria/${sectionId}/registro` })
 
     return NextResponse.json({ success: true, data: { registro: registroRow, firma: firmaRow } })
   } catch (err) {

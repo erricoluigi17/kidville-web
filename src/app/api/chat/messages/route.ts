@@ -1,19 +1,32 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
+import { parseBody, parseQuery } from '@/lib/validation/http';
+import { zUuid, zPaginazione } from '@/lib/validation/common';
+
+// markRead='' è ammesso per retro-compatibilità: equivale ad assente (nessun mark-read).
+const getQuerySchema = z.object({
+    threadId: zUuid,
+    markRead: zUuid.or(z.literal('')).optional(),
+    ...zPaginazione.shape,
+});
+
+const postBodySchema = z.object({
+    thread_id: zUuid,
+    sender_id: zUuid,
+    content: z.string().min(1, 'content è obbligatorio'),
+    attachment_url: z.string().nullish(),
+    attachment_type: z.string().nullish(),
+});
 
 // GET /api/chat/messages?threadId=xxx&limit=50&offset=0&markRead=userId
 // Lista messaggi per un thread con paginazione
 export async function GET(request: Request) {
     try {
-        const { searchParams } = new URL(request.url);
-        const threadId = searchParams.get('threadId');
-        const limit = parseInt(searchParams.get('limit') ?? '50');
-        const offset = parseInt(searchParams.get('offset') ?? '0');
-        const markReadFor = searchParams.get('markRead'); // userId che sta leggendo
-
-        if (!threadId) {
-            return NextResponse.json({ error: 'threadId è obbligatorio' }, { status: 400 });
-        }
+        const q = parseQuery(request, getQuerySchema);
+        if ('response' in q) return q.response;
+        const { threadId, limit, offset } = q.data;
+        const markReadFor = q.data.markRead; // userId che sta leggendo ('' → falsy → ignorato)
 
         const supabase = await createAdminClient();
 
@@ -25,7 +38,7 @@ export async function GET(request: Request) {
                 .from('chat_threads')
                 .select('teacher_id, parent_id')
                 .eq('id', threadId)
-                .single();
+                .maybeSingle();
 
             if (!thread) {
                 return NextResponse.json({ error: 'Thread non trovato' }, { status: 404 });
@@ -73,15 +86,9 @@ export async function GET(request: Request) {
 // Body: { thread_id, sender_id, content, attachment_url?, attachment_type? }
 export async function POST(request: Request) {
     try {
-        const body = await request.json();
-        const { thread_id, sender_id, content, attachment_url, attachment_type } = body;
-
-        if (!thread_id || !sender_id || !content) {
-            return NextResponse.json(
-                { error: 'thread_id, sender_id e content sono obbligatori' },
-                { status: 400 }
-            );
-        }
+        const b = await parseBody(request, postBodySchema);
+        if ('response' in b) return b.response;
+        const { thread_id, sender_id, content, attachment_url, attachment_type } = b.data;
 
         const supabase = await createAdminClient();
 

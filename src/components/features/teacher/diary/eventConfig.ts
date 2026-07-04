@@ -7,42 +7,50 @@ interface EventConfig {
     accentColor: string; // Tailwind text/border color class
 }
 
+// Colori on-token (brand/semantici Kidville) — sostituiscono i pastelli off-token
+// (purple/orange/sky/amber) per coerenza con il redesign DR.
 export const EVENT_CONFIG: Record<DiaryEventType, EventConfig> = {
     attivita: {
         label: 'Attività',
         emoji: '🎨',
-        color: 'bg-purple-50',
-        accentColor: 'text-purple-600 border-purple-200',
+        color: 'bg-kidville-green-soft',
+        accentColor: 'text-kidville-green border-kidville-green/25',
     },
     merenda: {
         label: 'Merenda',
         emoji: '🍎',
-        color: 'bg-orange-50',
-        accentColor: 'text-orange-600 border-orange-200',
+        color: 'bg-kidville-warn-soft',
+        accentColor: 'text-kidville-warn border-kidville-warn/25',
     },
     pranzo: {
         label: 'Pranzo',
         emoji: '🍽️',
-        color: 'bg-green-50',
-        accentColor: 'text-green-600 border-green-200',
+        color: 'bg-kidville-success-soft',
+        accentColor: 'text-kidville-success border-kidville-success/25',
     },
     nanna_inizio: {
         label: 'Nanna',
         emoji: '😴',
-        color: 'bg-blue-50',
-        accentColor: 'text-blue-600 border-blue-200',
+        color: 'bg-kidville-info-soft',
+        accentColor: 'text-kidville-info border-kidville-info/25',
     },
     nanna_fine: {
         label: 'Sveglia',
         emoji: '☀️',
-        color: 'bg-yellow-50',
-        accentColor: 'text-yellow-600 border-yellow-200',
+        color: 'bg-kidville-yellow-soft',
+        accentColor: 'text-kidville-yellow-dark border-kidville-yellow-dark/25',
     },
     bagno: {
         label: 'Bagno',
         emoji: '🚿',
-        color: 'bg-sky-50',
-        accentColor: 'text-sky-600 border-sky-200',
+        color: 'bg-kidville-info-soft',
+        accentColor: 'text-kidville-info border-kidville-info/25',
+    },
+    umore: {
+        label: 'Umore',
+        emoji: '🌈',
+        color: 'bg-kidville-yellow-soft',
+        accentColor: 'text-kidville-yellow-dark border-kidville-yellow-dark/25',
     },
 };
 
@@ -50,8 +58,8 @@ export const EVENT_CONFIG: Record<DiaryEventType, EventConfig> = {
 const LEGACY_FALLBACK: EventConfig = {
     label: 'Evento',
     emoji: '📝',
-    color: 'bg-gray-50',
-    accentColor: 'text-gray-600 border-gray-200',
+    color: 'bg-kidville-neutral-soft',
+    accentColor: 'text-kidville-neutral border-kidville-neutral/25',
 };
 
 /** Config specifica per eventi legacy noti */
@@ -59,8 +67,8 @@ const LEGACY_EVENT_CONFIG: Partial<Record<string, EventConfig>> = {
     entrata: {
         label: 'Entrata',
         emoji: '🌅',
-        color: 'bg-amber-50',
-        accentColor: 'text-amber-600 border-amber-200',
+        color: 'bg-kidville-yellow-soft',
+        accentColor: 'text-kidville-yellow-dark border-kidville-yellow-dark/25',
     },
 };
 

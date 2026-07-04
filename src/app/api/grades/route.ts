@@ -4,15 +4,42 @@
 // /api/primaria/valutazioni e /api/primaria/prospetto. Conservato come storico.
 
 import { NextResponse } from 'next/server';
-import { createClient, createAdminClient } from '@/lib/supabase/server-client';
+import { z } from 'zod';
+import { createAdminClient } from '@/lib/supabase/server-client';
+import { requireDocente } from '@/lib/auth/require-staff';
+import { parseBody, parseQuery } from '@/lib/validation/http';
+import { zUuid } from '@/lib/validation/common';
+
+// '' è ammesso per retro-compatibilità: ?alunnoId= (vuoto) equivale ad assente (nessun filtro).
+const getQuerySchema = z.object({
+    alunnoId: zUuid.or(z.literal('')).optional(),
+    materia: z.string().optional(),
+});
+
+const postBodySchema = z
+    .object({
+        alunnoId: zUuid,
+        materia: z.string().min(1, 'materia è obbligatoria'),
+        tipo: z.string().nullish(),
+        // Legacy: il voto può arrivare come numero o stringa numerica (il DB lo casta).
+        votoNumerico: z.union([z.number(), z.string()]).nullish(),
+        giudizioTesto: z.string().nullish(),
+    })
+    .refine((b) => Boolean(b.votoNumerico) || Boolean(b.giudizioTesto), {
+        message: 'Serve almeno votoNumerico o giudizioTesto',
+        path: ['votoNumerico'],
+    });
 
 // GET /api/grades?alunnoId=xxx&materia=Italiano
 // Recupera i voti di un alunno (opzionalmente filtrati per materia)
 export async function GET(request: Request) {
     try {
-        const { searchParams } = new URL(request.url);
-        const alunnoId = searchParams.get('alunnoId');
-        const materia = searchParams.get('materia');
+        const auth = await requireDocente(request);
+        if (auth.response) return auth.response;
+
+        const q = parseQuery(request, getQuerySchema);
+        if ('response' in q) return q.response;
+        const { alunnoId, materia } = q.data;
 
         const supabase = await createAdminClient();
 
@@ -55,20 +82,18 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
     try {
-        const body = await request.json();
-        const { alunnoId, materia, tipo, votoNumerico, giudizioTesto } = body;
+        const auth = await requireDocente(request);
+        if (auth.response) return auth.response;
 
-        if (!alunnoId || !materia || (!votoNumerico && !giudizioTesto)) {
-            return NextResponse.json({ error: 'Dati incompleti' }, { status: 400 });
-        }
+        const b = await parseBody(request, postBodySchema);
+        if ('response' in b) return b.response;
+        const { alunnoId, materia, tipo, votoNumerico, giudizioTesto } = b.data;
 
         // Admin client per bypassare RLS
         const supabase = await createAdminClient();
 
-        // Recupera l'utente dalla sessione se disponibile, altrimenti usa ID fallback per dev
-        const sessionClient = await createClient();
-        const { data: { user } } = await sessionClient.auth.getUser();
-        const maestraId = user?.id ?? '00000000-0000-0000-0000-000000000001';
+        // L'autore/valutatore è l'utente del gate (identità risolta server-side).
+        const maestraId = auth.user.id;
 
         // Inseriamo il voto. 'pubblicato' è false di default (nel DB).
         // Il buffer notifica sarà gestito tramite job asincrono su Supabase
@@ -81,7 +106,7 @@ export async function POST(request: Request) {
                 tipo,
                 voto_numerico: votoNumerico,
                 giudizio_testo: giudizioTesto,
-                pubblicato: false 
+                pubblicato: false
             })
             .select()
             .single();

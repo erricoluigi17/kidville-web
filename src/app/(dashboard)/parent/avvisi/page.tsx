@@ -1,16 +1,12 @@
 'use client';
 
 import { useState, useEffect, useCallback, Suspense } from 'react';
-import { useSearchParams } from 'next/navigation';
 import { AvvisoCard, Avviso } from '@/components/features/avvisi/AvvisoCard';
+import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 
-const DEFAULT_PARENT_ID = '33333333-3333-3333-3333-333333333333';
-const DEFAULT_STUDENT_ID = 'dc617529-e80d-4084-9041-fb28e864089f';
-
+// Identità dalla sessione (URL → localStorage → /api/me), senza fallback demo (M4).
 function ParentAvvisiContent() {
-    const searchParams = useSearchParams();
-    const studentId = searchParams.get('id') || DEFAULT_STUDENT_ID;
-    const parentId = searchParams.get('userId') || DEFAULT_PARENT_ID;
+    const { parentId, studentId, ready } = useParentIdentity();
 
     const [avvisi, setAvvisi] = useState<Avviso[]>([]);
     const [loading, setLoading] = useState(true);
@@ -19,6 +15,7 @@ function ParentAvvisiContent() {
 
     // 1. Carica info studente (per ricavare nome e classe)
     useEffect(() => {
+        if (!studentId) return;
         fetch(`/api/diary/students?id=${studentId}`)
             .then(r => r.ok ? r.json() : null)
             .then(d => {
@@ -34,22 +31,21 @@ function ParentAvvisiContent() {
 
     // 2. Carica gli avvisi per la classe dello studente
     const loadAvvisi = useCallback(async () => {
-        setLoading(true);
+        if (!ready || !parentId || !studentId) return;
         try {
             const res = await fetch(`/api/avvisi?classe=${classe}&parentId=${parentId}&studentId=${studentId}`);
             if (res.ok) setAvvisi(await res.json());
-        } catch (err) {
-            console.error('Errore caricamento avvisi:', err);
         } finally {
             setLoading(false);
         }
-    }, [classe, parentId, studentId]);
+    }, [ready, classe, parentId, studentId]);
 
     useEffect(() => {
         loadAvvisi();
     }, [loadAvvisi]);
 
     const handleReadReceipt = async (avvisoId: string) => {
+        if (!parentId || !studentId) return;
         try {
             await fetch(`/api/avvisi/${avvisoId}/risposte`, {
                 method: 'POST',
@@ -63,6 +59,7 @@ function ParentAvvisiContent() {
     };
 
     const handleAdesione = async (avvisoId: string, risposta: 'si' | 'no') => {
+        if (!parentId || !studentId) return;
         try {
             await fetch(`/api/avvisi/${avvisoId}/risposte`, {
                 method: 'POST',
@@ -75,20 +72,28 @@ function ParentAvvisiContent() {
         }
     };
 
+    // "Da gestire" (DR): non letti (presa visione) + adesioni senza risposta.
+    const daGestire = avvisi.filter(a =>
+        a.tipo === 'adesione' ? !a.my_response?.risposta : !a.my_response?.letto_il
+    ).length;
+
     return (
         <div className="max-w-lg mx-auto p-4 sm:p-6 pb-16">
             {/* Header */}
             <div className="flex items-start justify-between mb-6">
                 <div>
-                    <h1 className="font-barlow font-black text-3xl text-kidville-green uppercase tracking-wide">
-                        📋 Avvisi
+                    <p className="font-barlow font-bold text-[11px] uppercase tracking-[0.14em] text-kidville-yellow-dark">
+                        Comunicazioni
+                    </p>
+                    <h1 className="font-barlow font-black text-3xl text-kidville-green uppercase tracking-wide leading-none">
+                        Avvisi
                     </h1>
-                    <p className="font-maven text-gray-400 mt-1 text-sm">
-                        Comunicazioni dalla scuola
+                    <p className="font-maven text-kidville-muted mt-1 text-sm">
+                        {loading ? 'Comunicazioni dalla scuola' : daGestire > 0 ? `${daGestire} da gestire` : 'Tutto in regola ✓'}
                     </p>
                 </div>
                 {studentName && (
-                    <div className="flex items-center gap-2 bg-white/80 backdrop-blur-xl rounded-2xl border border-white/40 shadow-sm px-3 py-2 ml-3 flex-shrink-0">
+                    <div className="flex items-center gap-2 bg-white rounded-2xl border border-kidville-line shadow-sm px-3 py-2 ml-3 flex-shrink-0">
                         <div className="w-8 h-8 rounded-full bg-kidville-green flex items-center justify-center font-barlow font-black text-xs text-kidville-yellow flex-shrink-0">
                             {studentName.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase()}
                         </div>
@@ -133,7 +138,7 @@ function ParentAvvisiContent() {
             )}
 
             {/* Footer */}
-            <div className="mt-8 p-4 bg-white/50 backdrop-blur-sm rounded-2xl border border-white/30 text-center">
+            <div className="mt-8 p-4 bg-white rounded-2xl border border-kidville-line text-center">
                 <p className="font-maven text-xs text-gray-400">
                     📋 Gli avvisi restano visibili fino alla loro scadenza.<br />
                     Le prese visione vengono registrate automaticamente.

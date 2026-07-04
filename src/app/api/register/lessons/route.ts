@@ -1,16 +1,39 @@
 import { NextResponse } from 'next/server';
-import { createClient, createAdminClient } from '@/lib/supabase/server-client';
+import { z } from 'zod';
+import { createAdminClient } from '@/lib/supabase/server-client';
+import { requireDocente } from '@/lib/auth/require-staff';
+import { parseBody, parseQuery } from '@/lib/validation/http';
+import { zDataYMD, zUuid } from '@/lib/validation/common';
+import { assertClasseNomeInScope, scuoleDiUtente } from '@/lib/auth/scope';
+
+const getQuerySchema = z.object({
+    classeSezione: z.string().min(1),
+    data: zDataYMD,
+});
+
+const postBodySchema = z.object({
+    classeSezione: z.string().min(1),
+    // '' e null oggi ricadono sul fallback (prima scuola dal DB), quindi restano ammessi
+    scuolaId: z.union([zUuid, z.literal('')]).nullish(),
+    data: zDataYMD,
+    // oggi: qualsiasi valore truthy (numero ≠ 0 o stringa non vuota); il CHECK 1..8 resta al DB
+    oraLezione: z.union([z.number().refine((n) => n !== 0), z.string().min(1)]),
+    materia: z.string().min(1),
+    argomento: z.string().nullish(),
+    compiti: z.string().nullish(),
+    dataConsegnaCompiti: z.union([zDataYMD, z.literal('')]).nullish(),
+});
 
 // GET /api/register/lessons?classeSezione=3A&data=2026-05-13
+// Gate docente (M5.6): la route era raggiungibile senza identità post-M4.
 export async function GET(request: Request) {
-    try {
-        const { searchParams } = new URL(request.url);
-        const classeSezione = searchParams.get('classeSezione');
-        const data = searchParams.get('data');
+    const auth = await requireDocente(request);
+    if (auth.response) return auth.response;
 
-        if (!classeSezione || !data) {
-            return NextResponse.json({ error: 'classeSezione e data sono obbligatori' }, { status: 400 });
-        }
+    try {
+        const q = parseQuery(request, getQuerySchema);
+        if ('response' in q) return q.response;
+        const { classeSezione, data } = q.data;
 
         const supabase = await createAdminClient();
 
@@ -50,33 +73,42 @@ export async function GET(request: Request) {
 
 // POST /api/register/lessons
 // Body: { classeSezione, scuolaId, data, oraLezione, materia, argomento, compiti, dataConsegnaCompiti }
+// Gate docente (M5.6): scrittura su registro_orario; la firma usa l'identità
+// risolta dal gate (niente fallback dev post-M4).
 export async function POST(request: Request) {
-    try {
-        const body = await request.json();
-        const { classeSezione, scuolaId, data, oraLezione, materia, argomento, compiti, dataConsegnaCompiti } = body;
+    const auth = await requireDocente(request);
+    if (auth.response) return auth.response;
 
-        if (!classeSezione || !data || !oraLezione || !materia) {
-            return NextResponse.json({ error: 'classeSezione, data, oraLezione e materia sono obbligatori' }, { status: 400 });
-        }
+    try {
+        const b = await parseBody(request, postBodySchema);
+        if ('response' in b) return b.response;
+        const { classeSezione, scuolaId, data, oraLezione, materia, argomento, compiti, dataConsegnaCompiti } = b.data;
 
         // Admin client per bypassare RLS (stesso pattern delle altre API del progetto)
         const supabase = await createAdminClient();
 
-        // Recupera l'utente dalla sessione se disponibile, altrimenti usa ID fallback per dev
-        const sessionClient = await createClient();
-        const { data: { user } } = await sessionClient.auth.getUser();
-        const maestraId = user?.id ?? '00000000-0000-0000-0000-000000000001';
+        // La classe deve appartenere ai plessi del docente (niente scritture su classi altrui)
+        const classeScope = await assertClasseNomeInScope(supabase, auth.user, classeSezione);
+        if (classeScope) return classeScope;
 
-        // Recupera scuola_id se non fornito (prende il primo disponibile dal DB)
-        let finalScuolaId = scuolaId;
-        if (!finalScuolaId) {
-            const { data: school } = await supabase
-                .from('schools')
-                .select('id')
-                .limit(1)
-                .single();
-            finalScuolaId = school?.id;
-        }
+        const maestraId = auth.user.id;
+
+        // Deriva lo scuola_id server-side dalla sezione risolta ENTRO i plessi consentiti,
+        // ignorando lo scuolaId grezzo del client (regola d'oro: mai fidarsi del client).
+        const plessi = await scuoleDiUtente(supabase, auth.user);
+        const { data: sezioneRow } = await supabase
+            .from('sections')
+            .select('scuola_id')
+            .eq('name', classeSezione)
+            .in('scuola_id', plessi)
+            .limit(1)
+            .maybeSingle();
+        // Se scuolaId del client è tra i plessi consentiti lo rispettiamo, altrimenti la sede
+        // deriva dalla sezione; ultimo fallback: primo plesso accessibile.
+        const finalScuolaId =
+            (scuolaId && plessi.includes(scuolaId) ? scuolaId : undefined) ??
+            sezioneRow?.scuola_id ??
+            plessi[0];
 
         // UPSERT su registro_orario
         const { data: registroRow, error: registroError } = await supabase

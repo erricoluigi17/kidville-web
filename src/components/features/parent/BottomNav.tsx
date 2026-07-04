@@ -5,48 +5,101 @@ import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useState } from 'react';
 import {
-  Home, Bell, MessageCircle, BookOpen, MoreHorizontal,
-  Image, Package, FileText, BarChart3, CheckSquare, X, Euro, UtensilsCrossed,
-  GraduationCap, ClipboardList, AlertTriangle,
+  Home, Bell, MessageCircle, BookOpen, LayoutGrid,
+  Image, Package, FileText, BarChart3, X, Euro, UtensilsCrossed,
+  GraduationCap, ClipboardList, AlertTriangle, Megaphone, CalendarX2, IdCard,
+  ChevronRight, Shirt,
 } from 'lucide-react';
 import { useChildSchoolType } from '@/lib/auth/use-child-school-type';
 
 // grado: 'comune' = visibile sempre; 'primaria'/'infanzia' = solo quel grado.
 type Grado = 'comune' | 'primaria' | 'infanzia';
 
-const extraAll = [
-  { id: 'mensa', label: 'Mensa', icon: UtensilsCrossed, href: '/parent/mensa', grado: 'comune' as Grado },
-  { id: 'gallery', label: 'Galleria', icon: Image, href: '/parent/gallery', grado: 'comune' as Grado },
-  { id: 'lezioni', label: 'Lezioni', icon: GraduationCap, href: '/parent/lezioni', grado: 'primaria' as Grado },
-  { id: 'compiti', label: 'Compiti', icon: ClipboardList, href: '/parent/compiti', grado: 'primaria' as Grado },
-  { id: 'note', label: 'Note', icon: AlertTriangle, href: '/parent/primaria/note', grado: 'primaria' as Grado },
-  { id: 'assenze', label: 'Assenze', icon: CheckSquare, href: '/parent/primaria/assenze', grado: 'primaria' as Grado },
-  { id: 'pagelle', label: 'Pagelle', icon: FileText, href: '/parent/primaria/pagelle', grado: 'primaria' as Grado },
-  { id: 'locker', label: 'Armadietto', icon: Package, href: '/parent/locker', grado: 'infanzia' as Grado },
-  { id: 'attendance', label: 'Presenze', icon: CheckSquare, href: '/parent/attendance', grado: 'infanzia' as Grado },
-  { id: 'modulistica', label: 'Moduli', icon: FileText, href: '/parent/modulistica', grado: 'comune' as Grado },
-  { id: 'pagamenti', label: 'Pagamenti', icon: Euro, href: '/parent/pagamenti', grado: 'comune' as Grado },
-] as const;
+interface MenuItem {
+  id: string;
+  label: string;
+  sub: string;
+  icon: typeof Home;
+  href: string | null; // null = funzione non ancora navigabile
+  tint: string;
+  grado: Grado;
+  soon?: boolean;
+}
+
+interface MenuGroup {
+  label: string;
+  items: MenuItem[];
+}
 
 export default function BottomNav() {
   const pathname = usePathname();
-  const [showAltro, setShowAltro] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
   const { schoolType } = useChildSchoolType();
   const isPrimaria = schoolType === 'primaria';
 
-  // Gating per grado: la primaria non vede le sezioni infanzia e viceversa.
   const visibile = (g: Grado) => g === 'comune' || (isPrimaria ? g === 'primaria' : g === 'infanzia');
-  const extraItems = extraAll.filter((i) => visibile(i.grado));
 
-  // 4ª voce della barra: Registro (primaria) o Diario (infanzia/nido).
+  // Menu raggruppato del design (DR app/modules MenuScreen), mappato alle rotte reali.
+  // "Profilo e deleghe" non ha rotta reale → reso non navigabile con badge "In arrivo"
+  // (gap segnalato nel piano). I badge "In arrivo" del mockup sono stati RIMOSSI dalle
+  // voci già funzionanti (Registro/Mensa/Pagamenti/Modulistica esistono).
+  const groups: MenuGroup[] = [
+    {
+      label: 'La giornata',
+      items: [
+        { id: 'diario', label: 'Diario', sub: 'Routine e attività', icon: BookOpen, href: '/parent/diary', tint: '#006A5F', grado: 'infanzia' },
+        { id: 'presenze', label: 'Presenze', sub: 'Assenze e giustifiche', icon: CalendarX2, href: isPrimaria ? '/parent/primaria/assenze' : '/parent/attendance', tint: '#E6720A', grado: 'comune' },
+        { id: 'foto', label: 'Foto e video', sub: 'Galleria della classe', icon: Image, href: '/parent/gallery', tint: '#D14D8A', grado: 'comune' },
+      ],
+    },
+    {
+      label: 'Didattica · Primaria',
+      items: [
+        { id: 'registro', label: 'Registro e valutazioni', sub: 'Valutazioni, note, compiti, orario', icon: BarChart3, href: '/parent/primaria', tint: '#2A6FDB', grado: 'primaria' },
+        { id: 'lezioni', label: 'Lezioni', sub: 'Argomenti svolti', icon: GraduationCap, href: '/parent/lezioni', tint: '#0E9488', grado: 'primaria' },
+        { id: 'compiti', label: 'Compiti', sub: 'Da svolgere', icon: ClipboardList, href: '/parent/compiti', tint: '#E6720A', grado: 'primaria' },
+        { id: 'note', label: 'Note', sub: 'Note didattiche', icon: AlertTriangle, href: '/parent/primaria/note', tint: '#B5651D', grado: 'primaria' },
+        { id: 'pagelle', label: 'Pagelle', sub: 'Documento di valutazione', icon: FileText, href: '/parent/primaria/pagelle', tint: '#2A6FDB', grado: 'primaria' },
+      ],
+    },
+    {
+      label: 'Servizi',
+      items: [
+        { id: 'mensa', label: 'Mensa', sub: 'Menu e ticket pasto', icon: UtensilsCrossed, href: '/parent/mensa', tint: '#1F8A5B', grado: 'comune' },
+        { id: 'divise', label: 'Divise', sub: 'Ordina la divisa', icon: Shirt, href: '/parent/divise', tint: '#2A6FDB', grado: 'comune' },
+        { id: 'armadietto', label: 'Armadietto', sub: 'Scorte e materiale', icon: Package, href: '/parent/locker', tint: '#C9971A', grado: 'infanzia' },
+        { id: 'pagamenti', label: 'Pagamenti', sub: 'Rette e scadenze', icon: Euro, href: '/parent/pagamenti', tint: '#7A3FD0', grado: 'comune' },
+      ],
+    },
+    {
+      label: 'Comunicazioni',
+      items: [
+        { id: 'avvisi', label: 'Avvisi', sub: 'Circolari e adesioni', icon: Megaphone, href: '/parent/avvisi', tint: '#006A5F', grado: 'comune' },
+        { id: 'chat', label: 'Chat', sub: 'Scrivi alle maestre', icon: MessageCircle, href: '/parent/chat', tint: '#2A6FDB', grado: 'comune' },
+      ],
+    },
+    {
+      label: 'Documenti',
+      items: [
+        { id: 'modulistica', label: 'Modulistica', sub: 'Firme e certificati', icon: FileText, href: '/parent/modulistica', tint: '#B5651D', grado: 'comune' },
+        { id: 'profilo', label: 'Profilo e deleghe', sub: 'Anagrafica e ritiro', icon: IdCard, href: null, tint: '#475569', grado: 'comune', soon: true },
+      ],
+    },
+  ];
+
+  const visibleGroups = groups
+    .map((g) => ({ ...g, items: g.items.filter((i) => visibile(i.grado)) }))
+    .filter((g) => g.items.length > 0);
+
+  // Tab principali (ordine DR: Home / Diario·Scuola / Avvisi / Chat / Menu).
   const mainTabs = [
     { id: 'home', label: 'Home', icon: Home, href: '/parent' as const },
-    { id: 'avvisi', label: 'Avvisi', icon: Bell, href: '/parent/avvisi' as const },
-    { id: 'chat', label: 'Chat', icon: MessageCircle, href: '/parent/chat' as const },
     isPrimaria
       ? { id: 'scuola', label: 'Scuola', icon: BarChart3, href: '/parent/primaria' as const }
       : { id: 'diario', label: 'Diario', icon: BookOpen, href: '/parent/diary' as const },
-    { id: 'altro', label: 'Altro', icon: MoreHorizontal, href: null },
+    { id: 'avvisi', label: 'Avvisi', icon: Bell, href: '/parent/avvisi' as const },
+    { id: 'chat', label: 'Chat', icon: MessageCircle, href: '/parent/chat' as const },
+    { id: 'menu', label: 'Menu', icon: LayoutGrid, href: null },
   ] as const;
 
   const isActive = (href: string) => {
@@ -54,7 +107,9 @@ export default function BottomNav() {
     return pathname.startsWith(href);
   };
 
-  const isAltroSectionActive = extraItems.some(item => pathname.startsWith(item.href));
+  const isMenuSectionActive = visibleGroups.some((g) =>
+    g.items.some((i) => i.href && pathname.startsWith(i.href)),
+  );
 
   return (
     <>
@@ -62,16 +117,19 @@ export default function BottomNav() {
       <div className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[430px] z-50 px-3 pb-3"
         style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}>
         <div className="bg-white/96 backdrop-blur-2xl rounded-[26px] shadow-[0_-2px_24px_rgba(0,106,95,0.10),0_8px_32px_rgba(0,0,0,0.08)] border border-white/60">
-          <div className="flex items-stretch justify-around px-1 h-[60px]">
+          <nav aria-label="Navigazione principale" className="flex items-stretch justify-around px-1 h-[60px]">
             {mainTabs.map((tab) => {
               const Icon = tab.icon;
-              const active = tab.href ? isActive(tab.href) : (isAltroSectionActive || showAltro);
+              const active = tab.href ? isActive(tab.href) : (isMenuSectionActive || showMenu);
 
-              if (tab.id === 'altro') {
+              if (tab.id === 'menu') {
                 return (
                   <button
-                    key="altro"
-                    onClick={() => setShowAltro(v => !v)}
+                    key="menu"
+                    onClick={() => setShowMenu(v => !v)}
+                    aria-haspopup="menu"
+                    aria-expanded={showMenu}
+                    aria-label="Menu · tutte le sezioni"
                     className="flex flex-col items-center justify-center gap-[3px] flex-1 py-1 relative"
                   >
                     <motion.div
@@ -99,6 +157,7 @@ export default function BottomNav() {
                 <Link
                   key={tab.id}
                   href={tab.href!}
+                  aria-current={active ? 'page' : undefined}
                   className="flex flex-col items-center justify-center gap-[3px] flex-1 py-1 relative"
                 >
                   <motion.div
@@ -121,13 +180,13 @@ export default function BottomNav() {
                 </Link>
               );
             })}
-          </div>
+          </nav>
         </div>
       </div>
 
-      {/* ── ALTRO BOTTOM SHEET ──────────────────── */}
+      {/* ── MENU BOTTOM SHEET (DR raggruppato) ──── */}
       <AnimatePresence>
-        {showAltro && (
+        {showMenu && (
           <>
             <motion.div
               key="overlay"
@@ -136,7 +195,7 @@ export default function BottomNav() {
               exit={{ opacity: 0 }}
               transition={{ duration: 0.2 }}
               className="fixed inset-0 bg-kidville-green/30 backdrop-blur-[2px] z-40"
-              onClick={() => setShowAltro(false)}
+              onClick={() => setShowMenu(false)}
             />
 
             <motion.div
@@ -148,51 +207,87 @@ export default function BottomNav() {
               className="fixed left-1/2 -translate-x-1/2 w-full max-w-[430px] z-50 px-4"
               style={{ bottom: 'max(84px, calc(env(safe-area-inset-bottom) + 84px))' }}
             >
-              <div className="bg-white rounded-[24px] shadow-2xl border border-gray-100/80 p-5">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="font-barlow font-black text-base text-kidville-green uppercase tracking-wide">
-                    Tutte le sezioni
-                  </h3>
+              <div className="bg-kidville-cream rounded-[26px] shadow-2xl border border-black/5 max-h-[70vh] overflow-y-auto p-4">
+                <div className="flex items-center justify-between mb-3 px-1">
+                  <div>
+                    <p className="font-barlow font-bold text-[10px] uppercase tracking-[0.14em] text-kidville-yellow-dark">Tutte le sezioni</p>
+                    <h3 className="font-barlow font-black text-xl text-kidville-green uppercase tracking-wide leading-none">Menu</h3>
+                  </div>
                   <button
-                    onClick={() => setShowAltro(false)}
-                    className="w-7 h-7 rounded-full bg-gray-100 flex items-center justify-center hover:bg-gray-200 transition-colors"
+                    onClick={() => setShowMenu(false)}
+                    aria-label="Chiudi"
+                    className="w-9 h-9 rounded-full bg-kidville-cream-dark flex items-center justify-center text-kidville-green"
                   >
-                    <X className="w-3.5 h-3.5 text-gray-500" />
+                    <X className="w-4 h-4" strokeWidth={2.4} />
                   </button>
                 </div>
 
-                <div className="grid grid-cols-3 gap-2.5">
-                  {extraItems.map((item) => {
-                    const Icon = item.icon;
-                    const active = pathname.startsWith(item.href);
-                    return (
-                      <Link
-                        key={item.id}
-                        href={item.href}
-                        onClick={() => setShowAltro(false)}
+                <div className="flex flex-col gap-[18px]">
+                  {visibleGroups.map((g) => (
+                    <div key={g.label}>
+                      <p className="font-barlow font-extrabold text-[11px] uppercase tracking-[0.06em] text-kidville-muted mb-2 pl-1">
+                        {g.label}
+                      </p>
+                      <div
+                        className="bg-white rounded-card overflow-hidden"
+                        style={{ boxShadow: '0 1px 2px rgba(0,84,75,.04), 0 8px 24px -18px rgba(0,84,75,.28)' }}
                       >
-                        <motion.div
-                          whileTap={{ scale: 0.94 }}
-                          className="flex flex-col items-center gap-2 p-3 rounded-2xl transition-colors"
-                          style={{
-                            backgroundColor: active ? '#006A5F' : '#FEF1E4',
-                          }}
-                        >
-                          <Icon
-                            className="w-5 h-5"
-                            style={{ color: active ? '#FDC400' : '#006A5F' }}
-                            strokeWidth={1.6}
-                          />
-                          <span
-                            className="text-[10px] font-barlow font-bold uppercase text-center leading-tight"
-                            style={{ color: active ? '#FFFFFF' : '#006A5F' }}
-                          >
-                            {item.label}
-                          </span>
-                        </motion.div>
-                      </Link>
-                    );
-                  })}
+                        {g.items.map((it, i) => {
+                          const Icon = it.icon;
+                          const active = it.href ? pathname.startsWith(it.href) : false;
+                          const borderCls = i < g.items.length - 1 ? 'border-b border-kidville-line' : '';
+
+                          const inner = (
+                            <>
+                              <span
+                                className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl"
+                                style={{ background: it.tint + '18', color: it.tint }}
+                              >
+                                <Icon size={21} strokeWidth={1.8} />
+                              </span>
+                              <span className="min-w-0 flex-1">
+                                <span className="flex items-center gap-2">
+                                  <span className="font-barlow font-extrabold text-base uppercase leading-none text-kidville-green truncate">
+                                    {it.label}
+                                  </span>
+                                  {it.soon && (
+                                    <span className="font-barlow font-bold text-[9.5px] uppercase tracking-wide px-1.5 py-0.5 rounded-pill bg-kidville-neutral-soft text-kidville-muted">
+                                      In arrivo
+                                    </span>
+                                  )}
+                                </span>
+                                <span className="block font-maven text-xs text-kidville-muted mt-0.5">{it.sub}</span>
+                              </span>
+                              {it.href && <ChevronRight size={16} className="text-kidville-muted/60 flex-shrink-0" strokeWidth={2} />}
+                            </>
+                          );
+
+                          if (!it.href) {
+                            return (
+                              <div
+                                key={it.id}
+                                aria-disabled="true"
+                                className={`flex items-center gap-[13px] px-3 py-[11px] opacity-60 ${borderCls}`}
+                              >
+                                {inner}
+                              </div>
+                            );
+                          }
+                          return (
+                            <Link
+                              key={it.id}
+                              href={it.href}
+                              onClick={() => setShowMenu(false)}
+                              aria-current={active ? 'page' : undefined}
+                              className={`flex items-center gap-[13px] px-3 py-[11px] active:bg-kidville-cream ${borderCls}`}
+                            >
+                              {inner}
+                            </Link>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
             </motion.div>

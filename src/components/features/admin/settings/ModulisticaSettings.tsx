@@ -23,7 +23,7 @@ export function ModulisticaSettings({ userId }: { userId: string }) {
     const [draft, setDraft] = useState<ModulisticaConfig | null>(null);
     const [msg, setMsg] = useState('');
 
-    if (!settings) return <p className="font-maven text-sm text-gray-400">Caricamento…</p>;
+    if (!settings) return <p className="font-maven text-sm text-kidville-muted">Caricamento…</p>;
     const cfg = draft ?? ((settings.modulistica_config ?? {}) as ModulisticaConfig);
     const set = (patch: Partial<ModulisticaConfig>) => { setMsg(''); setDraft({ ...cfg, ...patch }); };
 

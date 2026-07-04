@@ -6,7 +6,8 @@ export type DiaryEventType =
     | 'pranzo'
     | 'nanna_inizio'
     | 'nanna_fine'
-    | 'bagno';
+    | 'bagno'
+    | 'umore';
 
 /** Include 'entrata' per compatibilità con dati storici */
 export type DiaryEventTypeLegacy = DiaryEventType | 'entrata';
@@ -119,7 +120,7 @@ const db = new Dexie('KidvilleOfflineDB') as Dexie & {
     armadietto: EntityTable<LocalLockerItem, 'id'>;
     genitori: EntityTable<LocalParent, 'id'>;
     documenti_alunni: EntityTable<LocalStudentDocument, 'id'>;
-    adulti: EntityTable<any, 'id'>; // Anagrafica adulti estesa (Fase 6)
+    adulti: EntityTable<{ id: string } & Record<string, unknown>, 'id'>; // Anagrafica adulti estesa (Fase 6)
     galleria: EntityTable<LocalGalleryMedia, 'id'>; // Galleria multimediale (Fase 3)
     primaria_appello: EntityTable<LocalPrimariaAppello, 'id'>; // Appello primaria (Fase 1)
     primaria_registro: EntityTable<LocalPrimariaRegistro, 'id'>; // Registro primaria (Fase 1)

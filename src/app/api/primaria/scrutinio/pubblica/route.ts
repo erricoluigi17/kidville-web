@@ -1,7 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { assertSezioneInScope } from '@/lib/auth/scope'
 import { enqueueNotifichePerAlunni } from '@/lib/primaria/notifiche'
+import { parseBody } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+const postBodySchema = z.object({
+  scrutinioId: zUuid,
+  pubblicato: z.boolean({ error: 'pubblicato (boolean) obbligatorio' }),
+})
 
 // POST /api/primaria/scrutinio/pubblica?userId=
 // L'OK del dirigente: rende visibili ai genitori i voti/pagelle di uno scrutinio
@@ -13,10 +23,9 @@ export async function POST(request: NextRequest) {
     const auth = await requireStaff(request, ['admin', 'coordinator'])
     if (auth.response) return auth.response
 
-    const { scrutinioId, pubblicato } = await request.json()
-    if (!scrutinioId || typeof pubblicato !== 'boolean') {
-      return NextResponse.json({ error: 'scrutinioId e pubblicato (boolean) obbligatori' }, { status: 400 })
-    }
+    const b = await parseBody(request, postBodySchema)
+    if ('response' in b) return b.response
+    const { scrutinioId, pubblicato } = b.data
 
     const supabase = await createAdminClient()
 
@@ -24,9 +33,13 @@ export async function POST(request: NextRequest) {
       .from('scrutini')
       .select('id, section_id, stato, pubblicato')
       .eq('id', scrutinioId)
-      .single()
+      .maybeSingle()
     if (!scrutinio) return NextResponse.json({ error: 'Scrutinio non trovato' }, { status: 404 })
     if (scrutinio.stato !== 'chiuso') return NextResponse.json({ error: 'Pubblicabile solo a scrutinio chiuso' }, { status: 409 })
+
+    // Scoping di plesso per la dirigenza: si pubblicano solo scrutini del proprio plesso.
+    const scopeErr = await assertSezioneInScope(supabase, auth.user, scrutinio.section_id as string)
+    if (scopeErr) return scopeErr
 
     const { data: updated, error } = await supabase
       .from('scrutini')

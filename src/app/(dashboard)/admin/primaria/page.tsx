@@ -1,14 +1,13 @@
 'use client';
 
 import { Suspense, useEffect, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
-import { ClipboardList, CalendarDays, FolderLock } from 'lucide-react';
+import { ClipboardList, CalendarDays, FolderLock, GraduationCap } from 'lucide-react';
 import { RegistriClassePanel } from '@/components/features/admin/primaria/RegistriClassePanel';
 import { OrarioManager } from '@/components/features/admin/primaria/OrarioManager';
 import { FascicoloAuditViewer } from '@/components/features/admin/primaria/FascicoloAuditViewer';
-
-const SCUOLA_ID = '11111111-1111-1111-1111-111111111111';
-const DEV_ADMIN = '22222222-2222-2222-2222-555555555555';
+import { CockpitPage, PageHeader, Tabs } from '@/components/ui/cockpit';
+import { useSessionIdentity } from '@/lib/auth/use-session-identity';
+import { SedeRequired, useSediAttive } from '@/lib/context/sede-context';
 
 type Tab = 'registri' | 'orario' | 'fascicoli';
 
@@ -20,93 +19,81 @@ interface Section {
 }
 
 function PrimariaAdminInner() {
-  const params = useSearchParams();
-  const userId = params.get('userId') || DEV_ADMIN;
+  const { userId } = useSessionIdentity();
+  const { sedeCorrente } = useSediAttive();
   const [tab, setTab] = useState<Tab>('registri');
   const [sezioni, setSezioni] = useState<Section[]>([]);
   const [sezioneId, setSezioneId] = useState<string>('');
 
   useEffect(() => {
-    fetch(`/api/admin/sections?scuola_id=${SCUOLA_ID}`)
+    if (!sedeCorrente) return; // sede ambigua: i pannelli mostrano l'avviso
+    // Il server scopa le sezioni dal cookie; `x-sedi` ne fa la chiave di re-fetch.
+    fetch(`/api/admin/sections`, { headers: { 'x-sedi': sedeCorrente } })
       .then((r) => r.json())
       .then((d) => {
         const list: Section[] = Array.isArray(d) ? d.filter((s: Section) => s.school_type === 'primaria') : [];
         setSezioni(list);
-        if (list.length && !sezioneId) setSezioneId(list[0].id);
+        // Update funzionale: nessuna dipendenza da sezioneId, deps pulite.
+        if (list.length) setSezioneId((cur) => cur || list[0].id);
       })
       .catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
-    { id: 'registri', label: 'Registri di classe', icon: <ClipboardList size={15} /> },
-    { id: 'orario', label: 'Orario', icon: <CalendarDays size={15} /> },
-    { id: 'fascicoli', label: 'Fascicoli/Accessi', icon: <FolderLock size={15} /> },
-  ];
+  }, [sedeCorrente]);
 
   return (
-    <div className="min-h-screen bg-kidville-cream/40 p-4 md:p-8">
-      <div className="max-w-5xl mx-auto">
-        <header className="mb-6">
-          <h1 className="font-barlow text-3xl font-bold text-kidville-green uppercase tracking-wide">
-            Scuola Primaria
-          </h1>
-          <p className="font-maven text-gray-500 text-sm">
-            Area operativa: registri di classe (tutto ciò che fa il docente), orario e registro accessi ai fascicoli. La configurazione (materie, docenti, obiettivi, giudizi, scrutinio) è in Impostazioni → Didattica primaria.
-          </p>
-        </header>
+    <CockpitPage max={1100}>
+      <PageHeader
+        icon={GraduationCap}
+        title="Scuola Primaria"
+        subtitle="Area operativa: registri di classe, orario e registro accessi ai fascicoli. La configurazione (materie, docenti, obiettivi, giudizi, scrutinio) è in Impostazioni → Didattica primaria."
+      />
 
-        {/* Selettore sezione (per Orario) */}
-        {(tab === 'orario') && (
-          <div className="mb-4 flex items-center gap-3">
-            <label className="font-maven text-sm text-gray-600">Classe/Sezione:</label>
-            <select
-              value={sezioneId}
-              onChange={(e) => setSezioneId(e.target.value)}
-              className="font-maven rounded-pill border border-gray-200 bg-white px-4 py-2 text-sm"
-            >
-              {sezioni.length === 0 && <option value="">Nessuna sezione primaria</option>}
-              {sezioni.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name} {s.scholastic_year ? `(${s.scholastic_year})` : ''}
-                </option>
-              ))}
-            </select>
+      {/* Selettore sezione (per Orario) */}
+      {(tab === 'orario') && (
+        <div className="mb-4 flex items-center gap-3">
+          <label className="font-maven text-sm text-kidville-ink/70">Classe/Sezione:</label>
+          <select
+            value={sezioneId}
+            onChange={(e) => setSezioneId(e.target.value)}
+            className="font-maven rounded-pill border border-kidville-line bg-kidville-white px-4 py-2 text-sm"
+          >
+            {sezioni.length === 0 && <option value="">Nessuna sezione primaria</option>}
+            {sezioni.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name} {s.scholastic_year ? `(${s.scholastic_year})` : ''}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      <Tabs
+        value={tab}
+        onChange={(id) => setTab(id as Tab)}
+        options={[
+          { id: 'registri', label: 'Registri di classe', icon: ClipboardList },
+          { id: 'orario', label: 'Orario', icon: CalendarDays },
+          { id: 'fascicoli', label: 'Fascicoli/Accessi', icon: FolderLock },
+        ]}
+      />
+
+      <SedeRequired cosa="la primaria">
+        {(scuolaId) => (
+          <div className="rounded-card bg-kidville-white p-4 md:p-6 shadow-sm">
+            {userId && tab === 'registri' && <RegistriClassePanel scuolaId={scuolaId} userId={userId} />}
+            {userId && tab === 'orario' && (
+              <OrarioManager sectionId={sezioneId} scuolaId={scuolaId} userId={userId} />
+            )}
+            {userId && tab === 'fascicoli' && <FascicoloAuditViewer scuolaId={scuolaId} userId={userId} />}
           </div>
         )}
-
-        <nav className="mb-6 flex flex-wrap gap-2">
-          {tabs.map((t) => (
-            <button
-              key={t.id}
-              onClick={() => setTab(t.id)}
-              className={`font-maven inline-flex items-center gap-2 rounded-pill px-4 py-2 text-sm transition ${
-                tab === t.id
-                  ? 'bg-kidville-green text-kidville-yellow'
-                  : 'bg-white text-gray-600 hover:bg-kidville-green/10'
-              }`}
-            >
-              {t.icon}
-              {t.label}
-            </button>
-          ))}
-        </nav>
-
-        <div className="rounded-card bg-white p-4 md:p-6 shadow-sm">
-          {tab === 'registri' && <RegistriClassePanel scuolaId={SCUOLA_ID} userId={userId} />}
-          {tab === 'orario' && (
-            <OrarioManager sectionId={sezioneId} scuolaId={SCUOLA_ID} userId={userId} />
-          )}
-          {tab === 'fascicoli' && <FascicoloAuditViewer scuolaId={SCUOLA_ID} userId={userId} />}
-        </div>
-      </div>
-    </div>
+      </SedeRequired>
+    </CockpitPage>
   );
 }
 
 export default function PrimariaAdminPage() {
   return (
-    <Suspense fallback={<div className="p-8 font-maven text-gray-500">Caricamento…</div>}>
+    <Suspense fallback={<div className="p-8 font-maven text-kidville-muted">Caricamento…</div>}>
       <PrimariaAdminInner />
     </Suspense>
   );

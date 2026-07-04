@@ -1,9 +1,26 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
-import { loadResolveOptions, DEFAULT_SCUOLA } from '@/lib/mensa/server'
+import { loadResolveOptions } from '@/lib/mensa/server'
 import { controllaAllergie } from '@/lib/mensa/allergie-check'
 import type { ResolveOptions } from '@/lib/mensa/resolveMenu'
+import { parseData, parseQuery } from '@/lib/validation/http'
+import { zDataYMD } from '@/lib/validation/common'
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+// '' è ammesso per retro-compatibilità: ?data= (vuoto) equivale ad assente.
+// Default dinamico (oggi) calcolato nell'handler.
+const postQuerySchema = z.object({
+  data: zDataYMD.or(z.literal('')).optional(),
+})
+
+// Body opzionale { data? }: letto solo se il query param è assente. Il body può
+// mancare del tutto (il cron chiama senza body), quindi JSON assente/malformato
+// resta tollerato come prima; se il JSON c'è, il campo `data` viene validato.
+const postBodySchema = z.object({
+  data: zDataYMD.nullish(),
+})
 
 interface AlunnoRow {
   id: string
@@ -30,10 +47,18 @@ export async function POST(request: Request) {
       if (auth.response) return auth.response
     }
 
-    const { searchParams } = new URL(request.url)
-    let data = searchParams.get('data')
+    const q = parseQuery(request, postQuerySchema)
+    if ('response' in q) return q.response
+
+    let data: string | null = q.data.data || null
     if (!data) {
-      try { data = (await request.json())?.data ?? null } catch { data = null }
+      let raw: unknown = null
+      try { raw = await request.json() } catch { raw = null }
+      if (raw !== null && raw !== undefined) {
+        const b = parseData(postBodySchema, raw)
+        if ('response' in b) return b.response
+        data = b.data.data ?? null
+      }
     }
     data = data ?? new Date().toISOString().slice(0, 10)
 
@@ -61,7 +86,7 @@ export async function POST(request: Request) {
     const optsCache = new Map<string, ResolveOptions>()
     let alert = 0
     for (const a of rows) {
-      const scuolaId = a.scuola_id ?? DEFAULT_SCUOLA
+      const scuolaId = a.scuola_id as string
       let opts = optsCache.get(scuolaId)
       if (!opts) { opts = await loadResolveOptions(supabase, scuolaId); optsCache.set(scuolaId, opts) }
       const inviata = await controllaAllergie(supabase, a, data, scuolaId, opts)

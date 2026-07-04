@@ -1,15 +1,56 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
+import { requireStaff } from '@/lib/auth/require-staff';
+import { parseBody, parseQuery } from '@/lib/validation/http';
+import { zUuid } from '@/lib/validation/common';
+import { resolveScuoleAttive } from '@/lib/auth/scope';
 
-const DEFAULT_SCUOLA_ID = '11111111-1111-1111-1111-111111111111';
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+const getQuerySchema = z.object({}); // nessun parametro in ingresso
+
+// Falsy (es. '' dal form) trattato come assente: preserva il fallback
+// pre-esistente `scuola_id || DEFAULT_SCUOLA_ID`.
+const zScuolaIdOpzionale = z.preprocess((v) => v || undefined, zUuid.optional());
+
+// Campi facoltativi permissivi (il codice normalizza solo i falsy a null);
+// students è JSONB libero: array di oggetti figlio senza vincoli sul contenuto.
+const postBodySchema = z.object({
+  parent_first_name: z.string().min(1),
+  parent_last_name: z.string().min(1),
+  parent_email: z.string().min(1),
+  parent_phone: z.string().nullish(),
+  parent_fiscal_code: z.string().nullish(),
+  parent_address: z.string().nullish(),
+  students: z.array(z.unknown()),
+  scuola_id: zScuolaIdOpzionale,
+});
+
+// Stati ammessi dal flusso attuale: 'rejected' | 'approved' (altro → 400).
+// assigned_class è obbligatoria solo per 'approved': resta il check nell'handler.
+const patchBodySchema = z.object({
+  id: zUuid,
+  status: z.enum(['rejected', 'approved']),
+  assigned_class: z.string().nullish(),
+});
 
 // GET: Recupera tutte le pre-iscrizioni (Sala d'attesa)
 export async function GET(request: NextRequest) {
   try {
+    // Gap auth segnalato in M3, chiuso in M9: la sala d'attesa (PII dei
+    // richiedenti) è dello staff. Il POST resta PUBBLICO: è la sottomissione
+    // del portale onboarding.
+    const auth = await requireStaff(request);
+    if (auth.response) return auth.response;
+
+    const q = parseQuery(request, getQuerySchema);
+    if ('response' in q) return q.response;
+
     const supabase = await createAdminClient();
     const { data, error } = await supabase
       .from('pre_inscriptions')
       .select('*')
+      .in('scuola_id', await resolveScuoleAttive(request, supabase, auth.user))
       .order('created_at', { ascending: false });
 
     if (error) {
@@ -17,15 +58,16 @@ export async function GET(request: NextRequest) {
     }
 
     return NextResponse.json(data);
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message || 'Errore interno' }, { status: 500 });
+  } catch (err) {
+    return NextResponse.json({ error: err instanceof Error ? err.message : 'Errore interno' }, { status: 500 });
   }
 }
 
 // POST: Sottomissione da parte del genitore (Portale Onboarding Pubblico)
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
+    const b = await parseBody(request, postBodySchema);
+    if ('response' in b) return b.response;
     const {
       parent_first_name,
       parent_last_name,
@@ -35,16 +77,22 @@ export async function POST(request: NextRequest) {
       parent_address,
       students,
       scuola_id
-    } = body;
-
-    if (!parent_first_name || !parent_last_name || !parent_email || !students || !Array.isArray(students)) {
-      return NextResponse.json({ error: 'Dati obbligatori mancanti' }, { status: 400 });
-    }
+    } = b.data;
 
     const supabase = await createAdminClient();
 
+    // Scuola: dal form se indicata; altrimenti l'unica scuola esistente.
+    let scuolaId = scuola_id || undefined;
+    if (!scuolaId) {
+      const { data: scuole } = await supabase.from('schools').select('id').limit(2);
+      if (scuole && scuole.length === 1) scuolaId = scuole[0].id as string;
+    }
+    if (!scuolaId) {
+      return NextResponse.json({ error: 'Specificare la scuola' }, { status: 400 });
+    }
+
     const record = {
-      scuola_id: scuola_id || DEFAULT_SCUOLA_ID,
+      scuola_id: scuolaId,
       parent_first_name,
       parent_last_name,
       parent_email,
@@ -66,20 +114,20 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.json(data, { status: 201 });
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message || 'Errore interno' }, { status: 500 });
+  } catch (err) {
+    return NextResponse.json({ error: err instanceof Error ? err.message : 'Errore interno' }, { status: 500 });
   }
 }
 
 // PATCH: Approvazione (Sala d'attesa) o Rifiuto
 export async function PATCH(request: NextRequest) {
   try {
-    const body = await request.json();
-    const { id, status, assigned_class } = body;
+    const auth = await requireStaff(request);
+    if (auth.response) return auth.response;
 
-    if (!id || !status) {
-      return NextResponse.json({ error: 'ID e stato obbligatori' }, { status: 400 });
-    }
+    const b = await parseBody(request, patchBodySchema);
+    if ('response' in b) return b.response;
+    const { id, status, assigned_class } = b.data;
 
     const supabase = await createAdminClient();
 
@@ -107,7 +155,7 @@ export async function PATCH(request: NextRequest) {
         .from('pre_inscriptions')
         .select('*')
         .eq('id', id)
-        .single();
+        .maybeSingle();
 
       if (fetchErr || !pre) {
         return NextResponse.json({ error: 'Pre-iscrizione non trovata' }, { status: 404 });
@@ -180,7 +228,7 @@ export async function PATCH(request: NextRequest) {
           role: 'parent'
         };
         await supabase.from('adults').upsert(adultsRecord);
-      } catch (adultsErr) {
+      } catch {
         console.log('Tabella adults non presente o non interrogabile direttamente, skippo...');
       }
 
@@ -254,8 +302,8 @@ export async function PATCH(request: NextRequest) {
     }
 
     return NextResponse.json({ error: 'Stato non valido' }, { status: 400 });
-  } catch (err: any) {
+  } catch (err) {
     console.error('Errore PATCH /api/admin/pre-inscriptions:', err);
-    return NextResponse.json({ error: err.message || 'Errore interno' }, { status: 500 });
+    return NextResponse.json({ error: err instanceof Error ? err.message : 'Errore interno' }, { status: 500 });
   }
 }

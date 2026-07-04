@@ -1,16 +1,29 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { getRequestUserId } from '@/lib/auth/require-staff'
+import { parseQuery } from '@/lib/validation/http'
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+// `userId` in query è consumato dal gate identità (getRequestUserId), non dall'handler.
+// studentId permissivo (stringa non vuota): oggi nessun vincolo di formato
+// (un id non valido produce già lista vuota, l'errore supabase è ignorato).
+const getQuerySchema = z.object({
+  studentId: z.string({ error: 'studentId obbligatorio' }).min(1, 'studentId obbligatorio'),
+})
+
+const postQuerySchema = z.object({}) // nessun parametro in ingresso (endpoint deprecato)
 
 // GET /api/parent/primaria/note?studentId=&userId=
 // Note disciplinari/didattiche del figlio. Filtrate per oscuramento.
 export async function GET(request: NextRequest) {
   try {
-    const sp = new URL(request.url).searchParams
-    const studentId = sp.get('studentId')
     const userId = getRequestUserId(request)
     if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
-    if (!studentId) return NextResponse.json({ error: 'studentId obbligatorio' }, { status: 400 })
+
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+    const { studentId } = q.data
 
     const supabase = await createAdminClient()
     const { data: note } = await supabase
@@ -26,26 +39,16 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// POST /api/parent/primaria/note — firma presa visione
+// POST /api/parent/primaria/note — DEPRECATO (DL-014).
+// La presa visione con firma (timestamp semplice) è stata sostituita dal flusso
+// FEA OTP/FES su POST /api/parent/primaria/note/firma (+ /firma/otp). Questo
+// endpoint risponde 410 per impedire firme prive di evidenza FES.
 export async function POST(request: NextRequest) {
-  try {
-    const userId = getRequestUserId(request)
-    if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
-    const body = await request.json()
-    const { notaId } = body
-    if (!notaId) return NextResponse.json({ error: 'notaId obbligatorio' }, { status: 400 })
+  const q = parseQuery(request, postQuerySchema)
+  if ('response' in q) return q.response
 
-    const supabase = await createAdminClient()
-    const { error } = await supabase
-      .from('note_disciplinari')
-      .update({ firmata_il: new Date().toISOString() })
-      .eq('id', notaId)
-      .is('firmata_il', null)
-
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-    return NextResponse.json({ success: true })
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Errore interno'
-    return NextResponse.json({ error: msg }, { status: 500 })
-  }
+  return NextResponse.json(
+    { error: 'Endpoint deprecato: usa /api/parent/primaria/note/firma (firma OTP/FES).' },
+    { status: 410 }
+  )
 }

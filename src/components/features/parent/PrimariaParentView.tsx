@@ -13,8 +13,8 @@ type OtpParams = { code: string; expiry: number; ticket: string };
 
 const CAT: Record<string, { label: string; cls: string }> = {
   disciplinare: { label: 'Nota disciplinare', cls: 'bg-kidville-error/10 text-kidville-error' },
-  didattica: { label: 'Nota didattica', cls: 'bg-blue-100 text-blue-700' },
-  compiti_non_svolti: { label: 'Compiti non svolti', cls: 'bg-amber-100 text-amber-700' },
+  didattica: { label: 'Nota didattica', cls: 'bg-kidville-info-soft text-kidville-info' },
+  compiti_non_svolti: { label: 'Compiti non svolti', cls: 'bg-kidville-warn-soft text-kidville-warn' },
 };
 
 const STATO_ASSENZA: Record<string, string> = {
@@ -342,7 +342,7 @@ function AssenzaRow({ assenza, onGiustifica, onRequestGiustificaOtp }: {
           <b>{STATO_ASSENZA[assenza.stato] ?? assenza.stato}</b> · {giorno}
         </span>
         {assenza.giustificata ? (
-          <span className={`text-[11px] font-maven ${assenza.giust_vista_il ? 'text-kidville-success' : 'text-amber-500'}`}>
+          <span className={`text-[11px] font-maven ${assenza.giust_vista_il ? 'text-kidville-success' : 'text-kidville-warn'}`}>
             {assenza.giust_vista_il ? '✓ presa visione' : 'giustificata · in attesa'}
           </span>
         ) : (
@@ -412,7 +412,7 @@ function ImpreparatoForm({ materie, onImpreparato }: {
   return (
     <section className="rounded-card bg-white p-5 shadow-sm">
       <h3 className="font-barlow text-lg font-bold text-gray-800 flex items-center gap-2 mb-3">
-        <Hand size={18} className="text-amber-500" /> Dichiara impreparato (a priori)
+        <Hand size={18} className="text-kidville-warn" /> Dichiara impreparato (a priori)
       </h3>
       <p className="font-maven text-xs text-gray-500 mb-3">
         Comunica in anticipo al docente che tuo figlio è impreparato per una determinata giornata/materia.

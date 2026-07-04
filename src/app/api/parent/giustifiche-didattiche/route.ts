@@ -1,6 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { getRequestUserId } from '@/lib/auth/require-staff'
+import { parseBody } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+// `data` resta stringa permissiva (oggi il DB accetta anche formati non YYYY-MM-DD);
+// `motivo` permissivo: oggi qualunque tipo è accettato (i non-string diventano null).
+const postBodySchema = z.object({
+  studentId: zUuid,
+  data: z.string().min(1),
+  motivo: z.unknown().optional(),
+  materiaId: zUuid.nullable().optional(),
+})
 
 // POST /api/parent/giustifiche-didattiche?userId=
 // body: { studentId, data, motivo?, materiaId? }
@@ -10,22 +23,21 @@ export async function POST(request: NextRequest) {
     const userId = getRequestUserId(request)
     if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
 
-    const { studentId, data, motivo, materiaId } = await request.json()
-    if (!studentId || !data) {
-      return NextResponse.json({ error: 'studentId e data obbligatori' }, { status: 400 })
-    }
+    const b = await parseBody(request, postBodySchema)
+    if ('response' in b) return b.response
+    const { studentId, data, motivo, materiaId } = b.data
 
     const supabase = await createAdminClient()
     const { data: alunno } = await supabase
       .from('alunni')
       .select('id, section_id')
       .eq('id', studentId)
-      .single()
+      .maybeSingle()
     if (!alunno) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
 
     let schoolType: string | null = null
     if (alunno.section_id) {
-      const { data: sez } = await supabase.from('sections').select('school_type').eq('id', alunno.section_id).single()
+      const { data: sez } = await supabase.from('sections').select('school_type').eq('id', alunno.section_id).maybeSingle()
       schoolType = sez?.school_type ?? null
     }
     if (schoolType !== 'primaria') {

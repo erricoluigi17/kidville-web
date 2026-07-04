@@ -13,6 +13,11 @@
 # testing
 /coverage
 
+# playwright
+/e2e/.auth/
+/test-results/
+/playwright-report/
+
 # next.js
 /.next/
 /out/
@@ -44,3 +49,7 @@ next-env.d.ts
 /scratch
 
 .claude/
+
+# working dirs non destinate al repo
+scratch/
+design-reference/

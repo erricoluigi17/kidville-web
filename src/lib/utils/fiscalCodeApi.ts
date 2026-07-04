@@ -35,7 +35,7 @@ export async function fetchFiscalCode(params: FiscalCodeParams): Promise<string>
         }
         
         throw new Error('API non disponibile o errore di validazione');
-    } catch (error) {
+    } catch {
         console.warn("API esterna fallita o irraggiungibile. Utilizzo algoritmo di fallback offline...");
         
         // Simulo un leggero delay di rete per mantenere la UX di caricamento
@@ -57,7 +57,7 @@ export async function fetchFiscalCode(params: FiscalCodeParams): Promise<string>
                 prov: params.provincia_nascita,
             });
             return cf.code;
-        } catch (localErr) {
+        } catch {
             console.warn("Impossibile calcolare il CF automaticamente coi dati forniti.");
             return "";
         }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, Suspense, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowLeft, MessageSquare, Plus, X, UserPlus } from 'lucide-react';
 import { ChatThreadList, ChatThread } from '@/components/features/chat/ChatThreadList';
@@ -8,8 +8,7 @@ import { ChatMessageArea, ChatMessage } from '@/components/features/chat/ChatMes
 import { ChatInput } from '@/components/features/chat/ChatInput';
 import { useUnreadNotifications } from '@/components/features/chat/useUnreadNotifications';
 import { useChatRealtime } from '@/components/features/chat/useChatRealtime';
-import { useSearchParams } from 'next/navigation';
-import { Suspense } from 'react';
+import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 
 interface Contact {
     user_id: string;
@@ -20,9 +19,9 @@ interface Contact {
     sezione: string;
 }
 
+// Identità dalla sessione (URL → localStorage → /api/me), senza fallback demo (M4).
 function TeacherChatContent() {
-    const searchParams = useSearchParams();
-    const teacherId = searchParams.get('userId') || '22222222-2222-2222-2222-222222222222';
+    const { userId: teacherId } = useSessionIdentity();
 
     const [threads, setThreads] = useState<ChatThread[]>([]);
     const [selectedThread, setSelectedThread] = useState<ChatThread | null>(null);
@@ -43,7 +42,7 @@ function TeacherChatContent() {
 
     // Notifiche non letti + badge titolo pagina (mantenuto come fallback)
     useUnreadNotifications({
-        userId: teacherId,
+        userId: teacherId ?? '', // il hook ignora gli id falsy
         enabled: true,
         onUnreadChange: setUnreadCount,
         pollInterval: 30000, // ridotto a 30s ora che c'è il realtime
@@ -51,11 +50,10 @@ function TeacherChatContent() {
 
     // Carica thread
     const loadThreads = useCallback(async () => {
+        if (!teacherId) return; // identità non risolta: lo spinner resta
         try {
-            const res = await fetch(`/api/chat/threads?userId=${teacherId}`);
-            if (res.ok) setThreads(await res.json());
-        } catch (err) {
-            console.error('Errore caricamento thread:', err);
+            const res = await fetch(`/api/chat/threads?userId=${teacherId}`).catch(() => null);
+            if (res?.ok) setThreads(await res.json());
         } finally {
             setLoading(false);
         }
@@ -64,16 +62,16 @@ function TeacherChatContent() {
     useEffect(() => { loadThreads(); }, [loadThreads]);
 
     // Carica contatti disponibili
+    // NB: lo spinner contatti (loadingContacts) viene attivato dall'handler di
+    // apertura modale, non qui: nessun setState sincrono nei loader da effect.
     const loadContacts = useCallback(async () => {
-        setLoadingContacts(true);
+        if (!teacherId) return;
         try {
-            const res = await fetch(`/api/chat/contacts?userId=${teacherId}`);
-            if (res.ok) {
+            const res = await fetch(`/api/chat/contacts?userId=${teacherId}`).catch(() => null);
+            if (res?.ok) {
                 const data = await res.json();
                 setContacts(data.contacts ?? []);
             }
-        } catch (err) {
-            console.error('Errore caricamento contatti:', err);
         } finally {
             setLoadingContacts(false);
         }
@@ -133,7 +131,7 @@ function TeacherChatContent() {
 
     // Attiva il realtime
     useChatRealtime({
-        userId: teacherId,
+        userId: teacherId ?? '', // il hook ignora gli id falsy
         selectedThreadId: selectedThread?.id ?? null,
         threads,
         onNewMessage: handleRealtimeNewMessage,
@@ -194,6 +192,7 @@ function TeacherChatContent() {
     };
 
     const handleNewChat = async (contact: Contact) => {
+        if (!teacherId) return;
         try {
             const res = await fetch('/api/chat/threads', {
                 method: 'POST',
@@ -222,7 +221,7 @@ function TeacherChatContent() {
     };
 
     const handleSendMessage = async (content: string, attachmentUrl?: string, attachmentType?: string) => {
-        if (!selectedThread) return;
+        if (!selectedThread || !teacherId) return;
         try {
             const res = await fetch('/api/chat/messages', {
                 method: 'POST',
@@ -251,11 +250,11 @@ function TeacherChatContent() {
     };
 
 
-    if (loading) {
+    if (loading || !teacherId) {
         return (
             <div className="max-w-5xl mx-auto p-4 sm:p-6 flex flex-col items-center justify-center min-h-[60vh] gap-4">
                 <div className="w-10 h-10 border-4 border-kidville-green/30 border-t-kidville-green rounded-full animate-spin" />
-                <p className="font-maven text-gray-500">Caricamento chat...</p>
+                <p className="font-maven text-kidville-muted">Caricamento chat...</p>
             </div>
         );
     }
@@ -276,28 +275,30 @@ function TeacherChatContent() {
                                     animate={{ scale: 1, opacity: 1 }}
                                     exit={{ scale: 0, opacity: 0 }}
                                     transition={{ type: 'spring', stiffness: 500, damping: 25 }}
-                                    className="inline-flex items-center justify-center min-w-[24px] h-6 px-2 rounded-full bg-emerald-500 text-white font-barlow font-bold text-xs shadow-lg shadow-emerald-500/30"
+                                    className="inline-flex items-center justify-center min-w-[24px] h-6 px-2 rounded-full bg-kidville-success text-white font-barlow font-bold text-xs shadow-lg shadow-sm"
                                 >
                                     {unreadCount > 99 ? '99+' : unreadCount}
                                 </motion.span>
                             )}
                         </AnimatePresence>
                     </div>
-                    <p className="font-maven text-gray-500 mt-1">Messaggi con le famiglie</p>
+                    <p className="font-maven text-kidville-muted mt-1">Messaggi con le famiglie</p>
                 </div>
                 <button
-                    onClick={() => { setShowNewChat(true); loadContacts(); }}
+                    onClick={() => { setShowNewChat(true); setLoadingContacts(true); loadContacts(); }}
                     className="flex items-center gap-2 px-4 py-2.5 bg-kidville-green text-kidville-yellow font-barlow font-bold text-sm uppercase rounded-2xl hover:opacity-90 active:scale-[0.98] transition-all shadow-lg shadow-kidville-green/20"
                 >
                     <Plus size={16} strokeWidth={1.5} /> Nuova Chat
                 </button>
             </div>
 
-            {/* Desktop Layout: sidebar + chat area */}
-            <div className="hidden md:flex gap-4 h-[calc(100vh-200px)] min-h-[500px]">
+            {/* Desktop Layout: sidebar + chat area. mb-24 = clearance sotto il
+                pannello ad altezza fissa, così lo scroll porta sempre il
+                composer sopra la bottom nav fissa (stesso fix del parent chat). */}
+            <div className="hidden md:flex gap-4 h-[calc(100vh-200px)] min-h-[500px] mb-24">
                 {/* Thread list */}
-                <div className="w-80 flex-shrink-0 bg-white/80 backdrop-blur-xl rounded-3xl border border-white/40 shadow-sm overflow-hidden flex flex-col">
-                    <div className="px-4 py-3 border-b border-gray-100/60">
+                <div className="w-80 flex-shrink-0 bg-white rounded-3xl border border-kidville-line shadow-sm overflow-hidden flex flex-col">
+                    <div className="px-4 py-3 border-b border-kidville-line">
                         <p className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide">Conversazioni</p>
                     </div>
                     <div className="flex-1 overflow-y-auto">
@@ -307,18 +308,18 @@ function TeacherChatContent() {
                 </div>
 
                 {/* Chat area */}
-                <div className="flex-1 bg-white/80 backdrop-blur-xl rounded-3xl border border-white/40 shadow-sm overflow-hidden flex flex-col">
+                <div className="flex-1 bg-white rounded-3xl border border-kidville-line shadow-sm overflow-hidden flex flex-col">
                     {selectedThread ? (
                         <>
-                            <div className="flex items-center gap-3 px-5 py-3.5 border-b border-gray-100/60">
-                                <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center font-barlow font-bold text-sm text-amber-700">
+                            <div className="flex items-center gap-3 px-5 py-3.5 border-b border-kidville-line">
+                                <div className="w-10 h-10 rounded-full bg-kidville-warn-soft flex items-center justify-center font-barlow font-bold text-sm text-kidville-warn">
                                     {selectedThread.other_user.first_name[0]}{selectedThread.other_user.last_name[0]}
                                 </div>
                                 <div>
                                     <p className="font-maven font-semibold text-sm text-kidville-green">
                                         {selectedThread.other_user.first_name} {selectedThread.other_user.last_name}
                                     </p>
-                                    <p className="font-maven text-[11px] text-gray-400">
+                                    <p className="font-maven text-[11px] text-kidville-muted">
                                         Genitore di {selectedThread.student.nome} {selectedThread.student.cognome}
                                     </p>
                                 </div>
@@ -342,7 +343,7 @@ function TeacherChatContent() {
                                 <p className="font-barlow font-bold text-lg text-kidville-green uppercase mb-1">
                                     Seleziona una conversazione
                                 </p>
-                                <p className="font-maven text-sm text-gray-400">
+                                <p className="font-maven text-sm text-kidville-muted">
                                     Scegli un genitore dalla lista o premi &quot;Nuova Chat&quot;
                                 </p>
                             </div>
@@ -355,26 +356,29 @@ function TeacherChatContent() {
             <div className="md:hidden">
                 {showMobile === 'list' ? (
                     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-                        className="bg-white/80 backdrop-blur-xl rounded-3xl border border-white/40 shadow-sm overflow-hidden">
+                        className="bg-white rounded-3xl border border-kidville-line shadow-sm overflow-hidden">
                         <ChatThreadList threads={threads} selectedId={null}
                             currentUserId={teacherId} onSelect={handleSelectThread} />
                     </motion.div>
                 ) : selectedThread && (
+                    // Conversazione a schermo intero su mobile: si adatta a qualsiasi
+                    // dispositivo (100dvh reale), il campo resta sempre visibile in fondo
+                    // sopra la safe-area; si esce con il tasto indietro in alto.
                     <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }}
-                        className="bg-white/80 backdrop-blur-xl rounded-3xl border border-white/40 shadow-sm overflow-hidden flex flex-col h-[calc(100vh-180px)]">
-                        <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-100/60">
+                        className="fixed inset-0 z-[60] bg-white flex flex-col overflow-hidden pb-[env(safe-area-inset-bottom)]">
+                        <div className="flex items-center gap-3 px-4 py-3 border-b border-kidville-line">
                             <button onClick={() => setShowMobile('list')}
-                                className="w-8 h-8 rounded-xl bg-gray-50 hover:bg-gray-100 flex items-center justify-center text-gray-500 transition-colors">
+                                className="w-8 h-8 rounded-xl bg-kidville-cream hover:bg-kidville-cream-dark flex items-center justify-center text-kidville-green transition-colors">
                                 <ArrowLeft size={16} strokeWidth={1.5} />
                             </button>
-                            <div className="w-9 h-9 rounded-full bg-amber-100 flex items-center justify-center font-barlow font-bold text-xs text-amber-700">
+                            <div className="w-9 h-9 rounded-full bg-kidville-warn-soft flex items-center justify-center font-barlow font-bold text-xs text-kidville-warn">
                                 {selectedThread.other_user.first_name[0]}{selectedThread.other_user.last_name[0]}
                             </div>
                             <div>
                                 <p className="font-maven font-semibold text-sm text-kidville-green">
                                     {selectedThread.other_user.first_name} {selectedThread.other_user.last_name}
                                 </p>
-                                <p className="font-maven text-[10px] text-gray-400">{selectedThread.student.nome}</p>
+                                <p className="font-maven text-[10px] text-kidville-muted">{selectedThread.student.nome}</p>
                             </div>
                         </div>
                         <ChatMessageArea
@@ -402,13 +406,13 @@ function TeacherChatContent() {
                             exit={{ opacity: 0, y: 20, scale: 0.97 }}
                             className="fixed inset-4 sm:inset-auto sm:top-1/2 sm:left-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 sm:w-full sm:max-w-md bg-white rounded-3xl shadow-2xl z-50 flex flex-col max-h-[80vh] overflow-hidden"
                         >
-                            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+                            <div className="flex items-center justify-between px-6 py-4 border-b border-kidville-line">
                                 <div className="flex items-center gap-2">
                                     <UserPlus size={18} className="text-kidville-green" strokeWidth={1.5} />
                                     <h2 className="font-barlow font-black text-lg text-kidville-green uppercase tracking-wide">Nuova Chat</h2>
                                 </div>
                                 <button onClick={() => setShowNewChat(false)}
-                                    className="w-8 h-8 rounded-xl bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-400">
+                                    className="w-8 h-8 rounded-xl bg-kidville-cream hover:bg-kidville-cream-dark flex items-center justify-center text-kidville-green">
                                     <X size={14} strokeWidth={1.5} />
                                 </button>
                             </div>
@@ -416,17 +420,17 @@ function TeacherChatContent() {
                                 {loadingContacts ? (
                                     <div className="flex flex-col items-center py-8 gap-3">
                                         <div className="w-7 h-7 border-[3px] border-kidville-green/20 border-t-kidville-green rounded-full animate-spin" />
-                                        <p className="font-maven text-sm text-gray-400">Caricamento contatti...</p>
+                                        <p className="font-maven text-sm text-kidville-muted">Caricamento contatti...</p>
                                     </div>
                                 ) : contacts.length === 0 ? (
                                     <div className="flex flex-col items-center py-8 text-center">
-                                        <p className="font-maven text-sm text-gray-400">
+                                        <p className="font-maven text-sm text-kidville-muted">
                                             Hai già una conversazione con tutti i genitori disponibili! 🎉
                                         </p>
                                     </div>
                                 ) : (
                                     <div className="space-y-2">
-                                        <p className="font-maven text-xs text-gray-400 mb-3">
+                                        <p className="font-maven text-xs text-kidville-muted mb-3">
                                             Seleziona un genitore per iniziare una conversazione
                                         </p>
                                         {contacts.map((contact, idx) => {
@@ -440,14 +444,14 @@ function TeacherChatContent() {
                                                     onClick={() => handleNewChat(contact)}
                                                     className="w-full flex items-center gap-3 px-4 py-3 rounded-2xl bg-kidville-cream/30 hover:bg-kidville-cream/60 transition-all text-left"
                                                 >
-                                                    <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center font-barlow font-bold text-sm text-amber-700">
+                                                    <div className="w-10 h-10 rounded-full bg-kidville-warn-soft flex items-center justify-center font-barlow font-bold text-sm text-kidville-warn">
                                                         {initials}
                                                     </div>
                                                     <div className="flex-1 min-w-0">
                                                         <p className="font-maven font-semibold text-sm text-kidville-green truncate">
                                                             {contact.user_name}
                                                         </p>
-                                                        <p className="font-maven text-xs text-gray-400 truncate">
+                                                        <p className="font-maven text-xs text-kidville-muted truncate">
                                                             Genitore di {contact.student_name} • {contact.sezione}
                                                         </p>
                                                     </div>

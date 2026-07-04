@@ -1,6 +1,11 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { sendPush } from '@/lib/push/web-push'
+import { sendPush, vapidConfigured } from '@/lib/push/web-push'
+import { sendNativePush, fcmConfigured } from '@/lib/push/native-push'
+import { parseQuery } from '@/lib/validation/http'
+
+const postQuerySchema = z.object({}) // nessun parametro in ingresso (il body eventuale del cron non viene letto)
 
 // POST /api/push/dispatch — invio Web Push delle notifiche non ancora inviate.
 // SERVICE-TO-SERVICE: richiede header `x-cron-secret`. NON chiamabile dal browser.
@@ -10,6 +15,19 @@ export async function POST(request: Request) {
     const secret = request.headers.get('x-cron-secret')
     if (!secret || secret !== process.env.CRON_SECRET) {
       return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
+    }
+
+    const q = parseQuery(request, postQuerySchema)
+    if ('response' in q) return q.response
+
+    // Senza NESSUN canale configurato (né VAPID web né FCM native) il push non
+    // può partire: esito visibile (non_configurato) e notifiche NON marcate come
+    // inviate, così partiranno appena un canale sarà configurato.
+    const webOk = vapidConfigured()
+    const nativeOk = fcmConfigured()
+    if (!webOk && !nativeOk) {
+      console.warn('[PUSH] dispatch saltato: nessun canale push configurato (VAPID/FCM)')
+      return NextResponse.json({ success: true, data: { inviate: 0, non_configurato: true } })
     }
 
     const supabase = await createAdminClient()
@@ -31,7 +49,7 @@ export async function POST(request: Request) {
     const utenti = [...new Set(pendenti.map((n) => n.utente_id))]
     const { data: subs } = await supabase
       .from('push_subscriptions')
-      .select('id, utente_id, endpoint, p256dh, auth')
+      .select('id, utente_id, endpoint, p256dh, auth, platform')
       .in('utente_id', utenti)
 
     const subsByUser = new Map<string, typeof subs>()
@@ -42,23 +60,30 @@ export async function POST(request: Request) {
     }
 
     let inviate = 0
+    let nativeInviate = 0
     const toRemove: string[] = []
     const inviateIds: string[] = []
 
     for (const n of pendenti) {
       const userSubs = subsByUser.get(n.utente_id) || []
-      let anySent = false
+      const payload = { title: n.titolo, body: n.corpo ?? undefined, url: n.link ?? '/', tag: n.id }
       for (const s of userSubs!) {
-        const res = await sendPush(
-          { endpoint: s.endpoint, p256dh: s.p256dh, auth: s.auth },
-          { title: n.titolo, body: n.corpo ?? undefined, url: n.link ?? '/', tag: n.id }
-        )
-        if (res.ok) { anySent = true; inviate++ }
-        else if (res.gone) toRemove.push(s.id)
+        if (s.platform === 'ios' || s.platform === 'android') {
+          // Canale nativo (FCM/APNs) — gated: se non configurato, saltato pulito.
+          if (!nativeOk) continue
+          const res = await sendNativePush(s.endpoint, s.platform, payload)
+          if (res.ok) nativeInviate++
+          else if (res.gone) toRemove.push(s.id)
+        } else {
+          // Canale web (VAPID). platform 'web' o legacy null.
+          if (!webOk) continue
+          const res = await sendPush({ endpoint: s.endpoint, p256dh: s.p256dh, auth: s.auth }, payload)
+          if (res.ok) inviate++
+          else if (res.gone) toRemove.push(s.id)
+        }
       }
-      // marca inviata (anche se l'utente non ha subs: evita ritentativi infiniti)
+      // marca inviata comunque (anche senza subs o con canali gated: evita ritentativi infiniti)
       inviateIds.push(n.id)
-      if (anySent) { /* ok */ }
     }
 
     if (inviateIds.length) {
@@ -68,7 +93,15 @@ export async function POST(request: Request) {
       await supabase.from('push_subscriptions').delete().in('id', toRemove)
     }
 
-    return NextResponse.json({ success: true, data: { inviate, notifiche: inviateIds.length, subs_rimosse: toRemove.length } })
+    return NextResponse.json({
+      success: true,
+      data: {
+        inviate,
+        native_inviate: nativeInviate,
+        notifiche: inviateIds.length,
+        subs_rimosse: toRemove.length,
+      },
+    })
   } catch (err) {
     console.error('Errore API POST dispatch:', err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })

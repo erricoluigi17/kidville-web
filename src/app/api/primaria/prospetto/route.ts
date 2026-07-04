@@ -1,7 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { getRequestUserId, loadAppUser } from '@/lib/auth/require-staff'
+import { requireDocente } from '@/lib/auth/require-staff'
+import { assertAlunnoInScope } from '@/lib/auth/scope'
 import { mediaGiudizi, type ScalaVoce } from '@/lib/primaria/media'
+import { parseQuery } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+const getQuerySchema = z.object({
+  alunnoId: zUuid,
+  materiaId: zUuid.optional(),
+})
 
 // GET /api/primaria/prospetto?alunnoId=&materiaId=&userId=
 // Con materiaId: valutazioni raggruppate per obiettivo + media per quella materia.
@@ -14,30 +24,27 @@ import { mediaGiudizi, type ScalaVoce } from '@/lib/primaria/media'
 // direttamente questa route con l'id del proprio figlio.
 export async function GET(request: NextRequest) {
   try {
-    const sp = new URL(request.url).searchParams
-    const alunnoId = sp.get('alunnoId')
-    const materiaId = sp.get('materiaId')
-    const userId = getRequestUserId(request)
-    if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
-    if (!alunnoId) return NextResponse.json({ error: 'alunnoId obbligatorio' }, { status: 400 })
+    // Gate di ruolo: solo docenti/segreteria/staff. Il genitore (role 'genitore')
+    // è escluso, così la media numerica non gli è mai accessibile via API (vedi nota sopra).
+    const auth = await requireDocente(request)
+    if (auth.response) return auth.response
 
-    // Gate di ruolo: solo docenti/segreteria. Il genitore (role 'genitore') è escluso
-    // così la media numerica non gli è mai accessibile via API. Vedi nota sopra.
-    const appUser = await loadAppUser(userId)
-    if (!appUser || !['educator', 'admin', 'coordinator'].includes(appUser.role)) {
-      return NextResponse.json(
-        { error: 'Accesso negato: prospetto riservato al personale docente' },
-        { status: 403 }
-      )
-    }
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+    const { alunnoId, materiaId } = q.data
 
     const supabase = await createAdminClient()
 
+    // Scope per tenant/classe: educator solo sui propri alunni; staff/segreteria
+    // su tutto il plesso; mai cross-tenant.
+    const scopeErr = await assertAlunnoInScope(supabase, auth.user, alunnoId)
+    if (scopeErr) return scopeErr
+
     // Recupera scala giudizi una sola volta (serve sia per materia singola sia per panoramica).
-    const { data: alunno } = await supabase.from('alunni').select('section_id').eq('id', alunnoId).single()
+    const { data: alunno } = await supabase.from('alunni').select('section_id').eq('id', alunnoId).maybeSingle()
     let scala: ScalaVoce[] = []
     if (alunno?.section_id) {
-      const { data: sez } = await supabase.from('sections').select('scuola_id').eq('id', alunno.section_id).single()
+      const { data: sez } = await supabase.from('sections').select('scuola_id').eq('id', alunno.section_id).maybeSingle()
       if (sez?.scuola_id) {
         const { data: s } = await supabase
           .from('giudizi_sintetici_scala')

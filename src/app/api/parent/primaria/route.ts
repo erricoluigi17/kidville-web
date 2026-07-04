@@ -1,31 +1,55 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { getRequestUserId } from '@/lib/auth/require-staff'
+import { requireUser } from '@/lib/auth/require-staff'
+import { parseQuery } from '@/lib/validation/http'
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+// studentId lasco (niente zUuid): un valore non-GUID oggi degrada a 404 dalla
+// query su `alunni` — stesso criterio di parent/competenze.
+const getQuerySchema = z.object({
+  studentId: z.string({ error: 'studentId obbligatorio' }).min(1, 'studentId obbligatorio'),
+})
 
 // GET /api/parent/primaria?studentId=&userId=
 // Vista genitore (read-only) del registro primaria del figlio, con OSCURAMENTO:
 // gli argomenti/compiti "propri" del docente di sostegno sono visibili solo se il
 // figlio è tra i destinatari. Valutazioni mostrate dopo il buffer notifica.
 export async function GET(request: NextRequest) {
+  // Gate sessione (M5.6): sostituisce il vecchio check di sola presenza
+  // dell'header x-user-id (spoofabile post-M4).
+  const auth = await requireUser(request)
+  if (auth.response) return auth.response
+
   try {
-    const sp = new URL(request.url).searchParams
-    const studentId = sp.get('studentId')
-    if (!studentId) return NextResponse.json({ error: 'studentId obbligatorio' }, { status: 400 })
-    if (!getRequestUserId(request)) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+    const { studentId } = q.data
 
     const supabase = await createAdminClient()
+
+    // scope: il genitore deve essere collegato all'alunno (lo staff passa dal ruolo)
+    if (auth.user.role === 'genitore') {
+      const { data: legame } = await supabase
+        .from('legame_genitori_alunni')
+        .select('alunno_id')
+        .eq('genitore_id', auth.user.id)
+        .eq('alunno_id', studentId)
+        .maybeSingle()
+      if (!legame) return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
+    }
 
     const { data: alunno } = await supabase
       .from('alunni')
       .select('id, nome, cognome, section_id, scuola_id')
       .eq('id', studentId)
-      .single()
+      .maybeSingle()
     if (!alunno) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
 
     // Tipo scuola della sezione (per la vista adattiva lato client).
     let schoolType: string | null = null
     if (alunno.section_id) {
-      const { data: sez } = await supabase.from('sections').select('school_type').eq('id', alunno.section_id).single()
+      const { data: sez } = await supabase.from('sections').select('school_type').eq('id', alunno.section_id).maybeSingle()
       schoolType = sez?.school_type ?? null
     }
 

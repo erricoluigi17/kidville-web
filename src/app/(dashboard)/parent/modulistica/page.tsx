@@ -1,15 +1,12 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
-  FileText, Clock, Archive, Award, HeartPulse, Shield,
-  ArrowRight, Download, CheckCircle2, User, Key, Info, Upload, Mail
+  Clock, Archive, Award, HeartPulse, Shield,
+  ArrowRight, Download, CheckCircle2, Upload, Mail
 } from 'lucide-react';
-import { jsPDF } from 'jspdf';
-import { getSupabase } from '@/lib/supabase/browser-client';
 import { OtpEmailModal } from '@/components/features/parent/forms/OtpEmailModal';
-
-const PARENT_ID = '33333333-3333-3333-3333-333333333333'; // Sarah Pagano
+import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 
 type FormType = 'sondaggio' | 'gradimento' | 'autorizzazione';
 
@@ -45,11 +42,33 @@ interface AssignedForm {
   } | null;
 }
 
+// Valore di risposta di un campo modulo (testo, rating numerico, consenso).
+type AnswerValue = string | number | boolean;
+
+// Log di firma FES restituito dal server (campi usati nella ricevuta PDF).
+interface SignatureLogInfo {
+  timestamp?: string;
+  ip?: string;
+  user_agent?: string;
+  provider?: string;
+  hash?: string;
+  parent_details?: { nome?: string | null; cognome?: string | null; cf?: string | null } | null;
+}
+
+interface MedCert {
+  id: string;
+  fileName?: string | null;
+  alunno?: { nome?: string | null } | null;
+  creato_il: string;
+  notes?: string | null;
+  giorni_coperti?: string[] | null;
+}
+
 interface SignedArchiveItem {
   id: string;
-  answers: Record<string, any>;
+  answers: Record<string, unknown>;
   is_signed: boolean;
-  signature_log: any;
+  signature_log: SignatureLogInfo | null;
   pdf_path: string;
   created_at: string;
   forms_templates: {
@@ -62,18 +81,20 @@ interface SignedArchiveItem {
   };
 }
 
+// Identità dalla sessione (URL → localStorage → /api/me), senza fallback demo (M4).
 export default function ParentModulisticaPage() {
+  const { userId: parentId } = useSessionIdentity();
   const [activeTab, setActiveTab] = useState<'compilare' | 'archivio' | 'certificati' | 'medici'>('compilare');
   const [assignedForms, setAssignedForms] = useState<AssignedForm[]>([]);
   const [archive, setArchive] = useState<SignedArchiveItem[]>([]);
-  const [medCerts, setMedCerts] = useState<any[]>([]);
+  const [medCerts, setMedCerts] = useState<MedCert[]>([]);
   const [children, setChildren] = useState<{ id: string; nome: string; cognome: string }[]>([]);
-  const [parentInfo, setParentInfo] = useState<any>(null);
+  const [parentInfo, setParentInfo] = useState<{ nome?: string | null; cognome?: string | null } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   // Active Compiler state
   const [compilingForm, setCompilingForm] = useState<AssignedForm | null>(null);
-  const [formAnswers, setFormAnswers] = useState<Record<string, any>>({});
+  const [formAnswers, setFormAnswers] = useState<Record<string, AnswerValue>>({});
   // Firma OTP via email (FES)
   const [showOtpModal, setShowOtpModal] = useState(false);
   const [otpSession, setOtpSession] = useState<{ email: string | null; expiry: number; ticket: string; devCode?: string } | null>(null);
@@ -81,65 +102,55 @@ export default function ParentModulisticaPage() {
   // Medical Certificate form
   const [selectedChildId, setSelectedChildId] = useState('');
   const [certFileName, setCertFileName] = useState('');
+  const [certFile, setCertFile] = useState<File | null>(null);
+  const [certDal, setCertDal] = useState('');
+  const [certAl, setCertAl] = useState('');
   const [certNotes, setCertNotes] = useState('');
 
   // Notifications
   const [toast, setToast] = useState('');
 
-  useEffect(() => {
-    fetchData();
-  }, []);
-
-  const fetchData = async () => {
-    setIsLoading(true);
+  const fetchData = useCallback(async () => {
+    if (!parentId) return; // identità non risolta: lo spinner resta
     try {
-      // 1. Fetch assigned forms
-      const fRes = await fetch(`/api/parent/forms?parent_id=${PARENT_ID}`);
-      const fData = await fRes.json();
+      // 1. Fetch assigned forms (gate requireUser: identità da sessione/header)
+      const fRes = await fetch('/api/parent/forms', { headers: { 'x-user-id': parentId } }).catch(() => null);
+      const fData = await fRes?.json().catch(() => null);
       if (Array.isArray(fData)) setAssignedForms(fData);
 
       // 2. Fetch signed archive
-      const aRes = await fetch(`/api/parent/submissions?parent_id=${PARENT_ID}`);
-      const aData = await aRes.json();
+      const aRes = await fetch('/api/parent/submissions', { headers: { 'x-user-id': parentId } }).catch(() => null);
+      const aData = await aRes?.json().catch(() => null);
       if (Array.isArray(aData)) setArchive(aData);
 
       // 3. Fetch medical certificates
-      const mRes = await fetch(`/api/parent/medical-certificates?parent_id=${PARENT_ID}`);
-      const mData = await mRes.json();
+      const mRes = await fetch('/api/parent/medical-certificates', { headers: { 'x-user-id': parentId } }).catch(() => null);
+      const mData = await mRes?.json().catch(() => null);
       if (Array.isArray(mData)) setMedCerts(mData);
 
-      // 4. Fetch children list from Supabase directly
-      const supabase = getSupabase();
-      const { data: legami } = await supabase
-        .from('legame_genitori_alunni')
-        .select('alunno_id')
-        .eq('genitore_id', PARENT_ID);
-      
-      if (legami && legami.length > 0) {
-        const { data: studs } = await supabase
-          .from('alunni')
-          .select('id, nome, cognome')
-          .in('id', legami.map((l: any) => l.alunno_id));
-        if (studs) {
-          setChildren(studs);
-          if (studs.length > 0) setSelectedChildId(studs[0].id);
-        }
+      // 4. Fetch children list via route server gated (parent-scoped, service-role)
+      const sRes = await fetch('/api/parent/students', { headers: { 'x-user-id': parentId } }).catch(() => null);
+      const sJson = await sRes?.json().catch(() => ({}));
+      const studs = Array.isArray(sJson?.data) ? sJson.data : [];
+      if (studs.length > 0) {
+        setChildren(studs);
+        setSelectedChildId(studs[0].id);
       }
 
-      // 5. Fetch Parent info (from utenti table)
-      const { data: parent } = await supabase
-        .from('utenti')
-        .select('*')
-        .eq('id', PARENT_ID)
-        .single();
-      if (parent) setParentInfo(parent);
-
-    } catch (err) {
-      console.error(err);
+      // 5. Fetch Parent info via /api/me (gated, niente lettura anon di `utenti`)
+      const pRes = await fetch('/api/me', { headers: { 'x-user-id': parentId } }).catch(() => null);
+      if (pRes?.ok) {
+        const parent = await pRes.json().catch(() => null);
+        if (parent) setParentInfo(parent);
+      }
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [parentId]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
 
   const showToastMsg = (msg: string) => {
     setToast(msg);
@@ -153,12 +164,13 @@ export default function ParentModulisticaPage() {
     setShowOtpModal(false);
 
     // Prefill form answers from DB info
-    const initialAnswers: Record<string, any> = {};
+    const initialAnswers: Record<string, AnswerValue> = {};
     form.fields.forEach(field => {
       if (field.db_mapping) {
         const [table, col] = field.db_mapping.split('.');
         if (table === 'utenti' && parentInfo) {
-          initialAnswers[field.id] = parentInfo[col] || '';
+          const v = (parentInfo as Record<string, unknown>)[col];
+          initialAnswers[field.id] = typeof v === 'string' ? v : '';
         } else if (table === 'alunni') {
           // If child information is mapped, we can mock it or we could fetch child info.
           // For simplicity we prefill with child's details we already have (or mock).
@@ -174,7 +186,7 @@ export default function ParentModulisticaPage() {
     setFormAnswers(initialAnswers);
   };
 
-  const handleFieldChange = (fieldId: string, value: any) => {
+  const handleFieldChange = (fieldId: string, value: AnswerValue) => {
     setFormAnswers({ ...formAnswers, [fieldId]: value });
   };
 
@@ -194,17 +206,16 @@ export default function ParentModulisticaPage() {
 
   // Invio diretto (sondaggio / gradimento) — nessuna firma OTP richiesta
   const handleSubmitDirect = async () => {
-    if (!compilingForm || !validateRequired()) return;
+    if (!compilingForm || !parentId || !validateRequired()) return;
     try {
       const res = await fetch('/api/parent/submissions', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-user-id': parentId },
         body: JSON.stringify({
           form_id: compilingForm.form_id,
           student_id: compilingForm.student.id,
           answers: formAnswers,
           is_signed: false,
-          parent_id: PARENT_ID,
         }),
       });
       if (!res.ok) {
@@ -221,13 +232,13 @@ export default function ParentModulisticaPage() {
   };
 
   const handleStartSigning = async () => {
-    if (!compilingForm || !validateRequired()) return;
+    if (!compilingForm || !parentId || !validateRequired()) return;
 
     try {
       const res = await fetch('/api/parent/forms/otp', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ parent_id: PARENT_ID }),
+        headers: { 'Content-Type': 'application/json', 'x-user-id': parentId },
+        body: JSON.stringify({}),
       });
       const json = await res.json();
       if (!res.ok) {
@@ -239,20 +250,19 @@ export default function ParentModulisticaPage() {
       if (!json.sent) {
         showToastMsg('ℹ️ Email non configurata: usa il codice mostrato (dev).');
       }
-    } catch (err) {
+    } catch {
       showToastMsg('❌ Errore durante l\'invio del codice');
     }
   };
 
   // Firma OTP via email — step 2: verifica il codice, finalizza la firma e genera la ricevuta
   const verifyOtpAndSign = async (code: string): Promise<{ ok: boolean; error?: string }> => {
-    if (!compilingForm || !otpSession) return { ok: false, error: 'Sessione di firma scaduta' };
+    if (!compilingForm || !otpSession || !parentId) return { ok: false, error: 'Sessione di firma scaduta' };
     try {
       const res = await fetch('/api/parent/forms/otp', {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-user-id': parentId },
         body: JSON.stringify({
-          parent_id: PARENT_ID,
           code,
           expiry: otpSession.expiry,
           ticket: otpSession.ticket,
@@ -276,18 +286,21 @@ export default function ParentModulisticaPage() {
       }, 1600);
 
       return { ok: true };
-    } catch (err) {
+    } catch {
       return { ok: false, error: 'Errore di rete. Riprova.' };
     }
   };
 
   // Receipt PDF Generator
-  const generateReceiptPDF = (form: AssignedForm | SignedArchiveItem, answers: Record<string, any>, log: any) => {
+  // M9.4: async per caricare jsPDF on-demand; i chiamanti sono fire-and-forget
+  // (onClick e post-firma), nessuno dipende dal completamento sincrono.
+  const generateReceiptPDF = async (form: AssignedForm | SignedArchiveItem, answers: Record<string, unknown>, log: SignatureLogInfo | null) => {
     const isArchive = 'forms_templates' in form;
     const title = isArchive ? (form as SignedArchiveItem).forms_templates.title : (form as AssignedForm).title;
     const desc = isArchive ? (form as SignedArchiveItem).forms_templates.description : (form as AssignedForm).description;
     const studentName = isArchive ? `${(form as SignedArchiveItem).alunni.nome} ${(form as SignedArchiveItem).alunni.cognome}` : `${(form as AssignedForm).student.nome} ${(form as AssignedForm).student.cognome}`;
-    
+
+    const { jsPDF } = await import('jspdf');
     const doc = new jsPDF();
     
     // School Letterhead Simulation
@@ -318,7 +331,7 @@ export default function ParentModulisticaPage() {
     doc.text(`Documento: ${title}`, 20, 68);
     doc.text(`Descrizione: ${desc || 'Nessuna'}`, 20, 75);
     doc.text(`Alunno: ${studentName}`, 20, 82);
-    doc.text(`Firmatario: ${log?.parent_details?.nome || 'Sarah'} ${log?.parent_details?.cognome || 'Pagano'} (${log?.parent_details?.cf || 'PGNSRH82E45H501K'})`, 20, 89);
+    doc.text(`Firmatario: ${log?.parent_details?.nome || ''} ${log?.parent_details?.cognome || ''} (${log?.parent_details?.cf || 'CF non disponibile'})`.trim(), 20, 89);
     
     doc.setFont('Helvetica', 'bold');
     doc.text('RISPOSTE FORNITE:', 20, 102);
@@ -330,7 +343,7 @@ export default function ParentModulisticaPage() {
       ? Object.entries(answers).map(([key, val]) => ({ label: key, val })) 
       : (form as AssignedForm).fields.map(f => ({ label: f.label, val: answers[f.id] }));
 
-    fieldsList.forEach((field: any) => {
+    fieldsList.forEach((field) => {
       const displayVal = typeof field.val === 'boolean' ? (field.val ? 'SÌ (Acconsentito)' : 'NO') : field.val;
       doc.text(`• ${field.label}: ${displayVal}`, 25, yOffset);
       yOffset += 8;
@@ -351,11 +364,11 @@ export default function ParentModulisticaPage() {
     doc.setTextColor(80, 80, 80);
     doc.setFont('Helvetica', 'normal');
     doc.setFontSize(8.5);
-    doc.text(`Marca temporale (UTC): ${new Date(log?.timestamp || Date.now()).toISOString()}`, 25, yOffset + 15);
+    doc.text(`Marca temporale (UTC): ${log?.timestamp ? new Date(log.timestamp).toISOString() : 'N.D.'}`, 25, yOffset + 15);
     doc.text(`Indirizzo IP Firmatario: ${log?.ip || '192.168.1.45'}`, 25, yOffset + 21);
     doc.text(`User Agent: ${log?.user_agent?.substring(0, 80) || 'N.D.'}`, 25, yOffset + 27);
     doc.text(`Identity Provider SPID/CIE: ${log?.provider || 'Aruba SPID'}`, 25, yOffset + 33);
-    doc.text(`SHA-256 Impronta Digitale: ${log?.hash || 'FES-HASH-' + Math.random().toString(16).substring(2, 10).toUpperCase()}`, 25, yOffset + 39);
+    doc.text(`SHA-256 Impronta Digitale: ${log?.hash || 'N.D.'}`, 25, yOffset + 39);
 
     // Footer
     doc.setTextColor(150, 150, 150);
@@ -370,9 +383,10 @@ export default function ParentModulisticaPage() {
     if (!parentInfo || children.length === 0) return;
     
     showToastMsg('⏳ Generazione certificato in corso...');
-    setTimeout(() => {
+    setTimeout(async () => {
+      const { jsPDF } = await import('jspdf');
       const doc = new jsPDF();
-      const currentStudent = children[0]; // Sofia
+      const currentStudent = children[0];
 
       // Header Letterhead
       doc.setFillColor(0, 106, 95); // Kidville Green
@@ -398,9 +412,9 @@ export default function ParentModulisticaPage() {
       doc.setFont('Helvetica', 'normal');
       doc.setFontSize(12);
       
-      const bodyText = type === 'iscrizione' 
-        ? `Si certifica che l'alunno/a ${currentStudent.cognome} ${currentStudent.nome}, CF: PGNSRH82E45H501K, risulta regolarmente iscritto/a presso questa istituzione scolastica per l'anno scolastico 2026/2027.`
-        : `Si certifica che l'alunno/a ${currentStudent.cognome} ${currentStudent.nome}, CF: PGNSRH82E45H501K, frequenta regolarmente le attività didattiche di questa scuola nella sezione dei Girasoli per l'anno scolastico corrente.`;
+      const bodyText = type === 'iscrizione'
+        ? `Si certifica che l'alunno/a ${currentStudent.cognome} ${currentStudent.nome} risulta regolarmente iscritto/a presso questa istituzione scolastica per l'anno scolastico 2026/2027.`
+        : `Si certifica che l'alunno/a ${currentStudent.cognome} ${currentStudent.nome} frequenta regolarmente le attività didattiche di questa scuola nella sezione dei Girasoli per l'anno scolastico corrente.`;
 
       const splitText = doc.splitTextToSize(bodyText, 160);
       doc.text(splitText, 25, 90);
@@ -427,30 +441,28 @@ export default function ParentModulisticaPage() {
   // Submit Medical Certificate
   const handleUploadMedicalCert = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!certFileName) {
-      showToastMsg('❌ Caricare un file di certificato medico.');
-      return;
-    }
+    if (!parentId) { showToastMsg('❌ Identità non risolta: accedi di nuovo.'); return; }
+    if (!certFile) { showToastMsg('❌ Caricare un file di certificato medico.'); return; }
+    if (!selectedChildId) { showToastMsg('❌ Seleziona il figlio.'); return; }
+    if (!certDal || !certAl || certDal > certAl) { showToastMsg('❌ Indica un periodo di copertura valido (dal/al).'); return; }
 
     try {
-      const mockStoragePath = `medical_certs/${PARENT_ID}/${selectedChildId}_${Date.now()}_${certFileName}`;
+      const fd = new FormData();
+      fd.append('file', certFile);
+      fd.append('student_id', selectedChildId);
+      fd.append('data_inizio', certDal);
+      fd.append('data_fine', certAl);
+      fd.append('note', certNotes);
       const res = await fetch('/api/parent/medical-certificates', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          student_id: selectedChildId,
-          file_path: mockStoragePath,
-          notes: certNotes,
-          parent_id: PARENT_ID
-        })
+        headers: { 'x-user-id': parentId },
+        body: fd,
       });
-
       if (!res.ok) throw new Error('Errore upload');
-      showToastMsg('✅ Certificato medico caricato. Assenza giustificata!');
-      setCertFileName('');
-      setCertNotes('');
+      showToastMsg('✅ Certificato caricato. In attesa di validazione della Segreteria.');
+      setCertFile(null); setCertFileName(''); setCertDal(''); setCertAl(''); setCertNotes('');
       fetchData();
-    } catch (err) {
+    } catch {
       showToastMsg('❌ Errore caricamento certificato medico');
     }
   };
@@ -458,12 +470,15 @@ export default function ParentModulisticaPage() {
   return (
     <div className="flex-1 flex flex-col p-4 sm:p-6 max-w-4xl mx-auto w-full">
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-gray-100 pb-4 mb-6">
+      <div className="flex items-center justify-between border-b border-kidville-line pb-4 mb-6">
         <div>
-          <h1 className="font-barlow font-black text-3xl text-kidville-green uppercase tracking-wide flex items-center gap-2">
-            <FileText size={28} className="text-kidville-yellow" /> Modulistica & Burocrazia
+          <p className="font-barlow font-bold text-[11px] uppercase tracking-[0.14em] text-kidville-yellow-dark">
+            Documenti
+          </p>
+          <h1 className="font-barlow font-black text-3xl text-kidville-green uppercase tracking-wide leading-none">
+            Modulistica
           </h1>
-          <p className="font-maven text-gray-500 mt-1">Giulia Bianchi</p>
+          <p className="font-maven text-kidville-muted mt-1">Firme, certificati e documenti</p>
         </div>
       </div>
 
@@ -507,7 +522,7 @@ export default function ParentModulisticaPage() {
             <div className="space-y-4">
               {assignedForms.filter(f => f.status === 'pending').length === 0 ? (
                 <div className="bg-white rounded-card p-10 text-center border border-gray-100">
-                  <CheckCircle2 className="mx-auto text-emerald-500 mb-3" size={48} />
+                  <CheckCircle2 className="mx-auto text-kidville-success mb-3" size={48} />
                   <p className="font-maven text-gray-500">Ottimo lavoro! Non hai moduli da compilare.</p>
                 </div>
               ) : (
@@ -538,7 +553,7 @@ export default function ParentModulisticaPage() {
                         </span>
 
                         {form.expiration_date && (
-                          <span className="bg-amber-50 text-amber-600 px-2.5 py-1 rounded-full text-xs font-semibold flex items-center gap-1">
+                          <span className="bg-kidville-warn-soft text-kidville-warn px-2.5 py-1 rounded-full text-xs font-semibold flex items-center gap-1">
                             <Clock size={12} />
                             Scade il: {new Date(form.expiration_date).toLocaleDateString()}
                           </span>
@@ -581,7 +596,7 @@ export default function ParentModulisticaPage() {
                       <label className="flex items-start gap-2.5 cursor-pointer select-none">
                         <input
                           type="checkbox"
-                          checked={formAnswers[field.id] || false}
+                          checked={Boolean(formAnswers[field.id])}
                           onChange={e => handleFieldChange(field.id, e.target.checked)}
                           className="rounded text-kidville-green focus:ring-kidville-green mt-1 h-4 w-4"
                         />
@@ -597,7 +612,7 @@ export default function ParentModulisticaPage() {
 
                         {field.type === 'textarea' && (
                           <textarea
-                            value={formAnswers[field.id] || ''}
+                            value={String(formAnswers[field.id] ?? '')}
                             onChange={e => handleFieldChange(field.id, e.target.value)}
                             className="w-full border-2 border-gray-100 rounded-xl px-4 py-2.5 font-maven text-sm focus:outline-none focus:border-kidville-green resize-none h-24"
                             placeholder="Scrivi la tua risposta..."
@@ -637,7 +652,7 @@ export default function ParentModulisticaPage() {
                         {(field.type === 'text' || field.type === 'date') && (
                           <input
                             type={field.type === 'date' ? 'date' : 'text'}
-                            value={formAnswers[field.id] || ''}
+                            value={String(formAnswers[field.id] ?? '')}
                             onChange={e => handleFieldChange(field.id, e.target.value)}
                             className="w-full border-2 border-gray-100 rounded-xl px-4 py-2.5 font-maven text-sm focus:outline-none focus:border-kidville-green"
                             placeholder={`Inserisci ${field.label.toLowerCase()}...`}
@@ -703,7 +718,7 @@ export default function ParentModulisticaPage() {
                       <p className="font-maven text-xs text-gray-500 mt-1">
                         Figlio: {item.alunni?.nome} {item.alunni?.cognome} | Firmato il: {new Date(item.created_at).toLocaleDateString()}
                       </p>
-                      <div className="mt-2.5 flex items-center gap-1 text-[10px] text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full font-bold w-fit uppercase tracking-wider">
+                      <div className="mt-2.5 flex items-center gap-1 text-[10px] text-kidville-success bg-kidville-success-soft px-2 py-0.5 rounded-full font-bold w-fit uppercase tracking-wider">
                         <Shield size={10} /> Ricevuta FES Protetta
                       </div>
                     </div>
@@ -729,7 +744,7 @@ export default function ParentModulisticaPage() {
                   <Award className="text-kidville-green/20 mb-2" size={32} />
                   <h3 className="font-barlow font-bold text-lg text-kidville-green uppercase">Certificato Frequenza</h3>
                   <p className="font-maven text-xs text-gray-500 leading-relaxed">
-                    Genera istantaneamente il certificato attestante la frequenza scolastica dell'alunno per l'anno in corso.
+                    Genera istantaneamente il certificato attestante la frequenza scolastica dell&apos;alunno per l&apos;anno in corso.
                   </p>
                 </div>
                 <button
@@ -788,9 +803,9 @@ export default function ParentModulisticaPage() {
                       Documento Scansionato (PDF / Foto) *
                     </label>
                     {certFileName ? (
-                      <div className="flex items-center justify-between border-2 border-emerald-100 bg-emerald-50 text-emerald-700 px-3 py-2 rounded-xl text-xs font-semibold">
+                      <div className="flex items-center justify-between border-2 border-kidville-success/20 bg-kidville-success-soft text-kidville-success px-3 py-2 rounded-xl text-xs font-semibold">
                         <span>📄 {certFileName}</span>
-                        <button type="button" onClick={() => setCertFileName('')} className="text-gray-400 hover:text-red-500">✕</button>
+                        <button type="button" onClick={() => { setCertFileName(''); setCertFile(null); }} className="text-gray-400 hover:text-red-500">✕</button>
                       </div>
                     ) : (
                       <label className="w-full h-10 border-2 border-dashed border-gray-200 hover:border-kidville-green rounded-xl flex items-center justify-center gap-1.5 cursor-pointer text-xs font-semibold text-gray-600 transition-colors">
@@ -799,10 +814,24 @@ export default function ParentModulisticaPage() {
                           type="file"
                           accept=".pdf,image/*"
                           className="hidden"
-                          onChange={e => setCertFileName(e.target.files?.[0]?.name || '')}
+                          onChange={e => { const f = e.target.files?.[0] ?? null; setCertFile(f); setCertFileName(f?.name || ''); }}
                         />
                       </label>
                     )}
+                  </div>
+                </div>
+
+                {/* Periodo di copertura (dal/al) — DL-027 */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block font-maven text-xs font-semibold text-kidville-green mb-1">Coperto dal *</label>
+                    <input type="date" value={certDal} onChange={e => setCertDal(e.target.value)}
+                      className="w-full border-2 border-gray-100 rounded-xl px-3 py-2 font-maven text-xs text-gray-600 focus:outline-none focus:border-kidville-green" />
+                  </div>
+                  <div>
+                    <label className="block font-maven text-xs font-semibold text-kidville-green mb-1">al *</label>
+                    <input type="date" value={certAl} min={certDal || undefined} onChange={e => setCertAl(e.target.value)}
+                      className="w-full border-2 border-gray-100 rounded-xl px-3 py-2 font-maven text-xs text-gray-600 focus:outline-none focus:border-kidville-green" />
                   </div>
                 </div>
 
@@ -845,12 +874,12 @@ export default function ParentModulisticaPage() {
                       </div>
 
                       <div className="flex flex-col items-end gap-1.5">
-                        {cert.giorni_coperti?.length > 0 ? (
-                          <span className="bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider">
-                            Giustificato: {cert.giorni_coperti.map((d: string) => new Date(d).toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit' })).join(', ')}
+                        {(cert.giorni_coperti?.length ?? 0) > 0 ? (
+                          <span className="bg-kidville-success-soft text-kidville-success px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider">
+                            Giustificato: {(cert.giorni_coperti ?? []).map((d: string) => new Date(d).toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit' })).join(', ')}
                           </span>
                         ) : (
-                          <span className="bg-amber-50 text-amber-600 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider">
+                          <span className="bg-kidville-warn-soft text-kidville-warn px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider">
                             In attesa di abbinamento assenza
                           </span>
                         )}

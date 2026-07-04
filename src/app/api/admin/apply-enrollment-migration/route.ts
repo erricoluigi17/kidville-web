@@ -1,4 +1,10 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
+import { sealDangerous } from '@/lib/security/seal'
+import { requireEnv } from '@/lib/security/require-env'
+import { parseQuery } from '@/lib/validation/http'
+
+const querySchema = z.object({}) // nessun parametro in ingresso
 
 /**
  * POST/GET /api/admin/apply-enrollment-migration
@@ -7,8 +13,9 @@ import { NextResponse } from 'next/server'
  * Idempotente — usa IF NOT EXISTS / ADD COLUMN IF NOT EXISTS.
  */
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!
+// Letti a import-time senza asserzione: il check runtime (503) è negli handler.
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? ''
+const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? ''
 
 async function execSql(sql: string): Promise<{ error?: string }> {
   // Supabase espone un endpoint pg REST per eseguire SQL raw via service-role
@@ -214,7 +221,13 @@ async function runMigrationDirect() {
   return { success: errors.length === 0 && schemaVerified, steps, errors, schemaVerified, schemaError }
 }
 
-export async function POST() {
+export async function POST(request: Request) {
+  const sealed = await sealDangerous(request)
+  if (sealed) return sealed
+  const missingEnv = requireEnv('NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY')
+  if (missingEnv) return missingEnv
+  const q = parseQuery(request, querySchema)
+  if ('response' in q) return q.response
   try {
     return NextResponse.json(await runMigration())
   } catch (error) {
@@ -222,7 +235,13 @@ export async function POST() {
   }
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const sealed = await sealDangerous(request)
+  if (sealed) return sealed
+  const missingEnv = requireEnv('NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY')
+  if (missingEnv) return missingEnv
+  const q = parseQuery(request, querySchema)
+  if ('response' in q) return q.response
   try {
     return NextResponse.json(await runMigration())
   } catch (error) {

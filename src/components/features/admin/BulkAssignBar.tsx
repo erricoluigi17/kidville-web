@@ -1,6 +1,6 @@
 'use client';
 
-import { Users, ChevronDown } from 'lucide-react';
+import { Users, ChevronDown, UtensilsCrossed } from 'lucide-react';
 
 interface Props {
     selectedCount: number;
@@ -10,6 +10,11 @@ interface Props {
     onAssign: () => void;
     onClear: () => void;
     isAssigning: boolean;
+    // P5.4 (DL-050): assegnazione massiva a gruppo mensa (opzionale, retro-compatibile).
+    mensaGroups?: { id: string; nome: string }[];
+    targetMensa?: string;
+    onTargetMensaChange?: (id: string) => void;
+    onAssignMensa?: () => void;
 }
 
 export function BulkAssignBar({
@@ -20,11 +25,41 @@ export function BulkAssignBar({
     onAssign,
     onClear,
     isAssigning,
+    mensaGroups,
+    targetMensa = '',
+    onTargetMensaChange,
+    onAssignMensa,
 }: Props) {
     if (selectedCount === 0) return null;
+    const showMensa = !!mensaGroups && mensaGroups.length > 0 && !!onAssignMensa;
 
     return (
-        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 w-full max-w-2xl px-4">
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 w-full max-w-2xl px-4 space-y-2">
+            {showMensa && (
+                <div className="bg-kidville-green/95 rounded-2xl shadow-xl p-3 flex items-center gap-3">
+                    <UtensilsCrossed size={16} className="text-kidville-yellow" />
+                    <div className="relative flex-1">
+                        <select
+                            value={targetMensa}
+                            onChange={e => onTargetMensaChange?.(e.target.value)}
+                            className="w-full bg-white/10 border-2 border-kidville-yellow/30 rounded-xl px-3 py-2 font-maven text-sm text-white appearance-none focus:outline-none focus:border-kidville-yellow cursor-pointer"
+                        >
+                            <option value="" className="text-kidville-green">Gruppo mensa…</option>
+                            {mensaGroups!.map(g => (
+                                <option key={g.id} value={g.id} className="text-kidville-green">{g.nome}</option>
+                            ))}
+                        </select>
+                        <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-kidville-yellow/60 pointer-events-none" />
+                    </div>
+                    <button
+                        onClick={onAssignMensa}
+                        disabled={!targetMensa || isAssigning}
+                        className="h-9 px-4 rounded-pill bg-kidville-yellow text-kidville-green font-barlow font-black uppercase tracking-wide text-xs hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50"
+                    >
+                        Assegna mensa
+                    </button>
+                </div>
+            )}
             <div className="bg-kidville-green rounded-2xl shadow-2xl p-4 flex items-center gap-4 animate-[slideUp_0.3s_ease-out]">
                 {/* Conteggio */}
                 <div className="flex items-center gap-2 bg-kidville-yellow/20 rounded-xl px-3 py-2">

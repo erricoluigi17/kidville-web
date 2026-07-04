@@ -1,11 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
+import { sealDangerous } from '@/lib/security/seal'
+import { parseQuery } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
+
+const getQuerySchema = z.object({
+  parentId: zUuid,
+})
 
 export async function GET(request: NextRequest) {
+  const sealed = await sealDangerous(request)
+  if (sealed) return sealed
+  const q = parseQuery(request, getQuerySchema)
+  if ('response' in q) return q.response
+  const { parentId } = q.data
   try {
-    const sp = new URL(request.url).searchParams
-    const parentId = sp.get('parentId') || '33333333-3333-3333-3333-333333333333'
-
     const supabase = await createAdminClient()
     const result: Record<string, unknown> = {}
 

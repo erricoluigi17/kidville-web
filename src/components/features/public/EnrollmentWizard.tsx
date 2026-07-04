@@ -31,7 +31,10 @@ function nsFields(prefix: string, fields: FormField[]): FormField[] {
 }
 
 function resolveError(errors: FieldValues, path: string): unknown {
-  return path.split('.').reduce<any>((acc, k) => (acc == null ? acc : acc[k]), errors)
+  return path.split('.').reduce<unknown>(
+    (acc, k) => (acc == null ? acc : (acc as Record<string, unknown>)[k]),
+    errors,
+  )
 }
 
 export function EnrollmentWizard() {
@@ -129,12 +132,11 @@ export function EnrollmentWizard() {
   const HeadIcon = heading.icon
 
   return (
-    <div className="min-h-screen flex flex-col" style={{ background: '#0b0f1f', color: '#f1f5f9' }}>
+    <div className="min-h-screen flex flex-col bg-kidville-cream text-kidville-ink">
       {/* Progress bar */}
-      <div className="h-1 w-full bg-white/5">
+      <div className="h-1 w-full bg-kidville-cream-dark">
         <motion.div
-          className="h-full"
-          style={{ background: '#047857' }}
+          className="h-full bg-kidville-green"
           initial={false}
           animate={{ width: `${progress}%` }}
           transition={{ type: 'spring', damping: 30, stiffness: 200 }}
@@ -144,12 +146,12 @@ export function EnrollmentWizard() {
       <div className="flex-1 w-full max-w-2xl mx-auto px-5 py-8 flex flex-col">
         {/* Brand header */}
         <div className="mb-6">
-          <div className="flex items-center gap-2 text-xs text-emerald-400/80 mb-2">
+          <div className="flex items-center gap-2 text-xs text-kidville-yellow-dark mb-2">
             <UserPlus className="w-3.5 h-3.5" />
             <span className="uppercase tracking-widest font-semibold">Iscrizione Nuovo Alunno</span>
           </div>
           {!done && (
-            <p className="text-xs text-slate-500 font-medium">
+            <p className="text-xs text-kidville-muted font-medium">
               Passo {step + 1} di {steps.length}
             </p>
           )}
@@ -161,11 +163,11 @@ export function EnrollmentWizard() {
             animate={{ opacity: 1, y: 0 }}
             className="flex-1 flex flex-col items-center justify-center text-center"
           >
-            <div className="w-16 h-16 rounded-2xl bg-emerald-500/15 flex items-center justify-center mb-4">
-              <PartyPopper className="w-8 h-8 text-emerald-400" />
+            <div className="w-16 h-16 rounded-2xl bg-kidville-success-soft flex items-center justify-center mb-4">
+              <PartyPopper className="w-8 h-8 text-kidville-success" />
             </div>
-            <h2 className="text-xl font-semibold text-white">Richiesta inviata!</h2>
-            <p className="text-sm text-slate-400 mt-1.5 max-w-sm">
+            <h2 className="text-xl font-semibold text-kidville-green">Richiesta inviata!</h2>
+            <p className="text-sm text-kidville-muted mt-1.5 max-w-sm">
               La tua richiesta di iscrizione è stata ricevuta. La segreteria la esaminerà e ti
               contatterà con le credenziali di accesso.
             </p>
@@ -185,12 +187,12 @@ export function EnrollmentWizard() {
                 >
                   {/* Step header */}
                   <div className="mb-5 flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-xl bg-emerald-500/15 flex items-center justify-center flex-shrink-0">
-                      <HeadIcon className="w-4.5 h-4.5 text-emerald-400" />
+                    <div className="w-9 h-9 rounded-xl bg-kidville-success-soft flex items-center justify-center flex-shrink-0">
+                      <HeadIcon className="w-4.5 h-4.5 text-kidville-success" />
                     </div>
                     <div>
-                      <h2 className="text-xl font-semibold text-white leading-tight">{heading.title}</h2>
-                      <p className="text-sm text-slate-400">{heading.sub}</p>
+                      <h2 className="text-xl font-semibold text-kidville-green leading-tight">{heading.title}</h2>
+                      <p className="text-sm text-kidville-muted">{heading.sub}</p>
                     </div>
                   </div>
 
@@ -214,7 +216,7 @@ export function EnrollmentWizard() {
                             <button
                               type="button"
                               onClick={addChild}
-                              className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/25 text-emerald-300 text-sm font-medium hover:bg-emerald-500/15 transition-all"
+                              className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-kidville-success-soft border border-kidville-success/30 text-kidville-success text-sm font-medium hover:bg-kidville-success-soft transition-all"
                             >
                               <Plus className="w-4 h-4" /> Aggiungi un altro figlio
                             </button>
@@ -223,7 +225,7 @@ export function EnrollmentWizard() {
                             <button
                               type="button"
                               onClick={() => { setChildCount(c => c - 1); setStep(s => Math.max(0, s - 1)) }}
-                              className="flex items-center gap-2 px-3 py-2 rounded-xl text-slate-500 hover:text-rose-400 text-sm transition-all"
+                              className="flex items-center gap-2 px-3 py-2 rounded-xl text-kidville-muted hover:text-kidville-error text-sm transition-all"
                             >
                               <Trash2 className="w-4 h-4" /> Rimuovi
                             </button>
@@ -237,9 +239,9 @@ export function EnrollmentWizard() {
                   {current.kind === 'adult' && (
                     <div className="space-y-6">
                       {current.index === 0 && (
-                        <div className="flex items-start gap-2.5 px-4 py-3 rounded-xl bg-sky-500/[0.07] border border-sky-500/20">
-                          <Info className="w-4 h-4 text-sky-400 flex-shrink-0 mt-0.5" />
-                          <p className="text-xs text-sky-200/80 leading-relaxed">
+                        <div className="flex items-start gap-2.5 px-4 py-3 rounded-xl bg-kidville-info-soft border border-kidville-info/20">
+                          <Info className="w-4 h-4 text-kidville-info flex-shrink-0 mt-0.5" />
+                          <p className="text-xs text-kidville-info leading-relaxed">
                             È obbligatorio almeno un adulto. Se sei già genitore di un bambino iscritto,
                             usa lo stesso codice fiscale: il nuovo figlio verrà collegato automaticamente
                             alla tua anagrafica.
@@ -263,7 +265,7 @@ export function EnrollmentWizard() {
                             <button
                               type="button"
                               onClick={addAdult}
-                              className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/25 text-emerald-300 text-sm font-medium hover:bg-emerald-500/15 transition-all"
+                              className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-kidville-success-soft border border-kidville-success/30 text-kidville-success text-sm font-medium hover:bg-kidville-success-soft transition-all"
                             >
                               <Plus className="w-4 h-4" /> Aggiungi adulto / tutore
                             </button>
@@ -272,7 +274,7 @@ export function EnrollmentWizard() {
                             <button
                               type="button"
                               onClick={() => { setAdultCount(a => a - 1); setStep(s => Math.max(0, s - 1)) }}
-                              className="flex items-center gap-2 px-3 py-2 rounded-xl text-slate-500 hover:text-rose-400 text-sm transition-all"
+                              className="flex items-center gap-2 px-3 py-2 rounded-xl text-kidville-muted hover:text-kidville-error text-sm transition-all"
                             >
                               <Trash2 className="w-4 h-4" /> Rimuovi
                             </button>
@@ -285,16 +287,16 @@ export function EnrollmentWizard() {
                   {/* REVIEW step */}
                   {current.kind === 'review' && (
                     <div className="space-y-4">
-                      <div className="px-4 py-3 rounded-xl bg-white/[0.03] border border-white/10">
-                        <p className="text-sm text-slate-300">
-                          Stai iscrivendo <span className="text-emerald-400 font-semibold">{childCount}</span>
+                      <div className="px-4 py-3 rounded-xl bg-white border border-kidville-line">
+                        <p className="text-sm text-kidville-ink">
+                          Stai iscrivendo <span className="text-kidville-success font-semibold">{childCount}</span>
                           {childCount === 1 ? ' bambino' : ' bambini'} con
-                          <span className="text-emerald-400 font-semibold"> {adultCount}</span>
+                          <span className="text-kidville-success font-semibold"> {adultCount}</span>
                           {adultCount === 1 ? ' adulto' : ' adulti'} di riferimento.
                         </p>
                       </div>
-                      <p className="text-xs text-slate-500 leading-relaxed">
-                        Premi <strong className="text-slate-300">Invia richiesta</strong> per trasmettere
+                      <p className="text-xs text-kidville-muted leading-relaxed">
+                        Premi <strong className="text-kidville-ink">Invia richiesta</strong> per trasmettere
                         i dati alla segreteria. Riceverai conferma e credenziali di accesso dopo la verifica.
                       </p>
                     </div>
@@ -304,11 +306,11 @@ export function EnrollmentWizard() {
             </div>
 
             {/* Navigation */}
-            <div className="flex items-center justify-between gap-3 pt-6 mt-4 border-t border-white/[0.07]">
+            <div className="flex items-center justify-between gap-3 pt-6 mt-4 border-t border-kidville-line">
               <button
                 onClick={goPrev}
                 disabled={step === 0 || submitting}
-                className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-white hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                className="flex items-center gap-2 px-4 py-2.5 rounded-pill font-barlow font-bold uppercase tracking-wide text-sm text-kidville-muted hover:text-kidville-green hover:bg-kidville-green-soft disabled:opacity-30 disabled:cursor-not-allowed transition-all"
               >
                 <ArrowLeft className="w-4 h-4" /> Indietro
               </button>
@@ -316,7 +318,7 @@ export function EnrollmentWizard() {
               <button
                 onClick={goNext}
                 disabled={submitting}
-                className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-semibold transition-all"
+                className="flex items-center gap-2 px-6 py-2.5 rounded-pill bg-kidville-green hover:bg-kidville-green-dark disabled:opacity-50 text-kidville-yellow font-barlow font-bold uppercase tracking-wide text-sm transition-all"
               >
                 {submitting ? (
                   <Loader2 className="w-4 h-4 animate-spin" />

@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Check, CheckCheck } from 'lucide-react';
+import { Check, CheckCheck, Languages, Loader2 } from 'lucide-react';
 
 export interface ChatMessage {
     id: string;
@@ -65,14 +65,112 @@ function UnreadSeparator() {
             transition={{ duration: 0.3, ease: 'easeOut' }}
             className="flex items-center gap-3 my-5 px-2"
         >
-            <div className="flex-1 h-px bg-emerald-400/40" />
-            <span className="flex items-center gap-2 text-emerald-600 text-xs font-bold font-barlow uppercase tracking-widest px-4 py-1.5 rounded-full bg-emerald-50 border border-emerald-300/60 shadow-sm whitespace-nowrap">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            <div className="flex-1 h-px bg-kidville-success/40" />
+            <span className="flex items-center gap-2 text-kidville-success text-xs font-bold font-barlow uppercase tracking-widest px-4 py-1.5 rounded-full bg-kidville-success-soft border border-kidville-success/40 shadow-sm whitespace-nowrap">
+                <span className="w-2 h-2 rounded-full bg-kidville-success animate-pulse" />
                 Nuovi Messaggi
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                <span className="w-2 h-2 rounded-full bg-kidville-success animate-pulse" />
             </span>
-            <div className="flex-1 h-px bg-emerald-400/40" />
+            <div className="flex-1 h-px bg-kidville-success/40" />
         </motion.div>
+    );
+}
+
+/** Bolla messaggio + traduzione automatica (DL-042) per i messaggi in ingresso. */
+function MessageBubble({ msg, isMine, currentUserId }: { msg: ChatMessage; isMine: boolean; currentUserId: string }) {
+    const [translated, setTranslated] = useState<string | null>(null);
+    const [translating, setTranslating] = useState(false);
+    const [unavailable, setUnavailable] = useState(false);
+
+    const handleTranslate = async () => {
+        if (translated) { setTranslated(null); return; } // toggle: nascondi
+        setTranslating(true);
+        try {
+            const targetLang = (typeof navigator !== 'undefined' ? navigator.language : 'it').split('-')[0] || 'it';
+            const res = await fetch('/api/chat/translate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'x-user-id': currentUserId },
+                body: JSON.stringify({ text: msg.content, targetLang }),
+            });
+            if (res.status === 503) { setUnavailable(true); return; }
+            if (res.ok) { const j = await res.json(); setTranslated(j.translated ?? null); }
+        } catch { /* best-effort */ } finally {
+            setTranslating(false);
+        }
+    };
+
+    return (
+        <div className={`max-w-[75%] rounded-2xl px-4 py-2.5 shadow-sm ${
+            isMine
+                ? 'bg-kidville-green text-white rounded-br-md'
+                : 'bg-kidville-white border border-kidville-line text-kidville-ink rounded-bl-md'
+        }`}>
+            {/* Attachment preview */}
+            {msg.attachment_url && msg.attachment_type === 'image' && (
+                <div className="mb-2 rounded-xl overflow-hidden">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={msg.attachment_url} alt="Allegato" className="w-full h-auto max-h-48 object-cover" />
+                </div>
+            )}
+            {msg.attachment_url && msg.attachment_type === 'document' && (
+                /^https?:\/\//i.test(msg.attachment_url) ? (
+                    <a
+                        href={msg.attachment_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className={`mb-2 px-3 py-2 rounded-xl text-xs font-maven flex items-center gap-2 underline-offset-2 hover:underline ${isMine ? 'bg-white/20' : 'bg-kidville-neutral-soft'}`}
+                    >
+                        📎 Documento allegato
+                    </a>
+                ) : (
+                    // URL con schema non-http (es. javascript:) salvato via API:
+                    // niente link, solo il chip inerte com'era prima.
+                    <div className={`mb-2 px-3 py-2 rounded-xl text-xs font-maven flex items-center gap-2 ${isMine ? 'bg-white/20' : 'bg-kidville-neutral-soft'}`}>
+                        📎 Documento allegato
+                    </div>
+                )
+            )}
+
+            {/* Text */}
+            <p className={`font-maven text-sm leading-relaxed ${isMine ? 'text-white' : 'text-kidville-ink'}`}>
+                {msg.content}
+            </p>
+
+            {/* Traduzione (solo messaggi in ingresso) */}
+            {!isMine && msg.content?.trim() && !unavailable && (
+                <>
+                    {translated && (
+                        <p className="font-maven text-sm leading-relaxed text-kidville-green mt-1.5 pt-1.5 border-t border-kidville-line italic">
+                            🌐 {translated}
+                        </p>
+                    )}
+                    <button
+                        onClick={handleTranslate}
+                        disabled={translating}
+                        className="mt-1 inline-flex items-center gap-1 text-[11px] font-maven text-kidville-muted hover:text-kidville-green transition-colors disabled:opacity-50"
+                    >
+                        {translating
+                            ? <Loader2 size={11} className="animate-spin" />
+                            : <Languages size={11} strokeWidth={1.5} />}
+                        {translated ? 'Mostra originale' : 'Traduci'}
+                    </button>
+                </>
+            )}
+
+            {/* Time + read status */}
+            <div className={`flex items-center gap-1 mt-1 ${isMine ? 'justify-end' : 'justify-start'}`}>
+                <span className={`font-maven text-[10px] ${isMine ? 'text-white/60' : 'text-kidville-muted'}`}>
+                    {formatMessageTime(msg.created_at)}
+                </span>
+                {isMine && (
+                    <span className="transition-all duration-300">
+                        {msg.read_at
+                            ? <CheckCheck size={12} className="text-kidville-yellow" strokeWidth={1.5} />
+                            : <Check size={12} className="text-white/40" strokeWidth={1.5} />}
+                    </span>
+                )}
+            </div>
+        </div>
     );
 }
 
@@ -120,7 +218,7 @@ export function ChatMessageArea({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [messages.length > 0 ? messages[0]?.thread_id : null]);
 
-    // Scroll al fondo per nuovi messaggi in arrivo (non al caricamento iniziale)
+    // Scroll al fondo per nuovi messaggi in ingresso (non al caricamento iniziale)
     const prevLengthRef = useRef(messages.length);
     useEffect(() => {
         const prev = prevLengthRef.current;
@@ -174,7 +272,7 @@ export function ChatMessageArea({
             <div className="flex-1 flex items-center justify-center">
                 <div className="flex flex-col items-center gap-3">
                     <div className="w-7 h-7 border-[3px] border-kidville-green/20 border-t-kidville-green rounded-full animate-spin" />
-                    <p className="font-maven text-sm text-gray-400">Caricamento messaggi...</p>
+                    <p className="font-maven text-sm text-kidville-muted">Caricamento messaggi...</p>
                 </div>
             </div>
         );
@@ -190,7 +288,7 @@ export function ChatMessageArea({
                     <p className="font-barlow font-bold text-lg text-kidville-green uppercase mb-1">
                         Inizia la conversazione
                     </p>
-                    <p className="font-maven text-sm text-gray-400 max-w-xs">
+                    <p className="font-maven text-sm text-kidville-muted max-w-xs">
                         Scrivi un messaggio a {otherUserName}
                     </p>
                 </div>
@@ -199,7 +297,6 @@ export function ChatMessageArea({
     }
 
     const groups = groupByDate(messages);
-    let separatorInserted = false;
 
     return (
         <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
@@ -207,9 +304,9 @@ export function ChatMessageArea({
                 <div key={group.date}>
                     {/* Date separator */}
                     <div className="flex items-center gap-3 my-4">
-                        <div className="flex-1 h-px bg-gray-200/60" />
-                        <span className="font-maven text-[11px] text-gray-400 px-2">{group.date}</span>
-                        <div className="flex-1 h-px bg-gray-200/60" />
+                        <div className="flex-1 h-px bg-kidville-line" />
+                        <span className="font-maven text-[11px] text-kidville-muted px-2">{group.date}</span>
+                        <div className="flex-1 h-px bg-kidville-line" />
                     </div>
 
                     {/* Messages */}
@@ -218,13 +315,9 @@ export function ChatMessageArea({
                             const isMine = msg.sender_id === currentUserId;
                             const isUnread = !isMine && msg.read_at === null;
 
-                            // Inserisci separatore prima del primo messaggio non letto
-                            const showSeparator =
-                                !separatorInserted &&
-                                firstUnreadId &&
-                                msg.id === firstUnreadId;
-
-                            if (showSeparator) separatorInserted = true;
+                            // Separatore prima del primo messaggio non letto:
+                            // gli id sono unici, il confronto è già esaustivo.
+                            const showSeparator = firstUnreadId !== null && msg.id === firstUnreadId;
 
                             return (
                                 <div key={msg.id}>
@@ -242,56 +335,7 @@ export function ChatMessageArea({
                                         data-message-id={isUnread ? msg.id : undefined}
                                         data-unread={isUnread ? 'true' : undefined}
                                     >
-                                        <div className={`max-w-[75%] rounded-2xl px-4 py-2.5 shadow-sm ${
-                                            isMine
-                                                ? 'bg-kidville-green text-white rounded-br-md'
-                                                : 'bg-white/90 backdrop-blur-sm border border-white/40 text-gray-800 rounded-bl-md'
-                                        }`}>
-                                            {/* Attachment preview */}
-                                            {msg.attachment_url && msg.attachment_type === 'image' && (
-                                                <div className="mb-2 rounded-xl overflow-hidden">
-                                                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                                                    <img
-                                                        src={msg.attachment_url}
-                                                        alt="Allegato"
-                                                        className="w-full h-auto max-h-48 object-cover"
-                                                    />
-                                                </div>
-                                            )}
-                                            {msg.attachment_url && msg.attachment_type === 'document' && (
-                                                <div className={`mb-2 px-3 py-2 rounded-xl text-xs font-maven flex items-center gap-2 ${
-                                                    isMine ? 'bg-white/20' : 'bg-gray-100'
-                                                }`}>
-                                                    📎 Documento allegato
-                                                </div>
-                                            )}
-
-                                            {/* Text */}
-                                            <p className={`font-maven text-sm leading-relaxed ${
-                                                isMine ? 'text-white' : 'text-gray-800'
-                                            }`}>
-                                                {msg.content}
-                                            </p>
-
-                                            {/* Time + read status */}
-                                            <div className={`flex items-center gap-1 mt-1 ${
-                                                isMine ? 'justify-end' : 'justify-start'
-                                            }`}>
-                                                <span className={`font-maven text-[10px] ${
-                                                    isMine ? 'text-white/60' : 'text-gray-400'
-                                                }`}>
-                                                    {formatMessageTime(msg.created_at)}
-                                                </span>
-                                                {isMine && (
-                                                    <span className="transition-all duration-300">
-                                                        {msg.read_at
-                                                            ? <CheckCheck size={12} className="text-blue-300" strokeWidth={1.5} />
-                                                            : <Check size={12} className="text-white/40" strokeWidth={1.5} />
-                                                        }
-                                                    </span>
-                                                )}
-                                            </div>
-                                        </div>
+                                        <MessageBubble msg={msg} isMine={isMine} currentUserId={currentUserId} />
                                     </motion.div>
                                 </div>
                             );

@@ -7,7 +7,8 @@ import { ClipboardList, CheckSquare, Star, AlertTriangle, CalendarDays, BarChart
 interface Section { id: string; name: string; school_type: string; scholastic_year?: string | null }
 
 // Voci = stesse funzioni del docente. Admin/segreteria accedono in modifica a
-// qualsiasi classe riusando le viste docente (deep-link con il proprio userId).
+// qualsiasi classe dalle rotte /admin/primaria/[sectionId]/* (ClasseShell),
+// così restano dentro il cockpit (sidebar+header) invece del layout mobile docente.
 const FUNZIONI = [
   { seg: 'registro', label: 'Registro di classe', icon: ClipboardList, desc: 'Lezioni svolte, argomenti, compiti, firme' },
   { seg: 'appello', label: 'Appello / Presenze', icon: CheckSquare, desc: 'Presenze, ritardi, uscite, giustifiche' },
@@ -38,18 +39,18 @@ export function RegistriClassePanel({ scuolaId, userId }: { scuolaId: string; us
 
   return (
     <div>
-      <h3 className="font-barlow text-base font-bold text-gray-800 mb-1">Registri di classe</h3>
-      <p className="font-maven text-xs text-gray-400 mb-4">
+      <h3 className="font-barlow text-base font-bold text-kidville-ink mb-1">Registri di classe</h3>
+      <p className="font-maven text-xs text-kidville-muted mb-4">
         Accedi a tutto ciò che fa l&apos;insegnante (registro, voti, lezioni, presenze, note, scrutinio) per qualsiasi
         classe, in modalità modifica.
       </p>
 
       <div className="mb-5 flex items-center gap-3">
-        <label className="font-maven text-sm text-gray-600">Classe/Sezione:</label>
+        <label className="font-maven text-sm text-kidville-ink">Classe/Sezione:</label>
         <select
           value={sezioneId}
           onChange={(e) => setSezioneId(e.target.value)}
-          className="font-maven rounded-pill border border-gray-200 bg-white px-4 py-2 text-sm"
+          className="font-maven rounded-pill border border-kidville-line bg-white px-4 py-2 text-sm"
         >
           {sezioni.length === 0 && <option value="">Nessuna sezione primaria</option>}
           {sezioni.map((s) => (
@@ -63,13 +64,13 @@ export function RegistriClassePanel({ scuolaId, userId }: { scuolaId: string; us
           {FUNZIONI.map(({ seg, label, icon: Icon, desc }) => (
             <Link
               key={seg}
-              href={`/teacher/primaria/${sezioneId}/${seg}?userId=${userId}`}
-              className="flex items-start gap-3 rounded-card border border-gray-100 bg-white p-3 transition hover:border-kidville-green/40 hover:bg-kidville-green/5"
+              href={`/admin/primaria/${sezioneId}/${seg}?userId=${userId}`}
+              className="flex items-start gap-3 rounded-card border border-kidville-line bg-white p-3 transition hover:border-kidville-green/40 hover:bg-kidville-green/5"
             >
               <span className="mt-0.5 text-kidville-green"><Icon size={18} /></span>
               <span>
-                <span className="font-maven block text-sm font-semibold text-gray-800">{label}</span>
-                <span className="font-maven block text-xs text-gray-400">{desc}</span>
+                <span className="font-maven block text-sm font-semibold text-kidville-ink">{label}</span>
+                <span className="font-maven block text-xs text-kidville-muted">{desc}</span>
               </span>
             </Link>
           ))}

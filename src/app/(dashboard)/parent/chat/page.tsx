@@ -8,7 +8,7 @@ import { ChatMessageArea, ChatMessage } from '@/components/features/chat/ChatMes
 import { ChatInput } from '@/components/features/chat/ChatInput';
 import { useUnreadNotifications } from '@/components/features/chat/useUnreadNotifications';
 import { useChatRealtime } from '@/components/features/chat/useChatRealtime';
-import { useSearchParams } from 'next/navigation';
+import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 
 interface Contact {
     user_id: string;
@@ -19,9 +19,9 @@ interface Contact {
     sezione: string;
 }
 
+// Identità dalla sessione (URL → localStorage → /api/me), senza fallback demo (M4).
 function ParentChatContent() {
-    const searchParams = useSearchParams();
-    const parentId = searchParams.get('userId') || '33333333-3333-3333-3333-333333333333';
+    const { userId: parentId } = useSessionIdentity();
 
     const [threads, setThreads] = useState<ChatThread[]>([]);
     const [selectedThread, setSelectedThread] = useState<ChatThread | null>(null);
@@ -50,23 +50,23 @@ function ParentChatContent() {
 
     // Notifiche non letti + badge titolo pagina (mantenuto come fallback)
     useUnreadNotifications({
-        userId: parentId,
+        userId: parentId ?? '', // il hook ignora gli id falsy
+
         enabled: true,
         onUnreadChange: setUnreadCount,
         pollInterval: 30000, // ridotto a 30s ora che c'è il realtime
     });
 
     const loadThreads = useCallback(async () => {
+        if (!parentId) return; // identità non risolta: lo spinner resta
         try {
-            const res = await fetch(`/api/chat/threads?userId=${parentId}`);
-            if (res.ok) {
+            const res = await fetch(`/api/chat/threads?userId=${parentId}`).catch(() => null);
+            if (res?.ok) {
                 const data: ChatThread[] = await res.json();
                 setThreads(data);
                 const names = [...new Set(data.map(t => t.student.nome))];
                 if (names.length > 0) setChildrenNames(names);
             }
-        } catch (err) {
-            console.error('Errore caricamento thread:', err);
         } finally {
             setLoading(false);
         }
@@ -82,18 +82,18 @@ function ParentChatContent() {
             .catch(() => {});
     }, []);
 
+    // NB: lo spinner contatti (loadingContacts) viene attivato dall'handler di
+    // apertura modale, non qui: nessun setState sincrono nei loader da effect.
     const loadContacts = useCallback(async () => {
-        setLoadingContacts(true);
+        if (!parentId) return;
         try {
-            const res = await fetch(`/api/chat/contacts?userId=${parentId}`);
-            if (res.ok) {
+            const res = await fetch(`/api/chat/contacts?userId=${parentId}`).catch(() => null);
+            if (res?.ok) {
                 const data = await res.json();
                 setContacts(data.contacts ?? []);
                 const names: string[] = [...new Set<string>((data.contacts ?? []).map((c: Contact) => c.student_name.split(' ')[0]))];
                 if (names.length > 0) setChildrenNames(names);
             }
-        } catch (err) {
-            console.error('Errore caricamento contatti:', err);
         } finally {
             setLoadingContacts(false);
         }
@@ -160,7 +160,8 @@ function ParentChatContent() {
 
     // Attiva il realtime solo quando i thread sono caricati
     useChatRealtime({
-        userId: parentId,
+        userId: parentId ?? '', // il hook ignora gli id falsy
+
         selectedThreadId: selectedThread?.id ?? null,
         threads,
         onNewMessage: handleRealtimeNewMessage,
@@ -226,6 +227,7 @@ function ParentChatContent() {
     };
 
     const handleNewChat = async (contact: Contact) => {
+        if (!parentId) return;
         try {
             const res = await fetch('/api/chat/threads', {
                 method: 'POST',
@@ -254,7 +256,7 @@ function ParentChatContent() {
     };
 
     const handleSendMessage = async (content: string, attachmentUrl?: string, attachmentType?: string) => {
-        if (!selectedThread) return;
+        if (!selectedThread || !parentId) return;
         try {
             const res = await fetch('/api/chat/messages', {
                 method: 'POST',
@@ -286,7 +288,7 @@ function ParentChatContent() {
     // Rimuovere il calcolo reattivo: firstUnreadId è ora uno stato
     // gestito da loadMessages e resettato da handleSendMessage/handleSelectThread
 
-    if (loading) {
+    if (loading || !parentId) {
         return (
             <div className="max-w-5xl mx-auto p-4 sm:p-6 flex flex-col items-center justify-center min-h-[60vh] gap-4">
                 <div className="w-10 h-10 border-4 border-kidville-green/30 border-t-kidville-green rounded-full animate-spin" />
@@ -299,9 +301,12 @@ function ParentChatContent() {
         <div className="max-w-5xl mx-auto p-4 sm:p-6">
             <div className="flex items-start justify-between mb-4">
                 <div>
+                    <p className="font-barlow font-bold text-[11px] uppercase tracking-[0.14em] text-kidville-yellow-dark">
+                        Comunicazioni
+                    </p>
                     <div className="flex items-center gap-3">
-                        <h1 className="font-barlow font-black text-3xl text-kidville-green uppercase tracking-wide">
-                            💬 Messaggi
+                        <h1 className="font-barlow font-black text-3xl text-kidville-green uppercase tracking-wide leading-none">
+                            Messaggi
                         </h1>
                         <AnimatePresence>
                             {unreadCount > 0 && (
@@ -310,7 +315,7 @@ function ParentChatContent() {
                                     animate={{ scale: 1, opacity: 1 }}
                                     exit={{ scale: 0, opacity: 0 }}
                                     transition={{ type: 'spring', stiffness: 500, damping: 25 }}
-                                    className="inline-flex items-center justify-center min-w-[24px] h-6 px-2 rounded-full bg-emerald-500 text-white font-barlow font-bold text-xs shadow-lg shadow-emerald-500/30"
+                                    className="inline-flex items-center justify-center min-w-[24px] h-6 px-2 rounded-full bg-kidville-yellow text-kidville-green font-barlow font-bold text-xs shadow-sm"
                                 >
                                     {unreadCount > 99 ? '99+' : unreadCount}
                                 </motion.span>
@@ -322,7 +327,7 @@ function ParentChatContent() {
                     </p>
                 </div>
                 <button
-                    onClick={() => { setShowNewChat(true); loadContacts(); }}
+                    onClick={() => { setShowNewChat(true); setLoadingContacts(true); loadContacts(); }}
                     className="flex items-center gap-2 px-4 py-2.5 bg-kidville-green text-kidville-yellow font-barlow font-bold text-sm uppercase rounded-2xl hover:opacity-90 active:scale-[0.98] transition-all shadow-lg shadow-kidville-green/20"
                 >
                     <Plus size={16} strokeWidth={1.5} /> Nuova Chat
@@ -330,15 +335,19 @@ function ParentChatContent() {
             </div>
 
             {chatCfg && !chatCfg.in_orario && (
-                <div className="mb-4 rounded-2xl bg-amber-50 border border-amber-200 px-4 py-3 font-maven text-sm text-amber-800">
+                <div className="mb-4 rounded-2xl bg-kidville-yellow-soft border border-kidville-yellow/40 px-4 py-3 font-maven text-sm text-kidville-yellow-dark">
                     {chatCfg.risposta_fuori_orario_msg || `I docenti rispondono dalle ${chatCfg.orario_docenti_da} alle ${chatCfg.orario_docenti_a} nei giorni scolastici.`}
                 </div>
             )}
 
-            {/* Desktop */}
-            <div className="hidden md:flex gap-4 h-[calc(100vh-200px)] min-h-[500px]">
-                <div className="w-80 flex-shrink-0 bg-white/80 backdrop-blur-xl rounded-3xl border border-white/40 shadow-sm overflow-hidden flex flex-col">
-                    <div className="px-4 py-3 border-b border-gray-100/60">
+            {/* Desktop. mb-24 = clearance sotto il pannello: l'altezza fissa
+                calc(100vh-200px) non tiene conto del banner fuori-orario, che
+                spingeva il composer SOTTO la bottom nav fissa (irraggiungibile
+                anche scrollando). Col margine lo scroll libera il composer;
+                senza banner la resa iniziale è identica (spazio sotto la fold). */}
+            <div className="hidden md:flex gap-4 h-[calc(100vh-200px)] min-h-[500px] mb-24">
+                <div className="w-80 flex-shrink-0 bg-white rounded-3xl border border-kidville-line shadow-sm overflow-hidden flex flex-col">
+                    <div className="px-4 py-3 border-b border-kidville-line">
                         <p className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide">Insegnanti</p>
                     </div>
                     <div className="flex-1 overflow-y-auto">
@@ -347,10 +356,10 @@ function ParentChatContent() {
                     </div>
                 </div>
 
-                <div className="flex-1 bg-white/80 backdrop-blur-xl rounded-3xl border border-white/40 shadow-sm overflow-hidden flex flex-col">
+                <div className="flex-1 bg-white rounded-3xl border border-kidville-line shadow-sm overflow-hidden flex flex-col">
                     {selectedThread ? (
                         <>
-                            <div className="flex items-center gap-3 px-5 py-3.5 border-b border-gray-100/60">
+                            <div className="flex items-center gap-3 px-5 py-3.5 border-b border-kidville-line">
                                 <div className="w-10 h-10 rounded-full bg-kidville-green flex items-center justify-center font-barlow font-bold text-sm text-kidville-yellow">
                                     {selectedThread.other_user.first_name[0]}{selectedThread.other_user.last_name[0]}
                                 </div>
@@ -391,14 +400,17 @@ function ParentChatContent() {
             <div className="md:hidden">
                 {showMobile === 'list' ? (
                     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-                        className="bg-white/80 backdrop-blur-xl rounded-3xl border border-white/40 shadow-sm overflow-hidden">
+                        className="bg-white rounded-3xl border border-kidville-line shadow-sm overflow-hidden">
                         <ChatThreadList threads={threads} selectedId={null}
                             currentUserId={parentId} onSelect={handleSelectThread} />
                     </motion.div>
                 ) : selectedThread && (
+                    // Conversazione a schermo intero su mobile: si adatta a qualsiasi
+                    // dispositivo (100dvh reale), il campo resta sempre visibile in fondo
+                    // sopra la safe-area; si esce con il tasto indietro in alto.
                     <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }}
-                        className="bg-white/80 backdrop-blur-xl rounded-3xl border border-white/40 shadow-sm overflow-hidden flex flex-col h-[calc(100vh-180px)]">
-                        <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-100/60">
+                        className="fixed inset-0 z-[60] bg-white flex flex-col overflow-hidden pb-[env(safe-area-inset-bottom)]">
+                        <div className="flex items-center gap-3 px-4 py-3 border-b border-kidville-line">
                             <button onClick={() => setShowMobile('list')}
                                 className="w-8 h-8 rounded-xl bg-gray-50 hover:bg-gray-100 flex items-center justify-center text-gray-500 transition-colors">
                                 <ArrowLeft size={16} strokeWidth={1.5} />

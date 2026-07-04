@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { requireStaff } from '@/lib/auth/require-staff'
+import { requireStaff, requireDocente } from '@/lib/auth/require-staff'
+import { resolveScuolaScrittura } from '@/lib/auth/scope'
+import { parseBody, parseQuery } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
 
 // ============================================================
 // Config globale primaria (admin_settings): matrice funzioni, scadenze
@@ -14,17 +18,38 @@ const FIELDS = [
   'notif_buffer_valutazioni_min',
 ] as const
 
+const getQuerySchema = z.object({
+  scuolaId: zUuid,
+})
+
+// I campi FIELDS sono pass-through verso admin_settings (JSONB/numerici):
+// schema permissivo per non alterare il comportamento attuale.
+const patchBodySchema = z.object({
+  scuolaId: zUuid,
+  funzioni_matrice: z.unknown().optional(),
+  timelock_giorni_classe_orale: z.unknown().optional(),
+  timelock_giorni_scritto_pratico: z.unknown().optional(),
+  notif_buffer_valutazioni_min: z.unknown().optional(),
+})
+
 // GET /api/admin/primaria/impostazioni?scuolaId=
 export async function GET(request: NextRequest) {
   try {
-    const scuolaId = new URL(request.url).searchParams.get('scuolaId')
-    if (!scuolaId) return NextResponse.json({ error: 'scuolaId obbligatorio' }, { status: 400 })
+    const auth = await requireDocente(request)
+    if (auth.response) return auth.response
+
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+    const { scuolaId } = q.data
 
     const supabase = await createAdminClient()
+    const { scuolaId: sede, response } = await resolveScuolaScrittura(request, supabase, auth.user, scuolaId)
+    if (response) return response
+
     const { data, error } = await supabase
       .from('admin_settings')
       .select(FIELDS.join(', '))
-      .eq('scuola_id', scuolaId)
+      .eq('scuola_id', sede)
       .maybeSingle()
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json({ success: true, data: data ?? {} })
@@ -40,17 +65,21 @@ export async function PATCH(request: NextRequest) {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
 
-    const { scuolaId, ...rest } = await request.json()
-    if (!scuolaId) return NextResponse.json({ error: 'scuolaId obbligatorio' }, { status: 400 })
+    const b = await parseBody(request, patchBodySchema)
+    if ('response' in b) return b.response
+    const { scuolaId, ...rest } = b.data
 
     const updates: Record<string, unknown> = {}
     for (const f of FIELDS) if (f in rest) updates[f] = rest[f]
     if (Object.keys(updates).length === 0) return NextResponse.json({ error: 'Nessun campo da aggiornare' }, { status: 400 })
 
     const supabase = await createAdminClient()
+    const { scuolaId: sede, response } = await resolveScuolaScrittura(request, supabase, auth.user, scuolaId)
+    if (response) return response
+
     const { data, error } = await supabase
       .from('admin_settings')
-      .upsert({ scuola_id: scuolaId, ...updates }, { onConflict: 'scuola_id' })
+      .upsert({ scuola_id: sede, ...updates }, { onConflict: 'scuola_id' })
       .select(FIELDS.join(', '))
       .single()
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })

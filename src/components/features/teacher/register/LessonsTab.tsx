@@ -60,15 +60,14 @@ export default function LessonsTab() {
                 });
                 setRegistroEntries(byHour);
             }
-        } catch (err) {
-            console.error('Errore caricamento registro:', err);
         } finally {
             setLoading(false);
         }
     }, [oggi]);
 
     useEffect(() => {
-        loadRegistro();
+        // Errori di rete ingoiati al call-site (pattern set-state-in-effect).
+        loadRegistro().catch(() => {});
     }, [loadRegistro]);
 
     const openModal = (hour: number) => {
@@ -161,7 +160,7 @@ export default function LessonsTab() {
         <>
             <div>
                 <h2 className="font-barlow font-bold text-2xl text-kidville-green mb-1">Orario e Firme</h2>
-                <p className="font-maven text-sm text-gray-400 mb-4">
+                <p className="font-maven text-sm text-kidville-muted mb-4">
                     {new Date(oggi).toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
                 </p>
                 <div className="flex flex-col gap-3">
@@ -171,7 +170,7 @@ export default function LessonsTab() {
                         return (
                             <div
                                 key={hour}
-                                className="border border-gray-100 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center gap-4 hover:shadow-sm transition-shadow"
+                                className="border border-kidville-line rounded-xl p-4 flex flex-col sm:flex-row sm:items-center gap-4 hover:shadow-sm transition-shadow"
                             >
                                 <div className="w-12 h-12 bg-kidville-cream text-kidville-green rounded-full flex items-center justify-center font-barlow font-bold text-xl flex-shrink-0">
                                     {hour}°
@@ -182,8 +181,8 @@ export default function LessonsTab() {
                                         <div>
                                             <div className="font-maven font-semibold text-kidville-green">{entry.materia}</div>
                                             {entry.argomento && (
-                                                <div className="text-sm text-gray-600 font-maven mt-1 flex items-start gap-1">
-                                                    <BookOpen size={13} className="mt-0.5 flex-shrink-0 text-gray-400" />
+                                                <div className="text-sm text-kidville-ink font-maven mt-1 flex items-start gap-1">
+                                                    <BookOpen size={13} className="mt-0.5 flex-shrink-0 text-kidville-muted" />
                                                     <span><strong>Argomento:</strong> {entry.argomento}</span>
                                                 </div>
                                             )}
@@ -191,7 +190,7 @@ export default function LessonsTab() {
                                                 <div className="mt-1 bg-yellow-50 border border-yellow-100 rounded-lg px-3 py-1.5">
                                                     <div className="flex items-center gap-1">
                                                         <ClipboardList size={13} className="text-yellow-600 flex-shrink-0" />
-                                                        <span className="text-sm font-maven text-gray-700">
+                                                        <span className="text-sm font-maven text-kidville-ink">
                                                             <strong>Compiti:</strong> {entry.compiti}
                                                         </span>
                                                     </div>
@@ -204,7 +203,7 @@ export default function LessonsTab() {
                                             )}
                                         </div>
                                     ) : (
-                                        <div className="text-gray-400 italic text-sm">Nessuna firma registrata per quest&apos;ora.</div>
+                                        <div className="text-kidville-muted italic text-sm">Nessuna firma registrata per quest&apos;ora.</div>
                                     )}
                                 </div>
 
@@ -220,11 +219,11 @@ export default function LessonsTab() {
                                         <div className="flex items-center gap-2">
                                             <button
                                                 onClick={() => openModal(hour)}
-                                                className="h-10 px-3 font-maven rounded-pill bg-kidville-cream text-kidville-green flex items-center gap-2 hover:bg-gray-200 text-sm"
+                                                className="h-10 px-3 font-maven rounded-pill bg-kidville-cream text-kidville-green flex items-center gap-2 hover:bg-kidville-cream-dark text-sm"
                                             >
                                                 Modifica
                                             </button>
-                                            <button className="h-10 px-3 font-maven rounded-pill bg-kidville-cream text-kidville-green flex items-center gap-2 hover:bg-gray-200">
+                                            <button className="h-10 px-3 font-maven rounded-pill bg-kidville-cream text-kidville-green flex items-center gap-2 hover:bg-kidville-cream-dark">
                                                 <Upload size={16} /> Allegato
                                             </button>
                                             <span className="flex items-center gap-1 text-kidville-success text-sm font-semibold">
@@ -260,7 +259,7 @@ export default function LessonsTab() {
                             {/* STEP 1: Selezione Materia */}
                             {step === 'materia' && (
                                 <div className="flex flex-col gap-4">
-                                    <p className="font-maven text-gray-500 text-sm">
+                                    <p className="font-maven text-kidville-muted text-sm">
                                         Seleziona la materia insegnata in questa ora per procedere con la firma.
                                     </p>
                                     <div className="grid grid-cols-2 gap-2">
@@ -271,7 +270,7 @@ export default function LessonsTab() {
                                                 className={`py-2.5 px-3 rounded-xl font-maven text-sm font-medium text-left transition-all border ${
                                                     selectedMateria === m
                                                         ? 'bg-kidville-green text-white border-kidville-green'
-                                                        : 'bg-white text-gray-700 border-gray-200 hover:border-kidville-green hover:text-kidville-green'
+                                                        : 'bg-white text-kidville-ink border-kidville-line hover:border-kidville-green hover:text-kidville-green'
                                                 }`}
                                             >
                                                 {m}
@@ -291,12 +290,12 @@ export default function LessonsTab() {
                             {/* STEP 2: Argomento + Compiti */}
                             {step === 'contenuto' && (
                                 <div className="flex flex-col gap-4">
-                                    <div className="flex items-center gap-2 pb-2 border-b border-gray-100">
+                                    <div className="flex items-center gap-2 pb-2 border-b border-kidville-line">
                                         <span className="font-maven font-semibold text-kidville-green">{selectedMateria}</span>
                                         {registroEntries[modalHour] ? null : (
                                             <button
                                                 onClick={() => setStep('materia')}
-                                                className="ml-auto text-xs text-gray-400 underline"
+                                                className="ml-auto text-xs text-kidville-muted underline"
                                             >
                                                 Cambia
                                             </button>
@@ -304,8 +303,8 @@ export default function LessonsTab() {
                                     </div>
 
                                     <div>
-                                        <label className="block font-maven text-sm font-semibold text-gray-700 mb-1.5">
-                                            <BookOpen size={14} className="inline mr-1 text-gray-400" />
+                                        <label className="block font-maven text-sm font-semibold text-kidville-ink mb-1.5">
+                                            <BookOpen size={14} className="inline mr-1 text-kidville-muted" />
                                             Argomento svolto in classe
                                         </label>
                                         <textarea
@@ -313,13 +312,13 @@ export default function LessonsTab() {
                                             onChange={(e) => setArgomento(e.target.value)}
                                             rows={3}
                                             placeholder="Es. Introduzione a I Promessi Sposi, Cap. 1..."
-                                            className="w-full border border-gray-200 rounded-xl p-3 font-maven text-sm resize-none focus:outline-none focus:ring-2 focus:ring-kidville-green/30 focus:border-kidville-green"
+                                            className="w-full border border-kidville-line rounded-xl p-3 font-maven text-sm resize-none focus:outline-none focus:ring-2 focus:ring-kidville-green/30 focus:border-kidville-green"
                                         />
                                     </div>
 
                                     <div>
-                                        <label className="block font-maven text-sm font-semibold text-gray-700 mb-1.5">
-                                            <ClipboardList size={14} className="inline mr-1 text-gray-400" />
+                                        <label className="block font-maven text-sm font-semibold text-kidville-ink mb-1.5">
+                                            <ClipboardList size={14} className="inline mr-1 text-kidville-muted" />
                                             Compiti per casa
                                         </label>
                                         <textarea
@@ -327,13 +326,13 @@ export default function LessonsTab() {
                                             onChange={(e) => setCompiti(e.target.value)}
                                             rows={2}
                                             placeholder="Es. Leggere pag. 12-15 e fare il riassunto..."
-                                            className="w-full border border-gray-200 rounded-xl p-3 font-maven text-sm resize-none focus:outline-none focus:ring-2 focus:ring-kidville-green/30 focus:border-kidville-green"
+                                            className="w-full border border-kidville-line rounded-xl p-3 font-maven text-sm resize-none focus:outline-none focus:ring-2 focus:ring-kidville-green/30 focus:border-kidville-green"
                                         />
                                     </div>
 
                                     {compiti && (
                                         <div>
-                                            <label className="block font-maven text-sm font-semibold text-gray-700 mb-1.5">
+                                            <label className="block font-maven text-sm font-semibold text-kidville-ink mb-1.5">
                                                 📅 Data di consegna compiti
                                             </label>
                                             <input
@@ -341,13 +340,13 @@ export default function LessonsTab() {
                                                 value={dataConsegna}
                                                 min={oggi}
                                                 onChange={(e) => setDataConsegna(e.target.value)}
-                                                className="w-full border border-gray-200 rounded-xl p-3 font-maven text-sm focus:outline-none focus:ring-2 focus:ring-kidville-green/30 focus:border-kidville-green"
+                                                className="w-full border border-kidville-line rounded-xl p-3 font-maven text-sm focus:outline-none focus:ring-2 focus:ring-kidville-green/30 focus:border-kidville-green"
                                             />
                                         </div>
                                     )}
 
                                     {saveError && (
-                                        <p className="text-sm text-red-500 font-maven bg-red-50 p-3 rounded-xl">{saveError}</p>
+                                        <p className="text-sm text-kidville-error font-maven bg-kidville-error-soft p-3 rounded-xl">{saveError}</p>
                                     )}
 
                                     <button

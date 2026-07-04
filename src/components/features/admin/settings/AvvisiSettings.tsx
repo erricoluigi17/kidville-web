@@ -23,7 +23,7 @@ export function AvvisiSettings({ userId }: { userId: string }) {
     const [draft, setDraft] = useState<AvvisiConfig | null>(null);
     const [msg, setMsg] = useState('');
 
-    if (!settings) return <p className="font-maven text-sm text-gray-400">Caricamento…</p>;
+    if (!settings) return <p className="font-maven text-sm text-kidville-muted">Caricamento…</p>;
     const cfg = draft ?? ((settings.avvisi_config ?? {}) as AvvisiConfig);
     const set = (patch: Partial<AvvisiConfig>) => { setMsg(''); setDraft({ ...cfg, ...patch }); };
 

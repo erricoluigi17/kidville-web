@@ -1,10 +1,13 @@
 'use client';
 
 import { useState, useEffect, useCallback, Suspense } from 'react';
+import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronLeft, ChevronRight, BookOpen, Camera, ChevronDown } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Camera, ChevronDown, GraduationCap } from 'lucide-react';
 import { getEventConfig } from '@/components/features/teacher/diary/eventConfig';
-import { useSearchParams } from 'next/navigation';
+import { useParentIdentity } from '@/lib/auth/use-parent-identity';
+import { useChildSchoolType } from '@/lib/auth/use-child-school-type';
+import { UMORE_CONFIG, umoreFromDettagli, umoreNarrative } from '@/lib/diary/umore';
 import { MediaGrid, MediaItem } from '@/components/features/gallery/MediaGrid';
 
 // ─── Tipi ─────────────────────────────────────────────────────────────────────
@@ -16,12 +19,6 @@ interface DiaryEntry {
     dettagli: Record<string, unknown> | null;
     note: string | null;
     activity_description?: string | null;
-}
-
-interface DailyPhoto {
-    id: string;
-    url: string;
-    caption: string;
 }
 
 // ─── Ordine canonico della giornata ───────────────────────────────────────────
@@ -56,9 +53,15 @@ const QUANTITY_NARRATIVE: Record<string, string> = {
     tutto:  'ho finito tutto! 🌟',
 };
 
-function buildFirstPersonNarrative(tipo: string, dettagli: Record<string, unknown> | null, actDesc?: string | null): { lines: string[], emoji: string } {
+function buildFirstPersonNarrative(tipo: string, dettagli: Record<string, unknown> | null): { lines: string[], emoji: string } {
     if (tipo === 'entrata') {
-        const orario = (dettagli?.orario as string) ?? '';
+        const orarioRaw = (dettagli?.orario as string) ?? '';
+        // orarioRaw può essere un ISO (timestamp dell'appello) o già 'HH:MM':
+        // formatto l'ISO in ora leggibile, lascio invariato ciò che ISO non è.
+        const d = orarioRaw ? new Date(orarioRaw) : null;
+        const orario = d && !isNaN(d.getTime())
+            ? d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })
+            : orarioRaw;
         return {
             emoji: '👋',
             lines: orario
@@ -198,7 +201,6 @@ function EventCard({ entry, index }: { entry: DiaryEntry; index: number }) {
     const { lines, emoji } = buildFirstPersonNarrative(
         entry.tipo_evento,
         entry.dettagli,
-        entry.activity_description,
     );
     const borderColor = config.accentColor.split(' ').find(c => c.startsWith('border-')) ?? 'border-gray-100';
 
@@ -207,7 +209,7 @@ function EventCard({ entry, index }: { entry: DiaryEntry; index: number }) {
             initial={{ opacity: 0, y: 14 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: index * 0.07, duration: 0.3, ease: 'easeOut' }}
-            className={`bg-white/80 backdrop-blur-xl rounded-3xl border-l-4 ${borderColor} border border-white/40 shadow-sm px-5 py-4`}
+            className={`bg-white rounded-3xl border-l-4 ${borderColor} border border-kidville-line shadow-sm px-5 py-4`}
         >
             {/* Header card */}
             <div className="flex items-center gap-3 mb-3">
@@ -250,7 +252,7 @@ function PhotosSection({ photos }: { photos: MediaItem[] }) {
             initial={{ opacity: 0, y: 14 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.4, duration: 0.3 }}
-            className="bg-white/80 backdrop-blur-xl rounded-3xl border border-white/40 shadow-sm overflow-hidden"
+            className="bg-white rounded-3xl border border-kidville-line shadow-sm overflow-hidden"
         >
             <button
                 onClick={() => setOpen(v => !v)}
@@ -294,17 +296,24 @@ function PhotosSection({ photos }: { photos: MediaItem[] }) {
 
 // ─── Pagina principale ────────────────────────────────────────────────────────
 
+// Identità dalla sessione (URL → localStorage → /api/me), senza fallback demo (M4).
 function ParentDiaryContent() {
-    const searchParams = useSearchParams();
-    const alunnoId = searchParams.get('id') || 'dc617529-e80d-4084-9041-fb28e864089f'; // Default: Tommaso Bianchi
-    const parentId = searchParams.get('parentId') || null;
+    const { parentId, studentId: alunnoId, ready } = useParentIdentity();
+    // Guardia grado: il diario giornaliero esiste solo per nido/infanzia.
+    const { schoolType, ready: schoolTypeReady } = useChildSchoolType();
 
     const [dateKey, setDateKey] = useState<string>(toDateKey(new Date()));
     const [entries, setEntries] = useState<DiaryEntry[]>([]);
     const [photos, setPhotos] = useState<MediaItem[]>([]);
-    const [loading, setLoading] = useState(true);
+    // Il giorno di cui abbiamo completato il caricamento: lo spinner è derivato
+    // (loading = giorno richiesto ≠ giorno caricato), niente setState sincroni.
+    const [loadedKey, setLoadedKey] = useState<string | null>(null);
+    const loading = loadedKey !== dateKey;
     const [direction, setDirection] = useState<1 | -1>(1);
     const [studentName, setStudentName] = useState<string | null>(null);
+    const [classe, setClasse] = useState<string | null>(null);
+    // "Entrata" letta dal modulo Presenze (read-only, DL-040).
+    const [checkIn, setCheckIn] = useState<string | null>(null);
 
     const goDay = (delta: number) => {
         setDirection(delta as 1 | -1);
@@ -318,44 +327,47 @@ function ParentDiaryContent() {
     };
 
     const load = useCallback(async (dk: string) => {
-        setLoading(true);
+        if (!ready || !alunnoId) return; // identità non risolta: lo spinner resta
         try {
-            // Carica eventi diario
-            const res = await fetch(`/api/diary/entries?alunno_id=${alunnoId}&from=${dk}&to=${dk}`);
-            if (res.ok) {
+            // Carica eventi diario (errore di rete ⇒ stato vuoto, come prima)
+            const res = await fetch(`/api/diary/entries?alunno_id=${alunnoId}&from=${dk}&to=${dk}`).catch(() => null);
+            if (res?.ok) {
                 const data: DiaryEntry[] = await res.json();
                 setEntries(deduplicateAndSort(data));
             } else {
                 setEntries([]);
             }
 
+            // "Entrata" dal modulo Presenze (orario di check-in del giorno)
+            const ciRes = await fetch(`/api/diary/checkin?alunno_id=${alunnoId}&date=${dk}`).catch(() => null);
+            const ci = ciRes?.ok ? await ciRes.json().catch(() => null) : null;
+            setCheckIn(ci?.orario_entrata ?? null);
+
             // Carica foto reali associate a questo alunno per il giorno selezionato
             let photosUrl = `/api/gallery?studentId=${alunnoId}&date=${dk}`;
             if (parentId) photosUrl += `&parentId=${parentId}`;
-            const photosRes = await fetch(photosUrl);
-            if (photosRes.ok) {
+            const photosRes = await fetch(photosUrl).catch(() => null);
+            if (photosRes?.ok) {
                 const photosData = await photosRes.json();
                 setPhotos(photosData.media ?? []);
             } else {
                 setPhotos([]);
             }
-        } catch (err) {
-            console.error('Errore nel caricamento del diario/foto:', err);
-            setEntries([]);
-            setPhotos([]);
         } finally {
-            setLoading(false);
+            setLoadedKey(dk);
         }
-    }, [alunnoId, parentId]);
+    }, [ready, alunnoId, parentId]);
 
     useEffect(() => { load(dateKey); }, [dateKey, load]);
 
     // Carica il nome reale del bambino
     useEffect(() => {
+        if (!alunnoId) return;
         fetch(`/api/diary/students?id=${alunnoId}`)
             .then(r => r.ok ? r.json() : null)
             .then(d => {
                 if (d?.nome) setStudentName(`${d.nome} ${d.cognome ?? ''}`.trim());
+                if (d?.classe_sezione) setClasse(d.classe_sezione);
             })
             .catch(() => {});
     }, [alunnoId]);
@@ -366,11 +378,31 @@ function ParentDiaryContent() {
 
     const isToday = dateKey === toDateKey(new Date());
 
+    // Umore del giorno (M5.4): entries è già deduplicato all'ultimo evento per
+    // tipo, quindi qui c'è al più l'umore più recente del giorno. L'evento vive
+    // nel banner giallo, non nella timeline.
+    const umore = umoreFromDettagli(entries.find(e => e.tipo_evento === 'umore')?.dettagli);
+    const umoreCfg = umore ? UMORE_CONFIG[umore] : null;
+    const timelineEntries = entries.filter(e => e.tipo_evento !== 'umore');
+
     const slideVariants = {
         enter: (dir: number) => ({ x: dir > 0 ? -40 : 40, opacity: 0 }),
         center: { x: 0, opacity: 1 },
         exit:  (dir: number) => ({ x: dir > 0 ? 40 : -40, opacity: 0 }),
     };
+
+    if (schoolTypeReady && schoolType === 'primaria') {
+        return (
+            <div className="min-h-screen bg-kidville-cream/40 p-6">
+                <div className="max-w-md mx-auto rounded-card bg-white p-8 text-center shadow-sm">
+                    <GraduationCap className="mx-auto mb-3 text-kidville-green" size={40} />
+                    <h2 className="font-barlow text-xl font-bold text-kidville-ink">Sezione non disponibile</h2>
+                    <p className="font-maven text-sm text-kidville-muted mt-1 mb-4">Il diario giornaliero riguarda solo nido e infanzia.</p>
+                    <Link href="/parent/primaria" className="font-maven inline-block rounded-pill bg-kidville-green px-5 py-2 text-sm text-kidville-yellow">Vai alla sezione Primaria</Link>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="w-full max-w-lg mx-auto p-4 sm:p-6 pb-16">
@@ -378,15 +410,18 @@ function ParentDiaryContent() {
             {/* Header: titolo + chip nome bambino */}
             <div className="flex items-start justify-between mb-6">
                 <div>
-                    <h1 className="font-barlow font-black text-3xl text-kidville-green uppercase tracking-wide">
+                    <p className="font-barlow font-bold text-[11px] uppercase tracking-[0.14em] text-kidville-yellow-dark">
+                        Diario
+                    </p>
+                    <h1 className="font-barlow font-black text-3xl text-kidville-green uppercase tracking-wide leading-none">
                         Il mio diario
                     </h1>
-                    <p className="font-maven text-gray-400 mt-1 text-sm">
+                    <p className="font-maven text-kidville-muted mt-1 text-sm">
                         La giornata a scuola, raccontata da me 🌈
                     </p>
                 </div>
                 {/* Chip nome bambino — top right */}
-                <div className="flex items-center gap-2 bg-white/80 backdrop-blur-xl rounded-2xl border border-white/40 shadow-sm px-3 py-2 ml-3 flex-shrink-0">
+                <div className="flex items-center gap-2 bg-white rounded-2xl border border-kidville-line shadow-sm px-3 py-2 ml-3 flex-shrink-0">
                     <div className="w-8 h-8 rounded-full bg-kidville-green flex items-center justify-center font-barlow font-black text-xs text-kidville-yellow flex-shrink-0">
                         {initials}
                     </div>
@@ -394,13 +429,13 @@ function ParentDiaryContent() {
                         <p className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide leading-tight">
                             {studentName ?? '...'}
                         </p>
-                        <p className="font-maven text-[10px] text-gray-400">Sezione Girasoli</p>
+                        {classe && <p className="font-maven text-[10px] text-gray-400">{classe}</p>}
                     </div>
                 </div>
             </div>
 
             {/* Navigazione giorno */}
-            <div className="flex items-center justify-between mb-5 bg-white/70 backdrop-blur-xl rounded-2xl border border-white/40 shadow-sm px-4 py-3">
+            <div className="flex items-center justify-between mb-5 bg-white rounded-2xl border border-kidville-line shadow-sm px-4 py-3">
                 <button
                     onClick={() => goDay(-1)}
                     className="w-9 h-9 rounded-xl bg-gray-50 hover:bg-gray-100 flex items-center justify-center text-gray-500 transition-colors"
@@ -451,8 +486,8 @@ function ParentDiaryContent() {
                         </div>
                     )}
 
-                    {/* Stato vuoto */}
-                    {!loading && entries.length === 0 && (
+                    {/* Stato vuoto (nessuna voce e nessuna entrata registrata) */}
+                    {!loading && entries.length === 0 && !checkIn && (
                         <div className="flex flex-col items-center justify-center py-20 text-center">
                             <div className="w-20 h-20 bg-kidville-cream rounded-full flex items-center justify-center mb-4 text-4xl">
                                 📖
@@ -466,11 +501,49 @@ function ParentDiaryContent() {
                         </div>
                     )}
 
-                    {/* Timeline eventi */}
-                    {!loading && entries.length > 0 && (
+                    {/* Timeline eventi (con "Entrata" in cima, letta dalle Presenze) */}
+                    {!loading && (checkIn || entries.length > 0) && (
                         <div className="space-y-3">
-                            {entries.map((entry, i) => (
-                                <EventCard key={entry.id} entry={entry} index={i} />
+                            {/* Banner umore (DR mood banner, M5.4): legge l'evento 'umore' più
+                                recente del giorno (dettagli.umore); senza evento resta il testo
+                                di attesa. */}
+                            <div className="flex items-center gap-3 rounded-[20px] bg-kidville-yellow px-4 py-3.5">
+                                <span className="text-[26px] leading-none">{umoreCfg?.emoji ?? '🙂'}</span>
+                                <div className="min-w-0">
+                                    <p className="font-barlow text-[15px] font-black uppercase leading-none tracking-wide text-kidville-green">
+                                        Umore della giornata{umoreCfg ? `: ${umoreCfg.label}` : ''}
+                                    </p>
+                                    <p className="mt-1 font-maven text-[12px] text-kidville-green/75">
+                                        {umore
+                                            ? umoreNarrative(umore)
+                                            : `Presto la maestra potrà segnalare come è andata${studentName ? ` per ${studentName.split(' ')[0]}` : ''}.`}
+                                    </p>
+                                </div>
+                            </div>
+                            {checkIn && (
+                                <motion.div
+                                    initial={{ opacity: 0, y: 14 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    transition={{ duration: 0.3, ease: 'easeOut' }}
+                                    className="bg-white rounded-3xl border-l-4 border-kidville-success/30 border border-kidville-line shadow-sm px-5 py-4"
+                                >
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-10 h-10 rounded-2xl flex items-center justify-center text-xl flex-shrink-0 bg-kidville-success-soft">
+                                            🚪
+                                        </div>
+                                        <div className="flex-1">
+                                            <p className="font-barlow font-black text-sm uppercase tracking-wide text-kidville-success">Entrata</p>
+                                            <p className="font-maven text-[11px] text-gray-400">{checkIn}</p>
+                                        </div>
+                                        <span className="text-2xl">👋</span>
+                                    </div>
+                                    <p className="font-maven text-sm text-gray-700 leading-relaxed pl-1 mt-2">
+                                        Sono arrivato/a a scuola alle {checkIn}!
+                                    </p>
+                                </motion.div>
+                            )}
+                            {timelineEntries.map((entry, i) => (
+                                <EventCard key={entry.id} entry={entry} index={i + (checkIn ? 1 : 0)} />
                             ))}
                             {/* Foto reali della giornata */}
                             <PhotosSection photos={photos} />
@@ -480,7 +553,7 @@ function ParentDiaryContent() {
             </AnimatePresence>
 
             {/* Footer */}
-            <div className="mt-8 p-4 bg-white/50 backdrop-blur-sm rounded-2xl border border-white/30 text-center">
+            <div className="mt-8 p-4 bg-white rounded-2xl border border-kidville-line text-center">
                 <p className="font-maven text-xs text-gray-400">
                     📋 Le informazioni sono visibili per i 14 giorni precedenti.<br />
                     Per lo storico completo contatta la segreteria.

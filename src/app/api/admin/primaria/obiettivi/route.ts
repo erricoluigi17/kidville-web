@@ -1,29 +1,66 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { requireStaff } from '@/lib/auth/require-staff'
+import { requireStaff, requireDocente } from '@/lib/auth/require-staff'
+import { resolveScuolaScrittura } from '@/lib/auth/scope'
+import { parseBody, parseQuery } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
 
 // ============================================================
 // Obiettivi di apprendimento (curricolo) — materia × livello.
 // ============================================================
 
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+/** '' equivale ad assente (i check truthy pre-esistenti restano invariati). */
+const vuotoComeAssente = (v: unknown) => (v === '' ? undefined : v)
+
+const getQuerySchema = z.object({
+  scuolaId: zUuid, // obbligatorio (sostituisce il 400 manuale)
+  // Filtri opzionali ('' = nessun filtro, come prima).
+  materiaCodice: z.preprocess(vuotoComeAssente, z.string().optional()),
+  livello: z.preprocess(vuotoComeAssente, z.coerce.number().optional()), // come Number(livello)
+})
+
+const postBodySchema = z.object({
+  scuolaId: zUuid,
+  materiaCodice: z.string().min(1, 'materiaCodice obbligatorio'),
+  // Truthy-check pre-esistente preservato (falsy → 400), poi Number() come prima.
+  livello: z.preprocess((v) => v || undefined, z.coerce.number({ error: 'livello obbligatorio' })),
+  codice: z.string().nullish(), // default null applicato nel codice (?? come prima)
+  descrizione: z.string().min(1, 'descrizione obbligatoria'),
+})
+
+// Il body (meno id e scuola_id) va in update(updates): .loose() preserva le chiavi extra.
+const patchBodySchema = z.object({
+  id: zUuid, // sostituisce il 400 manuale
+}).loose()
+
+const deleteQuerySchema = z.object({
+  id: zUuid, // obbligatorio (sostituisce il 400 manuale)
+})
+
 // GET /api/admin/primaria/obiettivi?scuolaId=&materiaCodice=&livello=
 export async function GET(request: NextRequest) {
-  try {
-    const sp = new URL(request.url).searchParams
-    const scuolaId = sp.get('scuolaId')
-    const materiaCodice = sp.get('materiaCodice')
-    const livello = sp.get('livello')
-    if (!scuolaId) return NextResponse.json({ error: 'scuolaId obbligatorio' }, { status: 400 })
+  const auth = await requireDocente(request)
+  if (auth.response) return auth.response
 
+  const q = parseQuery(request, getQuerySchema)
+  if ('response' in q) return q.response
+  const { scuolaId, materiaCodice, livello } = q.data
+  try {
     const supabase = await createAdminClient()
+    // Deriva/valida la sede server-side: lo scuolaId del client è solo `preferita`
+    // e viene accettato SOLO se rientra nei plessi accessibili all'utente.
+    const sede = await resolveScuolaScrittura(request, supabase, auth.user, scuolaId)
+    if (sede.response) return sede.response
     let query = supabase
       .from('obiettivi_apprendimento')
       .select('*')
-      .eq('scuola_id', scuolaId)
+      .eq('scuola_id', sede.scuolaId!)
       .order('livello', { ascending: true })
       .order('materia_codice', { ascending: true })
     if (materiaCodice) query = query.eq('materia_codice', materiaCodice)
-    if (livello) query = query.eq('livello', Number(livello))
+    if (livello !== undefined) query = query.eq('livello', livello)
 
     const { data, error } = await query
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
@@ -41,19 +78,21 @@ export async function POST(request: NextRequest) {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
 
-    const body = await request.json()
-    const { scuolaId, materiaCodice, livello, codice, descrizione } = body
-    if (!scuolaId || !materiaCodice || !livello || !descrizione) {
-      return NextResponse.json({ error: 'scuolaId, materiaCodice, livello, descrizione obbligatori' }, { status: 400 })
-    }
+    const b = await parseBody(request, postBodySchema)
+    if ('response' in b) return b.response
+    const { scuolaId, materiaCodice, livello, codice, descrizione } = b.data
 
     const supabase = await createAdminClient()
+    // Deriva la sede server-side: lo scuolaId del client è solo `preferita`,
+    // accettato SOLO se rientra nei plessi scrivibili dall'utente.
+    const sede = await resolveScuolaScrittura(request, supabase, auth.user, scuolaId)
+    if (sede.response) return sede.response
     const { data, error } = await supabase
       .from('obiettivi_apprendimento')
       .insert({
-        scuola_id: scuolaId,
+        scuola_id: sede.scuolaId!,
         materia_codice: materiaCodice,
-        livello: Number(livello),
+        livello,
         codice: codice ?? null,
         descrizione,
       })
@@ -73,8 +112,9 @@ export async function PATCH(request: NextRequest) {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
 
-    const { id, ...updates } = await request.json()
-    if (!id) return NextResponse.json({ error: 'id obbligatorio' }, { status: 400 })
+    const b = await parseBody(request, patchBodySchema)
+    if ('response' in b) return b.response
+    const { id, ...updates } = b.data
     delete updates.scuola_id
 
     const supabase = await createAdminClient()
@@ -98,8 +138,9 @@ export async function DELETE(request: NextRequest) {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
 
-    const id = new URL(request.url).searchParams.get('id')
-    if (!id) return NextResponse.json({ error: 'id obbligatorio' }, { status: 400 })
+    const q = parseQuery(request, deleteQuerySchema)
+    if ('response' in q) return q.response
+    const { id } = q.data
 
     const supabase = await createAdminClient()
     const { error } = await supabase.from('obiettivi_apprendimento').delete().eq('id', id)

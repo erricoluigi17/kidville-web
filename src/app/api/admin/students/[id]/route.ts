@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-
-const supabaseAdmin = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+import { requireEnv } from '@/lib/security/require-env';
+import { parseData } from '@/lib/validation/http';
+import { zUuid } from '@/lib/validation/common';
 
 // GET /api/admin/students/[id]
 // Restituisce il singolo alunno + i suoi genitori + i fratelli (alunni che condividono almeno un genitore)
@@ -13,7 +11,22 @@ export async function GET(
     context: { params: Promise<{ id: string }> }
 ) {
     try {
-        const { id: studentId } = await context.params;
+        const missingEnv = requireEnv('NEXT_PUBLIC_SUPABASE_URL');
+        if (missingEnv) return missingEnv;
+        const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+        if (!supabaseKey) {
+            return NextResponse.json(
+                { error: 'configurazione mancante: SUPABASE_SERVICE_ROLE_KEY' },
+                { status: 503 }
+            );
+        }
+        const supabaseAdmin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL as string, supabaseKey);
+
+        // Param dinamico: id alunno, usato come uuid nelle query (M3).
+        const { id } = await context.params;
+        const parsedId = parseData(zUuid, id);
+        if ('response' in parsedId) return parsedId.response;
+        const studentId = parsedId.data;
 
         // 1. Recupera l'alunno con i suoi genitori
         const { data: student, error: studentError } = await supabaseAdmin
@@ -28,7 +41,7 @@ export async function GET(
                 delegates (*)
             `)
             .eq('id', studentId)
-            .single();
+            .maybeSingle();
 
         if (studentError || !student) {
             return NextResponse.json({ error: studentError?.message || 'Alunno non trovato' }, { status: 404 });
@@ -36,11 +49,19 @@ export async function GET(
 
         // 2. Trova i fratelli: altri alunni che condividono almeno uno dei genitori
         // Raccogliamo gli ID dei genitori di questo alunno
-        const parentIds = (student.student_parents || [])
-            .map((sp: any) => sp.parents?.id)
+        const parentIds = ((student.student_parents ?? []) as Array<{ parents: { id: string } | null }>)
+            .map((sp) => sp.parents?.id)
             .filter(Boolean);
 
-        let siblings: any[] = [];
+        type SiblingRow = {
+            id: string;
+            nome: string | null;
+            cognome: string | null;
+            data_nascita: string | null;
+            classe_sezione: string | null;
+            stato: string | null;
+        };
+        let siblings: SiblingRow[] = [];
 
         if (parentIds.length > 0) {
             // Query: trova tutti gli alunni che hanno almeno uno di questi genitori, escludendo l'alunno corrente
@@ -63,9 +84,9 @@ export async function GET(
             // Deduplication: un alunno potrebbe apparire due volte se condivide entrambi i genitori
             if (siblingsData) {
                 const seen = new Set<string>();
-                siblings = siblingsData
-                    .map((sp: any) => sp.alunni)
-                    .filter((s: any) => {
+                siblings = (siblingsData as unknown as Array<{ alunni: SiblingRow | null }>)
+                    .map((sp) => sp.alunni)
+                    .filter((s): s is SiblingRow => {
                         if (!s || seen.has(s.id)) return false;
                         seen.add(s.id);
                         return true;
@@ -75,7 +96,7 @@ export async function GET(
 
         return NextResponse.json({ ...student, siblings });
 
-    } catch (err: any) {
+    } catch (err) {
         console.error('Errore GET /api/admin/students/[id]:', err);
         return NextResponse.json({ error: 'Errore interno del server' }, { status: 500 });
     }

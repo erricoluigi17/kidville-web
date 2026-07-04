@@ -67,7 +67,7 @@ export function useUnreadNotifications({
             }
 
             prevCountRef.current = totalUnread;
-        } catch (e) {
+        } catch {
             // Silenzioso
         }
     }, [userId, enabled, onUnreadChange]);
@@ -86,7 +86,13 @@ export function useUnreadNotifications({
     return { checkUnread };
 }
 
-function sendBrowserNotification(newCount: number, threads: any[]) {
+interface ChatThreadInfo {
+    unread_count: number;
+    other_user: { first_name: string; last_name: string };
+    last_message?: { content?: string } | null;
+}
+
+function sendBrowserNotification(newCount: number, threads: ChatThreadInfo[]) {
     if (typeof window === 'undefined' || !('Notification' in window)) return;
     if (Notification.permission !== 'granted') return;
 
@@ -94,7 +100,7 @@ function sendBrowserNotification(newCount: number, threads: any[]) {
     if (document.hasFocus()) return;
 
     // Trova il thread con il messaggio più recente non letto
-    const unreadThread = threads.find((t: any) => t.unread_count > 0);
+    const unreadThread = threads.find((t) => t.unread_count > 0);
     const senderName = unreadThread
         ? `${unreadThread.other_user.first_name} ${unreadThread.other_user.last_name}`
         : 'Qualcuno';

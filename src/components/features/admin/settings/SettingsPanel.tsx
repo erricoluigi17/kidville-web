@@ -21,8 +21,8 @@ interface ArubaCfg {
 const hdr = (u: string) => ({ 'Content-Type': 'application/json', 'x-user-id': u });
 const card = 'bg-white rounded-2xl shadow-sm p-5 mb-5';
 const h3 = 'font-barlow font-black text-base text-kidville-green uppercase tracking-wide mb-4 flex items-center gap-2';
-const input = 'border-2 border-gray-200 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green';
-const label = 'font-maven text-xs text-gray-500 mb-1 block';
+const input = 'border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green';
+const label = 'font-maven text-xs text-kidville-muted mb-1 block';
 const btnPrimary = 'px-4 py-2 rounded-full bg-kidville-green text-white font-maven font-bold text-sm hover:opacity-90 disabled:opacity-50 flex items-center gap-1';
 
 export function SettingsPanel({ userId, scuolaId }: Props) {
@@ -62,8 +62,8 @@ function CategorieManager({ userId }: Props) {
                 {cats.map(c => (
                     <span key={c.id} className="flex items-center gap-1 bg-kidville-cream rounded-full pl-3 pr-2 py-1 font-maven text-sm text-kidville-green">
                         {c.icona} {c.nome}
-                        {c.is_sistema ? <Lock size={11} className="text-gray-400" /> :
-                            <button onClick={() => del(c.id)} className="text-gray-400 hover:text-red-500"><Trash2 size={13} /></button>}
+                        {c.is_sistema ? <Lock size={11} className="text-kidville-muted" /> :
+                            <button onClick={() => del(c.id)} className="text-kidville-muted hover:text-kidville-error"><Trash2 size={13} /></button>}
                     </span>
                 ))}
             </div>
@@ -71,7 +71,7 @@ function CategorieManager({ userId }: Props) {
                 <input value={nuovo} onChange={e => setNuovo(e.target.value)} placeholder="Nuova categoria…" className={`${input} flex-1`} />
                 <button onClick={add} className={btnPrimary}><Plus size={14} /> Aggiungi</button>
             </div>
-            <p className="font-maven text-[11px] text-gray-400 mt-2"><Lock size={10} className="inline" /> = categoria di sistema (non eliminabile).</p>
+            <p className="font-maven text-[11px] text-kidville-muted mt-2"><Lock size={10} className="inline" /> = categoria di sistema (non eliminabile).</p>
         </section>
     );
 }
@@ -107,7 +107,7 @@ function RettaMorositaSettings({ userId }: Props) {
                 <div><label className={label}><AlertTriangle size={11} className="inline" /> Tolleranza insoluti (gg)</label>
                     <input type="number" value={s.insoluto_tolleranza_giorni} onChange={e => setS({ ...s, insoluto_tolleranza_giorni: Number(e.target.value) })} className={`${input} w-full`} /></div>
             </div>
-            <p className="font-maven text-[11px] text-gray-400 mt-1">La retta mensile compare al genitore dal giorno indicato del mese precedente alla competenza.</p>
+            <p className="font-maven text-[11px] text-kidville-muted mt-1">La retta mensile compare al genitore dal giorno indicato del mese precedente alla competenza.</p>
             <label className="flex items-center gap-2 cursor-pointer mt-3">
                 <input type="checkbox" checked={s.retta_auto_enabled} onChange={e => setS({ ...s, retta_auto_enabled: e.target.checked })} className="w-4 h-4 rounded text-kidville-green" />
                 <span className="font-maven text-sm text-kidville-green">Generazione automatica rette mensili</span>
@@ -116,7 +116,7 @@ function RettaMorositaSettings({ userId }: Props) {
                 <label className={label}>Causale fattura (template)</label>
                 <input value={s.fattura_causale_template ?? ''} onChange={e => setS({ ...s, fattura_causale_template: e.target.value })}
                     placeholder="{descrizione} - {alunno}" className={`${input} w-full`} />
-                <p className="font-maven text-[11px] text-gray-400 mt-1">Segnaposto disponibili: {'{descrizione}'}, {'{alunno}'}, {'{periodo}'}. Modificabile al momento dell&apos;emissione.</p>
+                <p className="font-maven text-[11px] text-kidville-muted mt-1">Segnaposto disponibili: {'{descrizione}'}, {'{alunno}'}, {'{periodo}'}. Modificabile al momento dell&apos;emissione.</p>
             </div>
             <div className="mt-4"><button onClick={save} disabled={saving} className={btnPrimary}><Save size={14} /> {saving ? 'Salvataggio…' : 'Salva'}</button></div>
         </section>
@@ -145,12 +145,12 @@ function TicketSettings({ userId }: Props) {
                         <input value={p.label} onChange={e => upd(i, 'label', e.target.value)} placeholder="Nome" className={`${input} flex-1`} />
                         <input type="number" value={p.pezzi || ''} onChange={e => upd(i, 'pezzi', Number(e.target.value))} placeholder="Pezzi" className={`${input} w-24`} />
                         <input type="number" value={p.costo || ''} onChange={e => upd(i, 'costo', Number(e.target.value))} placeholder="€" className={`${input} w-24`} />
-                        <button onClick={() => setPacchetti(pacchetti.filter((_, idx) => idx !== i))} className="text-gray-400 hover:text-red-500"><Trash2 size={15} /></button>
+                        <button onClick={() => setPacchetti(pacchetti.filter((_, idx) => idx !== i))} className="text-kidville-muted hover:text-kidville-error"><Trash2 size={15} /></button>
                     </div>
                 ))}
             </div>
             <div className="flex gap-2">
-                <button onClick={() => setPacchetti([...pacchetti, { label: '', pezzi: 10, costo: 50 }])} className="px-3 py-2 rounded-full border-2 border-gray-200 font-maven text-sm text-gray-500 flex items-center gap-1"><Plus size={14} /> Pacchetto</button>
+                <button onClick={() => setPacchetti([...pacchetti, { label: '', pezzi: 10, costo: 50 }])} className="px-3 py-2 rounded-full border-2 border-kidville-line font-maven text-sm text-kidville-muted flex items-center gap-1"><Plus size={14} /> Pacchetto</button>
                 <button onClick={save} disabled={saving} className={btnPrimary}><Save size={14} /> {saving ? '…' : 'Salva'}</button>
             </div>
         </section>
@@ -179,8 +179,8 @@ function ArubaSettings({ userId }: Props) {
     const f = cfg.fiscal || {};
     return (
         <section className={card}>
-            <h3 className={h3}><FileText size={16} /> Fatturazione Aruba <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">Scaffold</span></h3>
-            <p className="font-maven text-xs text-gray-400 mb-3">Predisposizione. La chiamata reale ad Aruba sarà attivata in produzione. Le credenziali non vengono salvate in chiaro (solo riferimento a vault/env).</p>
+            <h3 className={h3}><FileText size={16} /> Fatturazione Aruba <span className="text-[10px] bg-kidville-warn-soft text-kidville-warn px-2 py-0.5 rounded-full">Scaffold</span></h3>
+            <p className="font-maven text-xs text-kidville-muted mb-3">Predisposizione. La chiamata reale ad Aruba sarà attivata in produzione. Le credenziali non vengono salvate in chiaro (solo riferimento a vault/env).</p>
             <div className="grid grid-cols-2 gap-3">
                 <div><label className={label}>Username Aruba</label><input value={cfg.username} onChange={e => setCfg({ ...cfg, username: e.target.value })} className={`${input} w-full`} /></div>
                 <div><label className={label}>Password (riferimento vault){cfg.has_password && ' ✓ impostata'}</label><input type="password" value={pwd} onChange={e => setPwd(e.target.value)} placeholder={cfg.has_password ? '••••••' : 'es. ARUBA_PWD_REF'} className={`${input} w-full`} /></div>

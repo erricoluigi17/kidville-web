@@ -82,7 +82,7 @@ async function main() {
     
     if (allExist) {
         console.log('✅ Tutte le tabelle esistono già! Niente da fare.\n');
-        Object.entries(existing).forEach(([t, ok]) => console.log(`  ✅ ${t}`));
+        Object.entries(existing).forEach(([t]) => console.log(`  ✅ ${t}`));
         return;
     }
     
@@ -99,7 +99,7 @@ async function main() {
     
     // Tenta RPC
     console.log('\n📡 Esecuzione migrazione via RPC...');
-    const { data: testRpc, error: testErr } = await supabase.rpc('exec_sql_kidville', { sql_text: 'SELECT 1' }).maybeSingle();
+    const { error: testErr } = await supabase.rpc('exec_sql_kidville', { sql_text: 'SELECT 1' }).maybeSingle();
     
     if (testErr) {
         console.log(`\n⚠️  La funzione RPC non è disponibile: ${testErr.message}`);

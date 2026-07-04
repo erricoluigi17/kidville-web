@@ -4,13 +4,13 @@ export interface SignedSubmissionInput {
   form_id: string
   parent_id: string
   student_id?: string | null
-  answers: Record<string, any>
+  answers: Record<string, unknown>
   is_signed?: boolean
-  signature_log?: any
+  signature_log?: unknown
 }
 
 export interface SignedSubmissionResult {
-  submission?: any
+  submission?: Record<string, unknown>
   error?: string
   status: number
 }
@@ -43,8 +43,8 @@ export async function persistSignedSubmission(
 
   // 2. Auto-aggiornamento anagrafica dai campi mappati (es. "alunni.note_mediche", "utenti.cellulare")
   const fields = template.fields || []
-  const studentUpdates: Record<string, any> = {}
-  const parentUpdates: Record<string, any> = {}
+  const studentUpdates: Record<string, unknown> = {}
+  const parentUpdates: Record<string, unknown> = {}
 
   for (const field of fields) {
     const answerValue = answers[field.id]
@@ -78,7 +78,7 @@ export async function persistSignedSubmission(
 
     // Aggiorna anche adults per compatibilità (se la tabella esiste)
     try {
-      const adultsUpdates: Record<string, any> = {}
+      const adultsUpdates: Record<string, unknown> = {}
       if (parentUpdates.nome) adultsUpdates.first_name = parentUpdates.nome
       if (parentUpdates.cognome) adultsUpdates.last_name = parentUpdates.cognome
       if (parentUpdates.cellulare) adultsUpdates.phones = [parentUpdates.cellulare]

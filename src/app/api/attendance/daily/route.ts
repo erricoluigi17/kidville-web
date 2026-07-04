@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server-client';
+import { z } from 'zod';
+import { createAdminClient } from '@/lib/supabase/server-client';
+import { requireDocente } from '@/lib/auth/require-staff';
+import { parseBody, parseQuery } from '@/lib/validation/http';
+import { zDataYMD, zUuid } from '@/lib/validation/common';
 
 /**
  * GET /api/attendance/daily?data=YYYY-MM-DD&sezione=Girasoli
@@ -10,13 +14,39 @@ import { createClient } from '@/lib/supabase/server-client';
  * Upsert diretto su Supabase — bypassa Dexie per dati live nel registro mensile.
  */
 
+const getQuerySchema = z.object({
+    // default dinamico (oggi) calcolato nell'handler
+    data: zDataYMD.optional(),
+    sezione: z.string().default('Girasoli'),
+});
+
+const STATI_VALIDI = ['presente', 'assente', 'ritardo', 'uscita_anticipata'] as const;
+
+const postBodySchema = z.object({
+    alunno_id: zUuid,
+    data: zDataYMD,
+    stato: z.enum(STATI_VALIDI),
+    orario_entrata: z.string().nullable().optional(),
+    orario_uscita: z.string().nullable().optional(),
+});
+
 export async function GET(request: NextRequest) {
-    const { searchParams } = new URL(request.url);
-    const data = searchParams.get('data') ?? new Date().toISOString().split('T')[0];
-    const sezione = searchParams.get('sezione') ?? 'Girasoli';
+    const auth = await requireDocente(request);
+    if (auth.response) return auth.response;
+
+    const q = parseQuery(request, getQuerySchema);
+    if ('response' in q) return q.response;
+
+    const data = q.data.data ?? new Date().toISOString().split('T')[0];
+    const sezione = q.data.sezione;
 
     try {
-        const supabase = await createClient();
+        // Pattern canonico delle route docente (cfr. diary/entries, agenda):
+        // gate applicativo requireDocente + client admin. Con i cookie di
+        // sessione il client SSR applicherebbe la RLS come utente, e le policy
+        // scolastiche su presenze dipendono da un self-read su `utenti` che la
+        // RLS nega → via sessione non funzionerebbero per nessuno.
+        const supabase = await createAdminClient();
 
         const { data: rows, error } = await supabase
             .from('presenze')
@@ -31,7 +61,9 @@ export async function GET(request: NextRequest) {
                 alunni!inner ( id, nome, cognome, classe_sezione )
             `)
             .eq('data', data)
-            .eq('alunni.classe_sezione', sezione);
+            .eq('alunni.classe_sezione', sezione)
+            // bound difensivo: 1 riga per alunno/giorno, una sezione non supera mai 500
+            .limit(500);
 
         if (error) {
             console.error('[GET /api/attendance/daily]', JSON.stringify(error));
@@ -48,25 +80,25 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
     try {
-        const body = await request.json();
-        const { alunno_id, data, stato, orario_entrata, orario_uscita } = body;
+        const auth = await requireDocente(request);
+        if (auth.response) return auth.response;
 
-        if (!alunno_id || !data || !stato) {
-            return NextResponse.json(
-                { error: 'Campi obbligatori: alunno_id, data, stato' },
-                { status: 400 }
-            );
+        const b = await parseBody(request, postBodySchema);
+        if ('response' in b) return b.response;
+        const { alunno_id, data, stato, orario_entrata, orario_uscita } = b.data;
+
+        const supabase = await createAdminClient();
+
+        // Il record nasce completo di scuola/sezione (fonte: anagrafica alunno):
+        // le policy scolastiche su presenze e l'aggregato realtime li richiedono.
+        const { data: alunno } = await supabase
+            .from('alunni')
+            .select('scuola_id, section_id')
+            .eq('id', alunno_id)
+            .maybeSingle();
+        if (!alunno) {
+            return NextResponse.json({ error: 'Alunno non trovato.' }, { status: 404 });
         }
-
-        const STATI_VALIDI = ['presente', 'assente', 'ritardo', 'uscita_anticipata'];
-        if (!STATI_VALIDI.includes(stato)) {
-            return NextResponse.json(
-                { error: `Stato non valido. Valori ammessi: ${STATI_VALIDI.join(', ')}` },
-                { status: 400 }
-            );
-        }
-
-        const supabase = await createClient();
 
         const record = {
             alunno_id,
@@ -74,6 +106,8 @@ export async function POST(request: NextRequest) {
             stato,
             orario_entrata: orario_entrata ?? null,
             orario_uscita: orario_uscita ?? null,
+            scuola_id: alunno.scuola_id,
+            section_id: alunno.section_id,
             aggiornato_il: new Date().toISOString(),
         };
 

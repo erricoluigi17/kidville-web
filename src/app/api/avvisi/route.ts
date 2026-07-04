@@ -1,18 +1,61 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { getModuleConfig } from '@/lib/settings/module-config';
+import { requireDocente } from '@/lib/auth/require-staff';
+import { scuoleDiUtente } from '@/lib/auth/scope';
+import { logScrittura } from '@/lib/audit/scrittura';
+import { parseBody, parseQuery } from '@/lib/validation/http';
+import { zUuid } from '@/lib/validation/common';
+
+// Uuid opzionale da query string: stringa vuota trattata come assente
+// (preserva i check truthy `if (parentId)` / `if (studentId)` pre-esistenti).
+const zUuidQueryOpzionale = z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    zUuid.optional()
+);
+
+const getQuerySchema = z.object({
+    scope: z.string().optional(),
+    classe: z.string().optional(),
+    parentId: zUuidQueryOpzionale,
+    studentId: zUuidQueryOpzionale,
+});
+
+const postBodySchema = z.object({
+    author_id: zUuid,
+    titolo: z.string().min(1, 'author_id, titolo e contenuto sono obbligatori'),
+    contenuto: z.string().min(1, 'author_id, titolo e contenuto sono obbligatori'),
+    tipo: z.string().nullish(),
+    target_scope: z.string().nullish(),
+    target_classes: z.unknown().optional(),
+    scadenza: z.string().nullish(),
+    attachment_url: z.string().nullish(),
+});
 
 // GET /api/avvisi?scope=globale|classe&classe=xxx&parentId=xxx
 // Lista avvisi con filtri
 export async function GET(request: Request) {
     try {
-        const { searchParams } = new URL(request.url);
-        const scope = searchParams.get('scope');
-        const classe = searchParams.get('classe');
-        const parentId = searchParams.get('parentId');
-        const studentId = searchParams.get('studentId');
+        // Il ramo (staff vs genitore) si decide sul valore grezzo di parentId,
+        // così il gate auth resta PRIMA della validazione (come oggi).
+        const parentIdGrezzo = new URL(request.url).searchParams.get('parentId');
 
         const supabase = await createAdminClient();
+
+        // Ramo STAFF (no parentId): gate ruolo + isolamento per plesso.
+        // Ramo GENITORE (?parentId): resta aperto (scoping per classe del figlio).
+        let plessiScope: string[] | null = null;
+        if (!parentIdGrezzo) {
+            const auth = await requireDocente(request);
+            if (auth.response) return auth.response;
+            plessiScope = await scuoleDiUtente(supabase, auth.user);
+            if (plessiScope.length === 0) return NextResponse.json([]);
+        }
+
+        const q = parseQuery(request, getQuerySchema);
+        if ('response' in q) return q.response;
+        const { scope, classe, parentId, studentId } = q.data;
 
         let query = supabase
             .from('avvisi')
@@ -29,6 +72,10 @@ export async function GET(request: Request) {
                 created_at
             `)
             .order('created_at', { ascending: false });
+
+        if (plessiScope) {
+            query = query.in('scuola_id', plessiScope);
+        }
 
         if (scope) {
             query = query.eq('target_scope', scope);
@@ -83,7 +130,7 @@ export async function GET(request: Request) {
                     .from('utenti')
                     .select('nome, cognome, ruolo, first_name, last_name, role')
                     .eq('id', avviso.author_id)
-                    .single();
+                    .maybeSingle();
 
                 // Se è un genitore, controlla se ha letto
                 let myResponse = null;
@@ -130,15 +177,12 @@ export async function GET(request: Request) {
 // Body: { author_id, titolo, contenuto, tipo, target_scope, target_classes?, scadenza?, attachment_url? }
 export async function POST(request: Request) {
     try {
-        const body = await request.json();
-        const { author_id, titolo, contenuto, tipo, target_scope, target_classes, scadenza, attachment_url } = body;
+        const auth = await requireDocente(request);
+        if (auth.response) return auth.response;
 
-        if (!author_id || !titolo || !contenuto) {
-            return NextResponse.json(
-                { error: 'author_id, titolo e contenuto sono obbligatori' },
-                { status: 400 }
-            );
-        }
+        const b = await parseBody(request, postBodySchema);
+        if ('response' in b) return b.response;
+        const { author_id, titolo, contenuto, tipo, target_scope, target_classes, scadenza, attachment_url } = b.data;
 
         const supabase = await createAdminClient();
 
@@ -172,6 +216,7 @@ export async function POST(request: Request) {
                 target_classes: target_classes ?? null,
                 scadenza: scadenza ?? null,
                 attachment_url: attachment_url ?? null,
+                scuola_id: autore?.scuola_id ?? auth.user.scuola_id ?? null, // tenant
             })
             .select()
             .single();
@@ -180,6 +225,12 @@ export async function POST(request: Request) {
             console.error('Errore POST avvisi:', error);
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
+
+        await logScrittura(supabase, {
+            attore: auth.user, entitaTipo: 'avviso', entitaId: (data as { id?: string })?.id ?? null,
+            azione: 'insert', scuolaId: autore?.scuola_id ?? auth.user.scuola_id ?? null,
+            valoreDopo: { id: (data as { id?: string })?.id, titolo, target_scope },
+        });
 
         return NextResponse.json(data, { status: 201 });
     } catch (error) {

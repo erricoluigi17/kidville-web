@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createClient } from '@supabase/supabase-js';
+import { sealDangerous } from '@/lib/security/seal';
+import { requireEnv } from '@/lib/security/require-env';
+import { parseQuery } from '@/lib/validation/http';
 
-const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+const querySchema = z.object({}); // nessun parametro in ingresso
 
 const SCUOLA_ID = '11111111-1111-1111-1111-111111111111';
 
@@ -44,7 +45,17 @@ function generateCF(cognome: string, nome: string, gender: string, data: string,
 const PROVINCE = ['RM', 'MI', 'NA', 'TO', 'FI', 'BO', 'GE', 'PA', 'BA', 'CT'];
 const CITTA = ['Roma', 'Milano', 'Napoli', 'Torino', 'Firenze', 'Bologna', 'Genova', 'Palermo', 'Bari', 'Catania'];
 
-export async function POST() {
+export async function POST(request: Request) {
+    const sealed = await sealDangerous(request);
+    if (sealed) return sealed;
+    const missingEnv = requireEnv('NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY');
+    if (missingEnv) return missingEnv;
+    const q = parseQuery(request, querySchema);
+    if ('response' in q) return q.response;
+    const supabase = createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL as string,
+        process.env.SUPABASE_SERVICE_ROLE_KEY as string
+    );
     const results = { students: 0, parents: 0, teachers: 0, links: 0, errors: [] as string[] };
 
     try {
@@ -121,7 +132,7 @@ export async function POST() {
                     phone_numbers: [randomPhone()],
                 };
 
-                const { data: mother, error: mErr } = await supabase
+                const { data: mother } = await supabase
                     .from('parents')
                     .insert(motherData)
                     .select('id')
@@ -158,7 +169,7 @@ export async function POST() {
                     phone_numbers: [randomPhone()],
                 };
 
-                const { data: father, error: fErr } = await supabase
+                const { data: father } = await supabase
                     .from('parents')
                     .insert(fatherData)
                     .select('id')
@@ -215,10 +226,10 @@ export async function POST() {
             summary: `Creati ${results.students} alunni, ${results.parents} genitori, ${results.teachers} insegnanti, ${results.links} collegamenti. Errori: ${results.errors.length}`
         });
 
-    } catch (err: any) {
+    } catch (err) {
         return NextResponse.json({
             success: false,
-            error: err.message,
+            error: err instanceof Error ? err.message : String(err),
             ...results
         }, { status: 500 });
     }

@@ -38,6 +38,8 @@ export default function FascicoloPage() {
   const [expiry, setExpiry] = useState('');
   const [uploading, setUploading] = useState(false);
   const [msg, setMsg] = useState('');
+  const [finalita, setFinalita] = useState('');
+  const finalitaRef = useRef('');
   const fileRef = useRef<HTMLInputElement>(null);
 
   // Pagelle
@@ -54,20 +56,29 @@ export default function FascicoloPage() {
   }, [sectionId, userId]);
 
   const loadDocs = useCallback(async () => {
-    if (!alunnoId) { setDocs([]); setDenied(false); setAnniPagelle([]); return; }
-    const r = await fetch(`/api/primaria/fascicolo?alunnoId=${alunnoId}&userId=${userId}`);
-    if (r.status === 403) { setDenied(true); setDocs([]); return; }
-    setDenied(false);
-    const d = await r.json();
-    if (d.success) setDocs(d.data);
+    if (!alunnoId) return;
+    const fz = finalitaRef.current ? `&finalita=${encodeURIComponent(finalitaRef.current)}` : '';
+    try {
+      const r = await fetch(`/api/primaria/fascicolo?alunnoId=${alunnoId}&userId=${userId}${fz}`);
+      if (r.status === 403) {
+        setDenied(true);
+        setDocs([]);
+      } else {
+        setDenied(false);
+        const d = await r.json();
+        if (d.success) setDocs(d.data);
 
-    // Carica anche le pagelle
-    const rp = await fetch(`/api/primaria/fascicolo/pagelle?alunnoId=${alunnoId}&userId=${userId}`);
-    const dp = await rp.json();
-    if (dp.success) {
-      setAnniPagelle(dp.data ?? []);
-      // Apri automaticamente l'anno più recente
-      if (dp.data?.length > 0) setAnniAperti(new Set([dp.data[0].annoScolastico]));
+        // Carica anche le pagelle
+        const rp = await fetch(`/api/primaria/fascicolo/pagelle?alunnoId=${alunnoId}&userId=${userId}`);
+        const dp = await rp.json();
+        if (dp.success) {
+          setAnniPagelle(dp.data ?? []);
+          // Apri automaticamente l'anno più recente
+          if (dp.data?.length > 0) setAnniAperti(new Set([dp.data[0].annoScolastico]));
+        }
+      }
+    } finally {
+      // nessuno stato di caricamento da azzerare
     }
   }, [alunnoId, userId]);
 
@@ -84,6 +95,7 @@ export default function FascicoloPage() {
     const file = fileRef.current?.files?.[0];
     if (!alunnoId) { setMsg('Seleziona un alunno'); return; }
     if (!file) { setMsg('Seleziona un file'); return; }
+    if (!userId) { setMsg('Identità non risolta: riapri la pagina dal registro.'); return; }
     setUploading(true);
     const fd = new FormData();
     fd.append('file', file);
@@ -91,6 +103,7 @@ export default function FascicoloPage() {
     fd.append('documentType', documentType);
     if (descrizione) fd.append('descrizione', descrizione);
     if (expiry) fd.append('expiryDate', expiry);
+    if (finalitaRef.current) fd.append('finalita', finalitaRef.current);
     fd.append('userId', userId);
     const r = await fetch(`/api/primaria/fascicolo?userId=${userId}`, { method: 'POST', headers: { 'x-user-id': userId }, body: fd });
     const d = await r.json();
@@ -103,7 +116,8 @@ export default function FascicoloPage() {
   };
 
   const scarica = async (documentoId: string) => {
-    const r = await fetch(`/api/primaria/fascicolo/file?documentoId=${documentoId}&userId=${userId}`);
+    const fz = finalitaRef.current ? `&finalita=${encodeURIComponent(finalitaRef.current)}` : '';
+    const r = await fetch(`/api/primaria/fascicolo/file?documentoId=${documentoId}&userId=${userId}${fz}`);
     const d = await r.json();
     if (r.ok && d.data?.url) window.open(d.data.url, '_blank');
     else setMsg(d.error || 'Download non riuscito');
@@ -116,26 +130,39 @@ export default function FascicoloPage() {
   return (
     <div className="space-y-4">
       <div className="rounded-card bg-white p-5 shadow-sm">
-        <h2 className="font-barlow text-lg font-bold text-gray-800 mb-1 flex items-center gap-2">
+        <h2 className="font-barlow text-lg font-bold text-kidville-ink mb-1 flex items-center gap-2">
           <FolderLock size={18} className="text-kidville-green" /> Fascicolo personale
         </h2>
-        <p className="font-maven text-xs text-gray-400 mb-3">
-          Documenti riservati (PEI/PDP/sanitari) e pagelle. Accesso limitato ai docenti contitolari e alla dirigenza; ogni accesso è tracciato.
-        </p>
+        {/* Banner conformità: accesso tracciato + finalità (DR) */}
+        <div className="mb-3 flex items-start gap-2.5 rounded-xl border border-kidville-info/20 bg-kidville-info-soft px-3.5 py-3">
+          <FolderLock size={15} className="mt-0.5 shrink-0 text-kidville-info" />
+          <span className="font-maven text-[11.5px] leading-snug text-kidville-info">
+            <strong>Accesso tracciato.</strong> Documenti riservati (PEI/PDP/sanitari) e pagelle: l&apos;accesso è limitato ai docenti contitolari e alla dirigenza. Indica la <strong>finalità</strong> — ogni apertura è registrata nel log immodificabile del fascicolo.
+          </span>
+        </div>
 
         {apiError && (
-          <div className="mb-3 flex items-center gap-2 rounded-card bg-red-50 px-3 py-2 font-maven text-sm text-red-600">
+          <div className="mb-3 flex items-center gap-2 rounded-card bg-kidville-error-soft px-3 py-2 font-maven text-sm text-kidville-error">
             <ShieldAlert size={14} /> {apiError}
           </div>
         )}
 
-        <select value={alunnoId} onChange={(e) => setAlunnoId(e.target.value)} className="font-maven rounded-pill border border-gray-200 px-3 py-2 text-sm">
-          <option value="">Alunno…</option>
-          {alunni.map((a) => <option key={a.id} value={a.id}>{a.cognome} {a.nome}</option>)}
-        </select>
+        <div className="flex flex-wrap gap-2">
+          <select value={alunnoId} onChange={(e) => setAlunnoId(e.target.value)} className="font-maven rounded-pill border border-kidville-line px-3 py-2 text-sm">
+            <option value="">Alunno…</option>
+            {alunni.map((a) => <option key={a.id} value={a.id}>{a.cognome} {a.nome}</option>)}
+          </select>
+          <input
+            value={finalita}
+            onChange={(e) => { setFinalita(e.target.value); finalitaRef.current = e.target.value; }}
+            placeholder="Finalità di accesso (es. colloquio GLO)"
+            title="La finalità di accesso viene registrata nel log immodificabile del fascicolo."
+            className="font-maven flex-1 min-w-[12rem] rounded-pill border border-kidville-line px-3 py-2 text-sm"
+          />
+        </div>
 
-        {denied && (
-          <div className="mt-3 flex items-center gap-2 rounded-card bg-red-50 px-3 py-2 font-maven text-sm text-red-600">
+        {alunnoId && denied && (
+          <div className="mt-3 flex items-center gap-2 rounded-card bg-kidville-error-soft px-3 py-2 font-maven text-sm text-kidville-error">
             <ShieldAlert size={15} /> Non sei autorizzato ad accedere al fascicolo di questo alunno.
           </div>
         )}
@@ -146,28 +173,28 @@ export default function FascicoloPage() {
           {/* ── Pagelle raggruppate per anno scolastico ─────────── */}
           {anniPagelle.length > 0 && (
             <div className="rounded-card bg-white p-5 shadow-sm">
-              <h3 className="font-barlow text-base font-bold text-gray-800 mb-3 flex items-center gap-2">
+              <h3 className="font-barlow text-base font-bold text-kidville-ink mb-3 flex items-center gap-2">
                 <FileText size={16} className="text-kidville-green" /> Pagelle
               </h3>
               <div className="space-y-2">
                 {anniPagelle.map((anno) => (
-                  <div key={anno.annoScolastico} className="rounded-card border border-gray-100">
+                  <div key={anno.annoScolastico} className="rounded-card border border-kidville-line">
                     <button
                       onClick={() => toggleAnno(anno.annoScolastico)}
-                      className="flex w-full items-center justify-between px-4 py-3 font-maven text-sm font-semibold text-gray-700"
+                      className="flex w-full items-center justify-between px-4 py-3 font-maven text-sm font-semibold text-kidville-ink"
                     >
                       <span>A.S. {anno.annoScolastico}</span>
                       {anniAperti.has(anno.annoScolastico)
-                        ? <ChevronDown size={15} className="text-gray-400" />
-                        : <ChevronRight size={15} className="text-gray-400" />}
+                        ? <ChevronDown size={15} className="text-kidville-muted" />
+                        : <ChevronRight size={15} className="text-kidville-muted" />}
                     </button>
                     {anniAperti.has(anno.annoScolastico) && (
-                      <ul className="divide-y divide-gray-50 border-t border-gray-100">
+                      <ul className="divide-y divide-kidville-line border-t border-kidville-line">
                         {anno.pagelle.map((p) => (
                           <li key={p.scrutinioId} className="flex items-center justify-between gap-2 px-4 py-2.5">
                             <div>
-                              <p className="font-maven text-sm text-gray-800">{p.periodoNome}</p>
-                              <p className="font-maven text-xs text-gray-400">
+                              <p className="font-maven text-sm text-kidville-ink">{p.periodoNome}</p>
+                              <p className="font-maven text-xs text-kidville-muted">
                                 Pubblicata il {p.dataPubblicazione ? new Date(p.dataPubblicazione).toLocaleDateString('it-IT') : '—'}
                               </p>
                             </div>
@@ -189,15 +216,15 @@ export default function FascicoloPage() {
 
           {/* ── Carica documento ────────────────────────────────── */}
           <div className="rounded-card bg-white p-5 shadow-sm">
-            <h3 className="font-barlow text-base font-bold text-gray-800 mb-3">Carica documento</h3>
+            <h3 className="font-barlow text-base font-bold text-kidville-ink mb-3">Carica documento</h3>
             <div className="grid gap-2 md:grid-cols-2">
-              <select value={documentType} onChange={(e) => setDocumentType(e.target.value)} className="font-maven rounded-pill border border-gray-200 px-3 py-2 text-sm">
+              <select value={documentType} onChange={(e) => setDocumentType(e.target.value)} className="font-maven rounded-pill border border-kidville-line px-3 py-2 text-sm">
                 {TIPI.map((t) => <option key={t.v} value={t.v}>{t.l}</option>)}
               </select>
-              <input type="date" value={expiry} onChange={(e) => setExpiry(e.target.value)} className="font-maven rounded-pill border border-gray-200 px-3 py-2 text-sm" placeholder="Scadenza" />
+              <input type="date" value={expiry} onChange={(e) => setExpiry(e.target.value)} className="font-maven rounded-pill border border-kidville-line px-3 py-2 text-sm" placeholder="Scadenza" />
             </div>
-            <input value={descrizione} onChange={(e) => setDescrizione(e.target.value)} placeholder="Descrizione (facoltativa)" className="font-maven mt-2 w-full rounded-pill border border-gray-200 px-3 py-2 text-sm" />
-            <input ref={fileRef} type="file" accept="application/pdf,image/*" className="font-maven mt-2 block w-full text-sm text-gray-600 file:mr-3 file:rounded-pill file:border-0 file:bg-kidville-green/10 file:px-4 file:py-1.5 file:text-kidville-green" />
+            <input value={descrizione} onChange={(e) => setDescrizione(e.target.value)} placeholder="Descrizione (facoltativa)" className="font-maven mt-2 w-full rounded-pill border border-kidville-line px-3 py-2 text-sm" />
+            <input ref={fileRef} type="file" accept="application/pdf,image/*" className="font-maven mt-2 block w-full text-sm text-kidville-ink file:mr-3 file:rounded-pill file:border-0 file:bg-kidville-green/10 file:px-4 file:py-1.5 file:text-kidville-green" />
             {msg && <p className={`font-maven text-sm mt-2 ${msg.includes('✓') ? 'text-kidville-success' : 'text-kidville-error'}`}>{msg}</p>}
             <button onClick={carica} disabled={uploading} className="mt-3 font-maven inline-flex items-center gap-1.5 rounded-pill bg-kidville-green px-5 py-2 text-sm text-kidville-yellow disabled:opacity-50">
               <Upload size={15} /> {uploading ? 'Caricamento…' : 'Carica'}
@@ -206,19 +233,22 @@ export default function FascicoloPage() {
 
           {/* ── Documenti ufficiali (PEI/PDP/ecc.) ───────────────── */}
           <div className="rounded-card bg-white p-5 shadow-sm">
-            <h3 className="font-barlow text-base font-bold text-gray-800 mb-3">Documenti ufficiali</h3>
+            <h3 className="font-barlow text-base font-bold text-kidville-ink mb-3">Documenti ufficiali</h3>
             {docs.length === 0 ? (
-              <p className="font-maven text-sm text-gray-400">Nessun documento nel fascicolo.</p>
+              <p className="font-maven text-sm text-kidville-muted">Nessun documento nel fascicolo.</p>
             ) : (
-              <ul className="divide-y divide-gray-100">
+              <ul className="divide-y divide-kidville-line">
                 {docs.map((doc) => (
                   <li key={doc.id} className="flex items-center justify-between gap-2 py-2.5">
                     <div>
-                      <p className="font-maven text-sm font-semibold text-gray-800">
+                      <p className="font-maven text-sm font-semibold text-kidville-ink">
                         <span className="rounded-pill bg-kidville-green/10 px-2 py-0.5 text-[11px] text-kidville-green uppercase">{doc.document_type}</span>
+                        <span className="ml-1 inline-flex items-center gap-1 rounded-pill bg-kidville-error-soft px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-kidville-error">
+                          <ShieldAlert size={10} /> Sensibile
+                        </span>
                         {' '}{doc.file_name || doc.descrizione || 'Documento'}
                       </p>
-                      <p className="font-maven text-xs text-gray-400">
+                      <p className="font-maven text-xs text-kidville-muted">
                         {new Date(doc.created_at).toLocaleDateString('it-IT')}
                         {doc.expiry_date ? ` · scade ${new Date(doc.expiry_date).toLocaleDateString('it-IT')}` : ''}
                       </p>

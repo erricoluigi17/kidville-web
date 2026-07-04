@@ -74,15 +74,14 @@ export default function GradesTab() {
             if (gradesJson.success && gradesJson.data) {
                 setValutazioni(gradesJson.data);
             }
-        } catch (err) {
-            console.error('Errore caricamento dati GradesTab:', err);
         } finally {
             setLoading(false);
         }
     }, []);
 
     useEffect(() => {
-        loadData();
+        // Errori di rete ingoiati al call-site (pattern set-state-in-effect).
+        loadData().catch(() => {});
     }, [loadData]);
 
     const openModal = () => {
@@ -187,7 +186,7 @@ export default function GradesTab() {
                 </div>
 
                 {valutazioni.length === 0 ? (
-                    <div className="text-center py-12 text-gray-400 font-maven">
+                    <div className="text-center py-12 text-kidville-muted font-maven">
                         <Award size={32} className="mx-auto mb-2 opacity-30" />
                         <p>Nessuna valutazione registrata.</p>
                         <p className="text-sm mt-1">Usa il pulsante &quot;Aggiungi Voto&quot; per inserire la prima.</p>
@@ -196,7 +195,7 @@ export default function GradesTab() {
                     <div className="overflow-x-auto">
                         <table className="w-full text-left border-collapse">
                             <thead>
-                                <tr className="border-b-2 border-gray-100">
+                                <tr className="border-b-2 border-kidville-line">
                                     <th className="py-3 px-2 font-barlow text-kidville-green text-lg">Alunno</th>
                                     <th className="py-3 px-2 font-barlow text-kidville-green text-lg">Materia</th>
                                     <th className="py-3 px-2 font-barlow text-kidville-green text-lg">Tipo</th>
@@ -207,17 +206,17 @@ export default function GradesTab() {
                             <tbody>
                                 {valutazioni.map(v => (
                                     <tr key={v.id} className="border-b border-gray-50 hover:bg-kidville-cream/30 transition-colors">
-                                        <td className="py-3 px-2 font-maven font-semibold text-gray-800">
+                                        <td className="py-3 px-2 font-maven font-semibold text-kidville-ink">
                                             {v.alunni ? `${v.alunni.cognome} ${v.alunni.nome}` : getAlunnoName(v.alunno_id)}
                                         </td>
-                                        <td className="py-3 px-2 font-maven text-gray-600">{v.materia}</td>
-                                        <td className="py-3 px-2 font-maven text-gray-500 capitalize">{v.tipo}</td>
+                                        <td className="py-3 px-2 font-maven text-kidville-ink">{v.materia}</td>
+                                        <td className="py-3 px-2 font-maven text-kidville-muted capitalize">{v.tipo}</td>
                                         <td className="py-3 px-2">
                                             <span className={`inline-flex items-center justify-center min-w-[36px] h-8 px-2 rounded-lg font-maven font-bold text-sm ${getVotoStyle(v)}`}>
                                                 {formatVoto(v)}
                                             </span>
                                         </td>
-                                        <td className="py-3 px-2 font-maven text-gray-400 text-sm">
+                                        <td className="py-3 px-2 font-maven text-kidville-muted text-sm">
                                             {new Date(v.creato_il).toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit' })}
                                         </td>
                                     </tr>
@@ -227,7 +226,7 @@ export default function GradesTab() {
                     </div>
                 )}
 
-                <p className="text-xs text-gray-500 mt-6 bg-yellow-50 p-3 rounded-xl border border-yellow-100">
+                <p className="text-xs text-kidville-muted mt-6 bg-yellow-50 p-3 rounded-xl border border-yellow-100">
                     <strong>Nota:</strong> I voti inseriti diventano visibili ai genitori dopo 10 minuti (Buffer Notifica), permettendo eventuali correzioni.
                 </p>
             </div>
@@ -249,21 +248,21 @@ export default function GradesTab() {
                         <div className="p-5 flex flex-col gap-4">
                             {saveSuccess ? (
                                 <div className="text-center py-6">
-                                    <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                                    <div className="w-16 h-16 bg-kidville-success-soft rounded-full flex items-center justify-center mx-auto mb-3">
                                         <Award size={30} className="text-kidville-success" />
                                     </div>
                                     <p className="font-barlow font-bold text-xl text-kidville-green">Voto salvato!</p>
-                                    <p className="font-maven text-gray-500 text-sm mt-1">Visibile al genitore dopo 10 minuti.</p>
+                                    <p className="font-maven text-kidville-muted text-sm mt-1">Visibile al genitore dopo 10 minuti.</p>
                                 </div>
                             ) : (
                                 <>
                                     {/* Alunno */}
                                     <div>
-                                        <label className="block font-maven text-sm font-semibold text-gray-700 mb-1.5">Alunno</label>
+                                        <label className="block font-maven text-sm font-semibold text-kidville-ink mb-1.5">Alunno</label>
                                         <select
                                             value={selectedAlunnoId}
                                             onChange={(e) => setSelectedAlunnoId(e.target.value)}
-                                            className="w-full border border-gray-200 rounded-xl p-3 font-maven text-sm focus:outline-none focus:ring-2 focus:ring-kidville-green/30 focus:border-kidville-green"
+                                            className="w-full border border-kidville-line rounded-xl p-3 font-maven text-sm focus:outline-none focus:ring-2 focus:ring-kidville-green/30 focus:border-kidville-green"
                                         >
                                             <option value="">Seleziona alunno...</option>
                                             {alunni.map(a => (
@@ -274,11 +273,11 @@ export default function GradesTab() {
 
                                     {/* Materia */}
                                     <div>
-                                        <label className="block font-maven text-sm font-semibold text-gray-700 mb-1.5">Materia</label>
+                                        <label className="block font-maven text-sm font-semibold text-kidville-ink mb-1.5">Materia</label>
                                         <select
                                             value={selectedMateria}
                                             onChange={(e) => setSelectedMateria(e.target.value)}
-                                            className="w-full border border-gray-200 rounded-xl p-3 font-maven text-sm focus:outline-none focus:ring-2 focus:ring-kidville-green/30 focus:border-kidville-green"
+                                            className="w-full border border-kidville-line rounded-xl p-3 font-maven text-sm focus:outline-none focus:ring-2 focus:ring-kidville-green/30 focus:border-kidville-green"
                                         >
                                             <option value="">Seleziona materia...</option>
                                             {MATERIE.map(m => (
@@ -289,7 +288,7 @@ export default function GradesTab() {
 
                                     {/* Tipo valutazione */}
                                     <div>
-                                        <label className="block font-maven text-sm font-semibold text-gray-700 mb-1.5">Tipo</label>
+                                        <label className="block font-maven text-sm font-semibold text-kidville-ink mb-1.5">Tipo</label>
                                         <div className="flex gap-2">
                                             {TIPI.map(t => (
                                                 <button
@@ -298,7 +297,7 @@ export default function GradesTab() {
                                                     className={`flex-1 py-2 px-3 rounded-xl font-maven text-sm font-medium border transition-all ${
                                                         selectedTipo === t.value
                                                             ? 'bg-kidville-green text-white border-kidville-green'
-                                                            : 'bg-white text-gray-600 border-gray-200 hover:border-kidville-green'
+                                                            : 'bg-white text-kidville-ink border-kidville-line hover:border-kidville-green'
                                                     }`}
                                                 >
                                                     {t.label}
@@ -309,14 +308,14 @@ export default function GradesTab() {
 
                                     {/* Modo voto */}
                                     <div>
-                                        <label className="block font-maven text-sm font-semibold text-gray-700 mb-1.5">Tipo di Voto</label>
+                                        <label className="block font-maven text-sm font-semibold text-kidville-ink mb-1.5">Tipo di Voto</label>
                                         <div className="flex gap-2 mb-3">
                                             <button
                                                 onClick={() => setModoVoto('numerico')}
                                                 className={`flex-1 py-2 rounded-xl font-maven text-sm font-medium border transition-all ${
                                                     modoVoto === 'numerico'
                                                         ? 'bg-kidville-yellow text-kidville-green border-kidville-yellow'
-                                                        : 'bg-white text-gray-600 border-gray-200'
+                                                        : 'bg-white text-kidville-ink border-kidville-line'
                                                 }`}
                                             >
                                                 Numerico (1-10)
@@ -326,7 +325,7 @@ export default function GradesTab() {
                                                 className={`flex-1 py-2 rounded-xl font-maven text-sm font-medium border transition-all ${
                                                     modoVoto === 'giudizio'
                                                         ? 'bg-kidville-yellow text-kidville-green border-kidville-yellow'
-                                                        : 'bg-white text-gray-600 border-gray-200'
+                                                        : 'bg-white text-kidville-ink border-kidville-line'
                                                 }`}
                                             >
                                                 Giudizio
@@ -342,7 +341,7 @@ export default function GradesTab() {
                                                 value={votoNumerico}
                                                 onChange={(e) => setVotoNumerico(e.target.value)}
                                                 placeholder="Es. 7.5"
-                                                className="w-full border border-gray-200 rounded-xl p-3 font-maven text-sm focus:outline-none focus:ring-2 focus:ring-kidville-green/30 focus:border-kidville-green"
+                                                className="w-full border border-kidville-line rounded-xl p-3 font-maven text-sm focus:outline-none focus:ring-2 focus:ring-kidville-green/30 focus:border-kidville-green"
                                             />
                                         ) : (
                                             <div className="flex gap-2">
@@ -353,7 +352,7 @@ export default function GradesTab() {
                                                         className={`flex-1 py-2 rounded-xl font-maven text-sm font-medium border transition-all ${
                                                             giudizioTesto === g
                                                                 ? 'bg-kidville-green text-white border-kidville-green'
-                                                                : 'bg-white text-gray-600 border-gray-200 hover:border-kidville-green'
+                                                                : 'bg-white text-kidville-ink border-kidville-line hover:border-kidville-green'
                                                         }`}
                                                     >
                                                         {g}
@@ -364,7 +363,7 @@ export default function GradesTab() {
                                     </div>
 
                                     {saveError && (
-                                        <p className="text-sm text-red-500 font-maven bg-red-50 p-3 rounded-xl">{saveError}</p>
+                                        <p className="text-sm text-kidville-error font-maven bg-kidville-error-soft p-3 rounded-xl">{saveError}</p>
                                     )}
 
                                     <button

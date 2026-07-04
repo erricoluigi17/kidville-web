@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="it">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Kidville</title>
+    <style>
+      html, body {
+        margin: 0;
+        height: 100%;
+        background: #006A5F;
+        color: #fff;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+      }
+      .box { padding: 24px; max-width: 320px; }
+      h1 { font-size: 22px; margin: 0 0 8px; }
+      p { font-size: 15px; opacity: 0.85; line-height: 1.4; margin: 0; }
+    </style>
+  </head>
+  <body>
+    <!--
+      Fallback locale della shell Capacitor. A runtime la WebView carica l'app
+      web remota (server.url = CAP_SERVER_URL). Questa pagina viene mostrata solo
+      se il server non e' raggiungibile. Vedi docs/mobile.md.
+    -->
+    <div class="box">
+      <h1>Kidville</h1>
+      <p>Connessione al server in corso. Verifica la connessione a internet e riprova.</p>
+    </div>
+  </body>
+</html>

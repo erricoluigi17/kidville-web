@@ -1,88 +1,114 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { createAdminClient } from '@/lib/supabase/server-client';
+import { NextResponse } from 'next/server'
+import { z } from 'zod'
+import { createAdminClient } from '@/lib/supabase/server-client'
+import { requireStaff } from '@/lib/auth/require-staff'
+import { logScrittura } from '@/lib/audit/scrittura'
+import { periodoValido } from '@/lib/certificati/stato'
+import { parseBody, parseQuery } from '@/lib/validation/http'
 
-// GET: Recupera i certificati medici per gli alunni di una specifica classe
-export async function GET(request: NextRequest) {
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+// Filtri opzionali senza vincoli aggiuntivi: `stato` oggi è passato com'è alla
+// query (nessun enum imposto) e `class_name` filtra in memoria.
+const getQuerySchema = z.object({
+  stato: z.string().optional(),
+  class_name: z.string().optional(),
+})
+
+// `id` resta stringa permissiva (oggi basta un valore truthy; niente zUuid per
+// non rompere gli id non-RFC dei fixture). L'esito era già enumerato da
+// isEsitoValidazione; le date restano soggette al check incrociato
+// periodoValido (entrambe presenti e inizio <= fine). `nota_validazione` è
+// accettata oggi con QUALSIASI tipo (i non-string diventano null nel patch).
+const patchBodySchema = z.object({
+  id: z.string().min(1, 'id è obbligatorio'),
+  esito: z.enum(['validato', 'rifiutato'], { error: 'esito non valido (validato|rifiutato)' }),
+  data_inizio: z.string().nullish(),
+  data_fine: z.string().nullish(),
+  nota_validazione: z.unknown().optional(),
+})
+
+// GET /api/teacher/medical-certificates — elenco certificati per la Segreteria.
+// Filtri opzionali: ?stato=in_validazione | ?class_name=
+export async function GET(request: Request) {
   try {
-    const { searchParams } = new URL(request.url);
-    const className = searchParams.get('class_name');
+    const auth = await requireStaff(request)
+    if (auth.response) return auth.response
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+    const { stato, class_name: className } = q.data
 
-    if (!className) {
-      return NextResponse.json({ error: 'class_name è obbligatorio' }, { status: 400 });
-    }
-
-    const supabase = await createAdminClient();
-
-    // 1. Recupera gli ID degli alunni della classe
-    const { data: students, error: studErr } = await supabase
-      .from('alunni')
-      .select('id, nome, cognome')
-      .eq('classe_sezione', className);
-
-    if (studErr || !students) {
-      return NextResponse.json({ error: studErr?.message || 'Errore alunni' }, { status: 500 });
-    }
-
-    const studentIds = students.map(s => s.id);
-
-    if (studentIds.length === 0) {
-      return NextResponse.json([]);
-    }
-
-    // 2. Carica i certificati medici per questi alunni
-    const { data: certs, error: certErr } = await supabase
+    const supabase = await createAdminClient()
+    let query = supabase
       .from('certificati_medici')
-      .select('*')
-      .in('alunno_id', studentIds)
-      .order('creato_il', { ascending: false });
+      .select('id, alunno_id, file_path, data_inizio, data_fine, stato, note, nota_validazione, validato_il, creato_il, alunno:alunni(nome, cognome, classe_sezione)')
+      .order('creato_il', { ascending: false })
+    if (stato) query = query.eq('stato', stato)
 
-    if (certErr) {
-      return NextResponse.json({ error: certErr.message }, { status: 500 });
+    const { data, error } = await query
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+    let rows = (data ?? []) as Record<string, unknown>[]
+    if (className) {
+      rows = rows.filter((c) => {
+        const a = c.alunno as { classe_sezione?: string } | null
+        return a?.classe_sezione === className
+      })
     }
-
-    // Unisce le info dello studente al certificato
-    const results = certs.map(c => {
-      const student = students.find(s => s.id === c.alunno_id);
-      return {
-        ...c,
-        nome_alunno: student?.nome || '',
-        cognome_alunno: student?.cognome || ''
-      };
-    });
-
-    return NextResponse.json(results);
-  } catch (err: any) {
-    console.error('Errore GET /api/teacher/medical-certificates:', err);
-    return NextResponse.json({ error: err.message || 'Errore interno' }, { status: 500 });
+    // appiattisce nome/cognome alunno per retro-compat con la UI
+    rows = rows.map((c) => {
+      const a = c.alunno as { nome?: string; cognome?: string } | null
+      return { ...c, nome_alunno: a?.nome ?? '', cognome_alunno: a?.cognome ?? '' }
+    })
+    return NextResponse.json({ success: true, data: rows })
+  } catch (err) {
+    console.error('Errore GET teacher/medical-certificates:', err)
+    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
 }
 
-// PATCH: Spunta i giorni di assenza coperti dal certificato medico
-export async function PATCH(request: NextRequest) {
+// PATCH /api/teacher/medical-certificates — validazione Segreteria (DL-027).
+// Body: { id, esito: 'validato'|'rifiutato', data_inizio?, data_fine?, nota_validazione? }
+export async function PATCH(request: Request) {
   try {
-    const body = await request.json();
-    const { certificate_id, giorni_coperti } = body;
+    const auth = await requireStaff(request)
+    if (auth.response) return auth.response
 
-    if (!certificate_id || !Array.isArray(giorni_coperti)) {
-      return NextResponse.json({ error: 'certificate_id e giorni_coperti[] sono obbligatori' }, { status: 400 });
+    const b = await parseBody(request, patchBodySchema)
+    if ('response' in b) return b.response
+    const body = b.data
+    const id = body.id
+
+    const patch: Record<string, unknown> = {
+      stato: body.esito,
+      validato_da: auth.user.id,
+      validato_il: new Date().toISOString(),
+      nota_validazione: typeof body.nota_validazione === 'string' ? body.nota_validazione : null,
+    }
+    // la Segreteria può correggere il periodo in fase di validazione
+    if (body.data_inizio || body.data_fine) {
+      if (!periodoValido({ data_inizio: body.data_inizio, data_fine: body.data_fine })) {
+        return NextResponse.json({ error: 'Periodo di copertura non valido' }, { status: 400 })
+      }
+      patch.data_inizio = body.data_inizio
+      patch.data_fine = body.data_fine
     }
 
-    const supabase = await createAdminClient();
+    const supabase = await createAdminClient()
+    const { error } = await supabase.from('certificati_medici').update(patch).eq('id', id)
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-    const { data, error } = await supabase
-      .from('certificati_medici')
-      .update({ giorni_coperti })
-      .eq('id', certificate_id)
-      .select()
-      .single();
+    await logScrittura(supabase, {
+      attore: auth.user,
+      entitaTipo: 'certificato_medico',
+      entitaId: id,
+      azione: 'update',
+      scuolaId: auth.user.scuola_id,
+      valoreDopo: { stato: body.esito },
+    })
 
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
-
-    return NextResponse.json(data);
-  } catch (err: any) {
-    console.error('Errore PATCH /api/teacher/medical-certificates:', err);
-    return NextResponse.json({ error: err.message || 'Errore interno' }, { status: 500 });
+    return NextResponse.json({ success: true, data: { id, stato: body.esito } })
+  } catch (err) {
+    console.error('Errore PATCH teacher/medical-certificates:', err)
+    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
 }

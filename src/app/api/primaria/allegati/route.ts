@@ -1,6 +1,37 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { getRequestUserId } from '@/lib/auth/require-staff'
+import { requireDocente } from '@/lib/auth/require-staff'
+import { assertSezioneInScope } from '@/lib/auth/scope'
+import { parseData, parseQuery } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
+import type { SupabaseClient } from '@supabase/supabase-js'
+import type { AppUser } from '@/lib/auth/require-staff'
+
+const getQuerySchema = z.object({
+  registroId: zUuid,
+})
+
+const postFormSchema = z.object({
+  file: z.instanceof(File, { error: 'file obbligatorio' }),
+  registroId: zUuid,
+  ambito: z.string().default('argomento'),
+})
+
+// Risolve registroId → section_id della riga di registro e ne verifica lo scope.
+async function assertRegistroInScope(
+  supabase: SupabaseClient,
+  user: AppUser,
+  registroId: string,
+): Promise<NextResponse | null> {
+  const { data: registro } = await supabase
+    .from('registro_orario')
+    .select('id, section_id')
+    .eq('id', registroId)
+    .maybeSingle()
+  if (!registro) return NextResponse.json({ error: 'Registro non trovato' }, { status: 404 })
+  return assertSezioneInScope(supabase, user, registro.section_id as string)
+}
 
 const BUCKET = 'registro-allegati'
 const MAX_PDF = 10 * 1024 * 1024 // 10MB
@@ -10,11 +41,16 @@ const IMG_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/
 // GET /api/primaria/allegati?registroId=&userId=
 export async function GET(request: NextRequest) {
   try {
-    const registroId = new URL(request.url).searchParams.get('registroId')
-    if (!registroId) return NextResponse.json({ error: 'registroId obbligatorio' }, { status: 400 })
-    if (!getRequestUserId(request)) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
+    const auth = await requireDocente(request)
+    if (auth.response) return auth.response
+
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+    const { registroId } = q.data
 
     const supabase = await createAdminClient()
+    const scopeErr = await assertRegistroInScope(supabase, auth.user, registroId)
+    if (scopeErr) return scopeErr
     const { data, error } = await supabase
       .from('allegati_registro')
       .select('*')
@@ -31,13 +67,21 @@ export async function GET(request: NextRequest) {
 // POST /api/primaria/allegati  (multipart: file, registroId, ambito?, userId)
 export async function POST(request: NextRequest) {
   try {
-    const formData = await request.formData()
-    const file = formData.get('file') as File | null
-    const registroId = formData.get('registroId') as string | null
-    const ambito = (formData.get('ambito') as string | null) ?? 'argomento'
-    const userId = (formData.get('userId') as string | null) ?? getRequestUserId(request)
+    const auth = await requireDocente(request)
+    if (auth.response) return auth.response
+    // Identità dal gate (sessione o header legacy), MAI dal formData:
+    // il campo multipart 'userId' permetterebbe di impersonare chiunque.
+    const userId = auth.user.id
 
-    if (!file || !registroId) return NextResponse.json({ error: 'file e registroId obbligatori' }, { status: 400 })
+    const formData = await request.formData()
+    const f = parseData(postFormSchema, {
+      file: formData.get('file'),
+      registroId: formData.get('registroId'),
+      // formData.get restituisce null se assente: normalizza per il default zod
+      ambito: formData.get('ambito') ?? undefined,
+    })
+    if ('response' in f) return f.response
+    const { file, registroId, ambito } = f.data
 
     const isPdf = file.type === 'application/pdf'
     const isImg = IMG_TYPES.includes(file.type)
@@ -46,6 +90,8 @@ export async function POST(request: NextRequest) {
     if (isImg && file.size > MAX_IMG) return NextResponse.json({ error: 'Immagine oltre 3MB' }, { status: 400 })
 
     const supabase = await createAdminClient()
+    const scopeErr = await assertRegistroInScope(supabase, auth.user, registroId)
+    if (scopeErr) return scopeErr
 
     // Assicura il bucket.
     try {

@@ -1,16 +1,33 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server-client';
+import { z } from 'zod';
+import { createClient, createAdminClient } from '@/lib/supabase/server-client';
+import { requireDocente } from '@/lib/auth/require-staff';
+import { assertClasseNomeInScope } from '@/lib/auth/scope';
+import { parseQuery } from '@/lib/validation/http';
 
 /**
  * GET /api/attendance/delegates?sezione=Girasoli
- * 
+ *
  * Restituisce i delegati autorizzati al ritiro per gli alunni della sezione specificata.
  * I delegati sono dalla tabella `delegati` (vecchia) oppure `delegates` (nuova).
  */
+
+const getQuerySchema = z.object({
+    sezione: z.string().min(1, 'sezione obbligatoria'),
+});
+
 export async function GET(request: NextRequest) {
-    const sezione = request.nextUrl.searchParams.get('sezione') ?? 'Girasoli';
+    const auth = await requireDocente(request);
+    if (auth.response) return auth.response;
+
+    const q = parseQuery(request, getQuerySchema);
+    if ('response' in q) return q.response;
+    const { sezione } = q.data;
 
     try {
+        const scopeErr = await assertClasseNomeInScope(await createAdminClient(), auth.user, sezione);
+        if (scopeErr) return scopeErr;
+
         const supabase = await createClient();
 
         // Prova prima la tabella `delegati` (schema originale)

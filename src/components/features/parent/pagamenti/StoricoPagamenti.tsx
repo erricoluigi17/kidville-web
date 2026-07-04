@@ -1,8 +1,9 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Clock, CheckCircle2, AlertTriangle, Download, FileText } from 'lucide-react';
+import { AlertTriangle, Download, Receipt } from 'lucide-react';
 import { getSupabase } from '@/lib/supabase/browser-client';
+import { raggruppaPerCategoria } from '@/lib/pagamenti/categorie';
 import { PushOptIn } from './PushOptIn';
 
 interface Pagamento {
@@ -18,16 +19,16 @@ interface Pagamento {
     fattura_pdf_path?: string | null;
     importo_totale_famiglia?: number;
     payment_categories?: { nome?: string; colore?: string; icona?: string } | null;
-    alunni?: { nome?: string; cognome?: string };
+    alunni?: { nome?: string; cognome?: string; sospeso?: boolean };
 }
 
 interface Props { userId: string }
 
 const STATI: Record<string, { label: string; cls: string }> = {
-    da_pagare: { label: 'Da pagare', cls: 'bg-gray-100 text-gray-600' },
-    parziale: { label: 'Parziale', cls: 'bg-amber-100 text-amber-700' },
-    pagato: { label: 'Pagato', cls: 'bg-green-100 text-green-700' },
-    scaduto: { label: 'Scaduto', cls: 'bg-red-100 text-red-700' },
+    da_pagare: { label: 'Da pagare', cls: 'bg-kidville-neutral-soft text-kidville-neutral' },
+    parziale: { label: 'Parziale', cls: 'bg-kidville-warn-soft text-kidville-warn' },
+    pagato: { label: 'Pagato', cls: 'bg-kidville-success-soft text-kidville-success' },
+    scaduto: { label: 'Scaduto', cls: 'bg-kidville-error-soft text-kidville-error' },
 };
 
 export function StoricoPagamenti({ userId }: Props) {
@@ -38,17 +39,17 @@ export function StoricoPagamenti({ userId }: Props) {
 
     const load = useCallback(async () => {
         try {
-            const res = await fetch(`/api/pagamenti?userId=${userId}`, { headers: { 'x-user-id': userId } });
-            const j = await res.json();
-            if (j.success) {
+            const res = await fetch(`/api/pagamenti?userId=${userId}`, { headers: { 'x-user-id': userId } }).catch(() => null);
+            const j = res ? await res.json().catch(() => null) : null;
+            if (j?.success) {
                 setPagamenti(j.data);
                 idsRef.current = j.data.map((p: Pagamento) => p.id).join(',');
                 setError(null);
-            } else {
+            } else if (j) {
                 setError(j.error || 'Impossibile caricare i pagamenti');
+            } else {
+                setError('Errore di rete');
             }
-        } catch {
-            setError('Errore di rete');
         } finally { setLoading(false); }
     }, [userId]);
 
@@ -65,33 +66,102 @@ export function StoricoPagamenti({ userId }: Props) {
         return () => { supabase.removeChannel(channel); };
     }, [userId, load]);
 
-    const daPagare = pagamenti.filter((p) => p.stato !== 'pagato');
-    const pagati = pagamenti.filter((p) => p.stato === 'pagato');
+    // Figli sospesi per morosità (DL-021): banner informativo, lettura preservata.
+    const sospesi = [...new Set(
+        pagamenti.filter((p) => p.alunni?.sospeso).map((p) => `${p.alunni?.nome ?? ''} ${p.alunni?.cognome ?? ''}`.trim())
+    )].filter(Boolean);
+
+    // Vista a categorie (DL-022): Rette / Iscrizione / Mensa / Divisa / Materiale / Altro.
+    const gruppi = raggruppaPerCategoria(pagamenti);
+
+    // Totale ancora dovuto (DR banner "Totale da saldare"): somma del residuo sulle voci non saldate.
+    const totaleDovuto = pagamenti.reduce(
+        (s, p) => (p.stato !== 'pagato' ? s + (Number(p.importo) - Number(p.importo_pagato)) : s),
+        0,
+    );
+    const vociAperte = pagamenti.filter((p) => p.stato !== 'pagato').length;
 
     return (
         <div className="space-y-5">
+            {sospesi.length > 0 && (
+                <div className="flex items-start gap-2 rounded-card border border-kidville-error/30 bg-kidville-error-soft px-4 py-3 text-kidville-error">
+                    <AlertTriangle size={18} className="shrink-0 mt-0.5" />
+                    <p className="font-maven text-sm">
+                        <span className="font-bold">Account sospeso per morosità</span> ({sospesi.join(', ')}).
+                        Le funzioni di servizio sono temporaneamente limitate: regolarizza i pagamenti o contatta la Segreteria.
+                    </p>
+                </div>
+            )}
+
+            {!loading && !error && totaleDovuto > 0 && (
+                <div className="rounded-[22px] p-[18px]" style={{ background: 'linear-gradient(135deg, var(--color-kidville-green), var(--color-kidville-green-dark))' }}>
+                    <p className="font-maven text-[12.5px] text-white/75">Totale da saldare</p>
+                    <p className="font-barlow font-black text-[40px] leading-none text-kidville-yellow">
+                        € {totaleDovuto.toFixed(2)}
+                    </p>
+                    <p className="font-maven text-xs text-white/70 mt-1">
+                        {vociAperte} voc{vociAperte === 1 ? 'e' : 'i'} da saldare
+                    </p>
+                </div>
+            )}
+
             <div className="flex justify-end"><PushOptIn userId={userId} /></div>
 
             {loading ? (
-                <p className="font-maven text-sm text-gray-400 text-center py-8">Caricamento…</p>
+                <p className="font-maven text-sm text-kidville-muted text-center py-8">Caricamento…</p>
             ) : error ? (
-                <p className="font-maven text-sm text-red-500 text-center py-8">{error}</p>
+                <p className="font-maven text-sm text-kidville-error text-center py-8">{error}</p>
             ) : pagamenti.length === 0 ? (
-                <p className="font-maven text-sm text-gray-400 text-center py-8">Nessun pagamento.</p>
+                <p className="font-maven text-sm text-kidville-muted text-center py-8">Nessun pagamento.</p>
             ) : (
-                <>
-                    {daPagare.length > 0 && (
-                        <Section title="Da pagare" icon={<Clock size={16} className="text-amber-600" />}>
-                            {daPagare.map((p) => <PagamentoCard key={p.id} p={p} userId={userId} />)}
-                        </Section>
-                    )}
-                    {pagati.length > 0 && (
-                        <Section title="Pagamenti effettuati" icon={<CheckCircle2 size={16} className="text-green-600" />}>
-                            {pagati.map((p) => <PagamentoCard key={p.id} p={p} userId={userId} />)}
-                        </Section>
-                    )}
-                </>
+                gruppi.map((g) => (
+                    <Section key={g.categoria} title={g.categoria} icon={<span className="text-base leading-none">{g.icona ?? '📁'}</span>}>
+                        {g.daPagare.map((p) => <PagamentoCard key={p.id} p={p} userId={userId} />)}
+                        {g.pagati.map((p) => <PagamentoCard key={p.id} p={p} userId={userId} />)}
+                    </Section>
+                ))
             )}
+        </div>
+    );
+}
+
+interface FatturaRow { id: string; numero: number; quota_label: string | null; intestatario: string; pdf_disponibile: boolean }
+
+// Link fattura: uno solo (fast-path invariato) o uno per intestatario quando il
+// pagamento è stato fatturato in più quote (genitori separati).
+function FatturaLinks({ pagamentoId, userId }: { pagamentoId: string; userId: string }) {
+    const [fatture, setFatture] = useState<FatturaRow[] | null>(null);
+    useEffect(() => {
+        let active = true;
+        fetch(`/api/pagamenti/fattura/list?pagamento_id=${pagamentoId}&userId=${userId}`, { headers: { 'x-user-id': userId } })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((d) => { if (active && d?.success) setFatture(d.data); })
+            .catch(() => {});
+        return () => { active = false; };
+    }, [pagamentoId, userId]);
+
+    // In caricamento o quota unica → link singolo identico al comportamento storico.
+    if (!fatture || fatture.length <= 1) {
+        return (
+            <a
+                href={`/api/pagamenti/fattura?pagamento_id=${pagamentoId}&userId=${userId}`}
+                className="flex items-center gap-1 px-3 py-1 rounded-full bg-kidville-green/10 text-kidville-green text-xs font-bold hover:bg-kidville-green/20"
+            >
+                <Download size={13} /> Fattura
+            </a>
+        );
+    }
+    return (
+        <div className="flex flex-wrap items-center justify-end gap-1.5">
+            {fatture.map((f) => (
+                <a
+                    key={f.id}
+                    href={`/api/pagamenti/fattura?pagamento_id=${pagamentoId}&fattura_id=${f.id}&userId=${userId}`}
+                    className="flex items-center gap-1 px-3 py-1 rounded-full bg-kidville-green/10 text-kidville-green text-xs font-bold hover:bg-kidville-green/20"
+                >
+                    <Download size={13} /> Fattura — {f.quota_label || f.intestatario}
+                </a>
+            ))}
         </div>
     );
 }
@@ -114,16 +184,16 @@ function PagamentoCard({ p, userId }: { p: Pagamento; userId: string }) {
     const fatturaPronta = p.fattura_stato === 'emessa';
 
     return (
-        <div className={`bg-white rounded-xl border p-3 ${p.stato === 'scaduto' ? 'border-red-200' : 'border-gray-100'}`}>
+        <div className={`bg-white rounded-card border p-3 ${p.stato === 'scaduto' ? 'border-kidville-error/40' : 'border-kidville-line'}`}>
             <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                     <p className="font-maven font-bold text-sm text-kidville-green flex items-center gap-1">
                         {p.payment_categories?.icona} {p.descrizione}
-                        {p.obbligatorio && <span className="text-[10px] text-red-500">•obbl.</span>}
+                        {p.obbligatorio && <span className="text-[10px] text-kidville-error">•obbl.</span>}
                     </p>
-                    <p className="font-maven text-xs text-gray-400">
+                    <p className="font-maven text-xs text-kidville-muted">
                         {p.alunni?.nome} {p.alunni?.cognome} · scad. {p.scadenza}
-                        {isSplit && <span className="ml-1 text-amber-600">· tua quota</span>}
+                        {isSplit && <span className="ml-1 text-kidville-warn">· tua quota</span>}
                     </p>
                 </div>
                 <span className={`shrink-0 px-2 py-0.5 rounded-full text-[11px] font-bold ${st.cls}`}>{st.label}</span>
@@ -132,17 +202,17 @@ function PagamentoCard({ p, userId }: { p: Pagamento; userId: string }) {
             <div className="flex items-center justify-between mt-2">
                 <div className="font-maven text-sm">
                     <span className="text-kidville-green font-bold">€ {Number(p.importo).toFixed(2)}</span>
-                    {p.stato === 'parziale' && <span className="text-gray-400 text-xs ml-2">(resta € {resto.toFixed(2)})</span>}
+                    {p.stato === 'parziale' && <span className="text-kidville-muted text-xs ml-2">(resta € {resto.toFixed(2)})</span>}
                 </div>
                 {fatturaPronta ? (
-                    <a
-                        href={`/api/pagamenti/fattura?pagamento_id=${p.id}&userId=${userId}`}
-                        className="flex items-center gap-1 px-3 py-1 rounded-full bg-kidville-green/10 text-kidville-green text-xs font-bold hover:bg-kidville-green/20"
-                    >
-                        <Download size={13} /> Fattura
-                    </a>
+                    <FatturaLinks pagamentoId={p.id} userId={userId} />
                 ) : p.stato === 'pagato' ? (
-                    <span className="flex items-center gap-1 text-gray-300 text-xs font-maven"><FileText size={13} /> —</span>
+                    <a
+                        href={`/api/pagamenti/ricevuta?pagamento_id=${p.id}&userId=${userId}`}
+                        className="flex items-center gap-1 px-3 py-1 rounded-full border border-kidville-line text-kidville-muted text-xs font-bold hover:border-kidville-green hover:text-kidville-green"
+                    >
+                        <Receipt size={13} /> Ricevuta
+                    </a>
                 ) : null}
             </div>
         </div>

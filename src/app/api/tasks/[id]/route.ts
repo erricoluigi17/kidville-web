@@ -1,5 +1,34 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
+import { requireDocente } from '@/lib/auth/require-staff';
+import { scuoleDiUtente } from '@/lib/auth/scope';
+import { logScrittura } from '@/lib/audit/scrittura';
+import { parseBody, parseData } from '@/lib/validation/http';
+import { zUuid } from '@/lib/validation/common';
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+// Tutti i campi del body sono opzionali (merge parziale sul payload JSON).
+// Gli id nel payload (resolved_by, assignees, student_id) restano stringhe
+// libere: nel JSON circolano anche id non-UUID (dati legacy).
+const putBodySchema = z.object({
+    status: z.string().optional(),
+    resolution_notes: z.string().nullable().optional(),
+    resolved_by: z.string().nullable().optional(),
+    titolo: z.string().optional(),
+    contenuto: z.string().nullable().optional(),
+    priority: z.string().nullable().optional(),
+    category: z.string().nullable().optional(),
+    deadline: z.string().nullable().optional(),
+    assigned_to: z.union([z.string(), z.array(z.string())]).nullable().optional(),
+    target_class: z.string().nullable().optional(),
+    target_scope: z.string().nullable().optional(),
+    student_id: z.string().nullable().optional(),
+    compiti: z.array(z.unknown()).nullable().optional(),
+    revision_feedback: z.string().nullable().optional(),
+    attachments: z.array(z.unknown()).nullable().optional(),
+    commenti: z.array(z.unknown()).nullable().optional(),
+});
 
 interface Attachment {
     name: string;
@@ -94,8 +123,14 @@ export async function PUT(
     { params }: RouteParams
 ) {
     try {
-        const { id } = await params;
-        const body = await request.json();
+        const auth = await requireDocente(request);
+        if (auth.response) return auth.response;
+        const { id: rawId } = await params;
+        const idParsed = parseData(zUuid, rawId);
+        if ('response' in idParsed) return idParsed.response;
+        const id = idParsed.data;
+        const b = await parseBody(request, putBodySchema);
+        if ('response' in b) return b.response;
         const {
             status,
             resolution_notes,
@@ -113,19 +148,25 @@ export async function PUT(
             revision_feedback,
             attachments,
             commenti
-        } = body;
+        } = b.data;
 
         const supabase = await createAdminClient();
 
         // 1. Fetch current row
         const { data: currentRow, error: getErr } = await supabase
             .from('task_interni')
-            .select('id, author_id, assigned_to, target_class, titolo, contenuto, completato, created_at')
+            .select('id, author_id, assigned_to, target_class, titolo, contenuto, completato, created_at, scuola_id')
             .eq('id', id)
-            .single();
+            .maybeSingle();
 
         if (getErr || !currentRow) {
             return NextResponse.json({ error: 'Task non trovato' }, { status: 404 });
+        }
+
+        // Tenant: la task deve essere in un plesso dell'attore.
+        const plessi = await scuoleDiUtente(supabase, auth.user);
+        if (!currentRow.scuola_id || !plessi.includes(currentRow.scuola_id as string)) {
+            return NextResponse.json({ error: 'Accesso negato: task fuori dal tuo plesso' }, { status: 403 });
         }
 
         // 2. Decode existing JSON payload
@@ -134,16 +175,18 @@ export async function PUT(
         // 3. Merge updates
         const updated: Partial<TaskJsonPayload> = { ...existing };
 
-        if (rawDescrizione !== undefined) updated.descrizione = rawDescrizione;
-        if (priority !== undefined) updated.priority = priority;
-        if (category !== undefined) updated.category = category;
+        // NB: i `?? default` inline replicano i default che encodeContenuto
+        // applica comunque ai valori null: l'output JSON resta identico.
+        if (rawDescrizione !== undefined) updated.descrizione = rawDescrizione ?? '';
+        if (priority !== undefined) updated.priority = priority ?? 'medium';
+        if (category !== undefined) updated.category = category ?? 'generale';
         if (deadline !== undefined) updated.deadline = deadline;
-        if (target_scope !== undefined) updated.target_scope = target_scope;
+        if (target_scope !== undefined) updated.target_scope = target_scope ?? 'single';
         if (student_id !== undefined) updated.student_id = student_id;
-        if (compiti !== undefined) updated.compiti = compiti;
+        if (compiti !== undefined) updated.compiti = (compiti ?? []) as SubTask[];
         if (revision_feedback !== undefined) updated.revision_feedback = revision_feedback;
-        if (attachments !== undefined) updated.attachments = attachments;
-        if (commenti !== undefined) updated.commenti = commenti;
+        if (attachments !== undefined) updated.attachments = attachments as Attachment[] | null;
+        if (commenti !== undefined) updated.commenti = commenti as Commento[] | null;
 
         // Handle assignees update
         if (assigned_to !== undefined) {
@@ -200,6 +243,11 @@ export async function PUT(
         const row = data as Record<string, unknown>;
         const payload = decodeContenuto(row.contenuto as string | null);
 
+        await logScrittura(supabase, {
+            attore: auth.user, entitaTipo: 'task', entitaId: id, azione: 'update',
+            scuolaId: (currentRow.scuola_id as string) ?? null, valoreDopo: { id, status: payload.status, titolo: row.titolo },
+        });
+
         return NextResponse.json({
             id: row.id,
             titolo: row.titolo,
@@ -223,8 +271,20 @@ export async function DELETE(
     { params }: RouteParams
 ) {
     try {
-        const { id } = await params;
+        const auth = await requireDocente(request);
+        if (auth.response) return auth.response;
+        const { id: rawId } = await params;
+        const idParsed = parseData(zUuid, rawId);
+        if ('response' in idParsed) return idParsed.response;
+        const id = idParsed.data;
         const supabase = await createAdminClient();
+
+        // Tenant: la task deve essere in un plesso dell'attore.
+        const { data: row } = await supabase.from('task_interni').select('scuola_id').eq('id', id).maybeSingle();
+        const plessi = await scuoleDiUtente(supabase, auth.user);
+        if (!row || !row.scuola_id || !plessi.includes(row.scuola_id as string)) {
+            return NextResponse.json({ error: 'Accesso negato: task fuori dal tuo plesso' }, { status: 403 });
+        }
 
         const { error } = await supabase
             .from('task_interni')
@@ -235,6 +295,11 @@ export async function DELETE(
             console.error('Errore eliminazione task:', error);
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
+
+        await logScrittura(supabase, {
+            attore: auth.user, entitaTipo: 'task', entitaId: id, azione: 'delete',
+            scuolaId: (row.scuola_id as string) ?? null,
+        });
 
         return NextResponse.json({ success: true, message: 'Task eliminato con successo' });
     } catch (error) {

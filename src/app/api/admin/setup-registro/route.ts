@@ -1,12 +1,22 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
+import { sealDangerous } from '@/lib/security/seal';
 import { createAdminClient } from '@/lib/supabase/server-client';
+import { parseQuery } from '@/lib/validation/http';
+
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+const getQuerySchema = z.object({}); // nessun parametro in ingresso
 
 /**
  * GET /api/admin/setup-registro
  * Endpoint temporaneo per creare le tabelle del registro primaria nel DB Supabase.
  * Da eseguire UNA SOLA VOLTA. Idempotente (usa IF NOT EXISTS).
  */
-export async function GET() {
+export async function GET(request: Request) {
+    const sealed = await sealDangerous(request);
+    if (sealed) return sealed;
+    const q = parseQuery(request, getQuerySchema);
+    if ('response' in q) return q.response;
     try {
         const supabase = await createAdminClient();
 

@@ -29,7 +29,7 @@ export function FunzioniMatricePanel({ userId }: { userId: string }) {
     const [matrice, setMatrice] = useState<Matrice | null>(null);
     const [msg, setMsg] = useState('');
 
-    if (!settings) return <p className="font-maven text-sm text-gray-400">Caricamento…</p>;
+    if (!settings) return <p className="font-maven text-sm text-kidville-muted">Caricamento…</p>;
     const m = matrice ?? ((settings.funzioni_matrice ?? {}) as Matrice);
 
     const toggle = (grado: string, funzione: string) => {
@@ -45,21 +45,21 @@ export function FunzioniMatricePanel({ userId }: { userId: string }) {
     return (
         <section className={card}>
             <h3 className={h3}><LayoutGrid size={16} /> Funzioni e moduli per grado</h3>
-            <p className="font-maven text-xs text-gray-400 mb-3">
+            <p className="font-maven text-xs text-kidville-muted mb-3">
                 Quali moduli sono attivi per ciascun grado scolastico. Le funzioni spente non compaiono a docenti e genitori e le relative API sono bloccate.
             </p>
             <div className="overflow-x-auto">
                 <table className="w-full text-sm font-maven">
                     <thead>
-                        <tr className="text-gray-400">
+                        <tr className="text-kidville-muted">
                             <th className="p-2 text-left">Funzione</th>
                             {GRADI.map((g) => <th key={g} className="p-2 text-center capitalize">{g}</th>)}
                         </tr>
                     </thead>
                     <tbody>
                         {FUNZIONI.map((f) => (
-                            <tr key={f.id} className="border-t border-gray-100">
-                                <td className="p-2 text-gray-700">{f.label}</td>
+                            <tr key={f.id} className="border-t border-kidville-line">
+                                <td className="p-2 text-kidville-ink">{f.label}</td>
                                 {GRADI.map((g) => (
                                     <td key={g} className="p-2 text-center">
                                         <input

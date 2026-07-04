@@ -1,8 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { getRequestUserId } from '@/lib/auth/require-staff'
+import { requireDocente } from '@/lib/auth/require-staff'
+import { assertSezioneInScope } from '@/lib/auth/scope'
+import { parseBody } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
 
-const DEV_TEACHER = '22222222-2222-2222-2222-222222222222'
+// ─── Schemi di validazione input (M3) ────────────────────────────────────────
+// righe[] resta volutamente permissivo (z.unknown()): l'handler risolve e
+// valida ogni riga singolarmente (per id o per nome/codice) accumulando gli
+// errori riga per riga in `errori`, senza rifiutare l'intera richiesta.
+const postBodySchema = z.object({
+  scrutinioId: zUuid,
+  righe: z.array(z.unknown()),
+})
 
 // POST /api/primaria/scrutinio/import?userId=
 // Caricamento massivo dei giudizi sintetici di uno scrutinio (aperto) via CSV.
@@ -11,11 +22,12 @@ const DEV_TEACHER = '22222222-2222-2222-2222-222222222222'
 // body: { scrutinioId, righe: [{ alunnoId?, alunno?, materiaId?, materia?, giudizioSintetico }] }
 export async function POST(request: NextRequest) {
   try {
-    const userId = getRequestUserId(request) ?? DEV_TEACHER
-    const { scrutinioId, righe } = await request.json()
-    if (!scrutinioId || !Array.isArray(righe)) {
-      return NextResponse.json({ error: 'scrutinioId e righe[] obbligatori' }, { status: 400 })
-    }
+    const auth = await requireDocente(request)
+    if (auth.response) return auth.response
+    const userId = auth.user.id
+    const b = await parseBody(request, postBodySchema)
+    if ('response' in b) return b.response
+    const { scrutinioId, righe } = b.data
 
     const supabase = await createAdminClient()
 
@@ -23,15 +35,19 @@ export async function POST(request: NextRequest) {
       .from('scrutini')
       .select('id, section_id, stato')
       .eq('id', scrutinioId)
-      .single()
+      .maybeSingle()
     if (!scrutinio) return NextResponse.json({ error: 'Scrutinio non trovato' }, { status: 404 })
     if (scrutinio.stato === 'chiuso') return NextResponse.json({ error: 'Scrutinio chiuso: import non consentito', locked: true }, { status: 423 })
+
+    // Scope sulla sezione dello scrutinio (educator: solo proprie sezioni; staff: plesso).
+    const scopeErr = await assertSezioneInScope(supabase, auth.user, scrutinio.section_id as string)
+    if (scopeErr) return scopeErr
 
     // Anagrafiche della sezione per risoluzione per nome.
     const [{ data: alunni }, { data: materie }, { data: sez }] = await Promise.all([
       supabase.from('alunni').select('id, nome, cognome').eq('section_id', scrutinio.section_id),
       supabase.from('materie').select('id, nome, codice').eq('section_id', scrutinio.section_id),
-      supabase.from('sections').select('scuola_id').eq('id', scrutinio.section_id).single(),
+      supabase.from('sections').select('scuola_id').eq('id', scrutinio.section_id).maybeSingle(),
     ])
 
     // Scala valida (etichette consentite).
@@ -51,7 +67,8 @@ export async function POST(request: NextRequest) {
     const errori: { riga: number; messaggio: string }[] = []
     const rows: Record<string, unknown>[] = []
 
-    righe.forEach((r: Record<string, unknown>, i: number) => {
+    righe.forEach((raw, i) => {
+      const r = raw as Record<string, unknown>
       const n = i + 1
       const alunnoId = r.alunnoId && alunnoById.has(String(r.alunnoId))
         ? String(r.alunnoId)

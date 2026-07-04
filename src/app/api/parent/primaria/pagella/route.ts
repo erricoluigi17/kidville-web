@@ -1,16 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { getRequestUserId } from '@/lib/auth/require-staff'
+import { parseQuery } from '@/lib/validation/http'
+
+// Id lasco (non zUuid): il comportamento attuale accetta qualsiasi stringa non
+// vuota (il lookup su `alunni` fa comunque da gate con 404).
+const getQuerySchema = z.object({
+  studentId: z.string({ error: 'studentId obbligatorio' }).min(1, 'studentId obbligatorio'),
+})
 
 // GET /api/parent/primaria/pagella?studentId=&userId=
 // Lista delle pagelle disponibili (scrutini chiusi) per il figlio, con i metadati
 // del periodo. Il download del PDF avviene via /api/primaria/pagella.
 export async function GET(request: NextRequest) {
   try {
-    const studentId = new URL(request.url).searchParams.get('studentId')
     const userId = getRequestUserId(request)
     if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
-    if (!studentId) return NextResponse.json({ error: 'studentId obbligatorio' }, { status: 400 })
+
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+    const { studentId } = q.data
 
     const supabase = await createAdminClient()
 
@@ -18,9 +28,9 @@ export async function GET(request: NextRequest) {
       .from('alunni')
       .select('id, section_id')
       .eq('id', studentId)
-      .single()
-    console.log('[pagella GET] studentId=', studentId, 'alunno=', alunno)
-    if (!alunno?.section_id) return NextResponse.json({ success: true, data: [] })
+      .maybeSingle()
+    if (!alunno) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
+    if (!alunno.section_id) return NextResponse.json({ success: true, data: [] })
 
     // Scrutini PUBBLICATI della sezione del figlio + periodo (la chiusura non
     // basta: i voti sono visibili solo dopo l'OK/pubblicazione del dirigente).

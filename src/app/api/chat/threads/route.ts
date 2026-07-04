@@ -1,17 +1,33 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
+import { requireUser } from '@/lib/auth/require-staff';
+import { parseBody, parseQuery } from '@/lib/validation/http';
+import { zUuid } from '@/lib/validation/common';
 
-// GET /api/chat/threads?userId=xxx
-// Lista thread per un utente (insegnante o genitore)
+// Gap auth chiuso in M9: `?userId=` legacy accettato dallo schema ma IGNORATO,
+// l'identità è quella del gate (pattern M4 "parent_id legacy strippato").
+const getQuerySchema = z.object({
+    userId: zUuid.optional(),
+});
+
+const postBodySchema = z.object({
+    teacher_id: zUuid,
+    parent_id: zUuid,
+    student_id: zUuid,
+});
+
+// GET /api/chat/threads
+// Lista thread per l'utente autenticato (insegnante o genitore)
 export async function GET(request: Request) {
+    const auth = await requireUser(request);
+    if (auth.response) return auth.response;
+
+    const q = parseQuery(request, getQuerySchema);
+    if ('response' in q) return q.response;
+    const userId = auth.user.id;
+
     try {
-        const { searchParams } = new URL(request.url);
-        const userId = searchParams.get('userId');
-
-        if (!userId) {
-            return NextResponse.json({ error: 'userId è obbligatorio' }, { status: 400 });
-        }
-
         const supabase = await createAdminClient();
 
         // Cerca thread dove l'utente è teacher o parent
@@ -36,7 +52,7 @@ export async function GET(request: Request) {
                     .eq('thread_id', thread.id)
                     .order('created_at', { ascending: false })
                     .limit(1)
-                    .single();
+                    .maybeSingle();
 
                 // Conta messaggi non letti (inviati dall'altro)
                 const { count: unreadCount } = await supabase
@@ -52,13 +68,13 @@ export async function GET(request: Request) {
                     .from('utenti')
                     .select('nome, cognome, ruolo, first_name, last_name, role')
                     .eq('id', otherUserId)
-                    .single();
+                    .maybeSingle();
 
                 const { data: student } = await supabase
                     .from('alunni')
                     .select('nome, cognome, classe_sezione')
                     .eq('id', thread.student_id)
-                    .single();
+                    .maybeSingle();
 
                 return {
                     ...thread,
@@ -86,17 +102,23 @@ export async function GET(request: Request) {
 // POST /api/chat/threads
 // Body: { teacher_id, parent_id, student_id }
 export async function POST(request: Request) {
+    const auth = await requireUser(request);
+    if (auth.response) return auth.response;
+
+    const b = await parseBody(request, postBodySchema);
+    if ('response' in b) return b.response;
+    const { teacher_id, parent_id, student_id } = b.data;
+
+    // Gap auth chiuso in M9: il chiamante deve essere uno dei due partecipanti
+    // del thread che sta creando (niente thread per conto di terzi).
+    if (auth.user.id !== teacher_id && auth.user.id !== parent_id) {
+        return NextResponse.json(
+            { error: 'Accesso negato: non sei un partecipante del thread' },
+            { status: 403 }
+        );
+    }
+
     try {
-        const body = await request.json();
-        const { teacher_id, parent_id, student_id } = body;
-
-        if (!teacher_id || !parent_id || !student_id) {
-            return NextResponse.json(
-                { error: 'teacher_id, parent_id e student_id sono obbligatori' },
-                { status: 400 }
-            );
-        }
-
         const supabase = await createAdminClient();
 
         // Cerca se esiste già un thread per questa combinazione
@@ -106,7 +128,7 @@ export async function POST(request: Request) {
             .eq('teacher_id', teacher_id)
             .eq('parent_id', parent_id)
             .eq('student_id', student_id)
-            .single();
+            .maybeSingle();
 
         if (existing) {
             return NextResponse.json(existing);

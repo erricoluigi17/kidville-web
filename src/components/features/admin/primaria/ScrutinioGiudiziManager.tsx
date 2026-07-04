@@ -32,7 +32,7 @@ export function ScrutinioGiudiziManager({ scuolaId, userId }: { scuolaId: string
       .then((r) => r.json())
       .then((d) => { if (d.success) { setPeriodi(d.data); if (d.data.length) setPeriodoId((p) => p || d.data[0].id); } })
       .catch(() => {});
-    fetch(`/api/admin/primaria/giudizi?scuolaId=${scuolaId}`)
+    fetch(`/api/admin/primaria/giudizi?scuolaId=${scuolaId}`, { headers: { 'x-user-id': userId } })
       .then((r) => r.json())
       .then((d) => { if (d.success) setScala(d.data.scala ?? []); })
       .catch(() => {});
@@ -49,7 +49,7 @@ export function ScrutinioGiudiziManager({ scuolaId, userId }: { scuolaId: string
       let next: Materia[] | null = null;
       try {
         if (!sez) { next = []; return; }
-        const d = await fetch(`/api/admin/primaria/materie?sectionId=${sez.id}`)
+        const d = await fetch(`/api/admin/primaria/materie?sectionId=${sez.id}`, { headers: { 'x-user-id': userId } })
           .then((r) => r.json())
           .catch(() => null);
         if (d?.success) next = (d.data as Materia[]).filter((m) => m.codice);
@@ -58,13 +58,13 @@ export function ScrutinioGiudiziManager({ scuolaId, userId }: { scuolaId: string
       }
     };
     loadMaterie();
-  }, [sezioni, livello]);
+  }, [sezioni, livello, userId]);
 
   const loadTesti = useCallback(async () => {
     if (!periodoId) return;
     let map: Record<string, Record<string, string>> | null = null;
     try {
-      const r = await fetch(`/api/admin/primaria/scrutinio-giudizio?scuolaId=${scuolaId}&livello=${livello}&periodoId=${periodoId}`);
+      const r = await fetch(`/api/admin/primaria/scrutinio-giudizio?scuolaId=${scuolaId}&livello=${livello}&periodoId=${periodoId}`, { headers: { 'x-user-id': userId } });
       const d = await r.json();
       if (!d.success) return;
       const next: Record<string, Record<string, string>> = {};
@@ -76,7 +76,7 @@ export function ScrutinioGiudiziManager({ scuolaId, userId }: { scuolaId: string
     } finally {
       if (map) setTesti(map);
     }
-  }, [scuolaId, livello, periodoId]);
+  }, [scuolaId, livello, periodoId, userId]);
 
   useEffect(() => { loadTesti(); }, [loadTesti]);
 

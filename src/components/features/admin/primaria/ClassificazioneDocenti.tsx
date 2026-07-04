@@ -23,13 +23,15 @@ export function ClassificazioneDocenti({ scuolaId, userId }: { scuolaId: string;
   const load = useCallback(async () => {
     let next: Docente[] | null = null;
     try {
-      const r = await fetch(`/api/admin/primaria/docente-gradi?scuolaId=${scuolaId}`);
+      const r = await fetch(`/api/admin/primaria/docente-gradi?scuolaId=${scuolaId}`, {
+        headers: { 'x-user-id': userId },
+      });
       const d = await r.json();
       next = d.success ? d.data : [];
     } finally {
       if (next) setDocenti(next);
     }
-  }, [scuolaId]);
+  }, [scuolaId, userId]);
 
   useEffect(() => {
     load();

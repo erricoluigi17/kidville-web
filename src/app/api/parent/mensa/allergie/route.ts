@@ -4,7 +4,7 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid, zDataYMD } from '@/lib/validation/common'
-import { loadResolveOptions, DEFAULT_SCUOLA } from '@/lib/mensa/server'
+import { loadResolveOptions } from '@/lib/mensa/server'
 import { resolveMenuGiorno } from '@/lib/mensa/resolveMenu'
 import { allergeniAlunno, conflittiAllergie, allergeneLabel } from '@/lib/mensa/allergeni'
 
@@ -34,7 +34,7 @@ export async function GET(request: Request) {
 
   if (!al) return NextResponse.json({ conflitti: [], pericolo: false, allergeni: [] })
 
-  const scuolaId = (al.scuola_id as string) ?? DEFAULT_SCUOLA
+  const scuolaId = al.scuola_id as string
   const opts = await loadResolveOptions(supabase, scuolaId)
   const menu = resolveMenuGiorno(date, opts)
 

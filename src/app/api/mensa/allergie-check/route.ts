@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
-import { loadResolveOptions, DEFAULT_SCUOLA } from '@/lib/mensa/server'
+import { loadResolveOptions } from '@/lib/mensa/server'
 import { controllaAllergie } from '@/lib/mensa/allergie-check'
 import type { ResolveOptions } from '@/lib/mensa/resolveMenu'
 import { parseData, parseQuery } from '@/lib/validation/http'
@@ -86,7 +86,7 @@ export async function POST(request: Request) {
     const optsCache = new Map<string, ResolveOptions>()
     let alert = 0
     for (const a of rows) {
-      const scuolaId = a.scuola_id ?? DEFAULT_SCUOLA
+      const scuolaId = a.scuola_id as string
       let opts = optsCache.get(scuolaId)
       if (!opts) { opts = await loadResolveOptions(supabase, scuolaId); optsCache.set(scuolaId, opts) }
       const inviata = await controllaAllergie(supabase, a, data, scuolaId, opts)

@@ -10,8 +10,7 @@ import { BulkAssignBar } from '@/components/features/admin/BulkAssignBar';
 import { SectionsView } from '@/components/features/admin/SectionsView';
 import { CockpitPage, PageHeader, Tabs, StatCard } from '@/components/ui/cockpit';
 import { btnClass } from '@/components/ui/Btn';
-
-const SCUOLA_ID = '11111111-1111-1111-1111-111111111111';
+import { useSediAttive } from '@/lib/context/sede-context';
 
 interface Student {
   id: string;
@@ -36,6 +35,7 @@ interface Student {
 function AdminStudentsInner() {
   // Tab iniziale dal query param (?tab=sections: back-link dal dettaglio sezione).
   const search = useSearchParams();
+  const { reFetchKey } = useSediAttive();
   const [students, setStudents] = useState<Student[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -57,15 +57,17 @@ function AdminStudentsInner() {
   const [mensaGroups, setMensaGroups] = useState<{ id: string; nome: string }[]>([]);
   const [targetMensa, setTargetMensa] = useState('');
 
-  // Carica sezioni disponibili
+  // Carica sezioni disponibili. `x-sedi` = chiave di re-fetch al cambio sedi
+  // attive (il server scopa dal cookie); così reFetchKey è referenziato (deps).
   useEffect(() => {
-    fetch('/api/admin/sections').then(r => r.json()).then(d => { if (Array.isArray(d)) setAvailableSections(d); }).catch(() => {});
-    fetch('/api/admin/gruppi-mensa').then(r => r.json()).then(d => { if (d?.success) setMensaGroups(d.data ?? []); }).catch(() => {});
-  }, []);
+    const hdr = { 'x-sedi': reFetchKey };
+    fetch('/api/admin/sections', { headers: hdr }).then(r => r.json()).then(d => { if (Array.isArray(d)) setAvailableSections(d); }).catch(() => {});
+    fetch('/api/admin/gruppi-mensa', { headers: hdr }).then(r => r.json()).then(d => { if (d?.success) setMensaGroups(d.data ?? []); }).catch(() => {});
+  }, [reFetchKey]);
 
   const fetchStudents = useCallback(async () => {
     try {
-      const res = await fetch(`/api/admin/students?scuola_id=${SCUOLA_ID}&limit=1000`);
+      const res = await fetch(`/api/admin/students?limit=1000`, { headers: { 'x-sedi': reFetchKey } });
       const data = await res.json();
       if (Array.isArray(data)) {
         setStudents(data);
@@ -73,11 +75,11 @@ function AdminStudentsInner() {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [reFetchKey]);
 
   const fetchParents = useCallback(async () => {
     try {
-      const res = await fetch(`/api/admin/parents`);
+      const res = await fetch(`/api/admin/parents`, { headers: { 'x-sedi': reFetchKey } });
       const data = await res.json();
       if (Array.isArray(data)) {
         setStudents(data);
@@ -85,11 +87,11 @@ function AdminStudentsInner() {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [reFetchKey]);
 
   const fetchStaff = useCallback(async () => {
     try {
-      const res = await fetch(`/api/admin/parents`);
+      const res = await fetch(`/api/admin/parents`, { headers: { 'x-sedi': reFetchKey } });
       const data = await res.json();
       if (Array.isArray(data)) {
         // Filtra solo educatori e coordinatori (memorizzati in citizenship come workaround)
@@ -98,7 +100,7 @@ function AdminStudentsInner() {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [reFetchKey]);
 
   // NB: lo spinner viene attivato dal cambio tab (onChange dei Tabs), non qui:
   // setState sincrono negli effect è vietato (react-hooks/set-state-in-effect).

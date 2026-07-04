@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { requireStaff } from '@/lib/auth/require-staff'
+import { requireStaff, requireDocente } from '@/lib/auth/require-staff'
+import { scuoleDiUtente } from '@/lib/auth/scope'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 
@@ -25,17 +26,23 @@ const patchBodySchema = z.object({
 // GET /api/admin/primaria/docente-gradi?scuolaId=
 // Elenco docenti/staff con i loro gradi (per la gestione classificazione).
 export async function GET(request: NextRequest) {
+  const auth = await requireDocente(request)
+  if (auth.response) return auth.response
+
   const q = parseQuery(request, getQuerySchema)
   if ('response' in q) return q.response
   const { scuolaId } = q.data
   try {
     const supabase = await createAdminClient()
+    const plessi = await scuoleDiUtente(supabase, auth.user)
+    if (!plessi.length) return NextResponse.json({ success: true, data: [] })
+    const target = scuolaId && plessi.includes(scuolaId) ? [scuolaId] : plessi
     let query = supabase
       .from('utenti')
       .select('id, nome, cognome, email, ruolo, role, gradi')
       .in('ruolo', ['maestra', 'educator', 'docente', 'coordinator', 'admin'])
       .order('cognome', { ascending: true })
-    if (scuolaId) query = query.eq('scuola_id', scuolaId)
+    query = query.in('scuola_id', target)
 
     const { data, error } = await query
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })

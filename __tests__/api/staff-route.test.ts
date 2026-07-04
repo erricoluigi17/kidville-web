@@ -18,6 +18,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
       const b: Record<string, unknown> = {}
       b.select = () => b
       b.neq = () => b
+      b.eq = () => b // catena select (es. utenti_scuole in scuoleDiUtente)
       b.order = () => b
       b.then = (res: (v: unknown) => void) => res({ data: table === 'utenti' ? h.staff : [], error: null })
       b.update = (row: Record<string, unknown>) => ({ eq: async (_c: string, v: unknown) => { h.updates.push({ id: v, row }); return { error: null } } })
@@ -65,6 +66,9 @@ describe('/api/admin/staff', () => {
   })
 
   it('PATCH: aggiorna ruolo/sede, rimpiazza le classi e traccia audit', async () => {
+    // La sede destinazione deve appartenere ai plessi della Direzione (multi-scuola
+    // Fase B): la Direzione mockata è scoped proprio sulla sede assegnata.
+    h.requireStaff.mockResolvedValue({ user: { id: 'd1d1d1d1-d1d1-4d1d-8d1d-d1d1d1d1d1d1', role: 'admin', scuola_id: '52525252-5252-4525-8525-525252525252' } })
     const res = await PATCH(patchReq({ id: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1', ruolo: 'segreteria', scuola_id: '52525252-5252-4525-8525-525252525252', section_ids: ['sec-1', 'sec-2'] }))
     expect(res.status).toBe(200)
     expect(h.updates[0].row.ruolo).toBe('segreteria')
@@ -72,5 +76,12 @@ describe('/api/admin/staff', () => {
     expect(h.sezioniDeleted).toContain('a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1')
     expect(h.sezioniInserted[0]).toHaveLength(2)
     expect(h.logScrittura).toHaveBeenCalledTimes(1)
+  })
+
+  it('PATCH 403 se la sede destinazione è fuori dai plessi della Direzione (anti cross-tenant)', async () => {
+    // Direzione scoped su s1: non può spostare staff su un plesso non proprio.
+    const res = await PATCH(patchReq({ id: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1', scuola_id: '52525252-5252-4525-8525-525252525252' }))
+    expect(res.status).toBe(403)
+    expect(h.updates).toHaveLength(0)
   })
 })

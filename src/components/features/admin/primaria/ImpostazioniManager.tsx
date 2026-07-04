@@ -14,7 +14,7 @@ export function ImpostazioniManager({ scuolaId, userId }: { scuolaId: string; us
   const load = useCallback(async () => {
     let next: { classeOrale: number; scrittoPratico: number; buffer: number } | null = null;
     try {
-      const r = await fetch(`/api/admin/primaria/impostazioni?scuolaId=${scuolaId}`);
+      const r = await fetch(`/api/admin/primaria/impostazioni?scuolaId=${scuolaId}`, { headers: { 'x-user-id': userId } });
       const d = await r.json();
       if (d.success) {
         next = {
@@ -30,7 +30,7 @@ export function ImpostazioniManager({ scuolaId, userId }: { scuolaId: string; us
         setBuffer(next.buffer);
       }
     }
-  }, [scuolaId]);
+  }, [scuolaId, userId]);
 
   useEffect(() => { load(); }, [load]);
 

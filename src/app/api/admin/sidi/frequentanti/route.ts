@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { resolveScuolaScrittura } from '@/lib/auth/scope'
 import { parseQuery } from '@/lib/validation/http'
 import { buildFrequentanti } from '@/lib/sidi/payload'
 import { serializeFrequentanti } from '@/lib/sidi/serializer'
@@ -12,8 +13,6 @@ import { puoInviareFrequentanti } from '@/lib/sidi/sequenza'
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const postQuerySchema = z.object({}) // nessun parametro in ingresso (il body non viene letto; userId è consumato dal gate)
 
-const SCUOLA_ID_DEFAULT = '11111111-1111-1111-1111-111111111111'
-
 // POST /api/admin/sidi/frequentanti?userId=  — Invio flusso frequentanti.
 // Sequenza: consentito solo dopo Fase A `inviato` (altrimenti 409). Egress GATED.
 export async function POST(request: NextRequest) {
@@ -23,7 +22,9 @@ export async function POST(request: NextRequest) {
   if ('response' in q) return q.response
   try {
     const supabase = await createAdminClient()
-    const scuolaId = auth.user.scuola_id || SCUOLA_ID_DEFAULT
+    const sw = await resolveScuolaScrittura(request, supabase, auth.user)
+    if (sw.response) return sw.response
+    const scuolaId = sw.scuolaId!
 
     const state = await loadSyncState(supabase, scuolaId)
     if (!puoInviareFrequentanti(state.fase_a_stato)) {

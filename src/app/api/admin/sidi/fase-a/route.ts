@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { resolveScuolaScrittura } from '@/lib/auth/scope'
 import { parseQuery } from '@/lib/validation/http'
 import { buildFaseAReconcile } from '@/lib/sidi/payload'
 import { serializeFaseA } from '@/lib/sidi/serializer'
@@ -9,9 +10,8 @@ import { sidiTransmit } from '@/lib/sidi/client'
 import { persistFaseStato } from '@/lib/sidi/sync-store'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
-const postQuerySchema = z.object({}) // nessun parametro in ingresso (il body non viene letto; userId è consumato dal gate)
-
-const SCUOLA_ID_DEFAULT = '11111111-1111-1111-1111-111111111111'
+// scuola_id opzionale: la sede su cui operare (preferita per resolveScuolaScrittura).
+const postQuerySchema = z.object({ scuola_id: z.string().optional() })
 
 // POST /api/admin/sidi/fase-a?userId=  — Allineamento strutturale (Fase A).
 // Build neutro (sezioni + tempo scuola) → serialize → trasmissione GATED.
@@ -23,7 +23,10 @@ export async function POST(request: NextRequest) {
   if ('response' in q) return q.response
   try {
     const supabase = await createAdminClient()
-    const scuolaId = auth.user.scuola_id || SCUOLA_ID_DEFAULT
+    // Export per singola scuola: risolvo l'unica sede dallo scope dell'admin.
+    const sw = await resolveScuolaScrittura(request, supabase, auth.user, q.data.scuola_id ?? undefined)
+    if (sw.response) return sw.response
+    const scuolaId = sw.scuolaId!
 
     const { data: scuola } = await supabase.from('schools').select('id, nome').eq('id', scuolaId).maybeSingle()
     const { data: sezioni } = await supabase.from('sections').select('id, name, school_type').eq('scuola_id', scuolaId)

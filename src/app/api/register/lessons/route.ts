@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zDataYMD, zUuid } from '@/lib/validation/common';
+import { assertClasseNomeInScope, scuoleDiUtente } from '@/lib/auth/scope';
 
 const getQuerySchema = z.object({
     classeSezione: z.string().min(1),
@@ -86,18 +87,28 @@ export async function POST(request: Request) {
         // Admin client per bypassare RLS (stesso pattern delle altre API del progetto)
         const supabase = await createAdminClient();
 
+        // La classe deve appartenere ai plessi del docente (niente scritture su classi altrui)
+        const classeScope = await assertClasseNomeInScope(supabase, auth.user, classeSezione);
+        if (classeScope) return classeScope;
+
         const maestraId = auth.user.id;
 
-        // Recupera scuola_id se non fornito (prende il primo disponibile dal DB)
-        let finalScuolaId = scuolaId;
-        if (!finalScuolaId) {
-            const { data: school } = await supabase
-                .from('schools')
-                .select('id')
-                .limit(1)
-                .single();
-            finalScuolaId = school?.id;
-        }
+        // Deriva lo scuola_id server-side dalla sezione risolta ENTRO i plessi consentiti,
+        // ignorando lo scuolaId grezzo del client (regola d'oro: mai fidarsi del client).
+        const plessi = await scuoleDiUtente(supabase, auth.user);
+        const { data: sezioneRow } = await supabase
+            .from('sections')
+            .select('scuola_id')
+            .eq('name', classeSezione)
+            .in('scuola_id', plessi)
+            .limit(1)
+            .maybeSingle();
+        // Se scuolaId del client è tra i plessi consentiti lo rispettiamo, altrimenti la sede
+        // deriva dalla sezione; ultimo fallback: primo plesso accessibile.
+        const finalScuolaId =
+            (scuolaId && plessi.includes(scuolaId) ? scuolaId : undefined) ??
+            sezioneRow?.scuola_id ??
+            plessi[0];
 
         // UPSERT su registro_orario
         const { data: registroRow, error: registroError } = await supabase

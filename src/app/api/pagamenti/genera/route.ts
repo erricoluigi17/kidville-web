@@ -1,7 +1,8 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { resolveScuoleAttive } from '@/lib/auth/scope'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 
@@ -42,24 +43,33 @@ const postBodySchema = z.object({
 // GET /api/pagamenti/genera?userId=&categoria_id=&classe_sezione=&gruppo=  (staff)
 //   Preview: alunni candidati (iscritti con sezione), esclusi quelli che hanno
 //   già un pagamento con lo stesso `gruppo`.
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
 
     const q = parseQuery(request, getQuerySchema)
     if ('response' in q) return q.response
-    const scuolaId = q.data.scuola_id || auth.user.scuola_id
+    const scuolaIdClient = q.data.scuola_id
     const classeSezione = q.data.classe_sezione
     const gruppo = q.data.gruppo
 
     const supabase = await createAdminClient()
 
+    // Scope multi-scuola: MAI fidarsi dello scuola_id del client. Filtra la
+    // preview sui plessi accessibili; lo scuolaId del client serve SOLO a
+    // restringere dentro quell'insieme (se accessibile).
+    const scuoleAccessibili = await resolveScuoleAttive(request, supabase, auth.user)
+    const scuoleFiltro =
+      scuolaIdClient && scuoleAccessibili.includes(scuolaIdClient)
+        ? [scuolaIdClient]
+        : scuoleAccessibili
+
     let alQuery = supabase
       .from('alunni')
       .select('id, nome, cognome, classe_sezione, section_id, scuola_id')
       .eq('stato', 'iscritto')
-    if (scuolaId) alQuery = alQuery.eq('scuola_id', scuolaId)
+      .in('scuola_id', scuoleFiltro)
     if (classeSezione) alQuery = alQuery.eq('classe_sezione', classeSezione)
     const { data: alunniRaw } = await alQuery
     const alunni = (alunniRaw || []).filter((a) => a.classe_sezione != null || a.section_id != null)

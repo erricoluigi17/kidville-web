@@ -11,9 +11,10 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import type { LucideIcon } from 'lucide-react';
-import { Search, X, ChevronDown } from 'lucide-react';
+import { Search, X, ChevronDown, Check } from 'lucide-react';
 import { cx } from '@/lib/ui/cx';
 import { SHADOW_CARD, SHADOW_FLOAT } from '@/components/ui/Card';
+import { useSediAttive } from '@/lib/context/sede-context';
 
 export type Tone = 'green' | 'info' | 'warn' | 'error' | 'success' | 'neutral' | 'yellow';
 
@@ -268,29 +269,28 @@ export function Drawer({ open, onClose, title, subtitle, children, footer, width
   );
 }
 
-/** Selettore sede della TopBar: fetch reale /api/admin/schools, dropdown. */
+/**
+ * Selettore sede della TopBar: MULTI-select (Fase B). Le sedi accessibili e la
+ * selezione vivono nel contesto condiviso (@/lib/context/sede-context), che
+ * persiste il cookie `sedi_attive` e fa ri-scopare i dati server-side. Il
+ * dropdown resta aperto durante il toggle (selezione multipla); "Tutte le sedi"
+ * azzera il filtro. Con una sola sede accessibile il toggle è inerte (già "tutte").
+ */
 export function SedeSelector({ userId }: { userId?: string | null }) {
+  const { sedi, effettive, toggle, tutte } = useSediAttive();
   const [open, setOpen] = useState(false);
-  const [sedi, setSedi] = useState<{ id: string; nome: string; citta?: string | null; attiva?: boolean }[]>([]);
   const [totAlunni, setTotAlunni] = useState<number | null>(null);
-  const [sel, setSel] = useState<string | null>(null); // null = tutte le sedi
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const q = userId ? `?userId=${userId}` : '';
-    fetch(`/api/admin/schools${q}`)
-      .then((r) => r.json())
-      .then((d) => { const list = Array.isArray(d) ? d : d?.data ?? []; setSedi(list.filter((s: { attiva?: boolean }) => s.attiva !== false)); })
-      .catch(() => {});
-  }, [userId]);
-
-  useEffect(() => {
-    const q = userId ? `?userId=${userId}` : '';
-    fetch(`/api/admin/dashboard${q}`)
+    // `x-sedi`: segnala lo scope attivo (il server scopa dal cookie) e fa
+    // ri-conteggiare al cambio selezione. effettive è così referenziato (deps).
+    fetch(`/api/admin/dashboard${q}`, { headers: { 'x-sedi': effettive.join(',') } })
       .then((r) => r.json())
       .then((d) => { const n = d?.studenti?.iscritti ?? d?.data?.studenti?.iscritti; if (typeof n === 'number') setTotAlunni(n); })
       .catch(() => {});
-  }, [userId]);
+  }, [userId, effettive]);
 
   useEffect(() => {
     const onDoc = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
@@ -298,10 +298,15 @@ export function SedeSelector({ userId }: { userId?: string | null }) {
     return () => document.removeEventListener('mousedown', onDoc);
   }, []);
 
-  const current = sel ? sedi.find((s) => s.id === sel) : null;
+  const sel = new Set(effettive);
+  const tutteAttive = effettive.length === sedi.length; // include il caso "cookie vuoto"
   const strutture = (n: number) => `${n} struttur${n === 1 ? 'a' : 'e'}`;
-  const nome = current?.nome ?? (sedi.length === 1 ? sedi[0].nome : 'Tutte le sedi');
-  const meta = current ? current.citta ?? '' : `${totAlunni != null ? `${totAlunni} alunni · ` : ''}${strutture(sedi.length)}`;
+  const nome = tutteAttive
+    ? 'Tutte le sedi'
+    : effettive.length === 1
+      ? (sedi.find((s) => s.id === effettive[0])?.nome ?? '1 sede')
+      : `${effettive.length} sedi`;
+  const meta = `${totAlunni != null ? `${totAlunni} alunni · ` : ''}${strutture(tutteAttive ? sedi.length : effettive.length)}`;
 
   return (
     <div ref={ref} className="relative">
@@ -315,9 +320,9 @@ export function SedeSelector({ userId }: { userId?: string | null }) {
       </button>
       {open && (
         <div className="absolute left-0 top-[calc(100%+8px)] z-[60] w-[264px] rounded-[14px] bg-kidville-white p-1.5" style={{ boxShadow: SHADOW_FLOAT }}>
-          <SedeRow active={sel === null} nome="Tutte le sedi" meta={`${sedi.length} strutture`} onClick={() => { setSel(null); setOpen(false); }} />
+          <SedeRow active={tutteAttive} nome="Tutte le sedi" meta={`${sedi.length} ${sedi.length === 1 ? 'struttura' : 'strutture'}`} onClick={() => { tutte(); }} />
           {sedi.map((s) => (
-            <SedeRow key={s.id} active={sel === s.id} nome={s.nome} meta={s.citta ?? ''} onClick={() => { setSel(s.id); setOpen(false); }} />
+            <SedeRow key={s.id} active={!tutteAttive && sel.has(s.id)} nome={s.nome} meta="" onClick={() => { toggle(s.id); }} />
           ))}
         </div>
       )}
@@ -333,6 +338,7 @@ function SedeRow({ active, nome, meta, onClick }: { active: boolean; nome: strin
         <span className="block truncate font-barlow text-[14.5px] font-extrabold uppercase text-kidville-green">{nome}</span>
         {meta && <span className="block truncate font-maven text-[11.5px] text-kidville-muted">{meta}</span>}
       </span>
+      {active && <Check size={16} className="shrink-0 text-kidville-green" />}
     </button>
   );
 }

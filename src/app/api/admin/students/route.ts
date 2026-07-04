@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireStaff } from '@/lib/auth/require-staff';
+import { resolveScuoleAttive, resolveScuolaScrittura } from '@/lib/auth/scope';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 
@@ -107,11 +108,12 @@ export async function POST(request: NextRequest) {
 
         const { nome, cognome, data_nascita } = body;
 
-        // scuola_id: usa il valore dal body se presente, altrimenti default della scuola principale
-        const SCUOLA_ID_DEFAULT = '11111111-1111-1111-1111-111111111111';
+        // scuola_id: risolto dallo scope dell'admin (una sola sede per la scrittura).
+        const sw = await resolveScuolaScrittura(request, supabase, auth.user, body.scuola_id);
+        if (sw.response) return sw.response;
 
         const record: Record<string, unknown> = {
-            scuola_id: body.scuola_id || SCUOLA_ID_DEFAULT,
+            scuola_id: sw.scuolaId,
             nome,
             cognome,
             data_nascita,
@@ -177,7 +179,7 @@ export async function GET(request: NextRequest) {
     const q = parseQuery(request, getQuerySchema);
     if ('response' in q) return q.response;
     // Paginazione: limit clampato 1..1000 (default 200) + offset; shape array nudo invariata.
-    const { scuola_id: scuolaId, classe_sezione: classeSezione, stato, limit, offset } = q.data;
+    const { classe_sezione: classeSezione, stato, limit, offset } = q.data;
 
     try {
         const supabase = await createAdminClient();
@@ -202,7 +204,8 @@ export async function GET(request: NextRequest) {
             .order('cognome', { ascending: true })
             .range(offset, offset + limit - 1);
 
-        if (scuolaId) query = query.eq('scuola_id', scuolaId);
+        // Scope multi-sede: solo i plessi attivi (selezione SedeSelector ∩ accessibili).
+        query = query.in('scuola_id', await resolveScuoleAttive(request, supabase, auth.user));
         if (classeSezione) query = query.eq('classe_sezione', classeSezione);
         if (stato) query = query.eq('stato', stato);
 

@@ -1,14 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { resolveScuoleAttive, resolveScuolaScrittura } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { sendEmail, credentialsEmailBody } from '@/lib/email/send'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { z } from 'zod'
 import type { EnrollmentSubmissionData, EnrollmentAdult, EnrollmentChild } from '@/types/database.types'
-
-const DEFAULT_SCUOLA_ID = '11111111-1111-1111-1111-111111111111'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({
@@ -45,6 +44,7 @@ export async function GET(request: NextRequest) {
     const { data, error } = await supabase
       .from('enrollment_submissions')
       .select('*')
+      .in('scuola_id', await resolveScuoleAttive(request, supabase, auth.user))
       .order('created_at', { ascending: false })
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json(data)
@@ -99,7 +99,11 @@ export async function PATCH(request: NextRequest) {
     }
 
     const data = sub.data as EnrollmentSubmissionData
-    const scuolaId = sub.scuola_id || DEFAULT_SCUOLA_ID
+    // scuola_id: risolto dallo scope dell'admin (una sola sede), preferendo
+    // quella dell'invio se accessibile.
+    const sw = await resolveScuolaScrittura(request, supabase, auth.user, sub.scuola_id ?? undefined)
+    if (sw.response) return sw.response
+    const scuolaId = sw.scuolaId as string
     const children = data.children || []
     const adults = data.adults || []
 

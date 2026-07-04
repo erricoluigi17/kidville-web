@@ -9,8 +9,7 @@ import { GeneratoreCategoria } from '@/components/features/admin/pagamenti/Gener
 import { TicketMensaPanel } from '@/components/features/admin/pagamenti/TicketMensaPanel';
 import { CockpitPage, PageHeader, Tabs } from '@/components/ui/cockpit';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
-
-const SCUOLA_ID = '11111111-1111-1111-1111-111111111111';
+import { SedeRequired } from '@/lib/context/sede-context';
 
 type Tab = 'scadenziario' | 'rette' | 'categoria' | 'ticket';
 
@@ -48,12 +47,16 @@ function PagamentiInner() {
                 ]}
             />
 
-            <div className="bg-kidville-white rounded-2xl shadow-sm p-4 md:p-6">
-                {tab === 'scadenziario' && userId && <PaymentsDashboard userId={userId} scuolaId={SCUOLA_ID} />}
-                {tab === 'rette' && userId && <GeneratoreRette userId={userId} scuolaId={SCUOLA_ID} />}
-                {tab === 'categoria' && userId && <GeneratoreCategoria userId={userId} scuolaId={SCUOLA_ID} />}
-                {tab === 'ticket' && userId && <TicketMensaPanel userId={userId} scuolaId={SCUOLA_ID} />}
-            </div>
+            <SedeRequired cosa="i pagamenti">
+                {(scuolaId) => (
+                    <div className="bg-kidville-white rounded-2xl shadow-sm p-4 md:p-6">
+                        {tab === 'scadenziario' && userId && <PaymentsDashboard userId={userId} scuolaId={scuolaId} />}
+                        {tab === 'rette' && userId && <GeneratoreRette userId={userId} scuolaId={scuolaId} />}
+                        {tab === 'categoria' && userId && <GeneratoreCategoria userId={userId} scuolaId={scuolaId} />}
+                        {tab === 'ticket' && userId && <TicketMensaPanel userId={userId} scuolaId={scuolaId} />}
+                    </div>
+                )}
+            </SedeRequired>
         </CockpitPage>
     );
 }

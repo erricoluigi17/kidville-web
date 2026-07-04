@@ -45,6 +45,10 @@ export const IDS = {
   SCUOLA: 'e2e00000-0000-4000-8000-000000000001',
   SEC_GIRASOLI: 'e2e00000-0000-4000-8000-000000000011',
   SEC_TULIPANI: 'e2e00000-0000-4000-8000-000000000012',
+  // Sezione DEDICATA agli alunni importati dal flusso pubblico d'iscrizione:
+  // isola il loro conteggio da Girasoli/Tulipani (l'appello docente su Girasoli
+  // esige esattamente 2 alunni → "Completo"). Vedi public-iscrizione.spec.ts.
+  SEC_ISCRIZIONE: 'e2e00000-0000-4000-8000-000000000013',
   A1: 'e2e00000-0000-4000-8000-000000000101', // Aurora Arcobaleno-E2E (Girasoli)
   A2: 'e2e00000-0000-4000-8000-000000000102', // Bruno Baleno-E2E (Girasoli)
   A3: 'e2e00000-0000-4000-8000-000000000103', // Clara Cometa-E2E (Tulipani)
@@ -148,10 +152,12 @@ async function main() {
     avvisi_config: { ruoli_pubblicazione: ['admin', 'teacher'] },
   }, { onConflict: 'scuola_id' }));
 
-  // 3. Sezioni (l'appello/diario docente sono agganciati al nome "Girasoli")
+  // 3. Sezioni (l'appello/diario docente sono agganciati al nome "Girasoli";
+  //    "Nuovi Iscritti" è la sezione-parcheggio degli import pubblici).
   must('sections', await db.from('sections').upsert([
     { id: IDS.SEC_GIRASOLI, scuola_id: IDS.SCUOLA, name: 'Girasoli', school_type: 'infanzia' },
     { id: IDS.SEC_TULIPANI, scuola_id: IDS.SCUOLA, name: 'Tulipani', school_type: 'infanzia' },
+    { id: IDS.SEC_ISCRIZIONE, scuola_id: IDS.SCUOLA, name: 'Nuovi Iscritti', school_type: 'infanzia' },
   ], { onConflict: 'id' }));
 
   // 4. Utenti Auth reali (login UI con password) + righe utenti (id == auth.users.id)
@@ -213,7 +219,20 @@ async function main() {
     must('reset chat_threads', await db.from('chat_threads').delete().in('id', threadIds));
   }
 
-  // Artefatti del flusso pubblico d'iscrizione dei run precedenti
+  // Artefatti del flusso pubblico d'iscrizione dei run precedenti.
+  // NB: l'alunno importato ha id RANDOM (non è in ALUNNI_E2E), quindi le sue
+  // righe dipendenti (diario/presenze/…, create dalla suite del run precedente)
+  // vanno eliminate PRIMA, o il delete viola le FK (eventi_diario_alunno_id_fkey).
+  const alunniIscr = await db.from('alunni').select('id').eq('codice_fiscale', ISCRIZIONE_E2E.cfChild);
+  must('lettura alunni iscrizione', alunniIscr);
+  const alunniIscrIds = (alunniIscr.data ?? []).map((a) => a.id);
+  if (alunniIscrIds.length > 0) {
+    must('reset diario iscrizione', await db.from('eventi_diario').delete().in('alunno_id', alunniIscrIds));
+    must('reset presenze iscrizione', await db.from('presenze').delete().in('alunno_id', alunniIscrIds));
+    must('reset pagamenti iscrizione', await db.from('pagamenti').delete().in('alunno_id', alunniIscrIds));
+    must('reset armadietto iscrizione', await db.from('armadietto').delete().in('alunno_id', alunniIscrIds));
+    must('reset legami iscrizione', await db.from('legame_genitori_alunni').delete().in('alunno_id', alunniIscrIds));
+  }
   must('reset iscrizione alunni', await db.from('alunni').delete().eq('codice_fiscale', ISCRIZIONE_E2E.cfChild));
   must('reset iscrizione parents', await db.from('parents').delete().eq('fiscal_code', ISCRIZIONE_E2E.cfAdult));
   const utenteIscr = await db.from('utenti').select('id').eq('email', ISCRIZIONE_E2E.email).maybeSingle();

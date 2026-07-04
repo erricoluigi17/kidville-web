@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { requireStaff } from '@/lib/auth/require-staff'
+import { requireStaff, requireDocente } from '@/lib/auth/require-staff'
+import { resolveScuolaScrittura } from '@/lib/auth/scope'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 
@@ -50,17 +51,24 @@ const deleteQuerySchema = z.object({
 // GET /api/admin/primaria/giudizi?scuolaId=
 export async function GET(request: NextRequest) {
   try {
+    const auth = await requireDocente(request)
+    if (auth.response) return auth.response
+
     const q = parseQuery(request, getQuerySchema)
     if ('response' in q) return q.response
     const { scuolaId } = q.data
 
     const supabase = await createAdminClient()
+    const s = await resolveScuolaScrittura(request, supabase, auth.user, scuolaId)
+    if (s.response) return s.response
+    const sede = s.scuolaId!
+
     const [{ data: scala }, { data: template }] = await Promise.all([
-      supabase.from('giudizi_sintetici_scala').select('*').eq('scuola_id', scuolaId).order('ordine'),
+      supabase.from('giudizi_sintetici_scala').select('*').eq('scuola_id', sede).order('ordine'),
       supabase
         .from('giudizio_template')
         .select('*')
-        .or(`scuola_id.eq.${scuolaId},scuola_id.is.null`)
+        .or(`scuola_id.eq.${sede},scuola_id.is.null`)
         .order('dimensione'),
     ])
     return NextResponse.json({ success: true, data: { scala: scala ?? [], template: template ?? [] } })
@@ -85,7 +93,10 @@ export async function POST(request: NextRequest) {
       const b = await parseBody(request, scalaBodySchema)
       if ('response' in b) return b.response
       const { scuolaId, etichetta, ordine, valoreNumerico, giudizioDescrittivo, attivo } = b.data
-      const row: Record<string, unknown> = { scuola_id: scuolaId, etichetta, ordine: ordine ?? 0 }
+      const s = await resolveScuolaScrittura(request, supabase, auth.user, scuolaId)
+      if (s.response) return s.response
+      const sede = s.scuolaId!
+      const row: Record<string, unknown> = { scuola_id: sede, etichetta, ordine: ordine ?? 0 }
       if (valoreNumerico !== undefined) row.valore_numerico = valoreNumerico === null || valoreNumerico === '' ? null : Number(valoreNumerico)
       if (giudizioDescrittivo !== undefined) row.giudizio_descrittivo = giudizioDescrittivo || null
       if (attivo !== undefined) row.attivo = !!attivo
@@ -102,6 +113,9 @@ export async function POST(request: NextRequest) {
       const b = await parseBody(request, scalaRenameBodySchema)
       if ('response' in b) return b.response
       const { scuolaId, id, etichetta } = b.data
+      const s = await resolveScuolaScrittura(request, supabase, auth.user, scuolaId)
+      if (s.response) return s.response
+      const sede = s.scuolaId!
 
       // Etichetta vecchia: serve per propagare la rinomina ai giudizi descrittivi
       // configurati (referenziati per testo via etichetta_voto).
@@ -109,7 +123,7 @@ export async function POST(request: NextRequest) {
         .from('giudizi_sintetici_scala')
         .select('etichetta')
         .eq('id', id)
-        .eq('scuola_id', scuolaId)
+        .eq('scuola_id', sede)
         .maybeSingle()
       if (!prev) return NextResponse.json({ error: 'Giudizio non trovato' }, { status: 404 })
 
@@ -117,7 +131,7 @@ export async function POST(request: NextRequest) {
         .from('giudizi_sintetici_scala')
         .update({ etichetta })
         .eq('id', id)
-        .eq('scuola_id', scuolaId)
+        .eq('scuola_id', sede)
         .select()
         .single()
       if (error) return NextResponse.json({ error: error.message }, { status: 500 })
@@ -128,7 +142,7 @@ export async function POST(request: NextRequest) {
         const { error: cascadeErr } = await supabase
           .from('scrutinio_giudizio_descrittivo')
           .update({ etichetta_voto: etichetta })
-          .eq('scuola_id', scuolaId)
+          .eq('scuola_id', sede)
           .eq('etichetta_voto', prev.etichetta)
         if (cascadeErr) return NextResponse.json({ error: cascadeErr.message }, { status: 500 })
       }
@@ -140,9 +154,12 @@ export async function POST(request: NextRequest) {
       const b = await parseBody(request, templateBodySchema)
       if ('response' in b) return b.response
       const { scuolaId, dimensione, valore, frammento } = b.data
+      const s = await resolveScuolaScrittura(request, supabase, auth.user, scuolaId)
+      if (s.response) return s.response
+      const sede = s.scuolaId!
       const { data, error } = await supabase
         .from('giudizio_template')
-        .upsert({ scuola_id: scuolaId, dimensione, valore, frammento }, { onConflict: 'scuola_id,dimensione,valore' })
+        .upsert({ scuola_id: sede, dimensione, valore, frammento }, { onConflict: 'scuola_id,dimensione,valore' })
         .select()
         .single()
       if (error) return NextResponse.json({ error: error.message }, { status: 500 })
@@ -168,7 +185,10 @@ export async function DELETE(request: NextRequest) {
 
     const table = tipo === 'scala' ? 'giudizi_sintetici_scala' : 'giudizio_template'
     const supabase = await createAdminClient()
-    const { error } = await supabase.from(table).delete().eq('id', id)
+    const s = await resolveScuolaScrittura(request, supabase, auth.user)
+    if (s.response) return s.response
+    const sede = s.scuolaId!
+    const { error } = await supabase.from(table).delete().eq('id', id).eq('scuola_id', sede)
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json({ success: true })
   } catch (err) {

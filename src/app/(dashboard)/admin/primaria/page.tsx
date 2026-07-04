@@ -7,8 +7,7 @@ import { OrarioManager } from '@/components/features/admin/primaria/OrarioManage
 import { FascicoloAuditViewer } from '@/components/features/admin/primaria/FascicoloAuditViewer';
 import { CockpitPage, PageHeader, Tabs } from '@/components/ui/cockpit';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
-
-const SCUOLA_ID = '11111111-1111-1111-1111-111111111111';
+import { SedeRequired, useSediAttive } from '@/lib/context/sede-context';
 
 type Tab = 'registri' | 'orario' | 'fascicoli';
 
@@ -21,21 +20,24 @@ interface Section {
 
 function PrimariaAdminInner() {
   const { userId } = useSessionIdentity();
+  const { sedeCorrente } = useSediAttive();
   const [tab, setTab] = useState<Tab>('registri');
   const [sezioni, setSezioni] = useState<Section[]>([]);
   const [sezioneId, setSezioneId] = useState<string>('');
 
   useEffect(() => {
-    fetch(`/api/admin/sections?scuola_id=${SCUOLA_ID}`)
+    if (!sedeCorrente) return; // sede ambigua: i pannelli mostrano l'avviso
+    // Il server scopa le sezioni dal cookie; `x-sedi` ne fa la chiave di re-fetch.
+    fetch(`/api/admin/sections`, { headers: { 'x-sedi': sedeCorrente } })
       .then((r) => r.json())
       .then((d) => {
         const list: Section[] = Array.isArray(d) ? d.filter((s: Section) => s.school_type === 'primaria') : [];
         setSezioni(list);
-        // Update funzionale: nessuna dipendenza da sezioneId, deps [] pulite.
+        // Update funzionale: nessuna dipendenza da sezioneId, deps pulite.
         if (list.length) setSezioneId((cur) => cur || list[0].id);
       })
       .catch(() => {});
-  }, []);
+  }, [sedeCorrente]);
 
   return (
     <CockpitPage max={1100}>
@@ -74,13 +76,17 @@ function PrimariaAdminInner() {
         ]}
       />
 
-      <div className="rounded-card bg-kidville-white p-4 md:p-6 shadow-sm">
-          {userId && tab === 'registri' && <RegistriClassePanel scuolaId={SCUOLA_ID} userId={userId} />}
-          {userId && tab === 'orario' && (
-            <OrarioManager sectionId={sezioneId} scuolaId={SCUOLA_ID} userId={userId} />
-          )}
-          {userId && tab === 'fascicoli' && <FascicoloAuditViewer scuolaId={SCUOLA_ID} userId={userId} />}
-        </div>
+      <SedeRequired cosa="la primaria">
+        {(scuolaId) => (
+          <div className="rounded-card bg-kidville-white p-4 md:p-6 shadow-sm">
+            {userId && tab === 'registri' && <RegistriClassePanel scuolaId={scuolaId} userId={userId} />}
+            {userId && tab === 'orario' && (
+              <OrarioManager sectionId={sezioneId} scuolaId={scuolaId} userId={userId} />
+            )}
+            {userId && tab === 'fascicoli' && <FascicoloAuditViewer scuolaId={scuolaId} userId={userId} />}
+          </div>
+        )}
+      </SedeRequired>
     </CockpitPage>
   );
 }

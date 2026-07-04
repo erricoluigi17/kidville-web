@@ -1,8 +1,9 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireKitchenRead } from '@/lib/auth/require-staff'
-import { DEFAULT_SCUOLA, loadResolveOptions } from '@/lib/mensa/server'
+import { loadResolveOptions } from '@/lib/mensa/server'
+import { resolveScuolaScrittura } from '@/lib/auth/scope'
 import { resolveMenuGiorno } from '@/lib/mensa/resolveMenu'
 import { allergeniAlunno, conflittiAllergie, type ConflittoAllergia } from '@/lib/mensa/allergeni'
 import { parseQuery } from '@/lib/validation/http'
@@ -38,7 +39,7 @@ interface AlunnoReport {
 //   col menu del giorno.
 //   - admin/coordinator/cuoca: tutte le classi (filtro sezione opzionale)
 //   - educator: SOLO la propria sezione (parametro `sezione` obbligatorio)
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   try {
     const auth = await requireKitchenRead(request)
     if (auth.response) return auth.response
@@ -47,7 +48,6 @@ export async function GET(request: Request) {
     const qp = parseQuery(request, getQuerySchema)
     if ('response' in qp) return qp.response
     const data = qp.data.data ?? new Date().toISOString().slice(0, 10)
-    const scuolaId = qp.data.scuola_id || user.scuola_id || DEFAULT_SCUOLA
     const sezione = qp.data.sezione
 
     if (user.role === 'educator' && !sezione) {
@@ -55,6 +55,10 @@ export async function GET(request: Request) {
     }
 
     const supabase = await createAdminClient()
+
+    const sw = await resolveScuolaScrittura(request, supabase, user, qp.data.scuola_id ?? undefined)
+    if (sw.response) return sw.response
+    const scuolaId = sw.scuolaId as string
 
     // prenotazioni attive per la data
     const { data: pren } = await supabase

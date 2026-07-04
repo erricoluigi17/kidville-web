@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff, requireUser } from '@/lib/auth/require-staff'
+import { assertAlunnoInScope } from '@/lib/auth/scope'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 
@@ -16,7 +17,6 @@ const postBodySchema = z.object({
   pezzi: z.coerce.number().refine((v) => v > 0, 'pezzi deve essere > 0'),
   costo: z.coerce.number().refine((v) => v >= 0, 'costo deve essere >= 0'),
   metodo: z.string().nullish(),
-  scuola_id: zUuid.nullish(),
 })
 
 // GET /api/pagamenti/ticket?alunno_id=&userId=
@@ -49,7 +49,7 @@ export async function GET(request: Request) {
 }
 
 // POST /api/pagamenti/ticket  (staff) — ricarica ticket mensa
-// Body: { userId, alunno_id, pezzi, costo, metodo?, scuola_id? }
+// Body: { userId, alunno_id, pezzi, costo, metodo? }  (scuola_id derivato dall'alunno)
 // Un'unica azione: incrementa saldo_ticket E crea un pagamento Mensa già saldato.
 export async function POST(request: Request) {
   try {
@@ -63,12 +63,15 @@ export async function POST(request: Request) {
     const { alunno_id, pezzi, costo } = body
 
     const supabase = await createAdminClient()
-    let scuolaId = body.scuola_id
-    if (!scuolaId) {
-      const { data: al } = await supabase.from('alunni').select('scuola_id').eq('id', alunno_id).maybeSingle()
-      if (!al) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
-      scuolaId = al.scuola_id
-    }
+
+    // scoping: l'alunno deve stare nei plessi dello staff
+    const scopeErr = await assertAlunnoInScope(supabase, user, alunno_id)
+    if (scopeErr) return scopeErr
+
+    // scuola_id derivato SEMPRE dall'alunno (mai dal client)
+    const { data: al } = await supabase.from('alunni').select('scuola_id').eq('id', alunno_id).maybeSingle()
+    if (!al) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
+    const scuolaId = al.scuola_id
 
     // 1) incrementa saldo ticket (upsert)
     const { data: cur } = await supabase.from('ticket_mensa').select('saldo_ticket').eq('alunno_id', alunno_id).maybeSingle()

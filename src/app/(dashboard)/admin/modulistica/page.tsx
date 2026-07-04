@@ -7,8 +7,7 @@ import {
 } from 'lucide-react';
 import { PageHeader } from '@/components/ui/cockpit';
 import { btnClass } from '@/components/ui/Btn';
-
-const SCUOLA_ID = '11111111-1111-1111-1111-111111111111';
+import { SedeNotice, useSediAttive } from '@/lib/context/sede-context';
 
 type FormType = 'sondaggio' | 'gradimento' | 'autorizzazione';
 
@@ -82,6 +81,7 @@ interface PreInscription {
 }
 
 export default function AdminModulisticaPage() {
+  const { sedeCorrente, loading: sediLoading } = useSediAttive();
   const [activeTab, setActiveTab] = useState<'moduli-genitori' | 'moduli-esterni' | 'attesa' | 'odt'>('moduli-genitori');
   const [forms, setForms] = useState<FormTemplate[]>([]);
   const [preInscriptions] = useState<PreInscription[]>([]);
@@ -113,22 +113,25 @@ export default function AdminModulisticaPage() {
   const [toast, setToast] = useState('');
 
   const fetchInitialData = useCallback(async () => {
+    if (!sedeCorrente) return; // sede ambigua: mostro l'avviso, nessuna fetch
     try {
+      // Il server scopa forms/sezioni dal cookie; `x-sedi` ne fa la chiave di re-fetch.
+      const hdr = { 'x-sedi': sedeCorrente };
       // 1. Fetch Forms
-      const fRes = await fetch(`/api/admin/forms?scuola_id=${SCUOLA_ID}`).catch(() => null);
+      const fRes = await fetch(`/api/admin/forms`, { headers: hdr }).catch(() => null);
       const fData = fRes ? await fRes.json().catch(() => null) : null;
       if (Array.isArray(fData)) setForms(fData);
 
       // 2. Le pre-iscrizioni sono gestite nella nuova dashboard /admin/iscrizioni
 
       // 3. Fetch Classes/Sections
-      const sRes = await fetch('/api/admin/sections').catch(() => null);
+      const sRes = await fetch('/api/admin/sections', { headers: hdr }).catch(() => null);
       const sData = sRes ? await sRes.json().catch(() => null) : null;
       if (Array.isArray(sData)) setSections(sData);
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [sedeCorrente]);
 
   useEffect(() => {
     fetchInitialData();
@@ -206,7 +209,7 @@ export default function AdminModulisticaPage() {
           target_classes: formClasses,
           expiration_date: formExpiration || null,
           fields: formFields,
-          scuola_id: SCUOLA_ID
+          scuola_id: sedeCorrente
         })
       });
 
@@ -460,8 +463,15 @@ export default function AdminModulisticaPage() {
         </button>
       </div>
 
-      {/* Loading state */}
-      {isLoading ? (
+      {/* Guard sede: la modulistica opera su UNA sede alla volta */}
+      {sediLoading ? (
+        <div className="flex-1 flex flex-col items-center justify-center min-h-[40vh] gap-3">
+          <div className="w-10 h-10 border-4 border-kidville-green/30 border-t-kidville-green rounded-full animate-spin" />
+          <p className="font-maven text-kidville-muted">Caricamento in corso...</p>
+        </div>
+      ) : !sedeCorrente ? (
+        <SedeNotice cosa="la modulistica" />
+      ) : isLoading ? (
         <div className="flex-1 flex flex-col items-center justify-center min-h-[40vh] gap-3">
           <div className="w-10 h-10 border-4 border-kidville-green/30 border-t-kidville-green rounded-full animate-spin" />
           <p className="font-maven text-kidville-muted">Caricamento in corso...</p>

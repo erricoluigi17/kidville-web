@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireStaff } from '@/lib/auth/require-staff';
+import { resolveScuoleAttive, resolveScuolaScrittura } from '@/lib/auth/scope';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
@@ -48,7 +49,8 @@ export async function GET(request: NextRequest) {
         let query = supabase
             .from('sections')
             .select('*')
-            .order('name', { ascending: true });
+            .order('name', { ascending: true })
+            .in('scuola_id', await resolveScuoleAttive(request, supabase, auth.user));
 
         if (scuolaId) query = query.eq('scuola_id', scuolaId);
 
@@ -77,14 +79,15 @@ export async function POST(request: NextRequest) {
     try {
         const supabase = await createAdminClient();
 
-        const SCUOLA_ID_DEFAULT = '11111111-1111-1111-1111-111111111111';
-
         const { name, school_type, scuola_id } = b.data;
+
+        const sw = await resolveScuolaScrittura(request, supabase, auth.user, scuola_id ?? undefined);
+        if (sw.response) return sw.response;
 
         const record = {
             name,
             school_type: school_type || 'infanzia',
-            scuola_id: scuola_id || SCUOLA_ID_DEFAULT,
+            scuola_id: sw.scuolaId,
         };
 
         const { data, error } = await supabase

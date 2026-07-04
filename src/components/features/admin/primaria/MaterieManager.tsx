@@ -34,13 +34,13 @@ export function MaterieManager({ sectionId, sezione, userId, scuolaId }: Props) 
   const load = useCallback(async () => {
     if (!sectionId) return;
     try {
-      const r = await fetch(`/api/admin/primaria/materie?sectionId=${sectionId}`);
+      const r = await fetch(`/api/admin/primaria/materie?sectionId=${sectionId}`, { headers: { 'x-user-id': userId } });
       const d = await r.json();
       setMaterie(d.success ? d.data : []);
     } finally {
       setLoading(false);
     }
-  }, [sectionId]);
+  }, [sectionId, userId]);
 
   useEffect(() => {
     load();
@@ -63,14 +63,14 @@ export function MaterieManager({ sectionId, sezione, userId, scuolaId }: Props) 
   // Obiettivi della scuola per il livello dedotto + associazioni materia→obiettivo.
   useEffect(() => {
     if (!scuolaId) return;
-    fetch(`/api/admin/primaria/obiettivi?scuolaId=${scuolaId}&livello=${livello}`)
+    fetch(`/api/admin/primaria/obiettivi?scuolaId=${scuolaId}&livello=${livello}`, { headers: { 'x-user-id': userId } })
       .then((r) => r.json())
       .then((d) => { if (d.success) setObiettivi(d.data); });
-  }, [scuolaId, livello]);
+  }, [scuolaId, livello, userId]);
 
   useEffect(() => {
     if (!sectionId) return;
-    fetch(`/api/admin/primaria/materia-obiettivo?sectionId=${sectionId}`)
+    fetch(`/api/admin/primaria/materia-obiettivo?sectionId=${sectionId}`, { headers: { 'x-user-id': userId } })
       .then((r) => r.json())
       .then((d) => {
         if (d.success) {
@@ -79,7 +79,7 @@ export function MaterieManager({ sectionId, sezione, userId, scuolaId }: Props) 
           setAssoc(map);
         }
       });
-  }, [sectionId]);
+  }, [sectionId, userId]);
 
   const setObiettivo = async (materiaId: string, obiettivoId: string) => {
     setAssoc((prev) => ({ ...prev, [materiaId]: obiettivoId }));

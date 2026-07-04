@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { Suspense, useState, useEffect, useMemo, useCallback } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { Search, Filter, UserPlus, Users, FileDown, CheckCircle2, GraduationCap, Briefcase, AlertTriangle } from 'lucide-react';
 import { StudentTable } from '@/components/features/admin/StudentTable';
 import { StudentDetailPanel } from '@/components/features/admin/StudentDetailPanel';
@@ -32,13 +33,18 @@ interface Student {
 
 
 
-export default function AdminStudentsPage() {
+function AdminStudentsInner() {
+  // Tab iniziale dal query param (?tab=sections: back-link dal dettaglio sezione).
+  const search = useSearchParams();
   const [students, setStudents] = useState<Student[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterClass, setFilterClass] = useState('all');
   const [filterStatus, setFilterStatus] = useState('all');
-  const [viewType, setViewType] = useState<'child' | 'adult' | 'sections' | 'staff'>('child');
+  const [viewType, setViewType] = useState<'child' | 'adult' | 'sections' | 'staff'>(() => {
+    const t = search.get('tab');
+    return t === 'adult' || t === 'sections' || t === 'staff' ? t : 'child';
+  });
   
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
@@ -387,7 +393,7 @@ export default function AdminStudentsPage() {
 
       {/* Content area — switch by viewType */}
       {viewType === 'sections' ? (
-        <SectionsView onStudentClick={setSelectedStudent} />
+        <SectionsView />
       ) : (
         <>
           {/* Statistiche rapide — solo per alunni */}
@@ -464,5 +470,18 @@ export default function AdminStudentsPage() {
         }
       `}</style>
     </CockpitPage>
+  );
+}
+
+export default function AdminStudentsPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex-1 flex flex-col items-center justify-center min-h-[60vh] gap-4">
+        <div className="w-10 h-10 border-4 border-kidville-green/30 border-t-kidville-green rounded-full animate-spin" />
+        <p className="font-maven text-kidville-muted">Caricamento anagrafica...</p>
+      </div>
+    }>
+      <AdminStudentsInner />
+    </Suspense>
   );
 }

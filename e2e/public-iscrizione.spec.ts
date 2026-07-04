@@ -69,9 +69,10 @@ test.describe('import in segreteria', () => {
     await expect(richiesta).toBeVisible({ timeout: 15_000 });
     await richiesta.click();
 
-    // L'import esige una classe per bambino: prima sezione disponibile
-    // (l'alunno importato viene ripulito dal seed al run successivo).
-    await page.locator('select').first().selectOption({ index: 1 });
+    // L'import esige una classe per bambino: sezione DEDICATA agli iscritti,
+    // così non inquina il conteggio di Girasoli (appello docente) né di Tulipani.
+    // (l'alunno importato viene ripulito dal seed al run successivo.)
+    await page.locator('select').first().selectOption({ label: 'Nuovi Iscritti' });
     await page.getByRole('button', { name: 'Importa nelle anagrafiche' }).click();
 
     // Esito: import ok + credenziali + degrado email (RESEND non configurato).

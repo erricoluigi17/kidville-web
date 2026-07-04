@@ -1,32 +1,51 @@
 /**
- * Orchestratore emissione fattura elettronica (DL-017/018/019).
+ * Orchestratore emissione fattura elettronica (DL-017/018/019 + quote separati).
  *
- * Carica il pagamento saldato + l'intestatario + la config Aruba, assegna il
- * numero interno (sequenza per scuola/anno), genera l'XML FatturaPA, lo invia ad
- * Aruba (signin + upload) e persiste l'esito su `fatture_emesse` + `pagamenti`.
- * Nessun mock: se Aruba non è configurato/credenziali assenti ritorna un esito
- * `non_configurato` (HTTP 503) — niente più "successo finto".
+ * Carica il pagamento saldato, DETERMINA LE QUOTE di fatturazione (una sola nel
+ * caso normale; N per i genitori separati o gli ordini divise), e per ciascuna
+ * quota risolve l'intestatario (parents, via bridge), assegna un numero interno,
+ * genera l'XML FatturaPA e lo invia ad Aruba. Le quote sono INDIPENDENTI: quelle
+ * valide partono anche se un'altra fallisce (es. CF mancante), e ciascuna è
+ * idempotente (skip se esiste già una riga `fatture_emesse` non-scartata per
+ * quella quota). Nessun mock: senza credenziali Aruba ritorna `non_configurato`.
  */
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { arubaSignin, arubaUpload, resolveArubaCredentials, type ArubaConfig } from './client'
 import { buildFatturaElettronicaXml } from './fatturapa-xml'
+import { mapStatoAruba } from './stato'
+import { determinaQuoteFatturazione, resolveParentRegistry } from '@/lib/pagamenti/intestatari'
 
 export interface AttoreEmissione {
   id: string
 }
 
+/** Esito di una singola quota (riportato al chiamante per il caso multi-quota). */
+export interface EsitoQuota {
+  adultId: string
+  label: string
+  ok: boolean
+  numero?: number
+  uploadFileName?: string
+  motivo?: 'intestatario_mancante' | 'scartata' | 'idempotente'
+  messaggio?: string
+}
+
 export type EsitoEmissione =
-  | { ok: true; fatturaStato: 'in_attesa'; uploadFileName: string; numero: number }
+  | { ok: true; fatturaStato: 'in_attesa'; uploadFileName: string; numero: number; quote?: EsitoQuota[] }
   | {
       ok: false
       motivo: 'non_saldato' | 'non_configurato' | 'intestatario_mancante' | 'scartata' | 'errore'
       messaggio: string
       httpStatus: number
+      quote?: EsitoQuota[]
     }
 
 interface AlunnoNested {
+  id?: string
   nome?: string
   cognome?: string
+  genitori_separati?: boolean | null
+  retta_split_config?: { quote?: { adult_id: string; importo: number | string; etichetta?: string | null }[] } | null
   intestatario_fatture?: { tipo?: string; nome?: string; adult_id?: string } | null
 }
 
@@ -39,11 +58,11 @@ export async function emettiFatturaPagamento(
   pagamentoId: string,
   attore: AttoreEmissione
 ): Promise<EsitoEmissione> {
-  // 1. pagamento
+  // 1. pagamento + alunno (con i campi split)
   const { data: pag } = await supabase
     .from('pagamenti')
     .select(
-      'id, descrizione, importo, stato, scuola_id, fattura_causale, alunno_id, alunni:alunno_id ( nome, cognome, intestatario_fatture )'
+      'id, descrizione, importo, stato, scuola_id, fattura_causale, alunno_id, alunni:alunno_id ( id, nome, cognome, genitori_separati, retta_split_config, intestatario_fatture )'
     )
     .eq('id', pagamentoId)
     .single()
@@ -77,119 +96,188 @@ export async function emettiFatturaPagamento(
     }
   }
 
-  // 3. intestatario (persona fisica) dai parents
+  // 3. determina le quote di fatturazione
   const alunno = (Array.isArray(pag.alunni) ? pag.alunni[0] : pag.alunni) as AlunnoNested | null
-  const adultId = alunno?.intestatario_fatture?.adult_id
-  if (!adultId)
+  const quote = await determinaQuoteFatturazione(
+    supabase,
+    { id: pag.id, importo: pag.importo },
+    {
+      id: alunno?.id ?? pag.alunno_id,
+      genitori_separati: alunno?.genitori_separati,
+      retta_split_config: alunno?.retta_split_config,
+      intestatario_fatture: alunno?.intestatario_fatture,
+    }
+  )
+  if (quote.length === 0)
     return {
       ok: false,
       motivo: 'intestatario_mancante',
       messaggio: 'Intestatario fattura non impostato sull’anagrafica',
       httpStatus: 422,
     }
-  const { data: parent } = await supabase
-    .from('parents')
-    .select('first_name, last_name, fiscal_code, residence_address, residence_city, zip_code')
-    .eq('id', adultId)
-    .maybeSingle()
-  if (!parent?.fiscal_code)
-    return {
-      ok: false,
-      motivo: 'intestatario_mancante',
-      messaggio: 'Dati fiscali intestatario incompleti (codice fiscale mancante)',
-      httpStatus: 422,
-    }
+  const multi = quote.length > 1
 
-  // 4. numero interno (sequenza per scuola/anno)
+  // 4. righe fatture_emesse già presenti (per l'idempotenza per-quota)
+  const { data: esistenti } = await supabase
+    .from('fatture_emesse')
+    .select('id, numero, aruba_filename, sdi_stato, quota_adult_id')
+    .eq('pagamento_id', pagamentoId)
+  const righeEsistenti = (esistenti ?? []) as {
+    id: string
+    numero: number
+    aruba_filename: string | null
+    sdi_stato: number | null
+    quota_adult_id: string | null
+  }[]
+
+  // 5. emissione indipendente per quota
   const anno = new Date().getFullYear()
-  const { data: numeroData } = await supabase.rpc('prossimo_numero_fattura', {
-    p_scuola: pag.scuola_id,
-    p_anno: anno,
-  })
-  const numero = Number(numeroData ?? 1)
-
-  // 5. causale + XML
-  const causale = s(pag.fattura_causale) || s(pag.descrizione)
-  const importo = Number(pag.importo)
-  const xml = buildFatturaElettronicaXml({
-    progressivoInvio: String(numero).padStart(5, '0'),
-    numero: String(numero),
-    data: new Date().toISOString().slice(0, 10),
-    cedente: {
-      piva: s(fiscal.piva),
-      codiceFiscale: fiscal.cf ? s(fiscal.cf) : undefined,
-      denominazione: s(fiscal.ragione_sociale),
-      regimeFiscale: s(fiscal.regime) || 'RF01',
-      sede: {
-        indirizzo: s(fiscal.indirizzo) || s(fiscal.sede),
-        cap: s(fiscal.cap),
-        comune: s(fiscal.comune),
-        provincia: fiscal.provincia ? s(fiscal.provincia) : undefined,
-        nazione: 'IT',
-      },
-    },
-    cessionario: {
-      codiceFiscale: s(parent.fiscal_code),
-      nome: s(parent.first_name),
-      cognome: s(parent.last_name),
-      sede: {
-        indirizzo: s(parent.residence_address),
-        cap: s(parent.zip_code),
-        comune: s(parent.residence_city),
-        nazione: 'IT',
-      },
-    },
-    righe: [{ descrizione: causale, prezzoUnitario: importo }],
-    causale,
-  })
-
-  // 6. invio Aruba
-  const tokens = await arubaSignin(cfg.ambiente, creds)
-  const up = await arubaUpload(cfg.ambiente, tokens.accessToken, {
-    dataFileBase64: Buffer.from(xml, 'utf-8').toString('base64'),
-    senderPIVA: s(fiscal.piva),
-  })
-
-  const baseRow = {
-    pagamento_id: pagamentoId,
-    scuola_id: pag.scuola_id,
-    numero,
-    anno,
-    progressivo_invio: String(numero).padStart(5, '0'),
-    causale,
-    importo,
-    intestatario: { nome: parent.first_name, cognome: parent.last_name, codice_fiscale: parent.fiscal_code },
-    xml_inviato: xml,
-    creato_da: attore.id,
+  const causaleBase = s(pag.fattura_causale) || s(pag.descrizione)
+  let tokenCache: string | null = null
+  const ensureToken = async () => {
+    if (!tokenCache) tokenCache = (await arubaSignin(cfg.ambiente, creds)).accessToken
+    return tokenCache
   }
 
-  // 7. esito
-  if (!up.ok) {
+  const esiti: EsitoQuota[] = []
+  for (const q of quote) {
+    // idempotenza: esiste già una riga non-scartata per questa quota?
+    const gia = righeEsistenti.find((r) => {
+      const scartata = r.sdi_stato != null && mapStatoAruba(r.sdi_stato).isScarto
+      if (scartata) return false
+      return r.quota_adult_id === q.adultId || (!multi && r.quota_adult_id == null)
+    })
+    if (gia) {
+      esiti.push({ adultId: q.adultId, label: q.label, ok: true, numero: gia.numero, uploadFileName: gia.aruba_filename ?? undefined, motivo: 'idempotente' })
+      continue
+    }
+
+    // intestatario (persona fisica) risolto dal registry
+    const reg = await resolveParentRegistry(supabase, q.adultId)
+    if (!reg?.fiscal_code) {
+      const nome = [reg?.first_name, reg?.last_name].filter(Boolean).join(' ') || q.label || 'intestatario'
+      esiti.push({
+        adultId: q.adultId,
+        label: q.label,
+        ok: false,
+        motivo: 'intestatario_mancante',
+        messaggio: `Dati fiscali incompleti (codice fiscale mancante) per ${nome}`,
+      })
+      continue
+    }
+
+    // numero interno (sequenza per scuola/anno) — uno per quota
+    const { data: numeroData } = await supabase.rpc('prossimo_numero_fattura', { p_scuola: pag.scuola_id, p_anno: anno })
+    const numero = Number(numeroData ?? 1)
+
+    const causale = multi ? `${causaleBase} — quota ${q.label || reg.first_name || 'genitore'}` : causaleBase
+    const importoQuota = Number(q.importo)
+    const xml = buildFatturaElettronicaXml({
+      progressivoInvio: String(numero).padStart(5, '0'),
+      numero: String(numero),
+      data: new Date().toISOString().slice(0, 10),
+      cedente: {
+        piva: s(fiscal.piva),
+        codiceFiscale: fiscal.cf ? s(fiscal.cf) : undefined,
+        denominazione: s(fiscal.ragione_sociale),
+        regimeFiscale: s(fiscal.regime) || 'RF01',
+        sede: {
+          indirizzo: s(fiscal.indirizzo) || s(fiscal.sede),
+          cap: s(fiscal.cap),
+          comune: s(fiscal.comune),
+          provincia: fiscal.provincia ? s(fiscal.provincia) : undefined,
+          nazione: 'IT',
+        },
+      },
+      cessionario: {
+        codiceFiscale: s(reg.fiscal_code),
+        nome: s(reg.first_name),
+        cognome: s(reg.last_name),
+        sede: {
+          indirizzo: s(reg.residence_address),
+          cap: s(reg.zip_code),
+          comune: s(reg.residence_city),
+          nazione: 'IT',
+        },
+      },
+      righe: [{ descrizione: causale, prezzoUnitario: importoQuota }],
+      causale,
+    })
+
+    const baseRow = {
+      pagamento_id: pagamentoId,
+      scuola_id: pag.scuola_id,
+      numero,
+      anno,
+      progressivo_invio: String(numero).padStart(5, '0'),
+      causale,
+      importo: importoQuota,
+      intestatario: { nome: reg.first_name, cognome: reg.last_name, codice_fiscale: reg.fiscal_code },
+      xml_inviato: xml,
+      creato_da: attore.id,
+      quota_adult_id: q.adultId,
+      quota_label: q.label || null,
+      parent_registry_id: reg.id,
+    }
+
+    // invio Aruba (token condiviso fra le quote)
+    const token = await ensureToken()
+    const up = await arubaUpload(cfg.ambiente, token, {
+      dataFileBase64: Buffer.from(xml, 'utf-8').toString('base64'),
+      senderPIVA: s(fiscal.piva),
+    })
+
+    if (!up.ok) {
+      await supabase
+        .from('fatture_emesse')
+        .insert({ ...baseRow, sdi_stato: 2, sdi_stato_label: 'Errore upload', sdi_scarto_motivo: up.errorDescription ?? up.errorCode })
+      esiti.push({
+        adultId: q.adultId,
+        label: q.label,
+        ok: false,
+        motivo: 'scartata',
+        messaggio: up.errorDescription || `Emissione scartata (${up.errorCode})`,
+      })
+      continue
+    }
+
     await supabase
       .from('fatture_emesse')
-      .insert({ ...baseRow, sdi_stato: 2, sdi_stato_label: 'Errore upload', sdi_scarto_motivo: up.errorDescription ?? up.errorCode })
-    await supabase.from('pagamenti').update({ fattura_stato: 'scartata', fattura_causale: causale }).eq('id', pagamentoId)
+      .insert({ ...baseRow, aruba_filename: up.uploadFileName, sdi_stato: 1, sdi_stato_label: 'Presa in carico', inviata_il: new Date().toISOString() })
+    esiti.push({ adultId: q.adultId, label: q.label, ok: true, numero, uploadFileName: up.uploadFileName ?? undefined })
+  }
+
+  // 6. aggregato lato pagamento
+  const okEsiti = esiti.filter((e) => e.ok)
+  const nowIso = new Date().toISOString()
+  if (okEsiti.length === 0) {
+    await supabase.from('pagamenti').update({ fattura_stato: 'scartata', fattura_causale: causaleBase }).eq('id', pagamentoId)
+    const first = esiti[0]
     return {
       ok: false,
-      motivo: 'scartata',
-      messaggio: up.errorDescription || `Emissione scartata (${up.errorCode})`,
-      httpStatus: 502,
+      motivo: first?.motivo === 'intestatario_mancante' ? 'intestatario_mancante' : 'scartata',
+      messaggio: first?.messaggio ?? 'Emissione non riuscita',
+      httpStatus: first?.motivo === 'intestatario_mancante' ? 422 : 502,
+      quote: multi ? esiti : undefined,
     }
   }
 
-  const nowIso = new Date().toISOString()
-  await supabase
-    .from('fatture_emesse')
-    .insert({ ...baseRow, aruba_filename: up.uploadFileName, sdi_stato: 1, sdi_stato_label: 'Presa in carico', inviata_il: nowIso })
+  // Almeno una quota emessa → il pagamento va in attesa (lo SDI conferma via sync).
   await supabase
     .from('pagamenti')
     .update({
       fattura_stato: 'in_attesa',
-      fattura_aruba_id: up.uploadFileName,
-      fattura_causale: causale,
+      fattura_aruba_id: okEsiti[0].uploadFileName ?? null,
+      fattura_causale: causaleBase,
       fattura_emessa_il: nowIso,
     })
     .eq('id', pagamentoId)
 
-  return { ok: true, fatturaStato: 'in_attesa', uploadFileName: up.uploadFileName!, numero }
+  return {
+    ok: true,
+    fatturaStato: 'in_attesa',
+    uploadFileName: okEsiti[0].uploadFileName ?? '',
+    numero: okEsiti[0].numero ?? 0,
+    quote: multi ? esiti : undefined,
+  }
 }

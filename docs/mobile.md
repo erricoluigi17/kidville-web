@@ -89,15 +89,20 @@ npx cap doctor
 # --- Android ---
 # Apri in Android Studio
 npx cap open android
-# Build APK di debug da CLI (installabile su emulatore/device)
+# Build APK di debug da CLI (installabile su emulatore/device).
+# Gradle 8.14 NON supporta JDK 25 ("Unsupported class file major version 69"):
+# usare una JDK 21, es. la JBR di Android Studio.
+export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 cd android && ./gradlew assembleDebug
 #   → android/app/build/outputs/apk/debug/app-debug.apk
 
 # --- iOS (solo Mac con Xcode) ---
-npx cap open ios          # apre lo workspace in Xcode
-# Build simulatore da CLI:
-xcodebuild -workspace ios/App/App.xcworkspace -scheme App \
-  -sdk iphonesimulator -configuration Debug build
+npx cap open ios          # apre il progetto in Xcode
+# Build simulatore da CLI (Capacitor 8 usa Swift Package Manager: -project, NON
+# -workspace, e non esiste App.xcworkspace):
+xcodebuild -project ios/App/App.xcodeproj -scheme App \
+  -sdk iphonesimulator -configuration Debug \
+  -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
 ```
 
 ## Deep link
@@ -122,7 +127,23 @@ funzionalità offline/native e usare screenshot dell'app in uso.
 
 ## Stato build locale
 
-> Aggiornato in **M10.6** con l'esito reale delle build su questa macchina.
+Build **verificate in locale** in M10.6 su questa macchina (Xcode 26.2, Android
+SDK in `~/Library/Android/sdk`, JDK 21 = JBR di Android Studio):
 
-- Android APK debug: _(compilato in M10.6 — vedi commit)_
-- iOS simulator: _(compilato in M10.6 se Xcode presente — vedi commit)_
+- **Android APK debug**: ✅ `./gradlew assembleDebug` (JDK 21) → BUILD SUCCESSFUL
+  in ~36s → `android/app/build/outputs/apk/debug/app-debug.apk` (~7,2 MB,
+  installabile su emulatore/device). La JDK 25 di sistema è troppo recente per
+  Gradle 8.14 → usare la JBR 21.
+- **iOS simulator**: ✅ `xcodebuild -project ios/App/App.xcodeproj -scheme App
+  -sdk iphonesimulator … build` → `** BUILD SUCCEEDED **` (bundle `it.kidville.app`,
+  deployment target iOS 15, arch arm64 + x86_64 simulator). SPM risolve
+  `capacitor-swift-pm` 8.4.1 e i plugin locali (app, push-notifications,
+  status-bar).
+
+Gli APK/`.app` sono artefatti di build (gitignorati), non committati: i progetti
+`ios/` e `android/` sono la fonte da cui rigenerarli.
+
+**Restano gated** (credenziali/account esterni, fuori dal controllo del repo):
+pubblicazione su App Store / Google Play, invio push reale FCM/APNs, e l'URL
+HTTPS pubblico di produzione per `CAP_SERVER_URL` (dipende dal deploy Vercel —
+vedi `docs/cicd.md`).

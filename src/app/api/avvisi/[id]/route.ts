@@ -35,6 +35,56 @@ async function assertAvvisoInScope(
     return null;
 }
 
+// GET /api/avvisi/[id]
+// Singolo avviso (deep-link del dettaglio cockpit /admin/avvisi/[id]).
+export async function GET(request: Request, { params }: RouteParams) {
+    try {
+        const auth = await requireDocente(request);
+        if (auth.response) return auth.response;
+        const rawParams = await params;
+        const p = parseData(zUuid, rawParams.id);
+        if ('response' in p) return p.response;
+        const id = p.data;
+
+        const supabase = await createAdminClient();
+        const scopeErr = await assertAvvisoInScope(supabase, auth.user, id);
+        if (scopeErr) return scopeErr;
+
+        const { data, error } = await supabase
+            .from('avvisi')
+            .select('*')
+            .eq('id', id)
+            .maybeSingle();
+
+        if (error) {
+            console.error('Errore get avviso:', error);
+            return NextResponse.json({ error: error.message }, { status: 500 });
+        }
+        if (!data) {
+            return NextResponse.json({ error: 'Avviso non trovato' }, { status: 404 });
+        }
+
+        // Autore con query separata (nessun FK embed, come la route lista).
+        const { data: author } = await supabase
+            .from('utenti')
+            .select('nome, cognome, ruolo, first_name, last_name, role')
+            .eq('id', data.author_id)
+            .maybeSingle();
+
+        return NextResponse.json({
+            ...data,
+            author: author ? {
+                first_name: author.first_name || author.nome || '?',
+                last_name: author.last_name || author.cognome || '?',
+                role: author.role || author.ruolo || 'unknown',
+            } : { first_name: '?', last_name: '?', role: 'unknown' },
+        });
+    } catch (error) {
+        console.error('Errore API GET avviso:', error);
+        return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+    }
+}
+
 // PUT /api/avvisi/[id]
 // Body: { titolo, contenuto, tipo, target_scope, target_classes, scadenza, attachment_url }
 export async function PUT(request: Request, { params }: RouteParams) {

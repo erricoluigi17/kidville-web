@@ -213,7 +213,20 @@ async function main() {
     must('reset chat_threads', await db.from('chat_threads').delete().in('id', threadIds));
   }
 
-  // Artefatti del flusso pubblico d'iscrizione dei run precedenti
+  // Artefatti del flusso pubblico d'iscrizione dei run precedenti.
+  // NB: l'alunno importato ha id RANDOM (non è in ALUNNI_E2E), quindi le sue
+  // righe dipendenti (diario/presenze/…, create dalla suite del run precedente)
+  // vanno eliminate PRIMA, o il delete viola le FK (eventi_diario_alunno_id_fkey).
+  const alunniIscr = await db.from('alunni').select('id').eq('codice_fiscale', ISCRIZIONE_E2E.cfChild);
+  must('lettura alunni iscrizione', alunniIscr);
+  const alunniIscrIds = (alunniIscr.data ?? []).map((a) => a.id);
+  if (alunniIscrIds.length > 0) {
+    must('reset diario iscrizione', await db.from('eventi_diario').delete().in('alunno_id', alunniIscrIds));
+    must('reset presenze iscrizione', await db.from('presenze').delete().in('alunno_id', alunniIscrIds));
+    must('reset pagamenti iscrizione', await db.from('pagamenti').delete().in('alunno_id', alunniIscrIds));
+    must('reset armadietto iscrizione', await db.from('armadietto').delete().in('alunno_id', alunniIscrIds));
+    must('reset legami iscrizione', await db.from('legame_genitori_alunni').delete().in('alunno_id', alunniIscrIds));
+  }
   must('reset iscrizione alunni', await db.from('alunni').delete().eq('codice_fiscale', ISCRIZIONE_E2E.cfChild));
   must('reset iscrizione parents', await db.from('parents').delete().eq('fiscal_code', ISCRIZIONE_E2E.cfAdult));
   const utenteIscr = await db.from('utenti').select('id').eq('email', ISCRIZIONE_E2E.email).maybeSingle();

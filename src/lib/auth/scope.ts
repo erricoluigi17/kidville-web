@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, type NextRequest } from 'next/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { AppUser } from './require-staff'
 import { sezioniDiUtente } from '@/lib/sezioni/docenti'
@@ -31,6 +31,65 @@ export async function scuoleDiUtente(
   const extra = (data ?? []).map((r) => r.scuola_id as string)
   const set = new Set<string>([...own, ...extra])
   return [...set]
+}
+
+// =============================================================================
+// Sedi attive (selezione del SedeSelector → cookie). La selezione è una
+// preferenza UI: viene SEMPRE ri-validata server-side contro le sedi accessibili
+// (scuoleDiUtente), quindi manometterla non dà accesso a plessi non propri.
+// =============================================================================
+
+const COOKIE_SEDI = 'sedi_attive'
+
+function sediDalCookie(request: NextRequest): string[] {
+  // Difensivo: in test l'oggetto request può non avere `.cookies`.
+  const raw = request.cookies?.get?.(COOKIE_SEDI)?.value
+  if (!raw) return []
+  return raw.split(',').map((s) => s.trim()).filter(Boolean)
+}
+
+/**
+ * LETTURE: insieme di plessi su cui filtrare (`scuola_id IN (...)`). Sono le sedi
+ * selezionate nel SedeSelector (cookie) INTERSECATE con quelle accessibili. Cookie
+ * assente o intersezione vuota → tutte le accessibili. Mai vuoto se l'utente ha
+ * almeno un plesso.
+ */
+export async function resolveScuoleAttive(
+  request: NextRequest,
+  supabase: SupabaseClient,
+  user: AppUser,
+): Promise<string[]> {
+  const accessibili = await scuoleDiUtente(supabase, user)
+  const selezionate = sediDalCookie(request)
+  if (selezionate.length === 0) return accessibili
+  const set = new Set(accessibili)
+  const inter = selezionate.filter((id) => set.has(id))
+  return inter.length > 0 ? inter : accessibili
+}
+
+/**
+ * SCRITTURE (create/update che settano `scuola_id`): UNA sola sede. Ordine:
+ * `preferita`/body.scuola_id se accessibile → l'unica sede attiva (cookie) →
+ * l'unica sede accessibile → la sede primaria dell'utente. Se resta ambiguo
+ * (più sedi accessibili, nessuna indicata) ritorna una NextResponse 400.
+ */
+export async function resolveScuolaScrittura(
+  request: NextRequest,
+  supabase: SupabaseClient,
+  user: AppUser,
+  preferita?: string | null,
+): Promise<{ scuolaId?: string; response?: NextResponse }> {
+  const accessibili = await scuoleDiUtente(supabase, user)
+  if (accessibili.length === 0) {
+    return { response: NextResponse.json({ error: 'Nessun plesso associato all\'utente' }, { status: 403 }) }
+  }
+  const set = new Set(accessibili)
+  if (preferita && set.has(preferita)) return { scuolaId: preferita }
+  const attive = sediDalCookie(request).filter((id) => set.has(id))
+  if (attive.length === 1) return { scuolaId: attive[0] }
+  if (accessibili.length === 1) return { scuolaId: accessibili[0] }
+  if (user.scuola_id && set.has(user.scuola_id)) return { scuolaId: user.scuola_id }
+  return { response: NextResponse.json({ error: 'Specificare la sede (scuola_id) per questa operazione' }, { status: 400 }) }
 }
 
 /** True se l'utente ha visibilità su TUTTE le classi del proprio/i plesso/i. */

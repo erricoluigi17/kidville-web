@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireStaff } from '@/lib/auth/require-staff';
+import { resolveScuoleAttive, resolveScuolaScrittura } from '@/lib/auth/scope';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
@@ -53,6 +54,9 @@ export async function GET(request: NextRequest) {
                 .in('ruolo', ruoloValues);
         }
 
+        // Scope multi-sede: mai lista cross-tenant — filtra per i plessi attivi.
+        query = query.in('scuola_id', await resolveScuoleAttive(request, supabase, auth.user));
+
         const { data, error } = await query;
         if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
@@ -94,6 +98,10 @@ export async function POST(request: NextRequest) {
 
         const supabase = await createAdminClient();
 
+        // scuola_id: risolto dallo scope dell'admin (una sola sede per la scrittura).
+        const sw = await resolveScuolaScrittura(request, supabase, auth.user, scuola_id ?? undefined);
+        if (sw.response) return sw.response;
+
         // 1. Crea l'utente in Auth
         const { data: authData, error: authError } = await supabase.auth.admin.inviteUserByEmail(primaryEmail, {
             data: { first_name, last_name, role }
@@ -116,7 +124,7 @@ export async function POST(request: NextRequest) {
                 first_name,
                 last_name,
                 ruolo: role || 'educator',
-                scuola_id: scuola_id || '11111111-1111-1111-1111-111111111111',
+                scuola_id: sw.scuolaId,
                 attivo: true,
             })
             .select()

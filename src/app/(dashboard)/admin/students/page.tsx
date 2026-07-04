@@ -11,8 +11,6 @@ import { SectionsView } from '@/components/features/admin/SectionsView';
 import { CockpitPage, PageHeader, Tabs, StatCard } from '@/components/ui/cockpit';
 import { btnClass } from '@/components/ui/Btn';
 
-const SCUOLA_ID = '11111111-1111-1111-1111-111111111111';
-
 interface Student {
   id: string;
   nome?: string;
@@ -65,7 +63,7 @@ function AdminStudentsInner() {
 
   const fetchStudents = useCallback(async () => {
     try {
-      const res = await fetch(`/api/admin/students?scuola_id=${SCUOLA_ID}&limit=1000`);
+      const res = await fetch(`/api/admin/students?limit=1000`);
       const data = await res.json();
       if (Array.isArray(data)) {
         setStudents(data);

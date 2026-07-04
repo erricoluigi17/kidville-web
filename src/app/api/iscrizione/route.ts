@@ -5,8 +5,6 @@ import { rateLimit, clientIp } from '@/lib/security/rate-limit'
 import { parseBody } from '@/lib/validation/http'
 import type { EnrollmentSubmissionData } from '@/types/database.types'
 
-const DEFAULT_SCUOLA_ID = '11111111-1111-1111-1111-111111111111'
-
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // `data` viene inserito INTERO nella colonna JSONB enrollment_submissions.data:
 // .loose() preserva le chiavi extra del wizard. Gli elementi di children/adults
@@ -47,10 +45,23 @@ export async function POST(request: NextRequest) {
     const { data } = b.data
 
     const supabase = await createAdminClient()
+
+    // Scuola dell'iscrizione: dal form se indicata; altrimenti l'unica scuola
+    // esistente (deployment mono-scuola). Se ce n'è più d'una, va indicata (il
+    // link pubblico è per-scuola).
+    let scuolaId = (b.data.scuola_id as string | undefined) || undefined
+    if (!scuolaId) {
+      const { data: scuole } = await supabase.from('schools').select('id').limit(2)
+      if (scuole && scuole.length === 1) scuolaId = scuole[0].id as string
+    }
+    if (!scuolaId) {
+      return NextResponse.json({ error: 'Specificare la scuola per l\'iscrizione' }, { status: 400 })
+    }
+
     const { data: row, error } = await supabase
       .from('enrollment_submissions')
       .insert({
-        scuola_id: (b.data.scuola_id as string | undefined) || DEFAULT_SCUOLA_ID,
+        scuola_id: scuolaId,
         data: data as EnrollmentSubmissionData,
         status: 'pending',
       })

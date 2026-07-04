@@ -4,8 +4,7 @@ import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireStaff } from '@/lib/auth/require-staff';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
-
-const DEFAULT_SCUOLA_ID = '11111111-1111-1111-1111-111111111111';
+import { resolveScuoleAttive } from '@/lib/auth/scope';
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({}); // nessun parametro in ingresso
@@ -51,6 +50,7 @@ export async function GET(request: NextRequest) {
     const { data, error } = await supabase
       .from('pre_inscriptions')
       .select('*')
+      .in('scuola_id', await resolveScuoleAttive(request, supabase, auth.user))
       .order('created_at', { ascending: false });
 
     if (error) {
@@ -81,8 +81,18 @@ export async function POST(request: NextRequest) {
 
     const supabase = await createAdminClient();
 
+    // Scuola: dal form se indicata; altrimenti l'unica scuola esistente.
+    let scuolaId = scuola_id || undefined;
+    if (!scuolaId) {
+      const { data: scuole } = await supabase.from('schools').select('id').limit(2);
+      if (scuole && scuole.length === 1) scuolaId = scuole[0].id as string;
+    }
+    if (!scuolaId) {
+      return NextResponse.json({ error: 'Specificare la scuola' }, { status: 400 });
+    }
+
     const record = {
-      scuola_id: scuola_id || DEFAULT_SCUOLA_ID,
+      scuola_id: scuolaId,
       parent_first_name,
       parent_last_name,
       parent_email,

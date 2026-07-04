@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { resolveScuolaScrittura } from '@/lib/auth/scope'
 import { parseBody, parseData, parseQuery } from '@/lib/validation/http'
 import { parseSidiZip } from '@/lib/sidi/zip-parser'
 import { applySidiBatch } from '@/lib/sidi/import-apply'
@@ -21,8 +22,6 @@ const patchBodySchema = z.object({
   // il contratto odierno accetta qualunque stringa non vuota; il not-found è gestito da applySidiBatch).
   batchId: z.string().min(1, 'batchId obbligatorio'),
 })
-
-const SCUOLA_ID_DEFAULT = '11111111-1111-1111-1111-111111111111'
 
 // GET /api/admin/sidi/import?userId=  — batch di import recenti.
 export async function GET(request: NextRequest) {
@@ -57,10 +56,14 @@ export async function POST(request: NextRequest) {
 
     const buf = Buffer.from(await file.arrayBuffer())
     const parsed = await parseSidiZip(buf)
-    const scuolaId = auth.user.scuola_id || SCUOLA_ID_DEFAULT
     const filename = file.name ?? 'sidi.zip'
 
     const supabase = await createAdminClient()
+    // Import SIDI per singola scuola: risolvi l'unica sede di scrittura dallo scope dell'admin.
+    const sw = await resolveScuolaScrittura(request, supabase, auth.user)
+    if (sw.response) return sw.response
+    const scuolaId = sw.scuolaId
+
     const { data: batch, error } = await supabase
       .from('sidi_import_batches')
       .insert({

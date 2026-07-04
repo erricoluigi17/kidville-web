@@ -1,9 +1,10 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
-import { loadMensaConfig, loadResolveOptions, resolveMenuConfigId, DEFAULT_SCUOLA } from '@/lib/mensa/server'
+import { loadMensaConfig, loadResolveOptions, resolveMenuConfigId } from '@/lib/mensa/server'
 import { resolveMenuRange } from '@/lib/mensa/resolveMenu'
+import { resolveScuolaScrittura } from '@/lib/auth/scope'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zDataYMD, zUuid } from '@/lib/validation/common'
 
@@ -63,7 +64,7 @@ const deleteQuerySchema = z.object({
 //   Se menu_config_id è passato, usa direttamente quel menu.
 //   Se nessuno dei due è passato, usa il menu legacy (menu_config_id IS NULL).
 //   Con ?raw=1 ritorna le tabelle grezze per l'editor admin → richiede staff.
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   try {
     const supabase = await createAdminClient()
     const { searchParams } = new URL(request.url)
@@ -73,7 +74,9 @@ export async function GET(request: Request) {
       if (auth.response) return auth.response
       const q = parseQuery(request, rawQuerySchema)
       if ('response' in q) return q.response
-      const scuolaId = q.data.scuola_id || auth.user.scuola_id || DEFAULT_SCUOLA
+      const sw = await resolveScuolaScrittura(request, supabase, auth.user, q.data.scuola_id || undefined)
+      if (sw.response) return sw.response
+      const scuolaId = sw.scuolaId as string
       const menuConfigId = q.data.menu_config_id || null
       let rotQ = supabase.from('mensa_menu_rotazione').select('*').eq('scuola_id', scuolaId).order('settimana').order('giorno_settimana')
       let ovrQ = supabase.from('mensa_menu_override').select('*').eq('scuola_id', scuolaId).order('data')
@@ -90,7 +93,10 @@ export async function GET(request: Request) {
 
     const q = parseQuery(request, getQuerySchema)
     if ('response' in q) return q.response
-    const scuolaId = q.data.scuola_id || DEFAULT_SCUOLA
+    const scuolaId = q.data.scuola_id || undefined
+    if (!scuolaId) {
+      return NextResponse.json({ error: 'Specificare la sede (scuola_id)' }, { status: 400 })
+    }
     const today = new Date().toISOString().slice(0, 10)
     const from = q.data.from ?? today
     const to = q.data.to ?? from
@@ -128,16 +134,18 @@ export async function GET(request: Request) {
 // Body: { userId, scuola_id?, menu_config_id?,
 //         rotazione?: [{settimana, giorno_settimana, portate, note}],
 //         override?: [{data, chiuso, portate, note}] }
-export async function PUT(request: Request) {
+export async function PUT(request: NextRequest) {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
     const b = await parseBody(request, putBodySchema)
     if ('response' in b) return b.response
     const body = b.data
-    const scuolaId = body.scuola_id || auth.user.scuola_id || DEFAULT_SCUOLA
-    const menuConfigId: string | null = body.menu_config_id || null
     const supabase = await createAdminClient()
+    const sw = await resolveScuolaScrittura(request, supabase, auth.user, body.scuola_id || undefined)
+    if (sw.response) return sw.response
+    const scuolaId = sw.scuolaId as string
+    const menuConfigId: string | null = body.menu_config_id || null
 
     if (body.rotazione && body.rotazione.length > 0) {
       const rows = body.rotazione.map((r) => ({

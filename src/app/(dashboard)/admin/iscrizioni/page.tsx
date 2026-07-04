@@ -9,8 +9,6 @@ import { ADULT_ROLE_LABELS } from '@/lib/forms/enrollment-template'
 import type { EnrollmentSubmissionData, EnrollmentChild, EnrollmentAdult } from '@/types/database.types'
 import { CockpitPage, PageHeader, StatCard } from '@/components/ui/cockpit'
 
-const SCUOLA_ID = '11111111-1111-1111-1111-111111111111'
-
 interface SubmissionRow {
   id: string
   data: EnrollmentSubmissionData
@@ -39,7 +37,7 @@ export default function IscrizioniPage() {
     try {
       const [r, s] = await Promise.all([
         fetch('/api/admin/iscrizioni').then(x => x.json()),
-        fetch(`/api/admin/sections?scuola_id=${SCUOLA_ID}`).then(x => x.json()),
+        fetch('/api/admin/sections').then(x => x.json()),
       ])
       if (Array.isArray(r)) setRows(r)
       if (Array.isArray(s)) setSections(s)

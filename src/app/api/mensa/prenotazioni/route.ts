@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
-import { loadMensaConfig, loadResolveOptions, resolveMenuConfigId, entroCutoff, DEFAULT_SCUOLA } from '@/lib/mensa/server'
+import { loadMensaConfig, loadResolveOptions, resolveMenuConfigId, entroCutoff } from '@/lib/mensa/server'
 import { resolveMenuGiorno } from '@/lib/mensa/resolveMenu'
 import { notificaSaldoBasso } from '@/lib/mensa/notify'
 import { controllaAllergie } from '@/lib/mensa/allergie-check'
@@ -110,7 +110,7 @@ export async function POST(request: Request) {
     // scuola dell'alunno + nome (per notifiche)
     const { data: al } = await supabase.from('alunni').select('scuola_id, nome, cognome, classe_sezione, section_id, allergies, allergeni').eq('id', alunnoId).maybeSingle()
     if (!al) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
-    const scuolaId = al.scuola_id ?? DEFAULT_SCUOLA
+    const scuolaId = al.scuola_id as string
     const config = await loadMensaConfig(supabase, scuolaId)
     // Usa la prima data richiesta per determinare il menu attivo (approx per range)
     const primaData = dates[0]
@@ -203,7 +203,7 @@ export async function DELETE(request: Request) {
 
     const { data: al } = await supabase.from('alunni').select('scuola_id').eq('id', alunnoId).maybeSingle()
     if (!al) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
-    const scuolaId = al.scuola_id ?? DEFAULT_SCUOLA
+    const scuolaId = al.scuola_id as string
     const config = await loadMensaConfig(supabase, scuolaId)
 
     if (!entroCutoff(data, config.cutoffOra)) {

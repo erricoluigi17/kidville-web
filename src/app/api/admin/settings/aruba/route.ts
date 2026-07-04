@@ -1,16 +1,15 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
-
-const DEFAULT_SCUOLA = '11111111-1111-1111-1111-111111111111'
+import { resolveScuolaScrittura } from '@/lib/auth/scope'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 /**
  * scuola_id opzionale: qualunque valore falsy ('', null, assente) → "non fornito",
- * così il codice applica il fallback storico `|| auth.user.scuola_id || DEFAULT_SCUOLA`.
+ * così la scuola viene risolta dallo scope reale dell'admin (resolveScuolaScrittura).
  */
 const zScuolaId = z.preprocess((v) => v || undefined, zUuid.optional())
 
@@ -45,16 +44,19 @@ function sanitizeAruba(cfg: Record<string, unknown> | null) {
 }
 
 // GET /api/admin/settings/aruba?userId=&scuola_id=  (staff) — config Aruba (mascherata)
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
 
     const q = parseQuery(request, getQuerySchema)
     if ('response' in q) return q.response
-    const scuolaId = q.data.scuola_id || auth.user.scuola_id || DEFAULT_SCUOLA
 
     const supabase = await createAdminClient()
+    const sw = await resolveScuolaScrittura(request, supabase, auth.user, q.data.scuola_id ?? undefined)
+    if (sw.response) return sw.response
+    const scuolaId = sw.scuolaId
+
     const { data } = await supabase.from('admin_settings').select('aruba_config').eq('scuola_id', scuolaId).maybeSingle()
     return NextResponse.json({ success: true, data: sanitizeAruba((data?.aruba_config as Record<string, unknown>) ?? null) })
   } catch (err) {
@@ -67,7 +69,7 @@ export async function GET(request: Request) {
 // Body: { userId, scuola_id?, username?, password_ref?, fiscal?, iva?, abilitato?, ambiente? }
 // NB: la password reale non viene mai salvata in chiaro; si memorizza solo un
 // riferimento (env/vault). Mai esposta ai parent (admin_settings senza RLS parent).
-export async function PATCH(request: Request) {
+export async function PATCH(request: NextRequest) {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -75,9 +77,12 @@ export async function PATCH(request: Request) {
     const b = await parseBody(request, patchBodySchema)
     if ('response' in b) return b.response
     const body = b.data
-    const scuolaId = body.scuola_id || auth.user.scuola_id || DEFAULT_SCUOLA
 
     const supabase = await createAdminClient()
+    const sw = await resolveScuolaScrittura(request, supabase, auth.user, body.scuola_id ?? undefined)
+    if (sw.response) return sw.response
+    const scuolaId = sw.scuolaId
+
     const { data: cur } = await supabase.from('admin_settings').select('aruba_config').eq('scuola_id', scuolaId).maybeSingle()
     const existing = (cur?.aruba_config as Record<string, unknown>) ?? {}
 

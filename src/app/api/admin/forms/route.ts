@@ -2,16 +2,15 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente, requireStaff } from '@/lib/auth/require-staff';
+import { resolveScuoleAttive, resolveScuolaScrittura } from '@/lib/auth/scope';
 import { parseBody, parseQuery } from '@/lib/validation/http';
-
-const DEFAULT_SCUOLA_ID = '11111111-1111-1111-1111-111111111111';
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // Gli id restano stringhe libere (niente zUuid): oggi il codice non impone
 // alcun formato e nei test/dati seed circolano id non-UUID.
 
 const getQuerySchema = z.object({
-  scuola_id: z.string().optional(), // '' o assente → DEFAULT_SCUOLA_ID (come oggi)
+  scuola_id: z.string().optional(), // ignorato: la lista filtra sulle sedi attive risolte
 });
 
 const postBodySchema = z.object({
@@ -22,7 +21,7 @@ const postBodySchema = z.object({
   target_scope: z.string().nullish(), // falsy → 'class' nell'handler (come oggi)
   target_classes: z.unknown().optional(), // falsy → [] nell'handler (come oggi)
   expiration_date: z.string().nullish(), // falsy → null nell'handler (come oggi)
-  scuola_id: z.string().nullish(), // falsy → DEFAULT_SCUOLA_ID (come oggi)
+  scuola_id: z.string().nullish(), // preferita per resolveScuolaScrittura; falsy → sede risolta
   // Un form_type non ammesso NON viene rifiutato: oggi il codice lo normalizza
   // silenziosamente ad 'autorizzazione' → .catch() replica quel fallback.
   form_type: z.enum(['sondaggio', 'gradimento', 'autorizzazione']).catch('autorizzazione'),
@@ -54,13 +53,13 @@ export async function GET(request: NextRequest) {
   if ('response' in q) return q.response;
 
   try {
-    const scuolaId = q.data.scuola_id || DEFAULT_SCUOLA_ID;
     const supabase = await createAdminClient();
+    const sedi = await resolveScuoleAttive(request, supabase, auth.user);
 
     const { data, error } = await supabase
       .from('forms_templates')
       .select('*')
-      .eq('scuola_id', scuolaId)
+      .in('scuola_id', sedi)
       .order('created_at', { ascending: false });
 
     if (error) {
@@ -88,8 +87,11 @@ export async function POST(request: NextRequest) {
 
     const supabase = await createAdminClient();
 
+    const sw = await resolveScuolaScrittura(request, supabase, auth.user, scuola_id ?? undefined);
+    if (sw.response) return sw.response;
+
     const record = {
-      scuola_id: scuola_id || DEFAULT_SCUOLA_ID,
+      scuola_id: sw.scuolaId,
       title,
       description: description || '',
       form_type,

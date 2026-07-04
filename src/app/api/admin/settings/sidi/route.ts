@@ -1,16 +1,15 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { resolveScuolaScrittura } from '@/lib/auth/scope'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
-
-const DEFAULT_SCUOLA = '11111111-1111-1111-1111-111111111111'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 /**
  * scuola_id opzionale: qualunque valore falsy ('', null, assente) → "non fornito",
- * così il codice applica il fallback storico `|| auth.user.scuola_id || DEFAULT_SCUOLA`.
+ * così il codice lascia che sia resolveScuolaScrittura a risolvere la sede.
  */
 const zScuolaId = z.preprocess((v) => v || undefined, zUuid.optional())
 
@@ -42,16 +41,19 @@ function sanitizeSidi(cfg: Record<string, unknown> | null) {
 }
 
 // GET /api/admin/settings/sidi?userId=&scuola_id=  (staff) — config SIDI mascherata.
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
 
     const q = parseQuery(request, getQuerySchema)
     if ('response' in q) return q.response
-    const scuolaId = q.data.scuola_id || auth.user.scuola_id || DEFAULT_SCUOLA
 
     const supabase = await createAdminClient()
+    const sw = await resolveScuolaScrittura(request, supabase, auth.user, q.data.scuola_id ?? undefined)
+    if (sw.response) return sw.response
+    const scuolaId = sw.scuolaId
+
     const { data } = await supabase.from('admin_settings').select('sidi_config').eq('scuola_id', scuolaId).maybeSingle()
     return NextResponse.json({ success: true, data: sanitizeSidi((data?.sidi_config as Record<string, unknown>) ?? null) })
   } catch (err) {
@@ -62,7 +64,7 @@ export async function GET(request: Request) {
 
 // PATCH /api/admin/settings/sidi  (staff) — aggiorna config SIDI (merge server-side).
 // La password reale non è mai salvata in chiaro: solo un riferimento env (password_ref).
-export async function PATCH(request: Request) {
+export async function PATCH(request: NextRequest) {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -70,9 +72,12 @@ export async function PATCH(request: Request) {
     const b = await parseBody(request, patchBodySchema)
     if ('response' in b) return b.response
     const body = b.data
-    const scuolaId = body.scuola_id || auth.user.scuola_id || DEFAULT_SCUOLA
 
     const supabase = await createAdminClient()
+    const sw = await resolveScuolaScrittura(request, supabase, auth.user, body.scuola_id ?? undefined)
+    if (sw.response) return sw.response
+    const scuolaId = sw.scuolaId
+
     const { data: cur } = await supabase.from('admin_settings').select('sidi_config').eq('scuola_id', scuolaId).maybeSingle()
     const existing = (cur?.sidi_config as Record<string, unknown>) ?? {}
 

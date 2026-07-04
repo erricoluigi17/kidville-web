@@ -1,17 +1,16 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { resolveScuolaScrittura } from '@/lib/auth/scope'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
-
-const DEFAULT_SCUOLA = '11111111-1111-1111-1111-111111111111'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 /**
  * scuola_id opzionale: qualunque valore falsy ('', null, assente) viene trattato
- * come "non fornito" così il codice applica il fallback storico
- * `?scuola_id= || auth.user.scuola_id || DEFAULT_SCUOLA`, come prima.
+ * come "non fornito" così la scuola viene risolta dallo scope reale dell'admin
+ * (resolveScuolaScrittura), usando l'eventuale scuola_id come sede preferita.
  */
 const zScuolaId = z.preprocess((v) => v || undefined, zUuid.optional())
 
@@ -54,7 +53,7 @@ const patchBodySchema = z.object({
 })
 
 // GET /api/admin/settings?userId=&scuola_id=  (staff) — impostazioni della scuola
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -62,9 +61,15 @@ export async function GET(request: Request) {
     const q = parseQuery(request, getQuerySchema)
     if ('response' in q) return q.response
 
-    const scuolaId =
-      (q.data.scuola_id as string | undefined) || auth.user.scuola_id || DEFAULT_SCUOLA
     const supabase = await createAdminClient()
+    const sw = await resolveScuolaScrittura(
+      request,
+      supabase,
+      auth.user,
+      (q.data.scuola_id as string | undefined) ?? undefined,
+    )
+    if (sw.response) return sw.response
+    const scuolaId = sw.scuolaId as string
 
     const { data, error } = await supabase
       .from('admin_settings')
@@ -100,7 +105,7 @@ export async function GET(request: Request) {
 // Body: { userId, scuola_id?, retta_default_importo?, retta_giorno_scadenza?,
 //         retta_auto_enabled?, insoluto_tolleranza_giorni?, ticket_pacchetti? }
 // NB: aruba_config si gestisce dalla route dedicata /api/admin/settings/aruba
-export async function PATCH(request: Request) {
+export async function PATCH(request: NextRequest) {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -108,8 +113,16 @@ export async function PATCH(request: Request) {
     const b = await parseBody(request, patchBodySchema)
     if ('response' in b) return b.response
     const body = b.data as Record<string, unknown>
-    const scuolaId =
-      (body.scuola_id as string | undefined) || auth.user.scuola_id || DEFAULT_SCUOLA
+
+    const supabase = await createAdminClient()
+    const sw = await resolveScuolaScrittura(
+      request,
+      supabase,
+      auth.user,
+      (body.scuola_id as string | undefined) ?? undefined,
+    )
+    if (sw.response) return sw.response
+    const scuolaId = sw.scuolaId as string
 
     // Chiavi JSONB salvate in shallow-merge con l'esistente, così pannelli
     // diversi possono salvare indipendentemente senza sovrascriversi.
@@ -127,8 +140,6 @@ export async function PATCH(request: Request) {
     ]
     const updates: Record<string, unknown> = { scuola_id: scuolaId }
     for (const f of ALLOWED_FIELDS) if (body[f] !== undefined) updates[f] = body[f]
-
-    const supabase = await createAdminClient()
 
     const incomingMerged = mergedKeys.filter((k) => updates[k] !== undefined)
     if (incomingMerged.length > 0) {

@@ -14,8 +14,6 @@ import { UMORE_VALUES, UMORE_CONFIG, umoreFromDettagli, umoreAttivo } from '@/li
 
 interface Student { id: string; firstName: string; lastName: string; allergie: string[]; }
 
-const SEZIONE = 'Girasoli';
-
 // Entrata rimossa — gestita dal modulo Presenze
 // Nanna e Sveglia sono DUE pulsanti distinti (PRD §3.1.1): Nanna = orario inizio, Sveglia = orario fine.
 // 'umore' (M5.4) si aggiunge in coda solo se attivo in diario_config.routine_attive.
@@ -105,6 +103,35 @@ function TeacherDiaryInner() {
     const [showAll, setShowAll] = useState(false);
     // 'umore' visibile solo se attivo in diario_config.routine_attive (M5.4).
     const [umoreEnabled, setUmoreEnabled] = useState(false);
+    // Sezioni assegnate al docente (utenti_sezioni via /api/educator-sections):
+    // niente più sezione hardcoded; con più sezioni compare il selettore a pill.
+    const [sezioni, setSezioni] = useState<string[]>([]);
+    const [sezione, setSezione] = useState<string | null>(null);
+    const [sezioniLoaded, setSezioniLoaded] = useState(false);
+
+    useEffect(() => {
+        let active = true;
+        fetch(`/api/educator-sections?userId=${userId}`)
+            .then(r => (r.ok ? r.json() : null))
+            .then(d => {
+                if (!active) return;
+                const names: string[] = Array.isArray(d?.sectionNames) ? d.sectionNames : [];
+                setSezioni(names);
+                setSezione(cur => cur ?? names[0] ?? null);
+            })
+            .catch(() => {})
+            .finally(() => { if (active) setSezioniLoaded(true); });
+        return () => { active = false; };
+    }, [userId]);
+
+    // Cambio sezione manuale: la selezione evento e i "salvati" riguardavano la
+    // sezione precedente, quindi si azzerano insieme (reset nell'handler, non in
+    // un effect: react-hooks/set-state-in-effect).
+    const switchSezione = (name: string) => {
+        setSezione(name);
+        setSelectedEvent(null);
+        setSavedStudentIds(new Set());
+    };
 
     useEffect(() => {
         let active = true;
@@ -127,8 +154,9 @@ function TeacherDiaryInner() {
     }, []);
 
     const fetchStudents = async () => {
+        if (!sezione) return;
         try {
-            const res = await fetch(`/api/diary/students?sezione=${SEZIONE}&onlyPresent=${showAll ? 'false' : 'true'}&userId=${userId}`);
+            const res = await fetch(`/api/diary/students?sezione=${encodeURIComponent(sezione)}&onlyPresent=${showAll ? 'false' : 'true'}&userId=${userId}`);
             const data = await res.json();
             if (Array.isArray(data)) {
                 const mapped: Student[] = data.map((a: { id: string; nome: string; cognome: string; note_mediche: string | null }) => ({
@@ -144,19 +172,19 @@ function TeacherDiaryInner() {
         }
     };
 
-    // Carica studenti: di default solo i presenti; rifa il fetch al toggle.
+    // Carica studenti: di default solo i presenti; rifa il fetch al toggle o al cambio sezione.
     useEffect(() => {
         fetchStudents();
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [showAll]);
+    }, [showAll, sezione]);
 
     // Ripristina lo stato UI dai dati già salvati su Supabase per un certo tipo evento
     const restoreFromSupabase = async (eventType: DiaryEventType, studentList?: Student[]) => {
         const list = studentList ?? students;
-        if (list.length === 0) { setSavedStudentIds(new Set()); return; }
+        if (list.length === 0 || !sezione) { setSavedStudentIds(new Set()); return; }
         try {
             const today = todayISO();
-            const res = await fetch(`/api/diary/entries?sezione=${SEZIONE}&date=${today}&userId=${userId}`);
+            const res = await fetch(`/api/diary/entries?sezione=${encodeURIComponent(sezione)}&date=${today}&userId=${userId}`);
             const entries = await res.json();
             if (!Array.isArray(entries)) { setSavedStudentIds(new Set()); return; }
 
@@ -334,6 +362,22 @@ function TeacherDiaryInner() {
 
     const cfg = selectedEvent ? EVENT_CONFIG[selectedEvent] : null;
 
+    if (sezioniLoaded && !sezione) {
+        return (
+            <div className="mx-auto max-w-[460px] px-4 pt-5">
+                <div className="rounded-3xl bg-kidville-green px-5 py-5" style={{ boxShadow: '0 16px 34px -18px rgba(0,60,52,.6)' }}>
+                    <p className="font-barlow text-[11px] font-bold uppercase tracking-[0.14em] text-kidville-yellow">In sezione</p>
+                    <h1 className="font-barlow text-3xl font-black uppercase tracking-wide text-white">Diario del giorno</h1>
+                </div>
+                <div className="mt-4 rounded-3xl border border-kidville-line bg-white p-8 text-center shadow-sm">
+                    <p className="font-maven text-sm text-kidville-muted">
+                        Nessuna sezione assegnata al tuo profilo.<br />Chiedi alla segreteria di abbinarti alla tua sezione.
+                    </p>
+                </div>
+            </div>
+        );
+    }
+
     if (isLoading) {
         return (
             <div className="max-w-2xl mx-auto p-4 sm:p-6 flex flex-col items-center justify-center min-h-[60vh] gap-4">
@@ -351,9 +395,29 @@ function TeacherDiaryInner() {
                 <p className="font-barlow text-[11px] font-bold uppercase tracking-[0.14em] text-kidville-yellow">In sezione</p>
                 <h1 className="font-barlow text-3xl font-black uppercase tracking-wide text-white">Diario del giorno</h1>
                 <p className="mt-1.5 font-maven text-xs capitalize text-white/80">
-                    Sezione Girasoli • {new Date().toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' })}
+                    Sezione {sezione} • {new Date().toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' })}
                 </p>
             </div>
+
+            {/* Selettore sezione (solo con più sezioni assegnate) */}
+            {sezioni.length > 1 && (
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                    {sezioni.map(name => (
+                        <button
+                            key={name}
+                            onClick={() => switchSezione(name)}
+                            className={`rounded-pill border px-3 py-1.5 font-maven text-xs font-semibold transition-colors ${
+                                sezione === name
+                                    ? 'border-kidville-green/20 bg-kidville-green text-kidville-yellow'
+                                    : 'border-kidville-line bg-white text-kidville-muted'
+                            }`}
+                            aria-pressed={sezione === name}
+                        >
+                            {name}
+                        </button>
+                    ))}
+                </div>
+            )}
 
             {/* Controlli (filtro presenze + offline) */}
             <div className="mt-3 flex items-center gap-2">
@@ -445,7 +509,7 @@ function TeacherDiaryInner() {
                                         studentStates={studentStates}
                                         onMealSelect={updateMealCourse}
                                         date={todayISO()}
-                                        classId={SEZIONE}
+                                        classId={sezione ?? ''}
                                         savedStudentIds={savedStudentIds}
                                         isMerenda={selectedEvent === 'merenda'}
                                     />

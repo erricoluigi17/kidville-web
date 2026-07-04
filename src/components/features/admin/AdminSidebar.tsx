@@ -21,6 +21,7 @@ import {
   Award,
   ShieldCheck,
   ChefHat,
+  Shirt,
   Menu,
   X,
 } from 'lucide-react';
@@ -68,6 +69,7 @@ const NAV_GROUPS: NavGroup[] = [
     title: 'Operativo',
     items: [
       { href: '/admin/armadietto', label: 'Armadietto', icon: Package },
+      { href: '/admin/divise', label: 'Divise', icon: Shirt },
       { href: '/admin/mensa', label: 'Mensa', icon: UtensilsCrossed },
       { href: '/admin/mensa/cucina', label: 'Report Cucina', icon: ChefHat },
     ],

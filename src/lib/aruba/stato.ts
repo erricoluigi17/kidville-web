@@ -41,3 +41,29 @@ export function mapStatoAruba(code: number): StatoArubaMappato {
     }
   )
 }
+
+export interface RigaFatturaAgg {
+  sdi_stato: number | null
+  numero?: number | null
+  quota_adult_id?: string | null
+}
+
+/**
+ * Aggrega lo stato del PAGAMENTO dalle sue righe `fatture_emesse` (una per quota).
+ * Regola: uno scarto → `scartata`; tutte le quote emesse/consegnate → `emessa`;
+ * altrimenti `in_attesa`. Per ogni quota considera solo la riga più recente
+ * (numero massimo), così una quota scartata e poi RI-emessa non blocca l'aggregato.
+ */
+export function aggregaFatturaStato(righe: RigaFatturaAgg[]): FatturaStato {
+  if (!righe || righe.length === 0) return 'in_attesa'
+  const perQuota = new Map<string, RigaFatturaAgg>()
+  for (const r of righe) {
+    const key = r.quota_adult_id ?? '__single__'
+    const cur = perQuota.get(key)
+    if (!cur || (r.numero ?? 0) >= (cur.numero ?? 0)) perQuota.set(key, r)
+  }
+  const mapped = [...perQuota.values()].map((r) => mapStatoAruba(r.sdi_stato ?? 1))
+  if (mapped.some((m) => m.isScarto)) return 'scartata'
+  if (mapped.every((m) => m.fatturaStato === 'emessa')) return 'emessa'
+  return 'in_attesa'
+}

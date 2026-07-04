@@ -125,6 +125,47 @@ export function StoricoPagamenti({ userId }: Props) {
     );
 }
 
+interface FatturaRow { id: string; numero: number; quota_label: string | null; intestatario: string; pdf_disponibile: boolean }
+
+// Link fattura: uno solo (fast-path invariato) o uno per intestatario quando il
+// pagamento è stato fatturato in più quote (genitori separati).
+function FatturaLinks({ pagamentoId, userId }: { pagamentoId: string; userId: string }) {
+    const [fatture, setFatture] = useState<FatturaRow[] | null>(null);
+    useEffect(() => {
+        let active = true;
+        fetch(`/api/pagamenti/fattura/list?pagamento_id=${pagamentoId}&userId=${userId}`, { headers: { 'x-user-id': userId } })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((d) => { if (active && d?.success) setFatture(d.data); })
+            .catch(() => {});
+        return () => { active = false; };
+    }, [pagamentoId, userId]);
+
+    // In caricamento o quota unica → link singolo identico al comportamento storico.
+    if (!fatture || fatture.length <= 1) {
+        return (
+            <a
+                href={`/api/pagamenti/fattura?pagamento_id=${pagamentoId}&userId=${userId}`}
+                className="flex items-center gap-1 px-3 py-1 rounded-full bg-kidville-green/10 text-kidville-green text-xs font-bold hover:bg-kidville-green/20"
+            >
+                <Download size={13} /> Fattura
+            </a>
+        );
+    }
+    return (
+        <div className="flex flex-wrap items-center justify-end gap-1.5">
+            {fatture.map((f) => (
+                <a
+                    key={f.id}
+                    href={`/api/pagamenti/fattura?pagamento_id=${pagamentoId}&fattura_id=${f.id}&userId=${userId}`}
+                    className="flex items-center gap-1 px-3 py-1 rounded-full bg-kidville-green/10 text-kidville-green text-xs font-bold hover:bg-kidville-green/20"
+                >
+                    <Download size={13} /> Fattura — {f.quota_label || f.intestatario}
+                </a>
+            ))}
+        </div>
+    );
+}
+
 function Section({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
     return (
         <div>
@@ -164,12 +205,7 @@ function PagamentoCard({ p, userId }: { p: Pagamento; userId: string }) {
                     {p.stato === 'parziale' && <span className="text-kidville-muted text-xs ml-2">(resta € {resto.toFixed(2)})</span>}
                 </div>
                 {fatturaPronta ? (
-                    <a
-                        href={`/api/pagamenti/fattura?pagamento_id=${p.id}&userId=${userId}`}
-                        className="flex items-center gap-1 px-3 py-1 rounded-full bg-kidville-green/10 text-kidville-green text-xs font-bold hover:bg-kidville-green/20"
-                    >
-                        <Download size={13} /> Fattura
-                    </a>
+                    <FatturaLinks pagamentoId={p.id} userId={userId} />
                 ) : p.stato === 'pagato' ? (
                     <a
                         href={`/api/pagamenti/ricevuta?pagamento_id=${p.id}&userId=${userId}`}

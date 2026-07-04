@@ -1,0 +1,67 @@
+name: CI
+
+# Gate di qualità su ogni PR e su main.
+# La branch protection su `main` richiede che i job `quality` ed `e2e`
+# siano verdi prima del merge: così Vercel deploya in produzione solo
+# codice che ha superato lint, typecheck, unit ed end-to-end.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Evita run duplicate sullo stesso ref (es. push su un branch con PR aperta).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Lint · Typecheck · Unit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: ESLint (zero warning)
+        run: npx eslint . --max-warnings 0
+      - name: Typecheck + Unit (tsc --noEmit && vitest run)
+        run: npm run gate
+
+  e2e:
+    name: E2E (Playwright)
+    runs-on: ubuntu-latest
+    # Serializza le run che condividono il progetto Supabase CI:
+    # il seed lavora sulla scuola dedicata e2e00000-* ed è idempotente,
+    # ma due run simultanee sullo stesso DB potrebbero interferire.
+    concurrency:
+      group: e2e-ci-db
+      cancel-in-progress: false
+    env:
+      CI: 'true'
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.CI_SUPABASE_URL }}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.CI_SUPABASE_ANON_KEY }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.CI_SUPABASE_SERVICE_ROLE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Installa il browser Playwright
+        run: npx playwright install --with-deps chromium
+      - name: Seed del DB E2E (scuola e2e00000-*)
+        run: npm run e2e:seed
+      - name: Suite E2E
+        run: npm run e2e
+      - name: Report Playwright
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7

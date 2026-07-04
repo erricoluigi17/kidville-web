@@ -8,7 +8,7 @@ import {
   resolveArubaCredentials,
   type ArubaConfig,
 } from '@/lib/aruba/client'
-import { mapStatoAruba } from '@/lib/aruba/stato'
+import { mapStatoAruba, aggregaFatturaStato, type RigaFatturaAgg } from '@/lib/aruba/stato'
 import { enqueueNotifiche } from '@/lib/push/enqueue'
 
 // POST /api/pagamenti/fattura/sync — polling stato SDI delle fatture in volo.
@@ -102,10 +102,11 @@ export async function POST(request: Request) {
       const m = mapStatoAruba(stato.stato)
       const nowIso = new Date().toISOString()
 
-      // copia di cortesia PDF (best-effort) su stato valido
+      // copia di cortesia PDF (best-effort) su stato valido. Chiave PER RIGA
+      // (${pagamento}-${numero}.pdf): con più quote la 2ª non sovrascrive la 1ª.
       let pdfPath: string | null = null
       if (!m.isScarto && stato.pdfBase64) {
-        pdfPath = `${f.pagamento_id}.pdf` // chiave relativa al bucket "fatture"
+        pdfPath = `${f.pagamento_id}-${f.numero}.pdf` // chiave relativa al bucket "fatture"
         try {
           const storage = (supabase as { storage?: { from: (b: string) => { upload: (p: string, d: Buffer, o?: unknown) => Promise<unknown> } } }).storage
           await storage?.from('fatture').upload(pdfPath, Buffer.from(stato.pdfBase64, 'base64'), {
@@ -128,9 +129,24 @@ export async function POST(request: Request) {
         })
         .eq('id', f.id)
 
+      // Stato aggregato del pagamento dalle sue quote. Rileggo tutte le righe e
+      // sostituisco in memoria quella appena aggiornata (la SELECT potrebbe non
+      // riflettere ancora l'update appena fatto).
+      const { data: tutte } = await supabase
+        .from('fatture_emesse')
+        .select('id, numero, sdi_stato, quota_adult_id, pdf_path')
+        .eq('pagamento_id', f.pagamento_id)
+      const righeAgg = ((tutte ?? []) as (RigaFatturaAgg & { id: string; pdf_path: string | null })[]).map((r) =>
+        r.id === f.id ? { ...r, sdi_stato: stato.stato, pdf_path: pdfPath ?? r.pdf_path } : r
+      )
+      const statoAgg = aggregaFatturaStato(righeAgg)
+      // fattura_pdf_path resta sul pagamento SOLO per fattura singola (compat legacy);
+      // con più quote il download è per-fattura (vedi /api/pagamenti/fattura?fattura_id=).
+      const pdfSingola = righeAgg.length <= 1 ? righeAgg[0]?.pdf_path ?? null : null
+
       await supabase
         .from('pagamenti')
-        .update({ fattura_stato: m.fatturaStato, ...(pdfPath ? { fattura_pdf_path: pdfPath } : {}) })
+        .update({ fattura_stato: statoAgg, ...(pdfSingola ? { fattura_pdf_path: pdfSingola } : {}) })
         .eq('id', f.pagamento_id)
       processate++
 

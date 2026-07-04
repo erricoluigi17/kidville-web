@@ -1,8 +1,52 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { FileText, Download, Loader2, X } from 'lucide-react';
 import { motion } from 'framer-motion';
+
+interface FatturaRow { id: string; quota_label: string | null; intestatario: string }
+
+// Download fattura(e): link singolo o menù a tendina quando il pagamento è stato
+// fatturato in più quote (genitori separati).
+function EmessaLinks({ pagamentoId, userId }: { pagamentoId: string; userId: string }) {
+    const [fatture, setFatture] = useState<FatturaRow[] | null>(null);
+    const [open, setOpen] = useState(false);
+    useEffect(() => {
+        let active = true;
+        fetch(`/api/pagamenti/fattura/list?pagamento_id=${pagamentoId}&userId=${userId}`, { headers: { 'x-user-id': userId } })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((d) => { if (active && d?.success) setFatture(d.data); })
+            .catch(() => {});
+        return () => { active = false; };
+    }, [pagamentoId, userId]);
+
+    if (!fatture || fatture.length <= 1) {
+        return (
+            <a href={`/api/pagamenti/fattura?pagamento_id=${pagamentoId}&userId=${userId}`}
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-kidville-green/10 text-kidville-green text-xs font-bold hover:bg-kidville-green/20">
+                <Download size={12} /> Fattura
+            </a>
+        );
+    }
+    return (
+        <div className="relative inline-block">
+            <button onClick={() => setOpen((o) => !o)}
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-kidville-green/10 text-kidville-green text-xs font-bold hover:bg-kidville-green/20">
+                <Download size={12} /> Fatture ({fatture.length})
+            </button>
+            {open && (
+                <div className="absolute right-0 z-20 mt-1 w-56 rounded-xl border border-kidville-line bg-white p-1 shadow-lg">
+                    {fatture.map((f) => (
+                        <a key={f.id} href={`/api/pagamenti/fattura?pagamento_id=${pagamentoId}&fattura_id=${f.id}&userId=${userId}`}
+                            className="block rounded-lg px-3 py-1.5 font-maven text-xs text-kidville-green hover:bg-kidville-green/10">
+                            Fattura — {f.quota_label || f.intestatario}
+                        </a>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+}
 
 interface Props {
     pagamentoId: string;
@@ -36,12 +80,7 @@ export function FatturaButton({ pagamentoId, userId, fatturaStato, descrizione, 
     };
 
     if (stato === 'emessa') {
-        return (
-            <a href={`/api/pagamenti/fattura?pagamento_id=${pagamentoId}&userId=${userId}`}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-kidville-green/10 text-kidville-green text-xs font-bold hover:bg-kidville-green/20">
-                <Download size={12} /> Fattura
-            </a>
-        );
+        return <EmessaLinks pagamentoId={pagamentoId} userId={userId} />;
     }
 
     if (stato === 'in_attesa') {

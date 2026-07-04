@@ -22,7 +22,7 @@ interface SplitConfig { quote: QuotaConfig[] }
 interface IntestatarioAltro { nome?: string; cf?: string; indirizzo?: string; email?: string }
 interface Intestatario { tipo: 'adult' | 'altro'; adult_id?: string; nome?: string; dati?: IntestatarioAltro }
 
-interface Tutore { adult_id: string; nome: string; cognome: string; email: string; percentuale: number | null }
+interface Tutore { adult_id: string; nome: string; cognome: string; email: string; percentuale: number | null; has_fiscal_code?: boolean }
 
 interface ParentOption { id: string; nome: string; relazione: string }
 
@@ -95,6 +95,10 @@ export function StudentEconomicSection({ alunnoId, form, updateForm, parents }: 
     const quoteSum = (split?.quote ?? []).reduce((s, q) => s + Number(q.importo || 0), 0);
     const sumMismatch = separati && split && split.quote.length > 0 && Math.abs(quoteSum - importo) > 0.01;
 
+    // Mappa adult_id → ha codice fiscale (dal ponte parents lato server). Serve ad
+    // avvisare che una quota non è fatturabile senza CF del genitore intestatario.
+    const cfByAdult = new Map(tutori.map((t) => [t.adult_id, t.has_fiscal_code !== false]));
+
     const setIntestatario = (val: Intestatario | null) => updateForm('intestatario_fatture', val);
 
     return (
@@ -145,6 +149,11 @@ export function StudentEconomicSection({ alunnoId, form, updateForm, parents }: 
                         <div key={i} className="flex items-center gap-2">
                             <span className="font-maven text-sm text-kidville-green flex-1 truncate">
                                 {q.nome || `Genitore ${i + 1}`}
+                                {q.adult_id && cfByAdult.get(q.adult_id) === false && (
+                                    <span className="ml-1 rounded-full bg-kidville-warn-soft px-1.5 py-0.5 text-[10px] font-bold text-kidville-warn" title="Codice fiscale mancante: questa quota non può essere fatturata finché non lo aggiungi all'anagrafica del genitore.">
+                                        manca CF
+                                    </span>
+                                )}
                             </span>
                             <div className="flex items-center gap-1">
                                 <span className="font-maven text-xs text-kidville-muted">€</span>

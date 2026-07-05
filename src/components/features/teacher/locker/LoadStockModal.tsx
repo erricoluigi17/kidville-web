@@ -19,6 +19,8 @@ interface Props {
     preselectedMateriale?: string;
     classeSezione?: string;
     onConfirm: (data: { alunno_id: string; materiale: string; quantita: number }) => Promise<void>;
+    // Se fornito, abilita "assegna a tutta la sezione" (distribuisce a tutti gli alunni).
+    onConfirmBulk?: (data: { alunno_ids: string[]; materiale: string; quantita: number }) => Promise<void>;
 }
 
 const MATERIALI_FALLBACK: MaterialeConfig[] = [
@@ -36,6 +38,7 @@ export function LoadStockModal({
     preselectedMateriale,
     classeSezione,
     onConfirm,
+    onConfirmBulk,
 }: Props) {
     const [selectedStudent,   setSelectedStudent]   = useState(preselectedStudent ?? '');
     const [selectedMateriale, setSelectedMateriale] = useState(preselectedMateriale ?? '');
@@ -43,6 +46,7 @@ export function LoadStockModal({
     const [isSaving,          setIsSaving]          = useState(false);
     const [error,             setError]             = useState('');
     const [materiali,         setMateriali]         = useState<MaterialeConfig[]>(MATERIALI_FALLBACK);
+    const [tuttaLaSezione,    setTuttaLaSezione]    = useState(false);
 
     // Aggiorna i valori preselezionati quando cambiano le prop
     // (adeguamento dello stato durante il render, con guardia sul valore precedente:
@@ -72,17 +76,25 @@ export function LoadStockModal({
 
     if (!isOpen) return null;
 
+    const bulkMode = tuttaLaSezione && !!onConfirmBulk;
+
     const handleConfirm = async () => {
-        if (!selectedStudent)   { setError('Seleziona un alunno'); return; }
+        if (!bulkMode && !selectedStudent) { setError('Seleziona un alunno'); return; }
+        if (bulkMode && students.length === 0) { setError('Nessun alunno nella sezione'); return; }
         if (!selectedMateriale) { setError('Seleziona un materiale'); return; }
         if (quantity <= 0)       { setError('Inserisci una quantità valida'); return; }
 
         setIsSaving(true);
         setError('');
         try {
-            await onConfirm({ alunno_id: selectedStudent, materiale: selectedMateriale, quantita: quantity });
+            if (bulkMode) {
+                await onConfirmBulk!({ alunno_ids: students.map(s => s.id), materiale: selectedMateriale, quantita: quantity });
+            } else {
+                await onConfirm({ alunno_id: selectedStudent, materiale: selectedMateriale, quantita: quantity });
+            }
             onClose();
             setQuantity(10);
+            setTuttaLaSezione(false);
         } catch (e) {
             setError((e as { message?: string }).message ?? 'Errore durante il salvataggio');
         } finally {
@@ -118,13 +130,20 @@ export function LoadStockModal({
                     <select
                         value={selectedStudent}
                         onChange={e => setSelectedStudent(e.target.value)}
-                        className="w-full border-2 border-kidville-line rounded-xl p-2.5 text-sm focus:border-kidville-green outline-none"
+                        disabled={bulkMode}
+                        className="w-full border-2 border-kidville-line rounded-xl p-2.5 text-sm focus:border-kidville-green outline-none disabled:opacity-50"
                     >
                         <option value="">Seleziona...</option>
                         {students.map(s => (
                             <option key={s.id} value={s.id}>{s.nome} {s.cognome}</option>
                         ))}
                     </select>
+                    {onConfirmBulk && (
+                        <label className="mt-2 flex items-center gap-2 text-xs font-semibold text-kidville-green cursor-pointer">
+                            <input type="checkbox" checked={tuttaLaSezione} onChange={e => setTuttaLaSezione(e.target.checked)} />
+                            Assegna a tutta la sezione ({students.length} alunni)
+                        </label>
+                    )}
                 </div>
 
                 {/* Materiale */}

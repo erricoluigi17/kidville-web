@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
+import { SezioniMultiSelect } from '@/components/features/admin/SezioniMultiSelect';
 
 // ─── Tipi ────────────────────────────────────────────────────────────────────
 
@@ -23,7 +24,6 @@ interface MaterialeConfig {
     classe_sezione?: string;
 }
 
-const CLASSI = ['Girasoli', 'Coccinelle', 'Tulipani', 'Margherite'];
 const ICONE_SUGGERITE = ['🧷', '🧻', '🧴', '👕', '🍼', '🧸', '📦', '🎒', '💊', '🥤'];
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -31,7 +31,8 @@ const ICONE_SUGGERITE = ['🧷', '🧻', '🧴', '👕', '🍼', '🧸', '📦',
 function LockerSettingsInner() {
     const search = useSearchParams();
     const userId = getCurrentTeacherId(search);
-    const [classeFilter, setClasseFilter] = useState('Girasoli');
+    const [sezioniReali, setSezioniReali] = useState<string[]>([]);
+    const [classeFilter, setClasseFilter] = useState('');
     const [materiali, setMateriali]       = useState<MaterialeConfig[]>([]);
     const [loading, setLoading]           = useState(true);
     const [saving, setSaving]             = useState<string | null>(null); // id materiale in salvataggio
@@ -41,7 +42,21 @@ function LockerSettingsInner() {
     const [newMat, setNewMat]             = useState({
         nome: '', icona: '📦', unita: 'pz', livello_allerta: 5, livello_emergenza: 2,
     });
+    const [targetClassi, setTargetClassi] = useState<string[]>([]); // sezioni destinatarie del nuovo materiale
     const [addError, setAddError]         = useState('');
+
+    // Sezioni reali nido/infanzia dei plessi consentiti (niente più lista hardcoded).
+    useEffect(() => {
+        fetch('/api/admin/sections/scoped?grado=nido,infanzia')
+            .then(r => r.json())
+            .then(d => {
+                if (!d.success) return;
+                const names: string[] = (d.data ?? []).flatMap((g: { sezioni: { name: string }[] }) => g.sezioni.map(s => s.name));
+                setSezioniReali(names);
+                setClasseFilter(cur => cur || names[0] || '');
+            })
+            .catch(() => {});
+    }, []);
 
     // ── Fetch ─────────────────────────────────────────────────────────────────
     const fetchMateriali = useCallback(async (classe: string) => {
@@ -52,7 +67,7 @@ function LockerSettingsInner() {
         } finally { setLoading(false); }
     }, [userId]);
 
-    useEffect(() => { fetchMateriali(classeFilter); }, [classeFilter, fetchMateriali]);
+    useEffect(() => { if (classeFilter) fetchMateriali(classeFilter); }, [classeFilter, fetchMateriali]);
 
     // ── Toggle attivo ─────────────────────────────────────────────────────────
     const toggleAttivo = async (mat: MaterialeConfig) => {
@@ -125,6 +140,8 @@ function LockerSettingsInner() {
     const addMateriale = async () => {
         if (!userId) return;
         if (!newMat.nome.trim()) { setAddError('Inserisci un nome'); return; }
+        const classi = targetClassi.length > 0 ? targetClassi : (classeFilter ? [classeFilter] : []);
+        if (classi.length === 0) { setAddError('Seleziona almeno una sezione'); return; }
         setSaving('new');
         try {
             const res = await fetch('/api/locker/materials', {
@@ -132,13 +149,14 @@ function LockerSettingsInner() {
                 headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
                 body: JSON.stringify({
                     ...newMat,
-                    classe_sezione: classeFilter,
+                    classi_sezioni: classi,
                     ordine: materiali.length + 1,
                 }),
             });
             const json = await res.json();
             if (!res.ok) throw new Error(json.error);
-            setMateriali(ms => [...ms, json.data]);
+            // Ricarica la classe corrente (il materiale può essere finito anche su altre sezioni).
+            fetchMateriali(classeFilter);
             setNewMat({ nome: '', icona: '📦', unita: 'pz', livello_allerta: 5, livello_emergenza: 2 });
             setShowAddForm(false);
             setAddError('');
@@ -171,7 +189,10 @@ function LockerSettingsInner() {
 
             {/* Filtro classe */}
             <div className="mt-5 mb-6 flex gap-2 overflow-x-auto pb-1">
-                {CLASSI.map(c => (
+                {sezioniReali.length === 0 && (
+                    <span className="font-maven text-xs text-kidville-muted py-2">Nessuna sezione nido/infanzia disponibile.</span>
+                )}
+                {sezioniReali.map(c => (
                     <button key={c} onClick={() => setClasseFilter(c)}
                         className={`px-4 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition-all
                             ${classeFilter === c ? 'bg-kidville-green text-kidville-yellow shadow' : 'bg-white text-kidville-muted hover:bg-kidville-cream-dark border border-kidville-line'}`}>
@@ -330,6 +351,12 @@ function LockerSettingsInner() {
                         </div>
                     </div>
 
+                    {/* Sezioni destinatarie (multi-select reale) */}
+                    <div className="mb-4">
+                        <label className="text-xs font-bold text-kidville-muted mb-2 block">Assegna alle sezioni</label>
+                        <SezioniMultiSelect grado="nido,infanzia" value={targetClassi} onChange={setTargetClassi} emptyHint="Nessuna sezione nido/infanzia." />
+                    </div>
+
                     {addError && <p className="text-kidville-error text-xs mb-3">{addError}</p>}
 
                     <div className="flex gap-2">
@@ -346,9 +373,9 @@ function LockerSettingsInner() {
             ) : (
                 <button
                     id="add-material-btn"
-                    onClick={() => setShowAddForm(true)}
+                    onClick={() => { setTargetClassi(classeFilter ? [classeFilter] : []); setShowAddForm(true); }}
                     className="w-full py-3 border-2 border-dashed border-kidville-green/30 rounded-2xl text-kidville-green text-sm font-bold hover:bg-kidville-green/5 transition-colors flex items-center justify-center gap-2">
-                    <Plus size={16} /> Aggiungi Materiale per {classeFilter}
+                    <Plus size={16} /> Aggiungi Materiale
                 </button>
             )}
 

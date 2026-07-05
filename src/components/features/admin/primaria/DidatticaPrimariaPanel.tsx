@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { BookOpen, Users, GraduationCap, SlidersHorizontal, Target } from 'lucide-react';
+import Link from 'next/link';
+import { BookOpen, Users, GraduationCap, SlidersHorizontal, Target, Plus } from 'lucide-react';
 import { MaterieManager } from '@/components/features/admin/primaria/MaterieManager';
 import { DocentiMaterieManager } from '@/components/features/admin/primaria/DocentiMaterieManager';
 import { ObiettiviManager } from '@/components/features/admin/primaria/ObiettiviManager';
@@ -19,6 +20,7 @@ export function DidatticaPrimariaPanel({ scuolaId, userId }: { scuolaId: string;
   const [tab, setTab] = useState<Tab>('materie');
   const [sezioni, setSezioni] = useState<Section[]>([]);
   const [sezioneId, setSezioneId] = useState<string>('');
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     fetch(`/api/admin/sections?scuola_id=${scuolaId}`)
@@ -28,8 +30,14 @@ export function DidatticaPrimariaPanel({ scuolaId, userId }: { scuolaId: string;
         setSezioni(list);
         if (list.length) setSezioneId((prev) => prev || list[0].id);
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setLoaded(true));
   }, [scuolaId]);
+
+  // Nessuna sezione primaria = la causa reale del "mancano le materie": senza una
+  // classe primaria non c'è catalogo materie (le materie sono per-sezione).
+  const noSezioniPrimaria = loaded && sezioni.length === 0;
+  const linkSezioni = `/admin/students?tab=sections${userId ? `&userId=${userId}` : ''}`;
 
   const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
     { id: 'materie', label: 'Materie', icon: <BookOpen size={15} /> },
@@ -43,7 +51,7 @@ export function DidatticaPrimariaPanel({ scuolaId, userId }: { scuolaId: string;
 
   return (
     <div>
-      {(tab === 'materie' || tab === 'docenti') && (
+      {(tab === 'materie' || tab === 'docenti') && !noSezioniPrimaria && (
         <div className="mb-4 flex items-center gap-3">
           <label className="font-maven text-sm text-kidville-ink">Classe/Sezione:</label>
           <select
@@ -51,7 +59,6 @@ export function DidatticaPrimariaPanel({ scuolaId, userId }: { scuolaId: string;
             onChange={(e) => setSezioneId(e.target.value)}
             className="font-maven rounded-pill border border-kidville-line bg-white px-4 py-2 text-sm"
           >
-            {sezioni.length === 0 && <option value="">Nessuna sezione primaria</option>}
             {sezioni.map((s) => (
               <option key={s.id} value={s.id}>{s.name} {s.scholastic_year ? `(${s.scholastic_year})` : ''}</option>
             ))}
@@ -75,11 +82,32 @@ export function DidatticaPrimariaPanel({ scuolaId, userId }: { scuolaId: string;
       </nav>
 
       <div className="rounded-card bg-white p-4 md:p-6 shadow-sm">
-        {tab === 'materie' && <MaterieManager sectionId={sezioneId} sezione={sezioneCorrente} userId={userId} scuolaId={scuolaId} />}
-        {tab === 'docenti' && <DocentiMaterieManager sectionId={sezioneId} scuolaId={scuolaId} userId={userId} />}
-        {tab === 'obiettivi' && <ObiettiviManager scuolaId={scuolaId} userId={userId} />}
-        {tab === 'classificazione' && <ClassificazioneDocenti scuolaId={scuolaId} userId={userId} />}
-        {tab === 'vincoli' && <ImpostazioniManager scuolaId={scuolaId} userId={userId} />}
+        {(tab === 'materie' || tab === 'docenti') && noSezioniPrimaria ? (
+          <div className="py-10 text-center">
+            <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-kidville-info-soft">
+              <BookOpen size={22} className="text-kidville-info" />
+            </div>
+            <h4 className="font-barlow font-black text-lg text-kidville-ink">Nessuna classe di primaria</h4>
+            <p className="font-maven text-sm text-kidville-muted mt-1 max-w-md mx-auto">
+              Le materie si gestiscono per classe: crea prima una sezione di tipo <b>Primaria</b> in
+              Anagrafica → Sezioni, poi torna qui per applicare il preset delle materie o aggiungerle a mano.
+            </p>
+            <Link
+              href={linkSezioni}
+              className="font-maven mt-4 inline-flex items-center gap-2 rounded-pill bg-kidville-green px-5 py-2.5 text-sm text-kidville-yellow"
+            >
+              <Plus size={16} /> Crea una sezione primaria
+            </Link>
+          </div>
+        ) : (
+          <>
+            {tab === 'materie' && <MaterieManager sectionId={sezioneId} sezione={sezioneCorrente} userId={userId} scuolaId={scuolaId} />}
+            {tab === 'docenti' && <DocentiMaterieManager sectionId={sezioneId} scuolaId={scuolaId} userId={userId} />}
+            {tab === 'obiettivi' && <ObiettiviManager scuolaId={scuolaId} userId={userId} />}
+            {tab === 'classificazione' && <ClassificazioneDocenti scuolaId={scuolaId} userId={userId} />}
+            {tab === 'vincoli' && <ImpostazioniManager scuolaId={scuolaId} userId={userId} />}
+          </>
+        )}
       </div>
     </div>
   );

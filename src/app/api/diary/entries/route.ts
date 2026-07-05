@@ -5,6 +5,7 @@ import { requireDocente } from '@/lib/auth/require-staff';
 import { assertAlunnoInScope, scuoleDiUtente } from '@/lib/auth/scope';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { notificaTitolariScrittura, enqueueDiarioGenitori } from '@/lib/primaria/notifiche';
+import { getModuleConfig } from '@/lib/settings/module-config';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid, zDataYMD } from '@/lib/validation/common';
 
@@ -60,12 +61,28 @@ export async function GET(request: NextRequest) {
         })();
         const toDate = q.data.to ?? new Date().toISOString().split('T')[0];
 
+        // Buffer visibilità (come le valutazioni primaria, PRD §4.5): il genitore
+        // vede una voce solo trascorsi `buffer_visibilita_min` minuti dalla
+        // creazione, così la maestra ha la finestra di correzione. Default 10'.
+        const { data: alunno } = await admin
+            .from('alunni')
+            .select('scuola_id')
+            .eq('id', q.data.alunno_id)
+            .maybeSingle();
+        const diarioCfg = await getModuleConfig<{ buffer_visibilita_min?: number }>(
+            admin, 'diario_config', alunno?.scuola_id,
+        );
+        const bufferMin = diarioCfg.buffer_visibilita_min ?? 10;
+        const soglia = new Date(Date.now() - bufferMin * 60_000).toISOString();
+
         const { data, error } = await admin
             .from('eventi_diario')
             .select('id, tipo_evento, orario_inizio, dettagli, nota_libera')
             .eq('alunno_id', q.data.alunno_id)
             .gte('orario_inizio', `${fromDate}T00:00:00.000Z`)
             .lte('orario_inizio', `${toDate}T23:59:59.999Z`)
+            // Nasconde le voci create da meno di `bufferMin` (finestra di correzione).
+            .lte('creato_il', soglia)
             .order('orario_inizio', { ascending: false });
 
         if (error) return NextResponse.json({ error: error.message }, { status: 500 });

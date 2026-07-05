@@ -52,6 +52,65 @@
 > | **Interoperabilità SIDI / Piattaforma Unica** | ✅ Implementato (P5, DL-047..050) · 🔶 egress gated | Fase P5 | Import ZIP (parser pluggable), Fase A, frequentanti, genitori-alunni, certificati competenze D.M. 14/2024 + indicatore sync. **Trasmissione reale subordinata all'accreditamento ministeriale** |
 > | **Accessibilità AgID / Legge Stanca** | 🔶 Baseline (P1, DL-008) | Trasversale | Fatto: alto contrasto globale persistito, focus-ring, reduced-motion, Modal accessibile, landmark/skip-link/aria-current, smoke jest-axe. WCAG-AA = definition-of-done; audit AA per-pagina incrementale |
 
+---
+
+## 🗓️ Changelog — Batch Segreteria 2026-07-05 (branch `feat/batch-segreteria`)
+
+Batch di 9 interventi segreteria/didattica + creazione di 2 classi di prova. Gate verde:
+`eslint` 0, `vitest` 765/765, `build` ok (e2e in CI su push). Branch non ancora
+pushato/mergeato al momento della scrittura.
+
+1. **Diario 0-6 — buffer visibilità 10'.** Il ramo genitore di `GET /api/diary/entries`
+   nasconde le voci create da meno di `diario_config.buffer_visibilita_min` minuti
+   (default 10), replicando la finestra di correzione delle valutazioni primaria. Campo
+   regolabile in Impostazioni → Diario. Il ramo docente/segreteria vede tutto in tempo reale.
+2. **Materie primaria — accessibilità.** Il preset `materie_preset` è già seedato (65 righe);
+   la causa reale di "mancano le materie" era l'**assenza di sezioni di primaria** in prod
+   (le materie sono per-sezione). Il pannello Didattica primaria mostra ora un empty-state con
+   CTA "Crea una sezione primaria" invece del selettore vuoto.
+3. **Anagrafiche — salvataggio unico + fix bug.** Un solo pulsante "Salva anagrafica" fuori
+   dalle schede salva alunno + tutti i genitori insieme e collegati (schede genitore vuote
+   saltate; se l'alunno fallisce non si crea nulla → niente genitori orfani). I form alunno/adulto
+   sono `forwardRef` con `validate()/reset()/isEmpty()`, tutti montati. **Bug "campi genitore
+   vuoti alla riapertura" risolto**: `parents` ha RLS ON con **zero policy**, e la route
+   `GET /api/admin/parents/[id]` usava il client con RLS (`createClient`) tornando sempre vuoto;
+   ora usa `createAdminClient` (service-role) come le altre route admin.
+4. **Import anagrafiche — prestampato CSV.** Nuovo `src/lib/import/template.ts` (intestazioni
+   italiane alunno + 2 genitori) + `POST /api/admin/import/anagrafiche` che crea alunni + genitori
+   collegati con dedup sul codice fiscale. In Strumenti: "Scarica prestampato CSV" + import server.
+5. **Mensa — assegnazione sezioni multi-select.** Nuovo componente riusabile `SezioniMultiSelect`
+   (da `/api/admin/sections/scoped`); nel MenuBuilder, selezionando un menu, compare l'elenco
+   sezioni a selezione multipla. Nuovo `PUT /api/mensa/class-assignments` (semantica set).
+6. **Armadietto — materiale per classi + carico a tutta la sezione.** `POST /api/locker/materials`
+   accetta `classi_sezioni[]` (crea il materiale su più sezioni); la config materiali usa sezioni
+   reali (non più lista hardcoded) con `SezioniMultiSelect`; il modale di carico ha l'opzione
+   "Assegna a tutta la sezione" (distribuzione a tutti gli alunni della classe).
+7. **Rigenera credenziali — PDF nelle notifiche (genitori + staff).** `regenerate-credentials`,
+   oltre alla mail, genera un PDF (`src/lib/pdf/credentials-pdf.ts`) salvato nel bucket privato
+   `credenziali` e accoda una notifica alla segreteria con link di download
+   (`GET /api/admin/credentials-pdf?key=`, staff-gated). Pulsante reale in ParentDetailPanel e StaffPanel.
+8. **Messaggi alla segreteria (nuova sezione).** Voce sidebar "Messaggi" + pagina `/admin/messaggi`
+   con 2 tab: "Con i genitori" (chat segreteria↔genitore; riusa `/api/chat/*` con la segreteria
+   come `teacher_id`) e "Tutti i messaggi" (**supervisione sola-lettura** di tutte le chat
+   genitore↔insegnante, filtrabile per insegnante/genitore/classe; `/api/admin/chat/{threads,messages,contacts}`).
+9. **Iscrizioni — UI unica.** `/admin/iscrizioni` divisa in "Ricevute" (le richieste, invariate) +
+   "Moduli inviabili via link" (i modelli del builder con pubblica/copia-link; il wizard `/iscrizione`
+   compare come "modulo predefinito"). *Follow-up*: unificare nella lista Ricevute anche le
+   submission dei moduli d'iscrizione (ETL dedicato) — non fatto per contenere il rischio.
+
+**Classi di prova (produzione, sede Kidville Giugliano `d53b0fbc-…`).** Create 2 sezioni etichettate
+TEST — **"TEST Infanzia"** (school_type infanzia) e **"TEST 1A"** (primaria) — ognuna con 10 alunni,
+2 insegnanti e 10 genitori con login (password comune `KidvilleTest.2026!`, hash verificato). Email:
+`test.inf.docente{1,2}` / `test.inf.genitore{1..10}` / `test.pri.*` `@kidville.test`. Dati fittizi
+ripulibili (etichetta TEST).
+
+**Nota di regressione nota (non risolta):** in `parents` la colonna `citizenship` conserva in realtà il
+*ruolo* (`mother`/`father`/`educator`…) come workaround load-bearing per il filtro Staff e il pannello
+di dettaglio; la cittadinanza reale digitata viene sovrascritta. Non toccato per non rompere
+`students/page.tsx`. Da bonificare separatamente con un campo ruolo dedicato.
+
+---
+
 # PRD - Kidville App: Modulo Anagrafica e Account Famiglia
 
 ## 1. Obiettivo del Modulo

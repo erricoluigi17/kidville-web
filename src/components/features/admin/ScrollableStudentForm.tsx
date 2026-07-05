@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Fingerprint, FileWarning, User, AlertTriangle, Loader2, CheckCircle2, XCircle, Save, ArrowRight, RefreshCw } from 'lucide-react';
+import { Fingerprint, FileWarning, User, AlertTriangle, Loader2 } from 'lucide-react';
 import { fetchFiscalCode } from '@/lib/utils/fiscalCodeApi';
 import { z } from 'zod';
 import { AllergeniSelect } from '@/components/features/admin/AllergeniSelect';
@@ -34,11 +34,14 @@ const studentSchema = z.object({
     }).optional()
 });
 
-interface ScrollableStudentFormProps {
-    onSaveSuccess?: (studentId: string) => void;
+export interface StudentFormHandle {
+    // Valida i campi (mostra gli errori inline) e ritorna il payload pronto per
+    // POST /api/admin/students, oppure { ok:false } se ci sono errori.
+    validate: () => { ok: true; data: Record<string, unknown> } | { ok: false };
+    reset: () => void;
 }
 
-export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormProps = {}) {
+export const ScrollableStudentForm = forwardRef<StudentFormHandle>(function ScrollableStudentForm(_props, ref) {
     const [formData, setFormData] = useState({
         nome: '',
         cognome: '',
@@ -69,9 +72,13 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
     const [isCfAutoCalculated, setIsCfAutoCalculated] = useState(false);
     const [isCfLoading, setIsCfLoading] = useState(false);
     const [errors, setErrors] = useState<Record<string, string>>({});
-    const [toast, setToast] = useState<{ type: 'success' | 'error', message: string } | null>(null);
-    const [isSubmitting, setIsSubmitting] = useState(false);
-    const [savedStudent, setSavedStudent] = useState<{ id: string; nome: string; cognome: string } | null>(null);
+
+    const initialFormData = {
+        nome: '', cognome: '', sesso: 'M', data_nascita: '', comune_nascita: '', provincia_nascita: '',
+        codice_fiscale: '', indirizzo_residenza: '', comune_residenza: '', cap: '', classe_sezione: '',
+        scuola_id: '', is_bes_dsa: false, note_bes: '', usa_pannolino: false, allergies: '', allergeni: [] as string[],
+        invoice_holder_type: 'mom', invoice_holder_details: { nome: '', cognome: '', codice_fiscale: '', adult_id: '' },
+    };
 
     // Specchio dell'ultimo valore di formData.codice_fiscale: permette all'effect di
     // confrontare il CF corrente senza dipendere da formData.codice_fiscale (deps invariate)
@@ -140,131 +147,41 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
         }
     };
 
-    const handleSubmit = async () => {
-        setErrors({});
-        setIsSubmitting(true);
-        try {
-            const parsedData = studentSchema.parse(formData);
-            
-            const res = await fetch('/api/admin/students', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+    // Il salvataggio è orchestrato dal contenitore (FamilyRegistryManager) tramite
+    // un unico pulsante: qui esponiamo solo validazione + estrazione del payload.
+    useImperativeHandle(ref, () => ({
+        validate() {
+            setErrors({});
+            try {
+                const parsedData = studentSchema.parse(formData);
                 // scuola_id: sede scelta (default = sede attiva). Il server la valida
                 // via resolveScuolaScrittura contro le sedi accessibili.
-                body: JSON.stringify({ ...parsedData, scuola_id: scuolaSelezionata })
-            });
-
-            if (!res.ok) {
-                let errorMsg = 'Errore nel salvataggio';
-                try {
-                    const errorData = await res.json();
-                    errorMsg = errorData.error || errorMsg;
-                } catch { /* risposta non-JSON, ignoriamo */ }
-                throw new Error(errorMsg);
+                return { ok: true as const, data: { ...parsedData, scuola_id: scuolaSelezionata } };
+            } catch (error) {
+                const zodLike = error as { issues?: { path?: (string | number)[]; message: string }[] };
+                if (zodLike && zodLike.issues) {
+                    const fieldErrors: Record<string, string> = {};
+                    zodLike.issues.forEach((err) => {
+                        if (err.path && err.path.length > 0) fieldErrors[err.path.join('.')] = err.message;
+                    });
+                    setErrors(fieldErrors);
+                }
+                return { ok: false as const };
             }
-
-            const responseData = await res.json();
-
-            setSavedStudent({ id: responseData.id, nome: formData.nome, cognome: formData.cognome });
-            
-            if (onSaveSuccess && responseData.id) {
-                onSaveSuccess(responseData.id);
-            }
-
-        } catch (error) {
-            const zodLike = error as { issues?: { path?: (string | number)[]; message: string }[] };
-            if (zodLike && zodLike.issues) {
-                const fieldErrors: Record<string, string> = {};
-                zodLike.issues.forEach((err) => {
-                    if (err.path && err.path.length > 0) {
-                        fieldErrors[err.path.join('.')] = err.message;
-                    }
-                });
-                setErrors(fieldErrors);
-                setToast({ type: 'error', message: 'Correggi gli errori evidenziati nel form.' });
-            } else {
-                setToast({ type: 'error', message: (error as Error).message || 'Errore sconosciuto' });
-            }
-            setTimeout(() => setToast(null), 5000);
-        } finally {
-            setIsSubmitting(false);
-        }
-    };
+        },
+        reset() {
+            codiceFiscaleRef.current = '';
+            setErrors({});
+            setFormData({ ...initialFormData });
+        },
+    }), [formData, scuolaSelezionata]); // eslint-disable-line react-hooks/exhaustive-deps
 
     return (
         <div className="text-kidville-green">
-            {/* Pannello di conferma salvataggio — mostrato al posto del form */}
-            {savedStudent ? (
-                <motion.div
-                    initial={{ opacity: 0, scale: 0.95 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    className="flex flex-col items-center justify-center gap-6 py-10 text-center"
-                >
-                    <div className="w-20 h-20 rounded-full bg-kidville-green/20 flex items-center justify-center">
-                        <CheckCircle2 size={44} className="text-kidville-green" />
-                    </div>
-                    <div>
-                        <h3 className="text-2xl font-black font-barlow text-kidville-green uppercase tracking-wide">
-                            Alunno Salvato!
-                        </h3>
-                        <p className="text-kidville-green/80 font-maven mt-1 text-lg">
-                            {savedStudent.nome} {savedStudent.cognome}
-                        </p>
-                        <p className="text-kidville-muted font-maven text-sm mt-1">
-                            ID: {savedStudent.id.slice(0, 8)}...
-                        </p>
-                    </div>
-
-                    <div className="bg-kidville-success-soft border border-kidville-success-soft rounded-xl px-5 py-3 text-kidville-success text-sm font-maven font-bold flex items-center gap-2">
-                        <CheckCircle2 size={15} />
-                        Ora compila Madre e Padre per collegare i genitori
-                    </div>
-
-                    <div className="flex gap-3 mt-2">
-                        <a
-                            href="/admin/students"
-                            className="flex items-center gap-2 px-5 py-2.5 bg-kidville-green text-white rounded-xl font-barlow font-bold uppercase text-sm hover:opacity-90 transition-all"
-                        >
-                            Vai alla lista alunni <ArrowRight size={16} />
-                        </a>
-                        <button
-                            onClick={() => {
-                                setSavedStudent(null);
-                                codiceFiscaleRef.current = '';
-                                setFormData({ nome: '', cognome: '', sesso: 'M', data_nascita: '', comune_nascita: '', provincia_nascita: '', codice_fiscale: '', indirizzo_residenza: '', comune_residenza: '', cap: '', classe_sezione: '', scuola_id: '', is_bes_dsa: false, note_bes: '', usa_pannolino: false, allergies: '', allergeni: [], invoice_holder_type: 'mom', invoice_holder_details: { nome: '', cognome: '', codice_fiscale: '', adult_id: '' } });
-                            }}
-                            className="flex items-center gap-2 px-5 py-2.5 bg-kidville-cream border border-kidville-green/15 text-kidville-green rounded-xl font-barlow font-bold uppercase text-sm hover:bg-kidville-green-light transition-all"
-                        >
-                            <RefreshCw size={16} /> Nuovo alunno
-                        </button>
-                    </div>
-                </motion.div>
-            ) : (
-            <>
-            <AnimatePresence>
-                {toast && (
-                    <motion.div 
-                        initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}
-                        className={`absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-2 px-6 py-3 rounded-full font-bold shadow-lg z-50 ${toast.type === 'success' ? 'bg-kidville-green text-white' : 'bg-kidville-error text-white'}`}
-                    >
-                        {toast.type === 'success' ? <CheckCircle2 size={18} /> : <XCircle size={18} />}
-                        {toast.message}
-                    </motion.div>
-                )}
-            </AnimatePresence>
-
-            <div className="flex justify-between items-center mb-8 border-b border-kidville-green/15 pb-4">
+            <div className="flex items-center mb-8 border-b border-kidville-green/15 pb-4">
                 <h2 className="text-2xl font-bold text-kidville-green flex items-center gap-2">
                     <User /> Compilazione Alunno
                 </h2>
-                <button 
-                    onClick={handleSubmit}
-                    disabled={isSubmitting}
-                    className="flex items-center gap-2 px-6 py-2 rounded-full bg-kidville-green text-white font-bold hover:bg-kidville-green/90 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                    {isSubmitting ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />}
-                    {isSubmitting ? 'Salvataggio...' : 'Salva Alunno'}
-                </button>
             </div>
 
             <div className="space-y-12">
@@ -493,8 +410,6 @@ export function ScrollableStudentForm({ onSaveSuccess }: ScrollableStudentFormPr
                     </div>
                 </section>
             </div>
-            </>
-            )}
         </div>
     );
-}
+});

@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireStaff } from '@/lib/auth/require-staff';
+import { parseQuery } from '@/lib/validation/http';
+
+// Nessun parametro in ingresso: schema vuoto (rispetta il lock zod-coverage admin).
+const getQuerySchema = z.object({});
 
 // GET /api/admin/chat/contacts
 // Elenco genitori (utenti con login) con un figlio, per avviare una chat
@@ -8,6 +13,8 @@ import { requireStaff } from '@/lib/auth/require-staff';
 export async function GET(request: NextRequest) {
   const auth = await requireStaff(request);
   if (auth.response) return auth.response;
+  const q = parseQuery(request, getQuerySchema);
+  if ('response' in q) return q.response;
 
   try {
     const supabase = await createAdminClient();

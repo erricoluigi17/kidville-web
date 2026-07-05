@@ -25,6 +25,9 @@ vi.mock('@/lib/supabase/server-client', () => ({
         then: (res: (v: { data: unknown; error: null }) => unknown) => res({ data: h.events, error: null }),
       }
       b.select = () => b; b.eq = () => b; b.gte = () => b; b.lte = () => b; b.in = () => b; b.order = () => b
+      // Lookup scuola_id dell'alunno per il buffer visibilità (WS1): data null →
+      // getModuleConfig corto-circuita, buffer default 10', eventi comunque resi.
+      b.maybeSingle = () => Promise.resolve({ data: null, error: null })
       return b
     },
   }),

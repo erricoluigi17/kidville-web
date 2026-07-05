@@ -15,6 +15,7 @@ import { AvvisiPreview } from '@/components/features/parent/home/AvvisiPreview';
 import { GalleryTodayCard } from '@/components/features/parent/home/GalleryTodayCard';
 import { LockerTodayCard } from '@/components/features/parent/home/LockerTodayCard';
 import { AgendaTodayCard } from '@/components/features/parent/home/AgendaTodayCard';
+import { PresenzeTodayCard } from '@/components/features/parent/home/PresenzeTodayCard';
 
 function greetingByHour() {
   const h = new Date().getHours();
@@ -164,6 +165,19 @@ function ParentHomeContent() {
           );
         })}
       </div>
+
+      {/* ── PRESENZE OGGI (badge "A scuola" reale) ── */}
+      {parentId && studentId && (
+        <div className="px-4 pt-5">
+          <SectionHeader
+            eyebrow="Presenze"
+            title="Oggi a scuola"
+            actionLabel="Storico"
+            actionHref={wi(isPrimaria ? '/parent/primaria/assenze' : '/parent/attendance')}
+          />
+          <PresenzeTodayCard studentId={studentId} parentId={parentId} />
+        </div>
+      )}
 
       {/* ── RIEPILOGO PAGAMENTI ───────────────────── */}
       {parentId && (

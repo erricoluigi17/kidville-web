@@ -22,6 +22,7 @@ import {
   ShieldCheck,
   ChefHat,
   Shirt,
+  MessageCircle,
   Menu,
   X,
 } from 'lucide-react';
@@ -85,6 +86,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     title: 'Comunicazione',
     items: [
+      { href: '/admin/messaggi', label: 'Messaggi', icon: MessageCircle },
       { href: '/admin/avvisi', label: 'Avvisi', icon: Bell },
       { href: '/admin/compiti', label: 'Compiti', icon: ListTodo },
     ],

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { X, Save, Users, User, ChevronRight } from 'lucide-react';
+import { X, Save, Users, User, ChevronRight, KeyRound } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 // Strutture dati
@@ -57,6 +57,8 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave }: Props) {
     const [isLoading, setIsLoading] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     const [expandedChild, setExpandedChild] = useState<string | null>(null);
+    const [regen, setRegen] = useState<'idle' | 'loading' | 'done' | 'error'>('idle');
+    const [regenMsg, setRegenMsg] = useState('');
 
     useEffect(() => {
         if (!parentBasicInfo) return;
@@ -93,6 +95,33 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave }: Props) {
 
     const updateForm = <K extends keyof ParentProfile>(field: K, value: ParentProfile[K]) => {
         setForm(prev => ({ ...prev, [field]: value }));
+    };
+
+    const handleRegen = async () => {
+        if (!parent) return;
+        if (!confirm('Rigenerare le credenziali di accesso? La password precedente non sarà più valida.')) return;
+        setRegen('loading');
+        setRegenMsg('');
+        try {
+            const res = await fetch('/api/admin/regenerate-credentials', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ targetKind: 'parent', targetId: parent.id }),
+            });
+            const body = await res.json();
+            if (!res.ok) throw new Error(body.error || 'Errore');
+            setRegen('done');
+            setRegenMsg(
+                body.pdf_notifica
+                    ? 'Fatto: email inviata e PDF disponibile nel centro notifiche.'
+                    : body.email_inviata
+                        ? 'Fatto: email con le credenziali inviata.'
+                        : body.warning || 'Credenziali rigenerate.'
+            );
+        } catch (e) {
+            setRegen('error');
+            setRegenMsg((e as Error).message);
+        }
     };
 
     const getChildrenTabs = (): LinkedChild[] => {
@@ -322,7 +351,7 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave }: Props) {
                 )}
 
                 {/* Footer actions */}
-                <div className="flex-shrink-0 p-5 border-t border-kidville-line bg-white">
+                <div className="flex-shrink-0 p-5 border-t border-kidville-line bg-white space-y-2">
                     <button
                         onClick={handleSave}
                         disabled={isSaving}
@@ -337,6 +366,16 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave }: Props) {
                             </>
                         )}
                     </button>
+                    <button
+                        onClick={handleRegen}
+                        disabled={regen === 'loading' || !parent}
+                        className="w-full h-11 rounded-pill border-2 border-kidville-green/40 text-kidville-green font-barlow font-bold uppercase text-sm hover:bg-kidville-green/5 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                    >
+                        <KeyRound size={15} /> {regen === 'loading' ? 'Rigenerazione…' : 'Rigenera credenziali'}
+                    </button>
+                    {regenMsg && (
+                        <p className={`text-xs text-center font-maven ${regen === 'error' ? 'text-kidville-error' : 'text-kidville-success'}`}>{regenMsg}</p>
+                    )}
                 </div>
             </div>
         </>

@@ -8,6 +8,8 @@ import { randomPassword } from '@/lib/auth/backfill';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
+import { buildCredentialsPdf } from '@/lib/pdf/credentials-pdf';
+import { enqueueNotifiche } from '@/lib/push/enqueue';
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // targetId è sempre un UUID: parents.id (PK uuid) oppure utenti.id (= auth.users id).
@@ -87,13 +89,46 @@ export async function POST(request: Request) {
     text: credentialsEmailBody(nome, email, password),
   });
 
+  // PDF credenziali scaricabile → bucket privato + notifica alla segreteria che
+  // ha agito (oltre alla mail). Best-effort: un errore non blocca la rigenerazione.
+  let pdfPronto = false;
+  try {
+    const loginUrl = process.env.NEXT_PUBLIC_APP_URL ? `${process.env.NEXT_PUBLIC_APP_URL}/auth/login` : '/auth/login';
+    const pdf = buildCredentialsPdf({
+      schoolName: 'Kidville',
+      nome,
+      ruolo: targetKind === 'parent' ? 'Genitore' : 'Staff',
+      email,
+      password,
+      loginUrl,
+      generatedAt: new Date().toLocaleString('it-IT'),
+    });
+    // Assicura il bucket privato (idempotente: se esiste, l'errore è ignorato).
+    await admin.storage.createBucket('credenziali', { public: false }).catch(() => {});
+    const pdfKey = `${targetId}-${Date.now()}.pdf`;
+    const up = await admin.storage.from('credenziali').upload(pdfKey, pdf, { contentType: 'application/pdf', upsert: true });
+    if (up.error) throw up.error;
+    await enqueueNotifiche(admin, {
+      utenteIds: [auth.user.id],
+      tipo: 'credenziali',
+      titolo: 'Credenziali rigenerate',
+      corpo: `${nome ?? email}: PDF con le credenziali pronto per il download.`,
+      link: `/api/admin/credentials-pdf?key=${encodeURIComponent(pdfKey)}`,
+      entitaTipo: 'credenziali',
+      entitaId: targetId,
+    });
+    pdfPronto = true;
+  } catch (e) {
+    console.warn('[regenerate-credentials] PDF/notifica saltati (non bloccante):', (e as Error).message);
+  }
+
   await logScrittura(admin as never, {
     attore: auth.user,
     entitaTipo: 'credenziali',
     entitaId: targetId,
     azione: 'update',
     scuolaId: auth.user.scuola_id ?? null,
-    valoreDopo: { targetKind, emailed },
+    valoreDopo: { targetKind, emailed, pdf: pdfPronto },
   });
 
   // La password è già stata cambiata: un fallimento email NON può restare
@@ -101,6 +136,7 @@ export async function POST(request: Request) {
   return NextResponse.json({
     ok: true,
     email_inviata: emailed,
+    pdf_notifica: pdfPronto,
     ...(emailed
       ? {}
       : { warning: 'Email non inviata (provider non configurato): comunicare le credenziali manualmente.' }),

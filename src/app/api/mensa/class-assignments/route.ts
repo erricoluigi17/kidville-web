@@ -19,6 +19,14 @@ const postBodySchema = z.object({
   attivo_dal: zDataYMD,
 })
 
+// PUT: set semantics — sostituisce l'elenco sezioni assegnate a un menu.
+const putBodySchema = z.object({
+  scuola_id: zUuid,
+  menu_config_id: zUuid,
+  classi: z.array(z.string().trim().min(1)).max(200),
+  attivo_dal: zDataYMD.optional(),
+})
+
 const deleteQuerySchema = z.object({
   id: zUuid,
 })
@@ -72,6 +80,41 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: true, data }, { status: 201 })
   } catch (err) {
     console.error('POST /api/mensa/class-assignments:', err)
+    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
+  }
+}
+
+// PUT /api/mensa/class-assignments  { scuola_id, menu_config_id, classi: string[], attivo_dal? }
+// Rimpiazza tutte le sezioni assegnate a quel menu con l'elenco fornito (multi-select).
+export async function PUT(request: NextRequest) {
+  try {
+    const auth = await requireStaff(request)
+    if (auth.response) return auth.response
+    const b = await parseBody(request, putBodySchema)
+    if ('response' in b) return b.response
+    const { scuola_id, menu_config_id, classi, attivo_dal } = b.data
+
+    const supabase = await createAdminClient()
+    const { scuolaId: sede, response } = await resolveScuolaScrittura(request, supabase, auth.user, scuola_id)
+    if (response) return response
+
+    const { error: delErr } = await supabase
+      .from('mensa_class_menu_assignment')
+      .delete()
+      .eq('scuola_id', sede)
+      .eq('menu_config_id', menu_config_id)
+    if (delErr) throw delErr
+
+    const dal = attivo_dal ?? new Date().toISOString().split('T')[0]
+    const uniche = [...new Set(classi)]
+    if (uniche.length > 0) {
+      const rows = uniche.map((classe) => ({ scuola_id: sede, classe, menu_config_id, attivo_dal: dal }))
+      const { error: insErr } = await supabase.from('mensa_class_menu_assignment').insert(rows)
+      if (insErr) throw insErr
+    }
+    return NextResponse.json({ success: true, count: uniche.length })
+  } catch (err) {
+    console.error('PUT /api/mensa/class-assignments:', err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
 }

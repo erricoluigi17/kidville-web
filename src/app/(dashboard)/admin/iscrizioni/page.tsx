@@ -1,14 +1,17 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
 import {
   UserPlus, Baby, Users, FileText, CheckCircle2, XCircle, Loader2,
   ChevronLeft, Clock, KeyRound, AlertTriangle, ExternalLink, Star,
+  Inbox, Send, Copy, Link2, Pencil, Plus,
 } from 'lucide-react'
 import { ADULT_ROLE_LABELS } from '@/lib/forms/enrollment-template'
 import type { EnrollmentSubmissionData, EnrollmentChild, EnrollmentAdult } from '@/types/database.types'
-import { CockpitPage, PageHeader, StatCard } from '@/components/ui/cockpit'
+import { CockpitPage, PageHeader, StatCard, Tabs } from '@/components/ui/cockpit'
 import { useSediAttive } from '@/lib/context/sede-context'
+import { publicFormUrl } from '@/lib/forms/publish'
 
 interface SubmissionRow {
   id: string
@@ -22,6 +25,140 @@ interface SubmissionRow {
 interface Section { id: string; name: string }
 
 export default function IscrizioniPage() {
+  const [tab, setTab] = useState<'ricevute' | 'moduli'>('ricevute')
+  return (
+    <CockpitPage max={1152}>
+      <PageHeader
+        icon={UserPlus}
+        title="Iscrizioni"
+        subtitle="Richieste ricevute e moduli d'iscrizione da inviare ai genitori tramite link."
+        actions={
+          <a
+            href="/admin/sidi"
+            className="inline-flex h-[46px] items-center gap-2 rounded-pill bg-kidville-green-soft px-5 font-barlow text-sm font-extrabold uppercase tracking-[0.03em] text-kidville-green hover:bg-kidville-green/20"
+          >
+            <ExternalLink size={16} /> Interoperabilità SIDI
+          </a>
+        }
+      />
+      <Tabs
+        value={tab}
+        onChange={(v) => setTab(v as 'ricevute' | 'moduli')}
+        options={[
+          { id: 'ricevute', label: 'Ricevute', icon: Inbox },
+          { id: 'moduli', label: 'Moduli inviabili', icon: Send },
+        ]}
+      />
+      {tab === 'ricevute' ? <RicevuteTab /> : <ModuliTab />}
+    </CockpitPage>
+  )
+}
+
+interface FormModel {
+  id: string
+  title: string
+  is_active?: boolean
+  is_enrollment_form?: boolean
+  published_at?: string | null
+  public_token?: string | null
+  access_mode?: string | null
+}
+
+function ModuliTab() {
+  const [models, setModels] = useState<FormModel[]>([])
+  const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [copied, setCopied] = useState<string | null>(null)
+
+  const load = () => {
+    fetch('/api/admin/forms/models')
+      .then((r) => r.json())
+      .then((d) => { if (Array.isArray(d)) setModels(d) })
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }
+  useEffect(() => { load() }, [])
+
+  const togglePublish = async (m: FormModel) => {
+    setBusy(m.id)
+    try {
+      const res = await fetch('/api/admin/form-models/publish', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: m.id, action: m.published_at ? 'unpublish' : 'publish' }),
+      })
+      if (!res.ok) { const j = await res.json().catch(() => ({})); alert(j.error || 'Errore'); return }
+      load()
+    } finally { setBusy(null) }
+  }
+
+  const copyLink = async (url: string, id: string) => {
+    try { await navigator.clipboard.writeText(url); setCopied(id); setTimeout(() => setCopied(null), 2000) } catch { /* no-op */ }
+  }
+
+  const origin = typeof window !== 'undefined' ? window.location.origin : ''
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <p className="font-maven text-sm text-kidville-muted max-w-xl">Moduli personalizzabili da inviare ai genitori tramite link. Modificali nel builder e pubblicali per ottenere il link condivisibile.</p>
+        <Link href="/admin/forms/builder" className="inline-flex items-center gap-2 rounded-pill bg-kidville-green px-4 py-2 font-barlow text-sm font-bold uppercase text-kidville-yellow"><Plus size={15} /> Nuovo modulo</Link>
+      </div>
+
+      {/* Modulo predefinito: wizard fisso /iscrizione */}
+      <div className="rounded-card border border-kidville-line bg-kidville-white p-4">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <p className="font-barlow font-bold text-kidville-ink">Modulo d&apos;iscrizione standard
+              <span className="ml-2 text-[10px] uppercase bg-kidville-cream px-2 py-0.5 rounded-full text-kidville-muted">predefinito</span>
+            </p>
+            <p className="font-maven text-xs text-kidville-muted">Wizard pubblico sempre attivo. Le richieste arrivano nel tab «Ricevute».</p>
+          </div>
+          <button onClick={() => copyLink(`${origin}/iscrizione`, 'std')} className="inline-flex items-center gap-1.5 rounded-pill border border-kidville-green/30 px-3 py-1.5 text-sm text-kidville-green">
+            {copied === 'std' ? <><CheckCircle2 size={14} /> Copiato</> : <><Copy size={14} /> Copia link</>}
+          </button>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="flex items-center gap-2 text-kidville-muted p-4"><Loader2 size={16} className="animate-spin" /> Caricamento…</div>
+      ) : models.length === 0 ? (
+        <p className="font-maven text-sm text-kidville-muted p-2">Nessun modulo personalizzato. Creane uno con «Nuovo modulo».</p>
+      ) : models.map((m) => {
+        const pub = !!m.published_at
+        const url = m.public_token ? `${origin}${publicFormUrl(m.public_token)}` : ''
+        return (
+          <div key={m.id} className="rounded-card border border-kidville-line bg-kidville-white p-4">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div className="min-w-0">
+                <p className="font-barlow font-bold text-kidville-ink truncate">
+                  {m.title}
+                  {m.is_enrollment_form && <span className="ml-2 text-[10px] uppercase bg-kidville-green-soft px-2 py-0.5 rounded-full text-kidville-green">iscrizione</span>}
+                  <span className={`ml-2 text-[10px] uppercase px-2 py-0.5 rounded-full ${pub ? 'bg-kidville-success-soft text-kidville-success' : 'bg-kidville-warn-soft text-kidville-warn'}`}>{pub ? 'pubblicato' : 'bozza'}</span>
+                </p>
+                {pub && url && <p className="font-maven text-xs text-kidville-muted truncate">{url}</p>}
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <Link href={`/admin/forms/builder?id=${m.id}`} className="inline-flex items-center gap-1.5 rounded-pill border border-kidville-line px-3 py-1.5 text-sm text-kidville-muted hover:text-kidville-green"><Pencil size={14} /> Modifica</Link>
+                {pub && url && (
+                  <button onClick={() => copyLink(url, m.id)} className="inline-flex items-center gap-1.5 rounded-pill border border-kidville-green/30 px-3 py-1.5 text-sm text-kidville-green">
+                    {copied === m.id ? <><CheckCircle2 size={14} /> Copiato</> : <><Copy size={14} /> Copia link</>}
+                  </button>
+                )}
+                <button onClick={() => togglePublish(m)} disabled={busy === m.id} className={`inline-flex items-center gap-1.5 rounded-pill px-3 py-1.5 text-sm ${pub ? 'border border-kidville-error/30 text-kidville-error' : 'bg-kidville-green text-kidville-yellow'}`}>
+                  {busy === m.id ? <Loader2 size={14} className="animate-spin" /> : <Link2 size={14} />}
+                  {pub ? 'Ritira' : 'Pubblica'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function RicevuteTab() {
   const [rows, setRows] = useState<SubmissionRow[]>([])
   const [sections, setSections] = useState<Section[]>([])
   const [loading, setLoading] = useState(true)
@@ -113,21 +250,7 @@ export default function IscrizioniPage() {
   const pending = rows.filter(r => r.status === 'pending')
 
   return (
-    <CockpitPage max={1152}>
-      <PageHeader
-        icon={UserPlus}
-        title="Iscrizioni Nuovi Alunni"
-        subtitle="Richieste ricevute dal form pubblico. Assegna la classe e importa nelle anagrafiche."
-        actions={
-          <a
-            href="/admin/sidi"
-            className="inline-flex h-[46px] items-center gap-2 rounded-pill bg-kidville-green-soft px-5 font-barlow text-sm font-extrabold uppercase tracking-[0.03em] text-kidville-green hover:bg-kidville-green/20"
-          >
-            <ExternalLink size={16} /> Interoperabilità SIDI
-          </a>
-        }
-      />
-
+    <>
       {!loading && rows.length > 0 && (
         <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
           <StatCard icon={Users} label="Totale richieste" value={rows.length} tone="green" />
@@ -207,7 +330,7 @@ export default function IscrizioniPage() {
           </div>
         </div>
       )}
-    </CockpitPage>
+    </>
   )
 }
 

@@ -54,6 +54,24 @@
 
 ---
 
+## 🗓️ Changelog — Allineamento migrazioni DB ↔ repo 2026-07-06 (branch `chore/db-migration-align`)
+
+Housekeeping post-deploy (verifica via MCP Supabase su prod `uimulkjyekgemjakmepp`). La migrazione
+anagrafiche era nel repo come `20260767_*` — **nome-versione NON valido** (il CLI Supabase esige un
+timestamp a 14 cifre `YYYYMMDDHHMMSS`) — mentre in prod risultava già applicata e registrata come
+**`20260706105201`**. Verificato che lo schema prod è allineato: baseline `20260704120000` = dump completo
+(include divise/fatture/certificati/sidi/push…), e `20260706105201` applicata **per intero** (4 colonne su
+alunni+parents + funzione ETL). **Rinominato il file** → `20260706105201_anagrafiche_residenza_provincia_civico.sql`:
+repo e prod coincidono, `supabase db push` resta un no-op pulito. Nessuna modifica a schema/dati.
+
+Note residue emerse (non-bloccanti, da valutare a parte): (a) `fn_form_submission_etl` hardcoda una sede
+inesistente (`11111111-…`) → il trigger ETL su `form_submissions` inserirebbe alunni orfani (path non usato
+dall'import via API, che passa da `enrollment_submissions`); (b) advisor Supabase **WARN** pre-esistenti:
+funzioni SECURITY DEFINER esposte via RPC ad anon/authenticated, `pg_net` in schema `public`, leaked-password
+protection off. Gli INFO `rls_enabled_no_policy` sono **by-design** (pattern service-role, non RLS).
+
+---
+
 ## 🗓️ Changelog — Fix pre-deploy gate E2E 2026-07-06 (branch `feat/batch-segreteria`)
 
 Tre regressioni emerse in CI (E2E Playwright rosso) sul batch segreteria, tutte risolte senza

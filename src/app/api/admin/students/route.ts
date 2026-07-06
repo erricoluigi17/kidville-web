@@ -158,7 +158,7 @@ export async function POST(request: NextRequest) {
             .single();
 
         // Resilienza pre-migration: se una colonna non esiste ancora (es. usa_pannolino,
-        // residence_province/residence_street_number prima della migrazione 20260767),
+        // residence_province/residence_street_number prima della migrazione 20260706105201),
         // rimuovila dal record e riprova (Postgres segnala una colonna alla volta).
         let attempts = 0;
         while (error && (error as { code?: string }).code === '42703' && attempts < 5) {
@@ -224,7 +224,7 @@ export async function GET(request: NextRequest) {
 
         const embedTail = 'student_parents ( relation_type, is_primary, parents (*) ), delegates (*)';
         // Colonne "flat" della lista anagrafica. residence_province/residence_street_number
-        // dipendono dalla migrazione 20260767: se il DB non le ha ancora (es. progetto E2E CI,
+        // dipendono dalla migrazione 20260706105201: se il DB non le ha ancora (es. progetto E2E CI,
         // o finestra pre-migrate in un deploy) PostgREST risponde 42703 → le rimuoviamo e
         // riproviamo, esattamente come già fanno POST/PATCH qui sotto.
         let cols = [

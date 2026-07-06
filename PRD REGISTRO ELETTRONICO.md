@@ -54,6 +54,23 @@
 
 ---
 
+## 🗓️ Changelog — Unificazione Iscrizioni → Modulistica 2026-07-06 (branch `feat/batch-segreteria`)
+
+Unificate le due voci di sidebar **Iscrizioni** e **Modulistica** in un'unica voce **Modulistica**.
+Gate verde: `eslint` 0, `vitest` 773/773, `build` ok.
+
+- La sidebar perde la voce **Iscrizioni**; la sezione «Anagrafica & Iscrizioni» è rinominata **«Anagrafica»**.
+- La pagina **Modulistica** ha ora 4 tab: **Moduli inviabili** + **Moduli ricevuti** (spostate da Iscrizioni),
+  **Moduli Genitori** e **Template Certificati ODT**. Rimossa la tab **Moduli Esterni**.
+- «Moduli ricevuti» = le iscrizioni ricevute (invariato rispetto alla vecchia «Ricevute»): il link SIDI è preservato.
+- I due motori restano separati (form-builder vs moduli-genitori OTP).
+- I componenti sono stati estratti in `src/components/features/admin/iscrizioni/` (`ModuliInviabili`, `ModuliRicevuti`);
+  `/admin/iscrizioni` è ora un **redirect** a `/admin/modulistica?tab=ricevuti` (link/segnalibri preservati).
+  Modulistica legge `?tab=`; il back-link del builder punta a `?tab=inviabili`. Le tab inviabili/ricevuti
+  operano multi-sede (fuori dalla guardia sede-singola che resta per Moduli Genitori/ODT).
+
+---
+
 ## 🗓️ Changelog — Fix Segreteria/Didattica/Modulistica 2026-07-06 (branch `feat/batch-segreteria`)
 
 Batch di 7 interventi correttivi. Gate verde: `eslint` 0, `vitest` 773/773, `build` ok

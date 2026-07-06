@@ -1,13 +1,16 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { Suspense, useState, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'next/navigation';
 import {
   FileText, Plus, UserCheck, Settings, Calendar, Users,
-  Trash2, Download, CheckCircle, ArrowRight, Upload, Shield
+  Trash2, Download, CheckCircle, ArrowRight, Upload, Shield, Inbox, Send
 } from 'lucide-react';
 import { PageHeader } from '@/components/ui/cockpit';
 import { btnClass } from '@/components/ui/Btn';
 import { SedeNotice, useSediAttive } from '@/lib/context/sede-context';
+import { ModuliInviabili } from '@/components/features/admin/iscrizioni/ModuliInviabili';
+import { ModuliRicevuti } from '@/components/features/admin/iscrizioni/ModuliRicevuti';
 
 type FormType = 'sondaggio' | 'gradimento' | 'autorizzazione';
 
@@ -80,9 +83,15 @@ interface PreInscription {
   created_at: string;
 }
 
-export default function AdminModulisticaPage() {
+type ModulisticaTab = 'inviabili' | 'ricevuti' | 'moduli-genitori' | 'attesa' | 'odt';
+
+function ModulisticaInner() {
   const { sedeCorrente, loading: sediLoading } = useSediAttive();
-  const [activeTab, setActiveTab] = useState<'moduli-genitori' | 'moduli-esterni' | 'attesa' | 'odt'>('moduli-genitori');
+  const searchParams = useSearchParams();
+  const tabParam = searchParams.get('tab');
+  const initialTab: ModulisticaTab =
+    tabParam === 'ricevuti' || tabParam === 'moduli-genitori' || tabParam === 'odt' ? tabParam : 'inviabili';
+  const [activeTab, setActiveTab] = useState<ModulisticaTab>(initialTab);
   const [forms, setForms] = useState<FormTemplate[]>([]);
   const [preInscriptions] = useState<PreInscription[]>([]);
   const [sections, setSections] = useState<{ id: string; name: string }[]>([]);
@@ -414,10 +423,8 @@ export default function AdminModulisticaPage() {
     }
   };
 
-  // Moduli filtrati per sezione attiva (genitori = scope class, esterni = scope external)
-  const scopedForms = forms.filter(f =>
-    activeTab === 'moduli-esterni' ? f.target_scope === 'external' : f.target_scope !== 'external'
-  );
+  // Moduli per i genitori iscritti (scope class). Gli "esterni" sono stati rimossi.
+  const scopedForms = forms.filter(f => f.target_scope !== 'external');
 
   return (
     <div className="flex-1 flex flex-col p-4 sm:p-6 max-w-6xl mx-auto w-full">
@@ -427,50 +434,54 @@ export default function AdminModulisticaPage() {
         title="Modulistica & Onboarding"
         subtitle="Gestione moduli di consenso, sala d'attesa pre-iscrizioni e carta intestata."
         actions={
-          activeTab === 'moduli-genitori' || activeTab === 'moduli-esterni' ? (
-            <button onClick={() => openBuilder(activeTab === 'moduli-esterni' ? 'external' : 'class')} className={btnClass('primary', 'md')}>
-              <Plus size={18} /> {activeTab === 'moduli-esterni' ? 'Nuovo Modulo Esterni' : 'Nuovo Modulo Genitori'}
+          activeTab === 'moduli-genitori' ? (
+            <button onClick={() => openBuilder('class')} className={btnClass('primary', 'md')}>
+              <Plus size={18} /> Nuovo Modulo Genitori
             </button>
           ) : undefined
         }
       />
 
       {/* Tabs */}
-      <div className="flex gap-4 mb-6 border-b border-kidville-line">
+      <div className="flex gap-4 mb-6 border-b border-kidville-line overflow-x-auto">
         <button
-          className={`pb-3 px-2 font-barlow font-bold uppercase tracking-wide transition-colors flex items-center gap-1.5 ${activeTab === 'moduli-genitori' ? 'text-kidville-green border-b-2 border-kidville-green' : 'text-kidville-muted hover:text-kidville-ink'}`}
+          className={`pb-3 px-2 font-barlow font-bold uppercase tracking-wide transition-colors flex items-center gap-1.5 whitespace-nowrap ${activeTab === 'inviabili' ? 'text-kidville-green border-b-2 border-kidville-green' : 'text-kidville-muted hover:text-kidville-ink'}`}
+          onClick={() => setActiveTab('inviabili')}
+        >
+          <Send size={16} /> Moduli inviabili
+        </button>
+        <button
+          className={`pb-3 px-2 font-barlow font-bold uppercase tracking-wide transition-colors flex items-center gap-1.5 whitespace-nowrap ${activeTab === 'ricevuti' ? 'text-kidville-green border-b-2 border-kidville-green' : 'text-kidville-muted hover:text-kidville-ink'}`}
+          onClick={() => setActiveTab('ricevuti')}
+        >
+          <Inbox size={16} /> Moduli ricevuti
+        </button>
+        <button
+          className={`pb-3 px-2 font-barlow font-bold uppercase tracking-wide transition-colors flex items-center gap-1.5 whitespace-nowrap ${activeTab === 'moduli-genitori' ? 'text-kidville-green border-b-2 border-kidville-green' : 'text-kidville-muted hover:text-kidville-ink'}`}
           onClick={() => setActiveTab('moduli-genitori')}
         >
           <Users size={16} /> Moduli Genitori
         </button>
         <button
-          className={`pb-3 px-2 font-barlow font-bold uppercase tracking-wide transition-colors flex items-center gap-1.5 ${activeTab === 'moduli-esterni' ? 'text-kidville-green border-b-2 border-kidville-green' : 'text-kidville-muted hover:text-kidville-ink'}`}
-          onClick={() => setActiveTab('moduli-esterni')}
-        >
-          <FileText size={16} /> Moduli Esterni
-        </button>
-        <a
-          href="/admin/iscrizioni"
-          className="pb-3 px-2 font-barlow font-bold uppercase tracking-wide transition-colors flex items-center gap-1.5 text-kidville-muted hover:text-kidville-green"
-        >
-          <UserCheck size={16} /> Iscrizioni Nuovi Alunni
-        </a>
-        <button
-          className={`pb-3 px-2 font-barlow font-bold uppercase tracking-wide transition-colors flex items-center gap-1.5 ${activeTab === 'odt' ? 'text-kidville-green border-b-2 border-kidville-green' : 'text-kidville-muted hover:text-kidville-ink'}`}
+          className={`pb-3 px-2 font-barlow font-bold uppercase tracking-wide transition-colors flex items-center gap-1.5 whitespace-nowrap ${activeTab === 'odt' ? 'text-kidville-green border-b-2 border-kidville-green' : 'text-kidville-muted hover:text-kidville-ink'}`}
           onClick={() => setActiveTab('odt')}
         >
           <Settings size={16} /> Template Certificati ODT
         </button>
       </div>
 
-      {/* Guard sede: la modulistica opera su UNA sede alla volta */}
-      {sediLoading ? (
+      {/* Moduli inviabili / ricevuti: operano multi-sede (nessuna guardia sede singola). */}
+      {activeTab === 'inviabili' ? (
+        <ModuliInviabili />
+      ) : activeTab === 'ricevuti' ? (
+        <ModuliRicevuti />
+      ) : sediLoading ? (
         <div className="flex-1 flex flex-col items-center justify-center min-h-[40vh] gap-3">
           <div className="w-10 h-10 border-4 border-kidville-green/30 border-t-kidville-green rounded-full animate-spin" />
           <p className="font-maven text-kidville-muted">Caricamento in corso...</p>
         </div>
       ) : !sedeCorrente ? (
-        <SedeNotice cosa="la modulistica" />
+        <SedeNotice cosa="i moduli per i genitori" />
       ) : isLoading ? (
         <div className="flex-1 flex flex-col items-center justify-center min-h-[40vh] gap-3">
           <div className="w-10 h-10 border-4 border-kidville-green/30 border-t-kidville-green rounded-full animate-spin" />
@@ -478,16 +489,14 @@ export default function AdminModulisticaPage() {
         </div>
       ) : (
         <>
-          {/* TAB 1: Moduli (Genitori iscritti / Esterni) */}
-          {(activeTab === 'moduli-genitori' || activeTab === 'moduli-esterni') && (
+          {/* TAB: Moduli Genitori (iscritti) */}
+          {activeTab === 'moduli-genitori' && (
             <div className="space-y-4">
               {scopedForms.length === 0 ? (
                 <div className="bg-white rounded-card p-10 text-center border border-kidville-line">
                   <FileText className="mx-auto text-kidville-muted mb-3" size={48} />
                   <p className="font-maven text-kidville-muted">
-                    {activeTab === 'moduli-esterni'
-                      ? 'Nessun modulo per gli esterni (pre-iscrizione) creato finora.'
-                      : 'Nessun modulo per i genitori iscritti creato finora.'}
+                    Nessun modulo per i genitori iscritti creato finora.
                   </p>
                 </div>
               ) : (
@@ -1063,5 +1072,13 @@ export default function AdminModulisticaPage() {
         }
       `}</style>
     </div>
+  );
+}
+
+export default function AdminModulisticaPage() {
+  return (
+    <Suspense fallback={null}>
+      <ModulisticaInner />
+    </Suspense>
   );
 }

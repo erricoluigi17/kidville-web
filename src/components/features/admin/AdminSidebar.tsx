@@ -7,7 +7,6 @@ import { AnimatePresence, motion } from 'framer-motion';
 import {
   LayoutDashboard,
   Users,
-  ClipboardList,
   Euro,
   UtensilsCrossed,
   GraduationCap,
@@ -52,10 +51,9 @@ const NAV_GROUPS: NavGroup[] = [
     items: [{ href: '/admin', label: 'Dashboard', icon: LayoutDashboard }],
   },
   {
-    title: 'Anagrafica & Iscrizioni',
+    title: 'Anagrafica',
     items: [
       { href: '/admin/students', label: 'Anagrafica', icon: Users },
-      { href: '/admin/iscrizioni', label: 'Iscrizioni', icon: ClipboardList },
     ],
   },
   {

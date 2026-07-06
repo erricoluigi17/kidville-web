@@ -484,7 +484,7 @@ function FormBuilderInner() {
         >
           <div className="flex items-center gap-3">
             <Link
-              href="/admin/modulistica"
+              href="/admin/modulistica?tab=inviabili"
               className="p-1.5 rounded-lg text-kidville-muted hover:text-kidville-green hover:bg-kidville-cream-dark transition-all"
             >
               <ChevronLeft className="w-5 h-5" />

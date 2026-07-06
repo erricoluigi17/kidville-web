@@ -5,6 +5,7 @@ import { requireStaff } from '@/lib/auth/require-staff';
 import { resolveScuoleAttive, resolveScuolaScrittura } from '@/lib/auth/scope';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody, parseQuery } from '@/lib/validation/http';
+import { linkOrCreateParent } from '@/lib/anagrafiche/parents';
 
 // ============================================================
 // Anagrafica alunni — gated Segreteria+Direzione (DL-036) + audit
@@ -24,8 +25,12 @@ const postBodySchema = z.object({
     codice_fiscale: z.string().nullable().optional(),
     comune_nascita: z.string().nullable().optional(),
     provincia_nascita: z.string().nullable().optional(),
+    nazione_nascita: z.string().nullable().optional(),
+    cittadinanza: z.string().nullable().optional(),
     indirizzo_residenza: z.string().nullable().optional(),
+    civico: z.string().nullable().optional(),
     comune_residenza: z.string().nullable().optional(),
+    provincia_residenza: z.string().nullable().optional(),
     cap: z.string().nullable().optional(),
     allergies: z.string().nullable().optional(),
     // non-array tollerato e normalizzato a [] nell'handler, come oggi
@@ -36,6 +41,10 @@ const postBodySchema = z.object({
     invoice_holder_type: z.string().nullable().optional(),
     invoice_holder_details: z.unknown().optional(), // jsonb libero
     classe_sezione: z.string().nullable().optional(),
+    // Salvataggio atomico alunno+genitori: array opzionale di payload adulto
+    // (stesso shape del form ScrollableAdultForm). Ogni voce viene creata e
+    // collegata a questo alunno lato server (niente più genitori "persi").
+    parents: z.array(z.unknown()).optional(),
 });
 
 const getQuerySchema = z.object({
@@ -73,7 +82,9 @@ const patchBodySchema = z.object({
     birth_province: z.unknown().optional(),
     birth_city: z.unknown().optional(),
     residence_address: z.unknown().optional(),
+    residence_street_number: z.unknown().optional(),
     residence_city: z.unknown().optional(),
+    residence_province: z.unknown().optional(),
     zip_code: z.unknown().optional(),
     allergies: z.unknown().optional(),
     allergeni: z.unknown().optional(),
@@ -118,11 +129,15 @@ export async function POST(request: NextRequest) {
             cognome,
             data_nascita,
             gender: body.sesso || null,
+            citizenship: body.cittadinanza || null,
+            birth_nation: body.nazione_nascita || null,
             codice_fiscale: body.codice_fiscale || null,
             birth_city: body.comune_nascita || null,
             birth_province: body.provincia_nascita || null,
             residence_address: body.indirizzo_residenza || null,
+            residence_street_number: body.civico || null,
             residence_city: body.comune_residenza || null,
+            residence_province: (body.provincia_residenza || '').toUpperCase() || null,
             zip_code: body.cap || null,
             allergies: body.allergies || null,
             allergeni: Array.isArray(body.allergeni) ? body.allergeni : [],
@@ -142,10 +157,16 @@ export async function POST(request: NextRequest) {
             .select()
             .single();
 
-        // Resilienza pre-migration: se la colonna usa_pannolino non esiste ancora, riprova senza.
-        if (error && (error as { code?: string }).code === '42703' && /usa_pannolino/.test(error.message)) {
-            delete record.usa_pannolino;
+        // Resilienza pre-migration: se una colonna non esiste ancora (es. usa_pannolino,
+        // residence_province/residence_street_number prima della migrazione 20260767),
+        // rimuovila dal record e riprova (Postgres segnala una colonna alla volta).
+        let attempts = 0;
+        while (error && (error as { code?: string }).code === '42703' && attempts < 5) {
+            const col = /column "?([a-z_]+)"? of relation/i.exec(error.message)?.[1];
+            if (!col || !(col in record)) break;
+            delete record[col];
             ({ data, error } = await supabase.from('alunni').insert(record).select().single());
+            attempts++;
         }
 
         if (error) {
@@ -162,7 +183,24 @@ export async function POST(request: NextRequest) {
             valoreDopo: data,
         });
 
-        return NextResponse.json(data, { status: 201 });
+        // Salvataggio atomico dei genitori collegati (opzionale): ogni voce viene
+        // creata e collegata; gli errori per-genitore sono riportati senza
+        // compromettere l'alunno già creato.
+        const parentsResults: { label: string; ok: boolean; error?: string }[] = [];
+        if (Array.isArray(body.parents) && data?.id) {
+            for (let i = 0; i < body.parents.length; i++) {
+                const p = (body.parents[i] ?? {}) as Record<string, unknown>;
+                const label = `${p.first_name ?? ''} ${p.last_name ?? ''}`.trim() || `Genitore ${i + 1}`;
+                try {
+                    await linkOrCreateParent(supabase, auth.user, { studentId: data.id as string, payload: p });
+                    parentsResults.push({ label, ok: true });
+                } catch (e) {
+                    parentsResults.push({ label, ok: false, error: (e as Error).message });
+                }
+            }
+        }
+
+        return NextResponse.json({ ...data, parents: parentsResults }, { status: 201 });
     } catch (err) {
         console.error('Errore POST /api/admin/students:', err);
         return NextResponse.json({ error: err instanceof Error ? err.message : 'Errore interno del server' }, { status: 500 });
@@ -189,7 +227,8 @@ export async function GET(request: NextRequest) {
             .select(`
                 id, scuola_id, nome, cognome, data_nascita, codice_fiscale, classe_sezione, stato,
                 note_mediche, consenso_privacy, creato_il, gender, citizenship, birth_nation,
-                birth_province, birth_city, residence_address, residence_city, zip_code, allergies,
+                birth_province, birth_city, residence_address, residence_street_number, residence_city,
+                residence_province, zip_code, allergies,
                 invoice_holder_type, invoice_holder_details, is_bes_dsa, fiscal_code, section_id,
                 documento_path, importo_retta_mensile, genitori_separati, retta_split_config,
                 intestatario_fatture, allergeni, usa_pannolino, sospeso, sospeso_motivo, sospeso_il,
@@ -281,7 +320,7 @@ export async function PATCH(request: NextRequest) {
         if (id) {
             try {
                 const updates: Record<string, unknown> = {};
-                const allowedFields = ['classe_sezione', 'stato', 'note_mediche', 'bes', 'note_bes', 'nome', 'cognome', 'data_nascita', 'codice_fiscale', 'gender', 'citizenship', 'birth_nation', 'birth_province', 'birth_city', 'residence_address', 'residence_city', 'zip_code', 'allergies', 'allergeni', 'invoice_holder_type', 'invoice_holder_details', 'is_bes_dsa', 'usa_pannolino', 'section_id',
+                const allowedFields = ['classe_sezione', 'stato', 'note_mediche', 'bes', 'note_bes', 'nome', 'cognome', 'data_nascita', 'codice_fiscale', 'gender', 'citizenship', 'birth_nation', 'birth_province', 'birth_city', 'residence_address', 'residence_street_number', 'residence_city', 'residence_province', 'zip_code', 'allergies', 'allergeni', 'invoice_holder_type', 'invoice_holder_details', 'is_bes_dsa', 'usa_pannolino', 'section_id',
                     'importo_retta_mensile', 'genitori_separati', 'retta_split_config', 'intestatario_fatture'];
 
                 for (const field of allowedFields) {
@@ -303,9 +342,14 @@ export async function PATCH(request: NextRequest) {
                     .select()
                     .single();
 
-                if (error && (error as { code?: string }).code === '42703' && /usa_pannolino/.test(error.message)) {
-                    delete updates.usa_pannolino;
+                // Resilienza pre-migration: rimuove le colonne non ancora esistenti e riprova.
+                let patchAttempts = 0;
+                while (error && (error as { code?: string }).code === '42703' && patchAttempts < 5) {
+                    const col = /column "?([a-z_]+)"? of relation/i.exec(error.message)?.[1];
+                    if (!col || !(col in updates)) break;
+                    delete updates[col];
                     ({ data, error } = await supabase.from('alunni').update(updates).eq('id', id).select().single());
+                    patchAttempts++;
                 }
 
                 if (error) throw new Error(error.message);

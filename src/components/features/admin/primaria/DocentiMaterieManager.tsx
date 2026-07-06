@@ -14,13 +14,20 @@ interface Assegnazione {
 interface Materia { id: string; nome: string }
 interface Docente { id: string; nome: string; cognome: string; gradi?: string[] }
 
+interface SezioneOpt { id: string; name: string }
+
 interface Props {
   sectionId: string;
   scuolaId: string;
   userId: string;
+  // Fix 4: la classe è visibile "in entrambi i modi" — selettore in alto (nel
+  // pannello) e tendina qui nel form. Condividono lo stesso `sectionId`.
+  sezioni?: SezioneOpt[];
+  sezioneName?: string;
+  onSectionChange?: (id: string) => void;
 }
 
-export function DocentiMaterieManager({ sectionId, scuolaId, userId }: Props) {
+export function DocentiMaterieManager({ sectionId, scuolaId, userId, sezioni = [], sezioneName, onSectionChange }: Props) {
   const [assegnazioni, setAssegnazioni] = useState<Assegnazione[]>([]);
   const [materie, setMaterie] = useState<Materia[]>([]);
   const [docenti, setDocenti] = useState<Docente[]>([]);
@@ -91,6 +98,12 @@ export function DocentiMaterieManager({ sectionId, scuolaId, userId }: Props) {
         </div>
       )}
 
+      {sezioneName && (
+        <p className="font-maven text-sm text-kidville-muted">
+          Associazioni per la classe: <b className="text-kidville-green">{sezioneName}</b>
+        </p>
+      )}
+
       <ul className="divide-y divide-kidville-line">
         {assegnazioni.map((a) => (
           <li key={a.id} className="flex items-center justify-between py-2.5">
@@ -98,6 +111,7 @@ export function DocentiMaterieManager({ sectionId, scuolaId, userId }: Props) {
               {a.utenti ? `${a.utenti.nome} ${a.utenti.cognome}` : a.utente_id}
               <span className="mx-2 text-kidville-muted">→</span>
               <span className="text-kidville-green">{a.materie?.nome ?? a.materia_id}</span>
+              {sezioneName && <span className="ml-2 rounded-pill bg-kidville-cream text-kidville-muted px-2 py-0.5 text-[11px]">{sezioneName}</span>}
               {a.e_contitolare && <span className="ml-2 rounded-pill bg-kidville-green/10 text-kidville-green px-2 py-0.5 text-[11px]">contitolare</span>}
             </div>
             <button onClick={() => remove(a.id)} className="text-kidville-muted hover:text-kidville-error">
@@ -109,6 +123,20 @@ export function DocentiMaterieManager({ sectionId, scuolaId, userId }: Props) {
       </ul>
 
       <div className="flex flex-wrap items-end gap-2 border-t border-kidville-line pt-4">
+        {sezioni.length > 0 && (
+          <div>
+            <label className="block font-maven text-xs text-kidville-muted">Classe</label>
+            <select
+              value={sectionId}
+              onChange={(e) => onSectionChange?.(e.target.value)}
+              className="font-maven rounded-pill border border-kidville-line bg-white px-3 py-1.5 text-sm"
+            >
+              {sezioni.map((s) => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
         <div>
           <label className="block font-maven text-xs text-kidville-muted">Docente</label>
           <select

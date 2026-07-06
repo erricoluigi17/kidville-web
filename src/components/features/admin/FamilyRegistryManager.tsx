@@ -23,7 +23,7 @@ export function FamilyRegistryManager() {
     const [activeTab, setActiveTab] = useState('alunno');
     const [saving, setSaving] = useState(false);
     const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
-    const [savedSummary, setSavedSummary] = useState<{ studentName: string; parents: number } | null>(null);
+    const [savedSummary, setSavedSummary] = useState<{ studentName: string; parents: number; failed: { label: string; error?: string }[] } | null>(null);
 
     // Ref imperativi: ogni form resta auto-contenuto ma espone validate()/reset().
     // Tutti i form restano MONTATI (solo l'attivo è visibile) così lo stato e i ref
@@ -83,33 +83,26 @@ export function FamilyRegistryManager() {
 
         setSaving(true);
         try {
+            // Salvataggio ATOMICO: alunno + genitori in un'unica richiesta lato server
+            // (niente più genitori "persi" né alunni duplicati al retry).
             const sres = await fetch('/api/admin/students', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(sv.data),
+                body: JSON.stringify({ ...sv.data, parents: adultPayloads.map(a => a.data) }),
             });
             if (!sres.ok) {
                 const e = await sres.json().catch(() => ({}));
                 throw new Error(e.error || 'Errore nel salvataggio dell’alunno');
             }
             const student = await sres.json();
-            const studentId = student.id as string;
-
-            const failed: string[] = [];
-            for (const a of adultPayloads) {
-                const pres = await fetch('/api/admin/parents', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ ...a.data, action: 'create_parent', student_id: studentId }),
-                });
-                if (!pres.ok) failed.push(a.label);
-            }
+            const results: { label: string; ok: boolean; error?: string }[] = Array.isArray(student.parents) ? student.parents : [];
+            const failed = results.filter(r => !r.ok).map(r => ({ label: r.label, error: r.error }));
 
             const studentName = `${String(sv.data.nome ?? '')} ${String(sv.data.cognome ?? '')}`.trim();
             if (failed.length) {
-                showToast({ type: 'error', message: `Alunno salvato, ma errore su: ${failed.join(', ')}.` });
+                showToast({ type: 'error', message: `Alunno salvato, ma errore su: ${failed.map(f => f.label).join(', ')}.` });
             }
-            setSavedSummary({ studentName, parents: adultPayloads.length - failed.length });
+            setSavedSummary({ studentName, parents: results.filter(r => r.ok).length, failed });
         } catch (err) {
             showToast({ type: 'error', message: (err as Error).message });
         } finally {
@@ -150,6 +143,23 @@ export function FamilyRegistryManager() {
                                 : `${savedSummary.parents} ${savedSummary.parents === 1 ? 'genitore collegato' : 'genitori collegati'}`}
                         </p>
                     </div>
+                    {savedSummary.failed.length > 0 && (
+                        <div className="w-full max-w-md rounded-2xl border border-kidville-error/30 bg-kidville-error/5 p-4 text-left">
+                            <p className="flex items-center gap-2 font-barlow font-bold text-kidville-error uppercase text-sm">
+                                <XCircle size={16} /> Alcuni genitori non salvati
+                            </p>
+                            <ul className="mt-2 space-y-1">
+                                {savedSummary.failed.map((f, i) => (
+                                    <li key={i} className="font-maven text-xs text-kidville-error">
+                                        <b>{f.label}</b>{f.error ? ` — ${f.error}` : ''}
+                                    </li>
+                                ))}
+                            </ul>
+                            <p className="mt-2 font-maven text-xs text-kidville-muted">
+                                L&apos;alunno è stato salvato. Puoi riaggiungere questi genitori dalla scheda dell&apos;alunno.
+                            </p>
+                        </div>
+                    )}
                     <div className="flex gap-3 mt-2">
                         <a
                             href="/admin/students"

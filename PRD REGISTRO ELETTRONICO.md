@@ -54,6 +54,53 @@
 
 ---
 
+## 🗓️ Changelog — Fix Segreteria/Didattica/Modulistica 2026-07-06 (branch `feat/batch-segreteria`)
+
+Batch di 7 interventi correttivi. Gate verde: `eslint` 0, `vitest` 773/773, `build` ok
+(e2e in CI su push). **Richiede l'applicazione della migrazione `20260767`** (colonne
+residenza + ETL) sul DB prod prima dell'uso dei nuovi campi.
+
+1. **Anagrafiche complete e allineate (alunno ≡ genitore).** Alunno e genitore hanno ora lo
+   stesso set anagrafico completo; unica differenza i contatti (email/telefono, solo genitore).
+   Aggiunti **Cittadinanza** (`citizenship`), **Nazione di nascita** (`birth_nation`),
+   **Numero civico** (`residence_street_number`) e **Provincia di residenza** (`residence_province`,
+   sigla) a: form di creazione (`ScrollableStudentForm`/`ScrollableAdultForm`), route
+   `POST/PATCH/GET /api/admin/students`, e **schede di modifica** (`StudentDetailPanel`/`ParentDetailPanel`,
+   prima incomplete). Migrazione `20260767`: `residence_province`+`residence_street_number` su
+   `alunni` e `parents`. Insert/patch resilienti alle colonne non ancora esistenti (42703 → retry).
+2. **Bug "nuovo alunno + mamma non salvata né associata" risolto.** Nuovo helper condiviso
+   `src/lib/anagrafiche/parents.ts` (`linkOrCreateParent`): CF vuoto → `null` (chiude la violazione
+   UNIQUE che causava il 500 silente); cittadinanza reale per i genitori, col ruolo solo per lo
+   staff (preserva il workaround tab Staff). `POST /api/admin/students` accetta ora `parents[]`
+   opzionale → **salvataggio atomico** alunno+genitori in un'unica richiesta (niente più genitori
+   persi né alunni duplicati al retry). `FamilyRegistryManager` fa una sola fetch e mostra l'esito
+   reale (niente più finto "salvato" a fallimento parziale).
+3. **Anagrafica sezione — insegnanti di riferimento.** Nuova API
+   `/api/admin/sections/[id]/teachers` (GET/POST/DELETE, gate Direzione, add/remove) sulla ponte
+   `utenti_sezioni`; card "Insegnanti di riferimento" nel dettaglio sezione. Aggiungendo/rimuovendo
+   un docente si aggiorna automaticamente la sua anagrafica ("Classi assegnate" in StaffPanel).
+4. **Didattica primaria — classe nell'associazione Materie–Docenti.** Il modello DB/API era già
+   class-aware (`utenti_sezioni_materie.section_id`): la classe è ora esplicita **in entrambi i modi**
+   (tendina Classe nel form di `DocentiMaterieManager` + selettore in alto condiviso + classe mostrata
+   in ogni riga).
+5. **Mensa — Livello (tendina) + Sezioni (multi-select).** `SezioniMultiSelect` ha una prop
+   `withLivelloFilter`: tendina Livello (Nido/Infanzia/Primaria) che filtra le sezioni multi-select.
+   Attiva nel MenuBuilder; storage e vista genitore invariati.
+6. **Armadietto — materiale assegnato alle classi con tendina.** Stessa UX del punto 5
+   (`withLivelloFilter`) nel form "Nuovo Materiale"; rimosso il vincolo fisso a nido/infanzia
+   (ora copre anche primaria).
+7. **Modulo d'iscrizione standard — campi nuovi + editor segreteria + "Reimposta".** I 4 campi
+   nuovi sono nel template (visibili+obbligatori). Il modulo standard è ora un modello `form_models`
+   editabile dal builder (nuovo `src/lib/forms/enrollment-default-schema.ts` con
+   `ENROLLMENT_DEFAULT_SCHEMA` + id stabile + `ensureStandardEnrollmentModel`): card in `/admin/iscrizioni`
+   con **"Modifica"** (builder) e **"Reimposta"** (`POST /api/admin/form-models/reset`, solo per il
+   modello standard). Il wizard `/iscrizione` è ora schema-driven (`GET /api/iscrizione/model`, fallback
+   al template); **flusso invariato** (invio a `enrollment_submissions`, revisione in "Ricevute").
+   ETL import e trigger `fn_form_submission_etl` estesi ai 4 nuovi campi; catalogo builder
+   (`anagrafica-fields.ts`) aggiornato.
+
+---
+
 ## 🗓️ Changelog — Batch Segreteria 2026-07-05 (branch `feat/batch-segreteria`)
 
 Batch di 9 interventi segreteria/didattica + creazione di 2 classi di prova. Gate verde:

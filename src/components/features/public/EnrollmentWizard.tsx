@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useForm, FieldValues } from 'react-hook-form'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -11,6 +11,7 @@ import { FieldRenderer } from '@/components/features/forms/FieldRenderer'
 import {
   CHILD_FIELDS, ADULT_FIELDS, ENROLLMENT_LIMITS,
 } from '@/lib/forms/enrollment-template'
+import { extractEnrollmentTemplates } from '@/lib/forms/enrollment-default-schema'
 import type { FormField, EnrollmentSubmissionData } from '@/types/database.types'
 
 const UPLOAD_ENDPOINT = '/api/iscrizione/upload'
@@ -45,6 +46,22 @@ export function EnrollmentWizard() {
   const [submitting, setSubmitting] = useState(false)
   const [done, setDone] = useState(false)
 
+  // Campi del modulo: default = template; se la segreteria ha modificato il
+  // "Modulo d'iscrizione standard" nel builder, il wizard riflette lo schema.
+  const [childFields, setChildFields] = useState<FormField[]>(CHILD_FIELDS)
+  const [adultFields, setAdultFields] = useState<FormField[]>(ADULT_FIELDS)
+
+  useEffect(() => {
+    fetch('/api/iscrizione/model')
+      .then(r => r.json())
+      .then(d => {
+        const { child, adult } = extractEnrollmentTemplates(d?.schema)
+        setChildFields(child)
+        setAdultFields(adult)
+      })
+      .catch(() => {})
+  }, [])
+
   const {
     register, control, trigger, getValues,
     formState: { errors },
@@ -63,8 +80,8 @@ export function EnrollmentWizard() {
   const progress = ((step + 1) / steps.length) * 100
 
   function currentFieldNames(): string[] {
-    if (current.kind === 'child') return nsFields(`children.${current.index}`, CHILD_FIELDS).map(f => f.id)
-    if (current.kind === 'adult') return nsFields(`adults.${current.index}`, ADULT_FIELDS).map(f => f.id)
+    if (current.kind === 'child') return nsFields(`children.${current.index}`, childFields).map(f => f.id)
+    if (current.kind === 'adult') return nsFields(`adults.${current.index}`, adultFields).map(f => f.id)
     return []
   }
 
@@ -199,7 +216,7 @@ export function EnrollmentWizard() {
                   {/* CHILD step */}
                   {current.kind === 'child' && (
                     <div className="space-y-6">
-                      {nsFields(`children.${current.index}`, CHILD_FIELDS).map(f => (
+                      {nsFields(`children.${current.index}`, childFields).map(f => (
                         <FieldRenderer
                           key={f.id}
                           field={f}
@@ -248,7 +265,7 @@ export function EnrollmentWizard() {
                           </p>
                         </div>
                       )}
-                      {nsFields(`adults.${current.index}`, ADULT_FIELDS).map(f => (
+                      {nsFields(`adults.${current.index}`, adultFields).map(f => (
                         <FieldRenderer
                           key={f.id}
                           field={f}

@@ -15,14 +15,19 @@ export function SezioniMultiSelect({
   onChange,
   grado,
   emptyHint,
+  withLivelloFilter,
 }: {
   value: string[];
   onChange: (names: string[]) => void;
   grado?: string; // csv es. 'nido,infanzia'; assente = tutti i gradi
   emptyHint?: string;
+  // Tendina "Livello (classe)" sopra i chip: filtra le sezioni per school_type
+  // (Nido/Infanzia/Primaria) lato client. Usata da mensa e armadietto.
+  withLivelloFilter?: boolean;
 }) {
   const [gruppi, setGruppi] = useState<Gruppo[]>([]);
   const [loading, setLoading] = useState(true);
+  const [livello, setLivello] = useState('');
 
   useEffect(() => {
     const qs = grado ? `?grado=${encodeURIComponent(grado)}` : '';
@@ -44,37 +49,60 @@ export function SezioniMultiSelect({
     );
   }
 
-  const gruppiPieni = gruppi.filter((g) => g.sezioni.length > 0);
-  if (gruppiPieni.length === 0) {
-    return <p className="font-maven text-sm text-kidville-muted">{emptyHint ?? 'Nessuna sezione disponibile.'}</p>;
-  }
+  const LIVELLI = [
+    { v: '', l: 'Tutti i livelli' },
+    { v: 'nido', l: 'Nido' },
+    { v: 'infanzia', l: 'Infanzia' },
+    { v: 'primaria', l: 'Primaria' },
+  ];
+  const gruppiPieni = gruppi
+    .map((g) => ({ ...g, sezioni: livello ? g.sezioni.filter((s) => s.school_type === livello) : g.sezioni }))
+    .filter((g) => g.sezioni.length > 0);
   const multiSede = gruppiPieni.length > 1;
 
   return (
     <div className="space-y-3">
-      {gruppiPieni.map((g) => (
-        <div key={g.scuolaId}>
-          {multiSede && (
-            <p className="font-maven text-[11px] uppercase tracking-wider text-kidville-muted mb-1">{g.scuolaNome}</p>
-          )}
-          <div className="flex flex-wrap gap-2">
-            {g.sezioni.map((s) => (
-              <button
-                key={s.id}
-                type="button"
-                onClick={() => toggle(s.name)}
-                className={`font-maven rounded-full px-3 py-1.5 text-sm transition ${
-                  value.includes(s.name)
-                    ? 'bg-kidville-green text-kidville-yellow'
-                    : 'bg-kidville-line text-kidville-muted hover:bg-kidville-green/10'
-                }`}
-              >
-                {s.name} <span className="opacity-60 text-xs">({s.school_type})</span>
-              </button>
+      {withLivelloFilter && (
+        <div className="flex items-center gap-2">
+          <label className="font-maven text-[11px] uppercase tracking-wider text-kidville-muted">Livello (classe)</label>
+          <select
+            value={livello}
+            onChange={(e) => setLivello(e.target.value)}
+            className="font-maven rounded-pill border border-kidville-line bg-white px-3 py-1.5 text-sm"
+          >
+            {LIVELLI.map((l) => (
+              <option key={l.v} value={l.v}>{l.l}</option>
             ))}
-          </div>
+          </select>
         </div>
-      ))}
+      )}
+      {gruppiPieni.length === 0 ? (
+        <p className="font-maven text-sm text-kidville-muted">{emptyHint ?? 'Nessuna sezione disponibile.'}</p>
+      ) : (
+        gruppiPieni.map((g) => (
+          <div key={g.scuolaId}>
+            {multiSede && (
+              <p className="font-maven text-[11px] uppercase tracking-wider text-kidville-muted mb-1">{g.scuolaNome}</p>
+            )}
+            <div className="flex flex-wrap gap-2">
+              {g.sezioni.map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  onClick={() => toggle(s.name)}
+                  className={`font-maven rounded-full px-3 py-1.5 text-sm transition ${
+                    value.includes(s.name)
+                      ? 'bg-kidville-green text-kidville-yellow'
+                      : 'bg-kidville-line text-kidville-muted hover:bg-kidville-green/10'
+                  }`}
+                >
+                  {s.name} <span className="opacity-60 text-xs">({s.school_type})</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ))
+      )}
     </div>
   );
 }

@@ -15,9 +15,13 @@ const studentSchema = z.object({
     data_nascita: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Data non valida"),
     comune_nascita: z.string().min(2, "Comune non valido"),
     provincia_nascita: z.string().length(2, "Sigla provincia deve essere 2 lettere"),
+    nazione_nascita: z.string().optional().or(z.literal('')),
+    cittadinanza: z.string().optional().or(z.literal('')),
     codice_fiscale: z.string().optional().or(z.literal('')),
     indirizzo_residenza: z.string().optional().or(z.literal('')),
+    civico: z.string().optional().or(z.literal('')),
     comune_residenza: z.string().optional().or(z.literal('')),
+    provincia_residenza: z.string().max(2).optional().or(z.literal('')),
     cap: z.string().optional().or(z.literal('')),
     classe_sezione: z.string().optional().or(z.literal('')),
     is_bes_dsa: z.boolean(),
@@ -49,9 +53,13 @@ export const ScrollableStudentForm = forwardRef<StudentFormHandle>(function Scro
         data_nascita: '',
         comune_nascita: '',
         provincia_nascita: '',
+        nazione_nascita: 'Italia',
+        cittadinanza: 'Italiana',
         codice_fiscale: '',
         indirizzo_residenza: '',
+        civico: '',
         comune_residenza: '',
+        provincia_residenza: '',
         cap: '',
         classe_sezione: '',
         scuola_id: '',
@@ -75,7 +83,8 @@ export const ScrollableStudentForm = forwardRef<StudentFormHandle>(function Scro
 
     const initialFormData = {
         nome: '', cognome: '', sesso: 'M', data_nascita: '', comune_nascita: '', provincia_nascita: '',
-        codice_fiscale: '', indirizzo_residenza: '', comune_residenza: '', cap: '', classe_sezione: '',
+        nazione_nascita: 'Italia', cittadinanza: 'Italiana',
+        codice_fiscale: '', indirizzo_residenza: '', civico: '', comune_residenza: '', provincia_residenza: '', cap: '', classe_sezione: '',
         scuola_id: '', is_bes_dsa: false, note_bes: '', usa_pannolino: false, allergies: '', allergeni: [] as string[],
         invoice_holder_type: 'mom', invoice_holder_details: { nome: '', cognome: '', codice_fiscale: '', adult_id: '' },
     };
@@ -223,9 +232,17 @@ export const ScrollableStudentForm = forwardRef<StudentFormHandle>(function Scro
                             <input name="provincia_nascita" value={formData.provincia_nascita} onChange={handleInputChange} maxLength={2} className={`w-full p-3 rounded-xl border outline-none uppercase bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green ${errors.provincia_nascita ? 'border-kidville-error shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} />
                             {errors.provincia_nascita && <span className="text-xs text-kidville-error font-bold">{errors.provincia_nascita}</span>}
                         </div>
+                        <div>
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Nazione di Nascita</label>
+                            <input name="nazione_nascita" value={formData.nazione_nascita} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none" />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Cittadinanza</label>
+                            <input name="cittadinanza" value={formData.cittadinanza} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none" />
+                        </div>
                         <div className="col-span-2">
                             <label className="block text-sm font-bold text-kidville-green/80 mb-1 flex items-center gap-2">
-                                <Fingerprint size={16} /> Codice Fiscale 
+                                <Fingerprint size={16} /> Codice Fiscale
                                 {isCfLoading && <Loader2 size={14} className="animate-spin text-kidville-green" />}
                                 {isCfAutoCalculated && <span className="text-xs text-kidville-green font-normal">Autocalcolato! ✨</span>}
                             </label>
@@ -287,13 +304,21 @@ export const ScrollableStudentForm = forwardRef<StudentFormHandle>(function Scro
                     <div className="grid grid-cols-2 gap-6">
                         <div className="col-span-2">
                             <label className="block text-sm font-bold text-kidville-green/80 mb-1">Indirizzo di Residenza</label>
-                            <input name="indirizzo_residenza" value={formData.indirizzo_residenza} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green ${errors.indirizzo_residenza ? 'border-kidville-error shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} placeholder="Via Roma, 1" />
+                            <input name="indirizzo_residenza" value={formData.indirizzo_residenza} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green ${errors.indirizzo_residenza ? 'border-kidville-error shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} placeholder="Via Roma" />
                             {errors.indirizzo_residenza && <span className="text-xs text-kidville-error font-bold">{errors.indirizzo_residenza}</span>}
+                        </div>
+                        <div>
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Numero Civico</label>
+                            <input name="civico" value={formData.civico} onChange={handleInputChange} maxLength={20} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none" placeholder="123" />
                         </div>
                         <div>
                             <label className="block text-sm font-bold text-kidville-green/80 mb-1">Comune di Residenza</label>
                             <input name="comune_residenza" value={formData.comune_residenza} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green ${errors.comune_residenza ? 'border-kidville-error shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} />
                             {errors.comune_residenza && <span className="text-xs text-kidville-error font-bold">{errors.comune_residenza}</span>}
+                        </div>
+                        <div>
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Prov. Residenza (Sigla)</label>
+                            <input name="provincia_residenza" value={formData.provincia_residenza} onChange={handleInputChange} maxLength={2} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none uppercase" />
                         </div>
                         <div>
                             <label className="block text-sm font-bold text-kidville-green/80 mb-1">CAP</label>

@@ -102,7 +102,7 @@ export function DidatticaPrimariaPanel({ scuolaId, userId }: { scuolaId: string;
         ) : (
           <>
             {tab === 'materie' && <MaterieManager sectionId={sezioneId} sezione={sezioneCorrente} userId={userId} scuolaId={scuolaId} />}
-            {tab === 'docenti' && <DocentiMaterieManager sectionId={sezioneId} scuolaId={scuolaId} userId={userId} />}
+            {tab === 'docenti' && <DocentiMaterieManager sectionId={sezioneId} scuolaId={scuolaId} userId={userId} sezioni={sezioni} sezioneName={sezioneCorrente?.name} onSectionChange={setSezioneId} />}
             {tab === 'obiettivi' && <ObiettiviManager scuolaId={scuolaId} userId={userId} />}
             {tab === 'classificazione' && <ClassificazioneDocenti scuolaId={scuolaId} userId={userId} />}
             {tab === 'vincoli' && <ImpostazioniManager scuolaId={scuolaId} userId={userId} />}

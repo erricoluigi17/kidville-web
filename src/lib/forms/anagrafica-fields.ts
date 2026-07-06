@@ -61,15 +61,35 @@ const BAMBINO_FIELDS: AnagraficaPresetField[] = [
     db_mapping: 'alunni.birth_province', placeholder: 'Es. RM',
     validation: { pattern: PROV_PATTERN, min_length: 2, max_length: 2 },
   }),
+  preset('bambino.birth_nation', {
+    type: 'text', label: 'Nazione di Nascita', required: false,
+    db_mapping: 'alunni.birth_nation', placeholder: 'Es. Italia',
+    validation: { max_length: 100 },
+  }),
+  preset('bambino.citizenship', {
+    type: 'text', label: 'Cittadinanza', required: false,
+    db_mapping: 'alunni.citizenship', placeholder: 'Es. Italiana',
+    validation: { max_length: 100 },
+  }),
   preset('bambino.residence_address', {
     type: 'text', label: 'Indirizzo di Residenza', required: false,
-    db_mapping: 'alunni.residence_address', placeholder: 'Es. Via Roma, 1',
+    db_mapping: 'alunni.residence_address', placeholder: 'Es. Via Roma',
     validation: { max_length: 200 },
+  }),
+  preset('bambino.residence_street_number', {
+    type: 'text', label: 'Numero Civico', required: false,
+    db_mapping: 'alunni.residence_street_number', placeholder: 'Es. 123',
+    validation: { max_length: 20 },
   }),
   preset('bambino.residence_city', {
     type: 'text', label: 'Comune di Residenza', required: false,
     db_mapping: 'alunni.residence_city', placeholder: 'Es. Roma',
     validation: { max_length: 100 },
+  }),
+  preset('bambino.residence_province', {
+    type: 'text', label: 'Provincia di Residenza', required: false,
+    db_mapping: 'alunni.residence_province', placeholder: 'Es. RM',
+    validation: { pattern: PROV_PATTERN, min_length: 2, max_length: 2 },
   }),
   preset('bambino.zip_code', {
     type: 'text', label: 'CAP', required: false,
@@ -161,13 +181,23 @@ function makeAdultFields(prefix: 'madre' | 'padre' | 'delegato', nomeLabel: stri
     }),
     preset(`${prefix}.address`, {
       type: 'text', label: 'Indirizzo di Residenza', required: false,
-      db_mapping: 'adults.address', placeholder: 'Es. Via Roma, 1',
+      db_mapping: 'adults.address', placeholder: 'Es. Via Roma',
       validation: { max_length: 200 },
+    }),
+    preset(`${prefix}.residence_street_number`, {
+      type: 'text', label: 'Numero Civico', required: false,
+      db_mapping: 'adults.residence_street_number', placeholder: 'Es. 123',
+      validation: { max_length: 20 },
     }),
     preset(`${prefix}.residence_city`, {
       type: 'text', label: 'Comune di Residenza', required: false,
       db_mapping: 'adults.residence_city', placeholder: 'Es. Roma',
       validation: { max_length: 100 },
+    }),
+    preset(`${prefix}.residence_province`, {
+      type: 'text', label: 'Provincia di Residenza', required: false,
+      db_mapping: 'adults.residence_province', placeholder: 'Es. RM',
+      validation: { pattern: PROV_PATTERN, min_length: 2, max_length: 2 },
     }),
     preset(`${prefix}.zip_code`, {
       type: 'text', label: 'CAP', required: false,

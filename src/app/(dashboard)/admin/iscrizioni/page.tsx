@@ -5,9 +5,10 @@ import Link from 'next/link'
 import {
   UserPlus, Baby, Users, FileText, CheckCircle2, XCircle, Loader2,
   ChevronLeft, Clock, KeyRound, AlertTriangle, ExternalLink, Star,
-  Inbox, Send, Copy, Link2, Pencil, Plus,
+  Inbox, Send, Copy, Link2, Pencil, Plus, RotateCcw,
 } from 'lucide-react'
 import { ADULT_ROLE_LABELS } from '@/lib/forms/enrollment-template'
+import { STANDARD_ENROLLMENT_MODEL_ID } from '@/lib/forms/enrollment-default-schema'
 import type { EnrollmentSubmissionData, EnrollmentChild, EnrollmentAdult } from '@/types/database.types'
 import { CockpitPage, PageHeader, StatCard, Tabs } from '@/components/ui/cockpit'
 import { useSediAttive } from '@/lib/context/sede-context'
@@ -70,14 +71,35 @@ function ModuliTab() {
   const [busy, setBusy] = useState<string | null>(null)
   const [copied, setCopied] = useState<string | null>(null)
 
+  const [resetting, setResetting] = useState(false)
+
   const load = () => {
+    // Assicura l'esistenza del modello standard editabile (seed idempotente).
+    fetch('/api/iscrizione/model').catch(() => {})
     fetch('/api/admin/forms/models')
       .then((r) => r.json())
-      .then((d) => { if (Array.isArray(d)) setModels(d) })
+      // Il modulo standard ha la sua card dedicata: escludilo dalla lista generica.
+      .then((d) => { if (Array.isArray(d)) setModels(d.filter((m: FormModel) => m.id !== STANDARD_ENROLLMENT_MODEL_ID)) })
       .catch(() => {})
       .finally(() => setLoading(false))
   }
   useEffect(() => { load() }, [])
+
+  const resetStandard = async () => {
+    if (!confirm('Reimpostare il Modulo d\'iscrizione standard ai valori di base? Le modifiche fatte verranno annullate.')) return
+    setResetting(true)
+    try {
+      const res = await fetch('/api/admin/form-models/reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: STANDARD_ENROLLMENT_MODEL_ID }),
+      })
+      if (!res.ok) { const j = await res.json().catch(() => ({})); alert(j.error || 'Errore'); return }
+      alert('Modulo d\'iscrizione standard ripristinato ai valori di base.')
+    } finally {
+      setResetting(false)
+    }
+  }
 
   const togglePublish = async (m: FormModel) => {
     setBusy(m.id)
@@ -112,11 +134,19 @@ function ModuliTab() {
             <p className="font-barlow font-bold text-kidville-ink">Modulo d&apos;iscrizione standard
               <span className="ml-2 text-[10px] uppercase bg-kidville-cream px-2 py-0.5 rounded-full text-kidville-muted">predefinito</span>
             </p>
-            <p className="font-maven text-xs text-kidville-muted">Wizard pubblico sempre attivo. Le richieste arrivano nel tab «Ricevute».</p>
+            <p className="font-maven text-xs text-kidville-muted">Wizard pubblico sempre attivo. Le richieste arrivano nel tab «Ricevute». Modificabile dal builder.</p>
           </div>
-          <button onClick={() => copyLink(`${origin}/iscrizione`, 'std')} className="inline-flex items-center gap-1.5 rounded-pill border border-kidville-green/30 px-3 py-1.5 text-sm text-kidville-green">
-            {copied === 'std' ? <><CheckCircle2 size={14} /> Copiato</> : <><Copy size={14} /> Copia link</>}
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            <Link href={`/admin/forms/builder?id=${STANDARD_ENROLLMENT_MODEL_ID}`} className="inline-flex items-center gap-1.5 rounded-pill border border-kidville-line px-3 py-1.5 text-sm text-kidville-muted hover:text-kidville-green">
+              <Pencil size={14} /> Modifica
+            </Link>
+            <button onClick={resetStandard} disabled={resetting} className="inline-flex items-center gap-1.5 rounded-pill border border-kidville-warn/30 px-3 py-1.5 text-sm text-kidville-warn disabled:opacity-50">
+              {resetting ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />} Reimposta
+            </button>
+            <button onClick={() => copyLink(`${origin}/iscrizione`, 'std')} className="inline-flex items-center gap-1.5 rounded-pill border border-kidville-green/30 px-3 py-1.5 text-sm text-kidville-green">
+              {copied === 'std' ? <><CheckCircle2 size={14} /> Copiato</> : <><Copy size={14} /> Copia link</>}
+            </button>
+          </div>
         </div>
       </div>
 

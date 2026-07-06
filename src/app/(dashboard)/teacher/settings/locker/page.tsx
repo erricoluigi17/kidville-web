@@ -353,8 +353,8 @@ function LockerSettingsInner() {
 
                     {/* Sezioni destinatarie (multi-select reale) */}
                     <div className="mb-4">
-                        <label className="text-xs font-bold text-kidville-muted mb-2 block">Assegna alle sezioni</label>
-                        <SezioniMultiSelect grado="nido,infanzia" value={targetClassi} onChange={setTargetClassi} emptyHint="Nessuna sezione nido/infanzia." />
+                        <label className="text-xs font-bold text-kidville-muted mb-2 block">Assegna alle classi</label>
+                        <SezioniMultiSelect withLivelloFilter value={targetClassi} onChange={setTargetClassi} emptyHint="Nessuna sezione: creale in Anagrafica → Sezioni." />
                     </div>
 
                     {addError && <p className="text-kidville-error text-xs mb-3">{addError}</p>}

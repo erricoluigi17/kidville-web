@@ -31,11 +31,15 @@ interface ParentProfile {
     gender: string;
     birth_date: string;
     birth_city: string;
+    birth_province?: string;
+    birth_nation?: string;
     fiscal_code: string;
     emails: string[];
     phone_numbers: string[];
     residence_address: string;
+    residence_street_number?: string;
     residence_city: string;
+    residence_province?: string;
     zip_code: string;
     citizenship?: string;
     student_parents?: {
@@ -214,6 +218,64 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave }: Props) {
                             </div>
                         </section>
 
+                        {/* Nascita e Cittadinanza */}
+                        <section>
+                            <h3 className="font-barlow font-bold text-kidville-green uppercase text-xs tracking-wide mb-3">
+                                Nascita e Cittadinanza
+                            </h3>
+                            <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">Sesso</label>
+                                    <select
+                                        value={(form.gender as string) ?? ''}
+                                        onChange={e => updateForm('gender', e.target.value)}
+                                        className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:border-kidville-green"
+                                    >
+                                        <option value="">—</option>
+                                        <option value="M">Maschio</option>
+                                        <option value="F">Femmina</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">Comune di Nascita</label>
+                                    <input
+                                        type="text"
+                                        value={(form.birth_city as string) ?? ''}
+                                        onChange={e => updateForm('birth_city', e.target.value)}
+                                        className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">Prov. Nascita (Sigla)</label>
+                                    <input
+                                        type="text"
+                                        value={(form.birth_province as string) ?? ''}
+                                        onChange={e => updateForm('birth_province', e.target.value.toUpperCase())}
+                                        maxLength={2}
+                                        className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green uppercase focus:outline-none focus:border-kidville-green"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">Nazione di Nascita</label>
+                                    <input
+                                        type="text"
+                                        value={(form.birth_nation as string) ?? ''}
+                                        onChange={e => updateForm('birth_nation', e.target.value)}
+                                        className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
+                                    />
+                                </div>
+                                <div className="col-span-2">
+                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">Cittadinanza</label>
+                                    <input
+                                        type="text"
+                                        value={(form.citizenship as string) ?? ''}
+                                        onChange={e => updateForm('citizenship', e.target.value)}
+                                        className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
+                                    />
+                                </div>
+                            </div>
+                        </section>
+
                         {/* Recapiti e Residenza */}
                         <section>
                             <h3 className="font-barlow font-bold text-kidville-green uppercase text-xs tracking-wide mb-3">
@@ -230,11 +292,41 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave }: Props) {
                                     />
                                 </div>
                                 <div>
+                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">Numero Civico</label>
+                                    <input
+                                        type="text"
+                                        value={(form.residence_street_number as string) ?? ''}
+                                        onChange={e => updateForm('residence_street_number', e.target.value)}
+                                        maxLength={20}
+                                        className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
+                                    />
+                                </div>
+                                <div>
                                     <label className="font-maven text-xs text-kidville-muted mb-1 block">Città</label>
                                     <input
                                         type="text"
                                         value={(form.residence_city as string) ?? ''}
                                         onChange={e => updateForm('residence_city', e.target.value)}
+                                        className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">Prov. Residenza (Sigla)</label>
+                                    <input
+                                        type="text"
+                                        value={(form.residence_province as string) ?? ''}
+                                        onChange={e => updateForm('residence_province', e.target.value.toUpperCase())}
+                                        maxLength={2}
+                                        className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green uppercase focus:outline-none focus:border-kidville-green"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">CAP</label>
+                                    <input
+                                        type="text"
+                                        value={(form.zip_code as string) ?? ''}
+                                        onChange={e => updateForm('zip_code', e.target.value)}
+                                        maxLength={10}
                                         className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
                                     />
                                 </div>

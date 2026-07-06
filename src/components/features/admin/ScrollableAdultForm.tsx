@@ -18,7 +18,9 @@ const adultSchema = z.object({
     birth_place: z.string().optional().or(z.literal('')),
     fiscal_code: z.string().length(16, "CF deve essere 16 caratteri").toUpperCase().optional().or(z.literal('')),
     address: z.string().optional().or(z.literal('')),
+    civico: z.string().max(20).optional().or(z.literal('')),
     residence_city: z.string().optional().or(z.literal('')),
+    residence_province: z.string().max(2).optional().or(z.literal('')),
     zip_code: z.string().max(10).optional().or(z.literal('')),
     emails: z.array(z.string().email("Email non valida")).optional(),
     phones: z.array(z.string()).optional()
@@ -51,7 +53,9 @@ export const ScrollableAdultForm = forwardRef<AdultFormHandle, { defaultRole?: s
         birth_place: '',
         fiscal_code: '',
         address: '',
+        civico: '',
         residence_city: '',
+        residence_province: '',
         zip_code: '',
         emails: [''],
         phones: ['']
@@ -259,12 +263,20 @@ export const ScrollableAdultForm = forwardRef<AdultFormHandle, { defaultRole?: s
                     </h3>
                     <div className="grid grid-cols-2 gap-6">
                         <div className="col-span-2">
-                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Indirizzo Completo</label>
-                            <input name="address" value={formData.address} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none" placeholder="Via Roma, 123" />
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Indirizzo di Residenza</label>
+                            <input name="address" value={formData.address} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none" placeholder="Via Roma" />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Numero Civico</label>
+                            <input name="civico" value={formData.civico} onChange={handleInputChange} maxLength={20} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none" placeholder="123" />
                         </div>
                         <div>
                             <label className="block text-sm font-bold text-kidville-green/80 mb-1">Città di Residenza</label>
                             <input name="residence_city" value={formData.residence_city} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none" />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Prov. Residenza (Sigla)</label>
+                            <input name="residence_province" value={formData.residence_province} onChange={handleInputChange} maxLength={2} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none uppercase" />
                         </div>
                         <div>
                             <label className="block text-sm font-bold text-kidville-green/80 mb-1">CAP</label>

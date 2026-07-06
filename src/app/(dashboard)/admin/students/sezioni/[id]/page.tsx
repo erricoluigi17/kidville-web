@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { ArrowLeft, Building2, Loader2, Settings, User } from 'lucide-react';
+import { ArrowLeft, Building2, GraduationCap, Loader2, Plus, Settings, User, X } from 'lucide-react';
 import { CockpitPage } from '@/components/ui/cockpit';
 import { schoolTypeConfig } from '@/components/features/admin/SectionsView';
 
@@ -30,6 +30,12 @@ interface Student {
     stato?: string;
 }
 
+interface Teacher {
+    id: string;
+    nome: string;
+    cognome: string;
+}
+
 export default function SezioneDetailPage() {
     const params = useParams<{ id: string }>();
     const sectionId = params?.id;
@@ -38,6 +44,54 @@ export default function SezioneDetailPage() {
     const [students, setStudents] = useState<Student[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [isSavingType, setIsSavingType] = useState(false);
+    const [teachers, setTeachers] = useState<{ assigned: Teacher[]; available: Teacher[] }>({ assigned: [], available: [] });
+    const [newTeacherId, setNewTeacherId] = useState('');
+    const [teacherBusy, setTeacherBusy] = useState(false);
+    const [teachersLoading, setTeachersLoading] = useState(true);
+
+    const loadTeachers = useCallback(async () => {
+        if (!sectionId) return;
+        try {
+            const res = await fetch(`/api/admin/sections/${sectionId}/teachers`).catch(() => null);
+            const d = res?.ok ? await res.json().catch(() => null) : null;
+            if (d?.success) setTeachers({ assigned: d.assigned ?? [], available: d.available ?? [] });
+        } finally {
+            setTeachersLoading(false);
+        }
+    }, [sectionId]);
+
+    useEffect(() => { loadTeachers(); }, [loadTeachers]);
+
+    const addTeacher = async () => {
+        if (!newTeacherId || !sectionId) return;
+        setTeacherBusy(true);
+        try {
+            await fetch(`/api/admin/sections/${sectionId}/teachers`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ utente_id: newTeacherId }),
+            });
+            setNewTeacherId('');
+            await loadTeachers();
+        } finally {
+            setTeacherBusy(false);
+        }
+    };
+
+    const removeTeacher = async (utenteId: string) => {
+        if (!sectionId) return;
+        setTeacherBusy(true);
+        try {
+            await fetch(`/api/admin/sections/${sectionId}/teachers`, {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ utente_id: utenteId }),
+            });
+            await loadTeachers();
+        } finally {
+            setTeacherBusy(false);
+        }
+    };
 
     const load = useCallback(async () => {
         if (!sectionId) return;
@@ -172,6 +226,7 @@ export default function SezioneDetailPage() {
                     </p>
                 </div>
 
+                <div className="space-y-5">
                 {/* Impostazioni sezione */}
                 <div className="rounded-card bg-kidville-white p-6 shadow-sm">
                     <h4 className="font-barlow mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-kidville-muted">
@@ -199,6 +254,58 @@ export default function SezioneDetailPage() {
                             </div>
                         </div>
                     </div>
+                </div>
+
+                {/* Insegnanti di riferimento */}
+                <div className="rounded-card bg-kidville-white p-6 shadow-sm">
+                    <h4 className="font-barlow mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-kidville-muted">
+                        <GraduationCap size={16} /> Insegnanti di riferimento
+                    </h4>
+                    <div className="space-y-3 rounded-xl bg-kidville-cream p-4">
+                        {teachers.assigned.length > 0 ? (
+                            <div className="flex flex-wrap gap-2">
+                                {teachers.assigned.map(t => (
+                                    <span key={t.id} className="inline-flex items-center gap-1.5 rounded-full bg-kidville-green/10 px-3 py-1.5 font-maven text-sm text-kidville-green">
+                                        {t.cognome} {t.nome}
+                                        <button
+                                            onClick={() => removeTeacher(t.id)}
+                                            disabled={teacherBusy}
+                                            aria-label="Rimuovi insegnante"
+                                            className="text-kidville-green/60 hover:text-kidville-error disabled:opacity-50"
+                                        >
+                                            <X size={14} />
+                                        </button>
+                                    </span>
+                                ))}
+                            </div>
+                        ) : (
+                            <p className="font-maven text-sm text-kidville-muted">Nessun insegnante di riferimento assegnato.</p>
+                        )}
+                        <div className="flex items-center gap-2">
+                            <select
+                                value={newTeacherId}
+                                onChange={e => setNewTeacherId(e.target.value)}
+                                disabled={teacherBusy || teachersLoading || teachers.available.length === 0}
+                                className="flex-1 rounded-xl border-2 border-kidville-line bg-white p-2.5 font-maven text-sm focus:border-kidville-green focus:outline-none disabled:opacity-60"
+                            >
+                                <option value="">{teachersLoading ? 'Caricamento…' : teachers.available.length === 0 ? 'Nessun docente disponibile' : '— Seleziona insegnante —'}</option>
+                                {teachers.available.map(t => (
+                                    <option key={t.id} value={t.id}>{t.cognome} {t.nome}</option>
+                                ))}
+                            </select>
+                            <button
+                                onClick={addTeacher}
+                                disabled={!newTeacherId || teacherBusy || teachersLoading}
+                                className="inline-flex items-center gap-1.5 rounded-xl bg-kidville-green px-4 py-2.5 font-barlow text-sm font-bold uppercase text-kidville-yellow disabled:opacity-50"
+                            >
+                                <Plus size={16} /> Aggiungi
+                            </button>
+                        </div>
+                        <p className="font-maven text-xs text-kidville-muted">
+                            L&apos;insegnante aggiunto comparirà automaticamente tra le sue &quot;Classi assegnate&quot;.
+                        </p>
+                    </div>
+                </div>
                 </div>
             </div>
         </CockpitPage>

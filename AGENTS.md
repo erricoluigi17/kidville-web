@@ -9,8 +9,9 @@ Queste regole valgono per **ogni** sessione e vanno rispettate sempre.
 Regole operative obbligatorie:
 
 1. **Si lavora sempre su un branch secondario, mai direttamente su `main`.**
-   Alla **prima modifica** di una nuova attività si crea (o si riprende) un nuovo branch di lavoro
-   — es. `git checkout -b feat/<descrizione>`. Non committare mai direttamente su `main`.
+   **Non** si crea un branch nuovo a ogni attività: si **continua sul branch secondario esistente**
+   (es. `feat/batch-segreteria`). Un **nuovo branch va creato SOLO dopo un deploy andato a buon fine**
+   (merge in `main` + rilascio + pulizia dei branch, vedi punto 3). Non committare mai direttamente su `main`.
 
 2. **Ogni modifica aggiorna anche il PRD.** Il PRD di riferimento è
    **`PRD REGISTRO ELETTRONICO.md`** (nella radice del repo). Qualunque cambiamento a

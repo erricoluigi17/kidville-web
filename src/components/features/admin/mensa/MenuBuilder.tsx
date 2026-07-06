@@ -233,6 +233,7 @@ export function MenuBuilder({ userId, scuolaId }: Props) {
               <SezioniMultiSelect
                 value={assegnaSezioni}
                 onChange={setAssegnaSezioni}
+                withLivelloFilter
                 emptyHint="Nessuna sezione: creale in Anagrafica → Sezioni."
               />
               <button onClick={salvaSezioni} className="mt-3 px-3 py-1.5 rounded-full bg-kidville-green text-white font-maven font-bold text-xs flex items-center gap-1">

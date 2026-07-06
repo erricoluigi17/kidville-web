@@ -18,6 +18,8 @@ const getQuerySchema = z.object({
 const postBodySchema = z.object({
     id: z.preprocess(vuotoComeAssente, zUuid.nullish()), // presente ⇒ update, assente ⇒ insert
     classe_sezione: z.string().nullish(),
+    // Creazione dello stesso materiale su più sezioni in un colpo (multi-select).
+    classi_sezioni: z.array(z.string().min(1)).max(100).optional(),
     nome: z.string().nullish(), // il codice attuale non ne impone la presenza (l'assenza fallisce a DB, come prima)
     icona: z.string().nullish(),
     unita: z.string().nullish(),
@@ -84,14 +86,7 @@ export async function POST(request: NextRequest) {
         const body = b.data;
         const admin = await createAdminClient();
 
-        // Scope per plesso (classe risolta per nome dentro i propri plessi).
-        if (body.classe_sezione) {
-            const scopeErr = await assertClasseNomeInScope(admin, auth.user, body.classe_sezione);
-            if (scopeErr) return scopeErr;
-        }
-
-        const payload = {
-            classe_sezione:    body.classe_sezione ?? null,
+        const base = {
             nome:              body.nome,
             icona:             body.icona ?? '📦',
             unita:             body.unita ?? 'pz',
@@ -100,6 +95,31 @@ export async function POST(request: NextRequest) {
             ordine:            body.ordine ?? 99,
             attivo:            body.attivo ?? true,
         };
+
+        // Ramo multi-sezione: crea lo stesso materiale su ogni sezione scelta.
+        if (!body.id && body.classi_sezioni && body.classi_sezioni.length > 0) {
+            const uniche = [...new Set(body.classi_sezioni)];
+            for (const classe of uniche) {
+                const scopeErr = await assertClasseNomeInScope(admin, auth.user, classe);
+                if (scopeErr) return scopeErr;
+            }
+            const rows = uniche.map((classe) => ({ ...base, classe_sezione: classe }));
+            const { data, error } = await admin.from('locker_config').insert(rows).select();
+            if (error) throw error;
+            await logScrittura(admin, {
+                attore: auth.user, entitaTipo: 'armadietto_config', azione: 'insert',
+                valoreDopo: { nome: base.nome, sezioni: uniche },
+            });
+            return NextResponse.json({ success: true, data, created: data?.length ?? 0 });
+        }
+
+        // Scope per plesso (classe risolta per nome dentro i propri plessi).
+        if (body.classe_sezione) {
+            const scopeErr = await assertClasseNomeInScope(admin, auth.user, body.classe_sezione);
+            if (scopeErr) return scopeErr;
+        }
+
+        const payload = { ...base, classe_sezione: body.classe_sezione ?? null };
 
         let result;
         if (body.id) {

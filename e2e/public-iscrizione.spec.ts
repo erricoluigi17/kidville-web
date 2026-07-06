@@ -33,6 +33,12 @@ test('happy path: la richiesta pubblica viene inviata', async ({ page }, testInf
   await page.locator('select').selectOption('M');
   await page.locator('input[type="date"]').fill('2021-05-05');
   await page.getByPlaceholder('Es. RSSMRC99A01H501Z').fill(CF_CHILD);
+  // Campi resi obbligatori dal batch anagrafiche (nazione/cittadinanza/civico/provincia residenza).
+  await page.getByPlaceholder('Es. Italia', { exact: true }).fill('Italia');
+  await page.getByPlaceholder('Es. Italiana', { exact: true }).fill('Italiana');
+  await page.getByPlaceholder('Es. 123', { exact: true }).fill('10');
+  // 'Es. RM' è placeholder sia di Provincia di Nascita sia di Residenza: la residenza è la seconda.
+  await page.getByPlaceholder('Es. RM', { exact: true }).nth(1).fill('NA');
   await caricaDocumento(page, pngPath);
   await page.getByRole('button', { name: 'Avanti' }).click();
 
@@ -45,6 +51,11 @@ test('happy path: la richiesta pubblica viene inviata', async ({ page }, testInf
   await page.locator('select').nth(1).selectOption('CI');
   await page.getByPlaceholder('Es. AB1234567').fill('AB1234567');
   await page.getByPlaceholder('Es. maria.rossi@email.it').fill(EMAIL_ISCRIZIONE);
+  // Stessi campi obbligatori lato adulto (qui la Provincia di Nascita è 'Es. MI' → 'Es. RM' è univoca).
+  await page.getByPlaceholder('Es. Italia', { exact: true }).fill('Italia');
+  await page.getByPlaceholder('Es. Italiana', { exact: true }).fill('Italiana');
+  await page.getByPlaceholder('Es. 123', { exact: true }).fill('10');
+  await page.getByPlaceholder('Es. RM', { exact: true }).fill('NA');
   await caricaDocumento(page, pngPath);
   await page.getByRole('button', { name: 'Avanti' }).click();
 
@@ -64,7 +75,8 @@ test.describe('import in segreteria', () => {
   test('l’import mostra il degrado email visibile', async ({ page }) => {
     await page.goto('/admin/iscrizioni');
 
-    await expect(page.getByText('Iscrizioni Nuovi Alunni')).toBeVisible();
+    // /admin/iscrizioni ora reindirizza a Modulistica > tab "Moduli ricevuti".
+    await expect(page.getByText('Modulistica & Onboarding')).toBeVisible();
     const richiesta = page.getByText('Tino Iscrizione-E2E').first();
     await expect(richiesta).toBeVisible({ timeout: 15_000 });
     await richiesta.click();

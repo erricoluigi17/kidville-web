@@ -154,6 +154,20 @@ function AdminArmadiettoInner() {
     if (tab === 'mensile') loadMensile(sezione, userId, month);
   };
 
+  // Carico distribuito a tutti gli alunni della sezione selezionata.
+  const handleLoadStockBulk = async (body: { alunno_ids: string[]; materiale: string; quantita: number }) => {
+    for (const alunno_id of body.alunno_ids) {
+      const res = await fetch(`/api/locker/inventory?userId=${userId ?? ''}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ alunno_id, materiale: body.materiale, quantita: body.quantita }),
+      });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || 'Errore salvataggio'); }
+    }
+    loadGiornata(sezione, userId);
+    if (tab === 'mensile') loadMensile(sezione, userId, month);
+  };
+
   const students = useMemo(() => stock.map(s => ({ id: s.id, nome: s.nome, cognome: s.cognome })), [stock]);
   const pezziInStock = useMemo(() => stock.reduce((tot, s) => tot + s.stocks.reduce((a, i) => a + i.stock, 0), 0), [stock]);
   const consegneOggi = useMemo(() => caricoOggi.reduce((tot, s) => tot + s.inventario.length, 0), [caricoOggi]);
@@ -346,6 +360,7 @@ function AdminArmadiettoInner() {
         preselectedMateriale=""
         classeSezione={sezione ?? undefined}
         onConfirm={handleLoadStock}
+        onConfirmBulk={handleLoadStockBulk}
       />
     </CockpitPage>
   );

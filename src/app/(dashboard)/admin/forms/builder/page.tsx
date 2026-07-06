@@ -1,6 +1,7 @@
 'use client'
 
-import { Suspense, useRef, useState } from 'react'
+import { Suspense, useEffect, useRef, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
 import {
   DndContext,
   DragEndEvent,
@@ -25,6 +26,7 @@ import { FormBuilderCanvas } from '@/components/features/admin/forms/builder/For
 import { PropertiesPanel } from '@/components/features/admin/forms/builder/PropertiesPanel'
 import type { FormSchemaConfig, FormField, FormFieldType, FormPage } from '@/types/database.types'
 import { ANAGRAFICA_GROUPS, type AnagraficaPresetField, type AnagraficaGroup } from '@/lib/forms/anagrafica-fields'
+import { publicFormUrl } from '@/lib/forms/publish'
 
 // ── Field palette definition ─────────────────────────────────
 const PALETTE_ITEMS = [
@@ -201,6 +203,10 @@ function AnagraficaGroupSection({
 function FormBuilderInner() {
   // Identità staff (M4): session-only, nessun fallback demo.
   const { userId } = useSessionIdentity()
+  // ?id= → modifica di un modello esistente (carica schema + campi).
+  const searchParams = useSearchParams()
+  const editIdParam = searchParams.get('id')
+  const [editingId, setEditingId] = useState<string | null>(null)
   const [schema, setSchema] = useState<FormSchemaConfig>(() => ({
     version: '1.0',
     pages: [
@@ -231,6 +237,26 @@ function FormBuilderInner() {
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
     new Set(['madre', 'padre', 'delegato'])
   )
+
+  // Carica il modello esistente (modifica): schema + titolo + stato pubblicazione.
+  useEffect(() => {
+    if (!editIdParam) return
+    fetch(`/api/admin/form-models/${editIdParam}`)
+      .then(r => (r.ok ? r.json() : null))
+      .then((m) => {
+        if (!m || !m.id) return
+        if (m.schema?.pages?.length) setSchema(m.schema)
+        setFormTitle(m.title ?? 'Modello')
+        setEditingId(m.id)
+        setSavedModelId(m.id)
+        if (m.signature_mode === 'joint' || m.signature_mode === 'single') setSignatureMode(m.signature_mode)
+        if (m.access_mode === 'public' || m.access_mode === 'authenticated') setAccessMode(m.access_mode)
+        if (m.published_at && m.public_token) {
+          setPub({ token: m.public_token, url: publicFormUrl(m.public_token), access_mode: m.access_mode })
+        }
+      })
+      .catch(() => {})
+  }, [editIdParam])
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
@@ -372,20 +398,23 @@ function FormBuilderInner() {
     }
     setSaveState('saving')
     try {
+      // In modifica (editingId) si AGGIORNA il modello esistente (PATCH), così
+      // non si duplica e si preservano is_enrollment_form/pubblicazione.
+      const editing = editingId
       const res = await fetch('/api/admin/form-models', {
-        method: 'POST',
+        method: editing ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
-        body: JSON.stringify({
-          title: formTitle,
-          schema,
-          is_active: false,
-          requires_signature: hasSignature,
-          signature_mode: hasSignature ? signatureMode : 'single',
-        }),
+        body: JSON.stringify(
+          editing
+            ? { id: editing, title: formTitle, schema, requires_signature: hasSignature, signature_mode: hasSignature ? signatureMode : 'single' }
+            : { title: formTitle, schema, is_active: false, requires_signature: hasSignature, signature_mode: hasSignature ? signatureMode : 'single' },
+        ),
       })
       const json = await res.json()
       if (!res.ok) throw new Error(json.error ?? 'Salvataggio fallito')
-      setSavedModelId(json.id ?? null)
+      const newId = json.id ?? editing ?? null
+      setSavedModelId(newId)
+      setEditingId(newId)
       setSaveState('saved')
     } catch (err) {
       console.error('Errore salvataggio form_models:', err)
@@ -455,7 +484,7 @@ function FormBuilderInner() {
         >
           <div className="flex items-center gap-3">
             <Link
-              href="/admin/modulistica"
+              href="/admin/modulistica?tab=inviabili"
               className="p-1.5 rounded-lg text-kidville-muted hover:text-kidville-green hover:bg-kidville-cream-dark transition-all"
             >
               <ChevronLeft className="w-5 h-5" />

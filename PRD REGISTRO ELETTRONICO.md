@@ -52,6 +52,184 @@
 > | **Interoperabilità SIDI / Piattaforma Unica** | ✅ Implementato (P5, DL-047..050) · 🔶 egress gated | Fase P5 | Import ZIP (parser pluggable), Fase A, frequentanti, genitori-alunni, certificati competenze D.M. 14/2024 + indicatore sync. **Trasmissione reale subordinata all'accreditamento ministeriale** |
 > | **Accessibilità AgID / Legge Stanca** | 🔶 Baseline (P1, DL-008) | Trasversale | Fatto: alto contrasto globale persistito, focus-ring, reduced-motion, Modal accessibile, landmark/skip-link/aria-current, smoke jest-axe. WCAG-AA = definition-of-done; audit AA per-pagina incrementale |
 
+---
+
+## 🗓️ Changelog — Fix pre-deploy gate E2E 2026-07-06 (branch `feat/batch-segreteria`)
+
+Tre regressioni emerse in CI (E2E Playwright rosso) sul batch segreteria, tutte risolte senza
+alterare il comportamento di prodotto voluto:
+
+- **`/api/admin/students` (GET) resiliente al 42703** — il commit del batch anagrafiche aveva
+  aggiunto `residence_street_number`/`residence_province` (migrazione `20260767`) alla SELECT della
+  lista, ma solo a POST/PATCH era stato dato il retry "pre-migration"; la GET no. Su un DB privo di
+  quelle colonne (progetto E2E CI, o finestra pre-migrate di un deploy) PostgREST rispondeva 42703 →
+  HTTP 500 → tabella anagrafica vuota. Ora la GET rimuove le colonne mancanti e riprova, come già
+  facevano POST/PATCH. In prod le colonne esistono già → nessun cambiamento funzionale.
+- **Diario genitore E2E** — il buffer visibilità 10' (introdotto nel batch) filtra su `creato_il`;
+  il seed inseriva l'evento umore con `creato_il = now()` → nascosto ai genitori. Il seed ora
+  retrodata `creato_il` di 30' (solo dati di test; il buffer di prod resta invariato).
+- **Iscrizione pubblica E2E** — (a) `/admin/iscrizioni` ora reindirizza a *Modulistica → Moduli
+  ricevuti*: aggiornata l'asserzione heading del test; (b) i 4 campi resi obbligatori sul form
+  pubblico (Nazione/Cittadinanza/Civico/Provincia residenza) **restano obbligatori** (scelta
+  confermata: dati completi per SIDI) → il test happy-path ora li compila; (c) **import iscrizione
+  resiliente al 42703**: la PATCH `/api/admin/iscrizioni` scriveva `residence_street_number`/
+  `residence_province` (mig. 20260767) su `parents`/`alunni`; su DB senza quelle colonne l'INSERT
+  falliva e il `continue` saltava la creazione dell'account referente (nessuna credenziale emessa).
+  Ora rimuove le colonne mancanti e riprova, come la GET students. In prod le colonne esistono → nessun impatto.
+
+Gate: `eslint` 0, `vitest` verde, `build` ok, E2E Playwright verde in CI.
+
+---
+
+## 🗓️ Changelog — Configurazione invio email Resend 2026-07-06 (branch `feat/batch-segreteria`)
+
+Attivazione dell'invio email reale tramite **Resend** (provider transazionale già cablato in
+`src/lib/email/send.ts`, chiamata REST via `fetch` — nessuna libreria aggiuntiva). Consumatori:
+OTP firma moduli (`/api/forms/send-otp`, `otp-ticket`), credenziali genitori
+(`/api/admin/regenerate-credentials`, `/api/admin/iscrizioni`).
+
+- **Fix bug link login nelle credenziali:** `credentialsEmailBody` puntava a `${NEXT_PUBLIC_APP_URL}/login`
+  (rotta inesistente → 404); corretto in **`/auth/login`**, coerente con la rotta reale e con
+  `regenerate-credentials`. Senza il fix i genitori avrebbero ricevuto un link rotto all'accensione delle email.
+- **Scaffolding env** in `.env.local`: `RESEND_API_KEY` (vuoto → fallback log, nessun invio),
+  `OTP_FROM_EMAIL` (fase 1 sandbox `onboarding@resend.dev` → fase 2 `noreply@kidville.it` a dominio verificato),
+  `NEXT_PUBLIC_APP_URL` (base dei link nelle email).
+- **Attivazione produzione (residuo, lato servizi esterni):** creare account Resend + API key, verificare
+  il dominio `kidville.it` (record DNS SPF/DKIM), impostare le stesse env su Vercel (`RESEND_API_KEY`,
+  `OTP_FROM_EMAIL`, `NEXT_PUBLIC_APP_URL` = URL prod).
+
+Gate: `eslint` 0, `vitest` verde, `build` ok.
+
+---
+
+## 🗓️ Changelog — Unificazione Iscrizioni → Modulistica 2026-07-06 (branch `feat/batch-segreteria`)
+
+Unificate le due voci di sidebar **Iscrizioni** e **Modulistica** in un'unica voce **Modulistica**.
+Gate verde: `eslint` 0, `vitest` 773/773, `build` ok.
+
+- La sidebar perde la voce **Iscrizioni**; la sezione «Anagrafica & Iscrizioni» è rinominata **«Anagrafica»**.
+- La pagina **Modulistica** ha ora 4 tab: **Moduli inviabili** + **Moduli ricevuti** (spostate da Iscrizioni),
+  **Moduli Genitori** e **Template Certificati ODT**. Rimossa la tab **Moduli Esterni**.
+- «Moduli ricevuti» = le iscrizioni ricevute (invariato rispetto alla vecchia «Ricevute»): il link SIDI è preservato.
+- I due motori restano separati (form-builder vs moduli-genitori OTP).
+- I componenti sono stati estratti in `src/components/features/admin/iscrizioni/` (`ModuliInviabili`, `ModuliRicevuti`);
+  `/admin/iscrizioni` è ora un **redirect** a `/admin/modulistica?tab=ricevuti` (link/segnalibri preservati).
+  Modulistica legge `?tab=`; il back-link del builder punta a `?tab=inviabili`. Le tab inviabili/ricevuti
+  operano multi-sede (fuori dalla guardia sede-singola che resta per Moduli Genitori/ODT).
+- **Dashboard**: i link/KPI/alert che puntavano a Iscrizioni ora vanno a `/admin/modulistica?tab=ricevuti`;
+  rimosso il doppione «Iscrizioni» dal menu rapido (già presente «Modulistica»). Fix `withUser` per usare
+  `&` quando l'href ha già una query string (evita il doppio `?`).
+
+---
+
+## 🗓️ Changelog — Fix Segreteria/Didattica/Modulistica 2026-07-06 (branch `feat/batch-segreteria`)
+
+Batch di 7 interventi correttivi. Gate verde: `eslint` 0, `vitest` 773/773, `build` ok
+(e2e in CI su push). **Richiede l'applicazione della migrazione `20260767`** (colonne
+residenza + ETL) sul DB prod prima dell'uso dei nuovi campi.
+
+1. **Anagrafiche complete e allineate (alunno ≡ genitore).** Alunno e genitore hanno ora lo
+   stesso set anagrafico completo; unica differenza i contatti (email/telefono, solo genitore).
+   Aggiunti **Cittadinanza** (`citizenship`), **Nazione di nascita** (`birth_nation`),
+   **Numero civico** (`residence_street_number`) e **Provincia di residenza** (`residence_province`,
+   sigla) a: form di creazione (`ScrollableStudentForm`/`ScrollableAdultForm`), route
+   `POST/PATCH/GET /api/admin/students`, e **schede di modifica** (`StudentDetailPanel`/`ParentDetailPanel`,
+   prima incomplete). Migrazione `20260767`: `residence_province`+`residence_street_number` su
+   `alunni` e `parents`. Insert/patch resilienti alle colonne non ancora esistenti (42703 → retry).
+2. **Bug "nuovo alunno + mamma non salvata né associata" risolto.** Nuovo helper condiviso
+   `src/lib/anagrafiche/parents.ts` (`linkOrCreateParent`): CF vuoto → `null` (chiude la violazione
+   UNIQUE che causava il 500 silente); cittadinanza reale per i genitori, col ruolo solo per lo
+   staff (preserva il workaround tab Staff). `POST /api/admin/students` accetta ora `parents[]`
+   opzionale → **salvataggio atomico** alunno+genitori in un'unica richiesta (niente più genitori
+   persi né alunni duplicati al retry). `FamilyRegistryManager` fa una sola fetch e mostra l'esito
+   reale (niente più finto "salvato" a fallimento parziale).
+3. **Anagrafica sezione — insegnanti di riferimento.** Nuova API
+   `/api/admin/sections/[id]/teachers` (GET/POST/DELETE, gate Direzione, add/remove) sulla ponte
+   `utenti_sezioni`; card "Insegnanti di riferimento" nel dettaglio sezione. Aggiungendo/rimuovendo
+   un docente si aggiorna automaticamente la sua anagrafica ("Classi assegnate" in StaffPanel).
+4. **Didattica primaria — classe nell'associazione Materie–Docenti.** Il modello DB/API era già
+   class-aware (`utenti_sezioni_materie.section_id`): la classe è ora esplicita **in entrambi i modi**
+   (tendina Classe nel form di `DocentiMaterieManager` + selettore in alto condiviso + classe mostrata
+   in ogni riga).
+5. **Mensa — Livello (tendina) + Sezioni (multi-select).** `SezioniMultiSelect` ha una prop
+   `withLivelloFilter`: tendina Livello (Nido/Infanzia/Primaria) che filtra le sezioni multi-select.
+   Attiva nel MenuBuilder; storage e vista genitore invariati.
+6. **Armadietto — materiale assegnato alle classi con tendina.** Stessa UX del punto 5
+   (`withLivelloFilter`) nel form "Nuovo Materiale"; rimosso il vincolo fisso a nido/infanzia
+   (ora copre anche primaria).
+7. **Modulo d'iscrizione standard — campi nuovi + editor segreteria + "Reimposta".** I 4 campi
+   nuovi sono nel template (visibili+obbligatori). Il modulo standard è ora un modello `form_models`
+   editabile dal builder (nuovo `src/lib/forms/enrollment-default-schema.ts` con
+   `ENROLLMENT_DEFAULT_SCHEMA` + id stabile + `ensureStandardEnrollmentModel`): card in `/admin/iscrizioni`
+   con **"Modifica"** (builder) e **"Reimposta"** (`POST /api/admin/form-models/reset`, solo per il
+   modello standard). Il wizard `/iscrizione` è ora schema-driven (`GET /api/iscrizione/model`, fallback
+   al template); **flusso invariato** (invio a `enrollment_submissions`, revisione in "Ricevute").
+   ETL import e trigger `fn_form_submission_etl` estesi ai 4 nuovi campi; catalogo builder
+   (`anagrafica-fields.ts`) aggiornato. **Fix builder**: il form-builder non caricava mai un modello
+   esistente (`?id=` ignorato → apriva sempre "Nuovo Modello" vuoto, bug pre-esistente anche per i
+   moduli personalizzati). Aggiunto `GET /api/admin/form-models/[id]` + caricamento nel builder
+   (schema/titolo/pubblicazione) e salvataggio in **PATCH** quando si modifica (non duplica più).
+   Ora "Modifica" sul modulo standard apre i 36 campi (2 pagine) già presenti.
+
+---
+
+## 🗓️ Changelog — Batch Segreteria 2026-07-05 (branch `feat/batch-segreteria`)
+
+Batch di 9 interventi segreteria/didattica + creazione di 2 classi di prova. Gate verde:
+`eslint` 0, `vitest` 765/765, `build` ok (e2e in CI su push). Branch non ancora
+pushato/mergeato al momento della scrittura.
+
+1. **Diario 0-6 — buffer visibilità 10'.** Il ramo genitore di `GET /api/diary/entries`
+   nasconde le voci create da meno di `diario_config.buffer_visibilita_min` minuti
+   (default 10), replicando la finestra di correzione delle valutazioni primaria. Campo
+   regolabile in Impostazioni → Diario. Il ramo docente/segreteria vede tutto in tempo reale.
+2. **Materie primaria — accessibilità.** Il preset `materie_preset` è già seedato (65 righe);
+   la causa reale di "mancano le materie" era l'**assenza di sezioni di primaria** in prod
+   (le materie sono per-sezione). Il pannello Didattica primaria mostra ora un empty-state con
+   CTA "Crea una sezione primaria" invece del selettore vuoto.
+3. **Anagrafiche — salvataggio unico + fix bug.** Un solo pulsante "Salva anagrafica" fuori
+   dalle schede salva alunno + tutti i genitori insieme e collegati (schede genitore vuote
+   saltate; se l'alunno fallisce non si crea nulla → niente genitori orfani). I form alunno/adulto
+   sono `forwardRef` con `validate()/reset()/isEmpty()`, tutti montati. **Bug "campi genitore
+   vuoti alla riapertura" risolto**: `parents` ha RLS ON con **zero policy**, e la route
+   `GET /api/admin/parents/[id]` usava il client con RLS (`createClient`) tornando sempre vuoto;
+   ora usa `createAdminClient` (service-role) come le altre route admin.
+4. **Import anagrafiche — prestampato CSV.** Nuovo `src/lib/import/template.ts` (intestazioni
+   italiane alunno + 2 genitori) + `POST /api/admin/import/anagrafiche` che crea alunni + genitori
+   collegati con dedup sul codice fiscale. In Strumenti: "Scarica prestampato CSV" + import server.
+5. **Mensa — assegnazione sezioni multi-select.** Nuovo componente riusabile `SezioniMultiSelect`
+   (da `/api/admin/sections/scoped`); nel MenuBuilder, selezionando un menu, compare l'elenco
+   sezioni a selezione multipla. Nuovo `PUT /api/mensa/class-assignments` (semantica set).
+6. **Armadietto — materiale per classi + carico a tutta la sezione.** `POST /api/locker/materials`
+   accetta `classi_sezioni[]` (crea il materiale su più sezioni); la config materiali usa sezioni
+   reali (non più lista hardcoded) con `SezioniMultiSelect`; il modale di carico ha l'opzione
+   "Assegna a tutta la sezione" (distribuzione a tutti gli alunni della classe).
+7. **Rigenera credenziali — PDF nelle notifiche (genitori + staff).** `regenerate-credentials`,
+   oltre alla mail, genera un PDF (`src/lib/pdf/credentials-pdf.ts`) salvato nel bucket privato
+   `credenziali` e accoda una notifica alla segreteria con link di download
+   (`GET /api/admin/credentials-pdf?key=`, staff-gated). Pulsante reale in ParentDetailPanel e StaffPanel.
+8. **Messaggi alla segreteria (nuova sezione).** Voce sidebar "Messaggi" + pagina `/admin/messaggi`
+   con 2 tab: "Con i genitori" (chat segreteria↔genitore; riusa `/api/chat/*` con la segreteria
+   come `teacher_id`) e "Tutti i messaggi" (**supervisione sola-lettura** di tutte le chat
+   genitore↔insegnante, filtrabile per insegnante/genitore/classe; `/api/admin/chat/{threads,messages,contacts}`).
+9. **Iscrizioni — UI unica.** `/admin/iscrizioni` divisa in "Ricevute" (le richieste, invariate) +
+   "Moduli inviabili via link" (i modelli del builder con pubblica/copia-link; il wizard `/iscrizione`
+   compare come "modulo predefinito"). *Follow-up*: unificare nella lista Ricevute anche le
+   submission dei moduli d'iscrizione (ETL dedicato) — non fatto per contenere il rischio.
+
+**Classi di prova (produzione, sede Kidville Giugliano `d53b0fbc-…`).** Create 2 sezioni etichettate
+TEST — **"TEST Infanzia"** (school_type infanzia) e **"TEST 1A"** (primaria) — ognuna con 10 alunni,
+2 insegnanti e 10 genitori con login (password comune `KidvilleTest.2026!`, hash verificato). Email:
+`test.inf.docente{1,2}` / `test.inf.genitore{1..10}` / `test.pri.*` `@kidville.test`. Dati fittizi
+ripulibili (etichetta TEST).
+
+**Nota di regressione nota (non risolta):** in `parents` la colonna `citizenship` conserva in realtà il
+*ruolo* (`mother`/`father`/`educator`…) come workaround load-bearing per il filtro Staff e il pannello
+di dettaglio; la cittadinanza reale digitata viene sovrascritta. Non toccato per non rompere
+`students/page.tsx`. Da bonificare separatamente con un campo ruolo dedicato.
+
+---
+
 # PRD - Kidville App: Modulo Anagrafica e Account Famiglia
 
 ## 1. Obiettivo del Modulo

@@ -7,7 +7,6 @@ import { AnimatePresence, motion } from 'framer-motion';
 import {
   LayoutDashboard,
   Users,
-  ClipboardList,
   Euro,
   UtensilsCrossed,
   GraduationCap,
@@ -22,6 +21,7 @@ import {
   ShieldCheck,
   ChefHat,
   Shirt,
+  MessageCircle,
   Menu,
   X,
 } from 'lucide-react';
@@ -51,10 +51,9 @@ const NAV_GROUPS: NavGroup[] = [
     items: [{ href: '/admin', label: 'Dashboard', icon: LayoutDashboard }],
   },
   {
-    title: 'Anagrafica & Iscrizioni',
+    title: 'Anagrafica',
     items: [
       { href: '/admin/students', label: 'Anagrafica', icon: Users },
-      { href: '/admin/iscrizioni', label: 'Iscrizioni', icon: ClipboardList },
     ],
   },
   {
@@ -85,6 +84,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     title: 'Comunicazione',
     items: [
+      { href: '/admin/messaggi', label: 'Messaggi', icon: MessageCircle },
       { href: '/admin/avvisi', label: 'Avvisi', icon: Bell },
       { href: '/admin/compiti', label: 'Compiti', icon: ListTodo },
     ],

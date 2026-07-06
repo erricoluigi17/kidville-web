@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server-client';
+import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireStaff } from '@/lib/auth/require-staff';
 import { parseData } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
@@ -21,7 +21,11 @@ export async function GET(
         const idParsed = parseData(zUuid, rawId);
         if ('response' in idParsed) return idParsed.response;
         const id = idParsed.data;
-        const supabase = await createClient();
+        // Service-role come tutte le altre route admin (list/PATCH): il gate è
+        // applicativo (requireStaff). La tabella `parents` ha RLS abilitata SENZA
+        // policy → il client con RLS (createClient) tornava sempre vuoto qui,
+        // causando il "campi genitore vuoti alla riapertura".
+        const supabase = await createAdminClient();
 
         // Recuperiamo il genitore con tutti i figli associati (alunni)
         // e per ogni figlio, recuperiamo tutti i genitori associati (student_parents -> parents)

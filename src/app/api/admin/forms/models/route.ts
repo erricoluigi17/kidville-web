@@ -17,7 +17,12 @@ export async function GET(request: Request) {
   if ('response' in q) return q.response
 
   const supabase = await createAdminClient()
-  const { data, error } = await supabase.from('form_models').select('id, title').order('title')
+  // id, title per i filtri admin (consumo storico) + campi pubblicazione per la
+  // sezione Iscrizioni → Moduli inviabili (backward-compatible: solo campi in più).
+  const { data, error } = await supabase
+    .from('form_models')
+    .select('id, title, description, is_active, is_enrollment_form, published_at, public_token, access_mode, created_at')
+    .order('title')
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json(data ?? [])
 }

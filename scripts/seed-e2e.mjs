@@ -251,9 +251,13 @@ async function main() {
 
   // 8. Diario di oggi per Aurora (timeline + umore per il diario genitore)
   const now = new Date().toISOString();
+  // creato_il oltre il buffer visibilità genitori (default 10', route /api/diary/entries):
+  // orario_inizio resta "oggi" (navigazione + filtro data), ma la voce è abbastanza
+  // "vecchia" da superare il buffer ed essere visibile subito nel diario genitore.
+  const creato = new Date(Date.now() - 30 * 60_000).toISOString();
   must('eventi_diario', await db.from('eventi_diario').insert([
-    { id: IDS.DIARIO_UMORE, alunno_id: IDS.A1, maestra_id: IDS.DOCENTE, tipo_evento: 'umore', orario_inizio: now, dettagli: { umore: 'felice' } },
-    { id: IDS.DIARIO_ATTIVITA, alunno_id: IDS.A1, maestra_id: IDS.DOCENTE, tipo_evento: 'attivita', orario_inizio: now, dettagli: { activities: [{ tipo: 'Pittura', descrizione: 'Pittura con le dita', partecipazione: 'autonomia' }] }, nota_libera: 'Nota E2E per i genitori' },
+    { id: IDS.DIARIO_UMORE, alunno_id: IDS.A1, maestra_id: IDS.DOCENTE, tipo_evento: 'umore', orario_inizio: now, creato_il: creato, dettagli: { umore: 'felice' } },
+    { id: IDS.DIARIO_ATTIVITA, alunno_id: IDS.A1, maestra_id: IDS.DOCENTE, tipo_evento: 'attivita', orario_inizio: now, creato_il: creato, dettagli: { activities: [{ tipo: 'Pittura', descrizione: 'Pittura con le dita', partecipazione: 'autonomia' }] }, nota_libera: 'Nota E2E per i genitori' },
   ]));
 
   // 9. Avviso (adesione ⇒ massima priorità nella card della home genitore)

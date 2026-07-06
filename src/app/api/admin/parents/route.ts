@@ -5,6 +5,7 @@ import { requireStaff } from '@/lib/auth/require-staff';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
+import { linkOrCreateParent } from '@/lib/anagrafiche/parents';
 
 // ============================================================
 // Anagrafica genitori — gated Segreteria+Direzione (DL-036) + audit
@@ -109,93 +110,16 @@ export async function POST(request: NextRequest) {
         }
 
         if (body.action === 'create_parent') {
-            const { student_id, emails, phones, role, birth_nation, birth_place, birth_province, address, zip_code, ...rest } = body;
-            // Il discriminante `action` non deve finire nel record genitore.
-            const parentData: Record<string, unknown> = { ...rest };
-            delete parentData.action;
-
-            let parentId: string | null = null;
-            let created = false;
-
-            // 1. Genitore esistente per CF?
-            if (parentData.fiscal_code) {
-                const { data: existingParent } = await supabase
-                    .from('parents')
-                    .select('id')
-                    .eq('fiscal_code', parentData.fiscal_code)
-                    .maybeSingle();
-
-                if (existingParent) {
-                    parentId = existingParent.id;
-                }
-            }
-
-            // 2. Se non esiste, crea il nuovo genitore.
-            if (!parentId) {
-                const newParentRecord: Record<string, unknown> = {
-                    ...parentData,
-                    emails: emails || [],
-                    phone_numbers: phones || [],
-                    citizenship: role,
-                    birth_city: birth_place,
-                    birth_province: birth_province,
-                    birth_nation: birth_nation,
-                    residence_address: address,
-                    residence_city: body.residence_city,
-                    zip_code: zip_code
-                };
-
-                const { data: newParent, error: parentError } = await supabase
-                    .from('parents')
-                    .insert(newParentRecord)
-                    .select('id')
-                    .single();
-
-                if (parentError) {
-                    console.error('[create_parent] Errore insert genitore:', parentError.message);
-                    return NextResponse.json({ error: parentError.message }, { status: 500 });
-                }
-                parentId = newParent.id;
-                created = true;
-
-                await logScrittura(supabase, {
-                    attore: auth.user,
-                    entitaTipo: 'genitori',
-                    entitaId: parentId,
-                    azione: 'insert',
-                    valoreDopo: newParentRecord,
+            try {
+                const { parentId, created } = await linkOrCreateParent(supabase, auth.user, {
+                    studentId: (body.student_id as string) || null,
+                    payload: body as Record<string, unknown>,
                 });
+                return NextResponse.json({ success: true, parent_id: parentId, created });
+            } catch (e) {
+                console.error('[create_parent]', (e as Error).message);
+                return NextResponse.json({ error: (e as Error).message }, { status: 500 });
             }
-
-            // 3. Collega il genitore allo studente.
-            if (student_id && parentId) {
-                const { error: linkError } = await supabase
-                    .from('student_parents')
-                    .upsert(
-                        {
-                            student_id,
-                            parent_id: parentId,
-                            relation_type: role || 'delegate',
-                            is_primary: role === 'mother' || role === 'father'
-                        },
-                        { onConflict: 'student_id,parent_id', ignoreDuplicates: true }
-                    );
-
-                if (linkError) {
-                    console.error('[create_parent] Errore link student_parents:', linkError.message);
-                    return NextResponse.json({ error: linkError.message }, { status: 500 });
-                }
-
-                await logScrittura(supabase, {
-                    attore: auth.user,
-                    entitaTipo: 'legame',
-                    entitaId: `${student_id}:${parentId}`,
-                    azione: 'insert',
-                    valoreDopo: { student_id, parent_id: parentId, relation_type: role || 'delegate' },
-                });
-            }
-
-            return NextResponse.json({ success: true, parent_id: parentId, created });
         }
 
         return NextResponse.json({ error: 'Azione non supportata' }, { status: 400 });
@@ -218,11 +142,17 @@ export async function PATCH(request: NextRequest) {
         // Stato precedente per l'audit.
         const { data: prima } = await supabase.from('parents').select('*').eq('id', id).maybeSingle();
 
-        const { data, error } = await supabase
-            .from('parents')
-            .update(dataToUpdate)
-            .eq('id', id)
-            .select();
+        const updates: Record<string, unknown> = { ...dataToUpdate };
+        let { data, error } = await supabase.from('parents').update(updates).eq('id', id).select();
+        // Resilienza pre-migration: rimuove le colonne non ancora esistenti (42703) e riprova.
+        let attempts = 0;
+        while (error && (error as { code?: string }).code === '42703' && attempts < 6) {
+            const col = /column "?([a-z_]+)"? of relation/i.exec(error.message)?.[1];
+            if (!col || !(col in updates)) break;
+            delete updates[col];
+            ({ data, error } = await supabase.from('parents').update(updates).eq('id', id).select());
+            attempts++;
+        }
 
         if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 

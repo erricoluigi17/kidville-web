@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { UserPlus, Shield, Mail, Phone, Loader2, CheckCircle2, XCircle, MapPin, KeyRound, Save, Plus, Trash2, Fingerprint } from 'lucide-react';
+import { UserPlus, Shield, Mail, Phone, Loader2, MapPin, Plus, Trash2, Fingerprint } from 'lucide-react';
 import { fetchFiscalCode } from '@/lib/utils/fiscalCodeApi';
 import { z } from 'zod';
 
@@ -18,17 +18,30 @@ const adultSchema = z.object({
     birth_place: z.string().optional().or(z.literal('')),
     fiscal_code: z.string().length(16, "CF deve essere 16 caratteri").toUpperCase().optional().or(z.literal('')),
     address: z.string().optional().or(z.literal('')),
+    civico: z.string().max(20).optional().or(z.literal('')),
     residence_city: z.string().optional().or(z.literal('')),
+    residence_province: z.string().max(2).optional().or(z.literal('')),
     zip_code: z.string().max(10).optional().or(z.literal('')),
     emails: z.array(z.string().email("Email non valida")).optional(),
     phones: z.array(z.string()).optional()
 });
 
-export function ScrollableAdultForm({ defaultRole, updateTabLabel, studentId }: { tabId?: string, defaultRole?: string, updateTabLabel?: (label: string) => void, studentId?: string | null }) {
+export interface AdultFormHandle {
+    // Scheda mai compilata (nome+cognome vuoti): va SALTATA dal salvataggio unico,
+    // così si può registrare l'alunno con un solo genitore (o nessuno).
+    isEmpty: () => boolean;
+    // Valida i campi (mostra gli errori inline) e ritorna il payload per il POST
+    // /api/admin/parents (action create_parent), oppure { ok:false } se invalido.
+    validate: () => { ok: true; data: Record<string, unknown> } | { ok: false };
+    reset: () => void;
+}
+
+export const ScrollableAdultForm = forwardRef<AdultFormHandle, { defaultRole?: string; updateTabLabel?: (label: string) => void }>(
+    function ScrollableAdultForm({ defaultRole, updateTabLabel }, ref) {
     const initialRole = defaultRole || 'mother';
     const initialGender = (initialRole === 'mother' || initialRole === 'delegate') ? 'F' : 'M';
 
-    const [formData, setFormData] = useState({
+    const initialFormData = {
         first_name: '',
         last_name: '',
         role: initialRole,
@@ -40,17 +53,19 @@ export function ScrollableAdultForm({ defaultRole, updateTabLabel, studentId }: 
         birth_place: '',
         fiscal_code: '',
         address: '',
+        civico: '',
         residence_city: '',
+        residence_province: '',
         zip_code: '',
         emails: [''],
         phones: ['']
-    });
+    };
+
+    const [formData, setFormData] = useState(initialFormData);
 
     const [isCfAutoCalculated, setIsCfAutoCalculated] = useState(false);
     const [isCfLoading, setIsCfLoading] = useState(false);
-    const [isSubmitting, setIsSubmitting] = useState(false);
     const [errors, setErrors] = useState<Record<string, string>>({});
-    const [toast, setToast] = useState<{ type: 'success' | 'error', message: string } | null>(null);
 
     // Specchio dell'ultimo valore di formData.fiscal_code: permette all'effect di
     // confrontare il CF corrente senza dipendere da formData.fiscal_code (deps invariate)
@@ -123,100 +138,47 @@ export function ScrollableAdultForm({ defaultRole, updateTabLabel, studentId }: 
         });
     };
 
-    const handleSubmit = async () => {
-        setIsSubmitting(true);
-        setErrors({});
-        
-        try {
-            // Rimuovi stringhe vuote dagli array prima di validare
-            const dataToValidate = {
-                ...formData,
-                emails: formData.emails.filter(e => e.trim() !== ''),
-                phones: formData.phones.filter(p => p.trim() !== '')
-            };
-
-            const parsedData = adultSchema.parse(dataToValidate);
-            
-            const payload = {
-                ...parsedData,
-                action: 'create_parent',
-                student_id: studentId || null
-            };
-            
-            const res = await fetch('/api/admin/parents', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-
-            if (!res.ok) {
-                const data = await res.json();
-                throw new Error(data.error || 'Errore salvataggio genitore');
+    // Salvataggio orchestrato dal contenitore (FamilyRegistryManager): qui solo
+    // validazione + estrazione del payload (il role serve al collegamento lato server).
+    useImperativeHandle(ref, () => ({
+        isEmpty() {
+            return !formData.first_name.trim() && !formData.last_name.trim();
+        },
+        validate() {
+            setErrors({});
+            try {
+                const dataToValidate = {
+                    ...formData,
+                    emails: formData.emails.filter(e => e.trim() !== ''),
+                    phones: formData.phones.filter(p => p.trim() !== ''),
+                };
+                const parsedData = adultSchema.parse(dataToValidate);
+                return { ok: true as const, data: { ...parsedData } };
+            } catch (error) {
+                const zodLike = error as { issues?: { path?: (string | number)[]; message: string }[] };
+                if (zodLike && zodLike.issues) {
+                    const fieldErrors: Record<string, string> = {};
+                    zodLike.issues.forEach((err) => {
+                        if (err.path && err.path.length > 0) fieldErrors[err.path.join('.')] = err.message;
+                    });
+                    setErrors(fieldErrors);
+                }
+                return { ok: false as const };
             }
-
-            setToast({ type: 'success', message: 'Adulto salvato e credenziali inviate!' });
-
-        } catch (error) {
-            const zodLike = error as { issues?: { path?: (string | number)[]; message: string }[] };
-            if (zodLike && zodLike.issues) {
-                const fieldErrors: Record<string, string> = {};
-                zodLike.issues.forEach((err) => {
-                    if (err.path && err.path.length > 0) fieldErrors[err.path.join('.')] = err.message;
-                });
-                setErrors(fieldErrors);
-                setToast({ type: 'error', message: 'Correggi gli errori.' });
-            } else {
-                setToast({ type: 'error', message: (error as Error).message });
-            }
-        } finally {
-            setIsSubmitting(false);
-            setTimeout(() => setToast(null), 4000);
-        }
-    };
-
-    const handleRegenerateCredentials = async () => {
-        if (!formData.emails[0]) {
-            setToast({ type: 'error', message: 'Inserisci un indirizzo email primario per generare credenziali.' });
-            setTimeout(() => setToast(null), 3000);
-            return;
-        }
-        // Qui verrebbe chiamata una API per il reset della password / invio magic link
-        setToast({ type: 'success', message: 'Link di rigenerazione credenziali inviato alla mail primaria!' });
-        setTimeout(() => setToast(null), 3000);
-    };
+        },
+        reset() {
+            fiscalCodeRef.current = '';
+            setErrors({});
+            setFormData({ ...initialFormData });
+        },
+    }), [formData]); // eslint-disable-line react-hooks/exhaustive-deps
 
     return (
         <div className="text-kidville-green">
-            <AnimatePresence>
-                {toast && (
-                    <motion.div 
-                        initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}
-                        className={`absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-2 px-6 py-3 rounded-full font-bold shadow-lg z-50 ${toast.type === 'success' ? 'bg-kidville-green text-white' : 'bg-kidville-error text-white'}`}
-                    >
-                        {toast.type === 'success' ? <CheckCircle2 size={18} /> : <XCircle size={18} />}
-                        {toast.message}
-                    </motion.div>
-                )}
-            </AnimatePresence>
-
-            <div className="flex justify-between items-center mb-8 border-b border-kidville-green/15 pb-4">
+            <div className="flex items-center mb-8 border-b border-kidville-green/15 pb-4">
                 <h2 className="text-2xl font-bold text-kidville-green flex items-center gap-2">
                     <UserPlus /> Compilazione Adulto
                 </h2>
-                <div className="flex items-center gap-3">
-                    <button 
-                        onClick={handleRegenerateCredentials}
-                        className="flex items-center gap-2 px-4 py-2 rounded-full border border-kidville-green/50 text-kidville-green hover:bg-kidville-green/10 transition-colors text-sm font-bold"
-                    >
-                        <KeyRound size={16} /> Rigenera Credenziali
-                    </button>
-                    <button 
-                        onClick={handleSubmit} disabled={isSubmitting}
-                        className="flex items-center gap-2 px-6 py-2 rounded-full bg-kidville-green text-white font-bold hover:bg-kidville-green/90 shadow-lg disabled:opacity-50"
-                    >
-                        {isSubmitting ? <Loader2 size={18} className="animate-spin" /> : <><Save size={18} /> Salva Adulto</>}
-                    </button>
-                </div>
             </div>
 
             <div className="space-y-12">
@@ -301,12 +263,20 @@ export function ScrollableAdultForm({ defaultRole, updateTabLabel, studentId }: 
                     </h3>
                     <div className="grid grid-cols-2 gap-6">
                         <div className="col-span-2">
-                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Indirizzo Completo</label>
-                            <input name="address" value={formData.address} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none" placeholder="Via Roma, 123" />
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Indirizzo di Residenza</label>
+                            <input name="address" value={formData.address} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none" placeholder="Via Roma" />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Numero Civico</label>
+                            <input name="civico" value={formData.civico} onChange={handleInputChange} maxLength={20} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none" placeholder="123" />
                         </div>
                         <div>
                             <label className="block text-sm font-bold text-kidville-green/80 mb-1">Città di Residenza</label>
                             <input name="residence_city" value={formData.residence_city} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none" />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Prov. Residenza (Sigla)</label>
+                            <input name="residence_province" value={formData.residence_province} onChange={handleInputChange} maxLength={2} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none uppercase" />
                         </div>
                         <div>
                             <label className="block text-sm font-bold text-kidville-green/80 mb-1">CAP</label>
@@ -368,4 +338,4 @@ export function ScrollableAdultForm({ defaultRole, updateTabLabel, studentId }: 
             </div>
         </div>
     );
-}
+});

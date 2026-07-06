@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { CalendarRange, Save, Plus, Trash2, CalendarOff, UtensilsCrossed } from 'lucide-react';
 import { SaveCheck } from '@/components/ui/SaveConfirmation';
 import { ALLERGENI } from '@/lib/mensa/allergeni';
+import { SezioniMultiSelect } from '@/components/features/admin/SezioniMultiSelect';
 
 interface Props { userId: string; scuolaId: string }
 interface MenuConfig { id: string; nome: string; ordine: number }
@@ -63,6 +64,9 @@ export function MenuBuilder({ userId, scuolaId }: Props) {
   const [alg, setAlg] = useState<Record<string, AllergeniPortate>>({});
   const [override, setOverride] = useState<OvrRow[]>([]);
   const [done, setDone] = useState(false);
+  // Sezioni assegnate al menu selezionato (multi-select reale).
+  const [assegnaSezioni, setAssegnaSezioni] = useState<string[]>([]);
+  const [assegnaSaved, setAssegnaSaved] = useState(false);
   // nuovo override
   const [ovData, setOvData] = useState('');
   const [ovChiuso, setOvChiuso] = useState(false);
@@ -103,6 +107,33 @@ export function MenuBuilder({ userId, scuolaId }: Props) {
   }, [userId, scuolaId, menuConfigParam]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Sezioni attualmente assegnate al menu selezionato.
+  useEffect(() => {
+    if (!selectedMenuId) return;
+    let cancelled = false;
+    fetch(`/api/mensa/class-assignments?scuola_id=${scuolaId}`, { headers: hdr(userId) })
+      .then(r => r.json())
+      .then(j => {
+        if (cancelled || !j.success) return;
+        const names = [...new Set((j.data as { classe: string; menu_config_id: string }[])
+          .filter(a => a.menu_config_id === selectedMenuId)
+          .map(a => a.classe))];
+        setAssegnaSezioni(names);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [selectedMenuId, scuolaId, userId]);
+
+  const salvaSezioni = async () => {
+    if (!selectedMenuId) return;
+    const res = await fetch('/api/mensa/class-assignments', {
+      method: 'PUT', headers: hdr(userId),
+      body: JSON.stringify({ scuola_id: scuolaId, menu_config_id: selectedMenuId, classi: assegnaSezioni }),
+    });
+    const j = await res.json();
+    if (j.success) { setAssegnaSaved(true); setTimeout(() => setAssegnaSaved(false), 2500); } else alert(j.error);
+  };
 
   const setNome = (giorno: number, p: PortataKey, val: string) => {
     const key = `${settimana}-${giorno}`;
@@ -195,9 +226,21 @@ export function MenuBuilder({ userId, scuolaId }: Props) {
             ))}
           </div>
           {selectedMenuId && (
-            <p className="font-maven text-[10px] text-kidville-muted mt-1">
-              Stai modificando il menu <span className="font-bold text-kidville-green">{menus.find(m => m.id === selectedMenuId)?.nome}</span>. Assegna le classi da Impostazioni → Gestione menu.
-            </p>
+            <div className="mt-3 rounded-2xl bg-kidville-cream/40 p-3">
+              <p className="font-barlow font-bold text-kidville-green uppercase text-xs mb-2 flex items-center gap-1">
+                <UtensilsCrossed size={12} /> Sezioni assegnate a «{menus.find(m => m.id === selectedMenuId)?.nome}»
+              </p>
+              <SezioniMultiSelect
+                value={assegnaSezioni}
+                onChange={setAssegnaSezioni}
+                withLivelloFilter
+                emptyHint="Nessuna sezione: creale in Anagrafica → Sezioni."
+              />
+              <button onClick={salvaSezioni} className="mt-3 px-3 py-1.5 rounded-full bg-kidville-green text-white font-maven font-bold text-xs flex items-center gap-1">
+                <Save size={13} /> Salva sezioni
+              </button>
+              {assegnaSaved && <span className="ml-2 font-maven text-xs text-kidville-success inline-flex items-center gap-1"><SaveCheck size={13} /> Assegnazione salvata.</span>}
+            </div>
           )}
         </div>
       )}

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Users, Loader2, Pencil, Check, X, ShieldCheck } from 'lucide-react';
+import { Users, Loader2, Pencil, Check, X, ShieldCheck, KeyRound } from 'lucide-react';
 import { RUOLI_ASSEGNABILI, labelRuolo } from '@/lib/auth/ruoli';
 
 interface StaffUser { id: string; nome?: string; cognome?: string; email?: string; ruolo: string; scuola_id?: string; gradi?: string[] }
@@ -18,6 +18,7 @@ export function StaffPanel({ userId }: { userId: string }) {
   const [editId, setEditId] = useState<string | null>(null);
   const [draft, setDraft] = useState<{ ruolo: string; scuola_id: string; section_ids: string[] }>({ ruolo: '', scuola_id: '', section_ids: [] });
   const [saving, setSaving] = useState(false);
+  const [regenId, setRegenId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     // niente setLoading(true) sincrono: loading parte true da useState(true)
@@ -57,6 +58,23 @@ export function StaffPanel({ userId }: { userId: string }) {
     } finally { setSaving(false); }
   };
 
+  const rigenera = async (u: StaffUser) => {
+    if (!confirm(`Rigenerare le credenziali di ${u.cognome ?? ''} ${u.nome ?? ''}? La password precedente non sarà più valida.`)) return;
+    setRegenId(u.id);
+    try {
+      const res = await fetch('/api/admin/regenerate-credentials', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
+        body: JSON.stringify({ targetKind: 'staff', targetId: u.id }),
+      });
+      const body = await res.json();
+      if (!res.ok) { alert(body.error || 'Errore'); return; }
+      alert(body.pdf_notifica
+        ? 'Fatto: email inviata e PDF disponibile nel centro notifiche.'
+        : body.email_inviata ? 'Fatto: email con le credenziali inviata.' : (body.warning || 'Credenziali rigenerate.'));
+    } finally { setRegenId(null); }
+  };
+
   const toggleSezione = (sid: string) => {
     setDraft((d) => ({ ...d, section_ids: d.section_ids.includes(sid) ? d.section_ids.filter((x) => x !== sid) : [...d.section_ids, sid] }));
   };
@@ -85,6 +103,9 @@ export function StaffPanel({ userId }: { userId: string }) {
                 {!isEditing ? (
                   <div className="flex items-center gap-2 shrink-0">
                     <span className="px-2 py-0.5 rounded-full bg-kidville-cream text-kidville-green text-[11px] font-bold">{labelRuolo(u.ruolo)}</span>
+                    <button onClick={() => rigenera(u)} disabled={regenId === u.id} className="text-kidville-muted hover:text-kidville-green disabled:opacity-40" title="Rigenera credenziali">
+                      {regenId === u.id ? <Loader2 size={15} className="animate-spin" /> : <KeyRound size={15} />}
+                    </button>
                     <button onClick={() => apri(u)} className="text-kidville-muted hover:text-kidville-green" title="Modifica"><Pencil size={15} /></button>
                   </div>
                 ) : (

@@ -54,6 +54,27 @@
 
 ---
 
+## 🗓️ Changelog — Configurazione invio email Resend 2026-07-06 (branch `feat/batch-segreteria`)
+
+Attivazione dell'invio email reale tramite **Resend** (provider transazionale già cablato in
+`src/lib/email/send.ts`, chiamata REST via `fetch` — nessuna libreria aggiuntiva). Consumatori:
+OTP firma moduli (`/api/forms/send-otp`, `otp-ticket`), credenziali genitori
+(`/api/admin/regenerate-credentials`, `/api/admin/iscrizioni`).
+
+- **Fix bug link login nelle credenziali:** `credentialsEmailBody` puntava a `${NEXT_PUBLIC_APP_URL}/login`
+  (rotta inesistente → 404); corretto in **`/auth/login`**, coerente con la rotta reale e con
+  `regenerate-credentials`. Senza il fix i genitori avrebbero ricevuto un link rotto all'accensione delle email.
+- **Scaffolding env** in `.env.local`: `RESEND_API_KEY` (vuoto → fallback log, nessun invio),
+  `OTP_FROM_EMAIL` (fase 1 sandbox `onboarding@resend.dev` → fase 2 `noreply@kidville.it` a dominio verificato),
+  `NEXT_PUBLIC_APP_URL` (base dei link nelle email).
+- **Attivazione produzione (residuo, lato servizi esterni):** creare account Resend + API key, verificare
+  il dominio `kidville.it` (record DNS SPF/DKIM), impostare le stesse env su Vercel (`RESEND_API_KEY`,
+  `OTP_FROM_EMAIL`, `NEXT_PUBLIC_APP_URL` = URL prod).
+
+Gate: `eslint` 0, `vitest` verde, `build` ok.
+
+---
+
 ## 🗓️ Changelog — Unificazione Iscrizioni → Modulistica 2026-07-06 (branch `feat/batch-segreteria`)
 
 Unificate le due voci di sidebar **Iscrizioni** e **Modulistica** in un'unica voce **Modulistica**.

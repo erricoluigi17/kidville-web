@@ -49,7 +49,7 @@ export async function sendEmail({ to, subject, text }: SendEmailParams): Promise
 export function credentialsEmailBody(nome: string | null | undefined, email: string, password: string): string {
   const saluto = nome ? `Gentile ${nome},` : 'Gentile genitore,'
   const loginUrl = process.env.NEXT_PUBLIC_APP_URL
-    ? `${process.env.NEXT_PUBLIC_APP_URL}/login`
+    ? `${process.env.NEXT_PUBLIC_APP_URL}/auth/login`
     : 'la pagina di accesso all\'area genitori'
   return [
     saluto,

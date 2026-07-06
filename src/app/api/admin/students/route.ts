@@ -222,33 +222,44 @@ export async function GET(request: NextRequest) {
     try {
         const supabase = await createAdminClient();
 
-        let query = supabase
-            .from('alunni')
-            .select(`
-                id, scuola_id, nome, cognome, data_nascita, codice_fiscale, classe_sezione, stato,
-                note_mediche, consenso_privacy, creato_il, gender, citizenship, birth_nation,
-                birth_province, birth_city, residence_address, residence_street_number, residence_city,
-                residence_province, zip_code, allergies,
-                invoice_holder_type, invoice_holder_details, is_bes_dsa, fiscal_code, section_id,
-                documento_path, importo_retta_mensile, genitori_separati, retta_split_config,
-                intestatario_fatture, allergeni, usa_pannolino, sospeso, sospeso_motivo, sospeso_il,
-                sospeso_da, anonimizzato_il, gruppo_mensa_id, numero_domanda_sidi,
-                student_parents (
-                    relation_type,
-                    is_primary,
-                    parents (*)
-                ),
-                delegates (*)
-            `)
-            .order('cognome', { ascending: true })
-            .range(offset, offset + limit - 1);
-
+        const embedTail = 'student_parents ( relation_type, is_primary, parents (*) ), delegates (*)';
+        // Colonne "flat" della lista anagrafica. residence_province/residence_street_number
+        // dipendono dalla migrazione 20260767: se il DB non le ha ancora (es. progetto E2E CI,
+        // o finestra pre-migrate in un deploy) PostgREST risponde 42703 → le rimuoviamo e
+        // riproviamo, esattamente come già fanno POST/PATCH qui sotto.
+        let cols = [
+            'id', 'scuola_id', 'nome', 'cognome', 'data_nascita', 'codice_fiscale', 'classe_sezione', 'stato',
+            'note_mediche', 'consenso_privacy', 'creato_il', 'gender', 'citizenship', 'birth_nation',
+            'birth_province', 'birth_city', 'residence_address', 'residence_street_number', 'residence_city',
+            'residence_province', 'zip_code', 'allergies',
+            'invoice_holder_type', 'invoice_holder_details', 'is_bes_dsa', 'fiscal_code', 'section_id',
+            'documento_path', 'importo_retta_mensile', 'genitori_separati', 'retta_split_config',
+            'intestatario_fatture', 'allergeni', 'usa_pannolino', 'sospeso', 'sospeso_motivo', 'sospeso_il',
+            'sospeso_da', 'anonimizzato_il', 'gruppo_mensa_id', 'numero_domanda_sidi',
+        ];
         // Scope multi-sede: solo i plessi attivi (selezione SedeSelector ∩ accessibili).
-        query = query.in('scuola_id', await resolveScuoleAttive(request, supabase, auth.user));
-        if (classeSezione) query = query.eq('classe_sezione', classeSezione);
-        if (stato) query = query.eq('stato', stato);
+        const scuole = await resolveScuoleAttive(request, supabase, auth.user);
+        const runQuery = () => {
+            let query = supabase
+                .from('alunni')
+                .select(`${cols.join(', ')}, ${embedTail}`)
+                .order('cognome', { ascending: true })
+                .range(offset, offset + limit - 1)
+                .in('scuola_id', scuole);
+            if (classeSezione) query = query.eq('classe_sezione', classeSezione);
+            if (stato) query = query.eq('stato', stato);
+            return query;
+        };
 
-        const { data, error } = await query;
+        let { data, error } = await runQuery();
+        let attempts = 0;
+        while (error && (error as { code?: string }).code === '42703' && attempts < 5) {
+            const col = /column\s+(?:\w+\.)?"?(\w+)"?\s+does not exist/i.exec(error.message)?.[1];
+            if (!col || !cols.includes(col)) break;
+            cols = cols.filter((c) => c !== col);
+            ({ data, error } = await runQuery());
+            attempts++;
+        }
         if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
         return NextResponse.json(data);

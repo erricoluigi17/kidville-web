@@ -54,6 +54,29 @@
 
 ---
 
+## 🗓️ Changelog — Fix pre-deploy gate E2E 2026-07-06 (branch `feat/batch-segreteria`)
+
+Tre regressioni emerse in CI (E2E Playwright rosso) sul batch segreteria, tutte risolte senza
+alterare il comportamento di prodotto voluto:
+
+- **`/api/admin/students` (GET) resiliente al 42703** — il commit del batch anagrafiche aveva
+  aggiunto `residence_street_number`/`residence_province` (migrazione `20260767`) alla SELECT della
+  lista, ma solo a POST/PATCH era stato dato il retry "pre-migration"; la GET no. Su un DB privo di
+  quelle colonne (progetto E2E CI, o finestra pre-migrate di un deploy) PostgREST rispondeva 42703 →
+  HTTP 500 → tabella anagrafica vuota. Ora la GET rimuove le colonne mancanti e riprova, come già
+  facevano POST/PATCH. In prod le colonne esistono già → nessun cambiamento funzionale.
+- **Diario genitore E2E** — il buffer visibilità 10' (introdotto nel batch) filtra su `creato_il`;
+  il seed inseriva l'evento umore con `creato_il = now()` → nascosto ai genitori. Il seed ora
+  retrodata `creato_il` di 30' (solo dati di test; il buffer di prod resta invariato).
+- **Iscrizione pubblica E2E** — (a) `/admin/iscrizioni` ora reindirizza a *Modulistica → Moduli
+  ricevuti*: aggiornata l'asserzione heading del test; (b) i 4 campi resi obbligatori sul form
+  pubblico (Nazione/Cittadinanza/Civico/Provincia residenza) **restano obbligatori** (scelta
+  confermata: dati completi per SIDI) → il test happy-path ora li compila.
+
+Gate: `eslint` 0, `vitest` verde, `build` ok, E2E Playwright verde in CI.
+
+---
+
 ## 🗓️ Changelog — Configurazione invio email Resend 2026-07-06 (branch `feat/batch-segreteria`)
 
 Attivazione dell'invio email reale tramite **Resend** (provider transazionale già cablato in

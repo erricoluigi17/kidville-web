@@ -131,7 +131,7 @@ function ModulisticaInner() {
       const fData = fRes ? await fRes.json().catch(() => null) : null;
       if (Array.isArray(fData)) setForms(fData);
 
-      // 2. Le pre-iscrizioni sono gestite nella nuova dashboard /admin/iscrizioni
+      // 2. Le iscrizioni ricevute sono nella tab "Moduli ricevuti" (componente dedicato).
 
       // 3. Fetch Classes/Sections
       const sRes = await fetch('/api/admin/sections', { headers: hdr }).catch(() => null);

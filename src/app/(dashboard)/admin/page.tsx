@@ -47,7 +47,7 @@ function AdminDashboardInner() {
   const { userId } = useSessionIdentity();
   // Identità di sessione (M4): con identità non risolta il parametro viene
   // omesso (href invariato), mai `userId=null`.
-  const withUser = (href: string) => (userId ? `${href}?userId=${userId}` : href);
+  const withUser = (href: string) => (userId ? `${href}${href.includes('?') ? '&' : '?'}userId=${userId}` : href);
 
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -110,7 +110,7 @@ function AdminDashboardInner() {
         icon: ClipboardList,
         accent: 'border-kidville-warn',
         iconBg: 'bg-kidville-warn-soft text-kidville-warn',
-        href: '/admin/iscrizioni',
+        href: '/admin/modulistica?tab=ricevuti',
       },
       {
         key: 'mensa',
@@ -137,7 +137,6 @@ function AdminDashboardInner() {
 
   const modules = [
     { href: '/admin/students', label: 'Anagrafica', icon: Users },
-    { href: '/admin/iscrizioni', label: 'Iscrizioni', icon: ClipboardList },
     { href: '/admin/pagamenti', label: 'Pagamenti', icon: Euro },
     { href: '/admin/mensa', label: 'Mensa', icon: UtensilsCrossed },
     { href: '/admin/primaria', label: 'Primaria', icon: GraduationCap },
@@ -162,7 +161,7 @@ function AdminDashboardInner() {
           </div>
           <div className="flex flex-wrap gap-2">
             <Link
-              href={withUser('/admin/iscrizioni')}
+              href={withUser('/admin/modulistica?tab=ricevuti')}
               className="inline-flex items-center gap-2 rounded-pill bg-white/15 hover:bg-white/25 px-4 py-2 font-barlow font-black uppercase tracking-wide text-sm transition-colors backdrop-blur"
             >
               <ClipboardList size={16} /> Iscrizioni
@@ -284,7 +283,7 @@ function AdminDashboardInner() {
             icon={ClipboardList}
             count={data.iscrizioni.pending}
             tone="amber"
-            href={withUser('/admin/iscrizioni')}
+            href={withUser('/admin/modulistica?tab=ricevuti')}
             empty="Nessuna iscrizione in attesa"
             rows={data.alert.iscrizioni.map((s, i) => ({
               id: s.id,

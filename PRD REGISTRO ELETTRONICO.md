@@ -68,6 +68,9 @@ Gate verde: `eslint` 0, `vitest` 773/773, `build` ok.
   `/admin/iscrizioni` è ora un **redirect** a `/admin/modulistica?tab=ricevuti` (link/segnalibri preservati).
   Modulistica legge `?tab=`; il back-link del builder punta a `?tab=inviabili`. Le tab inviabili/ricevuti
   operano multi-sede (fuori dalla guardia sede-singola che resta per Moduli Genitori/ODT).
+- **Dashboard**: i link/KPI/alert che puntavano a Iscrizioni ora vanno a `/admin/modulistica?tab=ricevuti`;
+  rimosso il doppione «Iscrizioni» dal menu rapido (già presente «Modulistica»). Fix `withUser` per usare
+  `&` quando l'href ha già una query string (evita il doppio `?`).
 
 ---
 

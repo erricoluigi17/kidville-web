@@ -97,7 +97,11 @@ residenza + ETL) sul DB prod prima dell'uso dei nuovi campi.
    modello standard). Il wizard `/iscrizione` è ora schema-driven (`GET /api/iscrizione/model`, fallback
    al template); **flusso invariato** (invio a `enrollment_submissions`, revisione in "Ricevute").
    ETL import e trigger `fn_form_submission_etl` estesi ai 4 nuovi campi; catalogo builder
-   (`anagrafica-fields.ts`) aggiornato.
+   (`anagrafica-fields.ts`) aggiornato. **Fix builder**: il form-builder non caricava mai un modello
+   esistente (`?id=` ignorato → apriva sempre "Nuovo Modello" vuoto, bug pre-esistente anche per i
+   moduli personalizzati). Aggiunto `GET /api/admin/form-models/[id]` + caricamento nel builder
+   (schema/titolo/pubblicazione) e salvataggio in **PATCH** quando si modifica (non duplica più).
+   Ora "Modifica" sul modulo standard apre i 36 campi (2 pagine) già presenti.
 
 ---
 

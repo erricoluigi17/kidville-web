@@ -158,15 +158,18 @@ export async function PATCH(request: NextRequest) {
           document_number: a.document_number ?? null,
           documento_path: a.documento_path ?? null,
         }
-        // Insert resiliente al 42703: se il DB non ha ancora una colonna del record
-        // (es. progetto E2E CI privo della migrazione 20260767 → residence_province/
-        // residence_street_number) la rimuove e riprova. In prod le colonne esistono
-        // → nessun retry. Senza questo l'insert falliva e il `continue` sotto saltava
-        // la creazione dell'account referente (credenziali mai emesse).
+        // Insert resiliente alla colonna mancante: se il DB non ha ancora una colonna
+        // del record (es. progetto E2E CI privo della migrazione 20260767 →
+        // residence_province/residence_street_number) la rimuove e riprova. Un INSERT
+        // PostgREST con colonna assente torna PGRST204 ("Could not find the 'X' column
+        // ... in the schema cache"). In prod le colonne esistono → nessun retry. Senza
+        // questo l'insert falliva e il `continue` sotto saltava la creazione dell'account
+        // referente (credenziali mai emesse → test degrado email rosso).
         let pRes = await supabase.from('parents').insert(parentRecord).select('id').single()
         let pAttempts = 0
-        while (pRes.error && (pRes.error as { code?: string }).code === '42703' && pAttempts < 6) {
-          const col = /column "?([a-z_]+)"? of relation/i.exec(pRes.error.message)?.[1]
+        while (pRes.error && ['PGRST204', '42703'].includes((pRes.error as { code?: string }).code ?? '') && pAttempts < 6) {
+          const m = /Could not find the '([a-z_]+)' column|column "?([a-z_]+)"? of relation/i.exec(pRes.error.message)
+          const col = m?.[1] ?? m?.[2]
           if (!col || !(col in parentRecord)) break
           delete parentRecord[col]
           pRes = await supabase.from('parents').insert(parentRecord).select('id').single()
@@ -292,12 +295,13 @@ export async function PATCH(request: NextRequest) {
           classe_sezione: classe,
           stato: 'iscritto',
         }
-        // Insert resiliente al 42703 (come per i parents sopra): DB E2E senza le
-        // colonne della migrazione 20260767 → le rimuove e riprova.
+        // Insert resiliente alla colonna mancante (come per i parents sopra): DB E2E
+        // senza le colonne della migrazione 20260767 → PGRST204 → le rimuove e riprova.
         let cRes = await supabase.from('alunni').insert(childRecord).select('id, nome').single()
         let cAttempts = 0
-        while (cRes.error && (cRes.error as { code?: string }).code === '42703' && cAttempts < 6) {
-          const col = /column "?([a-z_]+)"? of relation/i.exec(cRes.error.message)?.[1]
+        while (cRes.error && ['PGRST204', '42703'].includes((cRes.error as { code?: string }).code ?? '') && cAttempts < 6) {
+          const m = /Could not find the '([a-z_]+)' column|column "?([a-z_]+)"? of relation/i.exec(cRes.error.message)
+          const col = m?.[1] ?? m?.[2]
           if (!col || !(col in childRecord)) break
           delete childRecord[col]
           cRes = await supabase.from('alunni').insert(childRecord).select('id, nome').single()

@@ -11,7 +11,9 @@ test('il diario di oggi mostra umore e attività seedati', async ({ page }) => {
   await expect(page.getByText('Oggi', { exact: true })).toBeVisible({ timeout: 15_000 });
 
   // Banner umore (evento tipo_evento='umore', dettagli.umore='felice').
-  await expect(page.getByText('Umore della giornata: Felice')).toBeVisible();
+  // Timeout ampio: in CI la 1ª richiesta compila la route lazy (next dev) e il
+  // fetch del diario può superare i 5s di default (flake storico).
+  await expect(page.getByText('Umore della giornata: Felice')).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText('Oggi sono stato/a proprio felice!')).toBeVisible();
 
   // Timeline: card Attività con la nota libera per i genitori.

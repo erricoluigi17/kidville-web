@@ -71,7 +71,11 @@ alterare il comportamento di prodotto voluto:
 - **Iscrizione pubblica E2E** — (a) `/admin/iscrizioni` ora reindirizza a *Modulistica → Moduli
   ricevuti*: aggiornata l'asserzione heading del test; (b) i 4 campi resi obbligatori sul form
   pubblico (Nazione/Cittadinanza/Civico/Provincia residenza) **restano obbligatori** (scelta
-  confermata: dati completi per SIDI) → il test happy-path ora li compila.
+  confermata: dati completi per SIDI) → il test happy-path ora li compila; (c) **import iscrizione
+  resiliente al 42703**: la PATCH `/api/admin/iscrizioni` scriveva `residence_street_number`/
+  `residence_province` (mig. 20260767) su `parents`/`alunni`; su DB senza quelle colonne l'INSERT
+  falliva e il `continue` saltava la creazione dell'account referente (nessuna credenziale emessa).
+  Ora rimuove le colonne mancanti e riprova, come la GET students. In prod le colonne esistono → nessun impatto.
 
 Gate: `eslint` 0, `vitest` verde, `build` ok, E2E Playwright verde in CI.
 

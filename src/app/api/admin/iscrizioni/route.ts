@@ -158,11 +158,21 @@ export async function PATCH(request: NextRequest) {
           document_number: a.document_number ?? null,
           documento_path: a.documento_path ?? null,
         }
-        const { data: newParent, error: pErr } = await supabase
-          .from('parents')
-          .insert(parentRecord)
-          .select('id')
-          .single()
+        // Insert resiliente al 42703: se il DB non ha ancora una colonna del record
+        // (es. progetto E2E CI privo della migrazione 20260767 → residence_province/
+        // residence_street_number) la rimuove e riprova. In prod le colonne esistono
+        // → nessun retry. Senza questo l'insert falliva e il `continue` sotto saltava
+        // la creazione dell'account referente (credenziali mai emesse).
+        let pRes = await supabase.from('parents').insert(parentRecord).select('id').single()
+        let pAttempts = 0
+        while (pRes.error && (pRes.error as { code?: string }).code === '42703' && pAttempts < 6) {
+          const col = /column "?([a-z_]+)"? of relation/i.exec(pRes.error.message)?.[1]
+          if (!col || !(col in parentRecord)) break
+          delete parentRecord[col]
+          pRes = await supabase.from('parents').insert(parentRecord).select('id').single()
+          pAttempts++
+        }
+        const { data: newParent, error: pErr } = pRes
         if (pErr || !newParent) {
           warnings.push(`Adulto ${ai + 1}: ${pErr?.message ?? 'creazione fallita'}`)
           continue
@@ -282,11 +292,18 @@ export async function PATCH(request: NextRequest) {
           classe_sezione: classe,
           stato: 'iscritto',
         }
-        const { data: newChild, error: cErr } = await supabase
-          .from('alunni')
-          .insert(childRecord)
-          .select('id, nome')
-          .single()
+        // Insert resiliente al 42703 (come per i parents sopra): DB E2E senza le
+        // colonne della migrazione 20260767 → le rimuove e riprova.
+        let cRes = await supabase.from('alunni').insert(childRecord).select('id, nome').single()
+        let cAttempts = 0
+        while (cRes.error && (cRes.error as { code?: string }).code === '42703' && cAttempts < 6) {
+          const col = /column "?([a-z_]+)"? of relation/i.exec(cRes.error.message)?.[1]
+          if (!col || !(col in childRecord)) break
+          delete childRecord[col]
+          cRes = await supabase.from('alunni').insert(childRecord).select('id, nome').single()
+          cAttempts++
+        }
+        const { data: newChild, error: cErr } = cRes
         if (cErr || !newChild) {
           warnings.push(`Bambino ${ci + 1}: ${cErr?.message ?? 'creazione fallita'}`)
           continue

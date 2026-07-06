@@ -1,6 +1,8 @@
--- 20260767 — Anagrafiche: provincia e civico di residenza su alunni + parents
+-- 20260706105201 — Anagrafiche: provincia e civico di residenza su alunni + parents
 -- e propagazione dei nuovi campi nell'ETL dei moduli d'iscrizione (trigger).
 -- Idempotente: ADD COLUMN IF NOT EXISTS + CREATE OR REPLACE FUNCTION.
+-- NB: versione allineata a quella registrata in prod (schema_migrations); il
+-- nome-file precedente "20260767" non era un timestamp valido per il CLI Supabase.
 
 ALTER TABLE public.alunni
   ADD COLUMN IF NOT EXISTS residence_province      varchar(2),

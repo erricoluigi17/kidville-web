@@ -159,7 +159,7 @@ export async function PATCH(request: NextRequest) {
           documento_path: a.documento_path ?? null,
         }
         // Insert resiliente alla colonna mancante: se il DB non ha ancora una colonna
-        // del record (es. progetto E2E CI privo della migrazione 20260767 →
+        // del record (es. progetto E2E CI privo della migrazione 20260706105201 →
         // residence_province/residence_street_number) la rimuove e riprova. Un INSERT
         // PostgREST con colonna assente torna PGRST204 ("Could not find the 'X' column
         // ... in the schema cache"). In prod le colonne esistono → nessun retry. Senza
@@ -296,7 +296,7 @@ export async function PATCH(request: NextRequest) {
           stato: 'iscritto',
         }
         // Insert resiliente alla colonna mancante (come per i parents sopra): DB E2E
-        // senza le colonne della migrazione 20260767 → PGRST204 → le rimuove e riprova.
+        // senza le colonne della migrazione 20260706105201 → PGRST204 → le rimuove e riprova.
         let cRes = await supabase.from('alunni').insert(childRecord).select('id, nome').single()
         let cAttempts = 0
         while (cRes.error && ['PGRST204', '42703'].includes((cRes.error as { code?: string }).code ?? '') && cAttempts < 6) {

@@ -54,6 +54,30 @@
 
 ---
 
+## 🗓️ Changelog — Hardening DB (ETL sede + REVOKE EXECUTE) 2026-07-06 (branch `fix/db-hardening`)
+
+Migrazione `20260706210352` (applicata a prod via MCP `apply_migration` e verificata; repo allineato).
+
+- **(a) ETL moduli d'iscrizione — sede non più hardcoded.** `fn_form_submission_etl` (trigger su
+  `form_submissions`) inseriva i nuovi alunni con `scuola_id = '11111111-…'`, sede **inesistente**:
+  la FK `alunni_scuola_id_fkey → schools(id)` falliva e l'`EXCEPTION` best-effort inghiottiva l'errore
+  → l'alunno **non veniva mai creato** (silenzioso). Ora la sede è risolta da `public.schools` (mono-sede
+  in prod → Kidville Giugliano); se nessuna sede, skip pulito. Bug era **latente** (`form_submissions`/
+  `enrollment_submissions` a 0 righe: sarebbe scattato al 1° modulo d'iscrizione inviato dal builder).
+- **(b) Superficie RPC ridotta (advisor SECURITY DEFINER).** `REVOKE EXECUTE` ad `anon`/`authenticated`
+  su `fn_form_submission_etl` (solo trigger), `notifiche_dispatch_tick`, `rls_auto_enable`,
+  `mensa_check_allergie_giornaliero` (non-trigger, non-RLS, non `.rpc` app; `service_role` mantenuto).
+  Su `is_staff_or_admin` tolto **solo** ad `anon` (le sue policy RLS sono tutte `TO authenticated`).
+  Esito advisor: **anon SECURITY DEFINER 5 → 0**; **authenticated 6 → 2** (restano `is_staff_or_admin`
+  e `current_parent_student_ids`, **necessari** alle policy RLS del "parents space" — non rimovibili
+  senza rompere RLS).
+
+Non toccati (per scelta/rischio): `pg_net` in schema `public` (spostarlo può rompere webhook/push) e
+**leaked-password protection OFF** (è un toggle Auth, da abilitare in dashboard Supabase → Authentication).
+Gate: `eslint` 0, `vitest` 773/773, `build` ok.
+
+---
+
 ## 🗓️ Changelog — Allineamento migrazioni DB ↔ repo 2026-07-06 (branch `chore/db-migration-align`)
 
 Housekeeping post-deploy (verifica via MCP Supabase su prod `uimulkjyekgemjakmepp`). La migrazione

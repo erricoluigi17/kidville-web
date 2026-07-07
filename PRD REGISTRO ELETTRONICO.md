@@ -70,12 +70,19 @@ Interventi UI su richiesta utente + campagna di test funzionale end-to-end sulla
   `CockpitPage` + back-link, coerente con `/admin/students/sezioni/[id]`). `StudentDetailPanel`/`ParentDetailPanel`
   hanno una prop `variant='page'|'drawer'`; la tabella naviga alla route (propaga `?userId=`+`kind=`); rimosso
   l'overlay `selectedStudent` dalla lista. Logica di salvataggio/associazione invariata (stessi endpoint PATCH/DELETE).
-- **(c) Test funzionale 360° Primaria (TEST 1A prod) → resoconto condivisibile.** Completate le anagrafiche di test,
-  associati alunni↔genitori, portati i docenti primaria a 5 con assegnazioni materia; campagna guidata dall'UI reale
-  (segreteria: orario+pagamenti+ticket mensa; 5 docenti: firma+lezione+voti+compiti+note; genitori: visione+chiarimenti
-  chat+prenotazioni mensa+adesione&firma gita) con screenshot e verifica estetica+funzionale di ogni pulsante.
-  Deliverable: pagina HTML condivisibile con tutte le problematiche riscontrate. Policy sui blocchi: **solo report**
-  (nessuna fix in questo giro; le correzioni si decidono dal resoconto).
+- **(c) Test funzionale 360° Primaria (TEST 1A prod) → resoconto condivisibile — ESEGUITO.** Completate le anagrafiche
+  di test (11 alunni + 10 famiglie collegate via parents+student_parents+legame), portati i docenti primaria a **5**
+  + creata la Segreteria di test, assegnazioni materia complete, password note verificate al login. Harness Playwright
+  dedicato in `e2e/primaria-360/` (config isolata, 16 storageState, journeys 10/20/30/40/50/60), 70 screenshot, ispezione
+  visiva da agenti + riconciliazione DB. **Esiti**: Segreteria (anagrafica fullscreen, orario, pagamenti €525 incassati,
+  ticket) ✓; 5 docenti (firma+lezione+voti+compiti+3 note ciascuno, avviso gita) ✓; genitori (orario, visione,
+  2 chiarimenti chat con risposta docente, 10/10 adesioni gita, 5/5 prenotazioni mensa) ✓; riscontri cross-ruolo
+  (mensa→segreteria “5 pasti”, voto→genitore, incassi→segreteria, chat bidirezionale) ✓; logout ✓ in tutte le aree.
+  **Problematiche (solo report)**: dashboard “16 vs 23 alunni”; mensa genitore non mostra saldo/prenotazioni (contesto
+  figlio non risolto); docente senza vista mensa (“In arrivo”); data-consegna-compiti assente in UI docente;
+  bottom-nav che copre contenuto in alcune viste; cutoff mensa 09:30 blocca “oggi” (corretto); chat con spinner lazy;
+  overlay dev Next “1 Issue” = hydration-mismatch pre-esistente sidebar (solo dev). Firma FEA del modulo gita (OTP) non
+  inclusa (meccanismo separato). Resoconto HTML condivisibile pubblicato come Artifact.
 
 Gate feature: `eslint . --max-warnings 0` = 0 · `vitest run` = 776/776 (aggiunti `logout.test.ts`,
 `auth-logout-route.test.ts`) · `build` ok (route `/admin/students/[id]` generata).

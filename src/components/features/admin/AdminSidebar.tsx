@@ -25,6 +25,12 @@ import {
   Menu,
   X,
 } from 'lucide-react';
+import { LogoutMenuButton } from '@/components/ui/LogoutMenuButton';
+
+// Voce "Esci" in fondo alla sidebar/drawer (il cockpit desktop ha il menu account
+// nella TopBar; qui serve per il mobile e come scorciatoia desktop).
+const LOGOUT_ROW_CLS =
+  'flex w-full items-center gap-3 rounded-xl px-4 py-3 font-maven text-sm font-semibold text-kidville-error transition-colors hover:bg-kidville-error-soft';
 
 interface NavItem {
   href: string;
@@ -223,6 +229,9 @@ export function AdminSidebar() {
           Il brand vive nella TopBar → qui si parte dal menu. */}
       <aside className="hidden lg:flex lg:flex-col lg:w-64 lg:shrink-0 lg:sticky lg:top-16 lg:h-[calc(100vh-4rem)] z-[105] border-r border-kidville-line bg-kidville-white overflow-y-auto pt-4">
         {NavList({})}
+        <div className="mt-auto border-t border-kidville-line px-3 py-3">
+          <LogoutMenuButton className={LOGOUT_ROW_CLS} />
+        </div>
       </aside>
 
       {/* Drawer mobile */}
@@ -254,6 +263,9 @@ export function AdminSidebar() {
                 </button>
               </div>
               {NavList({ onNavigate: () => setMobileOpen(false) })}
+              <div className="mt-auto border-t border-kidville-line px-3 py-3">
+                <LogoutMenuButton className={LOGOUT_ROW_CLS} />
+              </div>
             </motion.aside>
           </>
         )}

@@ -11,6 +11,7 @@ import {
   ChevronRight, Shirt,
 } from 'lucide-react';
 import { useChildSchoolType } from '@/lib/auth/use-child-school-type';
+import { LogoutMenuButton } from '@/components/ui/LogoutMenuButton';
 
 // grado: 'comune' = visibile sempre; 'primaria'/'infanzia' = solo quel grado.
 type Grado = 'comune' | 'primaria' | 'infanzia';
@@ -288,6 +289,12 @@ export default function BottomNav() {
                       </div>
                     </div>
                   ))}
+
+                  {/* Uscita — prima non c'era alcun logout nell'area Genitore. */}
+                  <LogoutMenuButton
+                    iconSize={21}
+                    className="flex w-full items-center justify-center gap-2.5 rounded-card bg-white px-3 py-[13px] font-barlow text-base font-extrabold uppercase tracking-wide text-kidville-error shadow-[0_1px_2px_rgba(0,84,75,.04),0_8px_24px_-18px_rgba(0,84,75,.28)] active:bg-kidville-error-soft disabled:opacity-60"
+                  />
                 </div>
               </div>
             </motion.div>

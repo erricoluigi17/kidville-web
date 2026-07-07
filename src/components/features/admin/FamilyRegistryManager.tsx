@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useRef, useState } from 'react';
+import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
 import { User, Users, Plus, Heart, ShieldCheck, Trash2, Save, Loader2, CheckCircle2, XCircle, ArrowRight, RefreshCw } from 'lucide-react';
 import { ScrollableStudentForm, type StudentFormHandle } from './ScrollableStudentForm';
@@ -161,12 +162,12 @@ export function FamilyRegistryManager() {
                         </div>
                     )}
                     <div className="flex gap-3 mt-2">
-                        <a
+                        <Link
                             href="/admin/students"
                             className="flex items-center gap-2 px-5 py-2.5 bg-kidville-green text-white rounded-xl font-barlow font-bold uppercase text-sm hover:opacity-90 transition-all"
                         >
                             Vai alla lista alunni <ArrowRight size={16} />
-                        </a>
+                        </Link>
                         <button
                             onClick={resetAll}
                             className="flex items-center gap-2 px-5 py-2.5 bg-kidville-cream border border-kidville-green/15 text-kidville-green rounded-xl font-barlow font-bold uppercase text-sm hover:bg-kidville-green-light transition-all"

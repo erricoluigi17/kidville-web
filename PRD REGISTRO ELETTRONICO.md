@@ -54,6 +54,34 @@
 
 ---
 
+## 🗓️ Changelog — Logout + Anagrafica fullscreen + Test 360° Primaria 2026-07-07 (branch `feat/logout-anagrafica-fullscreen`)
+
+Interventi UI su richiesta utente + campagna di test funzionale end-to-end sulla scuola primaria.
+
+- **(a) Pulsante Log out in TUTTE le aree.** Prima non esisteva alcun logout nell'app (né Direzione/Segreteria,
+  né Docente, né Genitore). Aggiunti: helper client `doLogout()` (`src/lib/auth/logout.ts` — chiude la sessione
+  Supabase `auth.signOut()`, azzera i cookie server-side via `POST /api/auth/logout` [`kv-active-role`,
+  `sedi_attive`], ripulisce l'identità applicativa in `localStorage` [`kv_user_id`/`_role`/`_parent_id`/
+  `_student_id`/`_teacher_id`], reindirizza a `/auth/login`); nuovo endpoint `src/app/api/auth/logout/route.ts`;
+  componenti `UserMenu` (dropdown sulla scritta ruolo "Segreteria/Direzione" in alto a destra della TopBar cockpit)
+  e `LogoutMenuButton` riusabile (drawer mobile Direzione, bottom-sheet Docente e Genitore).
+- **(b) Scheda anagrafica a TUTTA AREA (non più drawer laterale).** Il dettaglio alunno/genitore si apriva come
+  pannello laterale stretto sopra la lista. Ora apre nella nuova route `/admin/students/[id]` (full-screen, pattern
+  `CockpitPage` + back-link, coerente con `/admin/students/sezioni/[id]`). `StudentDetailPanel`/`ParentDetailPanel`
+  hanno una prop `variant='page'|'drawer'`; la tabella naviga alla route (propaga `?userId=`+`kind=`); rimosso
+  l'overlay `selectedStudent` dalla lista. Logica di salvataggio/associazione invariata (stessi endpoint PATCH/DELETE).
+- **(c) Test funzionale 360° Primaria (TEST 1A prod) → resoconto condivisibile.** Completate le anagrafiche di test,
+  associati alunni↔genitori, portati i docenti primaria a 5 con assegnazioni materia; campagna guidata dall'UI reale
+  (segreteria: orario+pagamenti+ticket mensa; 5 docenti: firma+lezione+voti+compiti+note; genitori: visione+chiarimenti
+  chat+prenotazioni mensa+adesione&firma gita) con screenshot e verifica estetica+funzionale di ogni pulsante.
+  Deliverable: pagina HTML condivisibile con tutte le problematiche riscontrate. Policy sui blocchi: **solo report**
+  (nessuna fix in questo giro; le correzioni si decidono dal resoconto).
+
+Gate feature: `eslint . --max-warnings 0` = 0 · `vitest run` = 776/776 (aggiunti `logout.test.ts`,
+`auth-logout-route.test.ts`) · `build` ok (route `/admin/students/[id]` generata).
+
+---
+
 ## 🗓️ Changelog — Hardening DB (ETL sede + REVOKE EXECUTE) 2026-07-06 (branch `fix/db-hardening`)
 
 Migrazione `20260706210352` (applicata a prod via MCP `apply_migration` e verificata; repo allineato).

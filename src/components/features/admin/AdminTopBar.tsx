@@ -10,6 +10,7 @@
 import { useEffect, useState } from 'react';
 import { Search } from 'lucide-react';
 import { SedeSelector } from '@/components/ui/cockpit';
+import { UserMenu } from '@/components/ui/UserMenu';
 import { AdminSearchPanel } from './AdminSearchPanel';
 import { AdminNotificationsPanel } from './AdminNotificationsPanel';
 
@@ -78,16 +79,8 @@ export function AdminTopBar() {
         {/* centro notifiche (reale, /api/notifiche — M7.3) */}
         <AdminNotificationsPanel userId={userId} />
 
-        {/* avatar + ruolo (chip giallo, iniziale verde — mirror DR) */}
-        <div className="flex items-center gap-2.5 pl-1.5">
-          <span className="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-full bg-kidville-yellow font-barlow text-[15px] font-extrabold uppercase text-kidville-green">
-            {ruoloLabel[0] ?? 'S'}
-          </span>
-          <div className="leading-[1.15]">
-            <div className="font-barlow text-sm font-extrabold uppercase text-kidville-white">{ruoloLabel}</div>
-            <div className="font-maven text-[11px] text-kidville-yellow">Kidville</div>
-          </div>
-        </div>
+        {/* avatar + ruolo (chip giallo, iniziale verde — mirror DR) + menu Esci */}
+        <UserMenu ruoloLabel={ruoloLabel} />
     </header>
   );
 }

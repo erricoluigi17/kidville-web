@@ -1,11 +1,9 @@
 'use client';
 
 import { Suspense, useState, useEffect, useMemo, useCallback } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Search, Filter, UserPlus, Users, FileDown, CheckCircle2, GraduationCap, Briefcase, AlertTriangle } from 'lucide-react';
 import { StudentTable } from '@/components/features/admin/StudentTable';
-import { StudentDetailPanel } from '@/components/features/admin/StudentDetailPanel';
-import { ParentDetailPanel } from '@/components/features/admin/ParentDetailPanel';
 import { BulkAssignBar } from '@/components/features/admin/BulkAssignBar';
 import { SectionsView } from '@/components/features/admin/SectionsView';
 import { CockpitPage, PageHeader, Tabs, StatCard } from '@/components/ui/cockpit';
@@ -35,6 +33,8 @@ interface Student {
 function AdminStudentsInner() {
   // Tab iniziale dal query param (?tab=sections: back-link dal dettaglio sezione).
   const search = useSearchParams();
+  const router = useRouter();
+  const userId = search.get('userId');
   const { reFetchKey } = useSediAttive();
   const [students, setStudents] = useState<Student[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -47,7 +47,6 @@ function AdminStudentsInner() {
   });
   
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
   const [targetClass, setTargetClass] = useState('');
   const [isAssigning, setIsAssigning] = useState(false);
   const [showToast, setShowToast] = useState(false);
@@ -159,60 +158,14 @@ function AdminStudentsInner() {
     }
   };
 
-  const handleSaveStudent = async (data: Partial<Student> & { id: string }) => {
-    try {
-      const res = await fetch('/api/admin/students', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
-      });
-      if (!res.ok) throw new Error('Errore salvataggio');
-      
-      showToastMsg('✅ Alunno aggiornato con successo');
-      fetchStudents();
-      setSelectedStudent(null);
-    } catch (err) {
-      console.error('Errore:', err);
-      showToastMsg('❌ Errore nel salvataggio');
-    }
-  };
-
-  const handleSaveParent = async (data: Record<string, unknown> & { id: string }) => {
-    try {
-      const res = await fetch('/api/admin/parents', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
-      });
-      if (!res.ok) throw new Error('Errore salvataggio genitore');
-      
-      showToastMsg('✅ Anagrafica genitore aggiornata con successo');
-      if (viewType === 'adult') fetchParents();
-      else if (viewType === 'staff') fetchStaff();
-      setSelectedStudent(null);
-    } catch (err) {
-      console.error('Errore:', err);
-      showToastMsg('❌ Errore nel salvataggio genitore');
-    }
-  };
-
-  const handleDeleteStudent = async (id: string) => {
-    try {
-      const res = await fetch('/api/admin/students', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id }),
-      });
-      if (!res.ok) throw new Error('Errore eliminazione');
-      
-      showToastMsg('✅ Alunno eliminato definitivamente (GDPR)');
-      fetchStudents();
-      setSelectedStudent(null);
-    } catch (err) {
-      console.error('Errore:', err);
-      showToastMsg('❌ Errore nell\'eliminazione');
-    }
-  };
+  // Apertura scheda anagrafica a TUTTA AREA (route dedicata /admin/students/[id],
+  // non più il drawer laterale). `kind` instrada su scheda alunno o genitore/staff.
+  const openDetail = useCallback((s: Student) => {
+    const kind = viewType === 'adult' ? 'adult' : viewType === 'staff' ? 'staff' : 'child';
+    const qs = new URLSearchParams({ kind });
+    if (userId) qs.set('userId', userId);
+    router.push(`/admin/students/${s.id}?${qs.toString()}`);
+  }, [viewType, userId, router]);
 
   const handleBulkAssign = async () => {
     if (!targetClass || selectedIds.size === 0) return;
@@ -414,7 +367,7 @@ function AdminStudentsInner() {
             selectedIds={selectedIds}
             onToggleSelect={handleToggleSelect}
             onToggleSelectAll={handleToggleSelectAll}
-            onStudentClick={setSelectedStudent}
+            onStudentClick={openDetail}
             currentTypeFilter={viewType === 'staff' ? 'adult' : viewType}
           />
 
@@ -434,24 +387,6 @@ function AdminStudentsInner() {
           />
 
         </>
-      )}
-
-      {/* Detail Panel - Renderizzato indipendentemente dalla tab attiva se selezionato */}
-      {selectedStudent && (
-          selectedStudent.nome || selectedStudent.cognome ? (
-              <StudentDetailPanel
-                student={selectedStudent}
-                onClose={() => setSelectedStudent(null)}
-                onSave={handleSaveStudent}
-                onDelete={handleDeleteStudent}
-              />
-          ) : (
-              <ParentDetailPanel
-                parentBasicInfo={selectedStudent as never}
-                onClose={() => setSelectedStudent(null)}
-                onSave={handleSaveParent}
-              />
-          )
       )}
 
       {/* Toast */}

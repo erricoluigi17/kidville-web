@@ -184,6 +184,16 @@ async function main() {
     });
   }
 
+  // 5b. Modulo firmabile "Autorizzazione gita" (FEA/OTP) — item 19.
+  // id fisso, allineato a FORM_MODEL_GITA in config/data.ts.
+  console.log('▸ Creo il modulo firmabile Autorizzazione gita (FEA)…');
+  await db.from('form_models').upsert({
+    id: 'fea60000-0000-4000-8000-000000000001',
+    title: 'Autorizzazione gita TEST 1A', is_active: true,
+    requires_signature: true, signature_mode: 'single',
+    schema: { pages: [{ title: 'Autorizzazione', fields: [{ id: 'note', type: 'text', label: 'Note (facoltative)' }] }] },
+  }, { onConflict: 'id' });
+
   // 6. Lista credenziali
   const creds = [
     { email: 'test.pri.segreteria@kidville.test', ruolo: 'Segreteria (coordinator)', alunno: '—' },

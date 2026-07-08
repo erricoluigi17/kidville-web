@@ -3,6 +3,10 @@ import { SECTION_1A } from './accounts';
 
 export const SECTION = SECTION_1A;
 
+// Modulo firmabile "Autorizzazione gita" (FEA/OTP) — item 19. id fisso allineato
+// al seed (seed-primaria-360.mjs). Firmato da genitore1 in 30-genitori.
+export const FORM_MODEL_GITA = 'fea60000-0000-4000-8000-000000000001';
+
 // Alunno1..10 (indice 1-based → id)
 export const ALUNNI: Record<number, string> = {
   1: 'b5ed40dc-9195-45bc-bbb7-59e4ffb478f6',

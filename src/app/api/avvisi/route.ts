@@ -31,6 +31,8 @@ const postBodySchema = z.object({
     target_classes: z.unknown().optional(),
     scadenza: z.string().nullish(),
     attachment_url: z.string().nullish(),
+    // Modulo firmabile FEA collegato (gita): opzionale (item 19).
+    form_model_id: zUuid.nullish(),
 });
 
 // GET /api/avvisi?scope=globale|classe&classe=xxx&parentId=xxx
@@ -57,36 +59,29 @@ export async function GET(request: Request) {
         if ('response' in q) return q.response;
         const { scope, classe, parentId, studentId } = q.data;
 
-        let query = supabase
-            .from('avvisi')
-            .select(`
-                id,
-                author_id,
-                titolo,
-                contenuto,
-                tipo,
-                target_scope,
-                target_classes,
-                scadenza,
-                attachment_url,
-                created_at
-            `)
-            .order('created_at', { ascending: false });
-
-        if (plessiScope) {
-            query = query.in('scuola_id', plessiScope);
+        const baseCols = 'id, author_id, titolo, contenuto, tipo, target_scope, target_classes, scadenza, attachment_url, created_at';
+        const buildQuery = (cols: string) => {
+            let query = supabase.from('avvisi').select(cols).order('created_at', { ascending: false });
+            if (plessiScope) query = query.in('scuola_id', plessiScope);
+            if (scope) query = query.eq('target_scope', scope);
+            return query;
+        };
+        // Prova con form_model_id (item 19); se la colonna manca (DB E2E CI non
+        // migrato) PostgREST torna 42703/PGRST204 → riprova senza.
+        let res = await buildQuery(`${baseCols}, form_model_id`);
+        if (res.error && ['PGRST204', '42703'].includes((res.error as { code?: string }).code ?? '')) {
+            res = await buildQuery(baseCols);
         }
-
-        if (scope) {
-            query = query.eq('target_scope', scope);
+        if (res.error) {
+            console.error('Errore GET avvisi:', res.error);
+            return NextResponse.json({ error: res.error.message }, { status: 500 });
         }
-
-        const { data: avvisi, error } = await query;
-
-        if (error) {
-            console.error('Errore GET avvisi:', error);
-            return NextResponse.json({ error: error.message }, { status: 500 });
-        }
+        const avvisi = (res.data ?? []) as unknown as Array<{
+            id: string; author_id: string; titolo: string; contenuto: string;
+            tipo: string | null; target_scope: string | null; target_classes: string[] | null;
+            scadenza: string | null; attachment_url: string | null; created_at: string;
+            form_model_id?: string | null;
+        }>;
 
         // Filtra lato server per la classe se specificata
         let filtered = avvisi ?? [];
@@ -182,7 +177,7 @@ export async function POST(request: Request) {
 
         const b = await parseBody(request, postBodySchema);
         if ('response' in b) return b.response;
-        const { author_id, titolo, contenuto, tipo, target_scope, target_classes, scadenza, attachment_url } = b.data;
+        const { author_id, titolo, contenuto, tipo, target_scope, target_classes, scadenza, attachment_url, form_model_id } = b.data;
 
         const supabase = await createAdminClient();
 
@@ -205,21 +200,32 @@ export async function POST(request: Request) {
             );
         }
 
-        const { data, error } = await supabase
-            .from('avvisi')
-            .insert({
-                author_id,
-                titolo,
-                contenuto,
-                tipo: tipo ?? 'presa_visione',
-                target_scope: target_scope ?? 'globale',
-                target_classes: target_classes ?? null,
-                scadenza: scadenza ?? null,
-                attachment_url: attachment_url ?? null,
-                scuola_id: autore?.scuola_id ?? auth.user.scuola_id ?? null, // tenant
-            })
-            .select()
-            .single();
+        // Insert resiliente alla colonna mancante: su DB E2E CI privo della
+        // migrazione 20260708150000 (form_model_id) → PGRST204/42703 → la rimuove
+        // e riprova. In prod la colonna esiste → nessun retry.
+        const avvisoRecord: Record<string, unknown> = {
+            author_id,
+            titolo,
+            contenuto,
+            tipo: tipo ?? 'presa_visione',
+            target_scope: target_scope ?? 'globale',
+            target_classes: target_classes ?? null,
+            scadenza: scadenza ?? null,
+            attachment_url: attachment_url ?? null,
+            form_model_id: form_model_id ?? null,
+            scuola_id: autore?.scuola_id ?? auth.user.scuola_id ?? null, // tenant
+        };
+        let insRes = await supabase.from('avvisi').insert(avvisoRecord).select().single();
+        let attempts = 0;
+        while (insRes.error && ['PGRST204', '42703'].includes((insRes.error as { code?: string }).code ?? '') && attempts < 4) {
+            const m = /Could not find the '([a-z_]+)' column|column "?([a-z_]+)"? of relation/i.exec(insRes.error.message);
+            const col = m?.[1] ?? m?.[2];
+            if (!col || !(col in avvisoRecord)) break;
+            delete avvisoRecord[col];
+            insRes = await supabase.from('avvisi').insert(avvisoRecord).select().single();
+            attempts++;
+        }
+        const { data, error } = insRes;
 
         if (error) {
             console.error('Errore POST avvisi:', error);

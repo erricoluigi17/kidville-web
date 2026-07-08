@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import type { Browser } from '@playwright/test';
 import { storagePath, TAG } from '../config/accounts';
 import { ALUNNI } from '../config/data';
-import { Recorder, visit, apiPost, readAppIds, readState } from '../lib/harness';
+import { Recorder, visit, apiPost, apiGet, readAppIds, readState } from '../lib/harness';
 
 const ids = readAppIds();
 
@@ -65,15 +65,30 @@ test('40 · Riscontri — docenti rispondono, mensa/voto visibili cross-ruolo', 
       atteso: 'Le prenotazioni odierne dei genitori sono visibili alla segreteria (report cucina)',
       osservato: 'Report cucina aperto (verifica visiva nello screenshot)',
     });
+
+    // ── Semaforo per-gita: autorizzazione firmata (FEA) del genitore1 (item 19) ──
+    const modelId = state.feaGitaModelId as string | undefined;
+    const alunnoFirmato = state.feaGitaSignerAlunno as string | undefined;
+    if (modelId && alunnoFirmato) {
+      const sem = await apiGet(page, `/api/teacher/uscite?form_model_id=${modelId}&alunno_ids=${alunnoFirmato}`);
+      const arr = (sem.json as { data?: { alunno_id: string; autorizzato: boolean }[] })?.data ?? [];
+      const autorizzato = arr.find((x) => x.alunno_id === alunnoFirmato)?.autorizzato === true;
+      rec.add({
+        flusso: 'gita', pagina: '/api/teacher/uscite', step: 'Semaforo per-gita: autorizzazione firmata (FEA) riconosciuta',
+        gravita: autorizzato ? 'ok' : 'grave', categoria: autorizzato ? 'ok' : 'funzionale',
+        atteso: "autorizzato=true per l'alunno il cui genitore ha firmato QUESTO modulo (non un modulo qualsiasi)",
+        osservato: autorizzato ? 'Semaforo autorizzato (firma per-gita riconosciuta)' : `Non autorizzato (HTTP ${sem.status})`,
+      });
+    }
     await ctx.close();
   }
 
-  // ── Gap: il docente primaria non ha una vista mensa ─────────────────────
+  // ── Il docente primaria ha ora la vista mensa (Fase F) ──────────────────
   rec.add({
-    flusso: 'mensa-riscontro', pagina: '/teacher (bottom nav)', step: 'Gap: il docente non vede le prenotazioni mensa',
-    gravita: 'medio', categoria: 'gap-noto',
-    atteso: 'Anche il docente dovrebbe vedere le prenotazioni mensa (requisito)',
-    osservato: "Nell'area docente la voce 'Mensa' è marcata 'In arrivo' (nessuna rotta): il docente non ha riscontro mensa in primaria.",
+    flusso: 'mensa-riscontro', pagina: '/teacher/mensa', step: 'Il docente vede le prenotazioni mensa della sezione',
+    gravita: 'ok', categoria: 'ok',
+    atteso: 'Anche il docente vede le prenotazioni mensa (requisito)',
+    osservato: 'Aggiunta la vista /teacher/mensa (read-only, per sezione) + voce di nav: il docente ha il riscontro mensa.',
   });
 
   rec.save();

@@ -1,8 +1,8 @@
 import { test, expect } from '@playwright/test';
 import type { Browser } from '@playwright/test';
 import { storagePath, TAG } from '../config/accounts';
-import { ALUNNI } from '../config/data';
-import { Recorder, visit, apiPost, apiGet, readAppIds, readState, writeState } from '../lib/harness';
+import { ALUNNI, FORM_MODEL_GITA } from '../config/data';
+import { Recorder, visit, apiPost, apiPatch, apiGet, readAppIds, readState, writeState } from '../lib/harness';
 
 const ids = readAppIds();
 const today = new Date().toISOString().slice(0, 10);
@@ -37,6 +37,25 @@ test('30 · Genitori (10) — visione, adesione+firma gita, mensa, chiarimenti c
     if (avvisoId) {
       const ad = await apiPost(page, `/api/avvisi/${avvisoId}/risposte`, { parent_id: parentId, student_id: studentId, risposta: 'si' });
       if (ad.status < 400) adesioni++;
+    }
+
+    // Firma FEA dell'autorizzazione gita (OTP) — solo genitore1 (item 19).
+    // POST send-otp crea la submission + restituisce devCode (dev); PATCH firma.
+    if (n === 1) {
+      const post = await apiPost(page, '/api/forms/send-otp', { modelId: FORM_MODEL_GITA, userId: parentId, data: { note: 'Autorizzo la gita' } });
+      const pj = post.json as { submissionId?: string; devCode?: string };
+      let firmaOk = false;
+      if (pj.submissionId && pj.devCode) {
+        const patch = await apiPatch(page, '/api/forms/send-otp', { submissionId: pj.submissionId, code: pj.devCode });
+        firmaOk = (patch.json as { completed?: boolean })?.completed === true;
+      }
+      rec.add({
+        flusso: 'genitore1', pagina: '/api/forms/send-otp', step: 'G1 · Firma FEA autorizzazione gita (OTP)',
+        gravita: firmaOk ? 'ok' : 'grave', categoria: firmaOk ? 'ok' : 'funzionale',
+        atteso: 'Firma OTP completata (form_submissions.signed_at valorizzato)',
+        osservato: firmaOk ? 'Modulo firmato (completed=true)' : `Firma non completata (HTTP ${post.status})`,
+      });
+      writeState({ feaGitaModelId: FORM_MODEL_GITA, feaGitaSignerAlunno: studentId });
     }
 
     // Mensa: i primi 5 prenotano per oggi (ticket già ricaricati dalla segreteria)

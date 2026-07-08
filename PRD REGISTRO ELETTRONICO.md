@@ -77,6 +77,11 @@ Chiusura dei rilievi della campagna 360° (bloccanti sicurezza + gravi + medi + 
 - **E15 — Dashboard direzione, 6 KPI vuote**: consumo di `ready` (skeleton solo durante la risoluzione identità; stato "sessione non valida" esplicito) → i KPI si popolano.
 - **Verifica**: nuovo `81-copertura-bucketB.spec.ts` (docente1/genitore1/segreteria; backend API + frontend/hydration/no-5xx) → **90/90 verdi (30 loop × 3 test)**. Gate: `eslint` 0 · `vitest` 798/798 · `build` ok.
 
+### BUCKET C — Roster/dati primaria ✅
+- **Diagnosi (MCP)**: i dati di TEST 1A risultano **già corretti** (sezione `school_type='primaria'`, `scuola_id` giusto, 11 alunni `stato='iscritto'` con `section_id`) → **E16 "0 in classe" ed E17 "nessuna sezione primaria" erano artefatti dello screenshot originale, già risolti** (nessuna scrittura dati necessaria).
+- **E18 — Default `school_type`**: `POST /api/admin/sections` ora valida `school_type ∈ {nido,infanzia,primaria}` (zod enum) → niente valori spazzatura; default 'infanzia' solo se omesso (la UI passa sempre il grado, `SectionsView`).
+- **Verifica**: `82-copertura-bucketC.spec.ts` (segreteria: sezioni→TEST 1A primaria, roster→11 alunni, school_type invalido→400) → **90/90 verdi (30 loop × 3 test)**. Gate: `eslint` 0 · `vitest` 798/798.
+
 ---
 
 ## 🗓️ Changelog — Campagna Test 360° ULTRA Primaria 2026-07-08 (branch `feat/logout-anagrafica-fullscreen`)

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
+import { genitoreHasFiglio } from '@/lib/anagrafiche/legami'
 import { persistSignedSubmission } from '@/lib/forms/persist-submission'
 import { getUserEmail, sendOtp, verifyTicket, codeHash } from '@/lib/auth/otp-ticket'
 import { buildSignatureLog, extractRequestMeta } from '@/lib/fea/signature-log'
@@ -71,6 +72,12 @@ export async function PATCH(request: NextRequest) {
     const { code, expiry, ticket, form_id, student_id, answers } = b.data
 
     const supabase = await createAdminClient()
+
+    // IDOR: la firma è consentita solo su un PROPRIO figlio (onboarding = student_id assente).
+    if (student_id && auth.user.role === 'genitore' && !(await genitoreHasFiglio(supabase, auth.user.id, student_id))) {
+      return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
+    }
+
     const email = await getUserEmail(supabase, parentId)
     if (!email) {
       return NextResponse.json({ error: 'Email del genitore non trovata' }, { status: 400 })

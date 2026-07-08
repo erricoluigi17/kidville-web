@@ -1,16 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { requireEnv } from '@/lib/security/require-env';
+import { requireStaff } from '@/lib/auth/require-staff';
 import { parseData } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 
 // GET /api/admin/students/[id]
 // Restituisce il singolo alunno + i suoi genitori + i fratelli (alunni che condividono almeno un genitore)
 export async function GET(
-    _request: NextRequest,
+    request: NextRequest,
     context: { params: Promise<{ id: string }> }
 ) {
     try {
+        // Fascicolo completo dell'alunno (PII + genitori + CF + fratelli): riservato
+        // allo staff. Gap del test 360° (esposizione anonima) chiuso qui.
+        const auth = await requireStaff(request);
+        if (auth.response) return auth.response;
+
         const missingEnv = requireEnv('NEXT_PUBLIC_SUPABASE_URL');
         if (missingEnv) return missingEnv;
         const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;

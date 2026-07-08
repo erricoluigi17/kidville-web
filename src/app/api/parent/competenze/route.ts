@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { getRequestUserId } from '@/lib/auth/require-staff'
+import { requireParentOfStudent } from '@/lib/auth/require-parent'
 import { CERTIFICATI_BUCKET } from '@/lib/competenze/certificato-store'
 import { parseQuery } from '@/lib/validation/http'
-import type { SupabaseClient } from '@supabase/supabase-js'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // `userId` in query è consumato dal gate identità (getRequestUserId), non qui.
@@ -14,40 +13,19 @@ const getQuerySchema = z.object({
   studentId: z.string({ error: 'studentId obbligatorio' }).min(1, 'studentId obbligatorio'),
 })
 
-// Verifica che il figlio sia collegato al genitore (modello autoritativo
-// student_parents + ponte legacy legame_genitori_alunni). Scoping app-level
-// coerente con le altre letture parent (identità via header finché S13 non sigilla).
-async function parentOwnsStudent(supabase: SupabaseClient, userId: string, studentId: string): Promise<boolean> {
-  const { data: leg } = await supabase
-    .from('legame_genitori_alunni')
-    .select('alunno_id')
-    .eq('genitore_id', userId)
-    .eq('alunno_id', studentId)
-  if ((leg ?? []).length > 0) return true
-  const { data: sp } = await supabase
-    .from('student_parents')
-    .select('student_id')
-    .eq('parent_id', userId)
-    .eq('student_id', studentId)
-  return (sp ?? []).length > 0
-}
-
 // GET /api/parent/competenze?studentId=&userId=
 // Certificati delle Competenze del figlio (solo generati/firmati), con URL di
 // download firmato. Nessun leak: se il figlio non è collegato, lista vuota.
 export async function GET(request: NextRequest) {
   try {
-    const userId = getRequestUserId(request)
-    if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
-
     const q = parseQuery(request, getQuerySchema)
     if ('response' in q) return q.response
     const { studentId } = q.data
 
+    const auth = await requireParentOfStudent(request, studentId)
+    if (auth.response) return auth.response
+
     const supabase = await createAdminClient()
-    if (!(await parentOwnsStudent(supabase, userId, studentId))) {
-      return NextResponse.json({ success: true, data: [] })
-    }
 
     const { data: certs } = await supabase
       .from('certificati_competenze')

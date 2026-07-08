@@ -17,6 +17,10 @@ export interface Account {
   area: Area;
   landing: RegExp;
   label: string;
+  /** Per i genitori: numero alunno collegato (1..10). */
+  studentN?: number;
+  /** Per i genitori: relazione con l'alunno. */
+  relation?: 'mother' | 'father';
 }
 
 export const SEGRETERIA: Account = {
@@ -35,13 +39,27 @@ export const DOCENTI: Account[] = Array.from({ length: 5 }, (_, i) => ({
   label: `Docente ${i + 1}`,
 }));
 
-export const GENITORI: Account[] = Array.from({ length: 10 }, (_, i) => ({
+// 10 alunni × { madre, padre } = 20 personas genitore.
+// Madri = account esistenti test.pri.genitore{n}; Padri = nuovi test.pri.genitore{n}p (seed).
+const MADRI: Account[] = Array.from({ length: 10 }, (_, i) => ({
   key: `genitore${i + 1}`,
   email: `test.pri.genitore${i + 1}@kidville.test`,
   area: 'parent' as Area,
   landing: /\/parent/,
-  label: `Genitore ${i + 1}`,
+  label: `Madre A${i + 1}`,
+  studentN: i + 1,
+  relation: 'mother' as const,
 }));
+const PADRI: Account[] = Array.from({ length: 10 }, (_, i) => ({
+  key: `genitore${i + 1}p`,
+  email: `test.pri.genitore${i + 1}p@kidville.test`,
+  area: 'parent' as Area,
+  landing: /\/parent/,
+  label: `Padre A${i + 1}`,
+  studentN: i + 1,
+  relation: 'father' as const,
+}));
+export const GENITORI: Account[] = [...MADRI, ...PADRI];
 
 export const ALL_ACCOUNTS: Account[] = [SEGRETERIA, ...DOCENTI, ...GENITORI];
 

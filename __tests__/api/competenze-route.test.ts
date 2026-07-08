@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server'
 
 const h = vi.hoisted(() => ({
   requireStaff: vi.fn(),
+  requireParentOfStudent: vi.fn(),
   logScrittura: vi.fn(),
   generaCertificato: vi.fn(),
   seedCertificato: vi.fn(),
@@ -14,6 +15,7 @@ vi.mock('@/lib/auth/require-staff', async (orig) => {
   const actual = (await orig()) as Record<string, unknown>
   return { ...actual, requireStaff: h.requireStaff }
 })
+vi.mock('@/lib/auth/require-parent', () => ({ requireParentOfStudent: h.requireParentOfStudent }))
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: h.logScrittura }))
 vi.mock('@/lib/competenze/certificato-store', () => ({
   generaCertificato: h.generaCertificato,
@@ -52,6 +54,7 @@ beforeEach(() => {
   h.owns = true
   h.certs = []
   h.requireStaff.mockResolvedValue({ user: { id: 'dir1', role: 'admin', scuola_id: 'sc1' } })
+  h.requireParentOfStudent.mockResolvedValue({ user: { id: 'par1', role: 'genitore' } })
   h.generaCertificato.mockResolvedValue({ pdf: Buffer.from('%PDF-1') })
 })
 
@@ -82,13 +85,11 @@ describe('POST /api/admin/competenze/genera — gate dirigenza', () => {
 })
 
 describe('GET /api/parent/competenze — scope figlio', () => {
-  it('figlio non collegato → lista vuota (nessun leak)', async () => {
-    h.owns = false
+  it('figlio non collegato → 403 (nessun leak)', async () => {
+    h.requireParentOfStudent.mockResolvedValue({ response: NextResponse.json({ error: 'Accesso negato' }, { status: 403 }) })
     h.certs = [{ id: 'cert-altro', stato: 'firmato' }]
     const res = await PARENT_GET(new Request('http://localhost/api/parent/competenze?studentId=al1&userId=par1') as never)
-    expect(res.status).toBe(200)
-    const body = await res.json()
-    expect(body.data).toEqual([])
+    expect(res.status).toBe(403)
   })
 
   it('figlio collegato → ritorna i certificati firmati/generati', async () => {

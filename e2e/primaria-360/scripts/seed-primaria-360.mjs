@@ -155,33 +155,73 @@ async function main() {
     }).eq('id', a.id);
   }
 
-  // 5. parents + student_parents (anagrafica genitore visibile in Segreteria)
-  console.log('▸ Creo/collego le anagrafiche genitore (parents + student_parents)…');
-  // Genitore{n} ↔ Alunno{n} secondo il legame runtime già esistente.
-  const alunnoByN = new Map(alunni.map((a) => [a.n, a]));
-  const parentUuid = (n) => `e2e36000-0000-4000-8000-0000000003${String(n).padStart(2, '0')}`;
-  // Pulisco eventuali legami student_parents di questi alunni (idempotenza)
+  // 5. Anagrafica famiglia DUAL-PARENT: MADRE + PADRE per ogni alunno.
+  //    parents (+auth_user_id sul padre), student_parents, student_guardians,
+  //    legame_genitori_alunni (runtime). 20 personas genitore (10 alunni × 2).
+  console.log('▸ Creo/collego le anagrafiche genitore (madre + padre) per ogni alunno…');
+  const motherParentUuid = (n) => `e2e36000-0000-4000-8000-0000000003${String(n).padStart(2, '0')}`;
+  const fatherParentUuid = (n) => `e2e36000-0000-4000-8000-0000000004${String(n).padStart(2, '0')}`;
   const alunnoIds = alunni.map((a) => a.id);
-  await db.from('student_parents').delete().in('student_id', alunnoIds);
-  for (const g of genitori) {
-    const a = alunnoByN.get(g.n);
-    if (!a) continue;
-    const male = g.n % 3 === 0; // mix padre/madre
-    const pid = parentUuid(g.n);
-    await db.from('parents').upsert({
-      id: pid, first_name: `Genitore${g.n}`, last_name: 'Test PRI',
-      gender: male ? 'M' : 'F', birth_date: '1985-05-15',
-      citizenship: RES.cittad, birth_nation: RES.nation, birth_province: RES.prov, birth_city: RES.city,
-      fiscal_code: fakeCF('GNT', g.n),
-      residence_address: `Via delle Scuole ${g.n}`, residence_street_number: String(g.n),
-      residence_city: RES.city, residence_province: RES.prov, zip_code: RES.zip,
-      phone_numbers: [`33300000${String(g.n).padStart(2, '0')}`],
-      emails: [g.email],
-    }, { onConflict: 'id' });
-    await db.from('student_parents').insert({
-      student_id: a.id, parent_id: pid,
-      relation_type: male ? 'father' : 'mother', is_primary: true,
+
+  // 5a. PADRI: crea (idempotente) gli account padre test.pri.genitore{n}p e raccogli gli uid.
+  console.log('▸ Account PADRE (…genitore{n}p): creo se mancanti + password nota…');
+  const fatherIds = new Map(); // n -> uid
+  for (const a of alunni) {
+    const uid = await ensureAccount(authMap, {
+      email: `test.pri.genitore${a.n}p@kidville.test`,
+      nome: `Padre${a.n}`, cognome: 'Test PRI', ruolo: 'genitore',
     });
+    fatherIds.set(a.n, uid);
+  }
+  // uid MADRE = account genitore{n} esistente (dalla query utenti, n>=1).
+  const motherIds = new Map(genitori.filter((g) => g.n >= 1).map((g) => [g.n, g.id]));
+
+  // Ricostruzione pulita e idempotente per i SOLI alunni target.
+  await db.from('student_parents').delete().in('student_id', alunnoIds);
+  await db.from('student_guardians').delete().in('alunno_id', alunnoIds);
+
+  for (const a of alunni) {
+    const mPid = motherParentUuid(a.n);
+    const fPid = fatherParentUuid(a.n);
+    const mUid = motherIds.get(a.n);
+    const fUid = fatherIds.get(a.n);
+    // Anagrafica MADRE (auth_user_id lasciato invariato: la madre risolve già via legame runtime).
+    await db.from('parents').upsert({
+      id: mPid, first_name: `Madre${a.n}`, last_name: 'Test PRI',
+      gender: 'F', birth_date: '1986-03-12',
+      citizenship: RES.cittad, birth_nation: RES.nation, birth_province: RES.prov, birth_city: RES.city,
+      fiscal_code: fakeCF('MDR', a.n),
+      residence_address: `Via delle Scuole ${a.n}`, residence_street_number: String(a.n),
+      residence_city: RES.city, residence_province: RES.prov, zip_code: RES.zip,
+      phone_numbers: [`33300000${String(a.n).padStart(2, '0')}`],
+      emails: [`test.pri.genitore${a.n}@kidville.test`],
+    }, { onConflict: 'id' });
+    // Anagrafica PADRE (auth_user_id = account padre → risolve anche via ponte anagrafico).
+    await db.from('parents').upsert({
+      id: fPid, first_name: `Padre${a.n}`, last_name: 'Test PRI',
+      gender: 'M', birth_date: '1984-09-22',
+      citizenship: RES.cittad, birth_nation: RES.nation, birth_province: RES.prov, birth_city: RES.city,
+      fiscal_code: fakeCF('PDR', a.n), auth_user_id: fUid ?? null,
+      residence_address: `Via delle Scuole ${a.n}`, residence_street_number: String(a.n),
+      residence_city: RES.city, residence_province: RES.prov, zip_code: RES.zip,
+      phone_numbers: [`33311111${String(a.n).padStart(2, '0')}`],
+      emails: [`test.pri.genitore${a.n}p@kidville.test`],
+    }, { onConflict: 'id' });
+    // student_parents: madre (primary) + padre.
+    await db.from('student_parents').insert([
+      { student_id: a.id, parent_id: mPid, relation_type: 'mother', is_primary: true },
+      { student_id: a.id, parent_id: fPid, relation_type: 'father', is_primary: false },
+    ]);
+    // legame_genitori_alunni (runtime): madre (intestataria 100%) + padre (0%).
+    const legami = [];
+    if (mUid) legami.push({ genitore_id: mUid, alunno_id: a.id, intestatario_fattura: true, percentuale_pagamento: 100 });
+    if (fUid) legami.push({ genitore_id: fUid, alunno_id: a.id, intestatario_fattura: false, percentuale_pagamento: 0 });
+    if (legami.length) await db.from('legame_genitori_alunni').upsert(legami, { onConflict: 'genitore_id,alunno_id' });
+    // student_guardians (canonica): madre + padre, account-linked.
+    const guardians = [];
+    if (mUid) guardians.push({ alunno_id: a.id, utenti_id: mUid, parent_id: mPid, relation_type: 'mother', is_primary: true });
+    if (fUid) guardians.push({ alunno_id: a.id, utenti_id: fUid, parent_id: fPid, relation_type: 'father', is_primary: false });
+    if (guardians.length) await db.from('student_guardians').insert(guardians);
   }
 
   // 5b. Modulo firmabile "Autorizzazione gita" (FEA/OTP) — item 19.
@@ -198,7 +238,10 @@ async function main() {
   const creds = [
     { email: 'test.pri.segreteria@kidville.test', ruolo: 'Segreteria (coordinator)', alunno: '—' },
     ...docenteIds.map((_, i) => ({ email: `test.pri.docente${i + 1}@kidville.test`, ruolo: 'Docente (educator)', alunno: '—' })),
-    ...genitori.map((g) => ({ email: g.email, ruolo: 'Genitore', alunno: (alunnoByN.get(g.n) ? `Alunno${g.n} Test PRI` : '—') })),
+    ...alunni.flatMap((a) => ([
+      { email: `test.pri.genitore${a.n}@kidville.test`, ruolo: 'Genitore · Madre', alunno: `Alunno${a.n} Test PRI` },
+      { email: `test.pri.genitore${a.n}p@kidville.test`, ruolo: 'Genitore · Padre', alunno: `Alunno${a.n} Test PRI` },
+    ])),
   ].map((c) => ({ ...c, password: PASSWORD }));
 
   console.log('\n=== LISTA CREDENZIALI (TEST 1A) ===');

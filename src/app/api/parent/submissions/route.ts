@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireUser } from '@/lib/auth/require-staff';
+import { genitoreHasFiglio } from '@/lib/anagrafiche/legami';
 import { persistSignedSubmission } from '@/lib/forms/persist-submission';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
@@ -40,6 +41,13 @@ export async function POST(request: NextRequest) {
     const { form_id, student_id, answers, is_signed, signature_log } = b.data;
 
     const supabase = await createAdminClient();
+
+    // IDOR: un genitore può sottomettere (e auto-aggiornare l'anagrafica) solo su
+    // un PROPRIO figlio. student_id assente = onboarding (ammesso).
+    if (student_id && auth.user.role === 'genitore' && !(await genitoreHasFiglio(supabase, auth.user.id, student_id))) {
+      return NextResponse.json({ error: 'Accesso negato' }, { status: 403 });
+    }
+
     const result = await persistSignedSubmission(supabase, {
       form_id,
       parent_id: auth.user.id,

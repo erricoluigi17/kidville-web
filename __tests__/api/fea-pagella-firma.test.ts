@@ -38,8 +38,8 @@ const h = vi.hoisted(() => {
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: vi.fn().mockResolvedValue(h.makeClient()),
 }))
-const auth = vi.hoisted(() => ({ getRequestUserId: vi.fn() }))
-vi.mock('@/lib/auth/require-staff', () => ({ getRequestUserId: auth.getRequestUserId }))
+const auth = vi.hoisted(() => ({ requireParentOfStudent: vi.fn() }))
+vi.mock('@/lib/auth/require-parent', () => ({ requireParentOfStudent: auth.requireParentOfStudent }))
 const otp = vi.hoisted(() => ({
   getUserEmail: vi.fn(),
   verifyTicket: vi.fn(),
@@ -48,7 +48,7 @@ const otp = vi.hoisted(() => ({
 vi.mock('@/lib/auth/otp-ticket', () => otp)
 
 import { POST } from '@/app/api/parent/primaria/pagella/firma/route'
-import { NextRequest } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 
 function req(body: unknown): NextRequest {
   return new NextRequest('http://localhost/api/parent/primaria/pagella/firma?userId=u-1', {
@@ -63,17 +63,23 @@ beforeEach(() => {
   h.state.queues = {}
   h.state.used = {}
   h.state.captured = { upsert: [], update: [], insert: [] }
-  auth.getRequestUserId.mockReturnValue('u-1')
+  auth.requireParentOfStudent.mockResolvedValue({ user: { id: 'u-1', role: 'genitore' }, response: null })
   otp.getUserEmail.mockResolvedValue('genitore@example.it')
   otp.verifyTicket.mockReturnValue({ ok: true })
   otp.codeHash.mockReturnValue('SHA256-MOCKEDHASH')
 })
 
 describe('POST /api/parent/primaria/pagella/firma', () => {
-  it('401 senza userId', async () => {
-    auth.getRequestUserId.mockReturnValue(null)
-    const res = await POST(req({ scrutinioId: 's-1', studentId: 'a-1' }))
+  it('401 senza sessione', async () => {
+    auth.requireParentOfStudent.mockResolvedValue({ response: NextResponse.json({ error: 'Non autenticato' }, { status: 401 }) })
+    const res = await POST(req({ scrutinioId: 's-1', studentId: 'a-1', code: '1', expiry: 1, ticket: 't' }))
     expect(res.status).toBe(401)
+  })
+
+  it('403 se la pagella è di un figlio non proprio (IDOR)', async () => {
+    auth.requireParentOfStudent.mockResolvedValue({ response: NextResponse.json({ error: 'Accesso negato' }, { status: 403 }) })
+    const res = await POST(req({ scrutinioId: 's-1', studentId: 'a-2', code: '1', expiry: 1, ticket: 't' }))
+    expect(res.status).toBe(403)
   })
 
   it('400 se mancano scrutinioId/studentId', async () => {

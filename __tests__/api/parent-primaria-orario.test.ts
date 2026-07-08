@@ -34,11 +34,11 @@ const h = vi.hoisted(() => {
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: vi.fn().mockResolvedValue(h.makeClient()),
 }))
-const auth = vi.hoisted(() => ({ getRequestUserId: vi.fn() }))
-vi.mock('@/lib/auth/require-staff', () => ({ getRequestUserId: auth.getRequestUserId }))
+const auth = vi.hoisted(() => ({ requireParentOfStudent: vi.fn() }))
+vi.mock('@/lib/auth/require-parent', () => ({ requireParentOfStudent: auth.requireParentOfStudent }))
 
 import { GET } from '@/app/api/parent/primaria/orario/route'
-import { NextRequest } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 
 function req(qs: string): NextRequest {
   return new NextRequest(`http://localhost/api/parent/primaria/orario${qs}`, { headers: { 'x-user-id': 'u-1' } })
@@ -48,14 +48,20 @@ beforeEach(() => {
   vi.clearAllMocks()
   h.state.queues = {}
   h.state.used = {}
-  auth.getRequestUserId.mockReturnValue('u-1')
+  auth.requireParentOfStudent.mockResolvedValue({ user: { id: 'u-1', role: 'genitore' }, response: null })
 })
 
 describe('GET /api/parent/primaria/orario', () => {
-  it('401 senza userId', async () => {
-    auth.getRequestUserId.mockReturnValue(null)
+  it('401 senza sessione', async () => {
+    auth.requireParentOfStudent.mockResolvedValue({ response: NextResponse.json({ error: 'Non autenticato' }, { status: 401 }) })
     const res = await GET(req('?studentId=a-1'))
     expect(res.status).toBe(401)
+  })
+
+  it('403 se il figlio non è del genitore (IDOR)', async () => {
+    auth.requireParentOfStudent.mockResolvedValue({ response: NextResponse.json({ error: 'Accesso negato' }, { status: 403 }) })
+    const res = await GET(req('?studentId=a-2'))
+    expect(res.status).toBe(403)
   })
 
   it('400 senza studentId', async () => {

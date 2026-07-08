@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
+import { requireParentOfStudent } from '@/lib/auth/require-parent';
 import { scuoleDiUtente } from '@/lib/auth/scope';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
@@ -38,6 +39,10 @@ export async function GET(request: NextRequest) {
         const supabase = await createAdminClient();
 
         if (alunnoId) {
+            // Ramo genitore: gate identità (sessione) + legame genitore↔alunno.
+            const auth = await requireParentOfStudent(request, alunnoId);
+            if (auth.response) return auth.response;
+
             let query = supabase
                 .from('locker_requests')
                 .select(`

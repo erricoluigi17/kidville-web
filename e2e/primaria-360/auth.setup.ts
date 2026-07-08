@@ -6,7 +6,8 @@ import { ALL_ACCOUNTS, PASSWORD, AUTH_DIR, storagePath, idsPath } from './config
 // identità applicativa in localStorage). Salva storageState per riuso e
 // risolve l'appId (da /api/me) per il deep-link ?userId= sulle pagine profonde.
 
-setup('login 16 account TEST 1A', async ({ browser }) => {
+setup('login account TEST 1A (26 personas)', async ({ browser }) => {
+  setup.setTimeout(360_000); // 26 login reali sequenziali
   fs.mkdirSync(AUTH_DIR, { recursive: true });
   const ids: Record<string, string> = {};
 

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { getRequestUserId } from '@/lib/auth/require-staff'
+import { requireParentOfStudent } from '@/lib/auth/require-parent'
 import { parseQuery } from '@/lib/validation/http'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
@@ -20,12 +20,12 @@ const getQuerySchema = z.object({
 // (notif_buffer_valutazioni_min, default 10') dalla creazione (PRD §4.5).
 export async function GET(request: NextRequest) {
   try {
-    const userId = getRequestUserId(request)
-    if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
-
     const q = parseQuery(request, getQuerySchema)
     if ('response' in q) return q.response
     const { studentId } = q.data
+
+    const auth = await requireParentOfStudent(request, studentId)
+    if (auth.response) return auth.response
 
     const supabase = await createAdminClient()
 

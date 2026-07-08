@@ -54,6 +54,39 @@
 
 ---
 
+## 🗓️ Changelog — Correzione rilievi Test 360° Primaria 2026-07-08 (branch `feat/logout-anagrafica-fullscreen`)
+
+Chiusura dei rilievi della campagna 360° (bloccanti sicurezza + gravi + medi + minori testuali), un commit per bucket, con **verifica a loop**: ogni fase ha un test dedicato (backend+frontend+debugging+grafica) eseguito ≥30× consecutive verdi; al primo rosso si torna alla causa radice.
+
+### BUCKET A — Sicurezza (bloccanti IDOR / PII / auth-bypass) ✅
+- Nuovo helper condiviso `src/lib/auth/require-parent.ts` → `requireParentOfStudent(request, studentId)`: `requireUser` (identità legata alla **sessione**, `ALLOW_HEADER_IDENTITY=false` → niente `?userId=` spoofabile) + `genitoreHasFiglio` (unione `legame_genitori_alunni` + `student_parents`/ponte) → **403** se l'alunno non è del genitore; staff/educator passano.
+- **E1 — IDOR letture** migrate al gate: `parent/primaria/{valutazioni,note,assenze,pagella,orario,scrutinio}`, `parent/presenze`, `parent/mensa/allergie`, `parent/competenze` (rimosso il `parentOwnsStudent` bacato che saltava il ponte `parents.auth_user_id`).
+- **E2 — IDOR scritture**: `parent/primaria/pagella/firma`, `parent/giustifiche-didattiche`, `parent/presenze/comunica-assenza`, `parent/presenze/giustifica`, e `persist-submission` (`parent/submissions` POST + `parent/forms/otp` PATCH) validano che `student_id` sia del genitore (onboarding con `student_id` null ammesso).
+- **E3 — PII anonima**: `admin/students/[id]` GET ora richiede `requireStaff` (era service-role senza gate).
+- **E4 — Locker**: rami genitore `?alunno_id` di `locker/inventory` e `locker/requests` ora passano da `requireParentOfStudent` (erano aperti in anonimo → IDOR).
+- **E5 — Auth-bypass**: chiuso dal passaggio a `requireUser`/`resolveIdentity`.
+- **Verifica**: `80-adversarial.spec.ts` riscritto con asserzioni reali (fallisce se una violazione persiste) + copertura E2/E4/extra-E1 → **60/60 verdi (30 loop × 2 test)**. Nuovo unit test `require-parent.test.ts`; aggiornati `competenze/fea-giustifica/fea-pagella-firma/orario/presenze` (mock del nuovo gate). Gate: `eslint . --max-warnings 0` = 0 · `vitest run` = **798/798**.
+
+---
+
+## 🗓️ Changelog — Campagna Test 360° ULTRA Primaria 2026-07-08 (branch `feat/logout-anagrafica-fullscreen`)
+
+Campagna di test 360° multi-agente ultra-scrupolosa su **TEST 1A** (Giugliano, DB prod). Roster **26 personas** con login reale a sessione (1 segreteria desktop + 5 docenti + **20 genitori = 10 alunni × madre+padre**). Seed esteso idempotente (`e2e/primaria-360/`): 10 account padre su auth prod + collegamento dual-parent (`parents.auth_user_id`, `student_parents`, `student_guardians`, `legame_genitori_alunni`) — riconciliato via MCP (20 legami / 20 student_parents / 20 guardians).
+
+**Copertura**: matrice canonica route×ruolo (`config/coverage-matrix.ts`); sweep Playwright di **420 route-visite** su tutte le personas (journeys `70/71/72`) + journey d'azione `10-60` (firma, valutazioni, note, avvisi, adesione gita, FEA/OTP, mensa, chat, pagamenti, logout). **App NATIVA Capacitor pilotata via Appium** su **Android** (UiAutomator2, context `WEBVIEW_`, APK ri-buildato con `CAP_SERVER_URL`; shell/safe-area/tasto back/deep-link `kidville://` verificati) e **iOS Simulator** (XCUITest; app caricata dal server, safe-area ok). Ispezione visiva multi-agente (Workflow, 9 agenti + critico completezza) su 494 screenshot → 92 rilievi grafici/UX/testuali.
+
+**🔴 Findings BLOCCANTI di sicurezza (access control) — verificati empiricamente, DA CHIUDERE:**
+- **IDOR** `/api/parent/primaria/{valutazioni,note,assenze,pagella}`: usano solo `getRequestUserId`, **nessun** `genitoreHasFiglio(userId, studentId)` → un genitore legge i dati di un alunno altrui via `?studentId=` (confermato: genitore1 → dati Alunno2, HTTP 200).
+- **PII senza auth** `/api/admin/students/[id]` GET: service-role **senza gate** → alunno + genitori + CF + indirizzi esposti a client anonimo (HTTP 200).
+- **Auth bypass**: `parent/primaria/valutazioni` con `userId` arbitrario e nessuna sessione → 200.
+- Fix indicato: `requireUser`+`genitoreHasFiglio` sulle route parent/primaria; `requireStaff` su `admin/students/[id]`. (Cross-role write genitore→docente correttamente 401.)
+
+**Findings funzionali (medi)**: `SEZIONE='Girasoli'` hardcoded in `teacher/attendance/page.tsx:13` e `CLASS_NAME='Girasoli'` in `teacher/modulistica/page.tsx:10` → 403 delegates/certificati per docente primaria; `/parent/locker` 500 (`alunno_id=null`), `/api/parent/submissions` 500 (onboarding/modulistica); hydration error `/teacher/gallery`; dashboard direzione con 6 card KPI vuote; date in formato USA `mm/dd/yyyy`; classe TEST 1A "0 alunni" vs 11 in anagrafica; refuso "primaria.La"; placeholder mensa troncato.
+
+Deliverable: **Artifact HTML** self-contained (matrice, findings per gravità con screenshot data-URI, sezione nativo, lacune). Cleanup: 9 prenotazioni mensa + 1 firma FEA di test eliminate. **Gate verdi**: eslint 0, tsc 0, vitest 790/790, build ok. Le vulnerabilità bloccanti restano **da correggere** (segnalate, non ancora fixate in questo giro).
+
+---
+
 ## 🗓️ Changelog — Risoluzione problematiche Test 360° Primaria 2026-07-08 (branch `feat/logout-anagrafica-fullscreen`)
 
 Risolte tutte le 19 problematiche emerse dal test 360° (decise voce per voce con l'utente). Fasi con gate verdi tra l'una e l'altra.

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { getRequestUserId } from '@/lib/auth/require-staff'
+import { requireParentOfStudent } from '@/lib/auth/require-parent'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 
@@ -20,12 +20,13 @@ const postBodySchema = z.object({
 // Il genitore dichiara l'alunno impreparato a priori. Solo primaria.
 export async function POST(request: NextRequest) {
   try {
-    const userId = getRequestUserId(request)
-    if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
-
     const b = await parseBody(request, postBodySchema)
     if ('response' in b) return b.response
     const { studentId, data, motivo, materiaId } = b.data
+
+    const auth = await requireParentOfStudent(request, studentId)
+    if (auth.response) return auth.response
+    const userId = auth.user.id
 
     const supabase = await createAdminClient()
     const { data: alunno } = await supabase

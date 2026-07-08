@@ -76,6 +76,9 @@ function AdminDashboardInner() {
         label: 'Alunni iscritti',
         value: data.studenti.iscritti,
         format: 'int' as const,
+        // Scope esplicito: il KPI conta gli iscritti delle sole sedi selezionate
+        // (SedeSelector). La card Presenze somma invece tutti i plessi accessibili.
+        sub: 'stato iscritto · sedi attive',
         icon: Users,
         accent: 'border-kidville-green',
         iconBg: 'bg-kidville-green/10 text-kidville-green',

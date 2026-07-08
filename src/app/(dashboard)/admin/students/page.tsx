@@ -354,7 +354,7 @@ function AdminStudentsInner() {
           {/* Statistiche rapide — solo per alunni */}
           {viewType === 'child' && (
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-              <StatCard icon={Users} label="Totale Alunni" value={students.length} tone="green" />
+              <StatCard icon={Users} label="Totale (tutti gli stati)" value={students.length} tone="green" />
               <StatCard icon={CheckCircle2} label="Iscritti" value={students.filter((s) => s.stato === 'iscritto').length} tone="success" />
               <StatCard icon={GraduationCap} label="Con BES" value={students.filter((s) => s.bes).length} tone="warn" />
               <StatCard icon={AlertTriangle} label="Con Allergie" value={students.filter((s) => s.note_mediche).length} tone="error" />

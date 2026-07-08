@@ -7,12 +7,13 @@
  * M7.3) · avatar+ruolo. Mirror di DR `ds.css .kv-topbar`. Su mobile è
  * nascosta: la topbar/drawer mobile vive già in AdminSidebar.
  */
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Search } from 'lucide-react';
 import { SedeSelector } from '@/components/ui/cockpit';
 import { UserMenu } from '@/components/ui/UserMenu';
 import { AdminSearchPanel } from './AdminSearchPanel';
 import { AdminNotificationsPanel } from './AdminNotificationsPanel';
+import { useAdminIdentity } from '@/lib/context/admin-identity';
 
 const ROLE_LABEL: Record<string, string> = {
   admin: 'Direzione',
@@ -20,24 +21,12 @@ const ROLE_LABEL: Record<string, string> = {
 };
 
 export function AdminTopBar() {
-  // Legge ?userId= LATO CLIENT senza useSearchParams (la shell non deve
-  // sospendere, vedi commento in admin/layout.tsx): lazy initializer, così
-  // niente setState sincrono nell'effect (react-hooks 7). In SSR è null e il
-  // markup non dipende da userId → nessun mismatch di hydration.
-  const [userId] = useState<string | null>(() =>
-    typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('userId')
-  );
-  const [ruolo, setRuolo] = useState<string>('');
+  // userId e ruolo dall'identità condivisa del cockpit (<AdminIdentityProvider>):
+  // niente lettura duplicata; il markup della TopBar non dipende da userId
+  // (usato solo come prop verso i pannelli), quindi nessun mismatch di hydration.
+  const { userId, ruolo } = useAdminIdentity();
   const [search, setSearch] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
-
-  useEffect(() => {
-    if (!userId) return;
-    fetch(`/api/primaria/me?userId=${userId}`)
-      .then((r) => r.json())
-      .then((d) => { if (d.success) setRuolo(d.data.ruolo || ''); })
-      .catch(() => {});
-  }, [userId]);
 
   const ruoloLabel = ROLE_LABEL[ruolo] ?? (ruolo ? 'Staff' : 'Segreteria');
 

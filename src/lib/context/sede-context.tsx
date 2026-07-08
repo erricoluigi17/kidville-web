@@ -20,12 +20,13 @@
  *  - `reFetchKey`   → dipendenza stabile per i useEffect delle liste multi-sede;
  *  - `loading`      → true finché non ho caricato le sedi accessibili.
  *
- * NB: non usa `useSessionIdentity` (che dipende da `useSearchParams`) per non far
- * sospendere l'intera shell admin — legge `userId` da URL/localStorage come
- * AdminTopBar; se assente il server risolve comunque l'identità dalla sessione.
+ * NB: `userId` arriva da <AdminIdentityProvider> (two-pass SSR-safe), non da
+ * `useSessionIdentity`/`useSearchParams`, così l'intera shell admin non sospende;
+ * se assente il server risolve comunque l'identità dalla sessione.
  */
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { useAdminIdentity } from './admin-identity';
 
 const COOKIE = 'sedi_attive';
 
@@ -63,19 +64,9 @@ function writeCookie(ids: string[]) {
   document.cookie = `${COOKIE}=${encodeURIComponent(ids.join(','))}; path=/; max-age=31536000; samesite=lax`;
 }
 
-function readUserId(): string | null {
-  if (typeof window === 'undefined') return null;
-  const fromUrl = new URLSearchParams(window.location.search).get('userId');
-  if (fromUrl) return fromUrl;
-  try {
-    return window.localStorage.getItem('kv_user_id');
-  } catch {
-    return null;
-  }
-}
-
 export function SedeProvider({ children }: { children: React.ReactNode }) {
-  const [userId] = useState<string | null>(readUserId);
+  // userId dall'identità condivisa del cockpit (niente più lettura duplicata).
+  const { userId } = useAdminIdentity();
   const [sedi, setSedi] = useState<Sede[]>([]);
   const [selezionate, setSelezionate] = useState<string[]>(readCookie);
   const [loading, setLoading] = useState(true);

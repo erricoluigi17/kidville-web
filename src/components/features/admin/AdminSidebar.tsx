@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useAdminIdentity } from '@/lib/context/admin-identity';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   LayoutDashboard,
@@ -120,26 +121,10 @@ function activeHref(pathname: string) {
 export function AdminSidebar() {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [ruolo, setRuolo] = useState('');
-
-  // Legge ?userId= (auth applicativa) LATO CLIENT, senza useSearchParams: così la
-  // sidebar non "sospende" durante l'SSR delle route dinamiche (es. la classe), dove
-  // veniva streamata in un template Suspense nascosto e non compariva. Resa inline.
-  // Lazy initializer (stesso pattern di AdminTopBar): niente setState sincrono
-  // nell'effect (react-hooks 7). In SSR è null.
-  const [userId] = useState<string | null>(() =>
-    typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('userId')
-  );
-  const withUser = (href: string) => (userId ? `${href}?userId=${userId}` : href);
-
-  // Ruolo dell'utente per l'eventuale filtro voci (config-driven).
-  useEffect(() => {
-    if (!userId) return;
-    fetch(`/api/primaria/me?userId=${userId}`)
-      .then((r) => r.json())
-      .then((d) => { if (d.success) setRuolo(d.data.ruolo || ''); })
-      .catch(() => {});
-  }, [userId]);
+  // userId (→ href ?userId=) e ruolo dall'identità condivisa del cockpit. Il
+  // provider risolve userId in two-pass (null al primo render, come l'SSR) →
+  // gli href della sidebar combaciano e non c'è hydration mismatch.
+  const { ruolo, withUser } = useAdminIdentity();
 
   const visible = (item: NavItem) => !item.roles || (!!ruolo && item.roles.includes(ruolo));
 

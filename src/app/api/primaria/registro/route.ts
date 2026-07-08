@@ -225,6 +225,27 @@ export async function POST(request: NextRequest) {
       .single()
     if (regErr) return NextResponse.json({ error: regErr.message }, { status: 500 })
 
+    // Una sola firma "principale" per ora/materia: un secondo docente non può
+    // firmare come principale la stessa riga (usare compresenza/cofirma). Il
+    // vincolo è ribadito a DB da un indice parziale unico (migr. 20260708),
+    // ma il guard applicativo copre anche il DB E2E non migrato e dà un messaggio chiaro.
+    if (tipoCompresenza === 'principale') {
+      const { data: altraPrincipale } = await supabase
+        .from('firme_docenti')
+        .select('id')
+        .eq('registro_id', registroRow.id)
+        .eq('tipo_compresenza', 'principale')
+        .neq('maestra_id', firmaUserId)
+        .limit(1)
+        .maybeSingle()
+      if (altraPrincipale) {
+        return NextResponse.json(
+          { error: 'Esiste già una firma principale per questa ora. Firma come compresenza o cofirma.' },
+          { status: 409 }
+        )
+      }
+    }
+
     // UPSERT firma del docente.
     const { data: firmaRow, error: firmaErr } = await supabase
       .from('firme_docenti')

@@ -22,9 +22,11 @@ async function docenteJourney(browser: Browser, n: number, rec: Recorder) {
   await visit(page, rec, { url: '/teacher/primaria', flusso: `docente${n}`, label: `D${n} · Le mie classi`, appId });
   await visit(page, rec, { url: `/teacher/primaria/${SECTION}/registro`, flusso: `docente${n}`, label: `D${n} · Registro (firma)`, appId });
 
-  // Firma l'ora + argomento lezione + compiti con data di consegna (via API)
+  // Firma l'ora + argomento lezione + compiti con data di consegna (via API).
+  // Ogni docente firma un'ora distinta (oraLezione: n) come "principale":
+  // una sola firma principale per ora è ora garantita da API + indice DB.
   const firma = await apiPost(page, '/api/primaria/registro', {
-    sectionId: SECTION, data: today, oraLezione: 1, materiaId: mat.id,
+    sectionId: SECTION, data: today, oraLezione: n, materiaId: mat.id,
     argomento: `${TAG} ${mat.nome}: lezione svolta in classe`,
     compiti: `${TAG} Esercizi ${mat.nome}`,
     dataConsegnaCompiti: '2026-07-10',

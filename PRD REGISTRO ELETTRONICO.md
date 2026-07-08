@@ -54,6 +54,27 @@
 
 ---
 
+## 🗓️ Changelog — Risoluzione problematiche Test 360° Primaria 2026-07-08 (branch `feat/logout-anagrafica-fullscreen`)
+
+Risolte tutte le 19 problematiche emerse dal test 360° (decise voce per voce con l'utente). Fasi con gate verdi tra l'una e l'altra.
+
+- **Fase A — UI/estetici** (voci 5,8,9,10,11,12,13,14,15): padding bottom-nav genitore `pb-16→pb-24` (avvisi/diary/gallery); `ChatListSkeleton` condiviso al posto dello spinner (parent+teacher); mensa genitore mostra il **cutoff** (GET `/api/mensa/prenotazioni` restituisce `cutoffOra`); valutazioni genitore auto-espanse con singola materia + anteprima giudizio; logo login `h-7→h-12`; saluto home fallback **neutro** + skeleton anti-flash (genitore) e docente time-aware (no “maestra”); registro “**orario da completare**” muted al posto di “materia non assegnata”; helper `src/lib/format/nome.ts` (titleCase) sui nomi lista alunni; compiti genitore **data unica** (chip it-IT).
+- **Fase B — Compiti** (voce 4): datepicker “Consegna compiti” nella `FirmaModal` primaria (l'API già accettava `dataConsegnaCompiti`).
+- **Fase C — Dashboard** (voce 1): il “16 vs 23” era transitorio (verificato: tutti i 23 di Giugliano sono `iscritto`, admin mono-plesso). **Solo etichette** (numeri invariati): KPI “stato iscritto · sedi attive”, anagrafica “Totale (tutti gli stati)”.
+- **Fase D — Firma registro** (voce 6): guard applicativo (409) + indice DB parziale `UNIQUE(registro_id) WHERE tipo='principale'` (migr. `20260708120000`, de-dup incluso). Una sola firma principale per ora.
+- **Fase E — Cockpit** (voce 16): nuovo `AdminIdentityProvider` (`useSyncExternalStore`, two-pass SSR-safe) → **fix hydration-mismatch** sidebar + dedup di `userId` (3 letture → 1: AdminSidebar/AdminTopBar/SedeProvider).
+- **Fase F — Mensa docente** (voce 3): nuova vista read-only `/teacher/mensa` (per sezione) riusando `/api/mensa/report` + voce nav (rimosso “In arrivo”).
+- **Fase G — Bridge & mensa genitore** (voci 2,17): helper condiviso `src/lib/anagrafiche/legami.ts` (**union** runtime `legame_genitori_alunni` + anagrafica `student_parents` via `parents.auth_user_id`) → contesto figlio robusto; `/api/parent/students` + mensa authorization migrati; `/parent/mensa` stato “nessun alunno collegato”. **Item 2 risolto** (verificato: genitore1 figlio-unico → saldo 29 + prenotazione). Consolidamento fisico (voce 17, deciso “drop+view in più step con cautela”): scoperti blocchi (colonne split pagamenti assenti in student_parents, embed PostgREST che si rompono su view, identità `parents.auth_user_id` disconnesse, **nessuna famiglia reale in DB**) → **Step 1** consegnato = fondazione additiva sicura: tabella canonica **`student_guardians`** (migr. `20260708140000`, rebuild validato via rollback, idempotente) + helper union come fonte logica unica. Il cutover fisico (DROP+VIEW + refactor embed) resta step finale documentato.
+- **Fase H — Iscrizione pubblica** (voce 18): risoluzione scuola robusta (`?scuola=` o scuola reale escludendo la seed E2E). **Verificato**: POST persiste su Giugliano (riga di test rimossa). Sblocca gli E2E public-iscrizione.
+- **Fase I — FEA gita** (voce 19): `avvisi.form_model_id` (migr. `20260708150000`, POST/GET resilienti) + semaforo **per-gita** (`/api/teacher/uscite?form_model_id=`). Copertura harness 360 (seed modulo firmabile + firma OTP genitore1 in 30-genitori + verifica semaforo in 40-riscontri). **Verificato end-to-end**: send-otp POST→devCode, PATCH→completed+signed_at; semaforo autorizzato solo per il modulo firmato.
+- **By-design (nessun codice)**: voce 7 (label 2° tab bottom-nav adattiva primaria/infanzia); voce 13 salto ore = intervallo/mensa esclusi.
+
+Migrazioni prod (`20260708*`) da applicare via `migrate.yml` (utente). Il DB E2E CI non migrato è gestito con degrado grazioso (PGRST204/42703).
+
+Gate: `eslint . --max-warnings 0` = 0 · `vitest run` = 790/790 (aggiunti `format-nome.test.ts`, `legami.test.ts`) · `tsc --noEmit` = 0 · `build` ok.
+
+---
+
 ## 🗓️ Changelog — Logout + Anagrafica fullscreen + Test 360° Primaria 2026-07-07 (branch `feat/logout-anagrafica-fullscreen`)
 
 Interventi UI su richiesta utente + campagna di test funzionale end-to-end sulla scuola primaria.

@@ -26,7 +26,7 @@ async function docenteJourney(browser: Browser, n: number, rec: Recorder) {
   const firma = await apiPost(page, '/api/primaria/registro', {
     sectionId: SECTION, data: today, oraLezione: 1, materiaId: mat.id,
     argomento: `${TAG} ${mat.nome}: lezione svolta in classe`,
-    compiti: `${TAG} Esercizi ${mat.nome} — consegna il 2026-07-10`,
+    compiti: `${TAG} Esercizi ${mat.nome}`,
     dataConsegnaCompiti: '2026-07-10',
     tipoCompresenza: 'principale',
   });
@@ -38,10 +38,10 @@ async function docenteJourney(browser: Browser, n: number, rec: Recorder) {
   });
   if (n === 1) {
     rec.add({
-      flusso: 'docente1', pagina: '/teacher/primaria/[id]/registro', step: 'Gap: data consegna compiti non impostabile dall\'UI docente',
-      gravita: 'medio', categoria: 'gap-noto',
-      atteso: 'La FirmaModal dovrebbe avere un campo data di consegna compiti',
-      osservato: "L'API /api/primaria/registro accetta dataConsegnaCompiti, ma la FirmaModal primaria raccoglie solo testo compiti (nessun datepicker dedicato).",
+      flusso: 'docente1', pagina: '/teacher/primaria/[id]/registro', step: 'Data consegna compiti impostabile dall\'UI docente',
+      gravita: 'ok', categoria: 'ok',
+      atteso: 'La FirmaModal ha un campo data di consegna compiti',
+      osservato: "Aggiunto datepicker 'Consegna compiti (facoltativa)' nella FirmaModal primaria; invia dataConsegnaCompiti all'API.",
     });
   }
 

@@ -231,6 +231,7 @@ function FirmaModal({
   const [tipo, setTipo] = useState<'principale' | 'compresenza' | 'cofirma' | 'sostegno'>('principale');
   const [argomento, setArgomento] = useState('');
   const [compiti, setCompiti] = useState('');
+  const [dataConsegnaCompiti, setDataConsegnaCompiti] = useState('');
   const [argomentoProprio, setArgomentoProprio] = useState('');
   const [compitiPropri, setCompitiPropri] = useState('');
   const [destinatari, setDestinatari] = useState<string[]>([]);
@@ -261,7 +262,7 @@ function FirmaModal({
       headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
       body: JSON.stringify({
         sectionId: targetSectionId, data, oraLezione: ordine, materiaId: altraClasse ? null : (materiaId || null),
-        argomento, compiti, tipoCompresenza: tipo,
+        argomento, compiti, dataConsegnaCompiti: dataConsegnaCompiti || null, tipoCompresenza: tipo,
         argomentoProprio, compitiPropri, destinatariIds: tipo === 'sostegno' && !altraClasse ? destinatari : [],
       }),
     });
@@ -344,6 +345,20 @@ function FirmaModal({
               <textarea value={compitiPropri} onChange={(e) => setCompitiPropri(e.target.value)} rows={2} className="font-maven w-full rounded-card border border-kidville-line px-3 py-2 text-sm" />
             </div>
           )}
+
+          {/* Data di consegna compiti (facoltativa): salvata su
+              registro_orario.data_consegna_compiti; il genitore la vede nei
+              Compiti. Con questo campo il docente non deve più scriverla nel testo. */}
+          <div>
+            <label className="block font-maven text-xs text-kidville-muted">Consegna compiti (facoltativa)</label>
+            <input
+              type="date"
+              value={dataConsegnaCompiti}
+              min={data}
+              onChange={(e) => setDataConsegnaCompiti(e.target.value)}
+              className="font-maven w-full rounded-pill border border-kidville-line px-3 py-2 text-sm"
+            />
+          </div>
         </div>
         <div className="flex justify-end gap-2 border-t border-kidville-line p-4">
           <button onClick={onClose} className="font-maven rounded-pill bg-kidville-cream px-4 py-2 text-sm text-kidville-ink">Annulla</button>

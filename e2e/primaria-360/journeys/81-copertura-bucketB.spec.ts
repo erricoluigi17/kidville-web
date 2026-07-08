@@ -64,7 +64,10 @@ test.describe('BUCKET B — gravi funzionali', () => {
 
       // E11: locker del PROPRIO figlio → 200 (niente 400 da alunno_id=null).
       const lock = await apiGet(page, `/api/locker/inventory?alunno_id=${ALUNNI[1]}&mode=stock`);
-      expect(lock.status, 'locker figlio proprio → 200').toBe(200);
+      expect(lock.status, 'locker inventory figlio proprio → 200').toBe(200);
+      // locker/requests non deve dare 500 (tabella non migrata su prod → degrada a []).
+      const lockReq = await apiGet(page, `/api/locker/requests?alunno_id=${ALUNNI[1]}`);
+      expect(lockReq.status, 'locker/requests non deve dare 500').not.toBe(500);
 
       // E8/E11: pagine genitore senza 5xx né pageerror.
       const { errors, server5xx } = collectErrors(page);

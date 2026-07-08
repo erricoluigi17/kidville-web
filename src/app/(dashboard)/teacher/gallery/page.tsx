@@ -9,6 +9,7 @@ import { StudentTagger } from '@/components/features/gallery/StudentTagger';
 import { saveLocalGalleryMedia, syncPendingGalleryMedia } from '@/lib/offline/syncEngine';
 import { processImageWithWatermark, validateVideoFile, processVideoWithWatermark } from '@/lib/media/processing';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
+import { useOnlineStatus } from '@/lib/hooks/use-online-status';
 
 interface Student {
     id: string;
@@ -36,7 +37,8 @@ function TeacherGalleryContent() {
     const [activeFileIndex, setActiveFileIndex] = useState<number>(0);
     const [uploading, setUploading] = useState(false);
     const [userRole, setUserRole] = useState<string>('educator');
-    const [isOnline, setIsOnline] = useState(() => typeof navigator === 'undefined' || navigator.onLine);
+    // SSR-safe (niente hydration mismatch né setState-in-effect).
+    const isOnline = useOnlineStatus();
 
     const [sezione, setSezione] = useState<string>('Girasoli');
     const [availableSections, setAvailableSections] = useState<string[]>([]);
@@ -97,24 +99,12 @@ function TeacherGalleryContent() {
         fetchSections();
     }, [teacherId]);
 
-    // Gestione connettività
+    // Quando è (ri)online, sincronizza i media salvati offline.
     useEffect(() => {
-        if (typeof window !== 'undefined') {
-            const handleOnline = () => {
-                setIsOnline(true);
-                // Prova a sincronizzare i file in sospeso
-                syncPendingGalleryMedia().then(() => loadMedia());
-            };
-            const handleOffline = () => setIsOnline(false);
-
-            window.addEventListener('online', handleOnline);
-            window.addEventListener('offline', handleOffline);
-            return () => {
-                window.removeEventListener('online', handleOnline);
-                window.removeEventListener('offline', handleOffline);
-            };
+        if (isOnline) {
+            syncPendingGalleryMedia().then(() => loadMedia()).catch(() => {});
         }
-    }, [loadMedia]);
+    }, [isOnline, loadMedia]);
 
     // Carica ruolo utente corrente (via /api/me gated, niente lettura anon di `utenti`)
     useEffect(() => {

@@ -1,19 +1,17 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, Suspense } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { LayoutGrid, CalendarDays, Loader2, WifiOff, Users, RefreshCw, ChevronLeft, ChevronRight, Calendar, Check } from 'lucide-react';
 import { LocalDelegate } from '@/lib/offline/db';
 import { StudentAttendanceRow, AttendanceRecord, AttendanceStato } from '@/components/features/teacher/StudentAttendanceRow';
 import { CheckoutModal } from '@/components/features/teacher/CheckoutModal';
 import { MonthlyAttendanceTable } from '@/components/features/teacher/attendance/MonthlyAttendanceTable';
+import { useSessionIdentity } from '@/lib/auth/use-session-identity';
+import { useOnlineStatus } from '@/lib/hooks/use-online-status';
 
-// ─── Costanti ─────────────────────────────────────────────────────────────────
+// ─── Scala stati (token brand DR) ──────────────────────────────────────────────
 
-const SEZIONE = 'Girasoli';
-
-// Scala stati con i token brand (DR STATI). Sostituisce i colori off-token
-// (blu/grigio) della versione glassmorphism precedente.
 const STATI: Record<string, { label: string; tint: string; soft: string }> = {
     presente: { label: 'Presenti', tint: 'var(--color-kidville-success)', soft: 'var(--color-kidville-success-soft)' },
     ritardo: { label: 'Ritardo', tint: 'var(--color-kidville-warn)', soft: 'var(--color-kidville-warn-soft)' },
@@ -114,12 +112,13 @@ function DateNavigator({ date, onChange }: { date: string; onChange: (d: string)
 // ─── Card riepilogo + filtro (DR Summary) ──────────────────────────────────────
 
 function Summary({
-    counts, total, filter, onFilter,
+    counts, total, filter, onFilter, sezione,
 }: {
     counts: Record<string, number>;
     total: number;
     filter: FilterKey;
     onFilter: (f: FilterKey) => void;
+    sezione: string;
 }) {
     const reg = (counts.presente ?? 0) + (counts.ritardo ?? 0) + (counts.uscita_anticipata ?? 0) + (counts.assente ?? 0);
     const safeTot = total || 1;
@@ -137,7 +136,7 @@ function Summary({
             <div className="rounded-[20px] bg-white p-4" style={{ boxShadow: '0 1px 2px rgba(0,84,75,.05), 0 10px 28px -20px rgba(0,84,75,.4)' }}>
                 <div className="flex items-end justify-between gap-3">
                     <div>
-                        <div className="font-barlow text-[11px] font-bold uppercase tracking-[0.12em] text-kidville-yellow-dark">Sezione {SEZIONE}</div>
+                        <div className="font-barlow text-[11px] font-bold uppercase tracking-[0.12em] text-kidville-yellow-dark">Sezione {sezione}</div>
                         <div className="mt-0.5 flex items-baseline gap-1.5">
                             <span className="font-barlow text-[34px] font-black leading-none text-kidville-green">{reg}</span>
                             <span className="font-barlow text-lg font-extrabold text-kidville-muted">/ {total}</span>
@@ -179,7 +178,7 @@ function Summary({
 
 // ─── Vista Oggi ───────────────────────────────────────────────────────────────
 
-function TodayView() {
+function TodayView({ sezione }: { sezione: string }) {
     const [selectedDate, setSelectedDate] = useState(toISO(new Date()));
 
     const [students, setStudents] = useState<Student[]>([]);
@@ -189,13 +188,14 @@ function TodayView() {
     const [loadingStudentId, setLoadingStudentId] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-    const [isOffline, setIsOffline] = useState(() => typeof navigator !== 'undefined' && !navigator.onLine);
+    // SSR-safe (niente hydration mismatch né setState-in-effect).
+    const isOffline = !useOnlineStatus();
     const [filter, setFilter] = useState<FilterKey>('tutti');
 
     // ── Fetch studenti reali dall'anagrafica Supabase ──
     // Restituisce null in caso di errore (rete o HTTP), mai eccezioni.
     const fetchStudents = useCallback(async (): Promise<Student[] | null> => {
-        const res = await fetch(`/api/diary/students?sezione=${SEZIONE}`).catch(() => null);
+        const res = await fetch(`/api/diary/students?sezione=${encodeURIComponent(sezione)}`).catch(() => null);
         if (!res?.ok) return null;
         const data = await res.json().catch(() => null);
         if (Array.isArray(data)) {
@@ -206,11 +206,11 @@ function TodayView() {
             }));
         }
         return [];
-    }, []);
+    }, [sezione]);
 
     // ── Fetch presenze del giorno selezionato da Supabase ──
     const fetchTodayRecords = useCallback(async () => {
-        const res = await fetch(`/api/attendance/daily?data=${selectedDate}&sezione=${SEZIONE}`).catch(() => null);
+        const res = await fetch(`/api/attendance/daily?data=${selectedDate}&sezione=${encodeURIComponent(sezione)}`).catch(() => null);
         const rows = res?.ok ? await res.json().catch(() => null) : null;
         const map: Record<string, AttendanceRecord> = {};
         if (Array.isArray(rows)) {
@@ -233,17 +233,17 @@ function TodayView() {
             });
         }
         setRecords(map);
-    }, [selectedDate]);
+    }, [selectedDate, sezione]);
 
     // ── Fetch delegati ──
     const fetchDelegates = useCallback(async () => {
         try {
-            const res = await fetch(`/api/attendance/delegates?sezione=${SEZIONE}`);
+            const res = await fetch(`/api/attendance/delegates?sezione=${encodeURIComponent(sezione)}`);
             if (!res.ok) return;
             const data = await res.json();
             if (Array.isArray(data)) setDelegates(data);
         } catch { /* non bloccante */ }
-    }, []);
+    }, [sezione]);
 
     // ── Caricamento iniziale ──
     const loadAll = useCallback(async () => {
@@ -266,14 +266,6 @@ function TodayView() {
 
     useEffect(() => {
         loadAll();
-        const onOnline = () => setIsOffline(false);
-        const onOffline = () => setIsOffline(true);
-        window.addEventListener('online', onOnline);
-        window.addEventListener('offline', onOffline);
-        return () => {
-            window.removeEventListener('online', onOnline);
-            window.removeEventListener('offline', onOffline);
-        };
     }, [loadAll]);
 
     // ── Cambia stato — scrive DIRETTAMENTE su Supabase ──
@@ -392,7 +384,7 @@ function TodayView() {
             <div className="flex flex-col items-center justify-center gap-4 py-20">
                 <span className="text-5xl opacity-30">👶</span>
                 <p className="text-center font-maven text-sm text-kidville-muted">
-                    Nessun alunno nella sezione <strong>{SEZIONE}</strong>.<br />
+                    Nessun alunno nella sezione <strong>{sezione}</strong>.<br />
                     Verifica che gli alunni abbiano la sezione corretta in anagrafica.
                 </p>
             </div>
@@ -424,7 +416,7 @@ function TodayView() {
             </div>
 
             {/* Card riepilogo + chip filtro */}
-            <Summary counts={counts} total={students.length} filter={filter} onFilter={setFilter} />
+            <Summary counts={counts} total={students.length} filter={filter} onFilter={setFilter} sezione={sezione} />
 
             {/* Lista studenti (filtrata) */}
             <div className="flex flex-col gap-2">
@@ -461,9 +453,28 @@ function TodayView() {
 
 // ─── Pagina Principale ────────────────────────────────────────────────────────
 
-export default function TeacherAttendancePage() {
+function TeacherAttendanceContent() {
+    const { userId: teacherId } = useSessionIdentity();
     const [activeTab, setActiveTab] = useState<Tab>('oggi');
     const [prevTab, setPrevTab] = useState<Tab>('oggi');
+
+    // Sezione REALE del docente (niente 'Girasoli' hardcoded): da educator-sections.
+    const [sezione, setSezione] = useState('');
+    const [availableSections, setAvailableSections] = useState<string[]>([]);
+    const [sectionsLoaded, setSectionsLoaded] = useState(false);
+
+    useEffect(() => {
+        if (!teacherId) return;
+        fetch(`/api/educator-sections?userId=${teacherId}`)
+            .then((r) => (r.ok ? r.json() : null))
+            .then((d) => {
+                const secs: string[] = d?.sectionNames ?? [];
+                setAvailableSections(secs);
+                if (secs.length > 0) setSezione((prev) => prev || secs[0]);
+            })
+            .catch(() => {})
+            .finally(() => setSectionsLoaded(true));
+    }, [teacherId]);
 
     const direction = TABS.findIndex(t => t.id === activeTab) - TABS.findIndex(t => t.id === prevTab);
 
@@ -480,9 +491,24 @@ export default function TeacherAttendancePage() {
                 <p className="font-barlow text-[11px] font-bold uppercase tracking-[0.14em] text-kidville-yellow">Registro</p>
                 <h1 className="font-barlow text-3xl font-black uppercase tracking-wide text-white">Appello</h1>
                 <span className="mt-2 inline-flex items-center gap-1.5 rounded-pill bg-white/15 px-2.5 py-1 font-maven text-xs font-semibold text-white backdrop-blur">
-                    <Users size={13} /> Sezione {SEZIONE}
+                    <Users size={13} /> Sezione {sezione || '…'}
                 </span>
             </div>
+
+            {/* ── Selettore sezione (solo se il docente ne ha più d'una) ── */}
+            {availableSections.length > 1 && (
+                <div className="mt-3 flex items-center gap-2">
+                    <label htmlFor="att-section-select" className="font-barlow text-xs font-bold uppercase tracking-wide text-kidville-muted">Sezione:</label>
+                    <select
+                        id="att-section-select"
+                        value={sezione}
+                        onChange={(e) => setSezione(e.target.value)}
+                        className="rounded-xl border border-kidville-line bg-white px-3 py-1.5 font-barlow text-sm font-bold uppercase text-kidville-green shadow-sm focus:outline-none"
+                    >
+                        {availableSections.map((sec) => <option key={sec} value={sec}>{sec}</option>)}
+                    </select>
+                </div>
+            )}
 
             {/* ── Tab Switcher ── */}
             <div className="mt-4 inline-flex gap-1 rounded-pill bg-white p-1 shadow-sm">
@@ -513,25 +539,49 @@ export default function TeacherAttendancePage() {
 
             {/* ── Tab Content ── */}
             <div className="relative mt-4 overflow-hidden">
-                <AnimatePresence initial={false} custom={direction} mode="wait">
-                    <motion.div
-                        key={activeTab}
-                        custom={direction}
-                        variants={tabContentVariants}
-                        initial="enter"
-                        animate="center"
-                        exit="exit"
-                    >
-                        {activeTab === 'oggi' && <TodayView />}
-
-                        {activeTab === 'mese' && (
-                            <div className="overflow-x-auto rounded-3xl border border-kidville-line bg-white p-4 shadow-sm">
-                                <MonthlyAttendanceTable sezione={SEZIONE} />
-                            </div>
+                {!sezione ? (
+                    <div className="flex flex-col items-center justify-center gap-4 py-20">
+                        {sectionsLoaded ? (
+                            <p className="text-center font-maven text-sm text-kidville-muted">
+                                Nessuna sezione assegnata al tuo profilo.
+                            </p>
+                        ) : (
+                            <Loader2 size={32} className="animate-spin text-kidville-green" />
                         )}
-                    </motion.div>
-                </AnimatePresence>
+                    </div>
+                ) : (
+                    <AnimatePresence initial={false} custom={direction} mode="wait">
+                        <motion.div
+                            key={activeTab}
+                            custom={direction}
+                            variants={tabContentVariants}
+                            initial="enter"
+                            animate="center"
+                            exit="exit"
+                        >
+                            {activeTab === 'oggi' && <TodayView sezione={sezione} />}
+
+                            {activeTab === 'mese' && (
+                                <div className="overflow-x-auto rounded-3xl border border-kidville-line bg-white p-4 shadow-sm">
+                                    <MonthlyAttendanceTable sezione={sezione} />
+                                </div>
+                            )}
+                        </motion.div>
+                    </AnimatePresence>
+                )}
             </div>
         </div>
+    );
+}
+
+export default function TeacherAttendancePage() {
+    return (
+        <Suspense fallback={
+            <div className="mx-auto flex min-h-[60vh] max-w-[460px] flex-col items-center justify-center gap-4 px-4">
+                <Loader2 size={32} className="animate-spin text-kidville-green" />
+            </div>
+        }>
+            <TeacherAttendanceContent />
+        </Suspense>
     );
 }

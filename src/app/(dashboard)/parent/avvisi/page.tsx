@@ -11,7 +11,9 @@ function ParentAvvisiContent() {
     const [avvisi, setAvvisi] = useState<Avviso[]>([]);
     const [loading, setLoading] = useState(true);
     const [studentName, setStudentName] = useState<string | null>(null);
-    const [classe, setClasse] = useState<string>('Girasoli');
+    // Nessun default hardcoded (era 'Girasoli', sezione infanzia): la classe reale
+    // arriva da diary/students del figlio; fino ad allora loadAvvisi attende.
+    const [classe, setClasse] = useState<string>('');
 
     // 1. Carica info studente (per ricavare nome e classe)
     useEffect(() => {
@@ -31,7 +33,7 @@ function ParentAvvisiContent() {
 
     // 2. Carica gli avvisi per la classe dello studente
     const loadAvvisi = useCallback(async () => {
-        if (!ready || !parentId || !studentId) return;
+        if (!ready || !parentId || !studentId || !classe) return;
         try {
             const res = await fetch(`/api/avvisi?classe=${classe}&parentId=${parentId}&studentId=${studentId}`);
             if (res.ok) setAvvisi(await res.json());

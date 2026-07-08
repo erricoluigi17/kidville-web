@@ -22,7 +22,7 @@ interface Contact {
 
 // Identità dalla sessione (URL → localStorage → /api/me), senza fallback demo (M4).
 function TeacherChatContent() {
-    const { userId: teacherId } = useSessionIdentity();
+    const { userId: teacherId, ready } = useSessionIdentity();
 
     const [threads, setThreads] = useState<ChatThread[]>([]);
     const [selectedThread, setSelectedThread] = useState<ChatThread | null>(null);
@@ -51,14 +51,14 @@ function TeacherChatContent() {
 
     // Carica thread
     const loadThreads = useCallback(async () => {
-        if (!teacherId) return; // identità non risolta: lo spinner resta
+        if (!ready || !teacherId) return; // in risoluzione o non autenticato (redirect dell'hook)
         try {
             const res = await fetch(`/api/chat/threads?userId=${teacherId}`).catch(() => null);
             if (res?.ok) setThreads(await res.json());
         } finally {
             setLoading(false);
         }
-    }, [teacherId]);
+    }, [ready, teacherId]);
 
     useEffect(() => { loadThreads(); }, [loadThreads]);
 
@@ -251,7 +251,10 @@ function TeacherChatContent() {
     };
 
 
-    if (loading || !teacherId) {
+    // Skeleton finché l'identità non è risolta e i thread non sono caricati.
+    // `loading` viene azzerato da loadThreads appena l'identità è valida, quindi
+    // niente skeleton infinito; con identità risolta-a-null l'hook reindirizza.
+    if (!ready || loading || !teacherId) {
         return <ChatListSkeleton />;
     }
 

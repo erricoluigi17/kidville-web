@@ -7,8 +7,6 @@ import {
 } from 'lucide-react';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 
-const CLASS_NAME = 'Girasoli';
-
 interface StudentSemaforo {
   student_id: string;
   nome: string;
@@ -42,6 +40,8 @@ interface MedicalCertificate {
 // Identità dalla sessione (URL → localStorage → /api/me), senza fallback demo (M4).
 export default function TeacherModulisticaPage() {
   const { userId: teacherId } = useSessionIdentity();
+  const [className, setClassName] = useState('');
+  const [availableSections, setAvailableSections] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState<'semaforo' | 'medici'>('semaforo');
   const [forms, setForms] = useState<FormTemplate[]>([]);
   const [selectedFormId, setSelectedFormId] = useState('');
@@ -62,6 +62,19 @@ export default function TeacherModulisticaPage() {
   // Notifications
   const [toast, setToast] = useState('');
 
+  // Sezione reale del docente (niente 'Girasoli' hardcoded): da educator-sections.
+  useEffect(() => {
+    if (!teacherId) return;
+    fetch(`/api/educator-sections?userId=${teacherId}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        const secs: string[] = d?.sectionNames ?? [];
+        setAvailableSections(secs);
+        if (secs.length > 0) setClassName((prev) => prev || secs[0]);
+      })
+      .catch(() => {});
+  }, [teacherId]);
+
   const fetchForms = useCallback(async () => {
     if (!teacherId) return; // identità non risolta: lo spinner resta
     try {
@@ -69,7 +82,7 @@ export default function TeacherModulisticaPage() {
       const data = await res?.json().catch(() => null);
       if (Array.isArray(data)) {
         // Filter forms assigned to this teacher's class
-        const classForms = data.filter((f: FormTemplate) => f.target_classes?.includes(CLASS_NAME));
+        const classForms = data.filter((f: FormTemplate) => f.target_classes?.includes(className));
         setForms(classForms);
         if (classForms.length > 0) {
           setSelectedFormId(classForms[0].id);
@@ -78,30 +91,30 @@ export default function TeacherModulisticaPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [teacherId]);
+  }, [teacherId, className]);
 
   const fetchSemaforo = useCallback(async () => {
     if (!selectedFormId) return;
     try {
-      const res = await fetch(`/api/teacher/modulistica?form_id=${selectedFormId}&class_name=${CLASS_NAME}`).catch(() => null);
+      const res = await fetch(`/api/teacher/modulistica?form_id=${selectedFormId}&class_name=${className}`).catch(() => null);
       const data = await res?.json().catch(() => null);
       if (Array.isArray(data)) setStudents(data);
     } finally {
       // errore di rete ⇒ stato invariato (nessun loading dedicato)
     }
-  }, [selectedFormId]);
+  }, [selectedFormId, className]);
 
   const fetchMedicalCertificates = useCallback(async () => {
     if (!teacherId) return; // identità non risolta: lo spinner resta
     try {
-      const res = await fetch(`/api/teacher/medical-certificates?class_name=${CLASS_NAME}`, { headers: { 'x-user-id': teacherId } }).catch(() => null);
+      const res = await fetch(`/api/teacher/medical-certificates?class_name=${className}`, { headers: { 'x-user-id': teacherId } }).catch(() => null);
       const data = await res?.json().catch(() => null);
       const rows = Array.isArray(data) ? data : (data?.data ?? []);
       setMedCerts(rows);
     } finally {
       // errore di rete ⇒ stato invariato (nessun loading dedicato)
     }
-  }, [teacherId]);
+  }, [teacherId, className]);
 
   useEffect(() => {
     fetchForms();
@@ -187,8 +200,22 @@ export default function TeacherModulisticaPage() {
         <h1 className="flex items-center gap-2 font-barlow text-3xl font-black uppercase tracking-wide text-white">
           <FileText size={26} className="text-kidville-yellow" /> Modulistica
         </h1>
-        <p className="mt-1.5 font-maven text-xs text-white/80">Consensi e certificati · Sezione Girasoli</p>
+        <p className="mt-1.5 font-maven text-xs text-white/80">Consensi e certificati · Sezione {className || '…'}</p>
       </div>
+
+      {availableSections.length > 1 && (
+        <div className="mt-3 flex items-center gap-2">
+          <label htmlFor="mod-section-select" className="font-barlow text-xs font-bold uppercase tracking-wide text-kidville-muted">Sezione:</label>
+          <select
+            id="mod-section-select"
+            value={className}
+            onChange={(e) => setClassName(e.target.value)}
+            className="rounded-xl border border-kidville-line bg-white px-3 py-1.5 font-barlow text-sm font-bold uppercase text-kidville-green shadow-sm focus:outline-none"
+          >
+            {availableSections.map((sec) => <option key={sec} value={sec}>{sec}</option>)}
+          </select>
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="mt-5 mb-6 flex gap-4 border-b border-kidville-line">

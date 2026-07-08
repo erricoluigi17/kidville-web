@@ -44,7 +44,7 @@ interface DashboardData {
 const euroFmt = new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 });
 
 function AdminDashboardInner() {
-  const { userId } = useSessionIdentity();
+  const { userId, ready } = useSessionIdentity();
   // Identità di sessione (M4): con identità non risolta il parametro viene
   // omesso (href invariato), mai `userId=null`.
   const withUser = (href: string) => (userId ? `${href}${href.includes('?') ? '&' : '?'}userId=${userId}` : href);
@@ -54,7 +54,7 @@ function AdminDashboardInner() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!userId) return; // identità non risolta: lo skeleton (loading=true) resta attivo
+    if (!ready || !userId) return; // in risoluzione o non autenticato (gestito nel render)
     let active = true;
     fetch(`/api/admin/dashboard?userId=${userId}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error('Errore caricamento'))))
@@ -66,7 +66,7 @@ function AdminDashboardInner() {
     return () => {
       active = false;
     };
-  }, [userId]);
+  }, [ready, userId]);
 
   const kpis = useMemo(() => {
     if (!data) return [];
@@ -179,14 +179,14 @@ function AdminDashboardInner() {
         </div>
       </AuroraHeader>
 
-      {error && (
+      {(error || (ready && !userId)) && (
         <div className="mt-6 rounded-2xl border border-kidville-error/30 bg-kidville-error-soft p-4 font-maven text-sm text-kidville-error">
-          {error}. Verifica di essere autenticato come staff (parametro <code>userId</code>).
+          {error ? `${error}. Verifica di essere autenticato come staff.` : 'Sessione non valida: effettua di nuovo l\'accesso.'}
         </div>
       )}
 
       {/* KPI */}
-      {loading ? (
+      {loading && !(ready && !userId) ? (
         <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {Array.from({ length: 6 }).map((_, i) => (
             <div key={i} className="h-32 rounded-2xl bg-kidville-white/60 animate-pulse border border-kidville-line" />

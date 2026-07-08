@@ -67,6 +67,16 @@ Chiusura dei rilievi della campagna 360° (bloccanti sicurezza + gravi + medi + 
 - **E5 — Auth-bypass**: chiuso dal passaggio a `requireUser`/`resolveIdentity`.
 - **Verifica**: `80-adversarial.spec.ts` riscritto con asserzioni reali (fallisce se una violazione persiste) + copertura E2/E4/extra-E1 → **60/60 verdi (30 loop × 2 test)**. Nuovo unit test `require-parent.test.ts`; aggiornati `competenze/fea-giustifica/fea-pagella-firma/orario/presenze` (mock del nuovo gate). Gate: `eslint . --max-warnings 0` = 0 · `vitest run` = **798/798**.
 
+### BUCKET B — Gravi funzionali ✅
+- **E6/E7/E8 — Sezione "Girasoli" hardcoded** rimossa: `teacher/attendance` e `teacher/modulistica` derivano la sezione reale da `/api/educator-sections` (+ selettore multi-sezione); `parent/avvisi` non parte più da 'Girasoli' (attende la classe del figlio).
+- **E9 — Certificati medici**: `/api/teacher/medical-certificates` aperto al DOCENTE (`requireDocente` + scope sezione/plesso + audit) invece di `requireStaff` → niente più 403 sul tab certificati.
+- **E10 — Hydration gallery/attendance**: nuovo hook `useOnlineStatus` (`useSyncExternalStore`, SSR-safe) al posto di `useState(navigator.onLine)` → niente mismatch né setState-in-effect.
+- **E11 — Locker `alunno_id=null`**: guardia identità in `fetchData` (+ empty-state "nessun bambino collegato") → niente 400/500.
+- **E12 — `/api/parent/submissions` 500**: GET reso difensivo (niente embed FK annidato; arricchimento con query separate) → onboarding/modulistica non vanno più in 500.
+- **E13/E14 — Chat docente/genitore bloccata su skeleton**: consumo di `ready` di `useSessionIdentity` + `loadThreads` che azzera `loading` con identità valida → niente skeleton infinito, titolo sempre visibile dopo il caricamento.
+- **E15 — Dashboard direzione, 6 KPI vuote**: consumo di `ready` (skeleton solo durante la risoluzione identità; stato "sessione non valida" esplicito) → i KPI si popolano.
+- **Verifica**: nuovo `81-copertura-bucketB.spec.ts` (docente1/genitore1/segreteria; backend API + frontend/hydration/no-5xx) → **90/90 verdi (30 loop × 3 test)**. Gate: `eslint` 0 · `vitest` 798/798 · `build` ok.
+
 ---
 
 ## 🗓️ Changelog — Campagna Test 360° ULTRA Primaria 2026-07-08 (branch `feat/logout-anagrafica-fullscreen`)

@@ -22,7 +22,7 @@ interface Contact {
 
 // Identità dalla sessione (URL → localStorage → /api/me), senza fallback demo (M4).
 function ParentChatContent() {
-    const { userId: parentId } = useSessionIdentity();
+    const { userId: parentId, ready } = useSessionIdentity();
 
     const [threads, setThreads] = useState<ChatThread[]>([]);
     const [selectedThread, setSelectedThread] = useState<ChatThread | null>(null);
@@ -59,7 +59,7 @@ function ParentChatContent() {
     });
 
     const loadThreads = useCallback(async () => {
-        if (!parentId) return; // identità non risolta: lo spinner resta
+        if (!ready || !parentId) return; // in risoluzione o non autenticato (redirect dell'hook)
         try {
             const res = await fetch(`/api/chat/threads?userId=${parentId}`).catch(() => null);
             if (res?.ok) {
@@ -71,7 +71,7 @@ function ParentChatContent() {
         } finally {
             setLoading(false);
         }
-    }, [parentId]);
+    }, [ready, parentId]);
 
     useEffect(() => { loadThreads(); }, [loadThreads]);
 
@@ -289,7 +289,10 @@ function ParentChatContent() {
     // Rimuovere il calcolo reattivo: firstUnreadId è ora uno stato
     // gestito da loadMessages e resettato da handleSendMessage/handleSelectThread
 
-    if (loading || !parentId) {
+    // Skeleton finché l'identità non è risolta e i thread non sono caricati.
+    // `loading` viene azzerato da loadThreads appena l'identità è valida, quindi
+    // niente skeleton infinito; con identità risolta-a-null l'hook reindirizza.
+    if (!ready || loading || !parentId) {
         return <ChatListSkeleton />;
     }
 

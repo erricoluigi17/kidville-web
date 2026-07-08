@@ -405,7 +405,7 @@ function ParentDiaryContent() {
     }
 
     return (
-        <div className="w-full max-w-lg mx-auto p-4 sm:p-6 pb-16">
+        <div className="w-full max-w-lg mx-auto p-4 sm:p-6 pb-24">
 
             {/* Header: titolo + chip nome bambino */}
             <div className="flex items-start justify-between mb-6">

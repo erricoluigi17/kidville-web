@@ -78,7 +78,7 @@ function ParentAvvisiContent() {
     ).length;
 
     return (
-        <div className="max-w-lg mx-auto p-4 sm:p-6 pb-16">
+        <div className="max-w-lg mx-auto p-4 sm:p-6 pb-24">
             {/* Header */}
             <div className="flex items-start justify-between mb-6">
                 <div>

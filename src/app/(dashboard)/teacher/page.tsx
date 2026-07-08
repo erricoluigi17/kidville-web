@@ -50,6 +50,14 @@ function relDate(iso: string) {
   }
 }
 
+// Saluto neutro (non di genere) e coerente con l'ora, come lato genitore.
+function greetingByHour() {
+  const h = new Date().getHours();
+  if (h < 12) return 'Buongiorno';
+  if (h < 18) return 'Buon pomeriggio';
+  return 'Buonasera';
+}
+
 function TeacherDashboardInner() {
   const { userId } = useSessionIdentity();
   // La home docente semina i link dell'app: con identità non risolta il
@@ -136,7 +144,7 @@ function TeacherDashboardInner() {
         <div className="relative z-10 max-w-[68%]">
           <p className="font-maven text-xs font-semibold capitalize text-kidville-green/70">{oggi}</p>
           <h1 className="mt-1 font-barlow text-3xl font-black uppercase leading-[0.96] text-kidville-green">
-            Buongiorno,<br />maestra!
+            {greetingByHour()}!
           </h1>
           <p className="mt-1.5 font-maven text-xs font-semibold text-kidville-green/75">
             {activeSection ? `Sezione ${activeSection} · ${studentCount} bambini` : 'La tua giornata in sezione'}

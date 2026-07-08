@@ -133,6 +133,7 @@ export default function RegistroPage() {
             const riga = rigaDi(camp.ordine);
             const plannedId = plannedMateriaId(camp);
             const plannedName = orarioCelle.find((o) => o.campanella_id === camp.id)?.materie?.nome;
+            const materiaNome = riga?.materie?.nome || riga?.materia || plannedName;
             const firmata = (riga?.firme_docenti?.length ?? 0) > 0;
             return (
               <li key={camp.id} className="rounded-card border border-kidville-line p-3">
@@ -141,8 +142,8 @@ export default function RegistroPage() {
                     <div className="flex items-center gap-2">
                       <span className="font-barlow text-sm font-bold text-kidville-green">{camp.ordine}ª ora</span>
                       <span className="text-xs text-kidville-muted">{camp.ora_inizio?.slice(0, 5)}–{camp.ora_fine?.slice(0, 5)}</span>
-                      <span className="font-maven text-sm text-kidville-ink">
-                        · {riga?.materie?.nome || riga?.materia || plannedName || 'materia non assegnata'}
+                      <span className={`font-maven text-sm ${materiaNome ? 'text-kidville-ink' : 'italic text-kidville-muted'}`}>
+                        · {materiaNome || 'orario da completare'}
                       </span>
                     </div>
                     {riga?.argomento && <p className="mt-1 font-maven text-sm text-kidville-ink">{riga.argomento}</p>}

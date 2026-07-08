@@ -69,7 +69,7 @@ export async function GET(request: Request) {
     const from = q.data.from ?? today
     const to = q.data.to ?? today
 
-    const [{ data: pren }, saldo] = await Promise.all([
+    const [{ data: pren }, saldo, { data: al }] = await Promise.all([
       supabase
         .from('mensa_prenotazioni')
         .select('data, stato, origine')
@@ -77,9 +77,18 @@ export async function GET(request: Request) {
         .gte('data', from).lte('data', to)
         .order('data', { ascending: true }),
       saldoCorrente(supabase, alunnoId),
+      supabase.from('alunni').select('scuola_id').eq('id', alunnoId).maybeSingle(),
     ])
 
-    return NextResponse.json({ success: true, data: { saldo, prenotazioni: pren ?? [] } })
+    // Orario limite (cutoff) per prenotare/disdire "oggi": mostrato in UI così
+    // il genitore lo conosce prima di provare (config per scuola, default 09:30).
+    let cutoffOra: string | null = null
+    if (al?.scuola_id) {
+      const config = await loadMensaConfig(supabase, al.scuola_id as string)
+      cutoffOra = config.cutoffOra
+    }
+
+    return NextResponse.json({ success: true, data: { saldo, prenotazioni: pren ?? [], cutoffOra } })
   } catch (err) {
     console.error('Errore API GET mensa/prenotazioni:', err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })

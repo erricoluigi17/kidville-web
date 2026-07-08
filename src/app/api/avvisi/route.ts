@@ -201,7 +201,7 @@ export async function POST(request: Request) {
         }
 
         // Insert resiliente alla colonna mancante: su DB E2E CI privo della
-        // migrazione 20260708150000 (form_model_id) → PGRST204/42703 → la rimuove
+        // migrazione 20260708174440 (form_model_id) → PGRST204/42703 → la rimuove
         // e riprova. In prod la colonna esiste → nessun retry.
         const avvisoRecord: Record<string, unknown> = {
             author_id,

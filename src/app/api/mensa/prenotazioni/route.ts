@@ -8,6 +8,7 @@ import { notificaSaldoBasso } from '@/lib/mensa/notify'
 import { controllaAllergie } from '@/lib/mensa/allergie-check'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid, zDataYMD } from '@/lib/validation/common'
+import { genitoreHasFiglio } from '@/lib/anagrafiche/legami'
 
 const getQuerySchema = z.object({
   alunno_id: zUuid,
@@ -27,12 +28,9 @@ const deleteQuerySchema = z.object({
   data: zDataYMD,
 })
 
-// Verifica che un genitore sia legato all'alunno.
+// Verifica che un genitore sia legato all'alunno (union runtime+anagrafica).
 async function genitoreDiAlunno(supabase: Awaited<ReturnType<typeof createAdminClient>>, genitoreId: string, alunnoId: string) {
-  const { data } = await supabase
-    .from('legame_genitori_alunni').select('alunno_id')
-    .eq('genitore_id', genitoreId).eq('alunno_id', alunnoId).maybeSingle()
-  return !!data
+  return genitoreHasFiglio(supabase, genitoreId, alunnoId)
 }
 
 async function saldoCorrente(supabase: Awaited<ReturnType<typeof createAdminClient>>, alunnoId: string): Promise<number> {

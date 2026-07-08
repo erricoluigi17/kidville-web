@@ -45,10 +45,16 @@ function Inner() {
         </h1>
         <p className="font-maven text-xs text-kidville-muted mt-1">Prenota il pranzo e consulta il menù della settimana.</p>
       </header>
-      {ready && parentId && studentId
-        ? <><AllergyBanner studentId={studentId} parentId={parentId} /><MensaCalendar userId={parentId} studentId={studentId} /></>
-        : <div className="py-12 flex justify-center"><div className="w-7 h-7 border-[3px] border-kidville-green/20 border-t-kidville-green rounded-full animate-spin" /></div>
-      }
+      {!ready || !parentId ? (
+        <div className="py-12 flex justify-center"><div className="w-7 h-7 border-[3px] border-kidville-green/20 border-t-kidville-green rounded-full animate-spin" /></div>
+      ) : !studentId ? (
+        <div className="rounded-2xl border border-kidville-line bg-white px-4 py-6 text-center">
+          <p className="font-maven text-sm text-kidville-ink">Nessun alunno collegato al tuo account.</p>
+          <p className="font-maven text-xs text-kidville-muted mt-1">Contatta la segreteria per collegare tuo figlio e usare la mensa.</p>
+        </div>
+      ) : (
+        <><AllergyBanner studentId={studentId} parentId={parentId} /><MensaCalendar userId={parentId} studentId={studentId} /></>
+      )}
     </div>
   );
 }

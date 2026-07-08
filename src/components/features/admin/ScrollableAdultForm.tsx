@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { UserPlus, Shield, Mail, Phone, Loader2, MapPin, Plus, Trash2, Fingerprint } from 'lucide-react';
 import { fetchFiscalCode } from '@/lib/utils/fiscalCodeApi';
 import { z } from 'zod';
+import { DateField } from '@/components/ui/DateField';
 
 const adultSchema = z.object({
     first_name: z.string().min(2, "Almeno 2 caratteri"),
@@ -226,7 +227,7 @@ export const ScrollableAdultForm = forwardRef<AdultFormHandle, { defaultRole?: s
                     <div className="grid grid-cols-2 gap-6">
                         <div>
                             <label className="block text-sm font-bold text-kidville-green/80 mb-1">Data di Nascita</label>
-                            <input type="date" name="birth_date" value={formData.birth_date} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none" style={{ colorScheme: 'light' }} />
+                            <DateField name="birth_date" value={formData.birth_date} onChange={(iso) => handleInputChange({ target: { name: 'birth_date', value: iso } } as unknown as React.ChangeEvent<HTMLInputElement>)} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none" />
                         </div>
                         <div>
                             <label className="block text-sm font-bold text-kidville-green/80 mb-1">Cittadinanza</label>

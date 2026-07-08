@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { ClipboardList, AlertTriangle, Users } from 'lucide-react';
+import { DateField } from '@/components/ui/DateField';
 import { allergeneLabel, allergeneEmoji } from '@/lib/mensa/allergeni';
 
 interface Props {
@@ -55,7 +56,7 @@ export function MensaReport({ userId, scuolaId, sezione, sezioni }: Props) {
       <div className="flex flex-wrap items-end gap-3 mb-4">
         <div>
           <label className="font-maven text-xs text-kidville-muted block mb-1">Data</label>
-          <input type="date" value={data} onChange={e => setData(e.target.value)}
+          <DateField value={data} onChange={setData}
             className="border-2 border-kidville-line rounded-lg px-3 py-1.5 font-maven text-sm text-kidville-green" />
         </div>
         {!sezione && sezioni && sezioni.length > 0 && (

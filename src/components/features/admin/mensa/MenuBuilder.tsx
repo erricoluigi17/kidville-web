@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { CalendarRange, Save, Plus, Trash2, CalendarOff, UtensilsCrossed } from 'lucide-react';
+import { DateField } from '@/components/ui/DateField';
 import { SaveCheck } from '@/components/ui/SaveConfirmation';
 import { ALLERGENI } from '@/lib/mensa/allergeni';
 import { SezioniMultiSelect } from '@/components/features/admin/SezioniMultiSelect';
@@ -34,7 +35,7 @@ function PortataEditor({
       <p className="font-barlow text-[11px] uppercase text-kidville-muted mb-1.5">{label}</p>
       <input value={nome} onChange={e => onNome(e.target.value)} placeholder="Nome piatto"
         className="w-full border-2 border-kidville-line rounded-lg px-2 py-1 font-maven text-xs text-kidville-green focus:border-kidville-green focus:outline-none mb-1.5" />
-      <input value={ingredienti} onChange={e => onIngredienti(e.target.value)} placeholder="Ingredienti (es. pasta, pomodoro, basilico)"
+      <input value={ingredienti} onChange={e => onIngredienti(e.target.value)} placeholder="Ingredienti…"
         className="w-full border-2 border-kidville-line rounded-lg px-2 py-1 font-maven text-[11px] text-kidville-ink focus:border-kidville-green focus:outline-none mb-2" />
       <div className="flex flex-wrap gap-1">
         {ALLERGENI.map(a => {
@@ -299,7 +300,7 @@ export function MenuBuilder({ userId, scuolaId }: Props) {
           <div className="flex flex-wrap items-end gap-2">
             <div>
               <label className="font-maven text-[11px] text-kidville-muted block mb-0.5">Data</label>
-              <input type="date" value={ovData} onChange={e => setOvData(e.target.value)}
+              <DateField value={ovData} onChange={setOvData}
                 className="border-2 border-kidville-line rounded-lg px-2 py-1 font-maven text-xs text-kidville-green" />
             </div>
             <label className="flex items-center gap-1.5 font-maven text-xs text-kidville-green py-1.5">

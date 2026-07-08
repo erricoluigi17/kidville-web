@@ -82,6 +82,15 @@ Chiusura dei rilievi della campagna 360° (bloccanti sicurezza + gravi + medi + 
 - **E18 — Default `school_type`**: `POST /api/admin/sections` ora valida `school_type ∈ {nido,infanzia,primaria}` (zod enum) → niente valori spazzatura; default 'infanzia' solo se omesso (la UI passa sempre il grado, `SectionsView`).
 - **Verifica**: `82-copertura-bucketC.spec.ts` (segreteria: sezioni→TEST 1A primaria, roster→11 alunni, school_type invalido→400) → **90/90 verdi (30 loop × 3 test)**. Gate: `eslint` 0 · `vitest` 798/798.
 
+### BUCKET D — Medi UI/i18n + testuali ✅
+- **E19 — i18n date**: nuovo componente `DateField` (gg/mm/aaaa deterministico, SSR-safe, senza setState-in-effect) + helper puri `lib/format/data` (isoToIt/itToIso/maskItDate con validazione di calendario) → sostituiti gli `<input type=date>` in anagrafica alunno/genitore (`Scrollable{Student,Adult}Form`), mensa eccezioni (`MenuBuilder`), impostazioni mensa (`MensaSettings`), report cucina (`MensaReport`).
+- **E20 — Placeholder mensa troncato**: placeholder ingredienti accorciato ("Ingredienti…") → niente clipping "…basil".
+- **E21 — Refuso "primaria.La"**: già corretto nel sorgente (lo spazio dopo `</strong>` è preservato da JSX) — nessun intervento.
+- **E22 — Empty-state scrutinio**: messaggio consapevole del ruolo (staff → "configuralo da Impostazioni → Didattica primaria"; docente → "chiedi alla segreteria") invece del circolare unico.
+- **E23 — Banner ClasseShell ripetuto**: mostrato una sola volta (solo su Panoramica), non su ogni tab della classe.
+- **Verifica**: `format-data.test.ts` + `83-copertura-bucketD.spec.ts` (report cucina gg/mm/aaaa; banner solo Panoramica) → **60/60 verdi (30 loop × 2 test)**. Gate: `eslint` 0 · `vitest` **801/801** · `build` ok.
+- **Rinviati ai residui** (prompt atomico): **E24** (diario 0-6 con voci nido NANNA/BAGNO esposto in primaria — fix architetturale su componente condiviso nido/infanzia: non esporlo in primaria o rendere le routine configurabili per grado) e **E25** (minori testuali da localizzare con certezza); estetici puri fuori scope per decisione utente.
+
 ---
 
 ## 🗓️ Changelog — Campagna Test 360° ULTRA Primaria 2026-07-08 (branch `feat/logout-anagrafica-fullscreen`)

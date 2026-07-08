@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { Settings, Save, Plus, Trash2, ChevronDown, ChevronUp, UtensilsCrossed, BookOpen } from 'lucide-react';
+import { DateField } from '@/components/ui/DateField';
 import { SaveCheck } from '@/components/ui/SaveConfirmation';
 
 interface Props { userId: string; scuolaId: string }
@@ -292,10 +293,9 @@ export function MensaSettings({ userId, scuolaId }: Props) {
                   </div>
                   <div>
                     <label className="font-maven text-[10px] text-kidville-muted block mb-0.5">Attivo dal</label>
-                    <input
-                      type="date"
+                    <DateField
                       value={newAttivoDal}
-                      onChange={e => setNewAttivoDal(e.target.value)}
+                      onChange={setNewAttivoDal}
                       className="border border-kidville-line rounded-lg px-2 py-1.5 font-maven text-xs text-kidville-green"
                     />
                   </div>

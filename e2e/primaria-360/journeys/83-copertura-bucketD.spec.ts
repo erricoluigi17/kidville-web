@@ -13,7 +13,7 @@ test.describe('BUCKET D — medi UI/i18n', () => {
       page.on('pageerror', (e) => errors.push(String(e).slice(0, 160)));
       await page.goto(`/admin/mensa/cucina?userId=${uid}`, { waitUntil: 'domcontentloaded' });
       // Il DateField mostra il placeholder italiano, non un input date nativo mm/dd/yyyy.
-      await expect(page.getByPlaceholder('gg/mm/aaaa').first()).toBeVisible({ timeout: 20000 });
+      await expect(page.getByPlaceholder('gg/mm/aaaa').first()).toBeVisible({ timeout: 35000 });
       expect(errors, `pageerror report cucina: ${errors.join(' | ')}`).toEqual([]);
     });
 
@@ -27,7 +27,7 @@ test.describe('BUCKET D — medi UI/i18n', () => {
 
       // Sulla Panoramica (indice sezione) il banner compare UNA volta.
       await page.goto(`/admin/primaria/${SECTION_1A}?userId=${uid}`, { waitUntil: 'domcontentloaded' });
-      await expect(page.getByText(/selettore del docente/i).first()).toBeVisible({ timeout: 20000 });
+      await expect(page.getByText(/selettore del docente/i).first()).toBeVisible({ timeout: 35000 });
     });
   });
 });

@@ -91,6 +91,15 @@ Chiusura dei rilievi della campagna 360° (bloccanti sicurezza + gravi + medi + 
 - **Verifica**: `format-data.test.ts` + `83-copertura-bucketD.spec.ts` (report cucina gg/mm/aaaa; banner solo Panoramica) → **60/60 verdi (30 loop × 2 test)**. Gate: `eslint` 0 · `vitest` **801/801** · `build` ok.
 - **Rinviati ai residui** (prompt atomico): **E24** (diario 0-6 con voci nido NANNA/BAGNO esposto in primaria — fix architetturale su componente condiviso nido/infanzia: non esporlo in primaria o rendere le routine configurabili per grado) e **E25** (minori testuali da localizzare con certezza); estetici puri fuori scope per decisione utente.
 
+### FASE FINALE — Verifica end-to-end ✅
+- **Copertura completa** (26 personas reali: 1 segreteria + 5 docenti + 20 genitori) `70/71/72` + `80-adversarial`: **28/28 verde**, **0 findings 5xx/403 spuri** (dopo il fix locker).
+- **Fix supplementare scoperto in verifica**: `/api/locker/requests` dava 500 perché la tabella `locker_requests` **non è migrata su prod** (esistono solo `armadietto`/`locker_config`) → degrado a vuoto su errore tabella-mancante (42P01).
+- **Loop 50× consecutivi verdi** per ogni dominio: adversarial **100/100**, BUCKET B **150/150**, C **150/150**, D **100/100** (i page-visit del cockpit richiedono ≤2 worker per evitare timeout di contesa; le sessioni Playwright vanno rigenerate ogni ~1h per la scadenza del token).
+- **Gate finali**: `eslint . --max-warnings 0` = 0 · `vitest run` = **801/801** · `npm run build` = ok.
+- **Report** `run/report-360.html` rigenerato: **bloccanti 0** (tutti i findings di sicurezza chiusi e verificati 50×). Marcati risolti nel `visual-findings` i 5 gravi (gallery/appello/chat×2/dashboard) + i medi Girasoli/mensa/scrutinio/banner/roster (17 findings). Residui nel report: **3 gravi STALI** da journey d'azione/nativo NON rieseguiti in questo ciclo (es. `60-fixup` mensa/prenotazioni 401; test nativi Appium) e **medi residui** (date ISO in pagamenti — fuori dal perimetro DateField; E24 diario; E25 minori testuali; estetici puri).
+
+**Stato**: bloccanti + gravi + medi in scope **RISOLTI e verificati** (adversarial 50× verde; copertura 26 personas senza 5xx/403; gate verdi). Codice su branch `feat/logout-anagrafica-fullscreen` (5 commit: 59461bb, 8ff4217, f7f52bd, e546e37 + fix locker), **NON mergiato/deployato**.
+
 ---
 
 ## 🗓️ Changelog — Campagna Test 360° ULTRA Primaria 2026-07-08 (branch `feat/logout-anagrafica-fullscreen`)

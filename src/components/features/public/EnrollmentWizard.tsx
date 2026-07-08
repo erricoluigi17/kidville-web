@@ -38,7 +38,7 @@ function resolveError(errors: FieldValues, path: string): unknown {
   )
 }
 
-export function EnrollmentWizard() {
+export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null } = {}) {
   const [childCount, setChildCount] = useState(1)
   const [adultCount, setAdultCount] = useState(1)
   const [step, setStep] = useState(0)
@@ -112,7 +112,7 @@ export function EnrollmentWizard() {
       const res = await fetch('/api/iscrizione', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ data }),
+        body: JSON.stringify({ data, scuola_id: scuolaId ?? undefined }),
       })
       const json = await res.json()
       if (!res.ok) throw new Error(json.error ?? 'Invio fallito')

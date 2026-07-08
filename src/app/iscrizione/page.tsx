@@ -5,6 +5,13 @@ export const metadata = {
   description: 'Modulo di iscrizione per nuovi alunni',
 }
 
-export default function IscrizionePage() {
-  return <EnrollmentWizard />
+// Link pubblico per-scuola: /iscrizione?scuola=<id>. Se assente, l'API risolve la
+// scuola reale del deployment (esclude la scuola di test E2E).
+export default async function IscrizionePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ scuola?: string }>
+}) {
+  const sp = await searchParams
+  return <EnrollmentWizard scuolaId={sp.scuola ?? null} />
 }

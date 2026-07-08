@@ -15,8 +15,9 @@ import { LogoutMenuButton } from '@/components/ui/LogoutMenuButton';
 // ============================================================================
 // TeacherBottomNav — bottom bar persistente del design (DR ins/screen-home.jsx
 // ShellTabBar + MenuSheet), mirror del pattern Genitore (parent/BottomNav).
-// Naviga SOLO rotte teacher esistenti; le voci del DR senza rotta (Mensa /
-// Calendario / Profilo) sono rese NON navigabili con badge "In arrivo".
+// Naviga SOLO rotte teacher esistenti; le voci del DR senza rotta (Calendario /
+// Profilo) sono rese NON navigabili con badge "In arrivo". La Mensa ha ora una
+// vista docente read-only (/teacher/mensa).
 // Propaga ?userId= su ogni href (le pagine teacher risolvono l'identità via query).
 // ============================================================================
 
@@ -59,7 +60,7 @@ export default function TeacherBottomNav() {
     {
       label: 'Vita scolastica',
       items: [
-        { id: 'mensa', label: 'Mensa', sub: 'Menù e diete', icon: UtensilsCrossed, href: null, tint: '#E6720A', soon: true },
+        { id: 'mensa', label: 'Mensa', sub: 'Prenotazioni pranzo', icon: UtensilsCrossed, href: '/teacher/mensa', tint: '#E6720A' },
         { id: 'foto', label: 'Foto', sub: 'Galleria sezione', icon: Image, href: '/teacher/gallery', tint: '#006A5F' },
         { id: 'bacheca', label: 'Bacheca', sub: 'Avvisi e comunicazioni', icon: Megaphone, href: '/teacher/avvisi', tint: '#E53935' },
         { id: 'calendario', label: 'Calendario', sub: 'Eventi e uscite', icon: CalendarDays, href: null, tint: '#2A6FDB', soon: true },

@@ -47,4 +47,11 @@ describe('PATCH /api/admin/settings — fiscale_config', () => {
     expect(res.status).toBe(200)
     expect(h.upserted?.fiscale_config).toEqual({ denominazione: 'Kidville Giugliano', piva: '01234567890' })
   })
+
+  it('accetta solleciti_config e lo salva in shallow-merge con l\'esistente', async () => {
+    h.existing = { solleciti_config: { enabled: false } }
+    const res = await PATCH(req({ scuola_id: '11111111-1111-4111-8111-111111111111', solleciti_config: { cadenza_min_giorni: 10 } }))
+    expect(res.status).toBe(200)
+    expect(h.upserted?.solleciti_config).toEqual({ enabled: false, cadenza_min_giorni: 10 })
+  })
 })

@@ -35,6 +35,8 @@ export function FiscalePanel({ userId, scuolaId }: Props) {
     const [alunni, setAlunni] = useState<Alunno[]>([]);
     const [attAlunno, setAttAlunno] = useState('');
     const [attAnno, setAttAnno] = useState(annoCorrente);
+    // La comunicazione AdE riguarda tipicamente l'anno d'imposta precedente.
+    const [adeAnno, setAdeAnno] = useState(annoCorrente - 1);
 
     const loadRegistro = useCallback(async () => {
         try {
@@ -86,6 +88,20 @@ export function FiscalePanel({ userId, scuolaId }: Props) {
                     ) : (
                         <span className="font-maven text-xs text-kidville-muted">Nessun alunno iscritto.</span>
                     )}
+                </div>
+            </div>
+
+            <div>
+                <SectionTitle icon={FileSpreadsheet} title="Comunicazione spese AdE"
+                    sub="XLSX per il commercialista (invio entro il 16 marzo): solo quote tracciabili; opposizioni, contanti e categorie escluse motivati nel secondo foglio." />
+                <div className="flex flex-wrap items-center gap-2">
+                    <select value={adeAnno} onChange={(e) => setAdeAnno(Number(e.target.value))} className={selCls}>
+                        {anni.map((a) => <option key={a} value={a}>{a}</option>)}
+                    </select>
+                    <a href={`/api/pagamenti/export?tipo=ade&anno=${adeAnno}&userId=${userId}&scuola_id=${scuolaId}`}
+                        className="inline-flex items-center gap-1.5 rounded-full border-2 border-kidville-green px-4 py-2 font-maven text-sm font-bold text-kidville-green hover:bg-kidville-green hover:text-white">
+                        <Download size={14} /> Esporta comunicazione {adeAnno}
+                    </a>
                 </div>
             </div>
 

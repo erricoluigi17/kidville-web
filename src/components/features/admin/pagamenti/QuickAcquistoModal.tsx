@@ -42,12 +42,33 @@ export function QuickAcquistoModal({ alunno, categoria, userId, scuolaId, onClos
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [creato, setCreato] = useState<{ id: string; fattura_stato?: string } | null>(null);
+    // Anti-duplicato: al primo submit si controlla se esiste già un pagamento
+    // gemello (stesso alunno+categoria, stesso importo, scadenza ±15gg); serve
+    // una seconda conferma esplicita per procedere comunque.
+    const [confermaDup, setConfermaDup] = useState<string | null>(null);
 
     const submit = async () => {
         if (!descrizione.trim()) { setError('Inserisci una descrizione'); return; }
         if (!importo || importo <= 0) { setError('Inserisci un importo maggiore di 0'); return; }
         setSaving(true);
         setError(null);
+        if (!confermaDup) {
+            try {
+                const r = await fetch(`/api/pagamenti?alunno_id=${alunno.id}&categoria_id=${categoria.id}`, { headers: { 'x-user-id': userId } });
+                const j = await r.json();
+                const SOGLIA_MS = 15 * 86_400_000;
+                const dup = ((j?.data || []) as { importo: number; scadenza?: string | null; descrizione?: string }[]).find(
+                    (p) => Number(p.importo) === Number(importo) && p.scadenza && Math.abs(Date.parse(p.scadenza) - Date.parse(data)) <= SOGLIA_MS
+                );
+                if (dup) {
+                    setConfermaDup(`Possibile duplicato: esiste già "${dup.descrizione}" da € ${Number(dup.importo).toFixed(2)} con scadenza ${dup.scadenza ? new Date(dup.scadenza).toLocaleDateString('it-IT') : '—'}.`);
+                    setSaving(false);
+                    return;
+                }
+            } catch {
+                // controllo best-effort: se fallisce non blocca la registrazione
+            }
+        }
         try {
             const res = await fetch('/api/pagamenti', {
                 method: 'POST',
@@ -147,12 +168,12 @@ export function QuickAcquistoModal({ alunno, categoria, userId, scuolaId, onClos
                                 <div>
                                     <label className="font-maven text-xs text-kidville-muted mb-1 block">Importo (€)</label>
                                     <input type="number" min={0} step="0.01" value={importo || ''}
-                                        onChange={(e) => setImporto(e.target.value === '' ? 0 : Number(e.target.value))}
+                                        onChange={(e) => { setImporto(e.target.value === '' ? 0 : Number(e.target.value)); setConfermaDup(null); }}
                                         className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
                                 </div>
                                 <div>
                                     <label className="font-maven text-xs text-kidville-muted mb-1 block">Data</label>
-                                    <input type="date" value={data} onChange={(e) => setData(e.target.value)}
+                                    <input type="date" value={data} onChange={(e) => { setData(e.target.value); setConfermaDup(null); }}
                                         className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
                                 </div>
                             </div>
@@ -187,6 +208,19 @@ export function QuickAcquistoModal({ alunno, categoria, userId, scuolaId, onClos
                                 </div>
                             )}
 
+                            {!acconti && giaPagato && metodo === 'contanti' && (
+                                <p className="rounded-xl bg-kidville-warn-soft px-3 py-2 font-maven text-[11px] leading-snug text-kidville-warn">
+                                    Contanti: pagamento non tracciabile. La quota non sarà detraibile nel 730 (art. 15 TUIR)
+                                    e resterà esclusa dalla comunicazione delle spese scolastiche all&apos;AdE.
+                                </p>
+                            )}
+
+                            {confermaDup && (
+                                <p className="rounded-xl bg-kidville-warn-soft px-3 py-2 font-maven text-[11px] leading-snug text-kidville-warn">
+                                    {confermaDup}
+                                </p>
+                            )}
+
                             {error && <p className="font-maven text-xs text-kidville-error">{error}</p>}
                         </div>
 
@@ -206,7 +240,7 @@ export function QuickAcquistoModal({ alunno, categoria, userId, scuolaId, onClos
                             ) : (
                                 <button onClick={submit} disabled={saving}
                                     className="flex-1 py-2.5 rounded-full bg-kidville-green font-maven font-bold text-sm text-white hover:opacity-90 disabled:opacity-50">
-                                    {saving ? 'Salvataggio…' : 'Registra acquisto'}
+                                    {saving ? 'Salvataggio…' : confermaDup ? 'Conferma comunque' : 'Registra acquisto'}
                                 </button>
                             )}
                         </div>

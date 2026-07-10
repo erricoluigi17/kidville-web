@@ -136,6 +136,13 @@ export function RegistraIncassoModal({ pagamento, userId, onClose, onDone }: Pro
                         </div>
                     </div>
 
+                    {metodo === 'contanti' && (
+                        <p className="rounded-xl bg-kidville-warn-soft px-3 py-2 font-maven text-[11px] leading-snug text-kidville-warn">
+                            Contanti: pagamento non tracciabile. La quota non sarà detraibile nel 730 (art. 15 TUIR)
+                            e resterà esclusa dalla comunicazione delle spese scolastiche all&apos;AdE.
+                        </p>
+                    )}
+
                     <div>
                         <label className="font-maven text-xs text-kidville-muted mb-1 block">Note (facoltativo)</label>
                         <input type="text" value={note} onChange={(e) => setNote(e.target.value)}
@@ -173,7 +180,7 @@ export function RegistraIncassoModal({ pagamento, userId, onClose, onDone }: Pro
                         </button>
                         <button onClick={submit} disabled={saving}
                             className="flex-1 py-2.5 rounded-full bg-kidville-green font-maven font-bold text-sm text-white hover:opacity-90 disabled:opacity-50">
-                            {saving ? 'Salvataggio…' : 'Registra'}
+                            {saving ? 'Salvataggio…' : `Registra € ${(importo || 0).toFixed(2)}`}
                         </button>
                     </div>
                 )}

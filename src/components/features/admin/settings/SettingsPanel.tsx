@@ -30,9 +30,70 @@ export function SettingsPanel({ userId, scuolaId }: Props) {
         <div>
             <CategorieManager userId={userId} scuolaId={scuolaId} />
             <RettaMorositaSettings userId={userId} scuolaId={scuolaId} />
+            <FiscaleSettings userId={userId} scuolaId={scuolaId} />
             <TicketSettings userId={userId} scuolaId={scuolaId} />
             <ArubaSettings userId={userId} scuolaId={scuolaId} />
         </div>
+    );
+}
+
+interface FiscaleCfg {
+    denominazione?: string; piva?: string; codice_fiscale?: string;
+    indirizzo?: string; cap?: string; comune?: string; provincia?: string;
+    bollo_enabled?: boolean; bollo_soglia?: number; bollo_importo?: number;
+    dicitura_bollo_ricevuta?: string;
+}
+
+// Dati struttura per ricevute/attestazioni (fallback: dati fiscali Aruba) e
+// marca da bollo sui documenti esenti IVA sopra soglia.
+function FiscaleSettings({ userId }: Props) {
+    const [cfg, setCfg] = useState<FiscaleCfg | null>(null);
+    const [saving, setSaving] = useState(false);
+    useEffect(() => {
+        fetch(`/api/admin/settings?userId=${userId}`, { headers: hdr(userId) })
+            .then(r => r.json())
+            .then(d => { if (d.success) setCfg((d.data.fiscale_config as FiscaleCfg) ?? {}); })
+            .catch(() => setCfg({}));
+    }, [userId]);
+    if (!cfg) return null;
+    const set = (k: keyof FiscaleCfg, v: unknown) => setCfg({ ...cfg, [k]: v });
+    const save = async () => {
+        setSaving(true);
+        await fetch('/api/admin/settings', { method: 'PATCH', headers: hdr(userId), body: JSON.stringify({ fiscale_config: cfg }) });
+        setSaving(false);
+    };
+    const campi: [keyof FiscaleCfg, string][] = [
+        ['denominazione', 'Denominazione struttura'], ['piva', 'Partita IVA'], ['codice_fiscale', 'Codice fiscale'],
+        ['indirizzo', 'Indirizzo'], ['cap', 'CAP'], ['comune', 'Comune'], ['provincia', 'Provincia'],
+    ];
+    return (
+        <section className={card}>
+            <h3 className={h3}><FileText size={16} /> Dati fiscali &amp; bollo</h3>
+            <p className="font-maven text-[11px] text-kidville-muted -mt-2 mb-3">
+                Compaiono su ricevute numerate e attestazioni (Bonus Nido/730). I campi vuoti ricadono sui dati fiscali Aruba.
+            </p>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                {campi.map(([k, l]) => (
+                    <div key={k}><label className={label}>{l}</label>
+                        <input value={(cfg[k] as string) ?? ''} onChange={e => set(k, e.target.value)} className={`${input} w-full`} /></div>
+                ))}
+            </div>
+            <label className="flex items-center gap-2 cursor-pointer mt-4">
+                <input type="checkbox" checked={!!cfg.bollo_enabled} onChange={e => set('bollo_enabled', e.target.checked)} className="w-4 h-4 rounded text-kidville-green" />
+                <span className="font-maven text-sm text-kidville-green">Marca da bollo €2 su documenti esenti IVA oltre soglia</span>
+            </label>
+            {cfg.bollo_enabled && (
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mt-3">
+                    <div><label className={label}>Soglia (€)</label>
+                        <input type="number" step="0.01" value={cfg.bollo_soglia ?? 77.47} onChange={e => set('bollo_soglia', Number(e.target.value))} className={`${input} w-full`} /></div>
+                    <div><label className={label}>Importo bollo (€)</label>
+                        <input type="number" step="0.01" value={cfg.bollo_importo ?? 2} onChange={e => set('bollo_importo', Number(e.target.value))} className={`${input} w-full`} /></div>
+                    <div className="col-span-2 md:col-span-1"><label className={label}>Dicitura su ricevuta</label>
+                        <input value={cfg.dicitura_bollo_ricevuta ?? ''} placeholder="Imposta di bollo assolta in modo virtuale…" onChange={e => set('dicitura_bollo_ricevuta', e.target.value)} className={`${input} w-full`} /></div>
+                </div>
+            )}
+            <div className="mt-4"><button onClick={save} disabled={saving} className={btnPrimary}><Save size={14} /> {saving ? 'Salvataggio…' : 'Salva'}</button></div>
+        </section>
     );
 }
 

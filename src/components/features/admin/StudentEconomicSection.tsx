@@ -230,6 +230,22 @@ export function StudentEconomicSection({ alunnoId, form, updateForm, parents }: 
                     </div>
                 )}
             </div>
+
+            <div className="mt-4 border-t border-kidville-line pt-3">
+                <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                        type="checkbox"
+                        checked={!!form.opposizione_ade}
+                        onChange={(e) => updateForm('opposizione_ade', e.target.checked)}
+                        className="w-4 h-4 rounded border-kidville-muted text-kidville-green focus:ring-kidville-green"
+                    />
+                    <span className="font-maven text-sm text-kidville-green">Opposizione alla comunicazione spese AdE</span>
+                </label>
+                <p className="font-maven text-[11px] text-kidville-muted mt-1">
+                    Se attiva, le spese di questo alunno restano fuori dall&apos;export della comunicazione
+                    all&apos;Agenzia delle Entrate (precompilata dei genitori).
+                </p>
+            </div>
         </section>
     );
 }

@@ -94,6 +94,7 @@ const patchBodySchema = z.object({
     usa_pannolino: z.unknown().optional(),
     section_id: z.unknown().optional(),
     importo_retta_mensile: z.unknown().optional(),
+    opposizione_ade: z.unknown().optional(),
     genitori_separati: z.unknown().optional(),
     retta_split_config: z.unknown().optional(),
     intestatario_fatture: z.unknown().optional(),
@@ -332,7 +333,7 @@ export async function PATCH(request: NextRequest) {
             try {
                 const updates: Record<string, unknown> = {};
                 const allowedFields = ['classe_sezione', 'stato', 'note_mediche', 'bes', 'note_bes', 'nome', 'cognome', 'data_nascita', 'codice_fiscale', 'gender', 'citizenship', 'birth_nation', 'birth_province', 'birth_city', 'residence_address', 'residence_street_number', 'residence_city', 'residence_province', 'zip_code', 'allergies', 'allergeni', 'invoice_holder_type', 'invoice_holder_details', 'is_bes_dsa', 'usa_pannolino', 'section_id',
-                    'importo_retta_mensile', 'genitori_separati', 'retta_split_config', 'intestatario_fatture'];
+                    'importo_retta_mensile', 'genitori_separati', 'retta_split_config', 'intestatario_fatture', 'opposizione_ade'];
 
                 for (const field of allowedFields) {
                     if (body[field] !== undefined) updates[field] = body[field];

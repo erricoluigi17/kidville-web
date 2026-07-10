@@ -45,6 +45,7 @@ const ALLOWED_FIELDS = [
   'armadietto_config',
   'modulistica_config',
   'segreteria_config',
+  'fiscale_config',
 ] as const
 
 const patchBodySchema = z.object({
@@ -137,6 +138,7 @@ export async function PATCH(request: NextRequest) {
       'armadietto_config',
       'modulistica_config',
       'segreteria_config',
+      'fiscale_config',
     ]
     const updates: Record<string, unknown> = { scuola_id: scuolaId }
     for (const f of ALLOWED_FIELDS) if (body[f] !== undefined) updates[f] = body[f]

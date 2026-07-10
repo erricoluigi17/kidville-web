@@ -18,6 +18,7 @@ const GeneratoreRette = dynamic(() => import('@/components/features/admin/pagame
 const GeneratoreCategoria = dynamic(() => import('@/components/features/admin/pagamenti/GeneratoreCategoria').then((m) => m.GeneratoreCategoria), { loading: caricamento });
 const TicketMensaPanel = dynamic(() => import('@/components/features/admin/pagamenti/TicketMensaPanel').then((m) => m.TicketMensaPanel), { loading: caricamento });
 const FiscalePanel = dynamic(() => import('@/components/features/admin/pagamenti/FiscalePanel').then((m) => m.FiscalePanel), { loading: caricamento });
+const SollecitiPanel = dynamic(() => import('@/components/features/admin/pagamenti/SollecitiPanel').then((m) => m.SollecitiPanel), { loading: caricamento });
 
 const isVista = (v: string | null): v is VistaContabilita => !!v && VISTE_CONTABILITA.some((o) => o.id === v);
 
@@ -81,9 +82,7 @@ function PagamentiInner() {
                             </div>
                         )}
 
-                        {vista === 'solleciti' && (
-                            <InPreparazione titolo="Solleciti" descrizione="Qui arriveranno i solleciti di pagamento con livelli, anteprima e invio email ai genitori." />
-                        )}
+                        {vista === 'solleciti' && userId && <SollecitiPanel userId={userId} scuolaId={scuolaId} />}
                         {vista === 'riconciliazione' && (
                             <InPreparazione titolo="Riconciliazione bancaria" descrizione="Qui potrai importare l'estratto conto (CSV) e abbinare i bonifici agli addebiti aperti." />
                         )}

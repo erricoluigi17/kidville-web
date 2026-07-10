@@ -9,6 +9,7 @@ import { StudentTagger } from '@/components/features/gallery/StudentTagger';
 import { saveLocalGalleryMedia, syncPendingGalleryMedia } from '@/lib/offline/syncEngine';
 import { processImageWithWatermark, validateVideoFile, processVideoWithWatermark } from '@/lib/media/processing';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
+import { useOnlineStatus } from '@/lib/hooks/use-online-status';
 
 interface Student {
     id: string;
@@ -36,9 +37,12 @@ function TeacherGalleryContent() {
     const [activeFileIndex, setActiveFileIndex] = useState<number>(0);
     const [uploading, setUploading] = useState(false);
     const [userRole, setUserRole] = useState<string>('educator');
-    const [isOnline, setIsOnline] = useState(() => typeof navigator === 'undefined' || navigator.onLine);
+    // SSR-safe (niente hydration mismatch né setState-in-effect).
+    const isOnline = useOnlineStatus();
 
-    const [sezione, setSezione] = useState<string>('Girasoli');
+    // Sezione reale da /api/educator-sections: init vuoto, mai hardcoded
+    // (i loader sono guardati da `if (!sezione) return`).
+    const [sezione, setSezione] = useState<string>('');
     const [availableSections, setAvailableSections] = useState<string[]>([]);
 
     const loadMedia = useCallback(async () => {
@@ -76,45 +80,35 @@ function TeacherGalleryContent() {
         }
     }, [sezione]);
 
-    // Carica sezioni educatore
+    // Carica sezioni educatore (sezione reale, mai hardcoded — pattern locker)
     useEffect(() => {
         const fetchSections = async () => {
             if (!teacherId) return;
             try {
                 const res = await fetch(`/api/educator-sections?userId=${teacherId}`);
-                if (res.ok) {
-                    const data = await res.json();
-                    const sections = data.sectionNames ?? [];
-                    setAvailableSections(sections);
-                    if (sections.length > 0) {
-                        setSezione(sections[0]);
-                    }
+                const data = res.ok ? await res.json() : null;
+                const sections: string[] = data?.sectionNames ?? [];
+                setAvailableSections(sections);
+                if (sections.length > 0) {
+                    setSezione(prev => prev || sections[0]);
+                } else {
+                    // Nessuna sezione (o errore API): niente da caricare → spegni lo spinner.
+                    setLoading(false);
                 }
             } catch (err) {
                 console.error('Errore caricamento sezioni educatore:', err);
+                setLoading(false);
             }
         };
         fetchSections();
     }, [teacherId]);
 
-    // Gestione connettività
+    // Quando è (ri)online, sincronizza i media salvati offline.
     useEffect(() => {
-        if (typeof window !== 'undefined') {
-            const handleOnline = () => {
-                setIsOnline(true);
-                // Prova a sincronizzare i file in sospeso
-                syncPendingGalleryMedia().then(() => loadMedia());
-            };
-            const handleOffline = () => setIsOnline(false);
-
-            window.addEventListener('online', handleOnline);
-            window.addEventListener('offline', handleOffline);
-            return () => {
-                window.removeEventListener('online', handleOnline);
-                window.removeEventListener('offline', handleOffline);
-            };
+        if (isOnline) {
+            syncPendingGalleryMedia().then(() => loadMedia()).catch(() => {});
         }
-    }, [loadMedia]);
+    }, [isOnline, loadMedia]);
 
     // Carica ruolo utente corrente (via /api/me gated, niente lettura anon di `utenti`)
     useEffect(() => {
@@ -374,7 +368,7 @@ function TeacherGalleryContent() {
             <div className="rounded-3xl bg-kidville-green px-5 py-5" style={{ boxShadow: '0 16px 34px -18px rgba(0,60,52,.6)' }}>
                 <p className="font-barlow text-[11px] font-bold uppercase tracking-[0.14em] text-kidville-yellow">Momenti</p>
                 <h1 className="font-barlow text-3xl font-black uppercase tracking-wide text-white">Galleria</h1>
-                <p className="mt-1.5 font-maven text-xs text-white/80">Foto e video della sezione {sezione}</p>
+                <p className="mt-1.5 font-maven text-xs text-white/80">Foto e video della sezione {sezione || '…'}</p>
             </div>
 
             {/* Controlli (sezione + step) */}

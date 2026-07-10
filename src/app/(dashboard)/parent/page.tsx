@@ -8,6 +8,7 @@ import { Bell, MessageCircle, BookOpen, Camera, CalendarX2, GraduationCap } from
 import { withIdentity } from '@/lib/auth/current-user';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 import { useChildSchoolType } from '@/lib/auth/use-child-school-type';
+import { useClientValue } from '@/lib/hooks/use-client-value';
 import { PagamentiSummary } from '@/components/features/parent/pagamenti/PagamentiSummary';
 import { SectionHeader } from '@/components/features/parent/home/SectionHeader';
 import { DiaryTodayCard } from '@/components/features/parent/home/DiaryTodayCard';
@@ -39,7 +40,12 @@ function ParentHomeContent() {
   const isPrimaria = schoolType === 'primaria';
 
   const [firstName, setFirstName] = useState('');
+  const [nameResolved, setNameResolved] = useState(false);
   const [mascotFailed, setMascotFailed] = useState(false);
+
+  // Saluto dipendente dall'ora locale: calcolato SOLO client-side (SSR-safe)
+  // per evitare il mismatch di hydration server-UTC vs browser.
+  const greeting = useClientValue(greetingByHour, '');
 
   useEffect(() => {
     if (!studentId) return;
@@ -49,8 +55,13 @@ function ParentHomeContent() {
         if (!d) return;
         setFirstName(d.nome ?? '');
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setNameResolved(true));
   }, [studentId]);
+
+  // Skeleton finché il nome non è risolto (evita il flash del fallback).
+  // Con studentId assente non si resta in caricamento: si mostra il saluto neutro.
+  const nameLoading = !!studentId && !nameResolved;
 
   // Azioni rapide (DR QuickActions): solo navigazione verso pagine reali.
   // "Segnala assenza" porta alla pagina assenze (dove vive il submit reale).
@@ -102,14 +113,20 @@ function ParentHomeContent() {
           {/* greeting */}
           <div className="relative z-[2] px-5 pb-6 pt-3" style={{ maxWidth: '64%' }}>
             <p className="mb-0.5 font-maven text-xs font-semibold capitalize" style={{ color: 'rgba(0,84,75,0.7)' }}>
-              {greetingByHour()}!
+              {greeting}{greeting ? '!' : ''}
             </p>
-            <h1
-              className="whitespace-pre-line font-barlow font-black uppercase leading-[0.98] tracking-tight"
-              style={{ fontSize: 30, color: '#006A5F' }}
-            >
-              {firstName ? `Ciao,\n${firstName}!` : 'Benvenuta!'}
-            </h1>
+            {nameLoading ? (
+              // Placeholder discreto: evita il flash "Benvenuta!" → "Ciao, Nome"
+              // prima che il nome sia risolto.
+              <div className="h-9 w-44 max-w-full rounded-lg bg-black/5 animate-pulse" aria-hidden="true" />
+            ) : (
+              <h1
+                className="whitespace-pre-line font-barlow font-black uppercase leading-[0.98] tracking-tight"
+                style={{ fontSize: 30, color: '#006A5F' }}
+              >
+                {firstName ? `Ciao,\n${firstName}!` : 'Ciao!'}
+              </h1>
+            )}
             {firstName && (
               <p className="mt-1.5 font-maven text-[13px]" style={{ color: 'rgba(0,84,75,0.78)' }}>
                 Ecco le novità di oggi 🌈

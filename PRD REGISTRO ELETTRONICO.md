@@ -54,6 +54,281 @@
 
 ---
 
+## 🗓️ Changelog — De-hardcode dati dinamici + Anagrafica di sede (multi-sede) 2026-07-10 (branch `feat/logout-anagrafica-fullscreen`)
+
+Audit esaustivo dei valori "di realtà" scritti fissi nel codice runtime (`src/`, esclusi e2e), con classificazione **A** (bug reale: cablato che finisce a schermo/scope/documento) / **B** (fallback benigno: DB letto prima o default irraggiungibile) / **C** (non-codice: commenti, placeholder, seed, dead code). **Categoria A svuotata**. In più, su richiesta, predisposizione **multi-sede** con **anagrafica di sede** completa. Piano in `docs/superpowers/plans/2026-07-10-dehardcode-sezioni.md`. **Zero migrazioni DB** (anagrafica in `scuole.config` JSONB già esistente; unica scrittura dati di test sulla sede fittizia "Kidville E2E", **Giugliano intatta** — verificato via MCP).
+
+### Hardcoded eliminati (casi A)
+- **Bacheca avvisi docente** (`teacher/avvisi/page.tsx`): rimossa `AVAILABLE_CLASSES=['Girasoli','Margherite','Tulipani','3A','4B']` → classi reali da `/api/educator-sections` (pattern locker); default dei componenti `AvvisoDetailsDrawer`/`AvvisoDetailsContent` portati a `[]`. Le statistiche del drawer per avvisi globali ora si calcolano sulle classi reali del docente. `admin/avvisi` intoccata (passava già liste reali da `/api/admin/sections/scoped`).
+- **Certificati self-service genitore** (`parent/modulistica/page.tsx`): il PDF diceva sempre "sezione dei Girasoli", "anno scolastico 2026/2027", "Milano, lì". Ora: sezione = `alunni.classe_sezione` reale del figlio; anno = `annoScolasticoCorrente()` (NUOVO helper `src/lib/anno-scolastico.ts`, regola decisa: a.s. **settembre→luglio**, da agosto scatta il nuovo → `mese≥8 ? y/y+1 : y-1/y`); città = `scuole.citta` dal DB (degrado "Lì <data>" se assente); **intestazione sede reale** nel PDF (denominazione, indirizzo, CAP città (prov.), Cod. Mecc.) via `buildIntestazioneSede`, righe omesse se mancanti (mai inventate). Testi in builder puri testati (`src/lib/certificati/self-service.ts`). Resta `children[0]` (il tab non ha selettore figlio — follow-up).
+- **Gallery docente** (`teacher/gallery/page.tsx`): `useState('Girasoli')` → `''` con fetch educator-sections; con 0 sezioni lo spinner si spegne (prima restava "Girasoli" per sempre + fetch transitorio errato al mount).
+- **Default API a nome sezione** (latenti, raggiungibili solo omettendo il parametro): `attendance/daily`, `attendance/monthly`, `diary/entries` `.default('Girasoli')` → `.default('')`; `diary/students` `?? 'Girasoli'` → `?? ''`. Parametro omesso ora degrada a `[]` (ogni route aveva già l'early-return), niente più leak dei dati Girasoli.
+- **Mappe email→sezione** (`maestra.anna/chiara@kidville.it → Girasoli/Tulipani`) rimosse da `api/tasks` e `api/educator-sections` (Method 3): verificato in prod via MCP che le email **non esistono** e che **tutti i 9 docenti** hanno legami in `utenti_sezioni`. Sostituite dal metodo canonico `nomiSezioniDiUtente` (NUOVO in `src/lib/sezioni/docenti.ts`, riusato da entrambe le route); in `api/tasks` l'euristica sui media taggati resta come fallback secondario. Degrado a `[]` senza legami.
+- **`api/tasks/meta`**: fallback `['Girasoli','Margherite','Tulipani','Coccinelle']` → `[]`; **`MonthlyAttendanceTable`** (`features/teacher/attendance/`): default prop `'Girasoli'` → `''`.
+- **Dead code '3A'**: eliminati `GradesTab/LessonsTab/NotesTab` (`features/teacher/register/`, zero import, pagina register già redirect a `/teacher/primaria`). Le API legacy grades/notes/register-lessons restano (coperte da `__tests__/api`) — follow-up: deprecarle.
+
+### Anagrafica di sede (multi-sede, NUOVO)
+- **Modello**: `scuole.config.anagrafica` (JSONB esistente → zero DDL) con denominazione ufficiale, codice meccanografico, CAP, provincia, telefono, email, PEC, P.IVA/CF; `citta`/`indirizzo` restano colonne. Helper `src/lib/scuole/anagrafica.ts` (`zAnagraficaSede`; `normalizzaAnagraficaSede` — trim, vuoti→null, cod. mecc. e sigla provincia MAIUSCOLI; `parseAnagraficaSede` safe da JSONB, mai throw).
+- **API**: `PATCH /api/admin/schools` accetta `anagrafica` zod-validata con **merge server-side** in `config` (preserva le altre chiavi; gate Direzione invariato; audit `logScrittura` già copre).
+- **UI**: `SchoolsPanel` (Impostazioni → Gestione Multi-Sede) con bottone "Anagrafica" per sede → form inline (città/indirizzo + 8 campi) e cod. mecc. nella riga riassuntiva. Dati reali di Giugliano da inserire dal pannello (a cura utente).
+- **Multi-sede by design**: `/api/parent/students` arricchita **per figlio** (`scuola_nome/citta/indirizzo/cap/provincia/codice_meccanografico` via lookup `scuole` sul `scuola_id`, best-effort senza FK) → fratelli in sedi diverse = certificati con intestazioni diverse; campi additivi (ChildSwitcher/use-parent-identity intoccati).
+
+### B/C documentati come benigni (non toccati)
+Default orari/soglie degli editor `admin_settings` (DB letto prima); placeholder UI "Es. Girasoli"; route di seed e commenti/JSDoc; `STANDARD_ENROLLMENT_MODEL_ID` (identità applicativa fissa); formule anno scolastico duplicate in `appello`/`GeneratoreRette`/`PaymentsDashboard`/`ScrutinioPeriodiManager` (follow-up: unificare su `annoScolasticoCorrente`); `sidi_config.codice_meccanografico` globale (follow-up: raccordo per-sede quando ci sarà >1 sede accreditata SIDI).
+
+### Verifica (loop)
+- **NUOVA journey assertiva** `e2e/primaria-360/journeys/90-dehardcode.spec.ts` (9 test: educator-sections/avvisi/gallery docente1 anti-Girasoli, default `''` su attendance/daily senza parametro, tasks 200, parent/students con classe+città+nome sede reali, download PDF certificato, PATCH+rilettura anagrafica su sede E2E, form Anagrafica nel pannello).
+- **Diagnosi flakiness**: il primo loop 50× su **dev server** ha mostrato ~10 flake su D2/D7 — causa radice accertata via error-context = **stallo del dev server sotto 450 esecuzioni consecutive** (compilazione on-demand di Next + pressione memoria), **non** un bug di prodotto. Verifica quindi spostata sulla **build di produzione** (`next start`, ciò che si deploya).
+- **Loop 50× su PRODUZIONE**: **450/450 passed** (9.3m), 0 flake. Journey **89** (non-regressione fix precedenti, incl. locker/educator-sections toccati) **10/10**. Sweep copertura **70-72** (26 personas, 420 visite) **26/26**, report `run/report-360.html` rigenerato → **0 difetti** (0 visivi/funzionali/sicurezza, 2 note-artefatto).
+- **Unit test nuovi**: 17 (`anno-scolastico` 5, `certificati-self-service` 9, `scuole-anagrafica` 3). 1 rosso intermedio nel primo smoke (sigla provincia non maiuscola) → corretto nell'helper (non nel test) → verde.
+- **Riscontri DB via MCP**: 9/9 docenti con `utenti_sezioni`, email cablate inesistenti, `scuole.citta='Giugliano'`, sede E2E `config.anagrafica` salvata/normalizzata (`NA1E000E2E`) e **Giugliano `config={}` intatta**.
+- **Gate**: `eslint . --max-warnings 0` = **0** · `vitest run` = **818/818** (136 file) · `tsc --noEmit` = **0** · `npm run build` = **ok**.
+- **Nativo**: non eseguibile (nessun emulatore/simulatore) — dichiarato, non finto.
+
+**Stato**: categoria A svuotata (0 valori di sezione/classe/anno/città cablati nei percorsi runtime); B/C censiti come benigni; anagrafica di sede pronta per il multi-sede. Nessuna migrazione DB, nessun deploy. Codice su branch `feat/logout-anagrafica-fullscreen`, **non committato**.
+
+---
+
+## 🗓️ Changelog — Correzione 11 difetti Test 360° Primaria 2026-07-09 (branch `feat/logout-anagrafica-fullscreen`)
+
+Risoluzione degli **11 difetti** aperti dal giro diagnostico 360° (vedi voce sotto). Piano in `docs/superpowers/plans/2026-07-09-primaria-360-11-difetti.md`, una **fase per difetto** con ragionamento sulla soluzione più pulita/performante senza regressioni, poi verifica a loop. **Nessuna migrazione DB** (unica scrittura dati: un `UPDATE admin_settings.diario_config` su Giugliano per allineare il default di F9). Decisioni F9 e F3/F4 prese con l'utente.
+
+### Difetti risolti (codice)
+**GRAVI (2)**
+- **F1 · Mensa genitore data-binding** (`MensaCalendar.tsx:61-67`): la GET ritorna `{success, data:{saldo,prenotazioni,cutoffOra}}` e la fetch la avvolge in `{status, data}`, quindi il payload è `pRaw.data.data.*`. Estratto `const payload = pRaw.data.data ?? {}` e lette da lì `saldo (?? 0)`, `cutoffOra`, `prenotazioni`. Ora il badge mostra il **saldo reale** (0 se nessun ticket), compare il **banner cutoff** e i pulsanti "Prenota pranzo" sono **attivi** con saldo>0. Rami POST/DELETE invariati (`j.data.*` già corretti).
+- **F2 · Armadietto docente sezione hardcoded** (`teacher/locker/page.tsx`): rimosso `const SEZIONE='Girasoli'`; aggiunto fetch `/api/educator-sections` → stato `sezione`/`availableSections` (pattern delle sorelle attendance/modulistica/diary), i 3 fetch usano `encodeURIComponent(sezione)`, effetti guardati su `sezione`, header "Sezione {sezione}", **selettore a pill** per docenti multi-sezione, `LoadStockModal classeSezione={sezione}`. Spinner chiusi anche quando il docente non ha sezioni.
+
+**MEDI (6)**
+- **F5 · Bottom-nav DOCENTE doppio-attivo** (`TeacherBottomNav.tsx`) e **F6 · GENITORE** (`BottomNav.tsx`): introdotto `const anyMainTabActive = mainTabs.some(t => t.href && isActive(t.href))`; il tab MENU è attivo solo con `isMenuSectionActive && !anyMainTabActive`. Rimossa l'esclusione parziale `!== '/teacher/attendance'` (mascherava attendance). Ora **una sola voce attiva** per rotta; corretto anche il bug latente per cui su `/teacher/attendance` nessun tab era attivo.
+- **F7 · Impostazioni armadietto spinner permanente** (`teacher/settings/locker/page.tsx`): `setLoading(false)` su tutti i rami terminali senza sezioni nido/infanzia (`!d.success`, `names.length===0`, `.catch`). Niente più spinner eterno per la primaria.
+- **F8 · Note genitore plurale** (`parent/primaria/note/page.tsx:94`): rimosso il ternario no-op; ora `{n>1 ? 'note' : 'nota'} in attesa di firma` → "4 note", "1 nota".
+- **F3 · KPI "Alunni iscritti" 19 vs 23 → FALSO ALLARME** (nessuna modifica): verificato sul DB prod che gli iscritti sono **23** (tutti `stato='iscritto'`, sede unica) e la query KPI (`.in scuola_id .eq stato='iscritto'`) restituisce 23; il "19" era un **artefatto di seed transitorio** del 07-08. Verificato live: `GET /api/admin/dashboard` → `studenti.iscritti = 23`.
+- **F4 · Grafico "Alunni per classe" barre a ~0 → FALSO ALLARME** (nessuna modifica): il `BarChart` usa `dataKey="count"` con `<YAxis>` a dominio Recharts di default `[0, dataMax]`, baseline 0; il payload `perClasse` = TEST 1A **11**, TEST Infanzia **10**. Le "barre a ~0" erano uno **screenshot catturato durante l'animazione** `animationDuration={1200}`/compilazione dev. Verificato live via API.
+
+**MINORI / ESTETICO (3)**
+- **F9 · Diario 0-6 fail-closed per la primaria** (decisione utente, **inverte** il default fail-open della voce precedente): `diario_primaria_visibile` ora è esposto in primaria **solo se attivato** dall'admin. Modificati `api/diary/config/route.ts` (`=== true`), `teacher/diary/page.tsx` (`=== true`), `DiarioSettings.tsx` (default `?? false` + copy "Disattivo di default"); `UPDATE admin_settings` Giugliano → `false`; aggiornato il commento del test e2e `84-diario-primaria` (il `finally` ora ripristina a `false`). Coerente con la dashboard "Nessuna attività infanzia/nido". Infanzia/nido invariati; e2e 84 verde.
+- **F10 · Overflow avatar classe** (`teacher/primaria/page.tsx:66`): il badge quadrato 52×52 ora ha `overflow-hidden px-1 text-center text-sm uppercase leading-tight [word-break:break-word]` → "TEST 1A" contenuto entro i bordi.
+- **F11 · Grafico Incassi asse Y** (`DashboardCharts.tsx`): asse Y con **tick uniformi** a passo adattivo (500/1000/2000/5000, ~5 tick) e formato it-IT (`tickFmt`), `domain=[0,top]`, `ticks` espliciti → spariti i tick disuniformi `450/900` e il formato misto `k`.
+
+### Verifica (loop)
+- **Suite assertiva dedicata** `e2e/primaria-360/journeys/89-fix-360.spec.ts` (10 test su UI+backend per F1–F11 con sessioni reali): **>50 iterazioni consecutive verdi** (`--repeat-each` 15+18+18 = **510 esecuzioni, 0 flake**) + passate singole.
+- **Non-regressione**: sweep di copertura `70-72` (26 personas, **420 visite**) → **0** issue grave/medio/minore su tutte le pagine; adversarial/scoping **0 violazioni**; journey 84-88 verdi (incl. `84-diario-primaria` con il nuovo fail-closed).
+- **Riscontri DB via MCP**: iscritti 23, saldi ticket TEST 1A (es. Alunno1=57), 4 note in attesa per Alunno1, config diario Giugliano `false`.
+- **Gate**: `eslint . --max-warnings 0` = **0** · `vitest run` = **801/801** (133 file) · `tsc --noEmit` = **0** · `npm run build` = **ok**.
+- **Report** `run/report-360.html` **rigenerato** → **0 difetti** (0 visivi/funzionali/sicurezza, 2 note-artefatto, 420 visite). Diagnostico preservato in `run/visual-findings-diagnostic-2026-07-09.json`.
+- **Nativo**: non rieseguito (nessun emulatore Android/AVD; iOS Simulator non ripilotato) — dichiarato, non finto.
+
+**Stato**: **11/11 difetti chiusi** (9 fix di codice + 2 falsi allarmi documentati con prova DB). Nessun deploy. Codice su branch `feat/logout-anagrafica-fullscreen`, non committato.
+
+---
+
+## 🗓️ Changelog — Ripetizione Test 360° Primaria (diagnostico) 2026-07-09 (branch `feat/logout-anagrafica-fullscreen`)
+
+Ripetizione **completa** della campagna 360° sulla classe **TEST 1A** con 26 personas reali. **Giro DIAGNOSTICO**: ha **scoperto 11 difetti reali ancora aperti** (nessuna correzione applicata in questo giro). Metodo: seed idempotente → rigenerazione storageState (26 login reali) → sweep Playwright di ogni route + journey d'azione + adversarial + logout → **Workflow multi-agente** di ispezione visiva sugli screenshot **freschi** (un ispettore per batch, **verifica adversarial per ogni difetto**, critico di completezza) → riconciliazione + root-cause nel codice.
+
+### Esito sintetico
+- **Sicurezza: 0 violazioni** — riverificato dal vivo (IDOR cross-alunno lettura/scrittura → 403; endpoint docente da genitore → 403; PII `/api/admin/students/[id]` e letture parent senza sessione → 401).
+- **Funzionali (backend/azioni): 0 difetti** su sweep (420 visite, 0 5xx/403) + journey d'azione (firma, valutazioni O.M. 3/2025, note, avviso+adesione gita, firma FEA/OTP, mensa, chat, pagamenti, logout). La prenotazione mensa **via API** è accettata.
+- **Ispezione visiva: 23 candidati → 17 confermati** dopo verifica adversarial → **11 difetti distinti** (dedup). **Falsi positivi eliminati**: indicatore dev Next.js (cerchio "N" in basso a sx), date-input nativi in formato en-US del browser headless, bottom-nav resa a metà pagina negli screenshot full-page, dati di test `[E2E360]`.
+
+### Difetti APERTI (da correggere in un giro successivo)
+**GRAVI (2)**
+- **Mensa genitore — regressione data-binding** (`MensaCalendar.tsx:51,62-65,113,180,234`): la GET `/api/mensa/prenotazioni` ritorna `{success, data:{saldo,...}}` (route.ts:89) e il client la avvolge in `{status, data}` ma poi legge `pRaw.data.saldo` invece di `pRaw.data.data.saldo` → `saldo=undefined` → badge "— ticket", banner cutoff assente e **pulsanti "Prenota pranzo" disabilitati (il genitore non può prenotare dalla UI)**. Il menu (`mRes.data`) legge un solo livello: asimmetria = origine della regressione.
+- **Armadietto docente — sezione hardcoded** (`teacher/locker/page.tsx:15,76,94,107,175`): `const SEZIONE = 'Girasoli'` cablato → per il docente di primaria header "Sezione Girasoli" e **scope dati sbagliato** (lista alunni/consumo/mensile su sezione errata). Le pagine sorelle (attendance:461, modulistica:65) erano già de-hardcodate; locker è rimasta indietro.
+
+**MEDI (6)**
+- Dashboard Direzione KPI **"Alunni iscritti" = 19** mentre presenze/topbar/Anagrafica dicono **23** (sotto-conteggio della query KPI).
+- Dashboard grafico **"Alunni per classe"**: barre appiattite a ~0 pur con 11/10 alunni (errore di scala data-viz).
+- **Bottom-nav a doppio-attivo** DOCENTE (`TeacherBottomNav.tsx:97-99,110`) e GENITORE (`BottomNav.tsx:59,99,111-113`): `isMenuSectionActive` accende MENU anche su rotte con tab dedicato → due voci "attive" insieme.
+- **Impostazioni armadietto materiali** (`teacher/settings/locker/page.tsx:37,56,67,70`): senza sezioni nido/infanzia `loading` non va mai a `false` → spinner "Caricamento..." **permanente** insieme all'empty-state (dead-end per la primaria).
+- **Note genitore**: banner **"4 nota in attesa di firma"** (pluralizzazione rotta, `parent/primaria/note/page.tsx:94`).
+
+**MINORI / ESTETICI (3)**
+- **Diario 0-6 esposto di default alla primaria** (`teacher/diary/page.tsx:40`, fail-open): mostra le routine nido NANNA/SVEGLIA/BAGNO a una classe di primaria (mitigabile col toggle admin, ma il default è visibile).
+- **Overflow testo** nell'avatar "CLASSE TEST 1A" (Le mie classi / Registro) su più docenti.
+- Grafico **"Incassi · ultimi 6 mesi"**: tick asse Y non uniformi (`2k·1k·900·450·0`) e formato misto.
+
+### Nativo (dichiarazione onesta, non finto)
+- **Android — BLOCCO ambiente**: nessun emulatore/AVD e `adb` non disponibile → APK non installabile/pilotabile. **Ripiego dichiarato**: docente/genitore provati in **web mobile 390×844** (sweep Playwright).
+- **iOS — non rieseguito**: Simulator disponibile ma build non rieseguita + limite noto (contesto WebView non esposto ad Appium sul Simulator). Nessuno screenshot nativo di questo ciclo incluso.
+
+### Deliverable
+- `e2e/primaria-360/run/report-360.html` **rigenerato** (solo difetti, screenshot **freschi** compressi, causa dal codice, sezioni sicurezza/nativo/lacune) + pubblicato come **Artifact** condivisibile.
+- Nuovo generatore `e2e/primaria-360/scripts/build-report-fresh.mjs`; `visual-findings.json`/`lacune.json` rigenerati dal Workflow; `native/native-declaration.json`.
+
+**Gate** (ri-verificati; nessuna modifica a `src/`, solo file sotto `e2e/primaria-360/**` ignorati da eslint): `eslint . --max-warnings 0` = **0** · `vitest run` = **801/801** (133 file) · `npm run build` = **ok**.
+
+**Stato**: giro **diagnostico** completato; **11 difetti reali APERTI** (2 gravi, 6 medi, 3 minori/estetici) da pianificare per la correzione. Nessun deploy. Codice su branch `feat/logout-anagrafica-fullscreen`.
+
+---
+
+## 🗓️ Changelog — Residui Test 360° Primaria 2026-07-09 (branch `feat/logout-anagrafica-fullscreen`)
+
+Chiusura dei **5 rilievi residui** della campagna 360° (E24 diario, E25 minori/i18n, estetici, findings stali), trattati per gravità con **verifica a loop** (≥30 giri verdi per fase, **50× finali**; ogni test copre backend+frontend+debug+grafica; al primo rosso si torna alla causa radice). **Nessuna migrazione DB** (toggle = JSONB additivo con default nel codice; CRUD campanelle su colonne già esistenti). Decisioni prese voce per voce con l'utente.
+
+### Fase 1 — Diario 0-6 configurabile per la primaria (E24) ✅
+Decisione utente: il diario resta **comunque esposto** in primaria di default, ma l'admin può disattivarlo dalle Impostazioni. Nuovo toggle `diario_config.diario_primaria_visibile` (default `true`, **fail-open**).
+- `DiarioSettings.tsx`: nuovo `CheckField` "Esponi il diario 0-6 ai docenti di primaria" (merge server-side già esistente su `/api/admin/settings`, nessuna modifica alla route).
+- `GET /api/diary/config`: espone `diario_primaria_visibile` (`!== false`).
+- `GET /api/educator-sections`: aggiunta **backward-compatible** di `sections[].school_type` (invariato `sectionNames`, letto da 7 consumer).
+- `/teacher/diary`: se il toggle è OFF filtra le sezioni `school_type === 'primaria'`; empty-state dedicato per il docente di sola primaria ("usa il Registro"). Verifica: loop **60/60** (spec `84-diario-primaria`, workers=1).
+
+### Fase 2 — Registro con slot esclusi visibili + editor orari admin ✅
+Decisione utente: **opzione B** (mostrare gli slot esclusi) + l'admin deve poter modificare gli orari.
+- `teacher/primaria/[sectionId]/registro`: rimosso il filtro client `tipo==='lezione'` → intervallo/mensa resi come **righe non firmabili** (la numerazione ore non "salta" più: lo slot escluso è visibile). Firma/conteggi ricalcolati sulle sole lezioni (`ordine` invariato = chiave di `registro_orario.ora_lezione`).
+- Nuovo **CRUD campanelle**: `POST /api/admin/primaria/orario?action=add-campanella|update-campanella|delete-campanella` (gate `requireStaff` + zod: enum tipo, `ora_fine>ora_inizio`, cleanup cella orfana se il tipo lascia `lezione`). UI in `OrarioManager` ("Modifica campanelle": orari/tipo inline + aggiungi/elimina). Verifica: loop **60/60** (spec `85-registro-orario`).
+
+### Fase 3 — Minori testuali (E25) ✅
+- **"Task" → "Attività"** (testo visibile): `teacher/tasks/page.tsx` (tab "Tutte le attività", empty-state, loading), `TaskResolutionModal` ("Risolvi attività", placeholder), `TeacherBottomNav` (sub). Identificatori di codice invariati.
+- **Tab con scroll orizzontale** (affordance, niente troncamento): tab-bar di `/teacher/tasks` → `overflow-x-auto` + `shrink-0 whitespace-nowrap`.
+- **Casing nomi**: `nomeCompleto`/`titleCaseNome` applicato ai nomi grezzi del registro (docente firmatario, destinatari sostegno).
+- **"si" → "Sì"**: verificato via grep → **non-issue** (i toggle usano già `'sì'`; gli altri `si` sono valori enum non visibili). Verifica: loop **30/30** (spec `86-minori-testuali`).
+
+### Fase 4 — i18n date pagamenti genitore ✅
+`isoToIt` (da `lib/format/data`, con fallback al grezzo) su `StoricoPagamenti.tsx` e `PagamentiSummary.tsx` → la scadenza è resa `gg/mm/aaaa`, mai ISO. Verifica: loop **30/30** (spec `87-pagamenti-date`, scadenza `07/07/2026`).
+
+### Fase 5 — Estetici (tutti e 3) ✅
+Decisione utente: includere tutti.
+- Pulsante "Carica file compilato" (`ImportExportClient`) da **blu off-brand** (`bg-kidville-info`) a **verde brand**.
+- Input file SIDI (`SidiPanel`) da nativo "Choose File" a **label italiana** "Scegli file .zip" (input nascosto).
+- **Muri di trattini** negli slot orario vuoti (`OrarioGrid`) → placeholder tenue (`·`). Verifica: loop **90/90** (spec `88-estetici`).
+
+### Fase 6 — Findings stali rigenerati ✅
+- **Mensa 401 "userId mancante" (era grave)**: **artefatto** confermato — la route `/api/mensa/prenotazioni` usa già `requireUser` + `genitoreDiAlunno` (identità dalla sessione, mai dal client). Il 401 era la sessione storageState di genitore1 scaduta tra journey 30 e 60. Rieseguito `60-fixups` con sessione fresca → **verde**, 0 occorrenze 401.
+- **PII bloccante** `admin/students/[id]` → confermato stale: adversarial-anon = **401**.
+- Rieseguiti journey `10-60` + copertura `70/71/72` (**26/26**, 420 visite, 0 5xx/403) + adversarial `80` (**2/2**) + bucket `81/82/83` (**8/8**). Findings: **0 bloccanti, 0 gravi** (funzionali/sicurezza/grafici); marcati risolti nel `visual-findings` i 6 rilievi ora chiusi (blu→verde, Choose File, trattini, 2× date ISO pagamenti, TASK).
+- **Native Appium NON rieseguiti** (nessun emulatore Android/simulatore iOS nell'ambiente): i 2 rilievi "login landing" restano stali dal ciclo precedente (limite dell'harness nativo login-through, non difetto dell'app web) → documentati nel report con disclaimer.
+- Report `run/report-360.html` rigenerato: **bloccanti 0**, sezione sicurezza resa positiva ("✓ 0 bloccanti — verificato dal vivo").
+- **Nota di metodo (scoperta):** il journey `50-logout` invalida le sessioni server-side (signOut) → gli spec eseguiti dopo ricevono 401; va eseguito **per ultimo** o le sessioni vanno rigenerate. Lo storageState va rigenerato ogni ~1h (scadenza token).
+
+**Gate finali**: `eslint . --max-warnings 0` = **0** · `vitest run` = **801/801** · `tsc --noEmit` = **0** · `npm run build` = **ok**.
+
+**Stato**: 5 residui **RISOLTI e verificati** (loop 50× verdi per fase; copertura 26 personas senza 5xx/403; adversarial verde; gate verdi). Codice su branch `feat/logout-anagrafica-fullscreen`, **NON mergiato/deployato**.
+
+---
+
+## 🗓️ Changelog — Correzione rilievi Test 360° Primaria 2026-07-08 (branch `feat/logout-anagrafica-fullscreen`)
+
+Chiusura dei rilievi della campagna 360° (bloccanti sicurezza + gravi + medi + minori testuali), un commit per bucket, con **verifica a loop**: ogni fase ha un test dedicato (backend+frontend+debugging+grafica) eseguito ≥30× consecutive verdi; al primo rosso si torna alla causa radice.
+
+### BUCKET A — Sicurezza (bloccanti IDOR / PII / auth-bypass) ✅
+- Nuovo helper condiviso `src/lib/auth/require-parent.ts` → `requireParentOfStudent(request, studentId)`: `requireUser` (identità legata alla **sessione**, `ALLOW_HEADER_IDENTITY=false` → niente `?userId=` spoofabile) + `genitoreHasFiglio` (unione `legame_genitori_alunni` + `student_parents`/ponte) → **403** se l'alunno non è del genitore; staff/educator passano.
+- **E1 — IDOR letture** migrate al gate: `parent/primaria/{valutazioni,note,assenze,pagella,orario,scrutinio}`, `parent/presenze`, `parent/mensa/allergie`, `parent/competenze` (rimosso il `parentOwnsStudent` bacato che saltava il ponte `parents.auth_user_id`).
+- **E2 — IDOR scritture**: `parent/primaria/pagella/firma`, `parent/giustifiche-didattiche`, `parent/presenze/comunica-assenza`, `parent/presenze/giustifica`, e `persist-submission` (`parent/submissions` POST + `parent/forms/otp` PATCH) validano che `student_id` sia del genitore (onboarding con `student_id` null ammesso).
+- **E3 — PII anonima**: `admin/students/[id]` GET ora richiede `requireStaff` (era service-role senza gate).
+- **E4 — Locker**: rami genitore `?alunno_id` di `locker/inventory` e `locker/requests` ora passano da `requireParentOfStudent` (erano aperti in anonimo → IDOR).
+- **E5 — Auth-bypass**: chiuso dal passaggio a `requireUser`/`resolveIdentity`.
+- **Verifica**: `80-adversarial.spec.ts` riscritto con asserzioni reali (fallisce se una violazione persiste) + copertura E2/E4/extra-E1 → **60/60 verdi (30 loop × 2 test)**. Nuovo unit test `require-parent.test.ts`; aggiornati `competenze/fea-giustifica/fea-pagella-firma/orario/presenze` (mock del nuovo gate). Gate: `eslint . --max-warnings 0` = 0 · `vitest run` = **798/798**.
+
+### BUCKET B — Gravi funzionali ✅
+- **E6/E7/E8 — Sezione "Girasoli" hardcoded** rimossa: `teacher/attendance` e `teacher/modulistica` derivano la sezione reale da `/api/educator-sections` (+ selettore multi-sezione); `parent/avvisi` non parte più da 'Girasoli' (attende la classe del figlio).
+- **E9 — Certificati medici**: `/api/teacher/medical-certificates` aperto al DOCENTE (`requireDocente` + scope sezione/plesso + audit) invece di `requireStaff` → niente più 403 sul tab certificati.
+- **E10 — Hydration gallery/attendance**: nuovo hook `useOnlineStatus` (`useSyncExternalStore`, SSR-safe) al posto di `useState(navigator.onLine)` → niente mismatch né setState-in-effect.
+- **E11 — Locker `alunno_id=null`**: guardia identità in `fetchData` (+ empty-state "nessun bambino collegato") → niente 400/500.
+- **E12 — `/api/parent/submissions` 500**: GET reso difensivo (niente embed FK annidato; arricchimento con query separate) → onboarding/modulistica non vanno più in 500.
+- **E13/E14 — Chat docente/genitore bloccata su skeleton**: consumo di `ready` di `useSessionIdentity` + `loadThreads` che azzera `loading` con identità valida → niente skeleton infinito, titolo sempre visibile dopo il caricamento.
+- **E15 — Dashboard direzione, 6 KPI vuote**: consumo di `ready` (skeleton solo durante la risoluzione identità; stato "sessione non valida" esplicito) → i KPI si popolano.
+- **Verifica**: nuovo `81-copertura-bucketB.spec.ts` (docente1/genitore1/segreteria; backend API + frontend/hydration/no-5xx) → **90/90 verdi (30 loop × 3 test)**. Gate: `eslint` 0 · `vitest` 798/798 · `build` ok.
+
+### BUCKET C — Roster/dati primaria ✅
+- **Diagnosi (MCP)**: i dati di TEST 1A risultano **già corretti** (sezione `school_type='primaria'`, `scuola_id` giusto, 11 alunni `stato='iscritto'` con `section_id`) → **E16 "0 in classe" ed E17 "nessuna sezione primaria" erano artefatti dello screenshot originale, già risolti** (nessuna scrittura dati necessaria).
+- **E18 — Default `school_type`**: `POST /api/admin/sections` ora valida `school_type ∈ {nido,infanzia,primaria}` (zod enum) → niente valori spazzatura; default 'infanzia' solo se omesso (la UI passa sempre il grado, `SectionsView`).
+- **Verifica**: `82-copertura-bucketC.spec.ts` (segreteria: sezioni→TEST 1A primaria, roster→11 alunni, school_type invalido→400) → **90/90 verdi (30 loop × 3 test)**. Gate: `eslint` 0 · `vitest` 798/798.
+
+### BUCKET D — Medi UI/i18n + testuali ✅
+- **E19 — i18n date**: nuovo componente `DateField` (gg/mm/aaaa deterministico, SSR-safe, senza setState-in-effect) + helper puri `lib/format/data` (isoToIt/itToIso/maskItDate con validazione di calendario) → sostituiti gli `<input type=date>` in anagrafica alunno/genitore (`Scrollable{Student,Adult}Form`), mensa eccezioni (`MenuBuilder`), impostazioni mensa (`MensaSettings`), report cucina (`MensaReport`).
+- **E20 — Placeholder mensa troncato**: placeholder ingredienti accorciato ("Ingredienti…") → niente clipping "…basil".
+- **E21 — Refuso "primaria.La"**: già corretto nel sorgente (lo spazio dopo `</strong>` è preservato da JSX) — nessun intervento.
+- **E22 — Empty-state scrutinio**: messaggio consapevole del ruolo (staff → "configuralo da Impostazioni → Didattica primaria"; docente → "chiedi alla segreteria") invece del circolare unico.
+- **E23 — Banner ClasseShell ripetuto**: mostrato una sola volta (solo su Panoramica), non su ogni tab della classe.
+- **Verifica**: `format-data.test.ts` + `83-copertura-bucketD.spec.ts` (report cucina gg/mm/aaaa; banner solo Panoramica) → **60/60 verdi (30 loop × 2 test)**. Gate: `eslint` 0 · `vitest` **801/801** · `build` ok.
+- **Rinviati ai residui** (prompt atomico): **E24** (diario 0-6 con voci nido NANNA/BAGNO esposto in primaria — fix architetturale su componente condiviso nido/infanzia: non esporlo in primaria o rendere le routine configurabili per grado) e **E25** (minori testuali da localizzare con certezza); estetici puri fuori scope per decisione utente. → **RISOLTI il 2026-07-09** (vedi changelog "Residui Test 360°" in cima: E24 = toggle admin `diario_primaria_visibile`; E25 + date pagamenti + estetici tutti chiusi).
+
+### FASE FINALE — Verifica end-to-end ✅
+- **Copertura completa** (26 personas reali: 1 segreteria + 5 docenti + 20 genitori) `70/71/72` + `80-adversarial`: **28/28 verde**, **0 findings 5xx/403 spuri** (dopo il fix locker).
+- **Fix supplementare scoperto in verifica**: `/api/locker/requests` dava 500 perché la tabella `locker_requests` **non è migrata su prod** (esistono solo `armadietto`/`locker_config`) → degrado a vuoto su errore tabella-mancante (42P01).
+- **Loop 50× consecutivi verdi** per ogni dominio: adversarial **100/100**, BUCKET B **150/150**, C **150/150**, D **100/100** (i page-visit del cockpit richiedono ≤2 worker per evitare timeout di contesa; le sessioni Playwright vanno rigenerate ogni ~1h per la scadenza del token).
+- **Gate finali**: `eslint . --max-warnings 0` = 0 · `vitest run` = **801/801** · `npm run build` = ok.
+- **Report** `run/report-360.html` rigenerato: **bloccanti 0** (tutti i findings di sicurezza chiusi e verificati 50×). Marcati risolti nel `visual-findings` i 5 gravi (gallery/appello/chat×2/dashboard) + i medi Girasoli/mensa/scrutinio/banner/roster (17 findings). Residui nel report: **3 gravi STALI** da journey d'azione/nativo NON rieseguiti in questo ciclo (es. `60-fixup` mensa/prenotazioni 401; test nativi Appium) e **medi residui** (date ISO in pagamenti — fuori dal perimetro DateField; E24 diario; E25 minori testuali; estetici puri). → **Aggiornato 2026-07-09**: il `60-fixup` mensa 401 era un **artefatto di sessione** (route già corretta, riverificata verde); date pagamenti/E24/E25/estetici **risolti**; restano solo i 2 findings nativi Appium (non rieseguibili senza emulatore), documentati con disclaimer nel report.
+
+**Stato**: bloccanti + gravi + medi in scope **RISOLTI e verificati** (adversarial 50× verde; copertura 26 personas senza 5xx/403; gate verdi). Codice su branch `feat/logout-anagrafica-fullscreen` (5 commit: 59461bb, 8ff4217, f7f52bd, e546e37 + fix locker), **NON mergiato/deployato**.
+
+---
+
+## 🗓️ Changelog — Campagna Test 360° ULTRA Primaria 2026-07-08 (branch `feat/logout-anagrafica-fullscreen`)
+
+Campagna di test 360° multi-agente ultra-scrupolosa su **TEST 1A** (Giugliano, DB prod). Roster **26 personas** con login reale a sessione (1 segreteria desktop + 5 docenti + **20 genitori = 10 alunni × madre+padre**). Seed esteso idempotente (`e2e/primaria-360/`): 10 account padre su auth prod + collegamento dual-parent (`parents.auth_user_id`, `student_parents`, `student_guardians`, `legame_genitori_alunni`) — riconciliato via MCP (20 legami / 20 student_parents / 20 guardians).
+
+**Copertura**: matrice canonica route×ruolo (`config/coverage-matrix.ts`); sweep Playwright di **420 route-visite** su tutte le personas (journeys `70/71/72`) + journey d'azione `10-60` (firma, valutazioni, note, avvisi, adesione gita, FEA/OTP, mensa, chat, pagamenti, logout). **App NATIVA Capacitor pilotata via Appium** su **Android** (UiAutomator2, context `WEBVIEW_`, APK ri-buildato con `CAP_SERVER_URL`; shell/safe-area/tasto back/deep-link `kidville://` verificati) e **iOS Simulator** (XCUITest; app caricata dal server, safe-area ok). Ispezione visiva multi-agente (Workflow, 9 agenti + critico completezza) su 494 screenshot → 92 rilievi grafici/UX/testuali.
+
+**🔴 Findings BLOCCANTI di sicurezza (access control) — verificati empiricamente, DA CHIUDERE:**
+- **IDOR** `/api/parent/primaria/{valutazioni,note,assenze,pagella}`: usano solo `getRequestUserId`, **nessun** `genitoreHasFiglio(userId, studentId)` → un genitore legge i dati di un alunno altrui via `?studentId=` (confermato: genitore1 → dati Alunno2, HTTP 200).
+- **PII senza auth** `/api/admin/students/[id]` GET: service-role **senza gate** → alunno + genitori + CF + indirizzi esposti a client anonimo (HTTP 200).
+- **Auth bypass**: `parent/primaria/valutazioni` con `userId` arbitrario e nessuna sessione → 200.
+- Fix indicato: `requireUser`+`genitoreHasFiglio` sulle route parent/primaria; `requireStaff` su `admin/students/[id]`. (Cross-role write genitore→docente correttamente 401.)
+
+**Findings funzionali (medi)**: `SEZIONE='Girasoli'` hardcoded in `teacher/attendance/page.tsx:13` e `CLASS_NAME='Girasoli'` in `teacher/modulistica/page.tsx:10` → 403 delegates/certificati per docente primaria; `/parent/locker` 500 (`alunno_id=null`), `/api/parent/submissions` 500 (onboarding/modulistica); hydration error `/teacher/gallery`; dashboard direzione con 6 card KPI vuote; date in formato USA `mm/dd/yyyy`; classe TEST 1A "0 alunni" vs 11 in anagrafica; refuso "primaria.La"; placeholder mensa troncato.
+
+Deliverable: **Artifact HTML** self-contained (matrice, findings per gravità con screenshot data-URI, sezione nativo, lacune). Cleanup: 9 prenotazioni mensa + 1 firma FEA di test eliminate. **Gate verdi**: eslint 0, tsc 0, vitest 790/790, build ok. Le vulnerabilità bloccanti restano **da correggere** (segnalate, non ancora fixate in questo giro).
+
+---
+
+## 🗓️ Changelog — Risoluzione problematiche Test 360° Primaria 2026-07-08 (branch `feat/logout-anagrafica-fullscreen`)
+
+Risolte tutte le 19 problematiche emerse dal test 360° (decise voce per voce con l'utente). Fasi con gate verdi tra l'una e l'altra.
+
+- **Fase A — UI/estetici** (voci 5,8,9,10,11,12,13,14,15): padding bottom-nav genitore `pb-16→pb-24` (avvisi/diary/gallery); `ChatListSkeleton` condiviso al posto dello spinner (parent+teacher); mensa genitore mostra il **cutoff** (GET `/api/mensa/prenotazioni` restituisce `cutoffOra`); valutazioni genitore auto-espanse con singola materia + anteprima giudizio; logo login `h-7→h-12`; saluto home fallback **neutro** + skeleton anti-flash (genitore) e docente time-aware (no “maestra”); registro “**orario da completare**” muted al posto di “materia non assegnata”; helper `src/lib/format/nome.ts` (titleCase) sui nomi lista alunni; compiti genitore **data unica** (chip it-IT).
+- **Fase B — Compiti** (voce 4): datepicker “Consegna compiti” nella `FirmaModal` primaria (l'API già accettava `dataConsegnaCompiti`).
+- **Fase C — Dashboard** (voce 1): il “16 vs 23” era transitorio (verificato: tutti i 23 di Giugliano sono `iscritto`, admin mono-plesso). **Solo etichette** (numeri invariati): KPI “stato iscritto · sedi attive”, anagrafica “Totale (tutti gli stati)”.
+- **Fase D — Firma registro** (voce 6): guard applicativo (409) + indice DB parziale `UNIQUE(registro_id) WHERE tipo='principale'` (migr. `20260708174412`, de-dup incluso). Una sola firma principale per ora.
+- **Fase E — Cockpit** (voce 16): nuovo `AdminIdentityProvider` (`useSyncExternalStore`, two-pass SSR-safe) → **fix hydration-mismatch** sidebar + dedup di `userId` (3 letture → 1: AdminSidebar/AdminTopBar/SedeProvider).
+- **Fase F — Mensa docente** (voce 3): nuova vista read-only `/teacher/mensa` (per sezione) riusando `/api/mensa/report` + voce nav (rimosso “In arrivo”).
+- **Fase G — Bridge & mensa genitore** (voci 2,17): helper condiviso `src/lib/anagrafiche/legami.ts` (**union** runtime `legame_genitori_alunni` + anagrafica `student_parents` via `parents.auth_user_id`) → contesto figlio robusto; `/api/parent/students` + mensa authorization migrati; `/parent/mensa` stato “nessun alunno collegato”. **Item 2 risolto** (verificato: genitore1 figlio-unico → saldo 29 + prenotazione). Consolidamento fisico (voce 17, deciso “drop+view in più step con cautela”): scoperti blocchi (colonne split pagamenti assenti in student_parents, embed PostgREST che si rompono su view, identità `parents.auth_user_id` disconnesse, **nessuna famiglia reale in DB**) → **Step 1** consegnato = fondazione additiva sicura: tabella canonica **`student_guardians`** (migr. `20260708174430`, rebuild validato via rollback, idempotente) + helper union come fonte logica unica. Il cutover fisico (DROP+VIEW + refactor embed) resta step finale documentato.
+- **Fase H — Iscrizione pubblica** (voce 18): risoluzione scuola robusta (`?scuola=` o scuola reale escludendo la seed E2E). **Verificato**: POST persiste su Giugliano (riga di test rimossa). Sblocca gli E2E public-iscrizione.
+- **Fase I — FEA gita** (voce 19): `avvisi.form_model_id` (migr. `20260708174440`, POST/GET resilienti) + semaforo **per-gita** (`/api/teacher/uscite?form_model_id=`). Copertura harness 360 (seed modulo firmabile + firma OTP genitore1 in 30-genitori + verifica semaforo in 40-riscontri). **Verificato end-to-end**: send-otp POST→devCode, PATCH→completed+signed_at; semaforo autorizzato solo per il modulo firmato.
+- **By-design (nessun codice)**: voce 7 (label 2° tab bottom-nav adattiva primaria/infanzia); voce 13 salto ore = intervallo/mensa esclusi.
+
+Migrazioni prod (`20260708174412/174430/174440`) **APPLICATE a prod via MCP Supabase** e verificate (indice firma creato + duplicato 5→1 risolto; `student_guardians` popolata 34 righe/24 alunni; `avvisi.form_model_id` presente; advisor security = 0 ERROR). Il DB E2E CI non migrato resta gestito con degrado grazioso (PGRST204/42703).
+
+Gate: `eslint . --max-warnings 0` = 0 · `vitest run` = 790/790 (aggiunti `format-nome.test.ts`, `legami.test.ts`) · `tsc --noEmit` = 0 · `build` ok.
+
+---
+
+## 🗓️ Changelog — Logout + Anagrafica fullscreen + Test 360° Primaria 2026-07-07 (branch `feat/logout-anagrafica-fullscreen`)
+
+Interventi UI su richiesta utente + campagna di test funzionale end-to-end sulla scuola primaria.
+
+- **(a) Pulsante Log out in TUTTE le aree.** Prima non esisteva alcun logout nell'app (né Direzione/Segreteria,
+  né Docente, né Genitore). Aggiunti: helper client `doLogout()` (`src/lib/auth/logout.ts` — chiude la sessione
+  Supabase `auth.signOut()`, azzera i cookie server-side via `POST /api/auth/logout` [`kv-active-role`,
+  `sedi_attive`], ripulisce l'identità applicativa in `localStorage` [`kv_user_id`/`_role`/`_parent_id`/
+  `_student_id`/`_teacher_id`], reindirizza a `/auth/login`); nuovo endpoint `src/app/api/auth/logout/route.ts`;
+  componenti `UserMenu` (dropdown sulla scritta ruolo "Segreteria/Direzione" in alto a destra della TopBar cockpit)
+  e `LogoutMenuButton` riusabile (drawer mobile Direzione, bottom-sheet Docente e Genitore).
+- **(b) Scheda anagrafica a TUTTA AREA (non più drawer laterale).** Il dettaglio alunno/genitore si apriva come
+  pannello laterale stretto sopra la lista. Ora apre nella nuova route `/admin/students/[id]` (full-screen, pattern
+  `CockpitPage` + back-link, coerente con `/admin/students/sezioni/[id]`). `StudentDetailPanel`/`ParentDetailPanel`
+  hanno una prop `variant='page'|'drawer'`; la tabella naviga alla route (propaga `?userId=`+`kind=`); rimosso
+  l'overlay `selectedStudent` dalla lista. Logica di salvataggio/associazione invariata (stessi endpoint PATCH/DELETE).
+- **(c) Test funzionale 360° Primaria (TEST 1A prod) → resoconto condivisibile — ESEGUITO.** Completate le anagrafiche
+  di test (11 alunni + 10 famiglie collegate via parents+student_parents+legame), portati i docenti primaria a **5**
+  + creata la Segreteria di test, assegnazioni materia complete, password note verificate al login. Harness Playwright
+  dedicato in `e2e/primaria-360/` (config isolata, 16 storageState, journeys 10/20/30/40/50/60), 70 screenshot, ispezione
+  visiva da agenti + riconciliazione DB. **Esiti**: Segreteria (anagrafica fullscreen, orario, pagamenti €525 incassati,
+  ticket) ✓; 5 docenti (firma+lezione+voti+compiti+3 note ciascuno, avviso gita) ✓; genitori (orario, visione,
+  2 chiarimenti chat con risposta docente, 10/10 adesioni gita, 5/5 prenotazioni mensa) ✓; riscontri cross-ruolo
+  (mensa→segreteria “5 pasti”, voto→genitore, incassi→segreteria, chat bidirezionale) ✓; logout ✓ in tutte le aree.
+  **Problematiche (solo report)**: dashboard “16 vs 23 alunni”; mensa genitore non mostra saldo/prenotazioni (contesto
+  figlio non risolto); docente senza vista mensa (“In arrivo”); data-consegna-compiti assente in UI docente;
+  bottom-nav che copre contenuto in alcune viste; cutoff mensa 09:30 blocca “oggi” (corretto); chat con spinner lazy;
+  overlay dev Next “1 Issue” = hydration-mismatch pre-esistente sidebar (solo dev). Firma FEA del modulo gita (OTP) non
+  inclusa (meccanismo separato). Resoconto HTML condivisibile pubblicato come Artifact.
+
+Gate feature: `eslint . --max-warnings 0` = 0 · `vitest run` = 776/776 (aggiunti `logout.test.ts`,
+`auth-logout-route.test.ts`) · `build` ok (route `/admin/students/[id]` generata).
+
+---
+
 ## 🗓️ Changelog — Hardening DB (ETL sede + REVOKE EXECUTE) 2026-07-06 (branch `fix/db-hardening`)
 
 Migrazione `20260706210352` (applicata a prod via MCP `apply_migration` e verificata; repo allineato).

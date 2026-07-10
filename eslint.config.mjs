@@ -16,6 +16,9 @@ const eslintConfig = defineConfig([
     // (ios/**/public/cordova.js ecc.) non vanno lintati dal gate del repo.
     "ios/**",
     "android/**",
+    // Harness one-off del test 360° Primaria (script Playwright + tooling): non
+    // è codice applicativo spedito, gira solo su richiesta. Escluso dal gate.
+    "e2e/primaria-360/**",
   ]),
 ]);
 

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireUser } from '@/lib/auth/require-staff';
+import { genitoreHasFiglio } from '@/lib/anagrafiche/legami';
 import { persistSignedSubmission } from '@/lib/forms/persist-submission';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
@@ -40,6 +41,13 @@ export async function POST(request: NextRequest) {
     const { form_id, student_id, answers, is_signed, signature_log } = b.data;
 
     const supabase = await createAdminClient();
+
+    // IDOR: un genitore può sottomettere (e auto-aggiornare l'anagrafica) solo su
+    // un PROPRIO figlio. student_id assente = onboarding (ammesso).
+    if (student_id && auth.user.role === 'genitore' && !(await genitoreHasFiglio(supabase, auth.user.id, student_id))) {
+      return NextResponse.json({ error: 'Accesso negato' }, { status: 403 });
+    }
+
     const result = await persistSignedSubmission(supabase, {
       form_id,
       parent_id: auth.user.id,
@@ -73,19 +81,11 @@ export async function GET(request: NextRequest) {
 
     const supabase = await createAdminClient();
 
-    const { data, error } = await supabase
+    // Query difensiva: niente embed annidato PostgREST (che dà 500 quando la
+    // relazione FK non è riconosciuta) → base + arricchimento con query separate.
+    const { data: subs, error } = await supabase
       .from('forms_submissions')
-      .select(`
-        *,
-        forms_templates (
-          title,
-          description
-        ),
-        alunni (
-          nome,
-          cognome
-        )
-      `)
+      .select('*')
       .eq('parent_id', parentId)
       .order('created_at', { ascending: false });
 
@@ -93,7 +93,29 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    return NextResponse.json(data);
+    const rows = (subs ?? []) as Record<string, unknown>[];
+    const formIds = [...new Set(rows.map((s) => s.form_id).filter(Boolean))] as string[];
+    const studentIds = [...new Set(rows.map((s) => s.student_id).filter(Boolean))] as string[];
+
+    const [tplRes, alRes] = await Promise.all([
+      formIds.length
+        ? supabase.from('forms_templates').select('id, title, description').in('id', formIds)
+        : Promise.resolve({ data: [] as Record<string, unknown>[] }),
+      studentIds.length
+        ? supabase.from('alunni').select('id, nome, cognome').in('id', studentIds)
+        : Promise.resolve({ data: [] as Record<string, unknown>[] }),
+    ]);
+
+    const tById = new Map((tplRes.data ?? []).map((t: Record<string, unknown>) => [t.id, { title: t.title, description: t.description }]));
+    const aById = new Map((alRes.data ?? []).map((a: Record<string, unknown>) => [a.id, { nome: a.nome, cognome: a.cognome }]));
+
+    const enriched = rows.map((s) => ({
+      ...s,
+      forms_templates: s.form_id ? tById.get(s.form_id as string) ?? null : null,
+      alunni: s.student_id ? aById.get(s.student_id as string) ?? null : null,
+    }));
+
+    return NextResponse.json(enriched);
   } catch (err) {
     const message = err instanceof Error && err.message ? err.message : 'Errore interno';
     return NextResponse.json({ error: message }, { status: 500 });

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { requireUser } from '@/lib/auth/require-staff'
+import { requireParentOfStudent } from '@/lib/auth/require-parent'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid, zDataYMD } from '@/lib/validation/common'
 import { loadResolveOptions } from '@/lib/mensa/server'
@@ -17,13 +17,13 @@ const getQuerySchema = z.object({
 // lato genitore (DL-043): incrocia gli allergeni del figlio col menu del giorno.
 // Riusa gli helper puri già usati dal job cuoca/segreteria.
 export async function GET(request: Request) {
-  const auth = await requireUser(request)
-  if (auth.response) return auth.response
-
   const q = parseQuery(request, getQuerySchema)
   if ('response' in q) return q.response
   const alunnoId = q.data.alunno_id
   const date = q.data.date ?? new Date().toISOString().slice(0, 10)
+
+  const auth = await requireParentOfStudent(request, alunnoId)
+  if (auth.response) return auth.response
 
   const supabase = await createAdminClient()
   const { data: al } = await supabase

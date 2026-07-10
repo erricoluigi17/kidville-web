@@ -11,6 +11,9 @@ import { parseQuery } from '@/lib/validation/http'
 const getQuerySchema = z.object({
   gruppo: z.string().optional(),
   alunno_ids: z.string().optional(),
+  // Se valorizzato: autorizzazione PER-GITA (firma di questo specifico modulo),
+  // altrimenti retro-compat (qualsiasi modulo firmato dal genitore).
+  form_model_id: z.string().optional(),
 })
 
 // GET /api/teacher/uscite?userId=&alunno_ids=a,b,c  (oppure &gruppo=)
@@ -27,7 +30,7 @@ export async function GET(request: Request) {
 
     const q = parseQuery(request, getQuerySchema)
     if ('response' in q) return q.response
-    const { gruppo, alunno_ids: alunnoIdsParam } = q.data
+    const { gruppo, alunno_ids: alunnoIdsParam, form_model_id: formModelId } = q.data
     const alunnoIds = alunnoIdsParam ? alunnoIdsParam.split(',').map((x) => x.trim()).filter(Boolean) : []
 
     if (!gruppo && alunnoIds.length === 0) {
@@ -66,8 +69,11 @@ export async function GET(request: Request) {
     }
     const firmatari = new Set<string>()
     if (allGenitori.size > 0) {
-      const { data: subs } = await supabase
+      let subsQuery = supabase
         .from('form_submissions').select('user_id, signed_at').in('user_id', [...allGenitori]).not('signed_at', 'is', null)
+      // Autorizzazione PER-GITA: se indicato, conta solo la firma di QUEL modulo.
+      if (formModelId) subsQuery = subsQuery.eq('model_id', formModelId)
+      const { data: subs } = await subsQuery
       for (const sub of subs || []) firmatari.add(sub.user_id)
     }
 

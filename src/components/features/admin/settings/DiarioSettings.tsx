@@ -13,6 +13,7 @@ interface DiarioConfig {
     visibile_genitori_da: string;
     buffer_visibilita_min: number;
     note_libere_abilitate: boolean;
+    diario_primaria_visibile: boolean;
 }
 
 const ROUTINE = [
@@ -62,6 +63,13 @@ export function DiarioSettings({ userId }: { userId: string }) {
                 <CheckField checked={cfg.note_libere_abilitate ?? true} onChange={(v) => set({ note_libere_abilitate: v })}>
                     Note libere dei docenti abilitate
                 </CheckField>
+            </div>
+
+            <div className="mt-2">
+                <CheckField checked={cfg.diario_primaria_visibile ?? false} onChange={(v) => set({ diario_primaria_visibile: v })}>
+                    Esponi il diario 0-6 ai docenti di primaria
+                </CheckField>
+                <p className="font-maven text-xs text-kidville-muted mt-1">Se disattivato, i docenti che hanno solo sezioni di primaria non vedono il diario 0-6 (con nanna/bagno/pasti): usano il Registro. Disattivo di default.</p>
             </div>
 
             <SaveRow onSave={salva} saving={saving} msg={msg} error={error} />

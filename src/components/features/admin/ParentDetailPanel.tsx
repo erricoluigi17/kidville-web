@@ -53,9 +53,11 @@ interface Props {
     parentBasicInfo: { id: string } | null;
     onClose: () => void;
     onSave: (data: Partial<ParentProfile> & { id: string }) => void;
+    // 'page' = scheda a tutta area (route /admin/students/[id]); 'drawer' = pannello laterale.
+    variant?: 'drawer' | 'page';
 }
 
-export function ParentDetailPanel({ parentBasicInfo, onClose, onSave }: Props) {
+export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 'drawer' }: Props) {
     const [parent, setParent] = useState<ParentProfile | null>(null);
     const [form, setForm] = useState<Partial<ParentProfile>>({});
     const [isLoading, setIsLoading] = useState(false);
@@ -135,41 +137,49 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave }: Props) {
 
     const children = getChildrenTabs();
 
+    const isPage = variant === 'page';
+    const shellCls = isPage
+        ? 'flex w-full flex-col rounded-card bg-white shadow-sm'
+        : 'fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col bg-white shadow-2xl';
+    const bodyCls = isPage ? 'p-5 md:p-6 space-y-5 custom-scrollbar' : 'flex-1 overflow-y-auto p-5 space-y-5 custom-scrollbar';
+
     return (
         <>
-            {/* Backdrop */}
-            <div className="fixed inset-0 z-40 bg-kidville-green/30 backdrop-blur-[1px]" onClick={onClose} />
+            {/* Backdrop — solo nel pannello laterale */}
+            {!isPage && <div className="fixed inset-0 z-40 bg-kidville-green/30 backdrop-blur-[1px]" onClick={onClose} />}
 
-            {/* Panel slide-in (Stile Bianco Kidville come Alunni) */}
-            <div className="fixed inset-y-0 right-0 z-50 w-full max-w-md bg-white shadow-2xl flex flex-col">
+            {/* Contenitore: pannello laterale oppure scheda a tutta area */}
+            <div className={shellCls}>
                 {/* Header */}
                 <div className="flex items-center justify-between p-5 border-b border-kidville-line">
                     <div>
                         <h2 className="font-barlow font-black text-xl text-kidville-green uppercase tracking-wide flex items-center gap-2">
                             <Users size={20} />
-                            {form.citizenship === 'educator' || form.citizenship === 'coordinator' 
-                                ? 'Membro dello Staff' 
+                            {form.citizenship === 'educator' || form.citizenship === 'coordinator'
+                                ? 'Membro dello Staff'
                                 : 'Anagrafica Genitore'}
                         </h2>
                         <p className="font-maven text-sm text-kidville-muted mt-0.5">
                             {form.first_name || ''} {form.last_name || ''}
                         </p>
                     </div>
-                    <button
-                        onClick={onClose}
-                        className="w-8 h-8 rounded-full bg-kidville-line flex items-center justify-center text-kidville-muted hover:text-kidville-ink"
-                    >
-                        <X size={16} />
-                    </button>
+                    {!isPage && (
+                        <button
+                            onClick={onClose}
+                            className="w-8 h-8 rounded-full bg-kidville-line flex items-center justify-center text-kidville-muted hover:text-kidville-ink"
+                        >
+                            <X size={16} />
+                        </button>
+                    )}
                 </div>
 
                 {isLoading ? (
-                    <div className="flex-1 flex flex-col items-center justify-center gap-4">
+                    <div className={`${isPage ? 'py-16' : 'flex-1'} flex flex-col items-center justify-center gap-4`}>
                         <div className="w-8 h-8 border-4 border-kidville-line border-t-kidville-green rounded-full animate-spin"></div>
                         <p className="font-maven text-kidville-muted">Caricamento dettagli...</p>
                     </div>
                 ) : (
-                    <div className="flex-1 overflow-y-auto p-5 space-y-5 custom-scrollbar">
+                    <div className={bodyCls}>
                         {/* Dati Anagrafici */}
                         <section>
                             <h3 className="font-barlow font-bold text-kidville-green uppercase text-xs tracking-wide mb-3">

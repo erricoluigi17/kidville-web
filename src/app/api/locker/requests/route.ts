@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
+import { requireParentOfStudent } from '@/lib/auth/require-parent';
 import { scuoleDiUtente } from '@/lib/auth/scope';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
@@ -22,6 +23,14 @@ const patchBodySchema = z.object({
     stato: z.enum(['acknowledged', 'fulfilled']),
 });
 
+// La tabella `locker_requests` può non esistere in alcuni ambienti (modulo non
+// migrato su prod, dove esistono solo `armadietto`/`locker_config`): in quel caso
+// si degrada a vuoto invece di rispondere 500.
+function tabellaMancante(error: { code?: string; message?: string } | null): boolean {
+    if (!error) return false;
+    return error.code === '42P01' || /does not exist|schema cache|could not find/i.test(error.message ?? '');
+}
+
 // ============================================================
 // GET /api/locker/requests
 // Query:
@@ -38,6 +47,10 @@ export async function GET(request: NextRequest) {
         const supabase = await createAdminClient();
 
         if (alunnoId) {
+            // Ramo genitore: gate identità (sessione) + legame genitore↔alunno.
+            const auth = await requireParentOfStudent(request, alunnoId);
+            if (auth.response) return auth.response;
+
             let query = supabase
                 .from('locker_requests')
                 .select(`
@@ -51,7 +64,10 @@ export async function GET(request: NextRequest) {
             if (stato) query = query.eq('stato', stato);
 
             const { data, error } = await query;
-            if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+            if (error) {
+                if (tabellaMancante(error)) return NextResponse.json([]);
+                return NextResponse.json({ error: error.message }, { status: 500 });
+            }
             return NextResponse.json(data);
 
         } else if (classeSezione) {
@@ -86,7 +102,10 @@ export async function GET(request: NextRequest) {
             if (stato) query = query.eq('stato', stato);
 
             const { data, error } = await query;
-            if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+            if (error) {
+                if (tabellaMancante(error)) return NextResponse.json([]);
+                return NextResponse.json({ error: error.message }, { status: 500 });
+            }
             return NextResponse.json(data);
         }
 
@@ -124,7 +143,10 @@ export async function PATCH(request: NextRequest) {
             .select()
             .single();
 
-        if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+        if (error) {
+            if (tabellaMancante(error)) return NextResponse.json({ ok: true, degraded: true });
+            return NextResponse.json({ error: error.message }, { status: 500 });
+        }
         return NextResponse.json(data);
     } catch (err) {
         console.error('Errore PATCH /api/locker/requests:', err);

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
+import { requireParentOfStudent } from '@/lib/auth/require-parent';
 import { assertAlunnoInScope, scuoleDiUtente } from '@/lib/auth/scope';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody, parseQuery } from '@/lib/validation/http';
@@ -65,8 +66,14 @@ export async function GET(request: NextRequest) {
 
         const supabase = await createAdminClient();
 
+        // Ramo genitore (?alunno_id): gate identità (sessione) + legame genitore↔alunno.
+        // Chiude l'IDOR anonimo segnalato dal test 360°. Staff/educator passano.
+        if (alunnoId) {
+            const auth = await requireParentOfStudent(request, alunnoId);
+            if (auth.response) return auth.response;
+        }
+
         // Ramo docente/staff (per classe): gate ruolo + isolamento per plesso.
-        // Il ramo genitore (?alunno_id) resta aperto.
         let plessiScope: string[] = [];
         if (classeSezione && !alunnoId) {
             const auth = await requireDocente(request);

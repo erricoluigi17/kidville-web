@@ -195,8 +195,8 @@ function LoginForm() {
       >
         {!highContrast && (
           // M9.5: logo statico su next/image (intrinseco 16:9 in scala; la resa
-          // la decide il CSS h-7 w-auto, identica all'<img>).
-          <Image src="/logo_green.png" alt="Kidville" width={192} height={108} priority className="mb-4 h-7 w-auto" />
+          // la decide il CSS h-12 w-auto, identica all'<img>).
+          <Image src="/logo_green.png" alt="Kidville" width={192} height={108} priority className="mb-4 h-12 w-auto" />
         )}
         <h1 className={(highContrast ? '' : 'text-kidville-green') + ' font-barlow text-2xl font-black uppercase tracking-wide mb-1'}>Accesso Kidville</h1>
         <p className={(highContrast ? 'text-zinc-300' : 'text-kidville-muted') + ' text-sm mb-5'}>

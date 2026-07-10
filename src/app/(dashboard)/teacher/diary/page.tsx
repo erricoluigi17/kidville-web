@@ -18,21 +18,32 @@ function TeacherDiaryInner() {
     const [sezioni, setSezioni] = useState<string[]>([]);
     const [sezione, setSezione] = useState<string | null>(null);
     const [sezioniLoaded, setSezioniLoaded] = useState(false);
+    // true se il docente ha SOLO sezioni primaria e l'admin ha disattivato
+    // l'esposizione del diario 0-6 alla primaria (empty-state dedicato).
+    const [soloPrimariaNascosta, setSoloPrimariaNascosta] = useState(false);
     const [isOffline, setIsOffline] = useState(() => typeof navigator !== 'undefined' && !navigator.onLine);
 
     const day = useDiaryDay(userId, sezione);
 
     useEffect(() => {
         let active = true;
-        fetch(`/api/educator-sections?userId=${userId}`)
-            .then(r => (r.ok ? r.json() : null))
-            .then(d => {
+        Promise.all([
+            fetch(`/api/educator-sections?userId=${userId}`).then(r => (r.ok ? r.json() : null)).catch(() => null),
+            fetch(`/api/diary/config?userId=${userId}`).then(r => (r.ok ? r.json() : null)).catch(() => null),
+        ])
+            .then(([sec, conf]) => {
                 if (!active) return;
-                const names: string[] = Array.isArray(d?.sectionNames) ? d.sectionNames : [];
+                // Preferisci `sections` (con school_type); fallback su `sectionNames` (risposta vecchia).
+                const raw: { name: string; school_type: string | null }[] = Array.isArray(sec?.sections)
+                    ? sec.sections
+                    : (Array.isArray(sec?.sectionNames) ? sec.sectionNames.map((n: string) => ({ name: n, school_type: null })) : []);
+                const primariaVisibile = conf?.diario_primaria_visibile === true; // fail-closed: primaria esposta solo se attivata dall'admin
+                const filtered = primariaVisibile ? raw : raw.filter(s => s.school_type !== 'primaria');
+                const names = filtered.map(s => s.name);
                 setSezioni(names);
                 setSezione(cur => cur ?? names[0] ?? null);
+                setSoloPrimariaNascosta(!primariaVisibile && raw.length > 0 && names.length === 0);
             })
-            .catch(() => {})
             .finally(() => { if (active) setSezioniLoaded(true); });
         return () => { active = false; };
     }, [userId]);
@@ -63,7 +74,11 @@ function TeacherDiaryInner() {
                 </div>
                 <div className="mt-4 rounded-3xl border border-kidville-line bg-white p-8 text-center shadow-sm">
                     <p className="font-maven text-sm text-kidville-muted">
-                        Nessuna sezione assegnata al tuo profilo.<br />Chiedi alla segreteria di abbinarti alla tua sezione.
+                        {soloPrimariaNascosta ? (
+                            <>Il diario 0-6 non è attivo per la primaria.<br />Per la tua classe usa il <strong>Registro</strong>.</>
+                        ) : (
+                            <>Nessuna sezione assegnata al tuo profilo.<br />Chiedi alla segreteria di abbinarti alla tua sezione.</>
+                        )}
                     </p>
                 </div>
             </div>

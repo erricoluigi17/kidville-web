@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { getRequestUserId } from '@/lib/auth/require-staff'
+import { requireParentOfStudent } from '@/lib/auth/require-parent'
 import { getUserEmail, verifyTicket, codeHash } from '@/lib/auth/otp-ticket'
 import { buildSignatureLog, extractRequestMeta } from '@/lib/fea/signature-log'
 import { recordSignerSlot } from '@/lib/fea/slots'
@@ -30,12 +30,13 @@ const postBodySchema = z.object({
 // Protetta da conferma OTP email (FES): richiedi prima l'OTP via /giustifica/otp.
 export async function POST(request: NextRequest) {
   try {
-    const userId = getRequestUserId(request)
-    if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
-
     const b = await parseBody(request, postBodySchema)
     if ('response' in b) return b.response
     const { studentId, data, motivo, code, expiry, ticket } = b.data
+
+    const auth = await requireParentOfStudent(request, studentId)
+    if (auth.response) return auth.response
+    const userId = auth.user.id
 
     const supabase = await createAdminClient()
 

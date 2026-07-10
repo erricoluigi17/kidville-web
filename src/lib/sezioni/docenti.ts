@@ -23,6 +23,23 @@ export async function sezioniDiUtente(supabase: SupabaseClient, utenteId: string
   return (data ?? []).map(r => r.section_id as string)
 }
 
+// Nomi (sections.name) delle sezioni assegnate a un utente — fonte canonica
+// utenti_sezioni → sections. Nessun fallback euristico: senza legami → [].
+export async function nomiSezioniDiUtente(supabase: SupabaseClient, utenteId: string): Promise<string[]> {
+  const { data } = await supabase
+    .from('utenti_sezioni')
+    .select('sections(name)')
+    .eq('utente_id', utenteId)
+  type Row = { sections: { name?: string | null }[] | { name?: string | null } | null }
+  return [...new Set(
+    ((data ?? []) as Row[]).flatMap((r) => {
+      const s = r.sections
+      if (!s) return []
+      return (Array.isArray(s) ? s : [s]).map((x) => x.name)
+    }).filter((n): n is string => Boolean(n))
+  )]
+}
+
 // Sezioni di un docente filtrate per grado scolastico (es. solo 'primaria').
 // Restituisce le righe sections complete (id, name, school_type, scholastic_year).
 export interface SezioneInfo {

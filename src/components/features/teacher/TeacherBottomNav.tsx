@@ -10,12 +10,14 @@ import {
   ListTodo, UtensilsCrossed, CalendarDays, User, X, ChevronRight,
 } from 'lucide-react';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
+import { LogoutMenuButton } from '@/components/ui/LogoutMenuButton';
 
 // ============================================================================
 // TeacherBottomNav — bottom bar persistente del design (DR ins/screen-home.jsx
 // ShellTabBar + MenuSheet), mirror del pattern Genitore (parent/BottomNav).
-// Naviga SOLO rotte teacher esistenti; le voci del DR senza rotta (Mensa /
-// Calendario / Profilo) sono rese NON navigabili con badge "In arrivo".
+// Naviga SOLO rotte teacher esistenti; le voci del DR senza rotta (Calendario /
+// Profilo) sono rese NON navigabili con badge "In arrivo". La Mensa ha ora una
+// vista docente read-only (/teacher/mensa).
 // Propaga ?userId= su ogni href (le pagine teacher risolvono l'identità via query).
 // ============================================================================
 
@@ -58,7 +60,7 @@ export default function TeacherBottomNav() {
     {
       label: 'Vita scolastica',
       items: [
-        { id: 'mensa', label: 'Mensa', sub: 'Menù e diete', icon: UtensilsCrossed, href: null, tint: '#E6720A', soon: true },
+        { id: 'mensa', label: 'Mensa', sub: 'Prenotazioni pranzo', icon: UtensilsCrossed, href: '/teacher/mensa', tint: '#E6720A' },
         { id: 'foto', label: 'Foto', sub: 'Galleria sezione', icon: Image, href: '/teacher/gallery', tint: '#006A5F' },
         { id: 'bacheca', label: 'Bacheca', sub: 'Avvisi e comunicazioni', icon: Megaphone, href: '/teacher/avvisi', tint: '#E53935' },
         { id: 'calendario', label: 'Calendario', sub: 'Eventi e uscite', icon: CalendarDays, href: null, tint: '#2A6FDB', soon: true },
@@ -67,7 +69,7 @@ export default function TeacherBottomNav() {
     {
       label: 'Strumenti',
       items: [
-        { id: 'attivita', label: 'Attività', sub: 'Task e bacheca interna', icon: ListTodo, href: '/teacher/tasks', tint: '#1F8A5B' },
+        { id: 'attivita', label: 'Attività', sub: 'Attività e bacheca interna', icon: ListTodo, href: '/teacher/tasks', tint: '#1F8A5B' },
         { id: 'armadietto', label: 'Armadietto', sub: 'Scorte e richieste', icon: Package, href: '/teacher/locker', tint: '#7A3FD0' },
         { id: 'moduli', label: 'Moduli', sub: 'Form da gestire', icon: FileText, href: '/teacher/modulistica', tint: '#E6720A' },
         { id: 'messaggi', label: 'Messaggi', sub: 'Chat con le famiglie', icon: MessageCircle, href: '/teacher/chat', tint: '#006A5F' },
@@ -93,8 +95,11 @@ export default function TeacherBottomNav() {
   };
 
   const isMenuSectionActive = groups.some((g) =>
-    g.items.some((i) => i.href && i.href !== '/teacher/attendance' && pathname.startsWith(i.href)),
+    g.items.some((i) => i.href && pathname.startsWith(i.href)),
   );
+  // Mutua esclusività: il MENU non si accende sulle rotte già coperte da un tab
+  // dedicato (Dashboard/Diario·Registro/Messaggi/Foto) → una sola voce attiva.
+  const anyMainTabActive = mainTabs.some((t) => t.href && isActive(t.href));
 
   return (
     <>
@@ -105,7 +110,7 @@ export default function TeacherBottomNav() {
           <nav aria-label="Navigazione principale" className="flex items-stretch justify-around px-1 h-[60px]">
             {mainTabs.map((tab) => {
               const Icon = tab.icon;
-              const active = tab.href ? isActive(tab.href) : (isMenuSectionActive || showMenu);
+              const active = tab.href ? isActive(tab.href) : ((isMenuSectionActive && !anyMainTabActive) || showMenu);
 
               if (tab.id === 'menu') {
                 return (
@@ -273,6 +278,12 @@ export default function TeacherBottomNav() {
                       </div>
                     </div>
                   ))}
+
+                  {/* Uscita — prima non c'era alcun logout nell'area Docente. */}
+                  <LogoutMenuButton
+                    iconSize={21}
+                    className="flex w-full items-center justify-center gap-2.5 rounded-card bg-white px-3 py-[13px] font-barlow text-base font-extrabold uppercase tracking-wide text-kidville-error shadow-[0_1px_2px_rgba(0,84,75,.04),0_8px_24px_-18px_rgba(0,84,75,.28)] active:bg-kidville-error-soft disabled:opacity-60"
+                  />
                 </div>
               </div>
             </motion.div>

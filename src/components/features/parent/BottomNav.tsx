@@ -11,6 +11,7 @@ import {
   ChevronRight, Shirt,
 } from 'lucide-react';
 import { useChildSchoolType } from '@/lib/auth/use-child-school-type';
+import { LogoutMenuButton } from '@/components/ui/LogoutMenuButton';
 
 // grado: 'comune' = visibile sempre; 'primaria'/'infanzia' = solo quel grado.
 type Grado = 'comune' | 'primaria' | 'infanzia';
@@ -110,6 +111,9 @@ export default function BottomNav() {
   const isMenuSectionActive = visibleGroups.some((g) =>
     g.items.some((i) => i.href && pathname.startsWith(i.href)),
   );
+  // Mutua esclusività: il MENU non si accende sulle rotte già coperte da un tab
+  // dedicato (Home/Scuola·Diario/Avvisi/Chat) → una sola voce attiva.
+  const anyMainTabActive = mainTabs.some((t) => t.href && isActive(t.href));
 
   return (
     <>
@@ -120,7 +124,7 @@ export default function BottomNav() {
           <nav aria-label="Navigazione principale" className="flex items-stretch justify-around px-1 h-[60px]">
             {mainTabs.map((tab) => {
               const Icon = tab.icon;
-              const active = tab.href ? isActive(tab.href) : (isMenuSectionActive || showMenu);
+              const active = tab.href ? isActive(tab.href) : ((isMenuSectionActive && !anyMainTabActive) || showMenu);
 
               if (tab.id === 'menu') {
                 return (
@@ -288,6 +292,12 @@ export default function BottomNav() {
                       </div>
                     </div>
                   ))}
+
+                  {/* Uscita — prima non c'era alcun logout nell'area Genitore. */}
+                  <LogoutMenuButton
+                    iconSize={21}
+                    className="flex w-full items-center justify-center gap-2.5 rounded-card bg-white px-3 py-[13px] font-barlow text-base font-extrabold uppercase tracking-wide text-kidville-error shadow-[0_1px_2px_rgba(0,84,75,.04),0_8px_24px_-18px_rgba(0,84,75,.28)] active:bg-kidville-error-soft disabled:opacity-60"
+                  />
                 </div>
               </div>
             </motion.div>

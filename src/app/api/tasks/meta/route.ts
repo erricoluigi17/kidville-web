@@ -65,7 +65,8 @@ export async function GET(request: Request) {
             .in('scuola_id', plessi)
             .order('name', { ascending: true });
 
-        let classes = ['Girasoli', 'Margherite', 'Tulipani', 'Coccinelle'];
+        // Nessun elenco hardcoded: senza sezioni né alunni il selettore resta vuoto.
+        let classes: string[] = [];
         if (!secErr && sections && sections.length > 0) {
             classes = sections.map(s => s.name);
         } else if (students.length > 0) {

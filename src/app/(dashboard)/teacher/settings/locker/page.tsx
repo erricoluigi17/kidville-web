@@ -50,12 +50,16 @@ function LockerSettingsInner() {
         fetch('/api/admin/sections/scoped?grado=nido,infanzia')
             .then(r => r.json())
             .then(d => {
-                if (!d.success) return;
+                if (!d.success) { setLoading(false); return; }
                 const names: string[] = (d.data ?? []).flatMap((g: { sezioni: { name: string }[] }) => g.sezioni.map(s => s.name));
                 setSezioniReali(names);
                 setClasseFilter(cur => cur || names[0] || '');
+                // Nessuna sezione nido/infanzia (es. plesso solo-primaria): niente da
+                // caricare → chiudo lo spinner, altrimenti resterebbe attivo a vita
+                // (fetchMateriali parte solo con classeFilter valorizzato).
+                if (names.length === 0) setLoading(false);
             })
-            .catch(() => {});
+            .catch(() => setLoading(false));
     }, []);
 
     // ── Fetch ─────────────────────────────────────────────────────────────────

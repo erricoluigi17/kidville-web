@@ -241,7 +241,7 @@ async function exportPDF(students: StudentMonthData[], days: Date[], month: numb
 
 // ─── Componente Principale ───────────────────────────────────────────────────
 
-export function MonthlyAttendanceTable({ sezione = 'Girasoli' }: { sezione?: string }) {
+export function MonthlyAttendanceTable({ sezione = '' }: { sezione?: string }) {
     const now = new Date();
     const [year, setYear] = useState(now.getFullYear());
     const [month, setMonth] = useState(now.getMonth() + 1);

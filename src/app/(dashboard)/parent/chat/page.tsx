@@ -6,6 +6,7 @@ import { ArrowLeft, MessageSquare, Plus, X, UserPlus } from 'lucide-react';
 import { ChatThreadList, ChatThread } from '@/components/features/chat/ChatThreadList';
 import { ChatMessageArea, ChatMessage } from '@/components/features/chat/ChatMessageArea';
 import { ChatInput } from '@/components/features/chat/ChatInput';
+import { ChatListSkeleton } from '@/components/features/chat/ChatListSkeleton';
 import { useUnreadNotifications } from '@/components/features/chat/useUnreadNotifications';
 import { useChatRealtime } from '@/components/features/chat/useChatRealtime';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
@@ -21,7 +22,7 @@ interface Contact {
 
 // Identità dalla sessione (URL → localStorage → /api/me), senza fallback demo (M4).
 function ParentChatContent() {
-    const { userId: parentId } = useSessionIdentity();
+    const { userId: parentId, ready } = useSessionIdentity();
 
     const [threads, setThreads] = useState<ChatThread[]>([]);
     const [selectedThread, setSelectedThread] = useState<ChatThread | null>(null);
@@ -58,7 +59,7 @@ function ParentChatContent() {
     });
 
     const loadThreads = useCallback(async () => {
-        if (!parentId) return; // identità non risolta: lo spinner resta
+        if (!ready || !parentId) return; // in risoluzione o non autenticato (redirect dell'hook)
         try {
             const res = await fetch(`/api/chat/threads?userId=${parentId}`).catch(() => null);
             if (res?.ok) {
@@ -70,7 +71,7 @@ function ParentChatContent() {
         } finally {
             setLoading(false);
         }
-    }, [parentId]);
+    }, [ready, parentId]);
 
     useEffect(() => { loadThreads(); }, [loadThreads]);
 
@@ -288,13 +289,11 @@ function ParentChatContent() {
     // Rimuovere il calcolo reattivo: firstUnreadId è ora uno stato
     // gestito da loadMessages e resettato da handleSendMessage/handleSelectThread
 
-    if (loading || !parentId) {
-        return (
-            <div className="max-w-5xl mx-auto p-4 sm:p-6 flex flex-col items-center justify-center min-h-[60vh] gap-4">
-                <div className="w-10 h-10 border-4 border-kidville-green/30 border-t-kidville-green rounded-full animate-spin" />
-                <p className="font-maven text-gray-500">Caricamento chat...</p>
-            </div>
-        );
+    // Skeleton finché l'identità non è risolta e i thread non sono caricati.
+    // `loading` viene azzerato da loadThreads appena l'identità è valida, quindi
+    // niente skeleton infinito; con identità risolta-a-null l'hook reindirizza.
+    if (!ready || loading || !parentId) {
+        return <ChatListSkeleton />;
     }
 
     return (

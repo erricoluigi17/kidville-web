@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Building2, Loader2, Pencil, Check, X, Plus, Power, ShieldCheck } from 'lucide-react';
+import { Building2, Loader2, Pencil, Check, X, Plus, Power, ShieldCheck, FileText } from 'lucide-react';
+import { parseAnagraficaSede, type AnagraficaSede } from '@/lib/scuole/anagrafica';
 
 interface Scuola {
   id: string;
@@ -9,6 +10,7 @@ interface Scuola {
   citta?: string | null;
   indirizzo?: string | null;
   attiva: boolean;
+  config?: unknown;
 }
 
 // Pannello Multi-Sede (DL-033) — riservato alla Direzione (gate server).
@@ -20,6 +22,10 @@ export function SchoolsPanel({ userId }: { userId: string }) {
   const [draftNome, setDraftNome] = useState('');
   const [nuova, setNuova] = useState({ nome: '', citta: '', indirizzo: '' });
   const [showNuova, setShowNuova] = useState(false);
+  // Anagrafica di sede (multi-sede): form inline per sede, dati in config.anagrafica.
+  const [anagId, setAnagId] = useState<string | null>(null);
+  const [draftAnag, setDraftAnag] = useState<AnagraficaSede>({});
+  const [draftSede, setDraftSede] = useState({ citta: '', indirizzo: '' });
 
   const hdr = { 'Content-Type': 'application/json', 'x-user-id': userId };
 
@@ -58,6 +64,7 @@ export function SchoolsPanel({ userId }: { userId: string }) {
       if (res.status === 403) { alert('Azione riservata alla Direzione.'); return; }
       if (!res.ok) { const j = await res.json().catch(() => ({})); alert(j.error || 'Errore'); return; }
       setEditId(null);
+      setAnagId(null);
       await load();
     } finally {
       setSaving(false);
@@ -75,8 +82,11 @@ export function SchoolsPanel({ userId }: { userId: string }) {
       </div>
 
       <div className="space-y-2">
-        {scuole.map((s) => (
-          <div key={s.id} className="bg-white rounded-card border border-kidville-line p-4 flex items-center justify-between gap-3">
+        {scuole.map((s) => {
+          const anag = parseAnagraficaSede(s.config);
+          return (
+          <div key={s.id} className="bg-white rounded-card border border-kidville-line p-4 space-y-3">
+            <div className="flex items-center justify-between gap-3">
             {editId === s.id ? (
               <input
                 value={draftNome}
@@ -91,7 +101,9 @@ export function SchoolsPanel({ userId }: { userId: string }) {
                   {!s.attiva && <span className="ml-2 text-[10px] uppercase bg-kidville-line text-kidville-muted px-2 py-0.5 rounded-full">Disattivata</span>}
                   {s.attiva && <span className="ml-2 text-[10px] uppercase bg-kidville-success-soft text-kidville-success px-2 py-0.5 rounded-full">Attiva</span>}
                 </p>
-                <p className="font-maven text-xs text-kidville-muted truncate">{[s.citta, s.indirizzo].filter(Boolean).join(' · ') || '—'}</p>
+                <p className="font-maven text-xs text-kidville-muted truncate">
+                  {[s.citta, s.indirizzo, anag.codice_meccanografico && `Cod. Mecc. ${anag.codice_meccanografico}`].filter(Boolean).join(' · ') || '—'}
+                </p>
               </div>
             )}
 
@@ -107,6 +119,18 @@ export function SchoolsPanel({ userId }: { userId: string }) {
                 </>
               ) : (
                 <>
+                  <button
+                    onClick={() => {
+                      if (anagId === s.id) { setAnagId(null); return; }
+                      setAnagId(s.id);
+                      setDraftAnag(parseAnagraficaSede(s.config));
+                      setDraftSede({ citta: s.citta ?? '', indirizzo: s.indirizzo ?? '' });
+                    }}
+                    className={`p-2 rounded-lg hover:bg-kidville-cream ${anagId === s.id ? 'text-kidville-green' : 'text-kidville-muted hover:text-kidville-green'}`}
+                    title="Anagrafica"
+                  >
+                    <FileText size={16} />
+                  </button>
                   <button onClick={() => { setEditId(s.id); setDraftNome(s.nome); }} className="p-2 rounded-lg text-kidville-muted hover:text-kidville-green hover:bg-kidville-cream" title="Rinomina">
                     <Pencil size={16} />
                   </button>
@@ -121,8 +145,39 @@ export function SchoolsPanel({ userId }: { userId: string }) {
                 </>
               )}
             </div>
+            </div>
+
+            {/* Anagrafica di sede: indirizzo completo, codice meccanografico, contatti.
+                Dati in scuole.config.anagrafica (merge server-side, solo Direzione). */}
+            {anagId === s.id && (
+              <div className="border-t border-kidville-line pt-3 space-y-2">
+                <input value={draftAnag.denominazione ?? ''} onChange={(e) => setDraftAnag(prev => ({ ...prev, denominazione: e.target.value }))} placeholder="Denominazione ufficiale" className="w-full border-2 border-kidville-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kidville-green" />
+                <div className="grid grid-cols-2 gap-2">
+                  <input value={draftSede.citta} onChange={(e) => setDraftSede(prev => ({ ...prev, citta: e.target.value }))} placeholder="Città" className="border-2 border-kidville-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kidville-green" />
+                  <input value={draftSede.indirizzo} onChange={(e) => setDraftSede(prev => ({ ...prev, indirizzo: e.target.value }))} placeholder="Indirizzo" className="border-2 border-kidville-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kidville-green" />
+                  <input value={draftAnag.cap ?? ''} onChange={(e) => setDraftAnag(prev => ({ ...prev, cap: e.target.value }))} placeholder="CAP" className="border-2 border-kidville-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kidville-green" />
+                  <input value={draftAnag.provincia ?? ''} onChange={(e) => setDraftAnag(prev => ({ ...prev, provincia: e.target.value }))} placeholder="Provincia (sigla)" className="border-2 border-kidville-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kidville-green" />
+                  <input value={draftAnag.codice_meccanografico ?? ''} onChange={(e) => setDraftAnag(prev => ({ ...prev, codice_meccanografico: e.target.value }))} placeholder="Codice meccanografico" className="border-2 border-kidville-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kidville-green" />
+                  <input value={draftAnag.piva_cf ?? ''} onChange={(e) => setDraftAnag(prev => ({ ...prev, piva_cf: e.target.value }))} placeholder="P.IVA / CF ente" className="border-2 border-kidville-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kidville-green" />
+                  <input value={draftAnag.telefono ?? ''} onChange={(e) => setDraftAnag(prev => ({ ...prev, telefono: e.target.value }))} placeholder="Telefono" className="border-2 border-kidville-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kidville-green" />
+                  <input value={draftAnag.email ?? ''} onChange={(e) => setDraftAnag(prev => ({ ...prev, email: e.target.value }))} placeholder="Email" className="border-2 border-kidville-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kidville-green" />
+                </div>
+                <input value={draftAnag.pec ?? ''} onChange={(e) => setDraftAnag(prev => ({ ...prev, pec: e.target.value }))} placeholder="PEC" className="w-full border-2 border-kidville-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kidville-green" />
+                <div className="flex gap-2 justify-end">
+                  <button onClick={() => setAnagId(null)} className="px-3 py-1.5 text-sm rounded-pill border border-kidville-line text-kidville-muted">Annulla</button>
+                  <button
+                    disabled={saving}
+                    onClick={() => patch(s.id, { citta: draftSede.citta, indirizzo: draftSede.indirizzo, anagrafica: draftAnag })}
+                    className="px-4 py-1.5 text-sm font-bold uppercase rounded-pill bg-kidville-green text-kidville-yellow disabled:opacity-50"
+                  >
+                    {saving ? 'Salvataggio…' : 'Salva anagrafica'}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
-        ))}
+          );
+        })}
       </div>
 
       {showNuova ? (

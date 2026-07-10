@@ -22,7 +22,8 @@ const getQuerySchema = z.object({
 
 const postBodySchema = z.object({
     name: z.string().min(1, 'Il nome della sezione è obbligatorio'),
-    school_type: z.string().nullish(), // default 'infanzia' applicato nel codice (|| copre anche '')
+    // Grado scuola validato (niente valori spazzatura); se assente → 'infanzia' nel codice.
+    school_type: z.preprocess(vuotoComeAssente, z.enum(['nido', 'infanzia', 'primaria']).nullish()),
     scuola_id: z.preprocess(vuotoComeAssente, zUuid.nullish()), // default sede principale nel codice
 });
 

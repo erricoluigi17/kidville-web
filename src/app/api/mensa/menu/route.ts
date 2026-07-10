@@ -7,6 +7,7 @@ import { resolveMenuRange } from '@/lib/mensa/resolveMenu'
 import { resolveScuolaScrittura, scuoleDiUtente } from '@/lib/auth/scope'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zDataYMD, zUuid } from '@/lib/validation/common'
+import { genitoreHasFiglio } from '@/lib/anagrafiche/legami'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // '' è ammesso per retro-compatibilità sui param opzionali: ?scuola_id= (vuoto)
@@ -109,10 +110,8 @@ export async function GET(request: NextRequest) {
       const { data: al } = await supabase.from('alunni').select('classe_sezione, scuola_id').eq('id', alunnoId).maybeSingle()
       if (!al) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
       if (user.role === 'genitore') {
-        const { data: leg } = await supabase
-          .from('legame_genitori_alunni').select('alunno_id')
-          .eq('genitore_id', user.id).eq('alunno_id', alunnoId).maybeSingle()
-        if (!leg) return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
+        const ok = await genitoreHasFiglio(supabase, user.id, alunnoId)
+        if (!ok) return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
       }
       classeAlunno = (al.classe_sezione as string | null) ?? null
       scuolaId = (al.scuola_id as string | null) ?? scuolaId

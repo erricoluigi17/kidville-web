@@ -14,7 +14,36 @@ const getQuerySchema = z.object({
 })
 
 const postQuerySchema = z.object({
-  action: z.enum(['set-tempo', 'genera-campanelle', 'set-cell']),
+  action: z.enum(['set-tempo', 'genera-campanelle', 'set-cell', 'add-campanella', 'update-campanella', 'delete-campanella']),
+})
+
+const zTime = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'orario in formato HH:MM')
+const zTipoCamp = z.enum(['lezione', 'intervallo', 'mensa'])
+
+// Editing manuale delle singole campanelle (oltre alla rigenerazione in blocco).
+const addCampanellaBodySchema = z
+  .object({
+    sectionId: zUuid,
+    giornoSettimana: z.coerce.number().int().min(1).max(6),
+    ordine: z.coerce.number().int().min(1).max(20),
+    oraInizio: zTime,
+    oraFine: zTime,
+    tipo: zTipoCamp,
+  })
+  .refine((b) => b.oraFine > b.oraInizio, { message: 'ora_fine deve essere dopo ora_inizio', path: ['oraFine'] })
+
+const updateCampanellaBodySchema = z.object({
+  sectionId: zUuid,
+  campanellaId: zUuid,
+  ordine: z.coerce.number().int().min(1).max(20).optional(),
+  oraInizio: zTime.optional(),
+  oraFine: zTime.optional(),
+  tipo: zTipoCamp.optional(),
+})
+
+const deleteCampanellaBodySchema = z.object({
+  sectionId: zUuid,
+  campanellaId: zUuid,
 })
 
 const setTempoBodySchema = z.object({
@@ -178,6 +207,64 @@ export async function POST(request: NextRequest) {
         .single()
       if (error) return NextResponse.json({ error: error.message }, { status: 500 })
       return NextResponse.json({ success: true, data }, { status: 201 })
+    }
+
+    if (action === 'add-campanella') {
+      const b = await parseBody(request, addCampanellaBodySchema)
+      if ('response' in b) return b.response
+      const { sectionId, giornoSettimana, ordine, oraInizio, oraFine, tipo } = b.data
+      const { data, error } = await supabase
+        .from('campanelle')
+        .insert({ section_id: sectionId, giorno_settimana: giornoSettimana, ordine, ora_inizio: oraInizio, ora_fine: oraFine, tipo })
+        .select()
+        .single()
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+      return NextResponse.json({ success: true, data }, { status: 201 })
+    }
+
+    if (action === 'update-campanella') {
+      const b = await parseBody(request, updateCampanellaBodySchema)
+      if ('response' in b) return b.response
+      const { sectionId, campanellaId } = b.data
+      // Recupera la campanella (scope sezione) per validare gli orari mergiati.
+      const { data: cur } = await supabase
+        .from('campanelle')
+        .select('*')
+        .eq('id', campanellaId)
+        .eq('section_id', sectionId)
+        .maybeSingle()
+      if (!cur) return NextResponse.json({ error: 'Campanella non trovata' }, { status: 404 })
+      const oraInizio = b.data.oraInizio ?? String(cur.ora_inizio).slice(0, 5)
+      const oraFine = b.data.oraFine ?? String(cur.ora_fine).slice(0, 5)
+      if (oraFine <= oraInizio) return NextResponse.json({ error: 'ora_fine deve essere dopo ora_inizio' }, { status: 400 })
+      const tipo = b.data.tipo ?? cur.tipo
+      const ordine = b.data.ordine ?? cur.ordine
+      const { data, error } = await supabase
+        .from('campanelle')
+        .update({ ora_inizio: oraInizio, ora_fine: oraFine, tipo, ordine })
+        .eq('id', campanellaId)
+        .eq('section_id', sectionId)
+        .select()
+        .single()
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+      // Se non è più una lezione, la cella orario (materia/docente) è orfana → rimuovila.
+      if (tipo !== 'lezione') {
+        await supabase.from('orario_settimanale').delete().eq('section_id', sectionId).eq('campanella_id', campanellaId)
+      }
+      return NextResponse.json({ success: true, data })
+    }
+
+    if (action === 'delete-campanella') {
+      const b = await parseBody(request, deleteCampanellaBodySchema)
+      if ('response' in b) return b.response
+      const { sectionId, campanellaId } = b.data
+      const { error } = await supabase
+        .from('campanelle')
+        .delete()
+        .eq('id', campanellaId)
+        .eq('section_id', sectionId)
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+      return NextResponse.json({ success: true })
     }
 
     return NextResponse.json({ error: 'action non riconosciuta' }, { status: 400 })

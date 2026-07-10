@@ -119,7 +119,7 @@ export function ImportExportClient() {
 
                 {/* Import anagrafiche complete (alunno + genitori) */}
                 <div className="bg-kidville-cream border border-kidville-green/15 p-6 rounded-2xl flex flex-col items-center justify-center text-center gap-4">
-                    <div className="p-4 bg-kidville-info-soft0/20 rounded-full text-kidville-info">
+                    <div className="p-4 bg-kidville-green/10 rounded-full text-kidville-green">
                         <Upload size={32} />
                     </div>
                     <div>
@@ -135,7 +135,7 @@ export function ImportExportClient() {
                             <FileDown size={18} /> Scarica prestampato CSV
                         </button>
 
-                        <label className={`px-6 py-2 bg-kidville-info hover:bg-kidville-info-soft0 text-white rounded-full font-medium transition-all cursor-pointer flex items-center gap-2 ${isImporting ? 'opacity-50 pointer-events-none' : ''}`}>
+                        <label className={`px-6 py-2 bg-kidville-green hover:opacity-90 text-white rounded-full font-medium transition-all cursor-pointer flex items-center gap-2 ${isImporting ? 'opacity-50 pointer-events-none' : ''}`}>
                             {isImporting ? <Loader2 size={18} className="animate-spin" /> : 'Carica file compilato'}
                             <input type="file" accept=".xlsx, .xls, .csv" onChange={handleImport} className="hidden" />
                         </label>

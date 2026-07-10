@@ -1,6 +1,6 @@
 'use client';
 
-import { BookOpen, ClipboardList, FileText, Image as ImageIcon } from 'lucide-react';
+import { BookOpen, ClipboardList, FileText, Image as ImageIcon, CalendarClock } from 'lucide-react';
 
 export interface Allegato { id: string; tipo: string; file_url: string; file_name: string | null }
 export interface Individualizzata { argomento: string | null; compiti: string | null }
@@ -94,7 +94,12 @@ export function CompitiList({ lezioni }: { lezioni: Lezione[] }) {
                       <p key={idx} className="mt-1 rounded bg-kidville-info-soft px-2 py-1 font-maven text-xs text-kidville-info">Compiti: {i.compiti}</p>
                     ))}
                     {l.data_consegna_compiti && (
-                      <p className="mt-1 font-maven text-[11px] text-kidville-error">Consegna: {new Date(l.data_consegna_compiti).toLocaleDateString('it-IT')}</p>
+                      // Data di consegna: unico indicatore (chip), formato it-IT.
+                      // Con il datepicker docente la data non va più scritta nel
+                      // testo libero, evitando la doppia indicazione.
+                      <p className="mt-1.5 inline-flex items-center gap-1 rounded-pill bg-kidville-error-soft px-2 py-0.5 font-maven text-[11px] font-semibold text-kidville-error">
+                        <CalendarClock size={11} /> Consegna: {new Date(l.data_consegna_compiti).toLocaleDateString('it-IT', { weekday: 'short', day: 'numeric', month: 'short' })}
+                      </p>
                     )}
                   </li>
                 ))}

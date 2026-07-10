@@ -5,6 +5,9 @@ const BASE_URL = `http://localhost:${PORT}`;
 
 export default defineConfig({
   testDir: './e2e',
+  // L'harness one-off del test 360° Primaria ha una sua config isolata: va escluso
+  // da questa suite (infanzia), altrimenti i suoi spec/auth verrebbero raccolti qui.
+  testIgnore: '**/primaria-360/**',
   globalSetup: './e2e/global-setup.ts',
   fullyParallel: false,
   forbidOnly: !!process.env.CI,

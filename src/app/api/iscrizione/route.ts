@@ -46,13 +46,22 @@ export async function POST(request: NextRequest) {
 
     const supabase = await createAdminClient()
 
-    // Scuola dell'iscrizione: dal form se indicata; altrimenti l'unica scuola
-    // esistente (deployment mono-scuola). Se ce n'è più d'una, va indicata (il
-    // link pubblico è per-scuola).
-    let scuolaId = (b.data.scuola_id as string | undefined) || undefined
-    if (!scuolaId) {
-      const { data: scuole } = await supabase.from('schools').select('id').limit(2)
-      if (scuole && scuole.length === 1) scuolaId = scuole[0].id as string
+    // Scuola dell'iscrizione: dal link (?scuola=) se indicata e valida; altrimenti
+    // la scuola REALE del deployment. La scuola di test E2E (id e2e00000…) è
+    // esclusa dalla risoluzione automatica, così in prod (E2E + reale) si sceglie
+    // sempre quella reale. Con più scuole reali e nessuna indicata → 400.
+    const { data: scuole } = await supabase.from('schools').select('id, nome')
+    const tutte = (scuole ?? []) as { id: string; nome: string }[]
+    const richiesta = (b.data.scuola_id as string | undefined) || undefined
+    let scuolaId: string | undefined
+    if (richiesta && tutte.some((s) => s.id === richiesta)) {
+      scuolaId = richiesta
+    } else {
+      const isE2E = (s: { id: string; nome: string }) =>
+        s.id.startsWith('e2e00000') || /e2e/i.test(s.nome)
+      const reali = tutte.filter((s) => !isE2E(s))
+      if (reali.length === 1) scuolaId = reali[0].id
+      else if (tutte.length === 1) scuolaId = tutte[0].id
     }
     if (!scuolaId) {
       return NextResponse.json({ error: 'Specificare la scuola per l\'iscrizione' }, { status: 400 })

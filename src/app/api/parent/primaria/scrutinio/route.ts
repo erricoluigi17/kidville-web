@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { getRequestUserId } from '@/lib/auth/require-staff'
+import { requireParentOfStudent } from '@/lib/auth/require-parent'
 import { parseQuery } from '@/lib/validation/http'
 
 // Id laschi (non zUuid): il comportamento attuale accetta qualsiasi stringa non
@@ -19,12 +19,13 @@ const getQuerySchema = z.object({
 // { firmato: false } (la UI mostra il flusso di firma).
 export async function GET(request: NextRequest) {
   try {
-    const userId = getRequestUserId(request)
-    if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
-
     const q = parseQuery(request, getQuerySchema)
     if ('response' in q) return q.response
     const { scrutinioId, studentId } = q.data
+
+    const auth = await requireParentOfStudent(request, studentId)
+    if (auth.response) return auth.response
+    const userId = auth.user.id
 
     const supabase = await createAdminClient()
 

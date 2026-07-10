@@ -5,6 +5,7 @@ import { NextResponse } from 'next/server'
 const h = vi.hoisted(() => ({
   requireUser: vi.fn(),
   requireStaff: vi.fn(),
+  requireDocente: vi.fn(),
   logScrittura: vi.fn(),
   legame: null as Record<string, unknown> | null,
   uploadCalls: [] as unknown[],
@@ -12,7 +13,8 @@ const h = vi.hoisted(() => ({
   updates: [] as { id: unknown; row: Record<string, unknown> }[],
 }))
 
-vi.mock('@/lib/auth/require-staff', () => ({ requireUser: h.requireUser, requireStaff: h.requireStaff }))
+vi.mock('@/lib/auth/require-staff', () => ({ requireUser: h.requireUser, requireStaff: h.requireStaff, requireDocente: h.requireDocente }))
+vi.mock('@/lib/auth/scope', () => ({ assertAlunnoInScope: async () => null, assertClasseNomeInScope: async () => null }))
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: h.logScrittura }))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
@@ -21,7 +23,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.select = () => b
       b.eq = () => b
       b.order = () => b
-      b.maybeSingle = async () => ({ data: table === 'legame_genitori_alunni' ? h.legame : null, error: null })
+      b.maybeSingle = async () => ({ data: table === 'legame_genitori_alunni' ? h.legame : table === 'certificati_medici' ? { alunno_id: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1' } : null, error: null })
       b.single = async () => ({ data: { id: 'cert-1', stato: 'in_validazione' }, error: null })
       b.insert = (row: Record<string, unknown>) => { h.inserts.push(row); return b }
       b.update = (row: Record<string, unknown>) => ({ eq: async (_c: string, v: unknown) => { h.updates.push({ id: v, row }); return { error: null } } })
@@ -87,11 +89,11 @@ describe('PATCH /api/teacher/medical-certificates (validazione)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     h.updates = []
-    h.requireStaff.mockResolvedValue({ user: { id: 'seg-1', role: 'segreteria', scuola_id: 's1' } })
+    h.requireDocente.mockResolvedValue({ user: { id: 'seg-1', role: 'segreteria', scuola_id: 's1' } })
   })
 
-  it('gated allo staff', async () => {
-    h.requireStaff.mockResolvedValue({ response: NextResponse.json({}, { status: 403 }) })
+  it('gated al personale (docente/staff)', async () => {
+    h.requireDocente.mockResolvedValue({ response: NextResponse.json({}, { status: 403 }) })
     expect((await PATCH(patchReq({ id: 'cert-1', esito: 'validato' }))).status).toBe(403)
   })
 

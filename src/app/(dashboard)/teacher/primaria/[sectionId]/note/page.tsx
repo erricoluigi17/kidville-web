@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import { AlertTriangle, Check } from 'lucide-react';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
+import { nomeCompleto } from '@/lib/format/nome';
 
 interface Alunno { id: string; nome: string; cognome: string }
 interface Nota {
@@ -94,7 +95,7 @@ export default function NotePage() {
           {alunni.map((a) => (
             <label key={a.id} className="flex items-center gap-2 py-0.5 font-maven text-sm">
               <input type="checkbox" checked={sel.includes(a.id)} onChange={() => toggle(a.id)} />
-              {a.cognome} {a.nome}
+              {nomeCompleto(a.nome, a.cognome, 'cognome-nome')}
             </label>
           ))}
         </div>
@@ -126,7 +127,7 @@ export default function NotePage() {
               <li key={n.id} className="py-2.5">
                 <div className="flex items-center gap-2">
                   <span className={`rounded-pill px-2 py-0.5 text-[11px] font-maven ${cat?.cls}`}>{cat?.label}</span>
-                  <span className="font-maven text-sm text-kidville-ink">{n.alunni?.cognome} {n.alunni?.nome}</span>
+                  <span className="font-maven text-sm text-kidville-ink">{nomeCompleto(n.alunni?.nome, n.alunni?.cognome, 'cognome-nome')}</span>
                   {n.richiede_firma && (
                     <span className={`text-[11px] font-maven ${n.firmata_il ? 'text-kidville-success' : 'text-kidville-warn'}`}>
                       {n.firmata_il ? '✓ firmata' : 'attesa firma'}

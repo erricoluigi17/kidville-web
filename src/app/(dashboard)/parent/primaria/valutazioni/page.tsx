@@ -1,6 +1,7 @@
 'use client';
 
 import { Suspense, useEffect, useState } from 'react';
+import { ChevronDown } from 'lucide-react';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 
 interface ValBreve {
@@ -41,7 +42,13 @@ function ValutazioniGenitore() {
       headers: { 'x-user-id': parentId },
     })
       .then((r) => r.json())
-      .then((d) => { if (d.success) setMaterie(d.data); })
+      .then((d) => {
+        if (d.success) {
+          setMaterie(d.data);
+          // Con una sola materia la pagina sembrerebbe vuota: apri subito la card.
+          if (d.data.length === 1) setAperta(d.data[0].materiaId);
+        }
+      })
       .finally(() => setLoading(false));
   }, [ready, studentId, parentId]);
 
@@ -64,17 +71,30 @@ function ValutazioniGenitore() {
         <div className="space-y-3">
           {materie.map((m) => (
             <div key={m.materiaId} className="rounded-card border border-kidville-line bg-white shadow-sm overflow-hidden">
-              <button
-                onClick={() => setAperta(aperta === m.materiaId ? null : m.materiaId)}
-                className="flex w-full items-center justify-between px-4 py-3.5"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="text-left">
-                    <p className="font-barlow text-base font-extrabold uppercase tracking-wide text-kidville-green">{m.nome}</p>
-                    <p className="font-maven text-xs text-kidville-muted">{m.valutazioni.length} valutazion{m.valutazioni.length === 1 ? 'e' : 'i'}</p>
-                  </div>
-                </div>
-              </button>
+              {(() => {
+                const isOpen = aperta === m.materiaId;
+                const anteprima = m.valutazioni.find((v) => v.giudizio_sintetico)?.giudizio_sintetico ?? null;
+                return (
+                  <button
+                    onClick={() => setAperta(isOpen ? null : m.materiaId)}
+                    aria-expanded={isOpen}
+                    className="flex w-full items-center justify-between gap-3 px-4 py-3.5"
+                  >
+                    <div className="text-left">
+                      <p className="font-barlow text-base font-extrabold uppercase tracking-wide text-kidville-green">{m.nome}</p>
+                      <p className="font-maven text-xs text-kidville-muted">{m.valutazioni.length} valutazion{m.valutazioni.length === 1 ? 'e' : 'i'}</p>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      {anteprima && !isOpen && (
+                        <span className={`rounded-full px-2.5 py-0.5 font-maven text-xs font-semibold ${giudizioCls(anteprima)}`}>
+                          {anteprima}
+                        </span>
+                      )}
+                      <ChevronDown size={18} className={`text-kidville-muted transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+                    </div>
+                  </button>
+                );
+              })()}
 
               {aperta === m.materiaId && (
                 <div className="border-t border-kidville-line divide-y divide-kidville-line">

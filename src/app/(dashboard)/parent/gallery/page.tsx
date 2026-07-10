@@ -69,7 +69,7 @@ function ParentGalleryContent() {
     }, [studentId]);
 
     return (
-        <div className="max-w-lg mx-auto p-4 sm:p-6 pb-16">
+        <div className="max-w-lg mx-auto p-4 sm:p-6 pb-24">
             {/* Header con glassmorphism */}
             <motion.div
                 initial={{ opacity: 0, y: -20 }}

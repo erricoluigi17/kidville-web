@@ -21,6 +21,7 @@ export default function ScrutinioPage() {
   const [periodi, setPeriodi] = useState<Periodo[]>([]);
   const [periodoId, setPeriodoId] = useState('');
   const [isDirigente, setIsDirigente] = useState(false);
+  const [isStaff, setIsStaff] = useState(false);
 
   const [scrutinio, setScrutinio] = useState<Scrutinio | null>(null);
   const [alunni, setAlunni] = useState<Alunno[]>([]);
@@ -40,7 +41,12 @@ export default function ScrutinioPage() {
   useEffect(() => {
     fetch(`/api/primaria/me?userId=${userId}`)
       .then((r) => r.json())
-      .then((d) => { if (d.success) setIsDirigente(!!d.data.isDirigente); })
+      .then((d) => {
+        if (d.success) {
+          setIsDirigente(!!d.data.isDirigente);
+          setIsStaff(['admin', 'coordinator', 'segreteria'].includes(d.data.ruolo));
+        }
+      })
       .catch(() => {});
   }, [userId]);
 
@@ -266,7 +272,12 @@ export default function ScrutinioPage() {
         </div>
 
         {periodi.length === 0 && (
-          <p className="font-maven text-sm text-kidville-warn">Nessun periodo di scrutinio configurato. Chiedi alla segreteria di crearne uno.</p>
+          <p className="font-maven text-sm text-kidville-warn">
+            Nessun periodo di scrutinio configurato.{' '}
+            {isStaff
+              ? 'Puoi configurarlo da Impostazioni → Didattica primaria (periodi di scrutinio).'
+              : 'Chiedi alla segreteria di crearne uno.'}
+          </p>
         )}
 
         {scrutinio && (

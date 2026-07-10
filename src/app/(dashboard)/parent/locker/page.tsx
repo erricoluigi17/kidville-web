@@ -74,7 +74,7 @@ function nextMonth(ym: string): string {
 
 function LockerInner() {
     // Identità reale (niente ID/nome hardcoded): come le altre pagine genitore.
-    const { studentId } = useParentIdentity();
+    const { studentId, ready } = useParentIdentity();
     const [childName, setChildName] = useState('');
     useEffect(() => {
         if (!studentId) return;
@@ -103,6 +103,7 @@ function LockerInner() {
 
     // ── Fetch overview (usa mode=stock per numeri precisi) ──────────────────────────────
     const fetchData = useCallback(async (silent = false) => {
+        if (!studentId) return; // identità non risolta: evita ?alunno_id=null (400/500); render gestisce loading/empty
         try {
             // mode=stock: ritorna [{materiale, stock}] con stock aggregato reale
             const [stockRes, reqRes] = await Promise.all([
@@ -203,6 +204,15 @@ function LockerInner() {
     const pendingRequests     = requests.filter(r => r.stato === 'pending');
     const acknowledgedRequests = requests.filter(r => r.stato === 'acknowledged');
     const completedRequests   = requests.filter(r => r.stato === 'fulfilled');
+
+    if (ready && !studentId) {
+        return (
+            <div className="max-w-lg mx-auto p-4 flex flex-col items-center justify-center min-h-[60vh] gap-4 text-center">
+                <Package size={40} className="text-kidville-muted" />
+                <p className="font-maven text-kidville-muted">Nessun bambino collegato a questo profilo.</p>
+            </div>
+        );
+    }
 
     if (isLoading) {
         return (

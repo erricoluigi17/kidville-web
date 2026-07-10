@@ -1,0 +1,4 @@
+# Artefatti runtime del test 360 (screenshot, findings, storageState, credenziali)
+run/
+.auth/
+run-credentials.json

@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useAdminIdentity } from '@/lib/context/admin-identity';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   LayoutDashboard,
@@ -25,6 +26,12 @@ import {
   Menu,
   X,
 } from 'lucide-react';
+import { LogoutMenuButton } from '@/components/ui/LogoutMenuButton';
+
+// Voce "Esci" in fondo alla sidebar/drawer (il cockpit desktop ha il menu account
+// nella TopBar; qui serve per il mobile e come scorciatoia desktop).
+const LOGOUT_ROW_CLS =
+  'flex w-full items-center gap-3 rounded-xl px-4 py-3 font-maven text-sm font-semibold text-kidville-error transition-colors hover:bg-kidville-error-soft';
 
 interface NavItem {
   href: string;
@@ -114,26 +121,10 @@ function activeHref(pathname: string) {
 export function AdminSidebar() {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [ruolo, setRuolo] = useState('');
-
-  // Legge ?userId= (auth applicativa) LATO CLIENT, senza useSearchParams: così la
-  // sidebar non "sospende" durante l'SSR delle route dinamiche (es. la classe), dove
-  // veniva streamata in un template Suspense nascosto e non compariva. Resa inline.
-  // Lazy initializer (stesso pattern di AdminTopBar): niente setState sincrono
-  // nell'effect (react-hooks 7). In SSR è null.
-  const [userId] = useState<string | null>(() =>
-    typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('userId')
-  );
-  const withUser = (href: string) => (userId ? `${href}?userId=${userId}` : href);
-
-  // Ruolo dell'utente per l'eventuale filtro voci (config-driven).
-  useEffect(() => {
-    if (!userId) return;
-    fetch(`/api/primaria/me?userId=${userId}`)
-      .then((r) => r.json())
-      .then((d) => { if (d.success) setRuolo(d.data.ruolo || ''); })
-      .catch(() => {});
-  }, [userId]);
+  // userId (→ href ?userId=) e ruolo dall'identità condivisa del cockpit. Il
+  // provider risolve userId in two-pass (null al primo render, come l'SSR) →
+  // gli href della sidebar combaciano e non c'è hydration mismatch.
+  const { ruolo, withUser } = useAdminIdentity();
 
   const visible = (item: NavItem) => !item.roles || (!!ruolo && item.roles.includes(ruolo));
 
@@ -223,6 +214,9 @@ export function AdminSidebar() {
           Il brand vive nella TopBar → qui si parte dal menu. */}
       <aside className="hidden lg:flex lg:flex-col lg:w-64 lg:shrink-0 lg:sticky lg:top-16 lg:h-[calc(100vh-4rem)] z-[105] border-r border-kidville-line bg-kidville-white overflow-y-auto pt-4">
         {NavList({})}
+        <div className="mt-auto border-t border-kidville-line px-3 py-3">
+          <LogoutMenuButton className={LOGOUT_ROW_CLS} />
+        </div>
       </aside>
 
       {/* Drawer mobile */}
@@ -254,6 +248,9 @@ export function AdminSidebar() {
                 </button>
               </div>
               {NavList({ onNavigate: () => setMobileOpen(false) })}
+              <div className="mt-auto border-t border-kidville-line px-3 py-3">
+                <LogoutMenuButton className={LOGOUT_ROW_CLS} />
+              </div>
             </motion.aside>
           </>
         )}

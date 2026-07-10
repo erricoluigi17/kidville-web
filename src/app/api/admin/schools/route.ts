@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { normalizzaScuola } from '@/lib/scuole/validate'
+import { zAnagraficaSede, normalizzaAnagraficaSede } from '@/lib/scuole/anagrafica'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 
 // Multi-Sede CRUD (DL-033). Riservato alla Direzione (admin/coordinator).
@@ -37,6 +38,9 @@ const patchBodySchema = z.object({
   indirizzo: z.unknown().optional(),
   attiva: z.unknown().optional(),
   config: z.unknown().optional(),
+  // Anagrafica di sede (multi-sede): merge server-side in config.anagrafica,
+  // le altre chiavi di config sono preservate.
+  anagrafica: zAnagraficaSede.optional(),
 })
 
 export async function GET(request: Request) {
@@ -96,13 +100,13 @@ export async function PATCH(request: Request) {
 
   const b = await parseBody(request, patchBodySchema)
   if ('response' in b) return b.response
-  const { id, nome, citta, indirizzo, attiva, config } = b.data
+  const { id, nome, citta, indirizzo, attiva, config, anagrafica } = b.data
 
   try {
     const supabase = await createAdminClient()
     const { data: existing } = await supabase
       .from('scuole')
-      .select('id')
+      .select('id, config')
       .eq('id', id)
       .maybeSingle()
     if (!existing) return NextResponse.json({ error: 'Sede non trovata' }, { status: 404 })
@@ -113,6 +117,14 @@ export async function PATCH(request: Request) {
     if (indirizzo !== undefined) updates.indirizzo = indirizzo ? String(indirizzo).trim() : null
     if (attiva !== undefined) updates.attiva = !!attiva
     if (config !== undefined) updates.config = config
+    if (anagrafica !== undefined) {
+      // Merge server-side (pattern Settings Hub): preserva le altre chiavi di
+      // config; se nel body arriva anche `config` grezza, l'anagrafica
+      // normalizzata vince sulla chiave omonima.
+      const base = updates.config ?? existing.config
+      const existingConfig = base && typeof base === 'object' ? (base as Record<string, unknown>) : {}
+      updates.config = { ...existingConfig, anagrafica: normalizzaAnagraficaSede(anagrafica) }
+    }
 
     const { data, error } = await supabase
       .from('scuole')

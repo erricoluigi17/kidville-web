@@ -64,9 +64,12 @@ interface Props {
     onClose: () => void;
     onSave: (data: Partial<Student> & { id: string }) => void;
     onDelete: (id: string) => void;
+    // 'page' = scheda a tutta area (route /admin/students/[id]); 'drawer' = pannello
+    // laterale storico. Il default resta 'drawer' per retro-compatibilità.
+    variant?: 'drawer' | 'page';
 }
 
-export function StudentDetailPanel({ student, onClose, onSave, onDelete }: Props) {
+export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant = 'drawer' }: Props) {
     // Il pannello è montato per-alunno ({selectedStudent && <StudentDetailPanel/>}):
     // form inizializzato dal prop, niente state+effect (react-hooks/set-state-in-effect).
     const [form, setForm] = useState<Partial<Student>>(() => (student ? { ...student } : {}));
@@ -174,13 +177,19 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete }: Props
     const adultTabs = getAdultTabs();
     const activeTabData = adultTabs.find(t => t.id === activeAdultTab);
 
+    const isPage = variant === 'page';
+    const shellCls = isPage
+        ? 'flex w-full flex-col rounded-card bg-white shadow-sm'
+        : 'fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col bg-white shadow-2xl';
+    const bodyCls = isPage ? 'p-5 md:p-6 space-y-5' : 'flex-1 overflow-y-auto p-5 space-y-5';
+
     return (
         <>
-            {/* Backdrop */}
-            <div className="fixed inset-0 z-40 bg-kidville-green/30 backdrop-blur-[1px]" onClick={onClose} />
+            {/* Backdrop — solo nel pannello laterale */}
+            {!isPage && <div className="fixed inset-0 z-40 bg-kidville-green/30 backdrop-blur-[1px]" onClick={onClose} />}
 
-            {/* Panel slide-in */}
-            <div className="fixed inset-y-0 right-0 z-50 w-full max-w-md bg-white shadow-2xl flex flex-col">
+            {/* Contenitore: pannello laterale oppure scheda a tutta area */}
+            <div className={shellCls}>
                 {/* Header */}
                 <div className="flex items-center justify-between p-5 border-b border-kidville-line">
                     <div>
@@ -191,16 +200,18 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete }: Props
                             {student.nome} {student.cognome}
                         </p>
                     </div>
-                    <button
-                        onClick={onClose}
-                        className="w-8 h-8 rounded-full bg-kidville-line flex items-center justify-center text-kidville-muted hover:text-kidville-ink"
-                    >
-                        <X size={16} />
-                    </button>
+                    {!isPage && (
+                        <button
+                            onClick={onClose}
+                            className="w-8 h-8 rounded-full bg-kidville-line flex items-center justify-center text-kidville-muted hover:text-kidville-ink"
+                        >
+                            <X size={16} />
+                        </button>
+                    )}
                 </div>
 
                 {/* Scrollable Form */}
-                <div className="flex-1 overflow-y-auto p-5 space-y-5">
+                <div className={bodyCls}>
                     {/* Dati Anagrafici */}
                     <section>
                         <h3 className="font-barlow font-bold text-kidville-green uppercase text-xs tracking-wide mb-3">

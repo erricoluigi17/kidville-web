@@ -11,8 +11,9 @@ const getByIdQuerySchema = z.object({
     id: zUuid,
 });
 
-// Lista per sezione: default sezione/classeSezione→'Girasoli' e date→oggi calcolati nel
-// codice; onlyPresent resta stringa confrontata con 'true' (semantica attuale preservata).
+// Lista per sezione: nessun default hardcoded — senza sezione/classeSezione la risposta
+// degrada a [] ('' non matcha alcuna classe); date→oggi calcolata nel codice;
+// onlyPresent resta stringa confrontata con 'true' (semantica attuale preservata).
 const getBySezioneQuerySchema = z.object({
     sezione: z.string().optional(),
     classeSezione: z.string().optional(),
@@ -20,8 +21,8 @@ const getBySezioneQuerySchema = z.object({
     date: zDataYMD.optional(),
 });
 
-// GET /api/diary/students?sezione=Girasoli                    → lista classe (tutti)
-// GET /api/diary/students?sezione=Girasoli&onlyPresent=true   → solo presenti oggi
+// GET /api/diary/students?sezione=<classe>                    → lista classe (tutti)
+// GET /api/diary/students?sezione=<classe>&onlyPresent=true   → solo presenti oggi
 // GET /api/diary/students?classeSezione=3A&onlyPresent=true&date=2026-05-17
 // GET /api/diary/students?id=uuid                             → singolo alunno
 export async function GET(request: NextRequest) {
@@ -71,8 +72,9 @@ export async function GET(request: NextRequest) {
 
     const q = parseQuery(request, getBySezioneQuerySchema);
     if ('response' in q) return q.response;
-    // Supporta sia "sezione" (Girasoli) che "classeSezione" (3A)
-    const sezione = q.data.sezione ?? q.data.classeSezione ?? 'Girasoli';
+    // Supporta sia "sezione" che "classeSezione"; nessun default a un nome
+    // reale: entrambi assenti → '' → 0 alunni → risposta [].
+    const sezione = q.data.sezione ?? q.data.classeSezione ?? '';
     const onlyPresent = q.data.onlyPresent === 'true';
     const date = q.data.date ?? new Date().toISOString().split('T')[0];
 

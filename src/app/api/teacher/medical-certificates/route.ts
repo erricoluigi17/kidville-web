@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { requireStaff } from '@/lib/auth/require-staff'
+import { requireDocente } from '@/lib/auth/require-staff'
+import { assertAlunnoInScope, assertClasseNomeInScope } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { periodoValido } from '@/lib/certificati/stato'
 import { parseBody, parseQuery } from '@/lib/validation/http'
@@ -31,13 +32,19 @@ const patchBodySchema = z.object({
 // Filtri opzionali: ?stato=in_validazione | ?class_name=
 export async function GET(request: Request) {
   try {
-    const auth = await requireStaff(request)
+    const auth = await requireDocente(request)
     if (auth.response) return auth.response
     const q = parseQuery(request, getQuerySchema)
     if ('response' in q) return q.response
     const { stato, class_name: className } = q.data
 
     const supabase = await createAdminClient()
+    // Docente (educator) → certificati della propria sezione; lo scope per
+    // nome-classe impedisce letture cross-plesso. Staff → proprio plesso.
+    if (className) {
+      const scopeErr = await assertClasseNomeInScope(supabase, auth.user, className)
+      if (scopeErr) return scopeErr
+    }
     let query = supabase
       .from('certificati_medici')
       .select('id, alunno_id, file_path, data_inizio, data_fine, stato, note, nota_validazione, validato_il, creato_il, alunno:alunni(nome, cognome, classe_sezione)')
@@ -70,7 +77,7 @@ export async function GET(request: Request) {
 // Body: { id, esito: 'validato'|'rifiutato', data_inizio?, data_fine?, nota_validazione? }
 export async function PATCH(request: Request) {
   try {
-    const auth = await requireStaff(request)
+    const auth = await requireDocente(request)
     if (auth.response) return auth.response
 
     const b = await parseBody(request, patchBodySchema)
@@ -78,13 +85,23 @@ export async function PATCH(request: Request) {
     const body = b.data
     const id = body.id
 
+    const supabase = await createAdminClient()
+
+    // Scope: il docente valida solo certificati di alunni nel proprio ambito
+    // (educator = proprie sezioni; staff = proprio plesso).
+    const { data: certScope } = await supabase
+      .from('certificati_medici').select('alunno_id').eq('id', id).maybeSingle()
+    if (!certScope) return NextResponse.json({ error: 'Certificato non trovato' }, { status: 404 })
+    const scopeErr = await assertAlunnoInScope(supabase, auth.user, certScope.alunno_id as string)
+    if (scopeErr) return scopeErr
+
     const patch: Record<string, unknown> = {
       stato: body.esito,
       validato_da: auth.user.id,
       validato_il: new Date().toISOString(),
       nota_validazione: typeof body.nota_validazione === 'string' ? body.nota_validazione : null,
     }
-    // la Segreteria può correggere il periodo in fase di validazione
+    // la Segreteria/docente può correggere il periodo in fase di validazione
     if (body.data_inizio || body.data_fine) {
       if (!periodoValido({ data_inizio: body.data_inizio, data_fine: body.data_fine })) {
         return NextResponse.json({ error: 'Periodo di copertura non valido' }, { status: 400 })
@@ -93,7 +110,6 @@ export async function PATCH(request: Request) {
       patch.data_fine = body.data_fine
     }
 
-    const supabase = await createAdminClient()
     const { error } = await supabase.from('certificati_medici').update(patch).eq('id', id)
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 

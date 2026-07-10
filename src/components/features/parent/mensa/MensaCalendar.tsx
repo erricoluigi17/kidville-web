@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
-import { Ticket, ChevronLeft, ChevronRight, Check, X, Lock, CalendarOff, UtensilsCrossed, RefreshCw, AlertTriangle } from 'lucide-react';
+import { Ticket, ChevronLeft, ChevronRight, Check, X, Lock, CalendarOff, UtensilsCrossed, RefreshCw, AlertTriangle, Clock } from 'lucide-react';
 import { allergeniDelGiorno, allergeneLabel, allergeneEmoji, type AllergeniPortate } from '@/lib/mensa/allergeni';
 import { SaveCelebration } from '@/components/ui/SaveConfirmation';
 
@@ -35,6 +35,8 @@ export function MensaCalendar({ userId, studentId }: Props) {
   const [msg, setMsg] = useState<string | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
   const [menuNome, setMenuNome] = useState<string | null>(null);
+  // Orario limite (cutoff) per prenotare/disdire "oggi" (dalla config scuola).
+  const [cutoffOra, setCutoffOra] = useState<string | null>(null);
   // Celebrazione festosa (spunta + coriandoli) su prenota/disdici riuscita.
   const [celebra, setCelebra] = useState<string | null>(null);
 
@@ -57,9 +59,13 @@ export function MensaCalendar({ userId, studentId }: Props) {
         setAuthError('Sessione non valida. Torna alla home e riapri la mensa dal menu principale.');
         setSaldo(null);
       } else if (pRaw?.data?.success) {
-        setSaldo(pRaw.data.saldo);
+        // La fetch avvolge la risposta in { status, data: <body> } e il body è
+        // { success, data: { saldo, prenotazioni, cutoffOra } } → il payload è pRaw.data.data.
+        const payload = pRaw.data.data ?? {};
+        setSaldo(payload.saldo ?? 0);
+        setCutoffOra(payload.cutoffOra ?? null);
         const map: Record<string, Prenotazione> = {};
-        for (const p of (pRaw.data.prenotazioni ?? []) as Prenotazione[]) map[p.data] = p;
+        for (const p of (payload.prenotazioni ?? []) as Prenotazione[]) map[p.data] = p;
         setPren(map);
       }
     } finally { setLoading(false); }
@@ -136,6 +142,13 @@ export function MensaCalendar({ userId, studentId }: Props) {
           </button>
         </div>
       </div>
+
+      {cutoffOra && !authError && (
+        <div className="mb-3 px-3 py-2 rounded-xl bg-kidville-info-soft border border-kidville-info/20 font-maven text-xs text-kidville-info flex items-center gap-2">
+          <Clock size={13} className="flex-shrink-0" />
+          <span>Prenota o disdici entro le <strong>{cutoffOra}</strong> del giorno stesso.</span>
+        </div>
+      )}
 
       {authError && (
         <div className="mb-3 px-3 py-2.5 rounded-xl bg-kidville-warn-soft border border-kidville-warn/30 font-maven text-xs text-orange-700 flex items-start gap-2">

@@ -104,9 +104,9 @@ export function ClasseShell({ basePrefix, children }: { basePrefix: string; chil
         </div>
       </header>
 
-      {/* Avviso-ponte NON bloccante (Fase 1): la disattivazione vera di "Salva"
-          e il selettore docente arrivano in Fase 4 (context { ruolo, docenteSelezionato }). */}
-      {isStaff && (
+      {/* Avviso-ponte NON bloccante: mostrato UNA sola volta (solo su Panoramica),
+          non ripetuto su ogni tab della classe. */}
+      {isStaff && pathname === base && (
         <div className="max-w-5xl mx-auto px-4 pt-3">
           <p className="font-maven flex items-start gap-2 rounded-card bg-kidville-warn-soft px-3 py-2 text-xs text-kidville-warn">
             <Info size={14} className="mt-0.5 shrink-0" />

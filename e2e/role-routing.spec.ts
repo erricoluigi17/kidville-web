@@ -6,7 +6,8 @@ import { EMAILS, STORAGE, login } from './fixtures';
 test('login docente atterra su /teacher', async ({ page }) => {
   await login(page, EMAILS.docente);
   await page.waitForURL('**/teacher');
-  await expect(page.getByRole('heading', { level: 1 })).toContainText('Buongiorno');
+  // Saluto dipendente dall'ora: asserzione tempo-indipendente (client-side).
+  await expect(page.getByRole('heading', { level: 1 })).toContainText(/Buongiorno|Buon pomeriggio|Buonasera/);
 });
 
 test.describe('docente con sessione attiva', () => {
@@ -15,7 +16,8 @@ test.describe('docente con sessione attiva', () => {
   test('naviga /parent → redirect su /teacher', async ({ page }) => {
     await page.goto('/parent');
     await page.waitForURL('**/teacher');
-    await expect(page.getByRole('heading', { level: 1 })).toContainText('Buongiorno');
+    // Saluto dipendente dall'ora: asserzione tempo-indipendente (client-side).
+    await expect(page.getByRole('heading', { level: 1 })).toContainText(/Buongiorno|Buon pomeriggio|Buonasera/);
   });
 });
 

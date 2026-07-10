@@ -34,7 +34,7 @@ interface StudentBasic {
     classe_sezione: string;
 }
 
-export function AvvisoDetailsContent({ avviso, availableClasses = ['Girasoli', 'Margherite', 'Tulipani', '3A', '4B'], userId, layout = 'drawer' }: Props) {
+export function AvvisoDetailsContent({ avviso, availableClasses = [], userId, layout = 'drawer' }: Props) {
     const [risposte, setRisposte] = useState<RispostaDettaglio[]>([]);
     const [targetStudents, setTargetStudents] = useState<StudentBasic[]>([]);
     const [loading, setLoading] = useState(true);

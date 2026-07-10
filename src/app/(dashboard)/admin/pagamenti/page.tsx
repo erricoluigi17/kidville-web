@@ -17,6 +17,7 @@ const caricamento = () => <p className="py-8 text-center font-maven text-sm text
 const GeneratoreRette = dynamic(() => import('@/components/features/admin/pagamenti/GeneratoreRette').then((m) => m.GeneratoreRette), { loading: caricamento });
 const GeneratoreCategoria = dynamic(() => import('@/components/features/admin/pagamenti/GeneratoreCategoria').then((m) => m.GeneratoreCategoria), { loading: caricamento });
 const TicketMensaPanel = dynamic(() => import('@/components/features/admin/pagamenti/TicketMensaPanel').then((m) => m.TicketMensaPanel), { loading: caricamento });
+const FiscalePanel = dynamic(() => import('@/components/features/admin/pagamenti/FiscalePanel').then((m) => m.FiscalePanel), { loading: caricamento });
 
 const isVista = (v: string | null): v is VistaContabilita => !!v && VISTE_CONTABILITA.some((o) => o.id === v);
 
@@ -86,9 +87,7 @@ function PagamentiInner() {
                         {vista === 'riconciliazione' && (
                             <InPreparazione titolo="Riconciliazione bancaria" descrizione="Qui potrai importare l'estratto conto (CSV) e abbinare i bonifici agli addebiti aperti." />
                         )}
-                        {vista === 'fiscale' && (
-                            <InPreparazione titolo="Documenti fiscali" descrizione="Qui arriveranno il registro ricevute, le attestazioni annuali e l'export per la comunicazione all'Agenzia delle Entrate." />
-                        )}
+                        {vista === 'fiscale' && userId && <FiscalePanel userId={userId} scuolaId={scuolaId} />}
 
                         {vista === 'ticket' && userId && <TicketMensaPanel userId={userId} scuolaId={scuolaId} />}
                     </div>

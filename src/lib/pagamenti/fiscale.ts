@@ -52,10 +52,15 @@ export const CATEGORIE_ESCLUSE_ADE = ['divisa', 'materiale']
 
 const METODI_TRACCIABILI = new Set(['bonifico', 'pos', 'assegno'])
 
+/** Il singolo metodo è tracciabile? (contanti/altro/ignoto → no) */
+export function metodoTracciabile(metodo?: string | null): boolean {
+    return !!metodo && METODI_TRACCIABILI.has(metodo)
+}
+
 /** Vero solo se OGNI incasso usa un metodo tracciabile (contanti/altro/ignoto escludono). */
 export function isTracciabile(metodi: (string | null | undefined)[]): boolean {
     if (metodi.length === 0) return false
-    return metodi.every((m) => !!m && METODI_TRACCIABILI.has(m))
+    return metodi.every((m) => metodoTracciabile(m))
 }
 
 /** Importo del bollo dovuto sul documento (0 se non dovuto o bollo disattivato). */

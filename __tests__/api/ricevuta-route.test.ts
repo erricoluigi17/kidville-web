@@ -10,15 +10,23 @@ const h = vi.hoisted(() => ({
 vi.mock('@/lib/auth/require-staff', () => ({ requireUser: h.requireUser }))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
+    rpc: async () => ({ data: 1, error: null }),
     from: (table: string) => {
       const b: Record<string, unknown> = {}
       b.select = () => b
       b.eq = () => b
+      b.is = () => b
+      b.order = () => b
       b.single = async () => ({ data: table === 'pagamenti' ? h.pagamento : null, error: null })
       b.maybeSingle = async () => ({
         data: table === 'pagamenti' ? h.pagamento : table === 'legame_genitori_alunni' ? h.legame : null,
         error: null,
       })
+      b.insert = (row: Record<string, unknown>) => ({
+        select: () => ({ single: async () => ({ data: { id: 'x', ...row }, error: null }) }),
+        then: (resolve: (v: unknown) => unknown) => resolve({ data: null, error: null }),
+      })
+      b.then = (resolve: (v: unknown) => unknown) => resolve({ data: [], error: null })
       return b
     },
   }),

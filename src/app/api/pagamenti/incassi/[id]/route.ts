@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { parseBody, parseData } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { annullaRicevutaAttiva } from '@/lib/pagamenti/ricevute'
 
 const patchBodySchema = z
   .object({
@@ -63,6 +64,12 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       utente_id: user.id,
     }).then(() => {}, () => {})
 
+    // La ricevuta fotografa importi e metodi al saldo: se cambiano va annullata
+    // (numero bruciato); al prossimo download se ne emette una nuova.
+    if (updates.importo !== undefined || updates.metodo !== undefined) {
+      await annullaRicevutaAttiva(supabase, incasso.pagamento_id as string, { da: user.id, motivo: 'modifica incasso' })
+    }
+
     // stato pagamento ricalcolato dal trigger
     const { data: pagamento } = await supabase
       .from('pagamenti').select('id, importo, importo_pagato, stato, data_incasso')
@@ -99,6 +106,8 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
       vecchio_valore: old,
       utente_id: user.id,
     }).then(() => {}, () => {})
+
+    await annullaRicevutaAttiva(supabase, old.pagamento_id as string, { da: user.id, motivo: 'storno incasso' })
 
     return NextResponse.json({ success: true })
   } catch (err) {

@@ -83,7 +83,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     title: 'Amministrazione',
     items: [
-      { href: '/admin/pagamenti', label: 'Pagamenti', icon: Euro },
+      { href: '/admin/pagamenti', label: 'Contabilità', icon: Euro },
       { href: '/admin/modulistica', label: 'Modulistica', icon: FileText },
       { href: '/admin/gdpr', label: 'Privacy & GDPR', icon: ShieldCheck },
     ],

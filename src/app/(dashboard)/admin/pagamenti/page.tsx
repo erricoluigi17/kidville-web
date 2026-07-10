@@ -1,24 +1,48 @@
 'use client';
 
 import { Suspense, useState } from 'react';
-import { Euro, CalendarClock, Ticket, Settings, Layers, UtensilsCrossed } from 'lucide-react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import dynamic from 'next/dynamic';
+import { CalendarClock, Euro, Layers, Settings, UtensilsCrossed } from 'lucide-react';
 import Link from 'next/link';
 import { PaymentsDashboard } from '@/components/features/admin/pagamenti/PaymentsDashboard';
-import { GeneratoreRette } from '@/components/features/admin/pagamenti/GeneratoreRette';
-import { GeneratoreCategoria } from '@/components/features/admin/pagamenti/GeneratoreCategoria';
-import { TicketMensaPanel } from '@/components/features/admin/pagamenti/TicketMensaPanel';
-import { CockpitPage, PageHeader, Tabs } from '@/components/ui/cockpit';
+import { ContabilitaNav, VISTE_CONTABILITA, type VistaContabilita } from '@/components/features/admin/pagamenti/ContabilitaNav';
+import { CockpitPage, PageHeader, SectionTitle } from '@/components/ui/cockpit';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { SedeRequired } from '@/lib/context/sede-context';
 
-type Tab = 'scadenziario' | 'rette' | 'categoria' | 'ticket';
+// Le viste secondarie si caricano on-demand: la pagina apre sempre sullo
+// scadenzario e non paga il bundle dei generatori/ticket finché non servono.
+const caricamento = () => <p className="py-8 text-center font-maven text-sm text-kidville-muted">Caricamento…</p>;
+const GeneratoreRette = dynamic(() => import('@/components/features/admin/pagamenti/GeneratoreRette').then((m) => m.GeneratoreRette), { loading: caricamento });
+const GeneratoreCategoria = dynamic(() => import('@/components/features/admin/pagamenti/GeneratoreCategoria').then((m) => m.GeneratoreCategoria), { loading: caricamento });
+const TicketMensaPanel = dynamic(() => import('@/components/features/admin/pagamenti/TicketMensaPanel').then((m) => m.TicketMensaPanel), { loading: caricamento });
+
+const isVista = (v: string | null): v is VistaContabilita => !!v && VISTE_CONTABILITA.some((o) => o.id === v);
+
+function InPreparazione({ titolo, descrizione }: { titolo: string; descrizione: string }) {
+    return (
+        <div className="py-10 text-center">
+            <p className="font-barlow text-lg font-extrabold uppercase text-kidville-green">{titolo}</p>
+            <p className="mx-auto mt-1 max-w-md font-maven text-sm text-kidville-muted">{descrizione}</p>
+        </div>
+    );
+}
 
 function PagamentiInner() {
     const { userId } = useSessionIdentity();
+    const router = useRouter();
+    const params = useSearchParams();
+    const fromUrl = params.get('vista');
+    const [vista, setVista] = useState<VistaContabilita>(isVista(fromUrl) ? fromUrl : 'scadenzario');
+
     // Identità di sessione (M4): con identità non risolta il parametro viene
     // omesso (href invariato), mai `userId=null`.
     const withUser = (href: string) => (userId ? `${href}?userId=${userId}` : href);
-    const [tab, setTab] = useState<Tab>('scadenziario');
+    const cambiaVista = (id: VistaContabilita) => {
+        setVista(id);
+        router.replace(userId ? `?userId=${userId}&vista=${id}` : `?vista=${id}`, { scroll: false });
+    };
 
     const linkCls = 'inline-flex h-[40px] items-center gap-1.5 rounded-pill border border-kidville-line bg-kidville-white px-4 font-barlow text-[13px] font-extrabold uppercase tracking-[0.03em] text-kidville-green transition-colors hover:border-kidville-green';
 
@@ -26,8 +50,8 @@ function PagamentiInner() {
         <CockpitPage max={1152}>
             <PageHeader
                 icon={Euro}
-                title="Pagamenti"
-                subtitle="Scadenziario, incassi, rette e ticket mensa."
+                title="Contabilità"
+                subtitle="Scadenzario, incassi, fatture, solleciti e documenti fiscali."
                 actions={
                     <>
                         <Link href={withUser('/admin/mensa')} className={linkCls}><UtensilsCrossed size={15} /> Mensa &amp; Cucina</Link>
@@ -36,24 +60,37 @@ function PagamentiInner() {
                 }
             />
 
-            <Tabs
-                value={tab}
-                onChange={(id) => setTab(id as Tab)}
-                options={[
-                    { id: 'scadenziario', label: 'Scadenziario', icon: Euro },
-                    { id: 'rette', label: 'Genera rette', icon: CalendarClock },
-                    { id: 'categoria', label: 'Genera pagamenti', icon: Layers },
-                    { id: 'ticket', label: 'Ticket mensa', icon: Ticket },
-                ]}
-            />
+            <ContabilitaNav value={vista} onChange={cambiaVista} />
 
-            <SedeRequired cosa="i pagamenti">
+            <SedeRequired cosa="la contabilità">
                 {(scuolaId) => (
                     <div className="bg-kidville-white rounded-2xl shadow-sm p-4 md:p-6">
-                        {tab === 'scadenziario' && userId && <PaymentsDashboard userId={userId} scuolaId={scuolaId} />}
-                        {tab === 'rette' && userId && <GeneratoreRette userId={userId} scuolaId={scuolaId} />}
-                        {tab === 'categoria' && userId && <GeneratoreCategoria userId={userId} scuolaId={scuolaId} />}
-                        {tab === 'ticket' && userId && <TicketMensaPanel userId={userId} scuolaId={scuolaId} />}
+                        {vista === 'scadenzario' && userId && <PaymentsDashboard userId={userId} scuolaId={scuolaId} />}
+
+                        {vista === 'genera' && userId && (
+                            <div className="space-y-8">
+                                <div>
+                                    <SectionTitle icon={CalendarClock} title="Rette mensili" sub="Anteprima e conferma: i duplicati vengono saltati automaticamente." />
+                                    <GeneratoreRette userId={userId} scuolaId={scuolaId} />
+                                </div>
+                                <div>
+                                    <SectionTitle icon={Layers} title="Addebiti per categoria" sub="Addebito massivo una-tantum su una classe o su tutti gli iscritti." />
+                                    <GeneratoreCategoria userId={userId} scuolaId={scuolaId} />
+                                </div>
+                            </div>
+                        )}
+
+                        {vista === 'solleciti' && (
+                            <InPreparazione titolo="Solleciti" descrizione="Qui arriveranno i solleciti di pagamento con livelli, anteprima e invio email ai genitori." />
+                        )}
+                        {vista === 'riconciliazione' && (
+                            <InPreparazione titolo="Riconciliazione bancaria" descrizione="Qui potrai importare l'estratto conto (CSV) e abbinare i bonifici agli addebiti aperti." />
+                        )}
+                        {vista === 'fiscale' && (
+                            <InPreparazione titolo="Documenti fiscali" descrizione="Qui arriveranno il registro ricevute, le attestazioni annuali e l'export per la comunicazione all'Agenzia delle Entrate." />
+                        )}
+
+                        {vista === 'ticket' && userId && <TicketMensaPanel userId={userId} scuolaId={scuolaId} />}
                     </div>
                 )}
             </SedeRequired>

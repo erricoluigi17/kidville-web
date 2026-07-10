@@ -38,7 +38,7 @@ export const ADMIN_ROUTES: RouteDef[] = [
   { label: 'Divise', path: '/admin/divise', inNav: true, area: 'Operativo' },
   { label: 'Mensa', path: '/admin/mensa', inNav: true, area: 'Operativo' },
   { label: 'Report Cucina', path: '/admin/mensa/cucina', inNav: true, area: 'Operativo' },
-  { label: 'Pagamenti', path: '/admin/pagamenti', inNav: true, area: 'Amministrazione' },
+  { label: 'Contabilità', path: '/admin/pagamenti', inNav: true, area: 'Amministrazione' },
   { label: 'Modulistica', path: '/admin/modulistica', inNav: true, area: 'Amministrazione' },
   { label: 'Privacy & GDPR', path: '/admin/gdpr', inNav: true, area: 'Amministrazione' },
   { label: 'Messaggi', path: '/admin/messaggi', inNav: true, area: 'Comunicazione' },

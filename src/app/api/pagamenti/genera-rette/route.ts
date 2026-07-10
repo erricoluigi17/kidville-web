@@ -44,6 +44,14 @@ function importoRetta(a: { importo_retta_mensile?: number | null }, rettaDefault
   return personalizzato > 0 ? personalizzato : rettaDefault
 }
 
+// La retta si genera solo dal mese di iscrizione in poi (iscrizione prima del
+// 1° settembre → tutto l'anno). NULL = alunno storico, iscritto da sempre.
+// Stessa regola della RPC SQL genera_rette_mensili (migr. 20260710160000).
+function iscrittoEntro(a: { data_iscrizione?: string | null }, periodo: string): boolean {
+  if (!a.data_iscrizione) return true
+  return `${String(a.data_iscrizione).slice(0, 7)}-01` <= periodo
+}
+
 // GET /api/pagamenti/genera-rette?userId=&periodo=YYYY-MM | &anno=YYYY [&scuola_id=]  (staff)
 // Preview: alunni candidati alla generazione retta per il mese (periodo) o per l'intero
 // anno scolastico (anno = anno di inizio, set->giu).
@@ -68,12 +76,21 @@ export async function GET(request: Request) {
     const rettaDefault = Number(sett?.retta_default_importo ?? 150)
 
     // alunni attivi = iscritti CON sezione valorizzata (classe_sezione o section_id)
+    const COLONNE_ALUNNI = 'id, nome, cognome, classe_sezione, section_id, importo_retta_mensile, genitori_separati, scuola_id'
     let alQuery = supabase
       .from('alunni')
-      .select('id, nome, cognome, classe_sezione, section_id, importo_retta_mensile, genitori_separati, scuola_id')
+      .select(`${COLONNE_ALUNNI}, data_iscrizione`)
       .eq('stato', 'iscritto')
     if (scuolaId) alQuery = alQuery.eq('scuola_id', scuolaId)
-    const { data: alunniRaw } = await alQuery
+    // eslint-disable-next-line prefer-const -- alunniRaw è riassegnato nel retry
+    let { data: alunniRaw, error: errAlunni } = await alQuery
+    // retry senza data_iscrizione sui DB non migrati (e2e CI): colonna ignorata
+    if (errAlunni && (errAlunni as { code?: string }).code === '42703') {
+      let retryQ = supabase.from('alunni').select(COLONNE_ALUNNI).eq('stato', 'iscritto')
+      if (scuolaId) retryQ = retryQ.eq('scuola_id', scuolaId)
+      const retry = await retryQ
+      alunniRaw = (retry.data ?? null) as unknown as typeof alunniRaw
+    }
     const alunni = (alunniRaw || []).filter((a) => a.classe_sezione != null || a.section_id != null)
 
     // --- Anteprima ANNUALE (set->giu) ---
@@ -97,7 +114,7 @@ export async function GET(request: Request) {
       let totalePrevisto = 0
       const mesi = periodi.map((p) => {
         const giaFatti = fattiPerPeriodo.get(p) ?? new Set()
-        const candidati = alunni.filter((a) => !giaFatti.has(a.id))
+        const candidati = alunni.filter((a) => !giaFatti.has(a.id) && iscrittoEntro(a, p))
         const importo = candidati.reduce((s, a) => s + importoRetta(a, rettaDefault), 0)
         totaleCandidati += candidati.length
         totalePrevisto += importo
@@ -127,7 +144,7 @@ export async function GET(request: Request) {
     const giaFatti = new Set((esistenti || []).map((e) => e.alunno_id))
 
     const candidati = alunni
-      .filter((a) => !giaFatti.has(a.id))
+      .filter((a) => !giaFatti.has(a.id) && iscrittoEntro(a, periodo))
       .map((a) => ({ ...a, importo_previsto: importoRetta(a, rettaDefault) }))
     const totale = candidati.reduce((s, a) => s + a.importo_previsto, 0)
 

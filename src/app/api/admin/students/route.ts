@@ -6,6 +6,7 @@ import { resolveScuoleAttive, resolveScuolaScrittura } from '@/lib/auth/scope';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { linkOrCreateParent } from '@/lib/anagrafiche/parents';
+import { riallineaScadenzeRetteFuture } from '@/lib/pagamenti/scadenze';
 
 // ============================================================
 // Anagrafica alunni — gated Segreteria+Direzione (DL-036) + audit
@@ -41,6 +42,8 @@ const postBodySchema = z.object({
     invoice_holder_type: z.string().nullable().optional(),
     invoice_holder_details: z.unknown().optional(), // jsonb libero
     classe_sezione: z.string().nullable().optional(),
+    data_iscrizione: z.string().nullable().optional(),
+    giorno_scadenza_pagamenti: z.number().int().min(1).max(28).nullable().optional(),
     // Salvataggio atomico alunno+genitori: array opzionale di payload adulto
     // (stesso shape del form ScrollableAdultForm). Ogni voce viene creata e
     // collegata a questo alunno lato server (niente più genitori "persi").
@@ -95,6 +98,8 @@ const patchBodySchema = z.object({
     section_id: z.unknown().optional(),
     importo_retta_mensile: z.unknown().optional(),
     opposizione_ade: z.unknown().optional(),
+    data_iscrizione: z.unknown().optional(),
+    giorno_scadenza_pagamenti: z.unknown().optional(),
     genitori_separati: z.unknown().optional(),
     retta_split_config: z.unknown().optional(),
     intestatario_fatture: z.unknown().optional(),
@@ -149,6 +154,8 @@ export async function POST(request: NextRequest) {
             invoice_holder_details: body.invoice_holder_details || null,
             // classe/sezione: il trigger DB sincronizza automaticamente section_id.
             classe_sezione: body.classe_sezione || null,
+            data_iscrizione: body.data_iscrizione || null,
+            giorno_scadenza_pagamenti: body.giorno_scadenza_pagamenti ?? null,
             stato: 'iscritto',
         };
 
@@ -333,7 +340,8 @@ export async function PATCH(request: NextRequest) {
             try {
                 const updates: Record<string, unknown> = {};
                 const allowedFields = ['classe_sezione', 'stato', 'note_mediche', 'bes', 'note_bes', 'nome', 'cognome', 'data_nascita', 'codice_fiscale', 'gender', 'citizenship', 'birth_nation', 'birth_province', 'birth_city', 'residence_address', 'residence_street_number', 'residence_city', 'residence_province', 'zip_code', 'allergies', 'allergeni', 'invoice_holder_type', 'invoice_holder_details', 'is_bes_dsa', 'usa_pannolino', 'section_id',
-                    'importo_retta_mensile', 'genitori_separati', 'retta_split_config', 'intestatario_fatture', 'opposizione_ade'];
+                    'importo_retta_mensile', 'genitori_separati', 'retta_split_config', 'intestatario_fatture', 'opposizione_ade',
+                    'data_iscrizione', 'giorno_scadenza_pagamenti'];
 
                 for (const field of allowedFields) {
                     if (body[field] !== undefined) updates[field] = body[field];
@@ -365,6 +373,12 @@ export async function PATCH(request: NextRequest) {
                 }
 
                 if (error) throw new Error(error.message);
+
+                // "Giorno di paga" cambiato → riallinea le scadenze delle rette
+                // aperte future (best-effort, vedi lib/pagamenti/scadenze).
+                if ('giorno_scadenza_pagamenti' in updates) {
+                    await riallineaScadenzeRetteFuture(supabase, id as string, updates.giorno_scadenza_pagamenti as number | null);
+                }
 
                 await logScrittura(supabase, {
                     attore: auth.user,

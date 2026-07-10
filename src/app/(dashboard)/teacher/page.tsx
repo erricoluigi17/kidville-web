@@ -8,6 +8,7 @@ import {
   Bell, ChevronRight, Check, AlertTriangle, Eye, Users,
 } from 'lucide-react';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
+import { useClientValue } from '@/lib/hooks/use-client-value';
 import { GradeWorldSwitch } from '@/components/features/teacher/GradeWorldSwitch';
 import { TeacherAgendaCard } from '@/components/features/teacher/TeacherAgendaCard';
 
@@ -72,6 +73,14 @@ function TeacherDashboardInner() {
   const [presenze, setPresenze] = useState<Presenza[]>([]);
   const [avvisi, setAvvisi] = useState<Avviso[]>([]);
 
+  // Saluto e data dipendono dall'ora/fuso locale: calcolati SOLO client-side
+  // (SSR-safe) per evitare il mismatch di hydration server-UTC vs browser.
+  const greeting = useClientValue(greetingByHour, '');
+  const oggi = useClientValue(
+    () => new Date().toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' }),
+    '',
+  );
+
   // me (gradi/funzioni) + sezioni + avvisi: 3 fetch indipendenti in UN solo
   // effect con Promise.all. Esiti gestiti per-fetch (catch silenziosi
   // indipendenti, come i 3 effect originali): un avviso che fallisce non
@@ -120,8 +129,6 @@ function TeacherDashboardInner() {
   const isEnabled = (key: string) => infanziaGradi.some((g) => me?.funzioni?.[g]?.[key] === true);
   const isPrimariaOnly = infanziaGradi.length === 0 && (me?.gradi ?? []).includes('primaria');
 
-  const oggi = new Date().toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' });
-
   // derivati
   const studentCount = students.length;
   const allergie = students.filter(
@@ -144,7 +151,7 @@ function TeacherDashboardInner() {
         <div className="relative z-10 max-w-[68%]">
           <p className="font-maven text-xs font-semibold capitalize text-kidville-green/70">{oggi}</p>
           <h1 className="mt-1 font-barlow text-3xl font-black uppercase leading-[0.96] text-kidville-green">
-            {greetingByHour()}!
+            {greeting}{greeting ? '!' : ''}
           </h1>
           <p className="mt-1.5 font-maven text-xs font-semibold text-kidville-green/75">
             {activeSection ? `Sezione ${activeSection} · ${studentCount} bambini` : 'La tua giornata in sezione'}

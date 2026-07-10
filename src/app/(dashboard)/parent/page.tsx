@@ -8,6 +8,7 @@ import { Bell, MessageCircle, BookOpen, Camera, CalendarX2, GraduationCap } from
 import { withIdentity } from '@/lib/auth/current-user';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 import { useChildSchoolType } from '@/lib/auth/use-child-school-type';
+import { useClientValue } from '@/lib/hooks/use-client-value';
 import { PagamentiSummary } from '@/components/features/parent/pagamenti/PagamentiSummary';
 import { SectionHeader } from '@/components/features/parent/home/SectionHeader';
 import { DiaryTodayCard } from '@/components/features/parent/home/DiaryTodayCard';
@@ -41,6 +42,10 @@ function ParentHomeContent() {
   const [firstName, setFirstName] = useState('');
   const [nameResolved, setNameResolved] = useState(false);
   const [mascotFailed, setMascotFailed] = useState(false);
+
+  // Saluto dipendente dall'ora locale: calcolato SOLO client-side (SSR-safe)
+  // per evitare il mismatch di hydration server-UTC vs browser.
+  const greeting = useClientValue(greetingByHour, '');
 
   useEffect(() => {
     if (!studentId) return;
@@ -108,7 +113,7 @@ function ParentHomeContent() {
           {/* greeting */}
           <div className="relative z-[2] px-5 pb-6 pt-3" style={{ maxWidth: '64%' }}>
             <p className="mb-0.5 font-maven text-xs font-semibold capitalize" style={{ color: 'rgba(0,84,75,0.7)' }}>
-              {greetingByHour()}!
+              {greeting}{greeting ? '!' : ''}
             </p>
             {nameLoading ? (
               // Placeholder discreto: evita il flash "Benvenuta!" → "Ciao, Nome"

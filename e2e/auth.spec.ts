@@ -22,7 +22,9 @@ test('login ok admin → /admin', async ({ page }) => {
 test('login ok docente → /teacher', async ({ page }) => {
   await login(page, EMAILS.docente);
   await page.waitForURL('**/teacher');
-  await expect(page.getByRole('heading', { level: 1 })).toContainText('Buongiorno');
+  // Saluto dipendente dall'ora (Buongiorno/Buon pomeriggio/Buonasera): asserzione
+  // tempo-indipendente sul saluto neutro renderizzato client-side.
+  await expect(page.getByRole('heading', { level: 1 })).toContainText(/Buongiorno|Buon pomeriggio|Buonasera/);
 });
 
 test('login ok genitore → /parent', async ({ page }) => {

@@ -133,6 +133,34 @@ describe('emettiFatturaPagamento', () => {
     expect((pagUpd!.row as { fattura_aruba_id: string }).fattura_aruba_id).toBe('IT12345678903_a1b2.xml.p7m')
   })
 
+  it('bollo virtuale: fiscale_config attivo + importo sopra soglia → DatiBollo nell\'XML e flag a registro', async () => {
+    vi.mocked(arubaSignin).mockResolvedValue({ accessToken: 'AT', refreshToken: 'RT', expiresAt: Date.now() + 1e6 })
+    vi.mocked(arubaUpload).mockResolvedValue({ ok: true, uploadFileName: 'IT_bollo.xml.p7m', errorCode: '0000' })
+    const sb = makeSupabase({
+      pagamenti: pagamentoSaldato,
+      admin_settings: { ...settingsConfig, fiscale_config: { bollo_enabled: true } },
+      parents: parent,
+      rpc: 8,
+    })
+    const esito = await emettiFatturaPagamento(sb as never, 'pag-1', { id: 'staff-1' })
+    expect(esito.ok).toBe(true)
+    const fattura = sb._inserts.find((i: { table: string }) => i.table === 'fatture_emesse')
+    expect((fattura!.row as { bollo_virtuale?: boolean }).bollo_virtuale).toBe(true)
+    expect((fattura!.row as { xml_inviato: string }).xml_inviato).toContain('<DatiBollo>')
+    expect((fattura!.row as { xml_inviato: string }).xml_inviato).toContain('<ImportoBollo>2.00</ImportoBollo>')
+  })
+
+  it('senza fiscale_config il default resta invariato: nessun bollo', async () => {
+    vi.mocked(arubaSignin).mockResolvedValue({ accessToken: 'AT', refreshToken: 'RT', expiresAt: Date.now() + 1e6 })
+    vi.mocked(arubaUpload).mockResolvedValue({ ok: true, uploadFileName: 'IT_x.xml.p7m', errorCode: '0000' })
+    const sb = makeSupabase({ pagamenti: pagamentoSaldato, admin_settings: settingsConfig, parents: parent, rpc: 9 })
+    const esito = await emettiFatturaPagamento(sb as never, 'pag-1', { id: 'staff-1' })
+    expect(esito.ok).toBe(true)
+    const fattura = sb._inserts.find((i: { table: string }) => i.table === 'fatture_emesse')
+    expect((fattura!.row as { bollo_virtuale?: boolean }).bollo_virtuale).toBe(false)
+    expect((fattura!.row as { xml_inviato: string }).xml_inviato).not.toContain('<DatiBollo>')
+  })
+
   it('upload scartato da Aruba (errorCode != 0000) → scartata (502) e pagamento scartata', async () => {
     vi.mocked(arubaSignin).mockResolvedValue({ accessToken: 'AT', refreshToken: 'RT', expiresAt: Date.now() + 1e6 })
     vi.mocked(arubaUpload).mockResolvedValue({ ok: false, errorCode: '0094', errorDescription: 'IdTrasmittente non valido' })

@@ -37,7 +37,7 @@ export function TaskResolutionModal({ task, notes, onNotesChange, files, onFiles
           <div className="flex items-center gap-2">
             <CheckCircle className="text-kidville-success" size={20} />
             <h2 className="font-barlow font-black text-lg text-kidville-green uppercase tracking-wide">
-              Risolvi Task
+              Risolvi attività
             </h2>
           </div>
           <button
@@ -51,7 +51,7 @@ export function TaskResolutionModal({ task, notes, onNotesChange, files, onFiles
         <form onSubmit={onConfirm} className="p-6 space-y-4 overflow-y-auto text-left">
           <div>
             <p className="font-barlow font-bold text-sm text-kidville-green uppercase tracking-wide">
-              Task: {task.titolo}
+              Attività: {task.titolo}
             </p>
             <p className="font-maven text-xs text-kidville-muted mt-1">
               Per completare, spiega brevemente cosa hai fatto e come l&apos;hai risolto. Puoi allegare anche dei file.
@@ -65,7 +65,7 @@ export function TaskResolutionModal({ task, notes, onNotesChange, files, onFiles
             <textarea
               required
               rows={3}
-              placeholder="Spiega cosa hai fatto per risolvere il task..."
+              placeholder="Spiega cosa hai fatto per risolvere l'attività..."
               value={notes}
               onChange={e => onNotesChange(e.target.value)}
               className="w-full border-2 border-kidville-line rounded-xl px-4 py-2.5 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:ring-2 focus:ring-kidville-green focus:border-transparent transition-all"

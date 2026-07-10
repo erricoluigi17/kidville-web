@@ -16,7 +16,7 @@ export interface MonthlyAttendanceRecord {
 }
 
 /**
- * GET /api/attendance/monthly?year=2026&month=5&sezione=Girasoli
+ * GET /api/attendance/monthly?year=2026&month=5&sezione=<classe>
  *
  * Strategia: due query separate (no join PostgREST) per massima compatibilità
  * con lo schema anche senza FK riconosciuta dalla schema cache.
@@ -30,7 +30,8 @@ const getQuerySchema = z.object({
     // default dinamici (anno/mese correnti) calcolati nell'handler
     year: zIntParseInt(z.number().int()).optional(),
     month: zIntParseInt(z.number().int().min(1).max(12)).optional(),
-    sezione: z.string().default('Girasoli'),
+    // Nessun default a un nome sezione reale: param omesso → '' → risposta vuota.
+    sezione: z.string().default(''),
 });
 
 export async function GET(request: NextRequest) {

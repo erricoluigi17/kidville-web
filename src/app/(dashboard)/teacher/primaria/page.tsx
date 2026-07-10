@@ -63,7 +63,7 @@ function HubInner() {
                 href={`/teacher/primaria/${c.id}?userId=${userId}`}
                 className="group flex items-center gap-3.5 rounded-[18px] bg-white p-4 shadow-sm transition hover:shadow-md"
               >
-                <div className="flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-[15px] bg-kidville-green font-barlow text-xl font-black text-kidville-yellow">
+                <div className="flex h-[52px] w-[52px] shrink-0 items-center justify-center overflow-hidden rounded-[15px] bg-kidville-green px-1 text-center font-barlow text-sm font-black uppercase leading-tight text-kidville-yellow [word-break:break-word]">
                   {c.name}
                 </div>
                 <div className="min-w-0 flex-1">

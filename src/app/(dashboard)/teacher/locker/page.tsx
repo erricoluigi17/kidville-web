@@ -12,8 +12,6 @@ import { LoadStockModal } from '@/components/features/teacher/locker/LoadStockMo
 import { MonthlyLockerTable, type StudentInfo } from '@/components/features/teacher/locker/MonthlyLockerTable';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 
-const SEZIONE = 'Girasoli';
-
 function currentYearMonth() {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
@@ -68,12 +66,31 @@ function TeacherLockerInner() {
     const [mensileStudents, setMensileStudents] = useState<StudentInfo[]>([]);
     const [mensileLoading,  setMensileLoading]  = useState(true);
 
+    // Sezioni reali del docente (utenti_sezioni via /api/educator-sections):
+    // niente più sezione hardcoded; con più sezioni compare il selettore a pill.
+    const [availableSections, setAvailableSections] = useState<string[]>([]);
+    const [sezione, setSezione] = useState('');
+
+    useEffect(() => {
+        if (!userId) return;
+        fetch(`/api/educator-sections?userId=${userId}`)
+            .then(r => (r.ok ? r.json() : null))
+            .then(d => {
+                const secs: string[] = d?.sectionNames ?? [];
+                setAvailableSections(secs);
+                setSezione(prev => prev || secs[0] || '');
+                // Nessuna sezione assegnata: niente da caricare → chiudo gli spinner.
+                if (secs.length === 0) { setCaricoLoading(false); setConsumoLoading(false); }
+            })
+            .catch(() => { setCaricoLoading(false); setConsumoLoading(false); });
+    }, [userId]);
+
     // ── Fetch Carico ─────────────────────────────────────────────────────────
     const fetchCarico = useCallback(async () => {
         try {
             const today = new Date().toISOString().slice(0, 10);
             const res = await fetch(
-                `/api/locker/inventory?classe_sezione=${SEZIONE}&mode=carico&month=${today.slice(0, 7)}&userId=${userId}`
+                `/api/locker/inventory?classe_sezione=${encodeURIComponent(sezione)}&mode=carico&month=${today.slice(0, 7)}&userId=${userId}`
             );
             const data = await res.json();
             if (Array.isArray(data)) {
@@ -86,25 +103,25 @@ function TeacherLockerInner() {
                 if (todayData.length > 0 && !expandedCarico) setExpandedCarico(todayData[0].id);
             }
         } finally { setCaricoLoading(false); }
-    }, [expandedCarico, userId]);
+    }, [expandedCarico, userId, sezione]);
 
     // ── Fetch Consumo (stock aggregato) ──────────────────────────────────────
     const fetchConsumo = useCallback(async () => {
         try {
-            const res = await fetch(`/api/locker/inventory?classe_sezione=${SEZIONE}&mode=stock&userId=${userId}`);
+            const res = await fetch(`/api/locker/inventory?classe_sezione=${encodeURIComponent(sezione)}&mode=stock&userId=${userId}`);
             const data = await res.json();
             if (Array.isArray(data)) {
                 setConsumoStudents(data);
                 if (data.length > 0 && !expandedConsumo) setExpandedConsumo(data[0].id);
             }
         } finally { setConsumoLoading(false); }
-    }, [expandedConsumo, userId]);
+    }, [expandedConsumo, userId, sezione]);
 
     // ── Fetch Mensile ─────────────────────────────────────────────────────────
     const fetchMensile = useCallback(async (ym: string) => {
         try {
             const res = await fetch(
-                `/api/locker/inventory?classe_sezione=${SEZIONE}&mode=carico&month=${ym}&userId=${userId}`
+                `/api/locker/inventory?classe_sezione=${encodeURIComponent(sezione)}&mode=carico&month=${ym}&userId=${userId}`
             );
             const data = await res.json();
             if (Array.isArray(data)) {
@@ -121,11 +138,11 @@ function TeacherLockerInner() {
                 })));
             }
         } finally { setMensileLoading(false); }
-    }, [userId]);
+    }, [userId, sezione]);
 
-    // Carica entrambi subito (Carico odierno + stock totale per confronto)
-    useEffect(() => { fetchCarico(); fetchConsumo(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
-    useEffect(() => { if (view === 'mensile') fetchMensile(month); }, [view, month, fetchMensile]);
+    // Carica Carico odierno + stock totale quando la sezione reale è nota.
+    useEffect(() => { if (sezione) { fetchCarico(); fetchConsumo(); } }, [sezione]); // eslint-disable-line react-hooks/exhaustive-deps
+    useEffect(() => { if (view === 'mensile' && sezione) fetchMensile(month); }, [view, month, sezione, fetchMensile]);
 
     // ── Azioni ────────────────────────────────────────────────────────────────
     const handleLoadStock = async (body: { alunno_id: string; materiale: string; quantita: number }) => {
@@ -172,7 +189,7 @@ function TeacherLockerInner() {
                         <h1 className="flex items-center gap-2 font-barlow text-3xl font-black uppercase tracking-wide text-white">
                             <Package size={26} className="text-kidville-yellow" /> Armadietto
                         </h1>
-                        <p className="mt-1.5 font-maven text-xs text-white/80">Scorte e consegne · Sezione Girasoli</p>
+                        <p className="mt-1.5 font-maven text-xs text-white/80">Scorte e consegne · Sezione {sezione || '…'}</p>
                     </div>
                     <div className="flex items-center gap-1.5">
                         <Link href={settingsHref}
@@ -190,6 +207,20 @@ function TeacherLockerInner() {
                     </div>
                 </div>
             </div>
+
+            {/* Selettore sezione (solo con più sezioni assegnate al docente) */}
+            {availableSections.length > 1 && (
+                <div className="mt-4 flex flex-wrap gap-2">
+                    {availableSections.map(s => (
+                        <button key={s} onClick={() => { setSezione(s); setExpandedCarico(null); setExpandedConsumo(null); }}
+                            className={`rounded-pill border px-3 py-1.5 font-maven text-xs font-semibold transition-colors ${
+                                sezione === s ? 'border-kidville-green/20 bg-kidville-green text-kidville-yellow' : 'border-kidville-line bg-white text-kidville-muted'
+                            }`} aria-pressed={sezione === s}>
+                            {s}
+                        </button>
+                    ))}
+                </div>
+            )}
 
             {/* Toggle 3 viste */}
             <div className="mt-5 mb-6 flex gap-1 rounded-2xl bg-white p-1 shadow-sm">
@@ -316,7 +347,7 @@ function TeacherLockerInner() {
                         students={caricoStudents.map(s => ({ id: s.id, nome: s.nome, cognome: s.cognome }))}
                         preselectedStudent={preStudent}
                         preselectedMateriale={preMat}
-                        classeSezione={SEZIONE}
+                        classeSezione={sezione}
                         onConfirm={handleLoadStock}
                     />
                 </>

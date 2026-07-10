@@ -112,7 +112,10 @@ export function SidiPanel({ userId }: { userId: string }) {
         </h2>
         <p className="font-maven text-xs text-kidville-muted mb-3">Carica il file <code>.zip</code> ministeriale senza rinominarlo. Il matching avviene sul <strong>Numero di domanda</strong> (fallback codice fiscale); i genitori sono sincronizzati per CF.</p>
         <div className="flex items-center gap-3 flex-wrap">
-          <input type="file" accept=".zip" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="font-maven text-sm" />
+          <label className="inline-flex cursor-pointer items-center gap-2 h-9 px-4 rounded-pill border border-kidville-line bg-white font-maven text-sm text-kidville-ink hover:bg-kidville-cream">
+            <UploadCloud size={15} /> {file ? file.name : 'Scegli file .zip'}
+            <input type="file" accept=".zip" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="hidden" />
+          </label>
           <button onClick={upload} disabled={!file || busy === 'upload'} className="h-9 px-4 rounded-pill bg-kidville-green text-white font-barlow font-black uppercase text-xs disabled:opacity-50">
             {busy === 'upload' ? 'Analisi…' : 'Carica e analizza'}
           </button>

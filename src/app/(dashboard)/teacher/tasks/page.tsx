@@ -53,21 +53,21 @@ function TeacherTasksContent() {
                 </div>
             </div>
 
-            {/* Tabs */}
-            <div className="mt-5 mb-6 flex flex-wrap gap-1 rounded-2xl border border-kidville-line bg-white p-1.5 md:flex-nowrap">
+            {/* Tabs — riga scrollabile orizzontalmente (affordance di scroll, niente troncamento) */}
+            <div className="mt-5 mb-6 flex gap-1 overflow-x-auto rounded-2xl border border-kidville-line bg-white p-1.5">
                 {[
                     { key: 'assigned', icon: <ListTodo size={14} />, label: 'Assegnati a me' },
                     { key: 'created', icon: <CheckSquare size={14} />, label: 'Creati da me' },
                     ...(isManager ? [
                         { key: 'to_review', icon: <CheckCircle size={14} />, label: 'Da Controllare' },
-                        { key: 'all', icon: <Eye size={14} />, label: 'Tutti i Task' }
+                        { key: 'all', icon: <Eye size={14} />, label: 'Tutte le attività' }
                     ] : []),
                     { key: 'archive', icon: <History size={14} />, label: 'Archivio' }
                 ].map(({ key, icon, label }) => (
                     <button
                         key={key}
                         onClick={() => setActiveTab(key as TasksTab)}
-                        className={`flex-1 min-w-[45%] md:min-w-0 flex items-center justify-center gap-1.5 py-2.5 md:py-3 rounded-xl text-[10px] md:text-xs font-semibold uppercase tracking-wider font-barlow transition-all relative
+                        className={`shrink-0 whitespace-nowrap flex items-center justify-center gap-1.5 px-3 py-2.5 md:py-3 rounded-xl text-[10px] md:text-xs font-semibold uppercase tracking-wider font-barlow transition-all relative
                             ${activeTab === key
                                 ? 'bg-white shadow text-kidville-green font-bold'
                                 : 'text-kidville-muted hover:text-kidville-ink'}`}
@@ -87,7 +87,7 @@ function TeacherTasksContent() {
             {loading && (
                 <div className="flex flex-col items-center justify-center py-20 gap-3">
                     <div className="w-8 h-8 border-[3px] border-kidville-green/20 border-t-kidville-green rounded-full animate-spin" />
-                    <p className="font-maven text-sm text-kidville-muted">Caricamento task...</p>
+                    <p className="font-maven text-sm text-kidville-muted">Caricamento attività...</p>
                 </div>
             )}
 
@@ -98,12 +98,12 @@ function TeacherTasksContent() {
                         {activeTab === 'archive' ? '📂' : '✏️'}
                     </div>
                     <h2 className="font-barlow font-bold text-xl text-kidville-green uppercase mb-2">
-                        {activeTab === 'archive' ? 'Archivio vuoto' : 'Nessun task attivo'}
+                        {activeTab === 'archive' ? 'Archivio vuoto' : 'Nessuna attività attiva'}
                     </h2>
                     <p className="font-maven text-kidville-muted text-sm max-w-xs leading-relaxed">
                         {activeTab === 'assigned' && 'Non hai attività in sospeso da svolgere al momento.'}
-                        {activeTab === 'created' && 'Non hai creato alcun task per lo staff recentemente.'}
-                        {activeTab === 'archive' && 'Non ci sono task completati in archivio.'}
+                        {activeTab === 'created' && 'Non hai creato alcuna attività per lo staff recentemente.'}
+                        {activeTab === 'archive' && 'Non ci sono attività completate in archivio.'}
                     </p>
                 </div>
             )}

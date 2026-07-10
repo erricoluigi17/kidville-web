@@ -69,7 +69,7 @@ export default function TeacherBottomNav() {
     {
       label: 'Strumenti',
       items: [
-        { id: 'attivita', label: 'Attività', sub: 'Task e bacheca interna', icon: ListTodo, href: '/teacher/tasks', tint: '#1F8A5B' },
+        { id: 'attivita', label: 'Attività', sub: 'Attività e bacheca interna', icon: ListTodo, href: '/teacher/tasks', tint: '#1F8A5B' },
         { id: 'armadietto', label: 'Armadietto', sub: 'Scorte e richieste', icon: Package, href: '/teacher/locker', tint: '#7A3FD0' },
         { id: 'moduli', label: 'Moduli', sub: 'Form da gestire', icon: FileText, href: '/teacher/modulistica', tint: '#E6720A' },
         { id: 'messaggi', label: 'Messaggi', sub: 'Chat con le famiglie', icon: MessageCircle, href: '/teacher/chat', tint: '#006A5F' },
@@ -95,8 +95,11 @@ export default function TeacherBottomNav() {
   };
 
   const isMenuSectionActive = groups.some((g) =>
-    g.items.some((i) => i.href && i.href !== '/teacher/attendance' && pathname.startsWith(i.href)),
+    g.items.some((i) => i.href && pathname.startsWith(i.href)),
   );
+  // Mutua esclusività: il MENU non si accende sulle rotte già coperte da un tab
+  // dedicato (Dashboard/Diario·Registro/Messaggi/Foto) → una sola voce attiva.
+  const anyMainTabActive = mainTabs.some((t) => t.href && isActive(t.href));
 
   return (
     <>
@@ -107,7 +110,7 @@ export default function TeacherBottomNav() {
           <nav aria-label="Navigazione principale" className="flex items-stretch justify-around px-1 h-[60px]">
             {mainTabs.map((tab) => {
               const Icon = tab.icon;
-              const active = tab.href ? isActive(tab.href) : (isMenuSectionActive || showMenu);
+              const active = tab.href ? isActive(tab.href) : ((isMenuSectionActive && !anyMainTabActive) || showMenu);
 
               if (tab.id === 'menu') {
                 return (

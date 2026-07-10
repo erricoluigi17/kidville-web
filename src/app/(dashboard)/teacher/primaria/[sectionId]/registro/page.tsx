@@ -5,6 +5,7 @@ import { useParams, useSearchParams } from 'next/navigation';
 import { PenLine, BookOpen, Check, Paperclip, FileText, Image as ImageIcon } from 'lucide-react';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { saveLocalRegistro, syncPendingRegistro } from '@/lib/offline/syncEngine';
+import { nomeCompleto } from '@/lib/format/nome';
 
 interface Campanella { id: string; ordine: number; ora_inizio: string; ora_fine: string; tipo: string }
 interface OrarioCella { campanella_id: string; materia_id: string | null; materie?: { nome: string } | null }
@@ -47,7 +48,11 @@ export default function RegistroPage() {
         fetch(`/api/primaria/classe/${sectionId}?userId=${userId}`).then((r) => r.json()),
       ]);
       if (reg.success) {
-        setCampanelle(reg.data.campanelle.filter((c: Campanella) => c.tipo === 'lezione'));
+        // Teniamo TUTTE le campanelle (lezione + intervallo/mensa): le pause
+        // vengono mostrate come righe non firmabili così la numerazione delle ore
+        // non "salta" (lo slot escluso resta visibile). Firma/conteggi restano
+        // sulle sole lezioni.
+        setCampanelle(reg.data.campanelle);
         setOrarioCelle(reg.data.orarioCelle);
         setRighe(reg.data.righe);
       }
@@ -83,6 +88,8 @@ export default function RegistroPage() {
   const rigaDi = (ordine: number) => righe.find((r) => r.ora_lezione === ordine);
   const plannedMateriaId = (camp: Campanella) =>
     orarioCelle.find((o) => o.campanella_id === camp.id)?.materia_id ?? '';
+  // Solo le lezioni sono firmabili/contate; intervallo e mensa sono righe informative.
+  const lezioni = campanelle.filter((c) => c.tipo === 'lezione');
 
   return (
     <div className="rounded-card bg-white p-5 shadow-sm">
@@ -96,9 +103,9 @@ export default function RegistroPage() {
         />
       </div>
 
-      {!loading && campanelle.length > 0 && (() => {
-        const firmate = campanelle.filter((c) => (rigaDi(c.ordine)?.firme_docenti?.length ?? 0) > 0).length;
-        const tot = campanelle.length;
+      {!loading && lezioni.length > 0 && (() => {
+        const firmate = lezioni.filter((c) => (rigaDi(c.ordine)?.firme_docenti?.length ?? 0) > 0).length;
+        const tot = lezioni.length;
         return (
           <div className="mb-4 space-y-3">
             <div className="rounded-2xl bg-white p-4" style={{ boxShadow: 'inset 0 0 0 1.5px var(--color-kidville-line)' }}>
@@ -125,11 +132,24 @@ export default function RegistroPage() {
 
       {loading ? (
         <p className="font-maven text-kidville-muted text-sm">Caricamento…</p>
-      ) : campanelle.length === 0 ? (
+      ) : lezioni.length === 0 ? (
         <p className="font-maven text-kidville-muted text-sm">Nessuna ora prevista dall&apos;orario in questo giorno.</p>
       ) : (
         <ul className="space-y-2">
           {campanelle.map((camp) => {
+            // Intervallo/mensa: riga informativa non firmabile (spiega il salto di numerazione).
+            if (camp.tipo !== 'lezione') {
+              return (
+                <li key={camp.id} className="rounded-card border border-dashed border-kidville-line bg-kidville-cream/40 px-3 py-2">
+                  <div className="flex items-center gap-2">
+                    <span className="font-barlow text-[11px] font-bold uppercase tracking-[0.1em] text-kidville-muted">
+                      {camp.tipo === 'mensa' ? 'Mensa' : 'Intervallo'}
+                    </span>
+                    <span className="text-xs text-kidville-muted">{camp.ora_inizio?.slice(0, 5)}–{camp.ora_fine?.slice(0, 5)}</span>
+                  </div>
+                </li>
+              );
+            }
             const riga = rigaDi(camp.ordine);
             const plannedId = plannedMateriaId(camp);
             const plannedName = orarioCelle.find((o) => o.campanella_id === camp.id)?.materie?.nome;
@@ -154,7 +174,7 @@ export default function RegistroPage() {
                     )}
                     {riga?.firme_docenti?.map((f) => (
                       <div key={f.id} className="mt-1 text-[11px] text-kidville-muted">
-                        ✍ {f.utenti ? `${f.utenti.nome} ${f.utenti.cognome}` : '—'} ({f.tipo_compresenza})
+                        ✍ {f.utenti ? nomeCompleto(f.utenti.nome, f.utenti.cognome) : '—'} ({f.tipo_compresenza})
                         {f.argomento_proprio && <span className="ml-1 text-kidville-info">· attività individualizzata</span>}
                       </div>
                     ))}
@@ -335,7 +355,7 @@ function FirmaModal({
                 {alunni.map((a) => (
                   <label key={a.id} className="flex items-center gap-2 py-0.5 font-maven text-sm">
                     <input type="checkbox" checked={destinatari.includes(a.id)} onChange={() => toggleDest(a.id)} />
-                    {a.cognome} {a.nome}
+                    {nomeCompleto(a.nome, a.cognome, 'cognome-nome')}
                   </label>
                 ))}
               </div>

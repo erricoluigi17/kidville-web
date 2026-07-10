@@ -17,8 +17,9 @@ const getParentQuerySchema = z.object({
 });
 
 // Modalità insegnante/staff: default date = oggi (dinamico, calcolato nel codice).
+// Nessun default a un nome sezione reale: param omesso → '' → risposta vuota.
 const getTeacherQuerySchema = z.object({
-    sezione: z.string().default('Girasoli'),
+    sezione: z.string().default(''),
     date: zDataYMD.optional(),
 });
 
@@ -39,7 +40,7 @@ const entrySchema = z.object({
 const postBodySchema = z.union([z.array(entrySchema), entrySchema]);
 
 // GET /api/diary/entries
-// Modalità insegnante: ?sezione=Girasoli&date=2026-05-12
+// Modalità insegnante: ?sezione=<classe>&date=2026-05-12
 // Modalità genitore:   ?alunno_id=xxx&from=2026-04-28
 //
 // P0/S9b (DL-040): tutti gli accessi a `eventi_diario` usano service-role +

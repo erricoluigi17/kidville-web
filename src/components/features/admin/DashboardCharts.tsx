@@ -24,6 +24,9 @@ const euroFmt = new Intl.NumberFormat('it-IT', {
   maximumFractionDigits: 0,
 });
 
+// Formatter tick asse Y incassi: numero it-IT (separatore migliaia '.') senza valuta.
+const tickFmt = new Intl.NumberFormat('it-IT', { maximumFractionDigits: 0 });
+
 interface TrendPoint {
   mese: string;
   label: string;
@@ -37,6 +40,12 @@ interface ClassePoint {
 
 /** Andamento incassi ultimi 6 mesi — area che si disegna progressivamente. */
 export function TrendIncassiChart({ data }: { data: TrendPoint[] }) {
+  // Asse Y a tick uniformi: passo adattivo (~5 tick) e formato it-IT coerente,
+  // così spariscono i tick disuniformi (450/900) e il formato misto 'k'/grezzo.
+  const maxVal = Math.max(0, ...data.map((d) => d.incassato));
+  const step = maxVal <= 2500 ? 500 : maxVal <= 5000 ? 1000 : maxVal <= 10000 ? 2000 : 5000;
+  const top = Math.max(step, Math.ceil(maxVal / step) * step);
+  const ticks = Array.from({ length: top / step + 1 }, (_, i) => i * step);
   return (
     <ResponsiveContainer width="100%" height={240}>
       <AreaChart data={data} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
@@ -49,7 +58,9 @@ export function TrendIncassiChart({ data }: { data: TrendPoint[] }) {
         <CartesianGrid strokeDasharray="3 3" stroke="#eef0ee" vertical={false} />
         <XAxis dataKey="label" tickLine={false} axisLine={false} fontSize={12} stroke="#9ca3af" />
         <YAxis
-          tickFormatter={(v) => (v >= 1000 ? `${Math.round(v / 1000)}k` : `${v}`)}
+          domain={[0, top]}
+          ticks={ticks}
+          tickFormatter={(v) => tickFmt.format(Number(v))}
           tickLine={false}
           axisLine={false}
           fontSize={12}

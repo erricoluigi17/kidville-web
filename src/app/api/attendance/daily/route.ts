@@ -6,7 +6,7 @@ import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zDataYMD, zUuid } from '@/lib/validation/common';
 
 /**
- * GET /api/attendance/daily?data=YYYY-MM-DD&sezione=Girasoli
+ * GET /api/attendance/daily?data=YYYY-MM-DD&sezione=<classe>
  * Restituisce le presenze del giorno per la sezione indicata.
  *
  * POST /api/attendance/daily
@@ -17,7 +17,8 @@ import { zDataYMD, zUuid } from '@/lib/validation/common';
 const getQuerySchema = z.object({
     // default dinamico (oggi) calcolato nell'handler
     data: zDataYMD.optional(),
-    sezione: z.string().default('Girasoli'),
+    // Nessun default a un nome sezione reale: param omesso → '' → risposta vuota.
+    sezione: z.string().default(''),
 });
 
 const STATI_VALIDI = ['presente', 'assente', 'ritardo', 'uscita_anticipata'] as const;

@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Sparkles } from 'lucide-react';
+import { Sparkles, Plus, Trash2 } from 'lucide-react';
 
 interface Campanella { id: string; giorno_settimana: number; ordine: number; ora_inizio: string; ora_fine: string; tipo: string }
 interface Cella { giorno_settimana: number; campanella_id: string; materia_id: string | null; docente_id: string | null }
@@ -9,6 +9,18 @@ interface Materia { id: string; nome: string }
 interface Docente { id: string; nome: string; cognome: string; gradi?: string[] }
 
 const GIORNI = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab'];
+const TIPI: { id: string; label: string }[] = [
+  { id: 'lezione', label: 'Lezione' },
+  { id: 'intervallo', label: 'Intervallo' },
+  { id: 'mensa', label: 'Mensa' },
+];
+
+// "HH:MM" + minuti → "HH:MM" (per proporre l'orario della campanella successiva).
+function addMin(hhmm: string, mins: number): string {
+  const [h, m] = hhmm.split(':').map(Number);
+  const total = h * 60 + m + mins;
+  return `${String(Math.floor(total / 60) % 24).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+}
 
 export function OrarioManager({ sectionId, scuolaId, userId }: { sectionId: string; scuolaId: string; userId: string }) {
   const [tempo, setTempo] = useState<{ modello: number; giorni_settimana: number } | null>(null);
@@ -87,6 +99,39 @@ export function OrarioManager({ sectionId, scuolaId, userId }: { sectionId: stri
       headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
       body: JSON.stringify(payload),
     });
+  };
+
+  // ── Editing manuale delle singole campanelle (orari/tipo/aggiungi/elimina) ──
+  const postAction = (action: string, body: object) =>
+    fetch(`/api/admin/primaria/orario?action=${action}&userId=${userId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
+      body: JSON.stringify(body),
+    });
+
+  const updateCampanella = async (campanellaId: string, patch: { oraInizio?: string; oraFine?: string; tipo?: string }) => {
+    setBusy(true);
+    await postAction('update-campanella', { sectionId, campanellaId, ...patch });
+    await load();
+    setBusy(false);
+  };
+
+  const deleteCampanella = async (campanellaId: string) => {
+    setBusy(true);
+    await postAction('delete-campanella', { sectionId, campanellaId });
+    await load();
+    setBusy(false);
+  };
+
+  const addCampanella = async (giorno: number) => {
+    const delGiorno = campanelle.filter((c) => c.giorno_settimana === giorno).sort((a, b) => a.ordine - b.ordine);
+    const last = delGiorno[delGiorno.length - 1];
+    const maxOrd = last ? last.ordine : 0;
+    const start = last ? String(last.ora_fine).slice(0, 5) : '08:30';
+    setBusy(true);
+    await postAction('add-campanella', { sectionId, giornoSettimana: giorno, ordine: maxOrd + 1, oraInizio: start, oraFine: addMin(start, 60), tipo: 'lezione' });
+    await load();
+    setBusy(false);
   };
 
   if (!sectionId) return <p className="font-maven text-kidville-muted">Seleziona una sezione primaria.</p>;
@@ -168,6 +213,53 @@ export function OrarioManager({ sectionId, scuolaId, userId }: { sectionId: stri
             </tbody>
           </table>
         </div>
+      )}
+
+      {campanelle.length > 0 && (
+        <details className="rounded-card border border-kidville-line bg-white p-3">
+          <summary className="cursor-pointer font-maven text-sm font-semibold text-kidville-ink">Modifica campanelle (orari, intervallo/mensa)</summary>
+          <p className="mt-1 font-maven text-xs text-kidville-muted">Modifica gli orari e il tipo di ogni campanella, aggiungi un intervallo/mensa o elimina uno slot. Attenzione: la rigenerazione dal tempo scuola sovrascrive queste modifiche.</p>
+          <div className="mt-3 space-y-4">
+            {giorniPresenti.map((g) => (
+              <div key={g}>
+                <div className="mb-1.5 flex items-center justify-between">
+                  <span className="font-barlow text-xs font-bold uppercase tracking-wide text-kidville-green">{GIORNI[g - 1]}</span>
+                  <button onClick={() => addCampanella(g)} disabled={busy} className="font-maven inline-flex items-center gap-1 rounded-pill bg-kidville-cream px-2.5 py-1 text-xs text-kidville-ink disabled:opacity-50">
+                    <Plus size={12} /> aggiungi ora
+                  </button>
+                </div>
+                <ul className="space-y-1.5">
+                  {campanelle.filter((c) => c.giorno_settimana === g).sort((a, b) => a.ordine - b.ordine).map((c) => (
+                    <li key={c.id} className="flex flex-wrap items-center gap-1.5">
+                      <span className="w-5 font-maven text-xs text-kidville-muted">{c.ordine}</span>
+                      <input
+                        type="time"
+                        defaultValue={String(c.ora_inizio).slice(0, 5)}
+                        onBlur={(e) => { if (e.target.value && e.target.value !== String(c.ora_inizio).slice(0, 5)) updateCampanella(c.id, { oraInizio: e.target.value }); }}
+                        className="rounded border border-kidville-line px-1.5 py-0.5 font-maven text-xs"
+                        aria-label="ora inizio"
+                      />
+                      <span className="text-xs text-kidville-muted">–</span>
+                      <input
+                        type="time"
+                        defaultValue={String(c.ora_fine).slice(0, 5)}
+                        onBlur={(e) => { if (e.target.value && e.target.value !== String(c.ora_fine).slice(0, 5)) updateCampanella(c.id, { oraFine: e.target.value }); }}
+                        className="rounded border border-kidville-line px-1.5 py-0.5 font-maven text-xs"
+                        aria-label="ora fine"
+                      />
+                      <select value={c.tipo} onChange={(e) => updateCampanella(c.id, { tipo: e.target.value })} className="rounded border border-kidville-line px-1.5 py-0.5 font-maven text-xs">
+                        {TIPI.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+                      </select>
+                      <button onClick={() => deleteCampanella(c.id)} disabled={busy} className="ml-auto inline-flex items-center rounded-pill p-1 text-kidville-error hover:bg-kidville-error/10 disabled:opacity-50" aria-label="elimina campanella">
+                        <Trash2 size={13} />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </details>
       )}
     </div>
   );

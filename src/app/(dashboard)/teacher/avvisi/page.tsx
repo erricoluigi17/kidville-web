@@ -7,8 +7,6 @@ import { AvvisoForm } from '@/components/features/avvisi/AvvisoForm';
 import { AvvisoDetailsDrawer } from '@/components/features/avvisi/AvvisoDetailsDrawer';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 
-const AVAILABLE_CLASSES = ['Girasoli', 'Margherite', 'Tulipani', '3A', '4B'];
-
 // Identità dalla sessione (URL → localStorage → /api/me), senza fallback demo (M4).
 function TeacherAvvisiContent() {
     const { userId: teacherId } = useSessionIdentity();
@@ -19,6 +17,18 @@ function TeacherAvvisiContent() {
     const [editingAvviso, setEditingAvviso] = useState<Avviso | null>(null);
     const [selectedAvviso, setSelectedAvviso] = useState<Avviso | null>(null);
     const [showDetails, setShowDetails] = useState(false);
+
+    // Classi reali del docente (utenti_sezioni via /api/educator-sections):
+    // niente elenco hardcoded; con 0 sezioni le pill del form restano vuote.
+    const [availableClasses, setAvailableClasses] = useState<string[]>([]);
+
+    useEffect(() => {
+        if (!teacherId) return;
+        fetch(`/api/educator-sections?userId=${teacherId}`)
+            .then(r => (r.ok ? r.json() : null))
+            .then(d => setAvailableClasses(d?.sectionNames ?? []))
+            .catch(() => {});
+    }, [teacherId]);
 
     const loadAvvisi = useCallback(async () => {
         if (!teacherId) return;
@@ -146,7 +156,7 @@ function TeacherAvvisiContent() {
                     setEditingAvviso(null);
                 }}
                 onSubmit={handleCreateOrUpdate}
-                availableClasses={AVAILABLE_CLASSES}
+                availableClasses={availableClasses}
                 initialAvviso={editingAvviso}
             />
 
@@ -158,7 +168,7 @@ function TeacherAvvisiContent() {
                     setShowDetails(false);
                     setSelectedAvviso(null);
                 }}
-                availableClasses={AVAILABLE_CLASSES}
+                availableClasses={availableClasses}
             />
         </div>
     );

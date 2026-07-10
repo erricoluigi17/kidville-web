@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { AlertTriangle, Download, Receipt } from 'lucide-react';
 import { getSupabase } from '@/lib/supabase/browser-client';
 import { raggruppaPerCategoria } from '@/lib/pagamenti/categorie';
+import { isoToIt } from '@/lib/format/data';
 import { PushOptIn } from './PushOptIn';
 
 interface Pagamento {
@@ -192,7 +193,7 @@ function PagamentoCard({ p, userId }: { p: Pagamento; userId: string }) {
                         {p.obbligatorio && <span className="text-[10px] text-kidville-error">•obbl.</span>}
                     </p>
                     <p className="font-maven text-xs text-kidville-muted">
-                        {p.alunni?.nome} {p.alunni?.cognome} · scad. {p.scadenza}
+                        {p.alunni?.nome} {p.alunni?.cognome} · scad. {isoToIt(p.scadenza) || p.scadenza}
                         {isSplit && <span className="ml-1 text-kidville-warn">· tua quota</span>}
                     </p>
                 </div>

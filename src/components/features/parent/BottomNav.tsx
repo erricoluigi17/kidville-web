@@ -111,6 +111,9 @@ export default function BottomNav() {
   const isMenuSectionActive = visibleGroups.some((g) =>
     g.items.some((i) => i.href && pathname.startsWith(i.href)),
   );
+  // Mutua esclusività: il MENU non si accende sulle rotte già coperte da un tab
+  // dedicato (Home/Scuola·Diario/Avvisi/Chat) → una sola voce attiva.
+  const anyMainTabActive = mainTabs.some((t) => t.href && isActive(t.href));
 
   return (
     <>
@@ -121,7 +124,7 @@ export default function BottomNav() {
           <nav aria-label="Navigazione principale" className="flex items-stretch justify-around px-1 h-[60px]">
             {mainTabs.map((tab) => {
               const Icon = tab.icon;
-              const active = tab.href ? isActive(tab.href) : (isMenuSectionActive || showMenu);
+              const active = tab.href ? isActive(tab.href) : ((isMenuSectionActive && !anyMainTabActive) || showMenu);
 
               if (tab.id === 'menu') {
                 return (

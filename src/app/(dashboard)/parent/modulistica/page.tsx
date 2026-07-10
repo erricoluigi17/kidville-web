@@ -7,6 +7,8 @@ import {
 } from 'lucide-react';
 import { OtpEmailModal } from '@/components/features/parent/forms/OtpEmailModal';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
+import { annoScolasticoCorrente } from '@/lib/anno-scolastico';
+import { buildCertificatoBody, buildIntestazioneSede, rigaLuogoData } from '@/lib/certificati/self-service';
 
 type FormType = 'sondaggio' | 'gradimento' | 'autorizzazione';
 
@@ -88,7 +90,14 @@ export default function ParentModulisticaPage() {
   const [assignedForms, setAssignedForms] = useState<AssignedForm[]>([]);
   const [archive, setArchive] = useState<SignedArchiveItem[]>([]);
   const [medCerts, setMedCerts] = useState<MedCert[]>([]);
-  const [children, setChildren] = useState<{ id: string; nome: string; cognome: string }[]>([]);
+  // Include i dati reali di classe e sede (per-figlio, multi-sede) forniti da
+  // /api/parent/students: alimentano i certificati self-service.
+  const [children, setChildren] = useState<{
+    id: string; nome: string; cognome: string;
+    classe_sezione?: string | null;
+    scuola_nome?: string | null; scuola_citta?: string | null; scuola_indirizzo?: string | null;
+    scuola_cap?: string | null; scuola_provincia?: string | null; scuola_codice_meccanografico?: string | null;
+  }[]>([]);
   const [parentInfo, setParentInfo] = useState<{ nome?: string | null; cognome?: string | null } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -386,7 +395,10 @@ export default function ParentModulisticaPage() {
     setTimeout(async () => {
       const { jsPDF } = await import('jspdf');
       const doc = new jsPDF();
+      // NB: sempre children[0] — il tab Certificati non ha selettore figlio
+      // (semantica esistente, fuori scope del de-hardcode).
       const currentStudent = children[0];
+      const anno = annoScolasticoCorrente();
 
       // Header Letterhead
       doc.setFillColor(0, 106, 95); // Kidville Green
@@ -398,6 +410,15 @@ export default function ParentModulisticaPage() {
       doc.setTextColor(255, 255, 255);
       doc.setFontSize(10);
       doc.text('Servizio Rilascio Certificati Automatici', 130, 25);
+
+      // Intestazione sede reale (dal DB, per-figlio): righe omesse se mancanti.
+      const intestazione = buildIntestazioneSede(currentStudent);
+      if (intestazione.length > 0) {
+        doc.setTextColor(100, 100, 100);
+        doc.setFont('Helvetica', 'normal');
+        doc.setFontSize(9);
+        intestazione.forEach((riga, i) => doc.text(riga, 20, 47 + i * 5));
+      }
 
       // Certificate content
       doc.setTextColor(0, 106, 95);
@@ -412,16 +433,17 @@ export default function ParentModulisticaPage() {
       doc.setFont('Helvetica', 'normal');
       doc.setFontSize(12);
       
-      const bodyText = type === 'iscrizione'
-        ? `Si certifica che l'alunno/a ${currentStudent.cognome} ${currentStudent.nome} risulta regolarmente iscritto/a presso questa istituzione scolastica per l'anno scolastico 2026/2027.`
-        : `Si certifica che l'alunno/a ${currentStudent.cognome} ${currentStudent.nome} frequenta regolarmente le attività didattiche di questa scuola nella sezione dei Girasoli per l'anno scolastico corrente.`;
+      // Testo dal builder puro (testato): sezione reale dell'alunno e anno
+      // scolastico calcolato — nessun valore cablato.
+      const bodyText = buildCertificatoBody(type, currentStudent, anno);
 
       const splitText = doc.splitTextToSize(bodyText, 160);
       doc.text(splitText, 25, 90);
 
       doc.text(`Rilasciato su richiesta del genitore ${parentInfo.nome} ${parentInfo.cognome} ad uso consentito dalla legge.`, 25, 130);
 
-      doc.text(`Milano, lì ${new Date().toLocaleDateString('it-IT')}`, 25, 160);
+      // Luogo reale della sede del figlio (scuole.citta), degrado a sola data.
+      doc.text(rigaLuogoData(currentStudent.scuola_citta, new Date().toLocaleDateString('it-IT')), 25, 160);
 
       // Signature stamp
       doc.setFont('Helvetica', 'bold');

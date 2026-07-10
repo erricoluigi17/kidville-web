@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { Euro, ChevronRight, CheckCircle2 } from 'lucide-react';
 import { getSupabase } from '@/lib/supabase/browser-client';
+import { isoToIt } from '@/lib/format/data';
 
 interface Pagamento {
     id: string; descrizione: string; importo: number; importo_pagato: number;
@@ -64,7 +65,7 @@ export function PagamentiSummary({ userId, href }: Props) {
                         </p>
                         {prossima && (
                             <p className="mt-1 truncate font-maven text-[12px]" style={{ color: 'rgba(255,255,255,0.72)' }}>
-                                {prossima.descrizione} · scad. {prossima.scadenza}
+                                {prossima.descrizione} · scad. {isoToIt(prossima.scadenza) || prossima.scadenza}
                             </p>
                         )}
                     </div>

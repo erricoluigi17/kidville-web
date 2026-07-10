@@ -91,7 +91,7 @@ function NoteGenitore() {
           {inAttesa.length > 0 && (
             <div className="rounded-2xl bg-kidville-warn-soft border border-kidville-warn/30 px-4 py-3">
               <p className="font-maven text-sm font-semibold text-kidville-warn">
-                {inAttesa.length} nota{inAttesa.length > 1 ? ' in attesa' : ' in attesa'} di firma
+                {inAttesa.length} {inAttesa.length > 1 ? 'note' : 'nota'} in attesa di firma
               </p>
             </div>
           )}

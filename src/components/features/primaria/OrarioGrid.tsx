@@ -99,7 +99,7 @@ export function OrarioGrid({
                           </div>
                         );
                       })() : (
-                        <span className="text-kidville-muted">—</span>
+                        <span className="text-kidville-muted/40" aria-hidden>·</span>
                       )}
                     </td>
                   );

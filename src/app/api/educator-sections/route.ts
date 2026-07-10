@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
+import { nomiSezioniDiUtente } from '@/lib/sezioni/docenti';
 import { parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 
@@ -16,25 +17,15 @@ const getQuerySchema = z.object({
     userId: zUuidQueryOpzionale,
 });
 
-// Educator section mapping - in production this would come from a DB table
-// For now we derive it from the alunni table using the educator's uploaded media
-// or fall back to a known mapping based on which alunni have section_id assigned
+// Sezioni del docente: fonte canonica utenti_sezioni → sections.name (Method 0);
+// in mancanza di legami restano due euristiche legacy (media taggati, eventi
+// diario). Nessuna mappa hardcoded: senza riscontri → [].
 async function getEducatorSectionNames(
     supabase: Awaited<ReturnType<typeof createAdminClient>>,
     userId: string
 ): Promise<string[]> {
     // Method 0 (canonico): legame docente↔sezione in utenti_sezioni → sections.name.
-    const { data: legamiSez } = await supabase
-        .from('utenti_sezioni')
-        .select('sections(name)')
-        .eq('utente_id', userId);
-    const canonicalNames = [...new Set(
-        (legamiSez ?? []).flatMap((r: { sections: { name?: string }[] | { name?: string } | null }) => {
-            const s = r.sections;
-            if (!s) return [];
-            return (Array.isArray(s) ? s : [s]).map(x => x.name);
-        }).filter(Boolean) as string[]
-    )];
+    const canonicalNames = await nomiSezioniDiUtente(supabase, userId);
     if (canonicalNames.length > 0) return canonicalNames;
 
     // Method 1: Check if the educator has any media uploads with tagged students
@@ -78,23 +69,7 @@ async function getEducatorSectionNames(
         if (sectionNames.length > 0) return sectionNames;
     }
 
-    // Method 3: Use email to determine section (Anna → Girasoli, Chiara → Tulipani)
-    const { data: utente } = await supabase
-        .from('utenti')
-        .select('email')
-        .eq('id', userId)
-        .maybeSingle();
-
-    // Known educator mappings
-    const emailToSection: Record<string, string> = {
-        'maestra.anna@kidville.it': 'Girasoli',
-        'maestra.chiara@kidville.it': 'Tulipani',
-    };
-
-    if (utente?.email && emailToSection[utente.email]) {
-        return [emailToSection[utente.email]];
-    }
-
+    // Nessun legame né derivazione: nessuna sezione (il chiamante degrada a vuoto).
     return [];
 }
 
@@ -136,10 +111,14 @@ export async function GET(request: Request) {
         if (isManager) {
             const { data: sections } = await supabase
                 .from('sections')
-                .select('name')
+                .select('name, school_type')
                 .order('name');
+            // `sections[].school_type` è additivo: `sectionNames` resta invariato
+            // per i consumer esistenti; il nuovo campo serve a /teacher/diary per
+            // filtrare le sezioni primaria in base a diario_primaria_visibile.
             return NextResponse.json({
                 sectionNames: sections?.map((s: { name: string }) => s.name) || [],
+                sections: (sections ?? []).map((s: { name: string; school_type: string | null }) => ({ name: s.name, school_type: s.school_type })),
                 role: normalizedRole
             });
         }
@@ -147,8 +126,20 @@ export async function GET(request: Request) {
         // Educators: derive their sections dynamically
         const sectionNames = await getEducatorSectionNames(supabase, userId);
 
+        // Arricchimento school_type per nome (i 4 metodi di derivazione producono
+        // solo nomi): un'unica query risolve il grado di ogni sezione.
+        let schoolTypeByName = new Map<string, string | null>();
+        if (sectionNames.length > 0) {
+            const { data: gradi } = await supabase
+                .from('sections')
+                .select('name, school_type')
+                .in('name', sectionNames);
+            schoolTypeByName = new Map((gradi ?? []).map((s: { name: string; school_type: string | null }) => [s.name, s.school_type]));
+        }
+
         return NextResponse.json({
             sectionNames,
+            sections: sectionNames.map((n) => ({ name: n, school_type: schoolTypeByName.get(n) ?? null })),
             role: 'educator'
         });
 

@@ -41,6 +41,7 @@ for (const f of findFiles) {
 
 // ── 2. Findings sicurezza (adversarial) ──────────────────────────────────────
 const advers = [...readJson(new URL('adversarial.json', FIND), []), ...readJson(new URL('adversarial-anon.json', FIND), [])];
+const hasSec = advers.some((x) => x.gravita && x.gravita !== 'ok'); // sicurezza ancora aperta?
 
 // ── 3. Findings nativi ───────────────────────────────────────────────────────
 const nativeFind = [
@@ -186,7 +187,7 @@ footer{padding:26px 0 50px;color:var(--muted);font-size:12.5px;text-align:center
   <h1>Test 360° ULTRA — Scuola Primaria</h1>
   <p class="sub">Campagna end-to-end multi-agente sulla classe <b>TEST 1A</b> (Kidville Giugliano): 26 personas reali (1 segreteria + 5 docenti + 20 genitori madre/padre), copertura di ogni route/pulsante/stato via Playwright, app <b>nativa</b> Capacitor pilotata via Appium su Android e iOS, e probe adversarial di sicurezza. Ogni esito è verificato dal vivo.</p>
   <div class="meta">
-    <span class="tag prod">DB · PRODUZIONE</span><span class="tag">Classe TEST 1A</span><span class="tag">08/07/2026</span>
+    <span class="tag prod">DB · PRODUZIONE</span><span class="tag">Classe TEST 1A</span><span class="tag">09/07/2026</span>
     <span class="tag yellow">Playwright + Appium (Android/iOS) + MCP</span>
   </div>
 </div></header>
@@ -202,18 +203,26 @@ footer{padding:26px 0 50px;color:var(--muted);font-size:12.5px;text-align:center
 </div></div>
 
 <section><div class="wrap">
-  <span class="eyebrow">Priorità assoluta</span>
-  <h2>Vulnerabilità di controllo accessi — bloccanti</h2>
+  <span class="eyebrow">Controllo accessi</span>
+  <h2>Sicurezza — scoping &amp; controllo accessi</h2>
+  ${hasSec ? `
   <div class="callout"><b>Azione immediata raccomandata.</b> I probe adversarial hanno confermato <b>dal vivo</b> l'esposizione di dati personali di minori senza controllo di proprietà/autenticazione. Endpoint su dati reali di produzione. Vanno chiusi prima di qualsiasi rilascio.</div>
   <div class="problist">${secRows}</div>
   <div class="note-box" style="margin-top:16px">
     <b>Causa (dal codice).</b>
     <ul>
-      <li><b>IDOR</b> — <span class="mono-sm">src/app/api/parent/primaria/{valutazioni,note,assenze,pagella}/route.ts</span>: usano <span class="mono-sm">getRequestUserId</span> ma non verificano mai <span class="mono-sm">genitoreHasFiglio(userId, studentId)</span>. Qualsiasi genitore autenticato legge i dati di un alunno arbitrario passando <span class="mono-sm">?studentId=</span>.</li>
-      <li><b>PII senza auth</b> — <span class="mono-sm">src/app/api/admin/students/[id]/route.ts</span>: GET service-role <b>senza alcun gate</b> (né sessione né ruolo). Restituisce alunno + genitori + codici fiscali + indirizzi a un client anonimo.</li>
-      <li><b>Fix indicato</b>: gate <span class="mono-sm">requireUser</span>+<span class="mono-sm">genitoreHasFiglio</span> sulle route parent/primaria; <span class="mono-sm">requireStaff</span> su admin/students/[id]. Verifica O.M. 3/2025 + GDPR.</li>
+      <li><b>IDOR</b> — <span class="mono-sm">src/app/api/parent/primaria/{valutazioni,note,assenze,pagella}/route.ts</span>: usano <span class="mono-sm">getRequestUserId</span> ma non verificano mai <span class="mono-sm">genitoreHasFiglio(userId, studentId)</span>.</li>
+      <li><b>PII senza auth</b> — <span class="mono-sm">src/app/api/admin/students/[id]/route.ts</span>: GET service-role senza gate.</li>
+      <li><b>Fix indicato</b>: gate <span class="mono-sm">requireUser</span>+<span class="mono-sm">genitoreHasFiglio</span> sulle route parent/primaria; <span class="mono-sm">requireStaff</span> su admin/students/[id].</li>
     </ul>
-  </div>
+  </div>` : `
+  <div class="note-box" style="border-color:color-mix(in srgb,var(--ok) 45%,transparent)">
+    <b style="color:var(--ok)">✓ 0 bloccanti — verificato dal vivo.</b> I probe adversarial (IDOR cross-alunno, PII senza auth, cross-role) rispondono tutti correttamente: proprio <span class="mono-sm">200</span> / altrui <span class="mono-sm">403</span> / anonimo <span class="mono-sm">401</span>. Le vulnerabilità della prima campagna sono chiuse e riverificate:
+    <ul>
+      <li><b>IDOR</b> parent/primaria → helper <span class="mono-sm">requireParentOfStudent</span> (<span class="mono-sm">requireUser</span> + <span class="mono-sm">genitoreHasFiglio</span>).</li>
+      <li><b>PII</b> <span class="mono-sm">admin/students/[id]</span> → <span class="mono-sm">requireStaff</span> (anonimo = 401).</li>
+    </ul>
+  </div>`}
 </div></section>
 
 <section><div class="wrap">
@@ -243,6 +252,7 @@ footer{padding:26px 0 50px;color:var(--muted);font-size:12.5px;text-align:center
   <span class="eyebrow">App nativa</span>
   <h2>Capacitor — Android & iOS (campione)</h2>
   <p class="lead">App nativa reale pilotata via Appium (non web mobile): shell WebView Capacitor che carica l'app dal server. Verificate safe-area, status bar, tasto back Android, deep-link <span class="mono-sm">kidville://</span>. Login-through via protocollo W3C non stabilisce la sessione Supabase (limite dell'harness nativo, non difetto app: Playwright autentica gli stessi account sullo stesso server).</p>
+  ${nativeFind.some((x) => x.gravita && x.gravita !== 'ok') ? `<div class="note-box" style="margin-bottom:16px"><b>Nota (ciclo 2026-07-09).</b> Gli smoke nativi Appium <b>non sono stati rieseguiti</b> in questo ciclo (nessun emulatore Android/simulatore iOS disponibile nell'ambiente). I ${nativeFind.filter((x) => x.gravita === 'grave').length} rilievi "login landing" restano dal ciclo precedente e riguardano la mancata persistenza della sessione nella WebView sotto login-through Appium (limite noto dell'harness, non un difetto dell'app web verificata via Playwright); da riverificare quando è disponibile un emulatore.</div>` : ''}
   <div class="grid2">
     ${fig('nat-android-doc', '<b>Android · docente</b> — app nativa (contexts NATIVE_APP + WEBVIEW_it.kidville.app), login reso con safe-area rispettata.')}
     ${fig('nat-android-teacher', '<b>Android · navigazione</b> — la WebView carica il dev server reale (10.0.2.2:3000).')}
@@ -308,7 +318,7 @@ footer{padding:26px 0 50px;color:var(--muted);font-size:12.5px;text-align:center
   <p class="lead" style="margin-top:10px">Password unica di test: <span class="mono-sm">KidvilleTest.2026!</span></p>
 </div></section>
 
-<footer><div class="wrap">Kidville · Registro Elettronico — Test 360° ULTRA Scuola Primaria · 08/07/2026 · classe TEST 1A · DB produzione · findings totali: ${allFindings.length}</div></footer>`;
+<footer><div class="wrap">Kidville · Registro Elettronico — Test 360° ULTRA Scuola Primaria · 09/07/2026 · classe TEST 1A · DB produzione · findings totali: ${allFindings.length}</div></footer>`;
 
 writeFileSync(new URL('report-360.html', RUN), html);
 console.log('✓ report-360.html generato —', Math.round(Buffer.byteLength(html) / 1024), 'KB');

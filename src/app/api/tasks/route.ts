@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { scuoleDiUtente } from '@/lib/auth/scope';
+import { nomiSezioniDiUtente } from '@/lib/sezioni/docenti';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 
@@ -283,10 +284,16 @@ export async function GET(request: Request) {
 
         const isManager = role === 'admin' || role === 'coordinator';
 
-        // Educator section names for class-based filter
-        // Derived dynamically from their uploaded media's tagged students' sections
+        // Sezioni del docente per il filtro `target_class`: fonte canonica
+        // utenti_sezioni → sections.name; fallback legacy sui media taggati.
+        // Nessuna mappa email→sezione (verificato in prod: email inesistenti,
+        // tutti i docenti hanno legami in utenti_sezioni). Senza riscontri → []
+        // (il docente vede comunque i task global/role/authored/assigned).
         let sectionNames: string[] = [];
-        if (!isManager) {
+        if (!isManager && userId) {
+            sectionNames = await nomiSezioniDiUtente(supabase, userId);
+        }
+        if (!isManager && sectionNames.length === 0) {
             // Get sections from educator's media uploads (tagged students' classes)
             const { data: myMedia } = await supabase
                 .from('galleria_media_v2')
@@ -306,19 +313,6 @@ export async function GET(request: Request) {
                 sectionNames = [...new Set(
                     (students ?? []).map((s: { classe_sezione: string }) => s.classe_sezione).filter(Boolean)
                 )];
-            }
-
-            // Fallback: use email-to-section mapping for known educators
-            if (sectionNames.length === 0) {
-                const { data: utEntryForSection } = await supabase
-                    .from('utenti').select('email').eq('id', userId ?? null).maybeSingle();
-                const emailToSection: Record<string, string> = {
-                    'maestra.anna@kidville.it': 'Girasoli',
-                    'maestra.chiara@kidville.it': 'Tulipani',
-                };
-                if (utEntryForSection?.email && emailToSection[utEntryForSection.email]) {
-                    sectionNames = [emailToSection[utEntryForSection.email]];
-                }
             }
         }
 

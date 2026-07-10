@@ -59,10 +59,13 @@ export function MensaCalendar({ userId, studentId }: Props) {
         setAuthError('Sessione non valida. Torna alla home e riapri la mensa dal menu principale.');
         setSaldo(null);
       } else if (pRaw?.data?.success) {
-        setSaldo(pRaw.data.saldo);
-        setCutoffOra(pRaw.data.cutoffOra ?? null);
+        // La fetch avvolge la risposta in { status, data: <body> } e il body è
+        // { success, data: { saldo, prenotazioni, cutoffOra } } → il payload è pRaw.data.data.
+        const payload = pRaw.data.data ?? {};
+        setSaldo(payload.saldo ?? 0);
+        setCutoffOra(payload.cutoffOra ?? null);
         const map: Record<string, Prenotazione> = {};
-        for (const p of (pRaw.data.prenotazioni ?? []) as Prenotazione[]) map[p.data] = p;
+        for (const p of (payload.prenotazioni ?? []) as Prenotazione[]) map[p.data] = p;
         setPren(map);
       }
     } finally { setLoading(false); }

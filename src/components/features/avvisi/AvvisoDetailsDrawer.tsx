@@ -16,7 +16,7 @@ interface Props {
     availableClasses?: string[];
 }
 
-export function AvvisoDetailsDrawer({ open, avviso, onClose, availableClasses = ['Girasoli', 'Margherite', 'Tulipani', '3A', '4B'] }: Props) {
+export function AvvisoDetailsDrawer({ open, avviso, onClose, availableClasses = [] }: Props) {
     if (!avviso) return null;
 
     const isAdesione = avviso.tipo === 'adesione';

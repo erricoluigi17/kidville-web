@@ -228,8 +228,9 @@ function RettaMorositaSettings({ userId }: Props) {
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                 <div><label className={label}>Retta default (€)</label>
                     <input type="number" value={s.retta_default_importo || ''} onChange={e => setS({ ...s, retta_default_importo: Number(e.target.value) })} className={`${input} w-full`} /></div>
-                <div><label className={label}>Giorno scadenza (1-28)</label>
-                    <input type="number" min={1} max={28} value={s.retta_giorno_scadenza} onChange={e => setS({ ...s, retta_giorno_scadenza: Number(e.target.value) })} className={`${input} w-full`} /></div>
+                <div><label className={label}>Giorno scadenza retta — default per tutti (1-28)</label>
+                    <input type="number" min={1} max={28} value={s.retta_giorno_scadenza} onChange={e => setS({ ...s, retta_giorno_scadenza: Number(e.target.value) })} className={`${input} w-full`} />
+                    <p className="font-maven text-[10px] text-kidville-muted mt-0.5">Personalizzabile per singolo alunno dall&apos;anagrafica (Dati economici).</p></div>
                 <div><label className={label}>Visibile dal giorno (mese prec.)</label>
                     <input type="number" min={1} max={28} value={s.retta_giorno_visibilita ?? 25} onChange={e => setS({ ...s, retta_giorno_visibilita: Number(e.target.value) })} className={`${input} w-full`} /></div>
                 <div><label className={label}><AlertTriangle size={11} className="inline" /> Tolleranza insoluti (gg)</label>

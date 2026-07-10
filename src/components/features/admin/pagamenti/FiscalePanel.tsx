@@ -18,7 +18,7 @@ interface RicevutaRiga {
     creato_il: string;
     alunni?: { nome?: string; cognome?: string } | null;
 }
-interface Alunno { id: string; nome?: string; cognome?: string; classe_sezione?: string | null }
+interface Alunno { id: string; nome?: string; cognome?: string; classe_sezione?: string | null; section_id?: string | null }
 
 interface Props { userId: string; scuolaId: string }
 
@@ -57,8 +57,10 @@ export function FiscalePanel({ userId, scuolaId }: Props) {
             .then((r) => r.json())
             .then((d) => {
                 const lista: Alunno[] = Array.isArray(d) ? d : (d.data || []);
-                setAlunni(lista);
-                if (lista[0]) setAttAlunno((cur) => cur || lista[0].id);
+                // solo frequentanti: gli iscritti senza sezione non maturano rette
+                const frequentanti = lista.filter((a) => a.classe_sezione != null || a.section_id != null);
+                setAlunni(frequentanti);
+                if (frequentanti[0]) setAttAlunno((cur) => cur || frequentanti[0].id);
             })
             .catch(() => {});
     }, [userId, scuolaId]);

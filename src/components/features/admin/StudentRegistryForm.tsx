@@ -12,6 +12,7 @@ const studentSchema = z.object({
     cognome: z.string().min(2, "Il cognome deve avere almeno 2 caratteri"),
     sesso: z.enum(['M', 'F']),
     data_nascita: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Data non valida"),
+    data_iscrizione: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Data non valida").optional(),
     comune_nascita: z.string().min(2, "Comune non valido"),
     provincia_nascita: z.string().length(2, "Sigla provincia deve essere 2 lettere"),
     codice_fiscale: z.string().length(16, "Il CF deve essere di 16 caratteri").toUpperCase(),
@@ -40,6 +41,8 @@ export function StudentRegistryForm() {
         cognome: '',
         sesso: 'M',
         data_nascita: '',
+        // default oggi: la data d'iscrizione pilota da quale mese partono le rette
+        data_iscrizione: new Date().toISOString().slice(0, 10),
         comune_nascita: '',
         provincia_nascita: '',
         codice_fiscale: '',
@@ -225,6 +228,11 @@ export function StudentRegistryForm() {
                             <label className="block text-sm font-bold text-kidville-ink mb-1">Data di Nascita</label>
                             <input type="date" name="data_nascita" value={formData.data_nascita} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none ${errors.data_nascita ? 'border-kidville-error bg-kidville-error-soft' : 'border-kidville-line focus:ring-2 focus:ring-kidville-green'}`} />
                             {errors.data_nascita && <span className="text-xs text-kidville-error">{errors.data_nascita}</span>}
+                        </div>
+                        <div>
+                            <label className="block text-sm font-bold text-kidville-ink mb-1">Data di Iscrizione</label>
+                            <input type="date" name="data_iscrizione" value={formData.data_iscrizione} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none ${errors.data_iscrizione ? 'border-kidville-error bg-kidville-error-soft' : 'border-kidville-line focus:ring-2 focus:ring-kidville-green'}`} />
+                            <span className="text-xs text-kidville-muted">Le rette partono dal mese di iscrizione.</span>
                         </div>
                         <div>
                             <label className="block text-sm font-bold text-kidville-ink mb-1">Comune di Nascita</label>

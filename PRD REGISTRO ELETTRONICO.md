@@ -82,7 +82,12 @@ Redesign completo della sezione **Contabilità** (`/admin/pagamenti`, etichetta 
 - Gate per ogni commit: `npx eslint . --max-warnings 0` → 0 · `npx vitest run` → 929/929 (116 test nuovi, TDD) · `npx tsc --noEmit` → 0 · `npm run build` → ok.
 - E2E: nuovo `e2e/admin-contabilita.spec.ts` (viste deep-link, KPI anche su viewport mobile) + `parent-pagamenti` esteso (download ricevuta = PDF vero). Tutte le route nuove degradano sul DB CI non migrato (42P01/PGRST204 → empty-state).
 
-**Stato**: Fase A COMPLETA su branch `feat/contabilita-merchandise` (12 commit, non ancora pushato/mergiato); migrazioni 20260710* da applicare a prod su conferma; Fase B Merchandise a seguire.
+### Rifiniture A14-A15 (2026-07-11): data di iscrizione + giorno di paga per alunno
+- **`alunni.data_iscrizione`** (migr. `20260710160000_contabilita_iscrizione_scadenze`, 4ª da applicare): le rette si generano SOLO dal mese di iscrizione in poi — iscrizione precedente al 1° settembre = tutto l'anno; NULL = alunno storico, iscritto da sempre. Filtro replicato in `genera_rette_mensili` (CREATE OR REPLACE) e nella preview TS (con retry 42703 su DB non migrati). Campo in anagrafica (Classe e Stato) e nel form di creazione (default oggi).
+- **`alunni.giorno_scadenza_pagamenti`** (1-28, NULL = default scuola): "giorno di paga" per alunno (es. genitore che paga col 15 dello stipendio); usato dalla RPC via COALESCE col default `admin_settings.retta_giorno_scadenza` (5, già editabile in Impostazioni — etichetta chiarita). Al salvataggio le scadenze delle rette APERTE future vengono riallineate (`src/lib/pagamenti/scadenze.ts`), e uno "scaduto" torna aperto se la nuova scadenza è futura. Campo in anagrafica → Dati economici.
+- **Solo frequentanti in contabilità**: il filtro iscritto+sezione esisteva già in SQL e nei pannelli; chiuso l'unico gap (`FiscalePanel` attestazioni).
+
+**Stato**: Fase A + rifiniture A14-A15 COMPLETE su branch `feat/contabilita-merchandise` (15 commit, PR draft #15, CI verde); 4 migrazioni 20260710* da applicare a prod su conferma (chat dedicata); Fase B Merchandise a seguire (chat dedicata).
 
 ---
 

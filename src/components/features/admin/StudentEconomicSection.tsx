@@ -125,6 +125,24 @@ export function StudentEconomicSection({ alunnoId, form, updateForm, parents }: 
                 </p>
             </div>
 
+            {/* Giorno di paga personalizzato */}
+            <div className="mb-4">
+                <label className={labelCls}>Giorno di pagamento della retta (1-28)</label>
+                <input
+                    type="number"
+                    min={1}
+                    max={28}
+                    value={(form.giorno_scadenza_pagamenti as number | null) ?? ''}
+                    onChange={(e) => updateForm('giorno_scadenza_pagamenti', e.target.value === '' ? null : Math.min(28, Math.max(1, Number(e.target.value))))}
+                    placeholder="Vuoto = default scuola (Impostazioni)"
+                    className={inputCls}
+                />
+                <p className="font-maven text-[11px] text-kidville-muted mt-1">
+                    Es. il genitore paga col 15 dello stipendio → 15: la retta scade quel giorno e dopo diventa morosa.
+                    Al salvataggio le rette future già generate vengono riallineate.
+                </p>
+            </div>
+
             {/* Genitori separati */}
             <div className="mb-3 flex items-center gap-3">
                 <label className="flex items-center gap-2 cursor-pointer">

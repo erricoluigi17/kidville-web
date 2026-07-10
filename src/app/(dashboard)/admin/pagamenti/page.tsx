@@ -19,17 +19,9 @@ const GeneratoreCategoria = dynamic(() => import('@/components/features/admin/pa
 const TicketMensaPanel = dynamic(() => import('@/components/features/admin/pagamenti/TicketMensaPanel').then((m) => m.TicketMensaPanel), { loading: caricamento });
 const FiscalePanel = dynamic(() => import('@/components/features/admin/pagamenti/FiscalePanel').then((m) => m.FiscalePanel), { loading: caricamento });
 const SollecitiPanel = dynamic(() => import('@/components/features/admin/pagamenti/SollecitiPanel').then((m) => m.SollecitiPanel), { loading: caricamento });
+const RiconciliazionePanel = dynamic(() => import('@/components/features/admin/pagamenti/RiconciliazionePanel').then((m) => m.RiconciliazionePanel), { loading: caricamento });
 
 const isVista = (v: string | null): v is VistaContabilita => !!v && VISTE_CONTABILITA.some((o) => o.id === v);
-
-function InPreparazione({ titolo, descrizione }: { titolo: string; descrizione: string }) {
-    return (
-        <div className="py-10 text-center">
-            <p className="font-barlow text-lg font-extrabold uppercase text-kidville-green">{titolo}</p>
-            <p className="mx-auto mt-1 max-w-md font-maven text-sm text-kidville-muted">{descrizione}</p>
-        </div>
-    );
-}
 
 function PagamentiInner() {
     const { userId } = useSessionIdentity();
@@ -83,9 +75,7 @@ function PagamentiInner() {
                         )}
 
                         {vista === 'solleciti' && userId && <SollecitiPanel userId={userId} scuolaId={scuolaId} />}
-                        {vista === 'riconciliazione' && (
-                            <InPreparazione titolo="Riconciliazione bancaria" descrizione="Qui potrai importare l'estratto conto (CSV) e abbinare i bonifici agli addebiti aperti." />
-                        )}
+                        {vista === 'riconciliazione' && userId && <RiconciliazionePanel userId={userId} scuolaId={scuolaId} />}
                         {vista === 'fiscale' && userId && <FiscalePanel userId={userId} scuolaId={scuolaId} />}
 
                         {vista === 'ticket' && userId && <TicketMensaPanel userId={userId} scuolaId={scuolaId} />}

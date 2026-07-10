@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Search, Filter, AlertTriangle, CheckCircle2, Clock, RefreshCw, Plus, Pencil, Layers, Eye, FileText } from 'lucide-react';
+import { Search, Filter, AlertTriangle, CheckCircle2, Clock, RefreshCw, Plus, Pencil, Layers, Eye, FileText, Download, X } from 'lucide-react';
 import { RegistraIncassoModal, PagamentoRow } from './RegistraIncassoModal';
 import { FatturaButton } from './FatturaButton';
 import { FatturaChip } from './FatturaChip';
@@ -12,6 +12,8 @@ import { QuickAcquistoModal } from './QuickAcquistoModal';
 import { ModificaPagamentoModal } from './ModificaPagamentoModal';
 import { RateizzaModal } from './RateizzaModal';
 import { STATI_PAGAMENTO as STATI } from './stati';
+import { AgendaScadenze } from './AgendaScadenze';
+import { AGING_LABEL, bucketScadenze, type AgingBucketId } from '@/lib/pagamenti/aging';
 import { Badge } from '@/components/ui/Badge';
 import { StatCard } from '@/components/ui/cockpit';
 
@@ -54,6 +56,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
     const [editing, setEditing] = useState<Pagamento | null>(null);
     const [rateizza, setRateizza] = useState<{ alunno: Alunno; pagamento: Pagamento } | null>(null);
     const [drawer, setDrawer] = useState<Pagamento | null>(null);
+    const [agendaFiltro, setAgendaFiltro] = useState<AgingBucketId | null>(null);
     const [quick, setQuick] = useState<{ alunno: Alunno; categoria: Categoria } | null>(null);
     const [generando, setGenerando] = useState(false);
     const [arubaGated, setArubaGated] = useState(false);
@@ -181,6 +184,15 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
 
     const mancantiRette = isRettaView ? alunniFiltrati.filter((a) => !rettaByAlunno.has(a.id)).length : 0;
 
+    // Vista agenda: pagamenti aperti del bucket selezionato, per scadenza crescente.
+    const oggiStr = now.toISOString().slice(0, 10);
+    const agendaItems = useMemo(() => {
+        if (!agendaFiltro) return [];
+        return bucketScadenze(pagamenti, oggiStr)[agendaFiltro].items
+            .slice()
+            .sort((a, b) => (a.scadenza || '').localeCompare(b.scadenza || ''));
+    }, [agendaFiltro, pagamenti, oggiStr]);
+
     const fattureScartate = pagamenti.filter((p) => p.fattura_stato === 'scartata').length;
     // Mappa alunno → sospeso (DL-021), derivata dal payload pagamenti.
     const sospesoByAlunno = new Map<string, boolean>();
@@ -219,6 +231,9 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                     sub={totals.nDaFatturare > 0 ? `${totals.nDaFatturare} pagament${totals.nDaFatturare === 1 ? 'o' : 'i'}` : undefined} tone="info" />
             </div>
 
+            {/* Agenda scadenze / aging: i bucket filtrano la lista sottostante */}
+            <AgendaScadenze pagamenti={pagamenti} attivo={agendaFiltro} onSelect={setAgendaFiltro} />
+
             {/* Filtri */}
             <div className="flex flex-wrap items-center gap-2 mb-4">
                 <div className="relative flex-1 min-w-[200px]">
@@ -256,6 +271,10 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                 <button onClick={() => { setLoading(true); load(); }} className="py-2 px-3 rounded-full border-2 border-kidville-line text-kidville-muted hover:text-kidville-green">
                     <RefreshCw size={14} />
                 </button>
+                <a href={`/api/pagamenti/export?tipo=scadenzario&userId=${userId}&scuola_id=${scuolaId}`} title="Esporta XLSX"
+                    className="py-2 px-3 rounded-full border-2 border-kidville-line text-kidville-muted hover:text-kidville-green">
+                    <Download size={14} />
+                </a>
             </div>
 
             {/* CTA generazione rette mancanti */}
@@ -274,6 +293,75 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
             {/* Corpo */}
             {loading ? (
                 <p className="font-maven text-sm text-kidville-muted py-8 text-center">Caricamento…</p>
+            ) : agendaFiltro ? (
+                /* ---- Vista AGENDA: pagamenti aperti del bucket, per scadenza ---- */
+                <>
+                <div className="mb-2 flex items-center justify-between gap-2">
+                    <p className="font-maven text-xs text-kidville-muted">
+                        <span className="font-bold text-kidville-green">{AGING_LABEL[agendaFiltro]}</span> · {agendaItems.length} pagament{agendaItems.length === 1 ? 'o' : 'i'} aperti
+                    </p>
+                    <button onClick={() => setAgendaFiltro(null)}
+                        className="inline-flex items-center gap-1 rounded-full border-2 border-kidville-line px-2.5 py-1 font-maven text-xs font-bold text-kidville-muted hover:border-kidville-green hover:text-kidville-green">
+                        <X size={12} /> Chiudi
+                    </button>
+                </div>
+                {agendaItems.length === 0 ? (
+                    <p className="font-maven text-sm text-kidville-muted py-8 text-center">Nessun pagamento in questo intervallo.</p>
+                ) : (
+                    <>
+                    <div className="hidden lg:block overflow-x-auto">
+                        <table className="w-full text-left">
+                            <thead>
+                                <tr className="font-maven text-xs text-kidville-muted uppercase">
+                                    <th className="py-2 px-2">Alunno</th>
+                                    <th className="py-2 px-2">Descrizione</th>
+                                    <th className="py-2 px-2">Scadenza</th>
+                                    <th className="py-2 px-2 text-right">Residuo</th>
+                                    <th className="py-2 px-2">Stato</th>
+                                    <th className="py-2 px-2"></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {agendaItems.map((p) => {
+                                    const st = STATI[p.stato] ?? STATI.da_pagare;
+                                    const residuo = Math.max(0, Number(p.importo) - Number(p.importo_pagato || 0));
+                                    return (
+                                        <tr key={p.id} className="border-t border-kidville-line font-maven text-sm">
+                                            <td className="py-2 px-2 text-kidville-green font-semibold">{p.alunni?.nome} {p.alunni?.cognome}</td>
+                                            <td className="py-2 px-2 text-kidville-ink">{p.descrizione}</td>
+                                            <td className="py-2 px-2 text-kidville-muted">{p.scadenza ? new Date(p.scadenza).toLocaleDateString('it-IT') : '—'}</td>
+                                            <td className="py-2 px-2 text-right font-bold text-kidville-green">€ {residuo.toFixed(2)}</td>
+                                            <td className="py-2 px-2">
+                                                <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold ${st.cls}`}>{st.label}</span>
+                                            </td>
+                                            <td className="py-2 px-2 text-right">
+                                                <div className="flex items-center justify-end gap-2">
+                                                    <button onClick={() => setSelected(p)}
+                                                        className="px-3 py-1 rounded-full bg-kidville-green text-white text-xs font-bold hover:opacity-90">Incassa</button>
+                                                    <button onClick={() => setDrawer(p)} title="Dettagli"
+                                                        className="text-kidville-muted hover:text-kidville-green"><Eye size={15} /></button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                    </div>
+                    <div className="space-y-2 lg:hidden">
+                        {agendaItems.map((p) => (
+                            <PagamentoCardMobile
+                                key={p.id}
+                                pagamento={p}
+                                alunnoLabel={`${p.alunni?.nome ?? ''} ${p.alunni?.cognome ?? ''}`.trim() || '—'}
+                                onIncassa={() => setSelected(p)}
+                                onApri={() => setDrawer(p)}
+                            />
+                        ))}
+                    </div>
+                    </>
+                )}
+                </>
             ) : alunniFiltrati.length === 0 ? (
                 <p className="font-maven text-sm text-kidville-muted py-8 text-center">Nessun alunno attivo trovato.</p>
             ) : isRettaView ? (

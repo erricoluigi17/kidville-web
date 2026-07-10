@@ -33,7 +33,7 @@
 > | **Armadietto** | ✅ Operativo | `/teacher/locker`, `/parent/locker` | `/api/locker/*` |
 > | **Mensa** | ✅ Operativo | `/admin/mensa`, `/parent/mensa` | `/api/mensa/*` |
 > | **Chat** | ✅ Operativo | `/teacher/chat`, `/parent/chat` | `/api/chat/*` |
-> | **Pagamenti** | ✅ Operativo | `/admin/pagamenti`, `/parent/pagamenti` | `/api/pagamenti/*` |
+> | **Contabilità (Pagamenti)** | ✅ Operativo | `/admin/pagamenti` (6 viste), `/parent/pagamenti` | `/api/pagamenti/*` (+ ricevute numerate, attestazioni, export AdE/XLSX, solleciti, riconciliazione) |
 > | **Modulistica** | ✅ Operativo | `/admin/forms`, `/parent/forms` | `/api/forms/*` |
 > | **Foto/Video** | ✅ Operativo | `/teacher/gallery`, `/parent/gallery` | `/api/gallery/*` |
 >
@@ -51,6 +51,38 @@
 > | **Libretto web giustificazioni** | 🔶 Parziale | Fase 2 | Esiste preavviso assenza; manca giustificazione online con PIN dispositivo |
 > | **Interoperabilità SIDI / Piattaforma Unica** | ✅ Implementato (P5, DL-047..050) · 🔶 egress gated | Fase P5 | Import ZIP (parser pluggable), Fase A, frequentanti, genitori-alunni, certificati competenze D.M. 14/2024 + indicatore sync. **Trasmissione reale subordinata all'accreditamento ministeriale** |
 > | **Accessibilità AgID / Legge Stanca** | 🔶 Baseline (P1, DL-008) | Trasversale | Fatto: alto contrasto globale persistito, focus-ring, reduced-motion, Modal accessibile, landmark/skip-link/aria-current, smoke jest-axe. WCAG-AA = definition-of-done; audit AA per-pagina incrementale |
+
+---
+
+## 🗓️ Changelog — Contabilità: redesign UX + moduli fiscale/solleciti/riconciliazione (Fase A) 2026-07-10 (branch `feat/contabilita-merchandise`)
+
+Redesign completo della sezione **Contabilità** (`/admin/pagamenti`, etichetta sidebar rinominata da "Pagamenti") in 12 step committati (A1-A12), con 3 nuove migrazioni **NON ancora applicate a prod** (`20260710130000_contabilita_fiscale`, `20260710140000_contabilita_solleciti`, `20260710150000_contabilita_riconciliazione` — da applicare via MCP su conferma). Piano in `~/.claude/plans/dobbiamo-rendere-la-sezione-zippy-simon.md`. Fase B (Merchandise) a seguire sullo stesso branch.
+
+### Shell & anti-errore (A1-A3)
+- Pagina a 6 viste deep-linkabili con `?vista=` (scadenzario · genera · solleciti · riconciliazione · fiscale · ticket): pills scrollabili su mobile, Tabs cockpit su desktop; viste secondarie lazy (`next/dynamic`).
+- KPI → `StatCard` responsive (2/4 colonne) col nuovo **"Da fatturare"**; `AgendaScadenze` (bucket aging cliccabili: scaduti >30gg / ≤30gg / settimana / 30gg) con vista agenda piatta; `FatturaChip` su ogni pagamento (Fatturata/In attesa SDI/Scartata/Da fatturare — **emissione sempre e solo manuale** via `FatturaButton`); `PagamentoDrawer` (timeline incassi/storni, quote, rate, tutte le azioni); card-list mobile al posto delle tabelle.
+- Anti-errore: warning **contanti = non detraibile** (RegistraIncasso e QuickAcquisto), bottone con importo esatto, anti-duplicato con "Conferma comunque" (stesso alunno/categoria/importo ±15gg), anteprima OBBLIGATORIA sul generatore per categoria (candidati reali + saltati-per-gruppo mostrati prima).
+- Fix: `GET /api/pagamenti` e `GET /api/pagamenti/[id]` ora riconoscono la **segreteria** come staff (prima ramo genitore → lista vuota/403).
+
+### Fiscale (A4-A8)
+- **Ricevute numerate** (`ricevute_emesse` + RPC `prossimo_numero_ricevuta`): emissione idempotente al primo download (una sola attiva per pagamento, indice parziale), snapshot intestatario/struttura/metodi, **annullo automatico su storno/modifica incasso** (numero bruciato con motivo); stesso numero per admin e genitore; conforme Bonus Nido INPS (denominazione+P.IVA, mensilità, PAGATO, metodo annotato = prova tracciabilità).
+- **Attestazione annuale 730** (`GET /api/pagamenti/attestazione`): criterio di cassa, versato vs **tracciabile detraibile** (contanti e divise/materiale esclusi); scaricabile da admin (vista Fiscale) e genitore ("Documenti fiscali" in `/parent/pagamenti`).
+- **Export comunicazione AdE** (`GET /api/pagamenti/export?tipo=ade&anno=`, obbligo dal 2022, scadenza 16/3): due fogli "Da comunicare" (CF alunno+pagatore) ed "Escluse" con motivo (opposizione — nuovo toggle `alunni.opposizione_ade` in anagrafica —, contanti, categorie escluse, CF mancante). Export scadenzario XLSX anche dalla toolbar.
+- **Marca da bollo virtuale** su FatturaPA (`<DatiBollo>` + `fatture_emesse.bollo_virtuale`) e ricevute, gated da `admin_settings.fiscale_config` (soglia 77,47/€2, default OFF → XML invariato); IVA parametrica per causale da `aruba_config.iva[]` (prima inutilizzata). Nuovo pannello settings "Dati fiscali & bollo".
+
+### Solleciti (A9-A10)
+- `solleciti_config` (3 livelli con template e segnaposto, cadenza minima, **automatico OFF di default**) + tabella `solleciti` (log col testo effettivo). Pannello settings dedicato.
+- Vista Solleciti: coda morosi con giorni ritardo/ultimo invio, selezione multipla, **anteprima obbligatoria** → conferma esplicita; email (Resend) + push; livelli sequenziali mai saltati.
+- `POST /api/pagamenti/solleciti/run` (`x-cron-secret`, nel regression-lock cron): refresh stati `scaduto` + invio automatico livelli 1-2 solo per scuole abilitate. **Sostituisce `genera_solleciti()` SQL (deprecata, mai schedulata)**; schedulazione pg_cron rinviata al deploy (come fattura/sync).
+
+### Riconciliazione bancaria (A11-A12)
+- Import CSV estratto conto (parser puro: separatori/intestazioni-sinonimo/importi it, SOLO accrediti; il file grezzo non si salva — PII), hash anti re-import per scuola, matcher a punteggio (+50 importo esatto, +25 nome in causale, +15 periodo, +10 descrizione) → suggerimento solo con best ≥60 e distacco ≥20, **mai auto-conferma**. Conferma → incasso `bonifico` con data operazione; ignora/riapri; coda persistente.
+
+### Verifica
+- Gate per ogni commit: `npx eslint . --max-warnings 0` → 0 · `npx vitest run` → 929/929 (116 test nuovi, TDD) · `npx tsc --noEmit` → 0 · `npm run build` → ok.
+- E2E: nuovo `e2e/admin-contabilita.spec.ts` (viste deep-link, KPI anche su viewport mobile) + `parent-pagamenti` esteso (download ricevuta = PDF vero). Tutte le route nuove degradano sul DB CI non migrato (42P01/PGRST204 → empty-state).
+
+**Stato**: Fase A COMPLETA su branch `feat/contabilita-merchandise` (12 commit, non ancora pushato/mergiato); migrazioni 20260710* da applicare a prod su conferma; Fase B Merchandise a seguire.
 
 ---
 

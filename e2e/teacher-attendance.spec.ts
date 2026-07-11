@@ -4,15 +4,17 @@ import { IDS, STORAGE } from './fixtures';
 // Appello docente (/teacher/attendance, sezione Girasoli): registrazione + persistenza.
 test.use({ storageState: STORAGE.docente });
 
-// Il roster (fetch alunni) e le transizioni dei bottoni (upsert presenze + refetch)
-// possono renderizzarsi in ritardo sotto carico CI: gli elementi compaiono davvero,
-// solo lenti. test.slow() (timeout test ×3) + timeout espliciti generosi evitano la
-// flakiness di timing senza cambiare cosa si asserisce.
-const RENDER = 30_000;
+// La CI E2E gira su `next dev` (playwright.config webServer): la pagina appello è il
+// PRIMO test a colpire /teacher/attendance + /api/diary/students + /api/attendance/*,
+// che compilano a FREDDO. Sotto carico runner questo cold-compile può superare i 30s
+// (la pagina resta su "Caricamento alunni da anagrafica…"; i fetch hanno .catch, non
+// si impiantano → è solo lentezza di compile). Timeout molto generosi + test-timeout
+// esplicito accomodano il cold-compile senza cambiare cosa si asserisce.
+const RENDER = 60_000;
 const AZIONE = 20_000;
 
 test('appello: registra presente/assente e persiste al reload', async ({ page }) => {
-  test.slow();
+  test.setTimeout(150_000);
   await page.goto('/teacher/attendance');
 
   await expect(page.getByRole('heading', { name: 'Appello' })).toBeVisible({ timeout: RENDER });

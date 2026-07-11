@@ -199,7 +199,7 @@ function OrdiniPanel({ userId, ordini, loading, reload }: { userId: string | nul
                     {s === 'ordinato' && <button type="button" disabled={busy} className={BTN_GHOST} onClick={() => azione('ordini-fornitore/checkin', 'POST', { righe_ids: [r.id] })}><Truck size={13} /> Registra arrivo</button>}
                     {s === 'arrivato' && <button type="button" disabled={busy} className={BTN_GHOST} onClick={() => azione('consegna', 'POST', { righe_ids: [r.id] })}><PackageCheck size={13} /> Consegna</button>}
                     {s !== 'annullato' && <button type="button" disabled={busy} className={BTN_GHOST} onClick={() => cambioTaglia(r)}><Repeat size={13} /> Cambia taglia</button>}
-                    {s !== 'consegnato' && s !== 'annullato' && <button type="button" disabled={busy} className={BTN_GHOST} onClick={() => azione('righe', 'PATCH', { riga_id: r.id, stato: 'annullato' })}><X size={13} /> Annulla riga</button>}
+                    {s !== 'consegnato' && s !== 'annullato' && <button type="button" disabled={busy} className={BTN_GHOST} onClick={() => { if (window.confirm(`Annullare ${r.quantita}× ${r.articolo_nome}${r.taglia ? ` (${r.taglia})` : ''}?`)) azione('righe', 'PATCH', { riga_id: r.id, stato: 'annullato' }); }}><X size={13} /> Annulla riga</button>}
                   </div>
                 </div>
               );
@@ -216,6 +216,7 @@ interface AlunnoLite { id: string; label: string; sub: string }
 function NuovoOrdinePanel({ userId, articoli, onCreated }: { userId: string | null; articoli: Articolo[]; onCreated: () => void }) {
   const [q, setQ] = useState('');
   const [risultati, setRisultati] = useState<AlunnoLite[]>([]);
+  const [risultatiPer, setRisultatiPer] = useState('');
   const [alunno, setAlunno] = useState<AlunnoLite | null>(null);
   const [righe, setRighe] = useState<{ articolo_id: string; taglia: string; quantita: number }[]>([]);
   const [note, setNote] = useState('');
@@ -228,11 +229,13 @@ function NuovoOrdinePanel({ userId, articoli, onCreated }: { userId: string | nu
     if (alunno || term.length < 2) return; // niente setState sincrono: il dropdown è gated in render
     const t = setTimeout(() => {
       fetch(`/api/admin/search?q=${encodeURIComponent(term)}${userId ? `&userId=${encodeURIComponent(userId)}` : ''}`)
-        .then((r) => (r.ok ? r.json() : null)).then((d) => { if (d?.success) setRisultati(d.data.alunni ?? []); }).catch(() => {});
+        .then((r) => (r.ok ? r.json() : null)).then((d) => { if (d?.success) { setRisultati(d.data.alunni ?? []); setRisultatiPer(term); } }).catch(() => {});
     }, 300);
     return () => clearTimeout(t);
   }, [q, userId, alunno]);
-  const mostraRisultati = !alunno && q.trim().length >= 2 && risultati.length > 0;
+  // il dropdown appare solo se i risultati sono della query corrente (niente
+  // match della query precedente mostrati durante il debounce)
+  const mostraRisultati = !alunno && q.trim().length >= 2 && risultati.length > 0 && risultatiPer === q.trim();
 
   const attivi = useMemo(() => articoli.filter((a) => a.attivo), [articoli]);
   const totale = righe.reduce((t, r) => { const a = articoli.find((x) => x.id === r.articolo_id); return t + (a ? a.prezzo * r.quantita : 0); }, 0);
@@ -305,6 +308,7 @@ function NuovoOrdinePanel({ userId, articoli, onCreated }: { userId: string | nu
             </div>
           );
         })}
+        {attivi.length === 0 && <p className="font-maven text-xs text-kidville-muted">Nessun articolo attivo: attivane o aggiungine uno nella vista <strong>Catalogo</strong> per poter creare un ordine.</p>}
         <button type="button" onClick={addRiga} disabled={attivi.length === 0} className={BTN_GHOST}><Plus size={14} /> Aggiungi articolo</button>
       </div>
 
@@ -351,6 +355,8 @@ function DaOrdinarePanel({ userId, onChanged }: { userId: string | null; onChang
   };
 
   const evadi = async (righeIds: string[]) => {
+    if (righeIds.length === 0) return;
+    if (!window.confirm(`Evadere da magazzino ${righeIds.length} rig${righeIds.length === 1 ? 'a' : 'he'}? Lo stock disponibile verrà scalato.`)) return;
     setBusy(true);
     for (const id of righeIds) { const r = await jsend(userId, 'evadi-magazzino', 'POST', { riga_id: id }); if (!r.ok) { alert(r.error ?? 'Stock insufficiente'); break; } }
     setBusy(false); load(); onChanged();
@@ -368,7 +374,7 @@ function DaOrdinarePanel({ userId, onChanged }: { userId: string | null; onChang
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <p className="font-barlow text-sm font-bold uppercase tracking-wide text-kidville-green">{g.fornitore ? g.fornitore.nome : 'Senza fornitore'} <span className="ml-1 font-maven text-xs font-normal text-kidville-muted">· {g.quantita} pezzi</span></p>
               <div className="flex flex-wrap gap-2">
-                <button type="button" disabled={busy} className={BTN_GHOST} onClick={() => evadi(tutteIds.filter((i) => sel.has(i)).length ? tutteIds.filter((i) => sel.has(i)) : tutteIds)}><Warehouse size={13} /> Evadi da magazzino</button>
+                <button type="button" disabled={busy} className={BTN_GHOST} onClick={() => { const s = tutteIds.filter((i) => sel.has(i)); evadi(s.length ? s : tutteIds); }}><Warehouse size={13} /> Evadi da magazzino</button>
                 {g.fornitore
                   ? <button type="button" disabled={busy} className={BTN_PRIMARY} onClick={() => generaPO(g.fornitore!.id, tutteIds)}><FileText size={15} /> Genera ordine (PDF)</button>
                   : <button type="button" disabled={busy} className={BTN_GHOST} onClick={() => generaPO(null, tutteIds)}><Check size={13} /> Segna ordinato senza PO</button>}
@@ -382,7 +388,7 @@ function DaOrdinarePanel({ userId, onChanged }: { userId: string | null; onChang
                     const on = t.righe_ids.every((i) => sel.has(i));
                     return (
                       <tr key={`${a.articolo_id}-${t.taglia}`} className={TROW}>
-                        <td className={TD}><input type="checkbox" checked={on} onChange={() => toggle(t.righe_ids)} className="accent-kidville-green" /></td>
+                        <td className={TD}><input type="checkbox" aria-label={`${a.nome} taglia ${t.taglia || 'unica'}`} checked={on} onChange={() => toggle(t.righe_ids)} className="accent-kidville-green" /></td>
                         <td className={cx(TD, 'font-maven text-sm text-kidville-ink')}>{a.nome}</td>
                         <td className={cx(TD, 'font-maven text-sm')}>{t.taglia || '—'}</td>
                         <td className={cx(TD, 'font-maven text-sm font-semibold')}>{t.quantita}</td>
@@ -416,7 +422,8 @@ function ArriviPanel({ userId, onChanged }: { userId: string | null; onChanged: 
   const toggle = (id: string) => setSel((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
 
   const checkin = async (righeIds: string[]) => {
-    const ids = righeIds.filter((i) => sel.has(i));
+    const selezionate = righeIds.filter((i) => sel.has(i));
+    const ids = selezionate.length > 0 ? selezionate : righeIds; // nessuna selezione = tutte le righe da ricevere
     if (ids.length === 0) return;
     setBusy(true);
     const res = await jsend(userId, 'ordini-fornitore/checkin', 'POST', { righe_ids: ids });
@@ -440,7 +447,7 @@ function ArriviPanel({ userId, onChanged }: { userId: string | null; onChanged: 
               </div>
               <div className="flex gap-2">
                 <button type="button" className={BTN_GHOST} onClick={() => window.open(url(userId, `ordini-fornitore/pdf?id=${p.id}`), '_blank')}><FileText size={13} /> Ristampa PDF</button>
-                <button type="button" disabled={busy} className={BTN_PRIMARY} onClick={() => checkin(daRicevere.map((r) => r.id))}><Truck size={15} /> Registra arrivo</button>
+                <button type="button" disabled={busy || daRicevere.length === 0} className={BTN_PRIMARY} onClick={() => checkin(daRicevere.map((r) => r.id))}><Truck size={15} /> Registra arrivo</button>
               </div>
             </div>
             {daRicevere.length === 0 ? <p className="font-maven text-xs text-kidville-muted">Tutte le righe già arrivate.</p> : (
@@ -506,6 +513,7 @@ function CatalogoPanel({ userId, articoli, fornitori, reload }: { userId: string
   const [form, setForm] = useState<CatForm>(CAT_EMPTY);
   const [saving, setSaving] = useState(false);
   const [tick, setTick] = useState(false);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const nomeFornitore = (id?: string | null) => fornitori.find((f) => f.id === id)?.nome ?? '—';
@@ -514,17 +522,22 @@ function CatalogoPanel({ userId, articoli, fornitori, reload }: { userId: string
 
   const submit = async () => {
     const taglie = form.taglie.split(',').map((t) => t.trim()).filter(Boolean);
-    const prezzo = Number(form.prezzo);
+    const prezzo = Number(form.prezzo.replace(',', '.')); // accetta la virgola decimale italiana
     if (!form.nome.trim()) { setError('Il nome è obbligatorio'); return; }
     if (!Number.isFinite(prezzo) || prezzo < 0) { setError('Prezzo non valido'); return; }
     setSaving(true); setError(null);
-    const body: Record<string, unknown> = { nome: form.nome.trim(), descrizione: form.descrizione.trim() || null, taglie, prezzo, categoria: form.categoria, fornitore_id: form.fornitore_id || null, prezzo_acquisto: form.prezzo_acquisto ? Number(form.prezzo_acquisto) : null, attivo: form.attivo };
+    const body: Record<string, unknown> = { nome: form.nome.trim(), descrizione: form.descrizione.trim() || null, taglie, prezzo, categoria: form.categoria, fornitore_id: form.fornitore_id || null, prezzo_acquisto: form.prezzo_acquisto ? Number(form.prezzo_acquisto.replace(',', '.')) : null, attivo: form.attivo };
     const res = form.id ? await jsend(userId, 'articoli', 'PATCH', { id: form.id, ...body }) : await jsend(userId, 'articoli', 'POST', body);
     setSaving(false);
     if (!res.ok) { setError(res.error ?? 'Salvataggio non riuscito'); return; }
     reset(); reload(); setTick(true); window.setTimeout(() => setTick(false), 1600);
   };
-  const toggleAttivo = async (a: Articolo) => { await jsend(userId, 'articoli', 'PATCH', { id: a.id, attivo: !a.attivo }); reload(); };
+  const toggleAttivo = async (a: Articolo) => {
+    setTogglingId(a.id); setError(null);
+    const res = await jsend(userId, 'articoli', 'PATCH', { id: a.id, attivo: !a.attivo });
+    setTogglingId(null);
+    if (res.ok) reload(); else setError(res.error ?? 'Aggiornamento non riuscito');
+  };
   const del = async (a: Articolo) => { if (!window.confirm(`Eliminare "${a.nome}"? Gli ordini restano.`)) return; await jsend(userId, `articoli?id=${a.id}`, 'DELETE', {}); if (form.id === a.id) reset(); reload(); };
 
   return (
@@ -543,7 +556,7 @@ function CatalogoPanel({ userId, articoli, fornitori, reload }: { userId: string
                     <td className={cx(TD, 'font-maven text-xs text-kidville-muted')}>{nomeFornitore(a.fornitore_id)}</td>
                     <td className={TD}><div className="flex flex-wrap gap-1">{a.taglie.length === 0 ? <span className="font-maven text-xs text-kidville-muted">—</span> : a.taglie.map((t) => <span key={t} className="rounded-pill bg-kidville-cream px-2 py-0.5 font-maven text-xs font-semibold text-kidville-ink">{t}</span>)}</div></td>
                     <td className={cx(TD, 'font-maven text-sm font-semibold text-kidville-ink')}>{euro(a.prezzo)}</td>
-                    <td className={TD}><button onClick={() => toggleAttivo(a)} className={cx('rounded-pill px-2.5 py-1 font-maven text-xs font-semibold', a.attivo ? 'bg-kidville-green-soft text-kidville-green' : 'bg-kidville-line/50 text-kidville-muted')}>{a.attivo ? 'Attivo' : 'Nascosto'}</button></td>
+                    <td className={TD}><button onClick={() => toggleAttivo(a)} disabled={togglingId === a.id} className={cx('rounded-pill px-2.5 py-1 font-maven text-xs font-semibold disabled:opacity-50', a.attivo ? 'bg-kidville-green-soft text-kidville-green' : 'bg-kidville-line/50 text-kidville-muted')}>{a.attivo ? 'Attivo' : 'Nascosto'}</button></td>
                     <td className={TD}><div className="flex items-center gap-2"><button onClick={() => edit(a)} aria-label="Modifica" className="text-kidville-muted hover:text-kidville-green"><Pencil size={15} /></button><button onClick={() => del(a)} aria-label="Elimina" className="text-kidville-muted hover:text-kidville-error"><Trash2 size={15} /></button></div></td>
                   </tr>
                 ))}

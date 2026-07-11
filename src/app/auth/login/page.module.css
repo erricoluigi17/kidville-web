@@ -12,7 +12,11 @@
 
 .page {
   position: relative;
-  min-height: 100dvh;
+  /* Tutto lo schermo, senza scroll: la login deve stare in una schermata sola.
+     `dvh` segue la barra degli indirizzi mobile che si apre/chiude. La deroga
+     per schermi molto bassi (landscape) è in fondo al file. */
+  height: 100dvh;
+  overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -336,23 +340,8 @@
   margin-bottom: 12px;
 }
 
-/* Fuori dalla card: nel design "Accedi" chiude il pannello bianco.
-   Pastiglia chiara perché qui sotto passano i blob: il testo cadrebbe sul verde
-   o sul giallo e diventerebbe illeggibile. */
-.contrast {
-  align-self: center;
-  margin-top: 14px;
-  background: var(--color-kidville-white);
-  border: 1px solid var(--color-kidville-line);
-  border-radius: var(--radius-pill);
-  cursor: pointer;
-  padding: 7px 16px;
-  font-family: var(--font-maven);
-  font-weight: 500;
-  font-size: 12.5px;
-  color: var(--color-kidville-sub);
-  box-shadow: 0 4px 12px -8px rgba(31, 61, 56, 0.4);
-}
+/* Il toggle Alto Contrasto non vive più qui: sta nei menu account di tutte le
+   aree (ContrastMenuButton). Nel design la card chiude con "Accedi". */
 
 /* ───────── Telefoni bassi (iPhone SE & co.) ─────────
    Alle proporzioni del design il contenuto sfora i 667px e "Accedi" finisce
@@ -386,8 +375,48 @@
   .accedi {
     margin-top: 20px;
   }
-  .contrast {
-    margin-top: 10px;
+}
+
+/* Telefoni molto bassi (SE 1ª gen, 568px): con `overflow:hidden` ciò che non
+   entra viene TAGLIATO, non scrollato — quindi qui la colonna va stretta ancora,
+   altrimenti il logo finisce mozzato. */
+@media (max-height: 600px) {
+  .logo {
+    width: 140px;
+  }
+  .mascot {
+    height: 124px;
+    margin-bottom: -24px;
+  }
+  .title {
+    font-size: 28px;
+  }
+  .card {
+    padding: 18px 20px 16px;
+  }
+  .field {
+    margin-top: 14px;
+  }
+  .input {
+    height: 42px;
+  }
+  .accedi {
+    margin-top: 16px;
+  }
+}
+
+/* Landscape / schermi molto bassi: qui NON c'è modo di far entrare tutto senza
+   rimpicciolire il form oltre il leggibile. Meglio restituire lo scroll che
+   tagliare via il bottone "Accedi". */
+@media (max-height: 480px) {
+  .page {
+    height: auto;
+    min-height: 100dvh;
+    overflow: visible;
+  }
+  .mascot,
+  .logo {
+    display: none;
   }
 }
 

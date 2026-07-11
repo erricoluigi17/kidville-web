@@ -143,8 +143,10 @@ function LoginForm() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [showForgot, setShowForgot] = useState(false);
-  // Alto contrasto: stato globale (provider + cookie SSR), non più locale.
-  const { highContrast, toggle: toggleContrast } = useAccessibility();
+  // Alto contrasto: qui si legge soltanto (per nascondere mascotte e decori). Il
+  // toggle vive nei menu account di tutte le aree (ContrastMenuButton), non più
+  // in questa pagina: la login deve restare a tutto schermo, senza scroll.
+  const { highContrast } = useAccessibility();
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   // ≥2 profili → step inline di scelta ruolo nella stessa card.
@@ -417,11 +419,6 @@ function LoginForm() {
             </>
           )}
         </form>
-
-        {/* Fuori dal form: nel design la card si chiude con "Accedi". */}
-        <button type="button" onClick={toggleContrast} className={styles.contrast} aria-pressed={highContrast}>
-          {highContrast ? 'Disattiva alto contrasto' : 'Attiva alto contrasto'}
-        </button>
       </div>
     </div>
   );

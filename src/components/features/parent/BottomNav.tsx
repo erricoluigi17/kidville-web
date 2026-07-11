@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { useChildSchoolType } from '@/lib/auth/use-child-school-type';
 import { LogoutMenuButton } from '@/components/ui/LogoutMenuButton';
+import { ContrastMenuButton } from '@/components/ui/ContrastMenuButton';
 
 // grado: 'comune' = visibile sempre; 'primaria'/'infanzia' = solo quel grado.
 type Grado = 'comune' | 'primaria' | 'infanzia';
@@ -291,6 +292,12 @@ export default function BottomNav() {
                       </div>
                     </div>
                   ))}
+
+                  {/* Accessibilità: il toggle stava solo nella login → irraggiungibile da dentro l'app. */}
+                  <ContrastMenuButton
+                    iconSize={21}
+                    className="flex w-full items-center justify-center gap-2.5 rounded-card bg-white px-3 py-[13px] font-barlow text-base font-extrabold uppercase tracking-wide text-kidville-ink shadow-[0_1px_2px_rgba(0,84,75,.04),0_8px_24px_-18px_rgba(0,84,75,.28)] active:bg-kidville-green-soft"
+                  />
 
                   {/* Uscita — prima non c'era alcun logout nell'area Genitore. */}
                   <LogoutMenuButton

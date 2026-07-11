@@ -68,7 +68,11 @@ Correzione difetti in fasi (1 commit per fase, gate verde per fase):
 - **Fase 6 🔵** — UX `/admin/merchandise`: conferme su evasione/annullo, empty-state, registra-arrivo non più no-op, dropdown ricerca non-stale, prezzo con virgola italiana, toggle catalogo con busy/errore, checkbox accessibili.
 - **Fase 7 🔵** — UX/grafica contabilità: rimossa fascia nera in `StudentDetailPanel`; skeleton KPI in loading; barra filtri nascosta in vista agenda; `aria-label` sui pulsanti icona (dashboard, FiscalePanel).
 
-**Pendenti** (in attesa di decisione/conferma): **numerazione fatture fiscali** (#7 IVA-XML, #8) — su indicazione: le fatture le numera Aruba, il contatore interno resta solo per le ricevute non fiscali (scelta rimozione emissione dalla web app vs numerazione Aruba da confermare); **migrazioni DB** (FK ricevute `ON DELETE`, FK articolo magazzino) da applicare a prod solo su conferma; copertura test aggiuntiva e rischi trasversali (timezone Europe/Rome, PII export log, idempotenza POST, atomicità) da valutare.
+- **Fase 9 🔵** — +31 test di regressione sui percorsi critici (rollback PO + `poCompleto`, evadi-magazzino gate 403/404/503, riconciliazione riapri/scope, solleciti cron+split, export/da-ordinare cross-plesso).
+- **Fatture 🟡 — numerazione allineata ad Aruba** (scelta utente: la numerazione fiscale la detta Aruba). `arubaUltimoNumeroFattura` legge da Aruba (`findByUsername`) l'ultimo numero emesso nell'anno; l'emissione usa la nuova RPC `prossimo_numero_fattura_sync` = `GREATEST(contatore interno, ultimo Aruba)+1` così il progressivo non si accavalla con fatture emesse anche fuori dall'app; rimosso il fallback `?? 1`; con IVA>0 si scorpora l'imponibile e `ImportoTotaleDocumento` torna congruente (=lordo incassato).
+- **Migrazione `20260711140000_fatture_sync_e_fk_hardening` APPLICATA a prod** (advisor 0 ERROR, version riallineata al timestamp-file): RPC sync numerazione + `ricevute_emesse.pagamento_id` `CASCADE→SET NULL` (registro fiscale immune alla cancellazione del pagamento) + `merch_rettifiche.articolo_id` `SET NULL→RESTRICT` (niente movimenti orfani, giacenze integre — chiude anche il rilievo FK articolo).
+
+**Pendenti** (Fase 10, rischi trasversali da valutare): timezone Europe/Rome sulle date fiscali, PII export → audit-log, validazione somma quote split esplicite, idempotenza delle POST (doppio addebito su retry), atomicità/transazioni, conservazione decennale dei registri.
 
 ---
 

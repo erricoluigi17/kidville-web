@@ -223,6 +223,8 @@ function NuovoOrdinePanel({ userId, articoli, onCreated }: { userId: string | nu
   const [saving, setSaving] = useState(false);
   const [celebra, setCelebra] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // chiave di idempotenza per invio: evita ordine+addebito doppi su retry/doppio click
+  const [idemKey, setIdemKey] = useState(() => crypto.randomUUID());
 
   useEffect(() => {
     const term = q.trim();
@@ -248,10 +250,11 @@ function NuovoOrdinePanel({ userId, articoli, onCreated }: { userId: string | nu
   const submit = async () => {
     if (!alunno || righe.length === 0) return;
     setSaving(true); setError(null);
-    const res = await jsend(userId, 'ordini', 'POST', { alunno_id: alunno.id, righe: righe.map((r) => ({ articolo_id: r.articolo_id, taglia: r.taglia, quantita: r.quantita })), note: note.trim() || null });
+    const res = await jsend(userId, 'ordini', 'POST', { alunno_id: alunno.id, righe: righe.map((r) => ({ articolo_id: r.articolo_id, taglia: r.taglia, quantita: r.quantita })), note: note.trim() || null, idempotency_key: idemKey });
     setSaving(false);
     if (!res.ok) { setError(res.error ?? 'Ordine non riuscito'); return; }
     setAlunno(null); setQ(''); setRighe([]); setNote('');
+    setIdemKey(crypto.randomUUID()); // nuova chiave per il prossimo ordine
     setCelebra('Ordine creato! L\'addebito è in Contabilità.');
     onCreated();
   };

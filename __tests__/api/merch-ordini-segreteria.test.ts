@@ -12,6 +12,8 @@ const h = vi.hoisted(() => ({
   cats: [] as Record<string, unknown>[],
   inserts: [] as { table: string; row: unknown }[],
   updates: [] as { table: string; row: unknown }[],
+  insertErr: {} as Record<string, { code: string } | undefined>,
+  ordineEsistente: null as Record<string, unknown> | null,
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
@@ -30,8 +32,8 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.or = () => b
       b.order = () => b
       b.limit = () => b
-      b.maybeSingle = async () => ({ data: table === 'alunni' ? h.alunno : null, error: null })
-      b.single = async () => ({ data: b._last ?? { id: `${table}-x` }, error: null })
+      b.maybeSingle = async () => ({ data: table === 'alunni' ? h.alunno : table === 'divise_ordini' ? h.ordineEsistente : null, error: null })
+      b.single = async () => (h.insertErr[table] ? { data: null, error: h.insertErr[table] } : { data: b._last ?? { id: `${table}-x` }, error: null })
       b.insert = (row: unknown) => { h.inserts.push({ table, row }); b._op = 'insert'; b._last = { id: `${table}-new`, ...(Array.isArray(row) ? {} : (row as object)) }; return b }
       b.update = (row: unknown) => { h.updates.push({ table, row }); b._op = 'update'; return b }
       b.delete = () => { b._op = 'delete'; return b }
@@ -68,6 +70,7 @@ beforeEach(() => {
   ]
   h.cats = [{ id: 'cat-divisa', scuola_id: null }]
   h.inserts = []; h.updates = []
+  h.insertErr = {}; h.ordineEsistente = null
 })
 
 it('403 alunno fuori scope', async () => {
@@ -117,4 +120,14 @@ it('201 crea pagamento categoria divisa/da_pagare con descrizione "Merchandise:"
   expect(String(pag.descrizione)).toContain('Merchandise:')
   const link = h.updates.find((u) => u.table === 'divise_ordini')!.row as { pagamento_id: string }
   expect(link.pagamento_id).toBe('pagamenti-new')
+})
+
+it('idempotenza: stessa chiave (23505) → ritorna l\'ordine esistente senza duplicare l\'addebito (200)', async () => {
+  h.insertErr.divise_ordini = { code: '23505' }
+  h.ordineEsistente = { id: 'ord-gia', pagamento_id: 'pag-gia', totale: 36 }
+  const res = await POST(post({ alunno_id: AID, righe: [{ articolo_id: ART, taglia: 'M', quantita: 2 }], idempotency_key: '33333333-3333-4333-8333-333333333333' }))
+  expect(res.status).toBe(200)
+  const j = await res.json()
+  expect(j.data).toMatchObject({ ordine_id: 'ord-gia', pagamento_id: 'pag-gia', idempotente: true })
+  expect(h.inserts.find((i) => i.table === 'pagamenti')).toBeUndefined() // niente secondo addebito
 })

@@ -74,7 +74,10 @@ Correzione difetti in fasi (1 commit per fase, gate verde per fase):
 
 - **Fase 10 (low-risk) 🔩** — chiusi 3 rischi trasversali: date a valenza fiscale su **Europe/Rome** (nuovo helper `src/lib/format/fiscal-date`; prima UTC → a cavallo di mezzanotte/31-dic la data documento e l'anno di numerazione slittavano); **PII negli export** → `logScrittura` per accountability GDPR (scadenzario, AdE con CF, merchandise); **congruenza quote split** (Σ quote esplicite pareggiata al totale del pagamento sulla prima quota, niente sotto/sovra-fatturazione). +test.
 
-**Pendenti** (Fase 10, rischi medio/alto — richiedono una scelta di progettazione): idempotenza delle POST ordine/cambio-taglia (doppio addebito su retry di rete), atomicità/transazioni (RPC per creazione ordine/emissione/evasione), conservazione decennale/immodificabilità dei registri fiscali.
+- **T5 — Conservazione/WORM** (migr `20260711150000` APPLICATA a prod): trigger append-only su `fatture_emesse`/`ricevute_emesse` (vietano DELETE e l'UPDATE dei campi fiscali; restano solo lo stato SDI e l'annullo), `fatture_emesse.pagamento_id` → `RESTRICT`, route DELETE pagamento con pre-check 409. Enforcement a livello DB (anche service-role).
+- **T2 — Idempotenza ordini** (migr `20260711160000` APPLICATA a prod): `divise_ordini.idempotency_key` univoca, il client genera la chiave per invio, la route ritorna l'ordine già creato su `23505` (niente ordine+addebito doppi su retry/doppio click). +test.
+
+**Pendente — T1 atomicità/transazioni**: la creazione ordine (ordine+righe+pagamento) resta una sequenza di await con rollback best-effort. Con T2 (idempotenza) + rollback + post-check evasione, il caso residuo (crash/timeout tra due insert) è raro e a basso impatto per il contesto (sede unica, bassa concorrenza); la RPC transazionale piena richiede la riscrittura in PL/pgSQL + doppio path per il DB CI non migrato. Rimandata alla decisione dell'utente.
 
 ---
 

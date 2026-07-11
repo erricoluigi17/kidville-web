@@ -60,6 +60,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
     const [quick, setQuick] = useState<{ alunno: Alunno; categoria: Categoria } | null>(null);
     const [generando, setGenerando] = useState(false);
     const [arubaGated, setArubaGated] = useState(false);
+    const [error, setError] = useState<string | null>(null);
 
     // Anno scolastico corrente (set->ago = anno corrente, gen->giu = anno-1)
     const now = new Date();
@@ -76,11 +77,12 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
     const load = useCallback(async () => {
         try {
             const [pagRes, alRes] = await Promise.all([
-                fetch(`/api/pagamenti?userId=${userId}&scuola_id=${scuolaId}`, { headers: { 'x-user-id': userId } }).then((r) => r.json()),
-                fetch(`/api/admin/students?stato=iscritto&scuola_id=${scuolaId}&limit=1000`, { headers: { 'x-user-id': userId } }).then((r) => r.json()),
+                fetch(`/api/pagamenti?userId=${userId}&scuola_id=${scuolaId}`, { headers: { 'x-user-id': userId } }).then((r) => r.json()).catch(() => null),
+                fetch(`/api/admin/students?stato=iscritto&scuola_id=${scuolaId}&limit=1000`, { headers: { 'x-user-id': userId } }).then((r) => r.json()).catch(() => null),
             ]);
-            if (pagRes.success) setPagamenti(pagRes.data);
-            const lista: Alunno[] = Array.isArray(alRes) ? alRes : (alRes.data || []);
+            if (pagRes?.success) { setPagamenti(pagRes.data); setError(null); }
+            else setError((pagRes && pagRes.error) || 'Impossibile caricare i pagamenti. Riprova.');
+            const lista: Alunno[] = Array.isArray(alRes) ? alRes : (alRes?.data || []);
             setAlunni(lista.filter((a) => a.classe_sezione != null || a.section_id != null));
         } finally {
             setLoading(false);
@@ -187,6 +189,18 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
 
     return (
         <div>
+            {/* Errore di caricamento: i KPI a 0,00 non devono sembrare dati reali */}
+            {error && (
+                <div className="mb-4 flex items-center gap-2 rounded-xl border-2 border-kidville-error-soft bg-kidville-error-soft px-4 py-3 text-kidville-error">
+                    <AlertTriangle size={18} />
+                    <span className="flex-1 font-maven text-sm font-bold">{error}</span>
+                    <button onClick={() => { setLoading(true); load(); }}
+                        className="rounded-full border border-kidville-error/40 bg-white px-3 py-1 font-maven text-xs font-bold text-kidville-error">
+                        Riprova
+                    </button>
+                </div>
+            )}
+
             {/* Gating Aruba/SDI (M2.4): segnale visibile quando la fatturazione non è configurata */}
             {arubaGated && (
                 <div className="mb-4 flex items-center gap-2 flex-wrap">
@@ -236,7 +250,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                 {/* Filtro mensilità: solo nella vista Rette */}
                 {isRettaView && (
                     <>
-                        <select value={annoScolastico} onChange={(e) => setAnnoScolastico(Number(e.target.value))}
+                        <select value={annoScolastico} onChange={(e) => { const y = Number(e.target.value); setAnnoScolastico(y); setMese(`${y}-09-01`); }}
                             className="py-2 px-3 border-2 border-kidville-line rounded-full font-maven text-sm text-kidville-green bg-white">
                             {[annoScolasticoCorrente - 1, annoScolasticoCorrente, annoScolasticoCorrente + 1].map((y) => (
                                 <option key={y} value={y}>A.S. {y}/{y + 1}</option>

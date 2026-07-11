@@ -65,7 +65,9 @@ export function ClasseShell({ basePrefix, children }: { basePrefix: string; chil
 
   return (
     <div className={inCockpit ? '' : 'min-h-screen bg-kidville-cream/40'}>
-      <header className={`${inCockpit ? 'lg:sticky lg:top-0' : 'sticky top-0'} z-20 bg-kidville-green`}>
+      {/* top: sotto /teacher la var --kv-appbar-h (layout) fa scorrere lo sticky
+          SOTTO la AppBar persistente; sotto /admin la var non esiste → 0px. */}
+      <header className={`${inCockpit ? 'lg:sticky lg:top-0' : 'sticky top-[var(--kv-appbar-h,0px)]'} z-20 bg-kidville-green`}>
         <div className="max-w-5xl mx-auto px-4 pt-3">
           <div className="flex items-center gap-3 pb-3">
             <Link href={`${basePrefix}${suffix}`} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/15 text-white transition-colors hover:bg-white/25">

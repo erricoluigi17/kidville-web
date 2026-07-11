@@ -12,9 +12,9 @@ export default async function TeacherLayout({ children }: { children: React.Reac
   // lo staff ha già permessi di scrittura sulle funzioni docente lato API).
   await requireArea('teacher');
   return (
-    // --kv-appbar-h: offset per gli sticky sotto la barra (ClasseShell); il
-    // fallback 0px della var mantiene identico il comportamento sotto /admin.
-    <div className="min-h-screen bg-kidville-cream" data-kv-shell style={{ '--kv-appbar-h': '58px' } as React.CSSProperties}>
+    // --kv-appbar-h (definita in globals.css su [data-kv-shell]): offset per gli
+    // sticky sotto la barra (ClasseShell); fallback 0px → /admin invariato.
+    <div className="min-h-screen bg-kidville-cream" data-kv-shell>
       <a
         href="#content"
         className="sr-only focus:not-sr-only focus:absolute focus:z-[100] focus:top-2 focus:left-2 focus:rounded-lg focus:bg-kidville-green focus:px-3 focus:py-2 focus:text-kidville-yellow"
@@ -22,7 +22,7 @@ export default async function TeacherLayout({ children }: { children: React.Reac
         Salta al contenuto
       </a>
       {/* AppBar usa useSearchParams (identità) → Suspense per il prerender. */}
-      <Suspense fallback={<div className="h-[58px] bg-kidville-green" />}>
+      <Suspense fallback={<div className="bg-kidville-green" style={{ height: 'var(--kv-appbar-h, 58px)' }} />}>
         <AppBar area="teacher" />
       </Suspense>
       <main id="content" className="pb-28">

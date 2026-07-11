@@ -94,8 +94,16 @@ body {
    margine negativo annulla il padding-top del body SOLO nelle shell che hanno
    la barra ([data-kv-shell]); il padding rientra dentro la barra stessa.
    Nel browser web env() = 0 → nessun effetto. */
+/* Altezza della AppBar persistente: 58px sul web; nella shell nativa cresce
+   dell'inset (la barra ingloba la status bar). Definita QUI e non inline nei
+   layout, così l'override .cap-native può vincere. Usata da sticky (ClasseShell)
+   e calc() delle altezze (chat). */
+[data-kv-shell] {
+  --kv-appbar-h: 58px;
+}
 .cap-native [data-kv-shell] {
   margin-top: calc(-1 * env(safe-area-inset-top));
+  --kv-appbar-h: calc(58px + env(safe-area-inset-top));
 }
 .cap-native [data-kv-shell] .kv-appbar {
   padding-top: env(safe-area-inset-top);

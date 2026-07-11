@@ -9,7 +9,7 @@ export default async function ParentLayout({ children }: { children: React.React
   // /parent finisce su /teacher, un doppio profilo senza scelta torna al login.
   await requireArea('parent');
   return (
-    <div className="min-h-screen bg-kidville-cream" data-kv-shell style={{ '--kv-appbar-h': '58px' } as React.CSSProperties}>
+    <div className="min-h-screen bg-kidville-cream" data-kv-shell>
       <a
         href="#content"
         className="sr-only focus:not-sr-only focus:absolute focus:z-[100] focus:top-2 focus:left-2 focus:rounded-lg focus:bg-kidville-green focus:px-3 focus:py-2 focus:text-kidville-yellow"
@@ -17,7 +17,7 @@ export default async function ParentLayout({ children }: { children: React.React
         Salta al contenuto
       </a>
       {/* AppBar full-bleed (fuori dal vincolo 430px); usa useSearchParams → Suspense. */}
-      <Suspense fallback={<div className="h-[58px] bg-kidville-green" />}>
+      <Suspense fallback={<div className="bg-kidville-green" style={{ height: 'var(--kv-appbar-h, 58px)' }} />}>
         <AppBar area="parent" />
       </Suspense>
       <div className="relative max-w-[430px] mx-auto">

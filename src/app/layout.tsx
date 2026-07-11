@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Barlow_Condensed, Maven_Pro } from "next/font/google";
 import { cookies } from "next/headers";
 import { readContrastCookie } from "@/lib/accessibility/cookie";
@@ -20,6 +20,16 @@ const maven = Maven_Pro({
 export const metadata: Metadata = {
   title: "Kidville",
   description: "La tua scuola, sempre con te",
+};
+
+// viewport-fit=cover DICHIARATO staticamente: l'append a runtime della shell
+// nativa (native-shell.ts) veniva perso quando Next riconcilia i meta del
+// <head> → env(safe-area-inset-*) restava 0 e la AppBar finiva sotto la
+// status bar iOS. Sul web env() vale 0: nessun effetto.
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
 };
 
 export default async function RootLayout({

@@ -15,7 +15,7 @@ interface HeroCardProps {
   subtitle?: React.ReactNode;
   /** Riga data "venerdì 29 maggio" sopra il saluto (SSR-safe). */
   showDate?: boolean;
-  /** Altezza mascotte in px (export: 142). */
+  /** Altezza mascotte in px: più alta della card, il cappello sbuca dal bordo. */
   mascotHeight?: number;
   /** Entrata framer-motion (comportamento home genitore, ora anche docente). */
   animate?: boolean;
@@ -23,16 +23,17 @@ interface HeroCardProps {
 
 /**
  * Hero gialla delle home (DR yellow card): data, saluto Barlow 900, sottotitolo
- * e mascotte. Wordmark e campanella NON vivono più qui: stanno nella AppBar
- * persistente. La mascotte ha lo sfondo giallo opaco, quindi è legale SOLO
- * dentro contenitori gialli come questo.
+ * e mascotte grande che scavalca il bordo alto (mockup utente). Wordmark e
+ * campanella NON vivono più qui: stanno nella AppBar persistente. Usa la
+ * mascotte TRASPARENTE (mascot-hero.png): quella ufficiale mascot.png ha lo
+ * sfondo giallo opaco e creerebbe una cucitura visibile fuori dalla card.
  */
 export function HeroCard({
   title,
   loading = false,
   subtitle,
   showDate = true,
-  mascotHeight = 142,
+  mascotHeight = 178,
   animate = true,
 }: HeroCardProps) {
   const [mascotFailed, setMascotFailed] = useState(false);
@@ -45,7 +46,7 @@ export function HeroCard({
 
   const body = (
     <>
-      <div className="relative z-[2] px-5 pb-6 pt-5" style={{ maxWidth: '64%' }}>
+      <div className="relative z-[2] px-5 pb-6 pt-5" style={{ maxWidth: '60%' }}>
         {showDate && (
           <p className="mb-0.5 font-maven text-xs font-semibold capitalize text-kidville-green/70">
             {oggi || ' '}
@@ -66,21 +67,19 @@ export function HeroCard({
         {subtitle && <p className="mt-1.5 font-maven text-[13px] text-kidville-green/80">{subtitle}</p>}
       </div>
 
-      {/* mascotte (intrinseco 792×1040 in scala) */}
-      <div
-        className="pointer-events-none absolute bottom-0 right-0 z-[1] flex items-end justify-end"
-        style={{ width: 150, height: '100%' }}
-      >
+      {/* mascotte trasparente (665×994): ancorata in basso, più alta della
+          card → il cappello scavalca il bordo (overflow visibile voluto) */}
+      <div className="pointer-events-none absolute bottom-0 right-2 z-[1] flex items-end justify-end">
         {!mascotFailed ? (
           <Image
-            src="/mascot.png"
+            src="/mascot-hero.png"
             alt=""
-            width={198}
-            height={260}
+            width={133}
+            height={199}
             priority
             draggable={false}
             onError={() => setMascotFailed(true)}
-            className="select-none object-contain object-bottom drop-shadow-xl"
+            className="select-none object-contain object-bottom"
             style={{ height: mascotHeight, width: 'auto' }}
           />
         ) : (
@@ -92,8 +91,8 @@ export function HeroCard({
     </>
   );
 
-  const cardClass = 'relative overflow-hidden rounded-[28px] bg-kidville-yellow';
-  const cardStyle = { minHeight: 150, boxShadow: '0 14px 30px -16px rgba(230,177,0,.7)' } as const;
+  const cardClass = 'relative rounded-[28px] bg-kidville-yellow';
+  const cardStyle = { minHeight: 160, boxShadow: '0 14px 30px -16px rgba(230,177,0,.7)' } as const;
 
   if (!animate) {
     return (

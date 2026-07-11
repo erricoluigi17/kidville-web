@@ -4,6 +4,8 @@ import { useState, useEffect, useCallback, Suspense } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronDown, ImageOff, Info } from 'lucide-react';
 import { MediaGrid, MediaItem } from '@/components/features/gallery/MediaGrid';
+import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
+import { Btn } from '@/components/ui/Btn';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 
 // Identità dalla sessione (URL → localStorage → /api/me), senza fallback demo (M4).
@@ -69,48 +71,30 @@ function ParentGalleryContent() {
     }, [studentId]);
 
     return (
-        <div className="max-w-lg mx-auto p-4 sm:p-6 pb-24">
-            {/* Header con glassmorphism */}
-            <motion.div
-                initial={{ opacity: 0, y: -20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.5, ease: 'easeOut' }}
-                className="flex items-start justify-between mb-6"
-            >
-                <div>
-                    <p className="font-barlow font-bold text-[11px] uppercase tracking-[0.14em] text-kidville-yellow-dark">
-                        Galleria
-                    </p>
-                    <h1 className="font-barlow font-black text-3xl text-kidville-green uppercase tracking-wide leading-none">
-                        Le mie foto
-                    </h1>
-                    <p className="font-maven text-kidville-muted mt-1 text-sm">
+        <div className="px-4 pt-5 pb-24">
+            <PageHeaderCard
+                eyebrow="Momenti"
+                title="Le mie foto"
+                subtitle={
+                    <>
                         {studentName ? `Le foto di ${studentName} a scuola` : 'Foto dalla scuola'} 🌈
-                    </p>
-                    {totalCount > 0 && (
-                        <motion.p
-                            initial={{ opacity: 0 }}
-                            animate={{ opacity: 1 }}
-                            className="font-maven text-xs text-kidville-green/60 mt-1"
-                        >
-                            {totalCount} {totalCount === 1 ? 'foto' : 'foto'} disponibil{totalCount === 1 ? 'e' : 'i'}
-                        </motion.p>
-                    )}
-                </div>
-                {studentName && (
-                    <motion.div
-                        initial={{ scale: 0.8, opacity: 0 }}
-                        animate={{ scale: 1, opacity: 1 }}
-                        transition={{ delay: 0.2, type: 'spring', stiffness: 200 }}
-                        className="flex items-center gap-2 bg-white rounded-full border border-kidville-green/10 shadow-sm px-3 py-2"
-                    >
-                        <div className="w-8 h-8 rounded-full bg-kidville-green flex items-center justify-center font-barlow font-black text-xs text-kidville-yellow">
+                        {totalCount > 0 && (
+                            <> · {totalCount} {totalCount === 1 ? 'foto' : 'foto'} disponibil{totalCount === 1 ? 'e' : 'i'}</>
+                        )}
+                    </>
+                }
+                action={studentName ? (
+                    <div className="flex items-center gap-2 rounded-pill bg-white/15 py-1 pl-1 pr-3">
+                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-kidville-yellow font-barlow text-xs font-extrabold text-kidville-green">
                             {studentName.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase()}
-                        </div>
-                        <p className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide">{studentName}</p>
-                    </motion.div>
-                )}
-            </motion.div>
+                        </span>
+                        <span className="min-w-0">
+                            <span className="block truncate font-barlow text-xs font-extrabold uppercase leading-none text-white">{studentName}</span>
+                        </span>
+                    </div>
+                ) : undefined}
+                className="mb-6"
+            />
 
             {/* Loading */}
             <AnimatePresence mode="wait">
@@ -161,19 +145,19 @@ function ParentGalleryContent() {
                     )}
 
                     {hasMore && media.length > 0 && (
-                        <motion.button
-                            whileHover={{ scale: 1.01 }}
-                            whileTap={{ scale: 0.98 }}
+                        <Btn
+                            variant="ghost"
+                            size="md"
+                            className="w-full"
                             onClick={handleLoadMore}
                             disabled={loadingMore}
-                            className="w-full py-3.5 rounded-full bg-white border border-kidville-green font-barlow font-bold text-sm text-kidville-green uppercase tracking-wide hover:bg-kidville-cream/30 active:scale-[0.99] transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-sm cursor-pointer"
                         >
                             {loadingMore ? (
                                 <><div className="w-4 h-4 border-2 border-kidville-green/20 border-t-kidville-green rounded-full animate-spin" /> Caricamento...</>
                             ) : (
                                 <><ChevronDown className="w-4 h-4" /> Carica Altre Foto</>
                             )}
-                        </motion.button>
+                        </Btn>
                     )}
                 </motion.div>
             )}
@@ -200,7 +184,7 @@ function ParentGalleryContent() {
 export default function ParentGalleryPage() {
     return (
         <Suspense fallback={
-            <div className="max-w-lg mx-auto p-4 sm:p-6 flex flex-col items-center justify-center min-h-[60vh] gap-4">
+            <div className="px-4 pt-5 pb-24 flex flex-col items-center justify-center min-h-[60vh] gap-4">
                 <div className="w-10 h-10 border-4 border-kidville-green/30 border-t-kidville-green rounded-full animate-spin" />
             </div>
         }>

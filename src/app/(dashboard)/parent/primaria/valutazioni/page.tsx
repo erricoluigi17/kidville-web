@@ -2,6 +2,7 @@
 
 import { Suspense, useEffect, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
+import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 
 interface ValBreve {
@@ -53,15 +54,8 @@ function ValutazioniGenitore() {
   }, [ready, studentId, parentId]);
 
   return (
-    <div className="px-4 pt-6 pb-24">
-      <div className="mb-4">
-        <p className="font-barlow font-bold text-[11px] uppercase tracking-[0.14em] text-kidville-yellow-dark">
-          Didattica · Primaria
-        </p>
-        <h1 className="font-barlow text-2xl font-black text-kidville-green uppercase tracking-wide leading-none">
-          Valutazioni
-        </h1>
-      </div>
+    <div className="px-4 pt-5 pb-24">
+      <PageHeaderCard eyebrow="Didattica · Primaria" title="Valutazioni" className="mb-4" />
 
       {loading ? (
         <p className="font-maven text-sm text-kidville-muted">Caricamento…</p>
@@ -127,7 +121,7 @@ function ValutazioniGenitore() {
 
 export default function ValutazioniGenitorePage() {
   return (
-    <Suspense fallback={<div className="p-8 font-maven text-kidville-muted">Caricamento…</div>}>
+    <Suspense fallback={<div className="px-4 pt-5 pb-24 font-maven text-kidville-muted">Caricamento…</div>}>
       <ValutazioniGenitore />
     </Suspense>
   );

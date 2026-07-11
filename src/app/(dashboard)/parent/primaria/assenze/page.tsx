@@ -2,7 +2,9 @@
 
 import { Suspense, useCallback, useEffect, useState } from 'react';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
-import { CheckSquare, AlertCircle, Check } from 'lucide-react';
+import { AlertCircle, Check } from 'lucide-react';
+import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
+import { Btn } from '@/components/ui/Btn';
 
 interface Presenza {
   id: string; data: string; stato: string;
@@ -80,10 +82,13 @@ function AssenzeGenitore() {
   const nonGiustificate = presenze.filter((p) => !p.giustificata);
 
   return (
-    <div className="px-4 pt-6 pb-24">
-      <h1 className="font-barlow text-xl font-black text-kidville-green uppercase tracking-wide mb-4 flex items-center gap-2">
-        <CheckSquare size={20} /> Presenze
-      </h1>
+    <div className="px-4 pt-5 pb-24">
+      <PageHeaderCard
+        eyebrow="Didattica · Primaria"
+        title="Presenze"
+        subtitle="Assenze, ritardi e giustifiche"
+        className="mb-4"
+      />
 
       {loading ? (
         <p className="font-maven text-sm text-kidville-muted">Caricamento…</p>
@@ -134,12 +139,14 @@ function AssenzeGenitore() {
 
                 {/* Azione giustifica (backend esistente con OTP) */}
                 {!p.giustificata && otpTarget !== p.id && (
-                  <button
+                  <Btn
+                    variant="primary"
+                    size="sm"
                     onClick={() => avviaGiustifica(p.id)}
-                    className="mt-3 font-maven inline-flex items-center gap-1.5 rounded-full bg-kidville-green px-4 py-1.5 text-sm text-kidville-yellow"
+                    className="mt-3"
                   >
                     <Check size={14} /> Giustifica
-                  </button>
+                  </Btn>
                 )}
 
                 {/* Conferma OTP/FES inline */}
@@ -160,13 +167,14 @@ function AssenzeGenitore() {
                         placeholder="000000"
                         className="font-maven rounded-full border border-kidville-line px-3 py-1.5 text-sm w-28 text-center tracking-widest"
                       />
-                      <button
+                      <Btn
+                        variant="primary"
+                        size="sm"
                         onClick={() => confermaGiustifica(p)}
                         disabled={firmando || !otpCode}
-                        className="font-maven rounded-full bg-kidville-green px-4 py-1.5 text-sm text-kidville-yellow disabled:opacity-50"
                       >
                         {firmando ? 'Invio…' : 'Conferma'}
-                      </button>
+                      </Btn>
                       <button onClick={annulla} className="font-maven text-xs text-kidville-muted">Annulla</button>
                     </div>
                   </div>

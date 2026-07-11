@@ -5,6 +5,8 @@ import Link from 'next/link';
 import { Baby, RefreshCw } from 'lucide-react';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 import { LezioniList, type Lezione } from '@/components/features/parent/LezioniCompitiSections';
+import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
+import { btnClass } from '@/components/ui/Btn';
 
 interface Data { schoolType: string | null; child: { nome: string; cognome: string } | null; lezioni: Lezione[] }
 
@@ -27,41 +29,37 @@ function LezioniInner() {
   useEffect(() => { load(); }, [load]);
 
   if (!ready || loading) {
-    return <div className="p-8 font-maven text-kidville-muted flex items-center gap-2"><RefreshCw className="animate-spin" size={16} /> Caricamento…</div>;
+    return <div className="px-4 pt-5 pb-24 font-maven text-kidville-muted flex items-center gap-2"><RefreshCw className="animate-spin" size={16} /> Caricamento…</div>;
   }
 
   if (data && data.schoolType !== 'primaria') {
     return (
-      <div className="min-h-screen bg-kidville-cream/40 p-6">
-        <div className="max-w-md mx-auto rounded-card bg-white p-8 text-center shadow-sm">
+      <div className="px-4 pt-5 pb-24">
+        <div className="rounded-card bg-white p-8 text-center shadow-sm">
           <Baby className="mx-auto mb-3 text-kidville-green" size={40} />
           <h2 className="font-barlow text-xl font-bold text-kidville-ink">Sezione non disponibile</h2>
           <p className="font-maven text-sm text-kidville-muted mt-1 mb-4">Le lezioni sono disponibili solo per la scuola primaria.</p>
-          <Link href="/parent/diary" className="font-maven inline-block rounded-pill bg-kidville-green px-5 py-2 text-sm text-kidville-yellow">Vai al Diario</Link>
+          <Link href="/parent/diary" className={btnClass('primary', 'sm')}>Vai al Diario</Link>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-kidville-cream/40 p-4 md:p-6">
-      <div className="max-w-4xl mx-auto">
-        <header className="mb-5">
-          <p className="font-barlow font-bold text-[11px] uppercase tracking-[0.14em] text-kidville-yellow-dark">
-            Didattica · Primaria
-          </p>
-          <h1 className="font-barlow text-3xl font-black text-kidville-green uppercase tracking-wide leading-none">Lezioni</h1>
-          {data?.child && <p className="font-maven text-kidville-muted text-sm mt-1">{data.child.nome} {data.child.cognome}</p>}
-        </header>
-        {data && <LezioniList lezioni={data.lezioni} />}
-      </div>
+    <div className="px-4 pt-5 pb-24">
+      <PageHeaderCard
+        eyebrow="Didattica · Primaria"
+        title="Lezioni"
+        subtitle={data?.child ? <>{data.child.nome} {data.child.cognome}</> : undefined}
+      />
+      {data && <div className="mt-5"><LezioniList lezioni={data.lezioni} /></div>}
     </div>
   );
 }
 
 export default function ParentLezioniPage() {
   return (
-    <Suspense fallback={<div className="p-8 font-maven text-kidville-muted">Caricamento…</div>}>
+    <Suspense fallback={<div className="px-4 pt-5 pb-24 font-maven text-kidville-muted">Caricamento…</div>}>
       <LezioniInner />
     </Suspense>
   );

@@ -3,6 +3,8 @@
 import { Suspense, useCallback, useEffect, useState } from 'react';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 import { Check } from 'lucide-react';
+import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
+import { Btn } from '@/components/ui/Btn';
 
 interface Nota {
   id: string; categoria: string; testo: string;
@@ -71,15 +73,8 @@ function NoteGenitore() {
   const inAttesa = note.filter((n) => n.richiede_firma && !n.firmata_il);
 
   return (
-    <div className="px-4 pt-6 pb-24">
-      <div className="mb-4">
-        <p className="font-barlow font-bold text-[11px] uppercase tracking-[0.14em] text-kidville-yellow-dark">
-          Didattica · Primaria
-        </p>
-        <h1 className="font-barlow text-2xl font-black text-kidville-green uppercase tracking-wide leading-none">
-          Note
-        </h1>
-      </div>
+    <div className="px-4 pt-5 pb-24">
+      <PageHeaderCard eyebrow="Didattica · Primaria" title="Note" subtitle="Note disciplinari e didattiche" className="mb-4" />
 
       {loading ? (
         <p className="font-maven text-sm text-kidville-muted">Caricamento…</p>
@@ -112,12 +107,9 @@ function NoteGenitore() {
                 </div>
                 <p className="font-maven text-sm text-kidville-ink">{n.testo}</p>
                 {n.richiede_firma && !n.firmata_il && otpTarget !== n.id && (
-                  <button
-                    onClick={() => avviaFirma(n.id)}
-                    className="mt-3 font-maven inline-flex items-center gap-1.5 rounded-full bg-kidville-green px-4 py-1.5 text-sm text-kidville-yellow disabled:opacity-50"
-                  >
+                  <Btn variant="primary" size="sm" onClick={() => avviaFirma(n.id)} className="mt-3">
                     <Check size={14} /> Firma presa visione
-                  </button>
+                  </Btn>
                 )}
 
                 {/* Conferma OTP/FES inline */}
@@ -133,13 +125,14 @@ function NoteGenitore() {
                         placeholder="000000"
                         className="font-maven rounded-full border border-kidville-line px-3 py-1.5 text-sm w-28 text-center tracking-widest"
                       />
-                      <button
+                      <Btn
+                        variant="primary"
+                        size="sm"
                         onClick={confermaFirma}
                         disabled={firmando === n.id || !otpCode}
-                        className="font-maven rounded-full bg-kidville-green px-4 py-1.5 text-sm text-kidville-yellow disabled:opacity-50"
                       >
                         {firmando === n.id ? 'Firma…' : 'Conferma'}
-                      </button>
+                      </Btn>
                       <button onClick={() => { setOtpTarget(null); setOtpState(null); setOtpCode(''); }}
                         className="font-maven text-xs text-kidville-muted">Annulla</button>
                     </div>
@@ -156,7 +149,7 @@ function NoteGenitore() {
 
 export default function NoteGenitorePage() {
   return (
-    <Suspense fallback={<div className="p-8 font-maven text-kidville-muted">Caricamento…</div>}>
+    <Suspense fallback={<div className="px-4 pt-5 pb-24 font-maven text-kidville-muted">Caricamento…</div>}>
       <NoteGenitore />
     </Suspense>
   );

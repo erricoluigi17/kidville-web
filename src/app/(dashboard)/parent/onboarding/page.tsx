@@ -4,6 +4,7 @@ import { Suspense, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ShieldCheck, KeyRound, Loader2 } from 'lucide-react';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
+import { Btn } from '@/components/ui/Btn';
 
 // Onboarding genitore (DL-045): primo accesso → password + consensi GDPR.
 // L'identità viene dalla sessione (URL → localStorage → /api/me), senza demo.
@@ -74,14 +75,10 @@ function Inner() {
 
         {error && <p className="font-maven text-xs text-kidville-error">{error}</p>}
 
-        <button
-          type="submit"
-          disabled={saving}
-          className="w-full h-11 rounded-pill bg-kidville-green text-kidville-yellow font-barlow font-black uppercase tracking-wider text-sm hover:opacity-90 disabled:opacity-50 transition-opacity flex items-center justify-center gap-2"
-        >
+        <Btn type="submit" variant="primary" size="md" disabled={saving} className="w-full">
           {saving && <Loader2 size={16} className="animate-spin" />}
           Completa l’accesso
-        </button>
+        </Btn>
       </form>
     </div>
   );

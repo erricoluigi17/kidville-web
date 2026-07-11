@@ -9,6 +9,7 @@ import { CheckoutModal } from '@/components/features/teacher/CheckoutModal';
 import { MonthlyAttendanceTable } from '@/components/features/teacher/attendance/MonthlyAttendanceTable';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { useOnlineStatus } from '@/lib/hooks/use-online-status';
+import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 
 // ─── Scala stati (token brand DR) ──────────────────────────────────────────────
 
@@ -487,13 +488,15 @@ function TeacherAttendanceContent() {
     return (
         <div className="mx-auto max-w-[460px] px-4 pt-5">
             {/* ── Header verde (DR) ── */}
-            <div className="rounded-3xl bg-kidville-green px-5 py-5" style={{ boxShadow: '0 16px 34px -18px rgba(0,60,52,.6)' }}>
-                <p className="font-barlow text-[11px] font-bold uppercase tracking-[0.14em] text-kidville-yellow">Registro</p>
-                <h1 className="font-barlow text-3xl font-black uppercase tracking-wide text-white">Appello</h1>
-                <span className="mt-2 inline-flex items-center gap-1.5 rounded-pill bg-white/15 px-2.5 py-1 font-maven text-xs font-semibold text-white backdrop-blur">
-                    <Users size={13} /> Sezione {sezione || '…'}
-                </span>
-            </div>
+            <PageHeaderCard
+                eyebrow="Registro"
+                title="Appello"
+                subtitle={
+                    <span className="inline-flex items-center gap-1.5 rounded-pill bg-white/15 px-2.5 py-1 font-maven text-xs font-semibold text-white backdrop-blur">
+                        <Users size={13} /> Sezione {sezione || '…'}
+                    </span>
+                }
+            />
 
             {/* ── Selettore sezione (solo se il docente ne ha più d'una) ── */}
             {availableSections.length > 1 && (

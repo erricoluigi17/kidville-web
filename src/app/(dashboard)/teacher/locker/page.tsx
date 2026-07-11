@@ -3,11 +3,12 @@
 import { useState, useEffect, useCallback, Suspense } from 'react';
 import { usePathname, useSearchParams } from 'next/navigation';
 import {
-    Package, RefreshCw, ChevronDown, ChevronRight,
+    RefreshCw, ChevronDown, ChevronRight,
     PlusCircle, MinusCircle, Table2, Truck, ChevronLeft,
     ChevronRight as ChevronRightIcon, Settings,
 } from 'lucide-react';
 import Link from 'next/link';
+import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { LoadStockModal } from '@/components/features/teacher/locker/LoadStockModal';
 import { MonthlyLockerTable, type StudentInfo } from '@/components/features/teacher/locker/MonthlyLockerTable';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
@@ -182,16 +183,12 @@ function TeacherLockerInner() {
     return (
         <div className="mx-auto max-w-[460px] px-4 pt-5">
             {/* Header verde (DR) */}
-            <div className="rounded-3xl bg-kidville-green px-5 py-5" style={{ boxShadow: '0 16px 34px -18px rgba(0,60,52,.6)' }}>
-                <div className="flex items-start justify-between gap-3">
-                    <div>
-                        <p className="font-barlow text-[11px] font-bold uppercase tracking-[0.14em] text-kidville-yellow">Strumenti</p>
-                        <h1 className="flex items-center gap-2 font-barlow text-3xl font-black uppercase tracking-wide text-white">
-                            <Package size={26} className="text-kidville-yellow" /> Armadietto
-                        </h1>
-                        <p className="mt-1.5 font-maven text-xs text-white/80">Scorte e consegne · Sezione {sezione || '…'}</p>
-                    </div>
-                    <div className="flex items-center gap-1.5">
+            <PageHeaderCard
+                eyebrow="Strumenti"
+                title="Armadietto"
+                subtitle={<>Scorte e consegne · Sezione {sezione || '…'}</>}
+                action={
+                    <>
                         <Link href={settingsHref}
                             className="flex h-9 w-9 items-center justify-center rounded-full bg-white/15 text-white transition-colors hover:bg-white/25"
                             title="Impostazioni materiali">
@@ -204,9 +201,9 @@ function TeacherLockerInner() {
                         >
                             <RefreshCw size={17} />
                         </button>
-                    </div>
-                </div>
-            </div>
+                    </>
+                }
+            />
 
             {/* Selettore sezione (solo con più sezioni assegnate al docente) */}
             {availableSections.length > 1 && (

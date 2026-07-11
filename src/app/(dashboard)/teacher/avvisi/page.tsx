@@ -5,6 +5,8 @@ import { Plus } from 'lucide-react';
 import { AvvisoCard, Avviso } from '@/components/features/avvisi/AvvisoCard';
 import { AvvisoForm } from '@/components/features/avvisi/AvvisoForm';
 import { AvvisoDetailsDrawer } from '@/components/features/avvisi/AvvisoDetailsDrawer';
+import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
+import { Btn } from '@/components/ui/Btn';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 
 // Identità dalla sessione (URL → localStorage → /api/me), senza fallback demo (M4).
@@ -91,19 +93,16 @@ function TeacherAvvisiContent() {
     return (
         <div className="mx-auto max-w-[460px] px-4 pt-5">
             {/* Header verde (DR) */}
-            <div className="rounded-3xl bg-kidville-green px-5 py-5" style={{ boxShadow: '0 16px 34px -18px rgba(0,60,52,.6)' }}>
-                <div className="flex items-start justify-between gap-3">
-                    <div>
-                        <p className="font-barlow text-[11px] font-bold uppercase tracking-[0.14em] text-kidville-yellow">Comunicazioni</p>
-                        <h1 className="font-barlow text-3xl font-black uppercase tracking-wide text-white">Bacheca</h1>
-                        <p className="mt-1.5 font-maven text-xs text-white/80">Circolari e avvisi alle famiglie</p>
-                    </div>
-                    <button onClick={() => { setEditingAvviso(null); setShowForm(true); }}
-                        className="flex shrink-0 items-center gap-2 rounded-pill bg-kidville-yellow px-4 py-2.5 font-barlow text-sm font-bold uppercase text-kidville-green transition-all active:scale-[0.98]">
+            <PageHeaderCard
+                eyebrow="Comunicazioni"
+                title="Bacheca"
+                subtitle="Circolari e avvisi alle famiglie"
+                action={
+                    <Btn variant="secondary" size="sm" onClick={() => { setEditingAvviso(null); setShowForm(true); }}>
                         <Plus size={16} strokeWidth={1.8} /> Nuovo
-                    </button>
-                </div>
-            </div>
+                    </Btn>
+                }
+            />
             <div className="mt-5">{/* contenuto */}</div>
 
             {/* Loading */}

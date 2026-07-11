@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { BookOpen, Users, ChevronRight } from 'lucide-react';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { GradeWorldSwitch } from '@/components/features/teacher/GradeWorldSwitch';
+import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 
 interface Classe {
   id: string;
@@ -35,9 +36,8 @@ function HubInner() {
   return (
     <div className="min-h-screen bg-kidville-cream/40">
       <div className="mx-auto max-w-[460px] px-4 pt-5">
-        {/* Header DR: eyebrow + titolo + switcher */}
-        <p className="font-barlow text-[11px] font-bold uppercase tracking-[0.14em] text-kidville-yellow-dark">Mondo Primaria</p>
-        <h1 className="font-barlow text-[28px] font-black uppercase leading-none tracking-wide text-kidville-green">Le mie classi</h1>
+        {/* Header verde (DR) */}
+        <PageHeaderCard eyebrow="Mondo Primaria" title="Le mie classi" />
         <div className="mt-3">
           <GradeWorldSwitch />
         </div>

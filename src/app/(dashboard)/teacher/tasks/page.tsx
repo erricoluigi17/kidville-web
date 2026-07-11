@@ -3,6 +3,8 @@
 import { Suspense } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Plus, ListTodo, CheckSquare, History, CheckCircle, Eye } from 'lucide-react';
+import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
+import { Btn } from '@/components/ui/Btn';
 import { TaskCard } from '@/components/features/teacher/tasks/TaskCard';
 import { TaskForm } from '@/components/features/teacher/tasks/TaskForm';
 import { TaskEditModal } from '@/components/features/teacher/tasks/TaskEditModal';
@@ -25,33 +27,28 @@ function TeacherTasksContent() {
     return (
         <div className="mx-auto max-w-[460px] px-4 pt-5">
             {/* Header verde (DR) */}
-            <div className="rounded-3xl bg-kidville-green px-5 py-5" style={{ boxShadow: '0 16px 34px -18px rgba(0,60,52,.6)' }}>
-                <div className="flex items-start justify-between gap-3">
-                    <div className="text-left">
-                        <p className="font-barlow text-[11px] font-bold uppercase tracking-[0.14em] text-kidville-yellow">Strumenti staff</p>
-                        <div className="flex items-center gap-3">
-                            <h1 className="font-barlow text-3xl font-black uppercase tracking-wide text-white">Attività</h1>
-                            {pendingCount > 0 && activeTab !== 'archive' && (
-                                <span className="inline-flex h-6 min-w-[24px] items-center justify-center rounded-full bg-kidville-yellow px-2 font-barlow text-xs font-bold text-kidville-green">
-                                    {pendingCount}
-                                </span>
-                            )}
-                        </div>
-                        <p className="mt-1.5 flex flex-wrap items-center gap-1.5 font-maven text-xs text-white/80">
-                            <span>👤 {currentUserName}</span>
-                            <span className="rounded-pill bg-white/15 px-2 py-0.5 text-[10px] font-bold uppercase text-white">
-                                {userRole === 'admin' ? 'Direzione' : userRole === 'coordinator' ? 'Coordinatore' : 'Insegnante'}
-                            </span>
-                        </p>
-                    </div>
-                    <button
-                        onClick={() => setShowCreateModal(true)}
-                        className="flex shrink-0 items-center gap-2 rounded-pill bg-kidville-yellow px-4 py-2.5 font-barlow text-sm font-bold uppercase text-kidville-green transition-all active:scale-[0.98]"
-                    >
+            <PageHeaderCard
+                eyebrow="Strumenti staff"
+                title="Attività"
+                badge={pendingCount > 0 && activeTab !== 'archive' && (
+                    <span className="inline-flex h-6 min-w-[24px] items-center justify-center rounded-full bg-kidville-yellow px-2 font-barlow text-xs font-bold text-kidville-green">
+                        {pendingCount}
+                    </span>
+                )}
+                subtitle={
+                    <span className="flex flex-wrap items-center gap-1.5">
+                        <span>👤 {currentUserName}</span>
+                        <span className="rounded-pill bg-white/15 px-2 py-0.5 text-[10px] font-bold uppercase text-white">
+                            {userRole === 'admin' ? 'Direzione' : userRole === 'coordinator' ? 'Coordinatore' : 'Insegnante'}
+                        </span>
+                    </span>
+                }
+                action={
+                    <Btn variant="secondary" size="sm" onClick={() => setShowCreateModal(true)}>
                         <Plus size={16} strokeWidth={1.8} /> Nuovo
-                    </button>
-                </div>
-            </div>
+                    </Btn>
+                }
+            />
 
             {/* Tabs — riga scrollabile orizzontalmente (affordance di scroll, niente troncamento) */}
             <div className="mt-5 mb-6 flex gap-1 overflow-x-auto rounded-2xl border border-kidville-line bg-white p-1.5">

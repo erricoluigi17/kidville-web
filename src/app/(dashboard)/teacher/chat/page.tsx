@@ -10,6 +10,8 @@ import { ChatListSkeleton } from '@/components/features/chat/ChatListSkeleton';
 import { useUnreadNotifications } from '@/components/features/chat/useUnreadNotifications';
 import { useChatRealtime } from '@/components/features/chat/useChatRealtime';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
+import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
+import { Btn } from '@/components/ui/Btn';
 
 interface Contact {
     user_id: string;
@@ -260,41 +262,42 @@ function TeacherChatContent() {
 
     return (
         <div className="max-w-5xl mx-auto p-4 sm:p-6">
-            {/* Header */}
-            <div className="flex items-start justify-between mb-4">
-                <div>
-                    <div className="flex items-center gap-3">
-                        <h1 className="font-barlow font-black text-3xl text-kidville-green uppercase tracking-wide">
-                            💬 Chat
-                        </h1>
-                        <AnimatePresence>
-                            {unreadCount > 0 && (
-                                <motion.span
-                                    initial={{ scale: 0, opacity: 0 }}
-                                    animate={{ scale: 1, opacity: 1 }}
-                                    exit={{ scale: 0, opacity: 0 }}
-                                    transition={{ type: 'spring', stiffness: 500, damping: 25 }}
-                                    className="inline-flex items-center justify-center min-w-[24px] h-6 px-2 rounded-full bg-kidville-success text-white font-barlow font-bold text-xs shadow-lg shadow-sm"
-                                >
-                                    {unreadCount > 99 ? '99+' : unreadCount}
-                                </motion.span>
-                            )}
-                        </AnimatePresence>
-                    </div>
-                    <p className="font-maven text-kidville-muted mt-1">Messaggi con le famiglie</p>
-                </div>
-                <button
-                    onClick={() => { setShowNewChat(true); setLoadingContacts(true); loadContacts(); }}
-                    className="flex items-center gap-2 px-4 py-2.5 bg-kidville-green text-kidville-yellow font-barlow font-bold text-sm uppercase rounded-2xl hover:opacity-90 active:scale-[0.98] transition-all shadow-lg shadow-kidville-green/20"
-                >
-                    <Plus size={16} strokeWidth={1.5} /> Nuova Chat
-                </button>
-            </div>
+            {/* Header verde (DR) */}
+            <PageHeaderCard
+                eyebrow="Comunicazioni"
+                title="Messaggi"
+                badge={
+                    <AnimatePresence>
+                        {unreadCount > 0 && (
+                            <motion.span
+                                initial={{ scale: 0, opacity: 0 }}
+                                animate={{ scale: 1, opacity: 1 }}
+                                exit={{ scale: 0, opacity: 0 }}
+                                transition={{ type: 'spring', stiffness: 500, damping: 25 }}
+                                className="inline-flex items-center justify-center min-w-[24px] h-6 px-2 rounded-full bg-kidville-yellow text-kidville-green font-barlow font-bold text-xs shadow-lg shadow-sm"
+                            >
+                                {unreadCount > 99 ? '99+' : unreadCount}
+                            </motion.span>
+                        )}
+                    </AnimatePresence>
+                }
+                subtitle="Messaggi con le famiglie"
+                action={
+                    <Btn
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => { setShowNewChat(true); setLoadingContacts(true); loadContacts(); }}
+                    >
+                        <Plus size={16} strokeWidth={1.5} /> Nuova Chat
+                    </Btn>
+                }
+                className="mb-4"
+            />
 
             {/* Desktop Layout: sidebar + chat area. mb-24 = clearance sotto il
                 pannello ad altezza fissa, così lo scroll porta sempre il
                 composer sopra la bottom nav fissa (stesso fix del parent chat). */}
-            <div className="hidden md:flex gap-4 h-[calc(100vh-200px)] min-h-[500px] mb-24">
+            <div className="hidden md:flex gap-4 h-[calc(100vh-200px-var(--kv-appbar-h,0px))] min-h-[500px] mb-24">
                 {/* Thread list */}
                 <div className="w-80 flex-shrink-0 bg-white rounded-3xl border border-kidville-line shadow-sm overflow-hidden flex flex-col">
                     <div className="px-4 py-3 border-b border-kidville-line">

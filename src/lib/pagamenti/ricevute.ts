@@ -10,6 +10,7 @@ import {
     type FiscaleConfig,
 } from './fiscale'
 import { determinaQuoteFatturazione, resolveParentRegistry } from './intestatari'
+import { annoFiscale } from '@/lib/format/fiscal-date'
 
 // Emissione ricevute NUMERATE (registro ricevute_emesse):
 //  • idempotente: una sola ricevuta ATTIVA per pagamento (indice parziale DB);
@@ -112,7 +113,7 @@ export async function emettiORecuperaRicevuta(
     const struttura = datiStruttura(fiscale, aruba)
     const importo = Number(pagamento.importo_pagato ?? pagamento.importo)
     const bollo = bolloDovuto(importo, fiscale) > 0
-    const anno = new Date().getFullYear()
+    const anno = annoFiscale()
 
     const num = await supabase.rpc('prossimo_numero_ricevuta', { p_scuola: pagamento.scuola_id, p_anno: anno })
     if (num.error || typeof num.data !== 'number') return { ok: true, legacy: true }

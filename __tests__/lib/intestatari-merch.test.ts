@@ -51,4 +51,15 @@ describe('determinaQuoteFatturazione — parent_id NULL (ordini segreteria)', ()
     const quote = await determinaQuoteFatturazione(sb, pagamento, { intestatario_fatture: { adult_id: 'int-x' } })
     expect(quote).toEqual([{ adultId: 'int-x', importo: 36, label: '' }])
   })
+
+  it('quote esplicite incongruenti → la differenza pareggia sulla prima (Σ == totale)', async () => {
+    const sb = mockSupabase({
+      ordine: { parent_id: null },
+      quote: [{ adult_id: 'a', importo: 20, etichetta: 'Mamma' }, { adult_id: 'b', importo: 10, etichetta: 'Papà' }],
+    })
+    const quote = await determinaQuoteFatturazione(sb, pagamento, { id: 'al-1', genitori_separati: true })
+    expect(quote.reduce((s, q) => s + q.importo, 0)).toBe(36) // non 30
+    expect(quote[0]).toEqual({ adultId: 'a', importo: 26, label: 'Mamma' }) // 20 + differenza 6
+    expect(quote[1]).toEqual({ adultId: 'b', importo: 10, label: 'Papà' })
+  })
 })

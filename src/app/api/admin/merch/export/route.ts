@@ -4,6 +4,7 @@ import * as XLSX from 'xlsx'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { scuoleDiUtente } from '@/lib/auth/scope'
+import { logScrittura } from '@/lib/audit/scrittura'
 import { parseQuery } from '@/lib/validation/http'
 
 // GET /api/admin/merch/export — XLSX flat delle righe Merchandise (una riga per
@@ -59,6 +60,14 @@ export async function GET(request: Request) {
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([]), 'Merchandise')
       return xlsxResponse(wb, `merchandise-${oggi}.xlsx`)
     }
+    // Accountability GDPR: l'export contiene PII (alunni, sezioni, importi).
+    await logScrittura(supabase, {
+      attore: auth.user,
+      entitaTipo: 'export_merch',
+      azione: 'insert',
+      scuolaId: plessi[0] ?? null,
+      valoreDopo: { tipo: 'merchandise_xlsx', plessi },
+    })
 
     const { data, error } = await supabase
       .from('divise_ordini_righe')

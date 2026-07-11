@@ -6,6 +6,8 @@ import { requireStaff } from '@/lib/auth/require-staff'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { resolveScuoleAttive } from '@/lib/auth/scope'
+import { logScrittura } from '@/lib/audit/scrittura'
+import { oggiFiscaleISO } from '@/lib/format/fiscal-date'
 import { calcolaAttestazione, type VoceAttestazione } from '@/lib/pagamenti/attestazione'
 import { resolveParentRegistry, type ParentRegistry } from '@/lib/pagamenti/intestatari'
 
@@ -56,6 +58,16 @@ export async function GET(request: NextRequest) {
     const supabase = await createAdminClient()
     const sediAttive = await resolveScuoleAttive(request, supabase, user)
 
+    // Accountability GDPR: gli export contengono PII (nomi, sezioni, importi; il
+    // ramo AdE anche i codici fiscali). Registra chi esporta cosa e quando.
+    await logScrittura(supabase, {
+      attore: user,
+      entitaTipo: 'export_pagamenti',
+      azione: 'insert',
+      scuolaId: scuolaId && sediAttive.includes(scuolaId) ? scuolaId : sediAttive[0] ?? null,
+      valoreDopo: { tipo: q.data.tipo, anno: q.data.anno ?? null, sedi: sediAttive },
+    })
+
     if (q.data.tipo === 'ade') {
       return exportAde(supabase, sediAttive, q.data.anno!)
     }
@@ -104,7 +116,7 @@ export async function GET(request: NextRequest) {
     const rawBuffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as unknown
     const nodeBuffer = rawBuffer as { buffer: ArrayBuffer; byteOffset: number; byteLength: number }
     const arrayBuffer = nodeBuffer.buffer.slice(nodeBuffer.byteOffset, nodeBuffer.byteOffset + nodeBuffer.byteLength)
-    const oggi = new Date().toISOString().slice(0, 10)
+    const oggi = oggiFiscaleISO()
     return new NextResponse(new Uint8Array(arrayBuffer as ArrayBuffer), {
       headers: {
         'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',

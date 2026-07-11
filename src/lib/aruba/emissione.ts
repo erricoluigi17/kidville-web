@@ -16,6 +16,7 @@ import { mapStatoAruba } from './stato'
 import { determinaQuoteFatturazione, resolveParentRegistry } from '@/lib/pagamenti/intestatari'
 import { bolloDovuto, type FiscaleConfig } from '@/lib/pagamenti/fiscale'
 import { getModuleConfig } from '@/lib/settings/module-config'
+import { annoFiscale, oggiFiscaleISO } from '@/lib/format/fiscal-date'
 
 export interface AttoreEmissione {
   id: string
@@ -138,7 +139,7 @@ export async function emettiFatturaPagamento(
   }[]
 
   // 5. emissione indipendente per quota
-  const anno = new Date().getFullYear()
+  const anno = annoFiscale()
   const causaleBase = s(pag.fattura_causale) || s(pag.descrizione)
   let tokenCache: string | null = null
   const ensureToken = async () => {
@@ -217,7 +218,7 @@ export async function emettiFatturaPagamento(
     const xml = buildFatturaElettronicaXml({
       progressivoInvio: String(numero).padStart(5, '0'),
       numero: String(numero),
-      data: new Date().toISOString().slice(0, 10),
+      data: oggiFiscaleISO(),
       cedente: {
         piva: s(fiscal.piva),
         codiceFiscale: fiscal.cf ? s(fiscal.cf) : undefined,

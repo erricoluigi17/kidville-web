@@ -72,7 +72,9 @@ Correzione difetti in fasi (1 commit per fase, gate verde per fase):
 - **Fatture 🟡 — numerazione allineata ad Aruba** (scelta utente: la numerazione fiscale la detta Aruba). `arubaUltimoNumeroFattura` legge da Aruba (`findByUsername`) l'ultimo numero emesso nell'anno; l'emissione usa la nuova RPC `prossimo_numero_fattura_sync` = `GREATEST(contatore interno, ultimo Aruba)+1` così il progressivo non si accavalla con fatture emesse anche fuori dall'app; rimosso il fallback `?? 1`; con IVA>0 si scorpora l'imponibile e `ImportoTotaleDocumento` torna congruente (=lordo incassato).
 - **Migrazione `20260711140000_fatture_sync_e_fk_hardening` APPLICATA a prod** (advisor 0 ERROR, version riallineata al timestamp-file): RPC sync numerazione + `ricevute_emesse.pagamento_id` `CASCADE→SET NULL` (registro fiscale immune alla cancellazione del pagamento) + `merch_rettifiche.articolo_id` `SET NULL→RESTRICT` (niente movimenti orfani, giacenze integre — chiude anche il rilievo FK articolo).
 
-**Pendenti** (Fase 10, rischi trasversali da valutare): timezone Europe/Rome sulle date fiscali, PII export → audit-log, validazione somma quote split esplicite, idempotenza delle POST (doppio addebito su retry), atomicità/transazioni, conservazione decennale dei registri.
+- **Fase 10 (low-risk) 🔩** — chiusi 3 rischi trasversali: date a valenza fiscale su **Europe/Rome** (nuovo helper `src/lib/format/fiscal-date`; prima UTC → a cavallo di mezzanotte/31-dic la data documento e l'anno di numerazione slittavano); **PII negli export** → `logScrittura` per accountability GDPR (scadenzario, AdE con CF, merchandise); **congruenza quote split** (Σ quote esplicite pareggiata al totale del pagamento sulla prima quota, niente sotto/sovra-fatturazione). +test.
+
+**Pendenti** (Fase 10, rischi medio/alto — richiedono una scelta di progettazione): idempotenza delle POST ordine/cambio-taglia (doppio addebito su retry di rete), atomicità/transazioni (RPC per creazione ordine/emissione/evasione), conservazione decennale/immodificabilità dei registri fiscali.
 
 ---
 

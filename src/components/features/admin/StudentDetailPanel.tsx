@@ -523,7 +523,7 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                                             animate={{ height: 'auto', opacity: 1 }}
                                             exit={{ height: 0, opacity: 0 }}
                                             transition={{ duration: 0.3, ease: 'easeInOut' }}
-                                            className="overflow-hidden bg-black rounded-2xl mt-2"
+                                            className="overflow-hidden rounded-2xl mt-2"
                                         >
                                             <LinkedAdultProfile data={activeTabData.data} type={activeTabData.type} />
                                         </motion.div>

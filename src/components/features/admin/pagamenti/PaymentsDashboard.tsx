@@ -223,17 +223,18 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
 
             {/* KPI (StatCard cockpit): 2 colonne su mobile, 4 su desktop */}
             <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
-                <StatCard icon={CheckCircle2} label="Incassato" value={`€ ${totals.incassato.toFixed(2)}`} tone="success" />
-                <StatCard icon={Clock} label="Da incassare" value={`€ ${totals.daIncassare.toFixed(2)}`} tone="warn" />
-                <StatCard icon={AlertTriangle} label="Scaduto (morosità)" value={`€ ${totals.scaduto.toFixed(2)}`} tone="error" />
-                <StatCard icon={FileText} label="Da fatturare" value={`€ ${totals.daFatturare.toFixed(2)}`}
-                    sub={totals.nDaFatturare > 0 ? `${totals.nDaFatturare} pagament${totals.nDaFatturare === 1 ? 'o' : 'i'}` : undefined} tone="info" />
+                <StatCard icon={CheckCircle2} label="Incassato" value={loading ? '—' : `€ ${totals.incassato.toFixed(2)}`} tone="success" />
+                <StatCard icon={Clock} label="Da incassare" value={loading ? '—' : `€ ${totals.daIncassare.toFixed(2)}`} tone="warn" />
+                <StatCard icon={AlertTriangle} label="Scaduto (morosità)" value={loading ? '—' : `€ ${totals.scaduto.toFixed(2)}`} tone="error" />
+                <StatCard icon={FileText} label="Da fatturare" value={loading ? '—' : `€ ${totals.daFatturare.toFixed(2)}`}
+                    sub={!loading && totals.nDaFatturare > 0 ? `${totals.nDaFatturare} pagament${totals.nDaFatturare === 1 ? 'o' : 'i'}` : undefined} tone="info" />
             </div>
 
             {/* Agenda scadenze / aging: i bucket filtrano la lista sottostante */}
-            <AgendaScadenze pagamenti={pagamenti} attivo={agendaFiltro} onSelect={setAgendaFiltro} />
+            {!loading && <AgendaScadenze pagamenti={pagamenti} attivo={agendaFiltro} onSelect={setAgendaFiltro} />}
 
-            {/* Filtri */}
+            {/* Filtri (nascosti in vista agenda: non filtrerebbero la lista del bucket) */}
+            {!agendaFiltro && (
             <div className="flex flex-wrap items-center gap-2 mb-4">
                 <div className="relative flex-1 min-w-[200px]">
                     <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-kidville-muted" />
@@ -267,14 +268,15 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                         </button>
                     </>
                 )}
-                <button onClick={() => { setLoading(true); load(); }} className="py-2 px-3 rounded-full border-2 border-kidville-line text-kidville-muted hover:text-kidville-green">
+                <button onClick={() => { setLoading(true); load(); }} aria-label="Aggiorna" title="Aggiorna" className="py-2 px-3 rounded-full border-2 border-kidville-line text-kidville-muted hover:text-kidville-green">
                     <RefreshCw size={14} />
                 </button>
-                <a href={`/api/pagamenti/export?tipo=scadenzario&userId=${userId}&scuola_id=${scuolaId}`} title="Esporta XLSX"
+                <a href={`/api/pagamenti/export?tipo=scadenzario&userId=${userId}&scuola_id=${scuolaId}`} title="Esporta XLSX" aria-label="Esporta XLSX"
                     className="py-2 px-3 rounded-full border-2 border-kidville-line text-kidville-muted hover:text-kidville-green">
                     <Download size={14} />
                 </a>
             </div>
+            )}
 
             {/* CTA generazione rette mancanti */}
             {isRettaView && !loading && mancantiRette > 0 && (

@@ -7,7 +7,8 @@ import { logScrittura } from '@/lib/audit/scrittura'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 
-// Ordini divise lato staff (step 13) — lista con embed alunno + righe; PATCH stato.
+// Ordini Merchandise lato staff (Fase B, move da /api/admin/divise/ordini) —
+// lista con embed alunno + righe; PATCH stato testata (vocabolario legacy).
 // Service-role + scoping per plesso (scuoleDiUtente) + audit.
 
 const getQuerySchema = z.object({
@@ -19,7 +20,7 @@ const patchBodySchema = z.object({
   stato: z.enum(['inviato', 'confermato', 'consegnato', 'annullato']),
 })
 
-// GET /api/admin/divise/ordini — ordini dei plessi dell'utente (alunno + righe)
+// GET /api/admin/merch/ordini — ordini dei plessi dell'utente (alunno + righe)
 export async function GET(request: Request) {
   try {
     const auth = await requireStaff(request)
@@ -48,12 +49,12 @@ export async function GET(request: Request) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json({ success: true, data: data ?? [] })
   } catch (err) {
-    console.error('Errore API GET divise/ordini:', err)
+    console.error('Errore API GET merch/ordini:', err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
 }
 
-// PATCH /api/admin/divise/ordini — avanza lo stato dell'ordine
+// PATCH /api/admin/merch/ordini — avanza lo stato dell'ordine (testata legacy)
 export async function PATCH(request: Request) {
   try {
     const auth = await requireStaff(request)
@@ -87,7 +88,7 @@ export async function PATCH(request: Request) {
 
     await logScrittura(supabase, {
       attore: auth.user,
-      entitaTipo: 'divise_ordine',
+      entitaTipo: 'merch_ordine',
       entitaId: id,
       azione: 'update',
       scuolaId: existing.scuola_id as string,
@@ -96,7 +97,7 @@ export async function PATCH(request: Request) {
     })
     return NextResponse.json({ success: true, data })
   } catch (err) {
-    console.error('Errore API PATCH divise/ordini:', err)
+    console.error('Errore API PATCH merch/ordini:', err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
 }

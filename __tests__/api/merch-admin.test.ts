@@ -37,11 +37,11 @@ vi.mock('@/lib/supabase/server-client', () => ({
   }),
 }))
 
-import { GET as ARTGET, POST as ARTPOST, PATCH as ARTPATCH, DELETE as ARTDELETE } from '@/app/api/admin/divise/articoli/route'
-import { GET as ORDGET, PATCH as ORDPATCH } from '@/app/api/admin/divise/ordini/route'
+import { GET as ARTGET, POST as ARTPOST, PATCH as ARTPATCH, DELETE as ARTDELETE } from '@/app/api/admin/merch/articoli/route'
+import { GET as ORDGET, PATCH as ORDPATCH } from '@/app/api/admin/merch/ordini/route'
 
-const A_URL = 'http://localhost/api/admin/divise/articoli'
-const O_URL = 'http://localhost/api/admin/divise/ordini'
+const A_URL = 'http://localhost/api/admin/merch/articoli'
+const O_URL = 'http://localhost/api/admin/merch/ordini'
 const json = (url: string, body: unknown, method: string) =>
   new Request(url, { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
 
@@ -57,7 +57,7 @@ beforeEach(() => {
   h.inserts = []; h.updates = []; h.deletes = []
 })
 
-describe('GET /api/admin/divise/articoli', () => {
+describe('GET /api/admin/merch/articoli', () => {
   it('403 senza staff', async () => {
     h.requireStaff.mockResolvedValue({ response: NextResponse.json({}, { status: 403 }) })
     expect((await ARTGET(new Request(A_URL))).status).toBe(403)
@@ -77,7 +77,7 @@ describe('GET /api/admin/divise/articoli', () => {
   })
 })
 
-describe('POST /api/admin/divise/articoli', () => {
+describe('POST /api/admin/merch/articoli', () => {
   it('403 senza staff', async () => {
     h.requireStaff.mockResolvedValue({ response: NextResponse.json({}, { status: 403 }) })
     expect((await ARTPOST(json(A_URL, { nome: 'X', prezzo: 1 }, 'POST'))).status).toBe(403)
@@ -92,11 +92,22 @@ describe('POST /api/admin/divise/articoli', () => {
     const res = await ARTPOST(json(A_URL, { nome: '  Polo Kidville ', taglie: ['S', 'M', 'L'], prezzo: '18.50' }, 'POST'))
     expect(res.status).toBe(201)
     expect(h.inserts[0].row).toMatchObject({ scuola_id: 'sc-1', nome: 'Polo Kidville', prezzo: 18.5, taglie: ['S', 'M', 'L'] })
+    // default categoria 'divisa' quando non specificata
+    expect(h.inserts[0].row).toMatchObject({ categoria: 'divisa', fornitore_id: null, prezzo_acquisto: null })
     expect(h.logScrittura).toHaveBeenCalled()
+  })
+  it('201 persiste categoria/fornitore/prezzo_acquisto quando forniti', async () => {
+    const FID = '33333333-3333-4333-8333-333333333333'
+    const res = await ARTPOST(json(A_URL, { nome: 'Quaderno', prezzo: 2, categoria: 'materiale', fornitore_id: FID, prezzo_acquisto: '1.20' }, 'POST'))
+    expect(res.status).toBe(201)
+    expect(h.inserts[0].row).toMatchObject({ categoria: 'materiale', fornitore_id: FID, prezzo_acquisto: 1.2 })
+  })
+  it('400 categoria non valida', async () => {
+    expect((await ARTPOST(json(A_URL, { nome: 'X', prezzo: 1, categoria: 'boh' }, 'POST'))).status).toBe(400)
   })
 })
 
-describe('PATCH /api/admin/divise/articoli', () => {
+describe('PATCH /api/admin/merch/articoli', () => {
   it('404 articolo inesistente', async () => {
     h.existing = null
     expect((await ARTPATCH(json(A_URL, { id: '11111111-1111-4111-8111-111111111111', nome: 'X' }, 'PATCH'))).status).toBe(404)
@@ -113,7 +124,7 @@ describe('PATCH /api/admin/divise/articoli', () => {
   })
 })
 
-describe('DELETE /api/admin/divise/articoli', () => {
+describe('DELETE /api/admin/merch/articoli', () => {
   it('404 articolo inesistente', async () => {
     h.existing = null
     expect((await ARTDELETE(new Request(`${A_URL}?id=11111111-1111-4111-8111-111111111111`, { method: 'DELETE' }))).status).toBe(404)
@@ -125,7 +136,7 @@ describe('DELETE /api/admin/divise/articoli', () => {
   })
 })
 
-describe('GET /api/admin/divise/ordini', () => {
+describe('GET /api/admin/merch/ordini', () => {
   it('403 senza staff', async () => {
     h.requireStaff.mockResolvedValue({ response: NextResponse.json({}, { status: 403 }) })
     expect((await ORDGET(new Request(O_URL))).status).toBe(403)
@@ -138,7 +149,7 @@ describe('GET /api/admin/divise/ordini', () => {
   })
 })
 
-describe('PATCH /api/admin/divise/ordini', () => {
+describe('PATCH /api/admin/merch/ordini', () => {
   it('400 stato non valido', async () => {
     expect((await ORDPATCH(json(O_URL, { id: '11111111-1111-4111-8111-111111111111', stato: 'boh' }, 'PATCH'))).status).toBe(400)
   })

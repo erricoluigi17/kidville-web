@@ -81,14 +81,14 @@ function AdminDiviseInner() {
   const [error, setError] = useState<string | null>(null);
 
   const loadArticoli = (uid: string) => {
-    fetch(`/api/admin/divise/articoli?userId=${uid}`)
+    fetch(`/api/admin/merch/articoli?userId=${uid}`)
       .then(r => (r.ok ? r.json() : null))
       .then(d => { if (d?.success) setArticoli(d.data ?? []); })
       .catch(() => {})
       .finally(() => setLoadingCat(false));
   };
   const loadOrdini = (uid: string) => {
-    fetch(`/api/admin/divise/ordini?userId=${uid}`)
+    fetch(`/api/admin/merch/ordini?userId=${uid}`)
       .then(r => (r.ok ? r.json() : null))
       .then(d => { if (d?.success) setOrdini(d.data ?? []); })
       .catch(() => {})
@@ -127,7 +127,7 @@ function AdminDiviseInner() {
       const body = isEdit
         ? { id: form.id, nome: form.nome.trim(), descrizione: form.descrizione.trim() || null, taglie, prezzo, attivo: form.attivo }
         : { nome: form.nome.trim(), descrizione: form.descrizione.trim() || null, taglie, prezzo, attivo: form.attivo };
-      const res = await fetch(`/api/admin/divise/articoli?userId=${userId}`, {
+      const res = await fetch(`/api/admin/merch/articoli?userId=${userId}`, {
         method: isEdit ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -148,7 +148,7 @@ function AdminDiviseInner() {
 
   const toggleAttivo = async (a: Articolo) => {
     if (!userId) return;
-    await fetch(`/api/admin/divise/articoli?userId=${userId}`, {
+    await fetch(`/api/admin/merch/articoli?userId=${userId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: a.id, attivo: !a.attivo }),
@@ -159,7 +159,7 @@ function AdminDiviseInner() {
   const deleteArticolo = async (a: Articolo) => {
     if (!userId) return;
     if (!window.confirm(`Eliminare "${a.nome}" dal catalogo? Gli ordini già effettuati restano.`)) return;
-    await fetch(`/api/admin/divise/articoli?id=${a.id}&userId=${userId}`, { method: 'DELETE' }).catch(() => null);
+    await fetch(`/api/admin/merch/articoli?id=${a.id}&userId=${userId}`, { method: 'DELETE' }).catch(() => null);
     if (form.id === a.id) resetForm();
     loadArticoli(userId);
   };
@@ -167,7 +167,7 @@ function AdminDiviseInner() {
   const changeStato = async (o: Ordine, stato: Ordine['stato']) => {
     if (!userId) return;
     setOrdini(prev => prev.map(x => (x.id === o.id ? { ...x, stato } : x)));
-    const res = await fetch(`/api/admin/divise/ordini?userId=${userId}`, {
+    const res = await fetch(`/api/admin/merch/ordini?userId=${userId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: o.id, stato }),

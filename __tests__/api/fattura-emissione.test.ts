@@ -3,11 +3,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 // Stub delle chiamate di rete Aruba (mantengo reali resolveArubaCredentials/arubaBaseUrls).
 vi.mock('@/lib/aruba/client', async (importActual) => {
   const actual = await importActual<typeof import('@/lib/aruba/client')>()
-  return { ...actual, arubaSignin: vi.fn(), arubaUpload: vi.fn() }
+  return { ...actual, arubaSignin: vi.fn(), arubaUpload: vi.fn(), arubaUltimoNumeroFattura: vi.fn() }
 })
 
 import { emettiFatturaPagamento } from '@/lib/aruba/emissione'
-import { arubaSignin, arubaUpload } from '@/lib/aruba/client'
+import { arubaSignin, arubaUpload, arubaUltimoNumeroFattura } from '@/lib/aruba/client'
 
 const SCUOLA = '11111111-1111-1111-1111-111111111111'
 
@@ -174,5 +174,36 @@ describe('emettiFatturaPagamento', () => {
     }
     const pagUpd = sb._updates.find((u: { table: string }) => u.table === 'pagamenti')
     expect((pagUpd!.row as { fattura_stato: string }).fattura_stato).toBe('scartata')
+  })
+
+  it('IVA 22%: scorpora l\'imponibile e ImportoTotaleDocumento = lordo incassato', async () => {
+    vi.mocked(arubaSignin).mockResolvedValue({ accessToken: 'AT', refreshToken: 'RT', expiresAt: Date.now() + 1e6 })
+    vi.mocked(arubaUpload).mockResolvedValue({ ok: true, uploadFileName: 'IT_iva.xml.p7m', errorCode: '0000' })
+    vi.mocked(arubaUltimoNumeroFattura).mockResolvedValue(0)
+    const sb = makeSupabase({
+      pagamenti: { ...pagamentoSaldato, descrizione: 'Gadget scuola' },
+      admin_settings: { ...settingsConfig, aruba_config: { ...settingsConfig.aruba_config, iva: [{ causale: 'Gadget', aliquota: 22 }] } },
+      parents: parent,
+      rpc: 10,
+    })
+    const esito = await emettiFatturaPagamento(sb as never, 'pag-1', { id: 'staff-1' })
+    expect(esito.ok).toBe(true)
+    const fattura = sb._inserts.find((i: { table: string }) => i.table === 'fatture_emesse')
+    const xml = (fattura!.row as { xml_inviato: string }).xml_inviato
+    // 150 lordo / 1.22 = 122.95 imponibile, imposta 27.05, totale documento 150.00
+    expect(xml).toContain('<ImponibileImporto>122.95</ImponibileImporto>')
+    expect(xml).toContain('<Imposta>27.05</Imposta>')
+    expect(xml).toContain('<ImportoTotaleDocumento>150.00</ImportoTotaleDocumento>')
+  })
+
+  it('allinea il progressivo ad Aruba: interroga l\'ultimo numero prima di numerare', async () => {
+    vi.mocked(arubaSignin).mockResolvedValue({ accessToken: 'AT', refreshToken: 'RT', expiresAt: Date.now() + 1e6 })
+    vi.mocked(arubaUpload).mockResolvedValue({ ok: true, uploadFileName: 'IT_sync.xml.p7m', errorCode: '0000' })
+    vi.mocked(arubaUltimoNumeroFattura).mockResolvedValue(41)
+    const sb = makeSupabase({ pagamenti: pagamentoSaldato, admin_settings: settingsConfig, parents: parent, rpc: 42 })
+    const esito = await emettiFatturaPagamento(sb as never, 'pag-1', { id: 'staff-1' })
+    expect(esito.ok).toBe(true)
+    expect(arubaUltimoNumeroFattura).toHaveBeenCalled()
+    if (esito.ok) expect(esito.numero).toBe(42) // GREATEST(locale, 41)+1 via RPC sync
   })
 })

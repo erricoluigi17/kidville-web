@@ -244,7 +244,7 @@ function PagamentoCard({ p, userId }: { p: Pagamento; userId: string }) {
             <div className="flex items-center justify-between mt-2">
                 <div className="font-maven text-sm">
                     <span className="text-kidville-green font-bold">€ {Number(p.importo).toFixed(2)}</span>
-                    {p.stato === 'parziale' && !isSplit && <span className="text-kidville-muted text-xs ml-2">(resta € {resto.toFixed(2)})</span>}
+                    {(p.stato === 'parziale' || p.stato === 'scaduto') && !isSplit && Number(p.importo_pagato) > 0 && <span className="text-kidville-muted text-xs ml-2">(resta € {resto.toFixed(2)})</span>}
                 </div>
                 {fatturaPronta ? (
                     <FatturaLinks pagamentoId={p.id} userId={userId} />

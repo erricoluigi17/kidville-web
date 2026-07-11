@@ -173,9 +173,17 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     const { data, error } = await supabase.from('pagamenti').update(updates).eq('id', id).select(SELECT).single()
     if (error) return NextResponse.json({ error: 'Errore aggiornamento', details: error.message }, { status: 500 })
 
-    // se è cambiato l'importo, ricalcola lo stato dal ledger
-    if (updates.importo !== undefined) {
-      await supabase.rpc('ricalcola_stato_pagamento', { p_id: id }).then(() => {}, () => {})
+    // se è cambiato l'importo O la scadenza, ricalcola lo stato dal ledger.
+    // Spostare la scadenza al futuro pulisce la morosità (scaduto -> parziale/da_pagare);
+    // riportarla al passato la ripristina. Tipo-aware: un 'padre' aggrega dalle rate,
+    // gli altri ricalcolano dal proprio ledger incassi (cascata al padre se rata).
+    if (updates.importo !== undefined || updates.scadenza !== undefined) {
+      const tipo = (data as { tipo?: string } | null)?.tipo
+      if (tipo === 'padre') {
+        await supabase.rpc('ricalcola_stato_padre', { p_parent: id }).then(() => {}, () => {})
+      } else {
+        await supabase.rpc('ricalcola_stato_pagamento', { p_id: id }).then(() => {}, () => {})
+      }
     }
 
     return NextResponse.json({ success: true, data })

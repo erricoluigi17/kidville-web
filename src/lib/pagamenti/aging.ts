@@ -29,6 +29,20 @@ export function residuoDi(p: AgingPagamento): number {
     return Number(p.importo) - Number(p.importo_pagato || 0)
 }
 
+/**
+ * Un pagamento è "moroso" se ha residuo > 0 e o è già `scaduto` (stato scritto
+ * dal trigger/backfill) o la scadenza è nel passato (ramo DATE-aware: il
+ * passaggio da_pagare→scaduto avviene solo via cron `genera_solleciti`, non via
+ * trigger, quindi senza questo ramo l'allarme rosso comparirebbe in ritardo).
+ * I contenitori 'padre' non sono mai morosi in sé: lo sono le rate figlie.
+ */
+export function isMoroso(p: AgingPagamento, oggi: string): boolean {
+    if (p.tipo === 'padre') return false
+    if (residuoDi(p) <= 0) return false
+    if (p.stato === 'scaduto') return true
+    return !!p.scadenza && p.scadenza.slice(0, 10) < oggi
+}
+
 export function bucketDiPagamento(p: AgingPagamento, oggi: string): AgingBucketId | null {
     if (p.tipo === 'padre') return null
     if (!STATI_APERTI.has(p.stato)) return null

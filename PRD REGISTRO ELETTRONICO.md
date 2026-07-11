@@ -21,7 +21,8 @@
 > | `valutazioni` | Voti e giudizi (Primaria) | Schema creato, non ancora popolato |
 > | `galleria_media` | Foto/Video con privacy tagging | Schema creato, non ancora popolato |
 > | `armadietto` | Inventario materiali a scalare | Schema creato, non ancora popolato |
-> | `ticket_mensa` | Saldo ticket pasto prepagato | Schema creato, non ancora popolato |
+> | `ticket_mensa` | Saldo ticket pasto prepagato (running int per alunno) | Schema creato, non ancora popolato |
+> | `mensa_ticket_movimenti` | Ledger movimenti ticket (ricarica/consumo/disdetta/rettifica + `saldo_dopo`) — storico e morosità | ✅ RLS + policy service_role |
 > | `pagamenti` | Scadenziario rette e quote | Schema creato, non ancora popolato |
 >
 > ### Moduli Implementati
@@ -51,6 +52,35 @@
 > | **Libretto web giustificazioni** | 🔶 Parziale | Fase 2 | Esiste preavviso assenza; manca giustificazione online con PIN dispositivo |
 > | **Interoperabilità SIDI / Piattaforma Unica** | ✅ Implementato (P5, DL-047..050) · 🔶 egress gated | Fase P5 | Import ZIP (parser pluggable), Fase A, frequentanti, genitori-alunni, certificati competenze D.M. 14/2024 + indicatore sync. **Trasmissione reale subordinata all'accreditamento ministeriale** |
 > | **Accessibilità AgID / Legge Stanca** | 🔶 Baseline (P1, DL-008) | Trasversale | Fatto: alto contrasto globale persistito, focus-ring, reduced-motion, Modal accessibile, landmark/skip-link/aria-current, smoke jest-axe. WCAG-AA = definition-of-done; audit AA per-pagina incrementale |
+
+---
+
+## 🗓️ Changelog — Login: redesign grafico identico al mockup 2026-07-11 (branch `feat/fix-contabilita-merchandise`)
+
+Riscrittura della sola grafica di `/auth/login` (`src/app/auth/login/page.tsx`) per renderla **identica al mockup fornito** (`~/Downloads/image.webp`): sfondo crema con blob d'angolo (teal in alto-destra, teal+giallo in basso) e doodle outline tenui (stella/nuvola/casa/cerchio/blocco), wordmark **Kidville** grande, **mascotte a figura intera su fondo trasparente** (non più nel cerchio giallo), card bianca a bottom-sheet con "Benvenuto!" / "Accedi al tuo account Kidville", campi Email/Password con icone inline (busta/lucchetto + occhio show-hide), "Password dimenticata?" e bottone "Accedi". **La logica di autenticazione è invariata** (smistamento per ruolo M4B.3, picker multi-profilo, alto contrasto, degrado graceful, anti open-redirect). Gate tutti verdi: **eslint 0 · tsc 0 · vitest 1050/1050 · build ok**; reso verificato via screenshot Playwright a viewport telefono (match col mockup).
+
+- **Asset**: nuova mascotte trasparente `public/mascot-hero.png` prodotta con la pipeline gstack→**Higgsfield** (`remove_background` su `public/mascot.png`; il chroma-key semplice non era praticabile perché sash/cappello/cravatta sono gialli come lo sfondo). `public/mascot.png` (fondo giallo) resta invariata per le altre pagine. Nuovo logo ritagliato `public/logo-kidville.png` (trim dei margini trasparenti di `logo_green.png`, così il wordmark risulta grande come nel mockup).
+- **Icone**: `lucide-react` (`Mail`/`Lock`/`Eye`/`EyeOff`) — nessun asset raster per le icone.
+- **Decisioni prodotto** (confermate dall'utente): l'app è ad accesso **solo su invito**, quindi il link "Registrati" del mockup è **omesso**; resta solo "Password dimenticata?" che rivela inline il messaggio "Contatta la Segreteria: riemette le credenziali via email". La nota "Accesso riservato — solo su invito della Segreteria" è mantenuta in piccolo sotto il form.
+- **Copy/test**: il bottone submit passa da "Entra" a **"Accedi"** (fedeltà al mockup); aggiornati i 4 riferimenti nei test che lo cercavano (`e2e/fixtures.ts`, `e2e/auth.spec.ts`, `e2e/primaria-360/auth.setup.ts`, `__tests__/components/login-smistamento.test.tsx`). Preservati intatti tutti gli altri selettori load-bearing: `#email`/`#password`, label "Email"/"Password", alert `role="alert"` con "Credenziali non valide", picker `role="group"` "Scelta del ruolo", toggle "alto contrasto" (`aria-pressed`), zero violazioni jest-axe.
+- **Font**: heading in Maven Pro (già a brand, tondeggiante) invece di Barlow Condensed — unica differenza non pixel-identica dal mockup; nessun webfont nuovo introdotto.
+
+**Pendente**: commit (solo i file del login, il working tree è misto con lo scadenziario) e deploy, su richiesta utente.
+
+---
+
+## 🗓️ Changelog — Scadenziario: visuale unificata, morosità con acconto, ticket mensa 2026-07-11 (branch `feat/fix-contabilita-merchandise`)
+
+Cinque interventi sullo scadenziario contabilità (`/admin/pagamenti`) e sui ticket mensa. Gate tutti verdi: **eslint 0 · tsc 0 · vitest 1050/1050 · build ok**.
+
+- **A — Visuale unificata a tutte le categorie** (`PaymentsDashboard.tsx`): la "vista retta" (tabella con allarme rosso sui morosi + dettagli espandibili nel `PagamentoDrawer`) è ora applicata a **tutte** le categorie non-retta, che prima erano una semplice griglia di card senza stato/scadenza né morosità. Nuova tabella 1-riga-per-pagamento (Alunno/Descrizione/Scadenza/Importo/Acconto/Stato/Azioni), riga rossa sui morosi, chip "Acconto € X", azioni Incassa/Dettagli/Rateizza/Modifica + selettore "Nuovo acquisto". Il filtro **"Morosi"** è ora disponibile in ogni categoria (prima solo retta).
+- **B — Acconto che NON azzera la morosità** (migr `20260711170000`): `ricalcola_stato_pagamento`/`ricalcola_stato_padre` riordinate — un pagamento **scaduto e non saldato resta `scaduto` (moroso) anche con un acconto** (prima l'acconto lo declassava a `parziale`, facendolo sparire dai morosi). Vale per **ogni** tipo di pagamento (singolo/rata/split/padre). Il padre usa `MIN(scadenza) FILTER (importo_pagato < importo)` per non falsare i piani con rate scadute già saldate. Backfill idempotente dei record esistenti. Nuovo helper condiviso `isMoroso(p, oggi)` date-aware (allarme rosso immediato, senza attendere il cron solleciti).
+- **B (sblocco)** — la Segreteria pulisce la morosità **spostando la scadenza** del singolo pagamento: `PATCH /api/pagamenti/[id]` ora ricalcola lo stato anche al cambio `scadenza` (prima solo al cambio importo), tipo-aware (padre→aggregato). Lato genitore (`StoricoPagamenti`) l'acconto/residuo resta visibile ("(resta € X)") anche sugli scaduti.
+- **C — Animazione di conferma ticket mensa** (`TicketMensaPanel.tsx`): spunta animata `SaveCheck` (idiom cockpit) dopo ogni ricarica, con `key` che la ri-anima a ogni operazione ripetuta.
+- **D — Storico ticket per-alunno su ledger dedicato** (migr `20260711180000`): nuova tabella `mensa_ticket_movimenti` (ricarica/consumo/disdetta/rettifica + `saldo_dopo`), scritta going-forward da ricarica (`/api/pagamenti/ticket`) e prenotazioni (`/api/mensa/prenotazioni` POST/DELETE) in best-effort (il saldo `ticket_mensa` resta autoritativo), con backfill idempotente + riconciliazione di apertura. Nuovo `GET /api/pagamenti/ticket/storico` (staff, `requireStaff`+scope) mostra, cliccando l'alunno, tutti i ticket acquistati (con metodo/stato, "Gratuita" se costo 0) e i consumi/disdette.
+- **E — Morosità ticket (saldo negativo)** (`GET /api/pagamenti/ticket/morosi`, scoping `resolveScuoleAttive` + join `!inner` su alunni): banner rosso in cima al pannello ticket con gli alunni a saldo negativo, cliccabili per aprirne saldo+storico.
+
+**Pendente (su richiesta utente)**: applicazione a prod delle 2 migrazioni (`20260711170000`, `20260711180000`) + verifica advisor, poi PR→`main` e deploy. Fino ad allora la app degrada in modo graceful (storico vuoto, ledger non scritto) senza rompersi.
 
 ---
 

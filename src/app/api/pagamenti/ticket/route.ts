@@ -31,7 +31,7 @@ export async function GET(request: Request) {
     const alunnoId = q.data.alunno_id
 
     const supabase = await createAdminClient()
-    const isStaff = user.role === 'admin' || user.role === 'coordinator'
+    const isStaff = user.role === 'admin' || user.role === 'coordinator' || user.role === 'segreteria'
     if (!isStaff) {
       const { data: legame } = await supabase
         .from('legame_genitori_alunni').select('alunno_id')
@@ -105,6 +105,13 @@ export async function POST(request: Request) {
         note: 'Ricarica ticket mensa', registrato_da: user.id,
       })
     }
+
+    // 5) movimento sul ledger ticket (best-effort: il saldo resta autoritativo)
+    const { error: mErr } = await supabase.from('mensa_ticket_movimenti').insert({
+      alunno_id, scuola_id: scuolaId, tipo: 'ricarica', delta: Number(pezzi),
+      saldo_dopo: nuovoSaldo, pagamento_id: pag.id, origine: 'segreteria', creato_da: user.id,
+    })
+    if (mErr) console.error('ticket: movimento ledger non registrato:', mErr.message)
 
     return NextResponse.json({ success: true, data: { saldo_ticket: nuovoSaldo, pagamento_id: pag.id } }, { status: 201 })
   } catch (err) {

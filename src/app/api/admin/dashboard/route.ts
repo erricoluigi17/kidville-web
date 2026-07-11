@@ -58,11 +58,15 @@ export async function GET(request: NextRequest) {
       .select('id, classe_sezione, stato')
       .in('scuola_id', sedi)
       .eq('stato', 'iscritto'),
-    // Pagamenti scaduti (non saldati con scadenza passata) + dato per gli alert
+    // Pagamenti scaduti (non saldati con scadenza passata) + dato per gli alert.
+    // Esclude i contenitori rateali 'padre' (gli incassi stanno sulle rate figlie:
+    // contarlo raddoppierebbe residuo/conteggio/alert), coerente con
+    // calcolaTotaliPagamenti/aging/export/solleciti.
     supabase
       .from('pagamenti')
       .select('id, importo, importo_pagato, scadenza, stato, alunni ( nome, cognome )')
       .in('scuola_id', sedi)
+      .neq('tipo', 'padre')
       .neq('stato', 'pagato')
       .lt('scadenza', today)
       .order('scadenza', { ascending: true }),

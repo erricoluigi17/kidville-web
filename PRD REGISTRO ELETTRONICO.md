@@ -55,6 +55,13 @@
 
 ---
 
+## 🗓️ Changelog — Fix status bar iOS (viewport-fit statico) + hero con mascotte grande 2026-07-12 (branch `feat/login-design-fidelity`)
+
+- **AppBar sotto la status bar iOS (tutte le pagine)**: il `viewport-fit=cover` era aggiunto a runtime dalla shell nativa ma veniva perso quando Next riconcilia i meta del `<head>` → `env(safe-area-inset-*)` restava 0 e la barra verde finiva sotto l'orologio. Ora è **dichiarato staticamente** (`export const viewport` nel root layout). `--kv-appbar-h` spostata da inline style a `globals.css` così l'override `.cap-native` (`calc(58px + env())`) vince: ClasseShell sticky, `calc()` della chat e fallback Suspense seguono l'altezza reale della barra. Verificato con simulazione inset 59px. **Da ricontrollare sul dispositivo/simulatore dopo il rebuild** (`npx cap sync ios`).
+- **Hero delle home (mockup utente)**: mascotte **trasparente** `mascot-hero.png` grande (178px su card 160) ancorata in basso a destra, **il cappello scavalca il bordo alto della card**; eliminata la cucitura dello sfondo giallo opaco di `mascot.png`; testo al 60%.
+
+---
+
 ## 🗓️ Changelog — Chat sul design export + adattamento a ogni viewport mobile 2026-07-12 (branch `feat/login-design-fidelity`)
 
 Secondo passaggio del re-skin: **interno della chat** portato al design export (componenti condivisi docente/genitore) e **audit responsive automatico** su tutta l'app mobile. Gate verdi: **eslint 0 · vitest 1051/1051 · build ok**.

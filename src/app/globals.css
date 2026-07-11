@@ -89,6 +89,17 @@ body {
 .cap-native body {
   padding-top: env(safe-area-inset-top);
 }
+/* AppBar persistente (teacher/parent): la barra verde deve dipingere SOTTO il
+   notch e lo sticky non deve infilarsi sotto il testo della status bar. Il
+   margine negativo annulla il padding-top del body SOLO nelle shell che hanno
+   la barra ([data-kv-shell]); il padding rientra dentro la barra stessa.
+   Nel browser web env() = 0 → nessun effetto. */
+.cap-native [data-kv-shell] {
+  margin-top: calc(-1 * env(safe-area-inset-top));
+}
+.cap-native [data-kv-shell] .kv-appbar {
+  padding-top: env(safe-area-inset-top);
+}
 
 /* =============================================================================
    Cockpit Direzione/Segreteria — la cornice persistente (sidebar) non deve MAI

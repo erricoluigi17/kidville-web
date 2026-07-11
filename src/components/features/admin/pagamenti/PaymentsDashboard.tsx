@@ -11,7 +11,7 @@ import { SospensioneToggle } from './SospensioneToggle';
 import { QuickAcquistoModal } from './QuickAcquistoModal';
 import { ModificaPagamentoModal } from './ModificaPagamentoModal';
 import { RateizzaModal } from './RateizzaModal';
-import { STATI_PAGAMENTO as STATI } from './stati';
+import { STATI_PAGAMENTO as STATI, calcolaTotaliPagamenti } from './stati';
 import { AgendaScadenze } from './AgendaScadenze';
 import { AGING_LABEL, bucketScadenze, type AgingBucketId } from '@/lib/pagamenti/aging';
 import { Badge } from '@/components/ui/Badge';
@@ -150,22 +150,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
         });
     }, [alunni, search, isRettaView, onlyMorosi, rettaByAlunno]);
 
-    const totals = useMemo(() => {
-        let incassato = 0, daIncassare = 0, scaduto = 0, daFatturare = 0, nDaFatturare = 0;
-        for (const p of pagamenti) {
-            incassato += Number(p.importo_pagato || 0);
-            const resto = Number(p.importo) - Number(p.importo_pagato || 0);
-            if (resto > 0) daIncassare += resto;
-            if (p.stato === 'scaduto') scaduto += resto;
-            // "Da fatturare": saldati senza fattura. I contenitori padre non si
-            // fatturano (si fatturano le rate), quindi restano fuori dal conto.
-            if (p.stato === 'pagato' && p.tipo !== 'padre' && (!p.fattura_stato || p.fattura_stato === 'non_richiesta')) {
-                daFatturare += Number(p.importo);
-                nDaFatturare += 1;
-            }
-        }
-        return { incassato, daIncassare, scaduto, daFatturare, nDaFatturare };
-    }, [pagamenti]);
+    const totals = useMemo(() => calcolaTotaliPagamenti(pagamenti), [pagamenti]);
 
     // genera la retta del mese selezionato (per chi non ce l'ha ancora)
     const generaMese = async () => {

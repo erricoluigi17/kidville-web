@@ -11,7 +11,7 @@ import { puoTransire, sincronizzaTestata, STATI_RIGA, type StatoRiga } from '@/l
 // PATCH /api/admin/merch/righe — transizione manuale di una singola riga (fallback
 // alle azioni dedicate: check-in/consegna/evasione). Enforce la macchina a stati.
 
-const SCHEMA_MANCANTE = new Set(['42P01', '42703', 'PGRST204', 'PGRST205'])
+const SCHEMA_MANCANTE = new Set(['42P01', '42703', 'PGRST200', 'PGRST204', 'PGRST205'])
 const bodySchema = z.object({
   riga_id: zUuid,
   stato: z.enum(STATI_RIGA),

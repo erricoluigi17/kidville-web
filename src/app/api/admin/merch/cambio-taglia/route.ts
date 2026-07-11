@@ -13,7 +13,7 @@ import { sincronizzaTestata } from '@/lib/merch/stati'
 // aggiuntivo, stato da_ordinare) sullo stesso ordine. Con reso_a_stock, il capo
 // restituito rientra a magazzino (rettifica +qty sulla taglia originale).
 
-const SCHEMA_MANCANTE = new Set(['42P01', '42703', 'PGRST204', 'PGRST205'])
+const SCHEMA_MANCANTE = new Set(['42P01', '42703', 'PGRST200', 'PGRST204', 'PGRST205'])
 const CAMPI_RIGA_NUOVI = ['stato', 'origine'] as const
 const uno = <T>(v: T | T[] | null | undefined): T | null => (Array.isArray(v) ? (v[0] ?? null) : (v ?? null))
 
@@ -35,12 +35,12 @@ export async function POST(request: Request) {
     const plessi = await scuoleDiUtente(supabase, auth.user)
 
     type R = {
-      id: string; articolo_id: string | null; articolo_nome: string; taglia: string | null; quantita: number; ordine_id: string
+      id: string; stato: string; articolo_id: string | null; articolo_nome: string; taglia: string | null; quantita: number; ordine_id: string
       ordine: { scuola_id?: string | null } | { scuola_id?: string | null }[] | null
     }
     const { data: rigaRaw, error } = await supabase
       .from('divise_ordini_righe')
-      .select('id, articolo_id, articolo_nome, taglia, quantita, ordine_id, ordine:ordine_id ( scuola_id )')
+      .select('id, stato, articolo_id, articolo_nome, taglia, quantita, ordine_id, ordine:ordine_id ( scuola_id )')
       .eq('id', riga_id)
       .maybeSingle()
     if (error && SCHEMA_MANCANTE.has(error.code ?? '')) {
@@ -82,8 +82,17 @@ export async function POST(request: Request) {
     }
     if (ins.error || !ins.data) return NextResponse.json({ error: ins.error?.message ?? 'Creazione riga fallita' }, { status: 500 })
 
-    // Reso a magazzino (facoltativo): il capo restituito rientra a stock.
-    if (reso_a_stock) {
+    // Semantica del cambio taglia (evita doppioni e stock fantasma):
+    //  • PRE-consegna (da_ordinare/ordinato/arrivato) = correzione: la riga
+    //    sbagliata va ANNULLATA (l'annullo rilascia da solo l'eventuale
+    //    allocazione da magazzino, per la formula giacenze). Nessuna rettifica.
+    //  • POST-consegna (consegnato) = scambio: la riga resta a storico; con
+    //    reso_a_stock il capo fisico restituito rientra a magazzino (+qty).
+    const consegnato = riga.stato === 'consegnato'
+    let resoApplicato = false
+    if (!consegnato) {
+      await supabase.from('divise_ordini_righe').update({ stato: 'annullato' }).eq('id', riga_id)
+    } else if (reso_a_stock) {
       await supabase.from('merch_rettifiche').insert({
         scuola_id: scuolaId,
         articolo_id: riga.articolo_id,
@@ -94,6 +103,7 @@ export async function POST(request: Request) {
         nota: `Cambio taglia ${riga.taglia || '—'} → ${nuova_taglia}`,
         creato_da: auth.user.id,
       })
+      resoApplicato = true
     }
 
     await sincronizzaTestata(supabase, riga.ordine_id)
@@ -104,10 +114,10 @@ export async function POST(request: Request) {
       entitaId: ins.data.id as string,
       azione: 'insert',
       scuolaId,
-      valoreDopo: { cambio_taglia: { da: riga.taglia, a: nuova_taglia, reso_a_stock: !!reso_a_stock } },
+      valoreDopo: { cambio_taglia: { da: riga.taglia, a: nuova_taglia, stato_originale: riga.stato, annullata_originale: !consegnato, reso_a_stock: resoApplicato } },
     })
 
-    return NextResponse.json({ success: true, data: { nuova_riga_id: ins.data.id, reso: !!reso_a_stock } }, { status: 201 })
+    return NextResponse.json({ success: true, data: { nuova_riga_id: ins.data.id, reso: resoApplicato, annullata_originale: !consegnato } }, { status: 201 })
   } catch (err) {
     console.error('Errore API POST merch/cambio-taglia:', err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })

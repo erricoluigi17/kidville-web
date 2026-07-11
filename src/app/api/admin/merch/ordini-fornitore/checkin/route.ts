@@ -14,7 +14,7 @@ import { notificaMerchArrivato } from '@/lib/merch/notify'
 // le righe indicate passano 'ordinato' → 'arrivato'. Un PO viene chiuso quando
 // TUTTE le sue righe non annullate sono arrivate/consegnate. Notifica ai genitori.
 
-const SCHEMA_MANCANTE = new Set(['42P01', '42703', 'PGRST204', 'PGRST205'])
+const SCHEMA_MANCANTE = new Set(['42P01', '42703', 'PGRST200', 'PGRST204', 'PGRST205'])
 
 const bodySchema = z.object({
   righe_ids: z.array(zUuid).min(1, 'Seleziona almeno una riga'),
@@ -68,7 +68,8 @@ export async function POST(request: Request) {
     }
 
     const now = new Date().toISOString()
-    const { error: updErr } = await supabase.from('divise_ordini_righe').update({ stato: 'arrivato', arrivato_il: now }).in('id', righe_ids)
+    // guard ottimistico: aggiorna SOLO le righe ancora 'ordinato' (anti-race)
+    const { error: updErr } = await supabase.from('divise_ordini_righe').update({ stato: 'arrivato', arrivato_il: now }).in('id', righe_ids).eq('stato', 'ordinato')
     if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 })
 
     // Chiudi i PO completi + sincronizza testate.

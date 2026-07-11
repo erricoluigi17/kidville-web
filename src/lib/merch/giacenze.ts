@@ -77,7 +77,7 @@ export function disponibileDi(cells: GiacenzaCell[], articoloId: string | null, 
   return c ? c.disponibile : 0
 }
 
-const SCHEMA_MANCANTE = new Set(['42P01', '42703', 'PGRST204', 'PGRST205'])
+const SCHEMA_MANCANTE = new Set(['42P01', '42703', 'PGRST200', 'PGRST204', 'PGRST205'])
 const uno = <T>(v: T | T[] | null | undefined): T | null => (Array.isArray(v) ? (v[0] ?? null) : (v ?? null))
 
 /**

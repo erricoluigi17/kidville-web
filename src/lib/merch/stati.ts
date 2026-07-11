@@ -59,7 +59,7 @@ export function derivaStatoTestata(statiRiga: StatoRiga[]): StatoTestata {
   return 'inviato'
 }
 
-const SCHEMA_MANCANTE = new Set(['42P01', '42703', 'PGRST204', 'PGRST205'])
+const SCHEMA_MANCANTE = new Set(['42P01', '42703', 'PGRST200', 'PGRST204', 'PGRST205'])
 
 /**
  * Ricalcola e sincronizza lo stato della testata `divise_ordini.stato` dagli

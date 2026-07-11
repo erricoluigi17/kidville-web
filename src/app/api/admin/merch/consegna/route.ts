@@ -13,7 +13,7 @@ import { notificaMerchConsegnato } from '@/lib/merch/notify'
 // (arrivato → consegnato). Restituisce l'eventuale warning "pagamento non
 // saldato" per ordine (NON bloccante). Notifica i genitori.
 
-const SCHEMA_MANCANTE = new Set(['42P01', '42703', 'PGRST204', 'PGRST205'])
+const SCHEMA_MANCANTE = new Set(['42P01', '42703', 'PGRST200', 'PGRST204', 'PGRST205'])
 const bodySchema = z.object({ righe_ids: z.array(zUuid).min(1, 'Seleziona almeno una riga') })
 const uno = <T>(v: T | T[] | null | undefined): T | null => (Array.isArray(v) ? (v[0] ?? null) : (v ?? null))
 
@@ -53,10 +53,12 @@ export async function POST(request: Request) {
     }
 
     const now = new Date().toISOString()
+    // guard ottimistico: consegna SOLO le righe ancora 'arrivato' (anti-race)
     const { error: updErr } = await supabase
       .from('divise_ordini_righe')
       .update({ stato: 'consegnato', consegnato_il: now, consegnato_da: auth.user.id })
       .in('id', righe_ids)
+      .eq('stato', 'arrivato')
     if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 })
 
     await Promise.all([...new Set(righe.map((r) => r.ordine_id))].map((id) => sincronizzaTestata(supabase, id)))

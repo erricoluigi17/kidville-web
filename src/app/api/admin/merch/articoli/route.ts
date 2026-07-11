@@ -14,7 +14,7 @@ import { zUuid } from '@/lib/validation/common'
 // è migrato (DB e2e CI): SELECT 42703 → colonne base; INSERT/UPDATE PGRST204 →
 // record legacy senza i campi nuovi.
 
-const SCHEMA_MANCANTE = new Set(['42P01', '42703', 'PGRST204', 'PGRST205'])
+const SCHEMA_MANCANTE = new Set(['42P01', '42703', 'PGRST200', 'PGRST204', 'PGRST205'])
 const FULL_COLS = 'id, scuola_id, nome, descrizione, taglie, prezzo, attivo, ordine, categoria, fornitore_id, prezzo_acquisto, created_at'
 const BASE_COLS = 'id, scuola_id, nome, descrizione, taglie, prezzo, attivo, ordine, created_at'
 const CAMPI_NUOVI = ['categoria', 'fornitore_id', 'prezzo_acquisto'] as const

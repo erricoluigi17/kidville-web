@@ -9,7 +9,7 @@ import { parseQuery } from '@/lib/validation/http'
 // GET /api/admin/merch/export — XLSX flat delle righe Merchandise (una riga per
 // riga d'ordine) per segreteria/magazzino. Degrada a foglio vuoto su DB non migrato.
 
-const SCHEMA_MANCANTE = new Set(['42P01', '42703', 'PGRST204', 'PGRST205'])
+const SCHEMA_MANCANTE = new Set(['42P01', '42703', 'PGRST200', 'PGRST204', 'PGRST205'])
 const getQuerySchema = z.object({})
 const uno = <T>(v: T | T[] | null | undefined): T | null => (Array.isArray(v) ? (v[0] ?? null) : (v ?? null))
 

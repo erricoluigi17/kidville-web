@@ -12,7 +12,7 @@ import { caricaGiacenze } from '@/lib/merch/giacenze'
 // POST /api/admin/merch/giacenze — rettifica di magazzino (carico/reso/scarico/…).
 // Service-role + scoping + audit; degrada su DB non migrato.
 
-const SCHEMA_MANCANTE = new Set(['42P01', '42703', 'PGRST204', 'PGRST205'])
+const SCHEMA_MANCANTE = new Set(['42P01', '42703', 'PGRST200', 'PGRST204', 'PGRST205'])
 const getQuerySchema = z.object({})
 
 const postBodySchema = z.object({

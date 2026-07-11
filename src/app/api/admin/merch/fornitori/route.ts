@@ -11,7 +11,7 @@ import { zUuid } from '@/lib/validation/common'
 // Service-role + scoping per plesso + audit. GET degrada a lista vuota dove la
 // tabella non esiste (DB e2e CI non migrato).
 
-const SCHEMA_MANCANTE = new Set(['42P01', '42703', 'PGRST204', 'PGRST205'])
+const SCHEMA_MANCANTE = new Set(['42P01', '42703', 'PGRST200', 'PGRST204', 'PGRST205'])
 const COLS = 'id, scuola_id, nome, referente, email, telefono, piva, indirizzo, note, attivo, creato_il'
 
 const getQuerySchema = z.object({})

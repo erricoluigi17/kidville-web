@@ -15,7 +15,7 @@ import { derivaStatoTestata } from '@/lib/merch/stati'
 // stato logistico proprio (default da_ordinare); la testata resta nel vocabolario
 // legacy ed è derivata. Service-role + scoping + audit; degrade su DB non migrato.
 
-const SCHEMA_MANCANTE = new Set(['42P01', '42703', 'PGRST204', 'PGRST205'])
+const SCHEMA_MANCANTE = new Set(['42P01', '42703', 'PGRST200', 'PGRST204', 'PGRST205'])
 const RIGHE_FULL = 'id, articolo_id, articolo_nome, taglia, quantita, prezzo_unitario, stato, origine, ordine_fornitore_id, ordinato_il, arrivato_il, consegnato_il, nota'
 const RIGHE_BASE = 'id, articolo_id, articolo_nome, taglia, quantita, prezzo_unitario'
 const CAMPI_RIGA_NUOVI = ['stato', 'origine'] as const
@@ -209,6 +209,9 @@ export async function POST(request: Request) {
       .select('id')
       .single()
     if (pagErr || !pagamento) {
+      // rollback best-effort: senza addebito l'ordine non deve restare orfano
+      await supabase.from('divise_ordini_righe').delete().eq('ordine_id', ordine.id)
+      await supabase.from('divise_ordini').delete().eq('id', ordine.id)
       return NextResponse.json({ error: pagErr?.message ?? 'Addebito non creato' }, { status: 500 })
     }
 

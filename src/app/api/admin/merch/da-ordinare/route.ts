@@ -12,7 +12,7 @@ const getQuerySchema = z.object({}) // nessun parametro: aggrega tutto il "da or
 // generare un ordine d'acquisto. Bucket "Senza fornitore" per gli articoli senza
 // fornitore associato. Degrada a lista vuota dove il DB non è migrato.
 
-const SCHEMA_MANCANTE = new Set(['42P01', '42703', 'PGRST204', 'PGRST205'])
+const SCHEMA_MANCANTE = new Set(['42P01', '42703', 'PGRST200', 'PGRST204', 'PGRST205'])
 
 type Riga = {
   id: string

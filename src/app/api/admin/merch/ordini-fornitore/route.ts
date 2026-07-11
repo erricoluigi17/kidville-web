@@ -17,7 +17,7 @@ import { sincronizzaTestata } from '@/lib/merch/stati'
 //  PATCH { id, stato:'annullato' } → annulla il PO; le righe tornano da_ordinare.
 // Service-role + scoping + audit; degrada su DB non migrato.
 
-const SCHEMA_MANCANTE = new Set(['42P01', '42703', 'PGRST204', 'PGRST205'])
+const SCHEMA_MANCANTE = new Set(['42P01', '42703', 'PGRST200', 'PGRST204', 'PGRST205'])
 
 const postBodySchema = z.object({
   fornitore_id: zUuid.nullish(),
@@ -122,12 +122,13 @@ export async function POST(request: Request) {
       po = { id: poRow.id as string, numero: poRow.numero as string }
     }
 
-    // Marca le righe ordinato + collega al PO.
+    // Marca le righe ordinato + collega al PO (guard: solo quelle ancora da_ordinare).
     const now = new Date().toISOString()
     const { error: updErr } = await supabase
       .from('divise_ordini_righe')
       .update({ stato: 'ordinato', ordine_fornitore_id: po?.id ?? null, ordinato_il: now })
       .in('id', righe_ids)
+      .eq('stato', 'da_ordinare')
     if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 })
 
     await syncTestate(supabase, righe.map((r) => r.ordine_id))

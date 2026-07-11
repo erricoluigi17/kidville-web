@@ -91,6 +91,33 @@ Redesign completo della sezione **Contabilità** (`/admin/pagamenti`, etichetta 
 
 ---
 
+## 🗓️ Changelog — Merchandise: da "Divise" a gestione completa (Fase B) 2026-07-11 (branch `feat/contabilita-merchandise`)
+
+Il modulo minimale **Divise** diventa **Merchandise** (`/admin/merchandise`): catalogo multi-categoria, anagrafica fornitori, ordini creati dalla segreteria, ciclo logistico per riga, ordini d'acquisto (PO) numerati con PDF, giacenze automatiche, consegne con notifica ai genitori. 8 step committati (B1-B8), TDD. Piano in `~/.claude/plans/dobbiamo-rendere-la-sezione-zippy-simon.md`. **Decisioni utente vincolanti**: ordini SOLO dalla segreteria (il genitore vede l'addebito in Contabilità, niente più shop lato genitore), giacenze AUTOMATICHE, stato logistico PER RIGA, un PDF d'ordine PER FORNITORE.
+
+### DB (B1) — migrazione `20260711120000_merchandise` (idempotente, 5ª del branch, DA APPLICARE a prod)
+- Tabelle legacy `divise_*` **NON rinominate** (nessuna rottura su `intestatari.ts`/baseline/dati prod). Nuove: **`merch_fornitori`** (anagrafica per scuola), **`merch_ordini_fornitore`** (PO, uno per fornitore, `numero` UNIQUE per scuola) + **`merch_po_numerazione`** + RPC **`prossimo_numero_po`** (pattern fatture/ricevute, `service_role`), **`merch_rettifiche`** (movimenti magazzino → giacenza automatica).
+- `divise_articoli` += `categoria` (divisa/materiale/libri/gadget/altro), `fornitore_id`, `prezzo_acquisto`. `divise_ordini_righe` += **stato logistico PER RIGA** (da_ordinare/ordinato/arrivato/consegnato/annullato) + `origine` (fornitore/magazzino) + `ordine_fornitore_id` + `ordinato_il/arrivato_il/consegnato_il/consegnato_da` + `nota`; **backfill** degli stati dallo stato legacy della testata. RLS deny-by-default + policy `service_role` su ogni tabella nuova.
+
+### API (B2-B5, B8) — tutte sotto `/api/admin/merch/**`, requireStaff + zod + scoping + audit + degrade
+- **Move** delle 2 route admin (`divise/{articoli,ordini}` → `merch/{articoli,ordini}`); catalogo esteso con degrade (SELECT 42703 → colonne base, INSERT/UPDATE PGRST204 → record legacy).
+- **`fornitori`** CRUD; **`ordini`** POST creazione segreteria (`assertAlunnoInScope`, prezzi/snapshot **server-side**, taglia obbligatoria SOLO se l'articolo ha taglie — fix del bug latente, `parent_id NULL`, pagamento `da_pagare` categoria `divisa` con descrizione "Merchandise: …") + GET filtri `stato_riga`/`q` + embed pagamento.
+- **`da-ordinare`** (aggregato per fornitore: matrice articolo×taglia×qty + righe_ids, bucket "Senza fornitore"); **`ordini-fornitore`** (POST genera PO **PO-AAAA-NNN** + marca `ordinato`, o marca senza PO; GET; PATCH annulla → righe tornano `da_ordinare`); **`ordini-fornitore/pdf`** (PDF ristampabile, committente da fiscale/aruba config); **`ordini-fornitore/checkin`** (arrivi anche parziali, chiude il PO quando completo, **notifica genitori "arrivato"**).
+- **Giacenze automatiche** (`src/lib/merch/giacenze.ts`, formula pura `disponibile = Σ rettifiche − Σ righe magazzino arrivato/consegnato`): `giacenze` GET matrice+storico / POST rettifica; **`evadi-magazzino`** (`da_ordinare→arrivato` origine=magazzino, **409 se stock insufficiente**); **`consegna`** (`arrivato→consegnato`, **warning "non pagato" NON bloccante**, notifica genitori); **`righe`** PATCH transizione manuale (macchina a stati enforced); **`export`** XLSX flat; **`cambio-taglia`** (nuova riga a prezzo 0 `da_ordinare` + reso a stock opzionale).
+- Macchina a stati `src/lib/merch/stati.ts` (`puoTransire`, `derivaStatoTestata` → sincronizza il campo legacy `divise_ordini.stato`, `poCompleto`); notifiche `src/lib/merch/notify.ts` (via `enqueueNotifiche`, link a `/parent/pagamenti`); PDF `src/lib/merch/pdf.ts`.
+
+### UI & pulizia lato genitore (B6-B7)
+- Pagina cockpit **`/admin/merchandise`** (`?vista=` deep-link, responsive) con 4 KPI e 8 viste: Ordini (Drawer con stati/azioni per riga + warning non-saldato + cambio taglia + export XLSX), Nuovo ordine (ricerca alunno debounce), Da ordinare (per fornitore, Genera PO+PDF, evadi magazzino), Arrivi (check-in per PO + ristampa PDF), Consegne (banner ambra non-pagato), Catalogo (categoria/fornitore/prezzo acquisto), Giacenze (matrice + rettifiche), Fornitori (CRUD). Sidebar Operativo: **"Divise" (Shirt) → "Merchandise" (ShoppingBag)**; `/admin/divise` → `redirect('/admin/merchandise')`.
+- Ordini creati **solo dalla segreteria**: eliminati `/parent/divise` (pagina), `/api/parent/divise` (route) e la voce "Divise" della BottomNav genitore; `coverage-matrix` primaria-360 aggiornata. `intestatari.ts` con `parent_id NULL` ricade su intestatario/split standard (test di regressione).
+
+### Verifica
+- Gate per ogni commit: `npx eslint . --max-warnings 0` → 0 · `npx vitest run` → 1001/1001 (64 test nuovi, TDD) · `npx tsc --noEmit` → 0 · `npm run build` → ok.
+- Tutte le route nuove degradano sul DB E2E CI non migrato (42P01/42703 su SELECT, PGRST204 su INSERT/UPDATE → empty-state/legacy).
+
+**Stato**: Fase B COMPLETA su branch `feat/contabilita-merchandise` (8 commit B1-B8). **Migrazione `20260711120000_merchandise` DA APPLICARE a prod** (con backfill stati righe) su conferma esplicita dell'utente — poi `get_advisors` = 0 ERROR (tutte le tabelle nuove hanno RLS + policy `service_role`, la RPC fissa `search_path`). Merge/deploy secondo AGENTS.md a valle della conferma.
+
+---
+
 ## 🗓️ Changelog — De-hardcode dati dinamici + Anagrafica di sede (multi-sede) 2026-07-10 (branch `feat/logout-anagrafica-fullscreen`)
 
 Audit esaustivo dei valori "di realtà" scritti fissi nel codice runtime (`src/`, esclusi e2e), con classificazione **A** (bug reale: cablato che finisce a schermo/scope/documento) / **B** (fallback benigno: DB letto prima o default irraggiungibile) / **C** (non-codice: commenti, placeholder, seed, dead code). **Categoria A svuotata**. In più, su richiesta, predisposizione **multi-sede** con **anagrafica di sede** completa. Piano in `docs/superpowers/plans/2026-07-10-dehardcode-sezioni.md`. **Zero migrazioni DB** (anagrafica in `scuole.config` JSONB già esistente; unica scrittura dati di test sulla sede fittizia "Kidville E2E", **Giugliano intatta** — verificato via MCP).

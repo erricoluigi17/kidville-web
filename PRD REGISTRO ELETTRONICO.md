@@ -55,6 +55,17 @@
 
 ---
 
+## 🗓️ Changelog — Chat sul design export + adattamento a ogni viewport mobile 2026-07-12 (branch `feat/login-design-fidelity`)
+
+Secondo passaggio del re-skin: **interno della chat** portato al design export (componenti condivisi docente/genitore) e **audit responsive automatico** su tutta l'app mobile. Gate verdi: **eslint 0 · vitest 1051/1051 · build ok**.
+
+- **Chat — lista thread** (`ChatThreadList`): avatar 48px con iniziali Barlow 800, nome Barlow 800 uppercase verde, riga ruolo/classe muted, anteprima Maven 12.5 `kidville-sub` (bold se non letta); **non-letto in giallo** (badge pill giallo/verde + riga `yellow-soft`, mai rosso — regola del design).
+- **Chat — conversazione** (`ChatMessageArea`): bolle con **angoli asimmetrici del design** (18px, coda 6px) — in uscita verdi con ombra `rgba(0,84,75,.7)`, in entrata bianche bordate `kidville-line` su **fondo crema**; testo Maven 13.5/1.42; separatori giorno e "Nuovi Messaggi" **a pillola** (Barlow 800, il secondo giallo); chip "Traduci" pill green-soft.
+- **Chat — composer** (`ChatInput`): allega = cerchio 40 `green-soft`, campo bianco r22 bordo `line` focus verde, **invio = cerchio 44 verde/giallo** con glow del design. **Header conversazione mobile**: barra verde con back `white/15`, avatar giallo (genitore) / tinta persona (docente), nome Barlow 800 bianco. Selettori e2e invariati (placeholder "Scrivi un messaggio", "Invia messaggio", "📎 Allegato", "Nuova Chat").
+- **Responsive**: audit Playwright automatico **33 rotte × 3 viewport (320/360/430)** con rilevamento overflow di pagina ed elementi fuori viewport (esclusi i contenitori scrollabili voluti) → 3 difetti trovati e corretti, **99/99 puliti**: riga appello docente (wrap dei controlli Presente/Ritardo/Assente), valutazioni classe (`grid-cols-1` esplicito → `minmax(0,1fr)`, `min-w-0` sui select, wrap `DimToggle`), mensa genitore (wrap navigazione settimana). Ultimi grigi hardcoded `MensaCalendar` → token.
+
+---
+
 ## 🗓️ Changelog — App genitore sulla linea design docente: AppBar persistente + header unificati 2026-07-12 (branch `feat/login-design-fidelity`)
 
 Re-skin coerente delle aree **genitore e docente** sul design dell'export Claude ("kidville web", cartella `ins/`): barra app verde persistente, hero gialla nelle home, card-header verde su tutte le sottopagine, pulsanti pill unificati. Gate verdi: **eslint 0 · vitest 1050/1050 · build ok**; verifica visiva Playwright (390×844) su docente/genitore/alto contrasto e regressione admin.

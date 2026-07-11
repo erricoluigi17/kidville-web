@@ -20,6 +20,7 @@
   --color-kidville-yellow-soft: #FBF0DD;
   --color-kidville-cream-dark: #F6E4D2;
   --color-kidville-error-soft: #FDECEC;
+  --color-kidville-error-strong: #C62828;  /* testo d'errore su error-soft (4,9:1) */
   --color-kidville-success-soft: #E7F3E8;
 
   /* ── Stati semantici cockpit (segreteria/admin) ── */
@@ -32,6 +33,7 @@
 
   /* ── Testo / linee ── */
   --color-kidville-ink: #1F3D38;
+  --color-kidville-sub: #55615C;   /* testo secondario (design --kv-sub) */
   --color-kidville-muted: #9AA6A2;
   --color-kidville-line: #EFE7DC;
 
@@ -126,6 +128,7 @@ body {
   --color-kidville-yellow-soft: #1A1A1A;
   --color-kidville-cream-dark: #000000;
   --color-kidville-error-soft: #000000;
+  --color-kidville-error-strong: #FF5252;
   --color-kidville-success-soft: #000000;
   --color-kidville-warn: #FFB300;
   --color-kidville-warn-soft: #1A1A1A;
@@ -134,6 +137,7 @@ body {
   --color-kidville-neutral: #E0E0E0;
   --color-kidville-neutral-soft: #1A1A1A;
   --color-kidville-ink: #FFFFFF;
+  --color-kidville-sub: #E0E0E0;
   --color-kidville-muted: #E0E0E0;
   --color-kidville-line: #8A8A8A;
 }

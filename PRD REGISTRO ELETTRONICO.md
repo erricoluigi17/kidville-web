@@ -55,6 +55,25 @@
 
 ---
 
+## 🗓️ Changelog — Login: allineamento 1:1 al design Claude + fix accessibilità 2026-07-12 (branch `feat/login-design-fidelity`)
+
+Ri-import del design **"Kidville - Login (standalone).html"** (MCP DesignSync, projectId `85d814d5-…`) e allineamento fedele di `/auth/login`, che nella prima implementazione (changelog sotto) aveva reinterpretato diversi valori. **Logica di autenticazione invariata**. Gate verdi: **eslint 0 · tsc 0 · vitest 1050/1050 · build ok**.
+
+> **Nota sul design**: `get_file` tronca il file a 256 KiB (immagini base64 inline) e il markup della card si perde. Il blocco `<style>` però arriva **completo**: la card è stata ricostruita dalle sue classi e la resa validata confrontando due screenshot Playwright a 402×874 (render di riferimento del design vs pagina reale).
+
+- **Sfondo decorativo — la differenza principale**: il design ha **blob angolari a colori pieni del brand** (cuneo verde in alto a destra, collina verde/teal `#0A8072` in basso a sinistra, collina gialla + onda verde in basso a destra), non blob sbiaditi al 10% come nella versione precedente. Portati i **path SVG originali** (spazio 402×874), ritagliati per angolo così restano agganciati ai bordi del viewport. Doodle (stella/nuvola/cerchio/casa) alle coordinate del mockup, ancorati alla colonna centrale. Il 5° doodle `abc` del design è **volutamente omesso**: nel mockup è interamente coperto dalla card, non è mai visibile.
+- **Sfondo pagina**: tinta piatta `#FAF6EF` (`--kv-cream` del design), page-scoped. Rimosso il `radial-gradient(… #fff7ec …)` cablato, che in Alto Contrasto **non si ribaltava** (restava chiaro mentre card e testi si invertivano).
+- **Geometria del design**: logo 208px, mascotte 278px che **scavalca la card di 40px**, card a 18px dai bordi (366px), padding `30/26/26`, raggio 34px, ombre `.34/.15`; titolo 38px, sottotitolo 15,5px, label 16px, campi con gap 9px e passo 26px. Nuovo token `--color-kidville-sub` (`#55615C`, il `--kv-sub` del design).
+- **Toggle "alto contrasto" fuori dalla card**: nel design la card **chiude con "Accedi"**. Spostato sotto, come pastiglia chiara — necessaria perché lì sotto passano i blob e il testo cadrebbe su verde/giallo.
+- **Picker multi-profilo**: rimossi Barlow Condensed + uppercase (nel design l'unico Barlow è l'h1): eredita la tipografia del CTA.
+- **Scostamenti voluti dal design (accessibilità)**: bottone "Accedi" a **44px** (design 40px, sotto il minimo touch target); input a **16px** (design 14,5px → iOS zooma al focus); area cliccabile dell'occhio portata a **44×44** via `::before` senza cambiarne l'aspetto (34×34).
+- **Accessibilità — difetti corretti**: rimosso `outline: none` dagli input (uccideva l'anello di focus **da tastiera**: il CSS module vince sul globale a parità di specificità); stato `:disabled` del CTA non più a `opacity .6` (portava "Accesso…" a 2,8:1) ma su verde scuro; testo d'errore su nuovo token `--color-kidville-error-strong` (`#C62828`, 4,9:1 — prima 3,7:1); icona occhio su `--color-kidville-sub` (unico segno visivo del controllo → serve 3:1); **il logo resta in Alto Contrasto** invertito in bianco (prima spariva: l'utente ipovedente perdeva l'unica identificazione del brand).
+- **Accessibilità — ARIA**: focus spostato sul gruppo "Scelta del ruolo" quando il picker sostituisce le credenziali (prima il focus cadeva su `<body>`); stato `?scegli=1` non più card vuota ma "Caricamento dei profili…" annunciato; `aria-busy` sul CTA; errore collegato ai campi (`aria-invalid` + `aria-describedby`); `aria-controls` sulla nota "Password dimenticata?"; nome dell'occhio reso statico (`aria-pressed` portava già lo stato); h1 con suffisso `sr-only` descrittivo.
+- **Selettori load-bearing preservati** (gate E2E): `#email`/`#password`, label "Email"/"Password", bottone "Accedi", `role="alert"`, `role="group" aria-label="Scelta del ruolo"`, toggle con `aria-pressed` e nome che matcha `/alto contrasto/i`.
+- **Gap noto, non corretto per fedeltà**: bordo input (`#EFE7DC`) e placeholder restano sotto le soglie WCAG di contrasto — come nel design stesso (`#EAE2D6` / `#9FB0AB`). La risposta del progetto resta la **modalità Alto Contrasto** dedicata.
+
+---
+
 ## 🗓️ Changelog — Login: implementazione dal design Claude ("Kidville · Login standalone") 2026-07-11 (branch `feat/fix-contabilita-merchandise`)
 
 Riscrittura della grafica di `/auth/login` importando il design **"Kidville - Login (standalone).html"** dal progetto Claude Design (MCP DesignSync, projectId `85d814d5-…`). Sostituisce il precedente tentativo di redesign login (mai committato, non presente nel working tree: su disco c'era ancora la versione storica "Accesso Kidville"/"Entra"). Nuovo CSS module co-locato `src/app/auth/login/page.module.css`; **logica di autenticazione invariata** (smistamento per ruolo M4B.3, picker multi-profilo `role="group"`, alto contrasto, degrado graceful, anti open-redirect). Gate tutti verdi: **eslint 0 · tsc 0 · vitest 1050/1050 · build ok**.

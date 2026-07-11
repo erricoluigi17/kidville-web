@@ -55,6 +55,18 @@
 
 ---
 
+## 🗓️ Changelog — Loader globale di pagina (flip 3D + riflesso) 2026-07-11 (branch `feat/fix-contabilita-merchandise`)
+
+Aggiunta la **schermata di caricamento a pagina intera** finora assente: nuovo `src/app/loading.tsx` (+ `src/app/loading.module.css`), il boundary di Suspense del segmento root che Next.js mostra automaticamente durante il caricamento delle pagine. Prima non esisteva alcun `loading.tsx` né un componente spinner condiviso (le pagine usavano ~112 spinner `animate-spin` copia-incollati inline). Gate tutti verdi: **eslint 0 · vitest 1050/1050 · build ok**.
+
+- **Grafica**: overlay `fixed inset-0` con sfondo crema del brand e due aloni sfumati (verde in alto-sx, giallo in basso-dx), coerente con la login. Il logo `public/logo-kidville.png` esegue un **flip 3D** (`rotateY` 0→360, un giro per ciclo + pausa frontale) con un **riflesso** (banda di luce mascherata sulla sagoma del logo) che entra da sinistra, attraversa mentre il logo è frontale ed **esce completamente dal bordo destro** prima del salto di ciclo (il riflesso non si ferma mai a metà). Caption "Caricamento…" con puntini pulsanti.
+- **Temi/accessibilità**: usa i token `--color-kidville-*` (con fallback hex) → si adatta da solo all'**alto contrasto** (`data-contrast="high"`: sfondo nero, logo reso in chiaro con `filter`, riflesso giallo). Rispetta `prefers-reduced-motion` (niente flip/riflesso, solo un respiro lento). Server Component, zero JS lato client; logo+riflesso resi come `<span>` con `background`/`mask` (nessun `<img>`, quindi nessun warning eslint `no-img-element`). `role="status"` + testo sr-only "Caricamento in corso…".
+- **Verifica**: animazione validata visivamente su anteprima standalone con CSS identico (fotogrammi congelati: al 68% il riflesso attraversa, all'84% è già fuori dal bordo destro → logo uniforme); la build conferma la compilazione di componente + CSS module reali.
+
+**Pendente**: commit e deploy, su richiesta utente (working tree ancora misto con login+scadenziario).
+
+---
+
 ## 🗓️ Changelog — Login: redesign grafico identico al mockup 2026-07-11 (branch `feat/fix-contabilita-merchandise`)
 
 Riscrittura della sola grafica di `/auth/login` (`src/app/auth/login/page.tsx`) per renderla **identica al mockup fornito** (`~/Downloads/image.webp`): sfondo crema con blob d'angolo (teal in alto-destra, teal+giallo in basso) e doodle outline tenui (stella/nuvola/casa/cerchio/blocco), wordmark **Kidville** grande, **mascotte a figura intera su fondo trasparente** (non più nel cerchio giallo), card bianca a bottom-sheet con "Benvenuto!" / "Accedi al tuo account Kidville", campi Email/Password con icone inline (busta/lucchetto + occhio show-hide), "Password dimenticata?" e bottone "Accedi". **La logica di autenticazione è invariata** (smistamento per ruolo M4B.3, picker multi-profilo, alto contrasto, degrado graceful, anti open-redirect). Gate tutti verdi: **eslint 0 · tsc 0 · vitest 1050/1050 · build ok**; reso verificato via screenshot Playwright a viewport telefono (match col mockup).
@@ -64,8 +76,9 @@ Riscrittura della sola grafica di `/auth/login` (`src/app/auth/login/page.tsx`) 
 - **Decisioni prodotto** (confermate dall'utente): l'app è ad accesso **solo su invito**, quindi il link "Registrati" del mockup è **omesso**; resta solo "Password dimenticata?" che rivela inline il messaggio "Contatta la Segreteria: riemette le credenziali via email". La nota "Accesso riservato — solo su invito della Segreteria" è mantenuta in piccolo sotto il form.
 - **Copy/test**: il bottone submit passa da "Entra" a **"Accedi"** (fedeltà al mockup); aggiornati i 4 riferimenti nei test che lo cercavano (`e2e/fixtures.ts`, `e2e/auth.spec.ts`, `e2e/primaria-360/auth.setup.ts`, `__tests__/components/login-smistamento.test.tsx`). Preservati intatti tutti gli altri selettori load-bearing: `#email`/`#password`, label "Email"/"Password", alert `role="alert"` con "Credenziali non valide", picker `role="group"` "Scelta del ruolo", toggle "alto contrasto" (`aria-pressed`), zero violazioni jest-axe.
 - **Font**: heading in Maven Pro (già a brand, tondeggiante) invece di Barlow Condensed — unica differenza non pixel-identica dal mockup; nessun webfont nuovo introdotto.
+- **Round 2 (correzioni fedeltà)**: analisi pixel del mockup → sfondo reale **bianco** `#fdfbf9` (non crema): root portato a `bg-white`. Scala resa più ariosa (hero `pt-16`, logo `w-52`, mascotte `w-48`, campi `py-3`, bottone `py-3.5 text-base`) perché gli elementi risultavano "ingranditi". Risolta la fascia crema sotto il notch nell'app nativa (`.cap-native body{padding-top:env(safe-area-inset-top)}` + body crema): `SfondoDecorato` reso layer `fixed inset-0 -z-10 bg-white` full-viewport, così il bianco arriva sotto la status bar come nel mockup senza toccare il body globale. Verificato su **app nativa iOS** (simulatore iPhone 17, `npx cap run ios`, `CAP_SERVER_URL=http://localhost:3210`). Gate ancora verdi (eslint 0 · tsc 0 · vitest 1050 · build).
 
-**Pendente**: commit (solo i file del login, il working tree è misto con lo scadenziario) e deploy, su richiesta utente.
+**Pendente**: commit (solo i file del login, il working tree è misto con lo scadenziario) e deploy, su richiesta utente. Nota: eccezione ATS temporanea in `ios/App/App/Info.plist` (HTTP localhost per l'app nativa in dev) da ripristinare prima del commit.
 
 ---
 

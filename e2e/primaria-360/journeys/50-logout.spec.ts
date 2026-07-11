@@ -12,7 +12,7 @@ async function freshLogin(browser: Browser, email: string, area: RegExp, mobile:
   await page.goto('/auth/login');
   await page.locator('#email').fill(email);
   await page.locator('#password').fill(PASSWORD);
-  await page.getByRole('button', { name: 'Entra' }).click();
+  await page.getByRole('button', { name: 'Accedi' }).click();
   await expect(page).toHaveURL(area, { timeout: 30000 });
   return { page, close: () => ctx.close() };
 }

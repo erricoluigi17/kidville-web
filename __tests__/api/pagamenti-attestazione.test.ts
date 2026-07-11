@@ -9,6 +9,7 @@ const h = vi.hoisted(() => ({
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireUser: h.requireUser }))
+vi.mock('@/lib/auth/scope', () => ({ resolveScuoleAttive: async () => ['sc-1'] }))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
     from: (table: string) => {
@@ -65,6 +66,11 @@ describe('GET /api/pagamenti/attestazione', () => {
 
   it('404 alunno inesistente', async () => {
     h.alunno = null
+    expect((await GET(req(`alunno_id=${AID}&anno=2026`))).status).toBe(404)
+  })
+
+  it('staff: alunno di un\'altra sede → 404 (scoping)', async () => {
+    h.alunno = { ...h.alunno!, scuola_id: 'sc-ALTRA' }
     expect((await GET(req(`alunno_id=${AID}&anno=2026`))).status).toBe(404)
   })
 })

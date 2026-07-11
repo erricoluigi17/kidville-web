@@ -64,7 +64,7 @@ function renderLogin() {
 function submitCredenziali() {
   fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'doc@kidville.it' } })
   fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'pw' } })
-  fireEvent.click(screen.getByRole('button', { name: 'Entra' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Accedi' }))
 }
 
 beforeEach(() => {

@@ -67,6 +67,12 @@ describe('POST /api/admin/merch/cambio-taglia', () => {
     ;(h.singleFor.divise_ordini_righe!.ordine as { scuola_id: string }).scuola_id = 'sc-ALTRO'
     expect((await POST(post({ riga_id: R1, nuova_taglia: 'L' }))).status).toBe(403)
   })
+  it('409 se la riga sorgente è già annullata (niente resurrezione a prezzo 0)', async () => {
+    h.singleFor.divise_ordini_righe!.stato = 'annullato'
+    const res = await POST(post({ riga_id: R1, nuova_taglia: 'L' }))
+    expect(res.status).toBe(409)
+    expect(h.inserts.find((i) => i.table === 'divise_ordini_righe')).toBeUndefined()
+  })
   it('201 (consegnato) crea la nuova riga (prezzo 0, da_ordinare); senza reso nessuna rettifica e originale non annullata', async () => {
     const res = await POST(post({ riga_id: R1, nuova_taglia: 'L' }))
     expect(res.status).toBe(201)

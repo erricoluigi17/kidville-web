@@ -32,5 +32,5 @@ export async function login(page: Page, email: string, password: string = PASSWO
   await page.goto('/auth/login');
   await page.locator('#email').fill(email);
   await page.locator('#password').fill(password);
-  await page.getByRole('button', { name: 'Entra' }).click();
+  await page.getByRole('button', { name: 'Accedi' }).click();
 }

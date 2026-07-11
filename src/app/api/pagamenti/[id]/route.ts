@@ -1,9 +1,11 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff, requireUser } from '@/lib/auth/require-staff'
 import { parseBody, parseData } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { resolveScuoleAttive } from '@/lib/auth/scope'
+import { annullaRicevutaAttiva } from '@/lib/pagamenti/ricevute'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // PATCH: merge parziale sui soli campi ammessi; i valori restano senza vincoli
@@ -63,6 +65,14 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     const pag = data as unknown as PagamentoDettaglio
 
     const isStaff = user.role === 'admin' || user.role === 'coordinator' || user.role === 'segreteria'
+
+    // scoping di sede (staff): il pagamento deve stare in una sede attiva
+    if (isStaff) {
+      const sedi = await resolveScuoleAttive(request as NextRequest, supabase, user)
+      if (!sedi.includes(String(pag.scuola_id))) {
+        return NextResponse.json({ error: 'Pagamento non trovato' }, { status: 404 })
+      }
+    }
 
     // scoping genitore
     let ownQuotaId: string | null = null
@@ -153,12 +163,27 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     updates.aggiornato_il = new Date().toISOString()
 
     const supabase = await createAdminClient()
+    // scoping di sede: non modificare pagamenti fuori dalle sedi attive
+    const { data: esistente } = await supabase.from('pagamenti').select('scuola_id').eq('id', id).maybeSingle()
+    if (!esistente) return NextResponse.json({ error: 'Pagamento non trovato' }, { status: 404 })
+    const sedi = await resolveScuoleAttive(request as NextRequest, supabase, auth.user)
+    if (!sedi.includes(String((esistente as { scuola_id: string }).scuola_id))) {
+      return NextResponse.json({ error: 'Pagamento non trovato' }, { status: 404 })
+    }
     const { data, error } = await supabase.from('pagamenti').update(updates).eq('id', id).select(SELECT).single()
     if (error) return NextResponse.json({ error: 'Errore aggiornamento', details: error.message }, { status: 500 })
 
-    // se è cambiato l'importo, ricalcola lo stato dal ledger
-    if (updates.importo !== undefined) {
-      await supabase.rpc('ricalcola_stato_pagamento', { p_id: id }).then(() => {}, () => {})
+    // se è cambiato l'importo O la scadenza, ricalcola lo stato dal ledger.
+    // Spostare la scadenza al futuro pulisce la morosità (scaduto -> parziale/da_pagare);
+    // riportarla al passato la ripristina. Tipo-aware: un 'padre' aggrega dalle rate,
+    // gli altri ricalcolano dal proprio ledger incassi (cascata al padre se rata).
+    if (updates.importo !== undefined || updates.scadenza !== undefined) {
+      const tipo = (data as { tipo?: string } | null)?.tipo
+      if (tipo === 'padre') {
+        await supabase.rpc('ricalcola_stato_padre', { p_parent: id }).then(() => {}, () => {})
+      } else {
+        await supabase.rpc('ricalcola_stato_pagamento', { p_id: id }).then(() => {}, () => {})
+      }
     }
 
     return NextResponse.json({ success: true, data })
@@ -182,6 +207,19 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
     const supabase = await createAdminClient()
     const { data: old } = await supabase.from('pagamenti').select('*').eq('id', id).maybeSingle()
     if (!old) return NextResponse.json({ error: 'Pagamento non trovato' }, { status: 404 })
+    // scoping di sede: non eliminare pagamenti fuori dalle sedi attive
+    const sediDel = await resolveScuoleAttive(request as NextRequest, supabase, user)
+    if (!sediDel.includes(String((old as { scuola_id: string }).scuola_id))) {
+      return NextResponse.json({ error: 'Pagamento non trovato' }, { status: 404 })
+    }
+    // Conservazione fiscale: un pagamento con FATTURA emessa non è cancellabile
+    // (FK RESTRICT + WORM). Le RICEVUTE si annullano prima e restano a registro
+    // (numero conservato, pagamento_id azzerato via ON DELETE SET NULL).
+    const { data: fatt, error: fattErr } = await supabase.from('fatture_emesse').select('id').eq('pagamento_id', id).limit(1)
+    if (!fattErr && fatt && fatt.length > 0) {
+      return NextResponse.json({ error: 'Pagamento con fattura emessa: non eliminabile per conservazione fiscale. Annulla/storna prima la fattura.' }, { status: 409 })
+    }
+    await annullaRicevutaAttiva(supabase, id, { da: user.id, motivo: 'cancellazione pagamento' })
     const { error } = await supabase.from('pagamenti').delete().eq('id', id)
     if (error) return NextResponse.json({ error: 'Errore eliminazione', details: error.message }, { status: 500 })
 

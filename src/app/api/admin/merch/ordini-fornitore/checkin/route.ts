@@ -69,16 +69,20 @@ export async function POST(request: Request) {
 
     const now = new Date().toISOString()
     // guard ottimistico: aggiorna SOLO le righe ancora 'ordinato' (anti-race)
-    const { error: updErr } = await supabase.from('divise_ordini_righe').update({ stato: 'arrivato', arrivato_il: now }).in('id', righe_ids).eq('stato', 'ordinato')
+    const { data: updatedRows, error: updErr } = await supabase.from('divise_ordini_righe').update({ stato: 'arrivato', arrivato_il: now }).in('id', righe_ids).eq('stato', 'ordinato').select('id')
     if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 })
+    // solo le righe realmente transitate (anti doppio check-in / doppie notifiche)
+    const idOk = new Set((updatedRows ?? []).map((r) => r.id as string))
+    const righeOk = righe.filter((r) => idOk.has(r.id))
+    if (righeOk.length === 0) return NextResponse.json({ success: true, data: { arrivate: 0 } })
 
     // Chiudi i PO completi + sincronizza testate.
-    await chiudiPOcompleti(supabase, righe.map((r) => r.ordine_fornitore_id ?? '').filter(Boolean))
-    await Promise.all([...new Set(righe.map((r) => r.ordine_id))].map((id) => sincronizzaTestata(supabase, id)))
+    await chiudiPOcompleti(supabase, righeOk.map((r) => r.ordine_fornitore_id ?? '').filter(Boolean))
+    await Promise.all([...new Set(righeOk.map((r) => r.ordine_id))].map((id) => sincronizzaTestata(supabase, id)))
 
     // Notifica genitori (per alunno): raccogli gli articoli arrivati.
     const perAlunno = new Map<string, { articoli: string[]; ordineId: string }>()
-    for (const r of righe) {
+    for (const r of righeOk) {
       const o = uno(r.ordine)
       const aid = o?.alunno_id
       if (!aid) continue
@@ -99,7 +103,7 @@ export async function POST(request: Request) {
       valoreDopo: { righe: righe_ids.length, stato: 'arrivato' },
     })
 
-    return NextResponse.json({ success: true, data: { arrivate: righe_ids.length } })
+    return NextResponse.json({ success: true, data: { arrivate: righeOk.length } })
   } catch (err) {
     console.error('Errore API POST merch/ordini-fornitore/checkin:', err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })

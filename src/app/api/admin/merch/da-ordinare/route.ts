@@ -44,10 +44,12 @@ export async function GET(request: Request) {
 
     const { data, error } = await supabase
       .from('divise_ordini_righe')
-      .select('id, articolo_id, articolo_nome, taglia, quantita, ordine:ordine_id ( scuola_id ), articolo:articolo_id ( fornitore_id )')
+      .select('id, articolo_id, articolo_nome, taglia, quantita, ordine:ordine_id!inner ( scuola_id ), articolo:articolo_id ( fornitore_id )')
       .eq('stato', 'da_ordinare')
       .eq('origine', 'fornitore')
-      .limit(2000)
+      .in('ordine.scuola_id', plessi)
+      .order('id', { ascending: true })
+      .limit(20000)
     if (error) {
       if (SCHEMA_MANCANTE.has(error.code ?? '')) return NextResponse.json({ success: true, data: { gruppi: [] } })
       return NextResponse.json({ error: error.message }, { status: 500 })

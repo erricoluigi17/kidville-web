@@ -10,6 +10,7 @@ const h = vi.hoisted(() => ({
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff, requireUser: h.requireUser }))
+vi.mock('@/lib/auth/scope', () => ({ resolveScuoleAttive: async () => ['sc-1'] }))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
     from: (table: string) => {
@@ -37,7 +38,7 @@ const req = () => new Request(`http://localhost/api/pagamenti/${PID}`)
 describe('GET /api/pagamenti/[id] — ruoli staff', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    h.pag = { id: PID, alunno_id: 'al-1', tipo: 'singolo', visibile_dal: null, importo: 150, stato: 'pagato' }
+    h.pag = { id: PID, alunno_id: 'al-1', scuola_id: 'sc-1', tipo: 'singolo', visibile_dal: null, importo: 150, stato: 'pagato' }
     h.legame = null // nessun legame genitore: lo staff NON deve passare da lì
     h.incassi = [{ id: 'i1', importo: 150, metodo: 'bonifico', data_incasso: '2026-09-03' }]
   })
@@ -53,6 +54,12 @@ describe('GET /api/pagamenti/[id] — ruoli staff', () => {
   it('admin ok (regressione)', async () => {
     h.requireUser.mockResolvedValue({ user: { id: 'staff-2', role: 'admin' } })
     expect((await GET(req(), ctx)).status).toBe(200)
+  })
+
+  it('staff: pagamento di un\'altra sede → 404 (scoping)', async () => {
+    h.requireUser.mockResolvedValue({ user: { id: 'staff-1', role: 'segreteria' } })
+    h.pag = { ...h.pag!, scuola_id: 'sc-ALTRA' }
+    expect((await GET(req(), ctx)).status).toBe(404)
   })
 
   it('genitore senza legame → 403 (regressione)', async () => {

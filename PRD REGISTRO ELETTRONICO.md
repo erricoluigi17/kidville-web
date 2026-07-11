@@ -21,7 +21,8 @@
 > | `valutazioni` | Voti e giudizi (Primaria) | Schema creato, non ancora popolato |
 > | `galleria_media` | Foto/Video con privacy tagging | Schema creato, non ancora popolato |
 > | `armadietto` | Inventario materiali a scalare | Schema creato, non ancora popolato |
-> | `ticket_mensa` | Saldo ticket pasto prepagato | Schema creato, non ancora popolato |
+> | `ticket_mensa` | Saldo ticket pasto prepagato (running int per alunno) | Schema creato, non ancora popolato |
+> | `mensa_ticket_movimenti` | Ledger movimenti ticket (ricarica/consumo/disdetta/rettifica + `saldo_dopo`) — storico e morosità | ✅ RLS + policy service_role |
 > | `pagamenti` | Scadenziario rette e quote | Schema creato, non ancora popolato |
 >
 > ### Moduli Implementati
@@ -51,6 +52,90 @@
 > | **Libretto web giustificazioni** | 🔶 Parziale | Fase 2 | Esiste preavviso assenza; manca giustificazione online con PIN dispositivo |
 > | **Interoperabilità SIDI / Piattaforma Unica** | ✅ Implementato (P5, DL-047..050) · 🔶 egress gated | Fase P5 | Import ZIP (parser pluggable), Fase A, frequentanti, genitori-alunni, certificati competenze D.M. 14/2024 + indicatore sync. **Trasmissione reale subordinata all'accreditamento ministeriale** |
 > | **Accessibilità AgID / Legge Stanca** | 🔶 Baseline (P1, DL-008) | Trasversale | Fatto: alto contrasto globale persistito, focus-ring, reduced-motion, Modal accessibile, landmark/skip-link/aria-current, smoke jest-axe. WCAG-AA = definition-of-done; audit AA per-pagina incrementale |
+
+---
+
+## 🗓️ Changelog — Login: implementazione dal design Claude ("Kidville · Login standalone") 2026-07-11 (branch `feat/fix-contabilita-merchandise`)
+
+Riscrittura della grafica di `/auth/login` importando il design **"Kidville - Login (standalone).html"** dal progetto Claude Design (MCP DesignSync, projectId `85d814d5-…`). Sostituisce il precedente tentativo di redesign login (mai committato, non presente nel working tree: su disco c'era ancora la versione storica "Accesso Kidville"/"Entra"). Nuovo CSS module co-locato `src/app/auth/login/page.module.css`; **logica di autenticazione invariata** (smistamento per ruolo M4B.3, picker multi-profilo `role="group"`, alto contrasto, degrado graceful, anti open-redirect). Gate tutti verdi: **eslint 0 · tsc 0 · vitest 1050/1050 · build ok**.
+
+- **Grafica (1:1 col design)**: sfondo crema con gradiente radiale + **blob organici d'angolo** (verde in alto-dx e basso-sx, giallo in basso-dx) e doodle outline tenui (stella/nuvola/cerchio/casa), tutti decorativi (`aria-hidden`, `pointer-events:none`). Wordmark **Kidville** grande (`public/logo-kidville.png`), **mascotte a figura intera su fondo trasparente** (`public/mascot-hero.png`) che sporge sopra la card bianca a bottom-sheet (raggio 34px, ombra morbida). Titolo **"Ciao!"** in Barlow Condensed verde, sottotitolo con il messaggio "solo su invito".
+- **Campi**: label verdi in grassetto, input con **icona guida inline** (busta/lucchetto, SVG inline) e per la password il toggle **occhio** show/hide; focus con bordo verde + alone. Link **"Password dimenticata?"** che rivela inline la nota "Contatta la Segreteria: riemette le credenziali via email". Bottone primario **"Accedi"** (verde, testo bianco, 60px, raggio 16px). Toggle "alto contrasto" preservato in fondo alla card.
+- **Asset**: `public/mascot-hero.png` rigenerata con **Higgsfield `remove_background`** su `public/mascot.png` (il chroma-key locale non era praticabile: sash/fascia del cappello sono gialli come lo sfondo → il flood-fill "bucava" la fascia). `public/mascot.png` (fondo giallo) resta invariata per le altre pagine.
+- **Alto Contrasto**: la card usa i token `--color-kidville-*` → rimappati da `html[data-contrast="high"]`; mascotte/logo/blob nascosti in HC; override mirati nel CSS module per testo bottone (nero) e bordi card. Rispetta `prefers-reduced-motion`.
+- **Copy/test**: il bottone submit passa da "Entra" a **"Accedi"** (fedeltà al design); aggiornati i 5 riferimenti nei test che lo cercavano (`e2e/fixtures.ts`, `e2e/auth.spec.ts`, `e2e/primaria-360/auth.setup.ts`, `e2e/primaria-360/journeys/50-logout.spec.ts`, `e2e/primaria-360/native/android-smoke.mjs`, `__tests__/components/login-smistamento.test.tsx`). Preservati intatti gli altri selettori load-bearing: `#email`/`#password`, label "Email"/"Password", alert `role="alert"` "Credenziali non valide", picker "Scelta del ruolo", toggle "alto contrasto" (`aria-pressed`).
+- **Verifica resa**: screenshot Playwright a viewport telefono su anteprima standalone con CSS/markup identici → match col design (logo, mascotte tucked, "Ciao!", campi con icone, "Accedi").
+
+**Pendente**: commit (working tree misto — solo i file del login) e deploy, su richiesta utente.
+
+---
+
+## 🗓️ Changelog — Loader globale di pagina (flip 3D + riflesso) 2026-07-11 (branch `feat/fix-contabilita-merchandise`)
+
+Aggiunta la **schermata di caricamento a pagina intera** finora assente: nuovo `src/app/loading.tsx` (+ `src/app/loading.module.css`), il boundary di Suspense del segmento root che Next.js mostra automaticamente durante il caricamento delle pagine. Prima non esisteva alcun `loading.tsx` né un componente spinner condiviso (le pagine usavano ~112 spinner `animate-spin` copia-incollati inline). Gate tutti verdi: **eslint 0 · vitest 1050/1050 · build ok**.
+
+- **Grafica**: overlay `fixed inset-0` con sfondo crema del brand e due aloni sfumati (verde in alto-sx, giallo in basso-dx), coerente con la login. Il logo `public/logo-kidville.png` esegue un **flip 3D** (`rotateY` 0→360, un giro per ciclo + pausa frontale) con un **riflesso** (banda di luce mascherata sulla sagoma del logo) che entra da sinistra, attraversa mentre il logo è frontale ed **esce completamente dal bordo destro** prima del salto di ciclo (il riflesso non si ferma mai a metà). Caption "Caricamento…" con puntini pulsanti.
+- **Temi/accessibilità**: usa i token `--color-kidville-*` (con fallback hex) → si adatta da solo all'**alto contrasto** (`data-contrast="high"`: sfondo nero, logo reso in chiaro con `filter`, riflesso giallo). Rispetta `prefers-reduced-motion` (niente flip/riflesso, solo un respiro lento). Server Component, zero JS lato client; logo+riflesso resi come `<span>` con `background`/`mask` (nessun `<img>`, quindi nessun warning eslint `no-img-element`). `role="status"` + testo sr-only "Caricamento in corso…".
+- **Verifica**: animazione validata visivamente su anteprima standalone con CSS identico (fotogrammi congelati: al 68% il riflesso attraversa, all'84% è già fuori dal bordo destro → logo uniforme); la build conferma la compilazione di componente + CSS module reali.
+
+**Pendente**: commit e deploy, su richiesta utente (working tree ancora misto con login+scadenziario).
+
+---
+
+## 🗓️ Changelog — Login: redesign grafico identico al mockup 2026-07-11 (branch `feat/fix-contabilita-merchandise`)
+
+Riscrittura della sola grafica di `/auth/login` (`src/app/auth/login/page.tsx`) per renderla **identica al mockup fornito** (`~/Downloads/image.webp`): sfondo crema con blob d'angolo (teal in alto-destra, teal+giallo in basso) e doodle outline tenui (stella/nuvola/casa/cerchio/blocco), wordmark **Kidville** grande, **mascotte a figura intera su fondo trasparente** (non più nel cerchio giallo), card bianca a bottom-sheet con "Benvenuto!" / "Accedi al tuo account Kidville", campi Email/Password con icone inline (busta/lucchetto + occhio show-hide), "Password dimenticata?" e bottone "Accedi". **La logica di autenticazione è invariata** (smistamento per ruolo M4B.3, picker multi-profilo, alto contrasto, degrado graceful, anti open-redirect). Gate tutti verdi: **eslint 0 · tsc 0 · vitest 1050/1050 · build ok**; reso verificato via screenshot Playwright a viewport telefono (match col mockup).
+
+- **Asset**: nuova mascotte trasparente `public/mascot-hero.png` prodotta con la pipeline gstack→**Higgsfield** (`remove_background` su `public/mascot.png`; il chroma-key semplice non era praticabile perché sash/cappello/cravatta sono gialli come lo sfondo). `public/mascot.png` (fondo giallo) resta invariata per le altre pagine. Nuovo logo ritagliato `public/logo-kidville.png` (trim dei margini trasparenti di `logo_green.png`, così il wordmark risulta grande come nel mockup).
+- **Icone**: `lucide-react` (`Mail`/`Lock`/`Eye`/`EyeOff`) — nessun asset raster per le icone.
+- **Decisioni prodotto** (confermate dall'utente): l'app è ad accesso **solo su invito**, quindi il link "Registrati" del mockup è **omesso**; resta solo "Password dimenticata?" che rivela inline il messaggio "Contatta la Segreteria: riemette le credenziali via email". La nota "Accesso riservato — solo su invito della Segreteria" è mantenuta in piccolo sotto il form.
+- **Copy/test**: il bottone submit passa da "Entra" a **"Accedi"** (fedeltà al mockup); aggiornati i 4 riferimenti nei test che lo cercavano (`e2e/fixtures.ts`, `e2e/auth.spec.ts`, `e2e/primaria-360/auth.setup.ts`, `__tests__/components/login-smistamento.test.tsx`). Preservati intatti tutti gli altri selettori load-bearing: `#email`/`#password`, label "Email"/"Password", alert `role="alert"` con "Credenziali non valide", picker `role="group"` "Scelta del ruolo", toggle "alto contrasto" (`aria-pressed`), zero violazioni jest-axe.
+- **Font**: heading in Maven Pro (già a brand, tondeggiante) invece di Barlow Condensed — unica differenza non pixel-identica dal mockup; nessun webfont nuovo introdotto.
+- **Round 2 (correzioni fedeltà)**: analisi pixel del mockup → sfondo reale **bianco** `#fdfbf9` (non crema): root portato a `bg-white`. Scala resa più ariosa (hero `pt-16`, logo `w-52`, mascotte `w-48`, campi `py-3`, bottone `py-3.5 text-base`) perché gli elementi risultavano "ingranditi". Risolta la fascia crema sotto il notch nell'app nativa (`.cap-native body{padding-top:env(safe-area-inset-top)}` + body crema): `SfondoDecorato` reso layer `fixed inset-0 -z-10 bg-white` full-viewport, così il bianco arriva sotto la status bar come nel mockup senza toccare il body globale. Verificato su **app nativa iOS** (simulatore iPhone 17, `npx cap run ios`, `CAP_SERVER_URL=http://localhost:3210`). Gate ancora verdi (eslint 0 · tsc 0 · vitest 1050 · build).
+
+**Pendente**: commit (solo i file del login, il working tree è misto con lo scadenziario) e deploy, su richiesta utente. Nota: eccezione ATS temporanea in `ios/App/App/Info.plist` (HTTP localhost per l'app nativa in dev) da ripristinare prima del commit.
+
+---
+
+## 🗓️ Changelog — Scadenziario: visuale unificata, morosità con acconto, ticket mensa 2026-07-11 (branch `feat/fix-contabilita-merchandise`)
+
+Cinque interventi sullo scadenziario contabilità (`/admin/pagamenti`) e sui ticket mensa. Gate tutti verdi: **eslint 0 · tsc 0 · vitest 1050/1050 · build ok**.
+
+- **A — Visuale unificata a tutte le categorie** (`PaymentsDashboard.tsx`): la "vista retta" (tabella con allarme rosso sui morosi + dettagli espandibili nel `PagamentoDrawer`) è ora applicata a **tutte** le categorie non-retta, che prima erano una semplice griglia di card senza stato/scadenza né morosità. Nuova tabella 1-riga-per-pagamento (Alunno/Descrizione/Scadenza/Importo/Acconto/Stato/Azioni), riga rossa sui morosi, chip "Acconto € X", azioni Incassa/Dettagli/Rateizza/Modifica + selettore "Nuovo acquisto". Il filtro **"Morosi"** è ora disponibile in ogni categoria (prima solo retta).
+- **B — Acconto che NON azzera la morosità** (migr `20260711170000`): `ricalcola_stato_pagamento`/`ricalcola_stato_padre` riordinate — un pagamento **scaduto e non saldato resta `scaduto` (moroso) anche con un acconto** (prima l'acconto lo declassava a `parziale`, facendolo sparire dai morosi). Vale per **ogni** tipo di pagamento (singolo/rata/split/padre). Il padre usa `MIN(scadenza) FILTER (importo_pagato < importo)` per non falsare i piani con rate scadute già saldate. Backfill idempotente dei record esistenti. Nuovo helper condiviso `isMoroso(p, oggi)` date-aware (allarme rosso immediato, senza attendere il cron solleciti).
+- **B (sblocco)** — la Segreteria pulisce la morosità **spostando la scadenza** del singolo pagamento: `PATCH /api/pagamenti/[id]` ora ricalcola lo stato anche al cambio `scadenza` (prima solo al cambio importo), tipo-aware (padre→aggregato). Lato genitore (`StoricoPagamenti`) l'acconto/residuo resta visibile ("(resta € X)") anche sugli scaduti.
+- **C — Animazione di conferma ticket mensa** (`TicketMensaPanel.tsx`): spunta animata `SaveCheck` (idiom cockpit) dopo ogni ricarica, con `key` che la ri-anima a ogni operazione ripetuta.
+- **D — Storico ticket per-alunno su ledger dedicato** (migr `20260711180000`): nuova tabella `mensa_ticket_movimenti` (ricarica/consumo/disdetta/rettifica + `saldo_dopo`), scritta going-forward da ricarica (`/api/pagamenti/ticket`) e prenotazioni (`/api/mensa/prenotazioni` POST/DELETE) in best-effort (il saldo `ticket_mensa` resta autoritativo), con backfill idempotente + riconciliazione di apertura. Nuovo `GET /api/pagamenti/ticket/storico` (staff, `requireStaff`+scope) mostra, cliccando l'alunno, tutti i ticket acquistati (con metodo/stato, "Gratuita" se costo 0) e i consumi/disdette.
+- **E — Morosità ticket (saldo negativo)** (`GET /api/pagamenti/ticket/morosi`, scoping `resolveScuoleAttive` + join `!inner` su alunni): banner rosso in cima al pannello ticket con gli alunni a saldo negativo, cliccabili per aprirne saldo+storico.
+
+**Rilascio**: 2 migrazioni **APPLICATE a prod** via MCP + verificate (parziale-scaduti 0, ledger quadra `SUM(delta)==saldo_ticket`, advisor 0 ERROR; versioni riallineate ai timestamp-file). Deploy via PR #16→`main`. **Hardening E2E flaky** (pre-esistenti, non correlati al lavoro: `teacher-attendance`/`teacher-agenda`/`public-iscrizione`): `test.slow()` + timeout espliciti generosi sui render/transizioni lenti sotto carico CI (gli elementi si renderizzano, solo tardi) — la diagnosi via artefatti Playwright ha escluso il loader (non presente negli snapshot di fallimento).
+
+---
+
+## 🗓️ Changelog — Test completo + correzione difetti Contabilità+Merchandise 2026-07-11 (branch `feat/fix-contabilita-merchandise`)
+
+**Test completo** del rilascio PR #15 (Contabilità Fase A + Merchandise Fase B): gate (eslint/tsc/vitest/build tutti verdi), review adversariale a 10 lenti (58 agenti, ogni rilievo confutato) e verifica read-only del DB di produzione (5 migrazioni allineate, advisor **0 ERROR**). Esito: **39 rilievi confermati** — 1 alto, 16 medi, 21 bassi, 0 critici. Referto navigabile prodotto come artifact.
+
+Correzione difetti in fasi (1 commit per fase, gate verde per fase):
+
+- **Fase 1 🟠 (ALTA)** — `PaymentsDashboard`: i KPI contavano due volte i piani rateali (contenitore `padre` + rate). Logica estratta in `calcolaTotaliPagamenti()` pura con guard `padre`; "Da incassare" non è più gonfiato in modo permanente. +test di regressione.
+- **Fase 2a 🟡** — `attestazione` 730: classificazione detraibile/non-tracciabile sul **netto** per voce (uno storno in contanti compensa il detraibile invece di gonfiarlo). `riconciliazione` conferma: update del movimento con **CAS ottimistico** + storno dell'incasso se la corsa è persa (anti doppio-incasso). +test.
+- **Fase 3 🟡** — scoping di sede su `pagamenti/[id]` (GET/PATCH/DELETE), `genera-rette` (GET) e `attestazione`: niente più lettura/modifica/PDF cross-sede per UUID (impatto pratico basso con sede unica, chiude il gap multi-sede). +test.
+- **Fase 4 🟡🔵** — magazzino: `giacenze` con filtro sede a livello DB prima del cap (no oversell da troncamento) + errori reali propagati invece di degradare a stock zero; `cambio-taglia` con guard sullo stato sorgente (una riga `annullato` non resuscita a prezzo 0); `export`/`da-ordinare` filtro sede a DB; `evadi-magazzino`/`consegna`/`checkin` contano e notificano solo le righe realmente transitate + post-check anti over-allocazione. +test.
+- **Fase 5 🟡** — frontend contabilità: reset del mese al cambio A.S.; stato di errore con banner+Riprova (niente KPI a 0,00 su load fallito); `StoricoPagamenti` genitore mostra residuo affidabile sugli split.
+- **Fase 6 🔵** — UX `/admin/merchandise`: conferme su evasione/annullo, empty-state, registra-arrivo non più no-op, dropdown ricerca non-stale, prezzo con virgola italiana, toggle catalogo con busy/errore, checkbox accessibili.
+- **Fase 7 🔵** — UX/grafica contabilità: rimossa fascia nera in `StudentDetailPanel`; skeleton KPI in loading; barra filtri nascosta in vista agenda; `aria-label` sui pulsanti icona (dashboard, FiscalePanel).
+
+- **Fase 9 🔵** — +31 test di regressione sui percorsi critici (rollback PO + `poCompleto`, evadi-magazzino gate 403/404/503, riconciliazione riapri/scope, solleciti cron+split, export/da-ordinare cross-plesso).
+- **Fatture 🟡 — numerazione allineata ad Aruba** (scelta utente: la numerazione fiscale la detta Aruba). `arubaUltimoNumeroFattura` legge da Aruba (`findByUsername`) l'ultimo numero emesso nell'anno; l'emissione usa la nuova RPC `prossimo_numero_fattura_sync` = `GREATEST(contatore interno, ultimo Aruba)+1` così il progressivo non si accavalla con fatture emesse anche fuori dall'app; rimosso il fallback `?? 1`; con IVA>0 si scorpora l'imponibile e `ImportoTotaleDocumento` torna congruente (=lordo incassato).
+- **Migrazione `20260711140000_fatture_sync_e_fk_hardening` APPLICATA a prod** (advisor 0 ERROR, version riallineata al timestamp-file): RPC sync numerazione + `ricevute_emesse.pagamento_id` `CASCADE→SET NULL` (registro fiscale immune alla cancellazione del pagamento) + `merch_rettifiche.articolo_id` `SET NULL→RESTRICT` (niente movimenti orfani, giacenze integre — chiude anche il rilievo FK articolo).
+
+- **Fase 10 (low-risk) 🔩** — chiusi 3 rischi trasversali: date a valenza fiscale su **Europe/Rome** (nuovo helper `src/lib/format/fiscal-date`; prima UTC → a cavallo di mezzanotte/31-dic la data documento e l'anno di numerazione slittavano); **PII negli export** → `logScrittura` per accountability GDPR (scadenzario, AdE con CF, merchandise); **congruenza quote split** (Σ quote esplicite pareggiata al totale del pagamento sulla prima quota, niente sotto/sovra-fatturazione). +test.
+
+- **T5 — Conservazione/WORM** (migr `20260711150000` APPLICATA a prod): trigger append-only su `fatture_emesse`/`ricevute_emesse` (vietano DELETE e l'UPDATE dei campi fiscali; restano solo lo stato SDI e l'annullo), `fatture_emesse.pagamento_id` → `RESTRICT`, route DELETE pagamento con pre-check 409. Enforcement a livello DB (anche service-role).
+- **T2 — Idempotenza ordini** (migr `20260711160000` APPLICATA a prod): `divise_ordini.idempotency_key` univoca, il client genera la chiave per invio, la route ritorna l'ordine già creato su `23505` (niente ordine+addebito doppi su retry/doppio click). +test.
+
+**Pendente — T1 atomicità/transazioni**: la creazione ordine (ordine+righe+pagamento) resta una sequenza di await con rollback best-effort. Con T2 (idempotenza) + rollback + post-check evasione, il caso residuo (crash/timeout tra due insert) è raro e a basso impatto per il contesto (sede unica, bassa concorrenza); la RPC transazionale piena richiede la riscrittura in PL/pgSQL + doppio path per il DB CI non migrato. Rimandata alla decisione dell'utente.
 
 ---
 

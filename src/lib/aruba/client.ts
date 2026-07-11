@@ -172,6 +172,43 @@ export async function arubaGetByFilename(
   return { stato, pdfBase64: pdf, raw: json }
 }
 
+/**
+ * Ultimo (massimo) numero di fattura EMESSA su Aruba per l'anno indicato:
+ * GET /services/invoice/out/findByUsername. Serve ad allineare il progressivo
+ * interno ed evitare collisioni con fatture emesse anche fuori dalla web app.
+ * Best-effort: il chiamante degrada al contatore locale se questa fallisce.
+ * NB il `number` è una stringa: si estrae la parte numerica e si prende il max.
+ */
+export async function arubaUltimoNumeroFattura(
+  ambiente: string | undefined,
+  accessToken: string,
+  params: { username: string; anno: number; vatcodeSender?: string }
+): Promise<number> {
+  const { ws } = arubaBaseUrls(ambiente)
+  const qs = new URLSearchParams({
+    username: params.username,
+    page: '1',
+    size: '500',
+    startDate: `${params.anno}-01-01`,
+    endDate: `${params.anno}-12-31`,
+  })
+  if (params.vatcodeSender) qs.set('vatcodeSender', params.vatcodeSender)
+  const res = await fetch(`${ws}/services/invoice/out/findByUsername?${qs.toString()}`, {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${accessToken}` },
+  })
+  if (!res.ok) throw new Error(`Aruba findByUsername fallita (HTTP ${res.status})`)
+  const json = await readJson(res)
+  const env = (json.value as Record<string, unknown>) ?? json
+  const invoices = (env.invoices ?? env.content ?? []) as { number?: string | number | null }[]
+  let max = 0
+  for (const inv of invoices) {
+    const n = parseInt(String(inv.number ?? '').replace(/[^\d]/g, ''), 10)
+    if (Number.isFinite(n) && n > max) max = n
+  }
+  return max
+}
+
 /** Notifiche SDI relative a una fattura inviata. */
 export async function arubaGetNotifications(
   ambiente: string | undefined,

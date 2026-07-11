@@ -76,11 +76,13 @@ export function StoricoPagamenti({ userId }: Props) {
     // Vista a categorie (DL-022): Rette / Iscrizione / Mensa / Divisa / Materiale / Altro.
     const gruppi = raggruppaPerCategoria(pagamenti);
 
-    // Totale ancora dovuto (DR banner "Totale da saldare"): somma del residuo sulle voci non saldate.
-    const totaleDovuto = pagamenti.reduce(
-        (s, p) => (p.stato !== 'pagato' ? s + (Number(p.importo) - Number(p.importo_pagato)) : s),
-        0,
-    );
+    // Totale ancora dovuto (DR banner "Totale da saldare"): somma del residuo sulle
+    // voci non saldate. Per gli split importo_pagato è dell'intero pagamento (non
+    // della quota del genitore): il residuo affidabile è l'intera quota; per i
+    // non-split è importo − importo_pagato, mai negativo.
+    const residuoDi = (p: Pagamento) =>
+        p.stato === 'pagato' ? 0 : p.tipo === 'split' ? Number(p.importo) : Math.max(0, Number(p.importo) - Number(p.importo_pagato));
+    const totaleDovuto = pagamenti.reduce((s, p) => s + residuoDi(p), 0);
     const vociAperte = pagamenti.filter((p) => p.stato !== 'pagato').length;
 
     return (
@@ -217,8 +219,10 @@ function Section({ title, icon, children }: { title: string; icon: React.ReactNo
 
 function PagamentoCard({ p, userId }: { p: Pagamento; userId: string }) {
     const st = STATI[p.stato] ?? STATI.da_pagare;
-    const resto = Number(p.importo) - Number(p.importo_pagato);
     const isSplit = p.tipo === 'split';
+    // Per gli split importo_pagato è dell'intero pagamento, non della quota:
+    // il residuo per-quota non è calcolabile qui, quindi non si mostra "(resta …)".
+    const resto = Number(p.importo) - Number(p.importo_pagato);
     const fatturaPronta = p.fattura_stato === 'emessa';
 
     return (
@@ -240,7 +244,7 @@ function PagamentoCard({ p, userId }: { p: Pagamento; userId: string }) {
             <div className="flex items-center justify-between mt-2">
                 <div className="font-maven text-sm">
                     <span className="text-kidville-green font-bold">€ {Number(p.importo).toFixed(2)}</span>
-                    {p.stato === 'parziale' && <span className="text-kidville-muted text-xs ml-2">(resta € {resto.toFixed(2)})</span>}
+                    {(p.stato === 'parziale' || p.stato === 'scaduto') && !isSplit && Number(p.importo_pagato) > 0 && <span className="text-kidville-muted text-xs ml-2">(resta € {resto.toFixed(2)})</span>}
                 </div>
                 {fatturaPronta ? (
                     <FatturaLinks pagamentoId={p.id} userId={userId} />

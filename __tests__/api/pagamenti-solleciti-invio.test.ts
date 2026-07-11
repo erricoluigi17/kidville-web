@@ -11,6 +11,7 @@ const h = vi.hoisted(() => ({
   settingsRow: {} as Record<string, unknown>,
   legami: [] as Record<string, unknown>[],
   utenti: [] as Record<string, unknown>[],
+  quote: [] as Record<string, unknown>[],
   inserts: [] as { table: string; row: Record<string, unknown> }[],
   updates: [] as { table: string; row: Record<string, unknown> }[],
 }))
@@ -45,6 +46,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
             : table === 'admin_settings' ? h.settingsRows
             : table === 'legame_genitori_alunni' ? h.legami
             : table === 'utenti' ? h.utenti
+            : table === 'pagamenti_quote' ? h.quote
             : [],
           error: null,
         })
@@ -57,6 +59,7 @@ import { POST } from '@/app/api/pagamenti/solleciti/route'
 import { POST as RUN } from '@/app/api/pagamenti/solleciti/run/route'
 
 const PID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaab1'
+const PID2 = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2'
 const post = (body: unknown) =>
   new Request('http://localhost/api/pagamenti/solleciti', {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
@@ -76,6 +79,7 @@ beforeEach(() => {
   h.settingsRow = { solleciti_config: {}, fiscale_config: { denominazione: 'Kidville' }, aruba_config: {} }
   h.legami = [{ genitore_id: 'g-1' }]
   h.utenti = [{ id: 'g-1', email: 'genitore@test.it', nome: 'Giulia', cognome: 'Farina' }]
+  h.quote = []
 })
 
 describe('POST /api/pagamenti/solleciti', () => {
@@ -122,6 +126,35 @@ describe('POST /api/pagamenti/solleciti', () => {
     h.requireStaff.mockResolvedValue({ response: NextResponse.json({}, { status: 403 }) })
     expect((await POST(post({ pagamento_ids: [PID] }))).status).toBe(403)
   })
+
+  // #36 — pagamento split: i destinatari NON sono i tutori del bambino, ma i
+  // titolari delle quote (adult_id di pagamenti_quote). Con legami VUOTI, un
+  // invio riuscito prova che i destinatari arrivano dalle quote.
+  it('#36 split: destinatari risolti dagli adult_id di pagamenti_quote', async () => {
+    h.pagamenti[0].tipo = 'split'
+    h.quote = [{ adult_id: 'ad-1' }, { adult_id: 'ad-2' }]
+    h.utenti = [{ id: 'ad-1', email: 'ad1@test.it' }, { id: 'ad-2', email: 'ad2@test.it' }]
+    h.legami = [] // se i destinatari venissero dai legami, non si invierebbe nulla
+    const res = await POST(post({ pagamento_ids: [PID] }))
+    expect(res.status).toBe(200)
+    const j = await res.json()
+    expect(j.data[0].ok).toBe(true)
+    expect((j.data[0].destinatari as { id: string }[]).map((d) => d.id)).toEqual(['ad-1', 'ad-2'])
+    expect(h.sendEmail).toHaveBeenCalledTimes(2)
+    const to = h.sendEmail.mock.calls.map((c) => c[0].to)
+    expect(to).toEqual(expect.arrayContaining(['ad1@test.it', 'ad2@test.it']))
+  })
+
+  it('#36 split senza quote né legami → nessun destinatario, niente invio', async () => {
+    h.pagamenti[0].tipo = 'split'
+    h.quote = []
+    h.legami = []
+    const res = await POST(post({ pagamento_ids: [PID] }))
+    const j = await res.json()
+    expect(j.data[0].ok).toBe(false)
+    expect(j.data[0].motivo).toContain('destinatario')
+    expect(h.sendEmail).not.toHaveBeenCalled()
+  })
 })
 
 describe('POST /api/pagamenti/solleciti/run', () => {
@@ -141,5 +174,29 @@ describe('POST /api/pagamenti/solleciti/run', () => {
     expect(h.sendEmail).not.toHaveBeenCalled()
     // il run aggiorna comunque gli scaduti (sostituisce genera_solleciti SQL)
     expect(h.updates.some((u) => u.table === 'pagamenti' && u.row.stato === 'scaduto')).toBe(true)
+  })
+
+  // #34 — giro automatico con scuola abilitata e candidato scaduto/obbligatorio:
+  // deve INVIARE, escludendo il contenitore rateale `tipo='padre'`.
+  it('#34 cron: config abilitata + candidato scaduto → invia ed ESCLUDE il contenitore padre', async () => {
+    vi.stubEnv('CRON_SECRET', 'test-secret')
+    h.settingsRows = [{ scuola_id: 'sc-1', solleciti_config: { enabled: true } }]
+    h.pagamenti = [
+      { id: PID, alunno_id: 'al-1', scuola_id: 'sc-1', descrizione: 'Retta', importo: 150, importo_pagato: 0,
+        stato: 'scaduto', scadenza: '2026-06-01', tipo: 'singolo', obbligatorio: true, ultimo_sollecito_il: null,
+        alunni: { nome: 'Mario', cognome: 'Rossi' } },
+      { id: PID2, alunno_id: 'al-2', scuola_id: 'sc-1', descrizione: 'Rateale annuale', importo: 300, importo_pagato: 0,
+        stato: 'scaduto', scadenza: '2026-06-01', tipo: 'padre', obbligatorio: true, ultimo_sollecito_il: null,
+        alunni: { nome: 'Luca', cognome: 'Bianchi' } },
+    ]
+    const res = await RUN(new Request('http://localhost/api/pagamenti/solleciti/run', { method: 'POST', headers: { 'x-cron-secret': 'test-secret' } }))
+    expect(res.status).toBe(200)
+    const j = await res.json()
+    expect(j.esaminati).toBe(2)
+    // solo il pagamento `singolo` è sollecitato; il contenitore `padre` è escluso
+    expect(j.inviati).toBe(1)
+    expect(h.sendEmail).toHaveBeenCalledTimes(1)
+    expect(h.sendEmail.mock.calls[0][0]).toMatchObject({ to: 'genitore@test.it' })
+    expect(h.enqueueNotifiche).toHaveBeenCalledTimes(1)
   })
 })

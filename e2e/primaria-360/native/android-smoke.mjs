@@ -122,9 +122,9 @@ async function main() {
       }).catch((e) => String(e));
       log('fill result', filled);
       await new Promise((r) => setTimeout(r, 800));
-      // Submit: requestSubmit del form (trigger onSubmit React) + click Entra.
+      // Submit: requestSubmit del form (trigger onSubmit React) + click Accedi.
       const sub = await req('POST', `/session/${id}/execute/sync`, {
-        script: "const f=document.querySelector('form');const b=[...document.querySelectorAll('button')].find(x=>/entra/i.test((x.textContent||'').trim()));let r=[];if(f){try{f.requestSubmit(b||undefined);r.push('requestSubmit');}catch(e){r.push('rsErr:'+e.message);}}if(b&&!b.disabled){b.click();r.push('click');}return r.join(',');",
+        script: "const f=document.querySelector('form');const b=[...document.querySelectorAll('button')].find(x=>/accedi/i.test((x.textContent||'').trim()));let r=[];if(f){try{f.requestSubmit(b||undefined);r.push('requestSubmit');}catch(e){r.push('rsErr:'+e.message);}}if(b&&!b.disabled){b.click();r.push('click');}return r.join(',');",
         args: [],
       }).catch((e) => String(e));
       log('submit result', sub);

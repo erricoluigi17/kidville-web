@@ -77,6 +77,8 @@ function importo(n: number): string {
   return n.toFixed(2)
 }
 
+const round2 = (n: number): number => Math.round(n * 100) / 100
+
 function sedeXml(sede: SedeFiscale): string {
   const prov = sede.provincia ? `        <Provincia>${esc(sede.provincia)}</Provincia>\n` : ''
   return (
@@ -96,7 +98,7 @@ export function buildFatturaElettronicaXml(input: FatturaPAInput): string {
 
   const iva = input.iva ?? { aliquota: 0, natura: NATURA_ESENTE, riferimentoNormativo: RIFERIMENTO_NORMATIVO }
   const naturaXml = iva.natura ? `        <Natura>${esc(iva.natura)}</Natura>\n` : ''
-  const imposta = (totale * iva.aliquota) / 100
+  const imposta = round2((totale * iva.aliquota) / 100)
 
   const linee = righe
     .map((r, i) => {
@@ -182,7 +184,7 @@ export function buildFatturaElettronicaXml(input: FatturaPAInput): string {
     `        <Data>${esc(input.data)}</Data>\n` +
     `        <Numero>${esc(input.numero)}</Numero>\n` +
     datiBollo +
-    `        <ImportoTotaleDocumento>${importo(totale)}</ImportoTotaleDocumento>\n` +
+    `        <ImportoTotaleDocumento>${importo(round2(totale + imposta))}</ImportoTotaleDocumento>\n` +
     causale +
     `      </DatiGeneraliDocumento>\n` +
     `    </DatiGenerali>\n` +

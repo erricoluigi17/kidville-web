@@ -115,7 +115,7 @@ export function FiscalePanel({ userId, scuolaId }: Props) {
                             <select value={anno} onChange={(e) => { setAnno(Number(e.target.value)); setLoading(true); }} className={selCls}>
                                 {anni.map((a) => <option key={a} value={a}>{a}</option>)}
                             </select>
-                            <button onClick={() => { setLoading(true); loadRegistro(); }}
+                            <button onClick={() => { setLoading(true); loadRegistro(); }} aria-label="Aggiorna" title="Aggiorna"
                                 className="rounded-full border-2 border-kidville-line p-2 text-kidville-muted hover:text-kidville-green">
                                 <RefreshCw size={14} />
                             </button>

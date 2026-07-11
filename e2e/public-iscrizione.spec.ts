@@ -73,12 +73,14 @@ test.describe('import in segreteria', () => {
   test.use({ storageState: STORAGE.admin });
 
   test('l’import mostra il degrado email visibile', async ({ page }) => {
+    test.slow();
     await page.goto('/admin/iscrizioni');
 
-    // /admin/iscrizioni ora reindirizza a Modulistica > tab "Moduli ricevuti".
-    await expect(page.getByText('Modulistica & Onboarding')).toBeVisible();
+    // /admin/iscrizioni ora reindirizza a Modulistica > tab "Moduli ricevuti":
+    // il redirect + render può essere lento sotto carico CI → timeout generoso.
+    await expect(page.getByText('Modulistica & Onboarding')).toBeVisible({ timeout: 30_000 });
     const richiesta = page.getByText('Tino Iscrizione-E2E').first();
-    await expect(richiesta).toBeVisible({ timeout: 15_000 });
+    await expect(richiesta).toBeVisible({ timeout: 20_000 });
     await richiesta.click();
 
     // L'import esige una classe per bambino: sezione DEDICATA agli iscritti,
@@ -89,9 +91,9 @@ test.describe('import in segreteria', () => {
 
     // Esito: import ok + credenziali + degrado email (RESEND non configurato).
     await expect(page.getByText('Iscrizione importata')).toBeVisible({ timeout: 20_000 });
-    await expect(page.getByText(/Credenziali:/)).toBeVisible();
+    await expect(page.getByText(/Credenziali:/)).toBeVisible({ timeout: 15_000 });
     await expect(
       page.getByText('Email non inviata: comunicare le credenziali manualmente.')
-    ).toBeVisible();
+    ).toBeVisible({ timeout: 15_000 });
   });
 });

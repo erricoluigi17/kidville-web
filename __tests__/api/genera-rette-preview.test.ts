@@ -9,6 +9,7 @@ const h = vi.hoisted(() => ({
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
+vi.mock('@/lib/auth/scope', () => ({ resolveScuoleAttive: async () => ['sc-1'] }))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
     from: (table: string) => {

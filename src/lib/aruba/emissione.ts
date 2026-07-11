@@ -10,12 +10,13 @@
  * quella quota). Nessun mock: senza credenziali Aruba ritorna `non_configurato`.
  */
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { arubaSignin, arubaUpload, resolveArubaCredentials, type ArubaConfig } from './client'
+import { arubaSignin, arubaUpload, arubaUltimoNumeroFattura, resolveArubaCredentials, type ArubaConfig } from './client'
 import { buildFatturaElettronicaXml } from './fatturapa-xml'
 import { mapStatoAruba } from './stato'
 import { determinaQuoteFatturazione, resolveParentRegistry } from '@/lib/pagamenti/intestatari'
 import { bolloDovuto, type FiscaleConfig } from '@/lib/pagamenti/fiscale'
 import { getModuleConfig } from '@/lib/settings/module-config'
+import { annoFiscale, oggiFiscaleISO } from '@/lib/format/fiscal-date'
 
 export interface AttoreEmissione {
   id: string
@@ -28,7 +29,7 @@ export interface EsitoQuota {
   ok: boolean
   numero?: number
   uploadFileName?: string
-  motivo?: 'intestatario_mancante' | 'scartata' | 'idempotente'
+  motivo?: 'intestatario_mancante' | 'scartata' | 'idempotente' | 'errore'
   messaggio?: string
 }
 
@@ -138,12 +139,28 @@ export async function emettiFatturaPagamento(
   }[]
 
   // 5. emissione indipendente per quota
-  const anno = new Date().getFullYear()
+  const anno = annoFiscale()
   const causaleBase = s(pag.fattura_causale) || s(pag.descrizione)
   let tokenCache: string | null = null
   const ensureToken = async () => {
     if (!tokenCache) tokenCache = (await arubaSignin(cfg.ambiente, creds)).accessToken
     return tokenCache
+  }
+
+  // Allineamento con Aruba: leggi l'ultimo numero già emesso per l'anno, così il
+  // progressivo non si accavalla con fatture emesse anche fuori dalla web app.
+  // Best-effort: se fallisce si usa solo il contatore interno.
+  let ultimoAruba = 0
+  try {
+    const token = await ensureToken()
+    ultimoAruba =
+      (await arubaUltimoNumeroFattura(cfg.ambiente, token, {
+        username: creds.username,
+        anno,
+        vatcodeSender: s(fiscal.piva) || undefined,
+      })) || 0
+  } catch (e) {
+    console.warn(`[ARUBA] lettura ultimo numero fattura fallita per scuola ${pag.scuola_id}, uso il contatore interno:`, e)
   }
 
   const esiti: EsitoQuota[] = []
@@ -173,9 +190,15 @@ export async function emettiFatturaPagamento(
       continue
     }
 
-    // numero interno (sequenza per scuola/anno) — uno per quota
-    const { data: numeroData } = await supabase.rpc('prossimo_numero_fattura', { p_scuola: pag.scuola_id, p_anno: anno })
-    const numero = Number(numeroData ?? 1)
+    // numero (sequenza per scuola/anno) allineato ad Aruba: la RPC restituisce
+    // GREATEST(contatore interno, ultimoAruba) + 1, così non si accavalla mai.
+    // Nessun fallback a un numero fisso: un errore RPC duplicherebbe la numerazione.
+    const numRes = await supabase.rpc('prossimo_numero_fattura_sync', { p_scuola: pag.scuola_id, p_anno: anno, p_min: ultimoAruba })
+    if (numRes.error || typeof numRes.data !== 'number') {
+      esiti.push({ adultId: q.adultId, label: q.label, ok: false, motivo: 'errore', messaggio: 'Numerazione fattura non disponibile' })
+      continue
+    }
+    const numero = numRes.data
 
     const causale = multi ? `${causaleBase} — quota ${q.label || reg.first_name || 'genitore'}` : causaleBase
     const importoQuota = Number(q.importo)
@@ -185,13 +208,17 @@ export async function emettiFatturaPagamento(
     const ivaEntry = (cfg.iva || []).find(
       (v) => v.causale && causale.toLowerCase().includes(String(v.causale).toLowerCase())
     )
-    const esente = !ivaEntry || Number(ivaEntry.aliquota) === 0
+    const aliquota = ivaEntry ? Number(ivaEntry.aliquota) : 0
+    const esente = aliquota === 0
     const bolloImporto = esente ? bolloDovuto(importoQuota, fiscaleCfg) : 0
+    // importoQuota è il LORDO incassato: con IVA>0 va scorporato l'imponibile,
+    // così ImportoTotaleDocumento (imponibile+imposta) torna pari all'incassato.
+    const imponibile = aliquota > 0 ? Math.round((importoQuota / (1 + aliquota / 100)) * 100) / 100 : importoQuota
 
     const xml = buildFatturaElettronicaXml({
       progressivoInvio: String(numero).padStart(5, '0'),
       numero: String(numero),
-      data: new Date().toISOString().slice(0, 10),
+      data: oggiFiscaleISO(),
       cedente: {
         piva: s(fiscal.piva),
         codiceFiscale: fiscal.cf ? s(fiscal.cf) : undefined,
@@ -216,9 +243,9 @@ export async function emettiFatturaPagamento(
           nazione: 'IT',
         },
       },
-      righe: [{ descrizione: causale, prezzoUnitario: importoQuota }],
+      righe: [{ descrizione: causale, prezzoUnitario: imponibile }],
       causale,
-      iva: ivaEntry ? { aliquota: Number(ivaEntry.aliquota), natura: ivaEntry.natura || undefined } : undefined,
+      iva: ivaEntry ? { aliquota, natura: ivaEntry.natura || undefined } : undefined,
       bollo: bolloImporto > 0 ? { importo: bolloImporto } : undefined,
     })
 
@@ -272,11 +299,12 @@ export async function emettiFatturaPagamento(
   if (okEsiti.length === 0) {
     await supabase.from('pagamenti').update({ fattura_stato: 'scartata', fattura_causale: causaleBase }).eq('id', pagamentoId)
     const first = esiti[0]
+    const motivoAgg = first?.motivo === 'intestatario_mancante' ? 'intestatario_mancante' : first?.motivo === 'errore' ? 'errore' : 'scartata'
     return {
       ok: false,
-      motivo: first?.motivo === 'intestatario_mancante' ? 'intestatario_mancante' : 'scartata',
+      motivo: motivoAgg,
       messaggio: first?.messaggio ?? 'Emissione non riuscita',
-      httpStatus: first?.motivo === 'intestatario_mancante' ? 422 : 502,
+      httpStatus: motivoAgg === 'intestatario_mancante' ? 422 : motivoAgg === 'errore' ? 500 : 502,
       quote: multi ? esiti : undefined,
     }
   }

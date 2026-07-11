@@ -152,14 +152,20 @@ export async function POST(request: Request) {
       const { error: sErr } = await setSaldo(supabase, alunnoId, saldo)
       if (sErr) { saldo = saldo + 1; esiti.push({ data, ok: false, motivo: 'Errore saldo' }); continue }
 
-      const { error: pErr } = await supabase.from('mensa_prenotazioni').upsert(
+      const { data: pren, error: pErr } = await supabase.from('mensa_prenotazioni').upsert(
         {
           alunno_id: alunnoId, scuola_id: scuolaId, data, stato: 'prenotato',
           origine, ticket_scalato: 1, prenotato_da: user.id,
         },
         { onConflict: 'alunno_id,data' }
-      )
+      ).select('id').single()
       if (pErr) { saldo = saldo + 1; await setSaldo(supabase, alunnoId, saldo); esiti.push({ data, ok: false, motivo: 'Errore prenotazione' }); continue }
+      // movimento ledger ticket (best-effort): consumo -1
+      const { error: mErr } = await supabase.from('mensa_ticket_movimenti').insert({
+        alunno_id: alunnoId, scuola_id: scuolaId, tipo: 'consumo', delta: -1,
+        saldo_dopo: saldo, prenotazione_id: pren?.id, origine, data, creato_da: user.id,
+      })
+      if (mErr) console.error('prenotazioni: movimento consumo non registrato:', mErr.message)
       esiti.push({ data, ok: true })
     }
 
@@ -229,6 +235,13 @@ export async function DELETE(request: Request) {
     await supabase.from('mensa_prenotazioni')
       .update({ stato: 'disdetto', prenotato_da: user.id })
       .eq('id', existing.id)
+
+    // movimento ledger ticket (best-effort): disdetta +ticket_scalato
+    const { error: mErr } = await supabase.from('mensa_ticket_movimenti').insert({
+      alunno_id: alunnoId, scuola_id: scuolaId, tipo: 'disdetta', delta: Number(existing.ticket_scalato ?? 1),
+      saldo_dopo: saldo, prenotazione_id: existing.id, origine: 'disdetta', data, creato_da: user.id,
+    })
+    if (mErr) console.error('prenotazioni: movimento disdetta non registrato:', mErr.message)
 
     return NextResponse.json({ success: true, data: { saldo } })
   } catch (err) {

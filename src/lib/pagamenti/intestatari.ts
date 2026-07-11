@@ -118,11 +118,19 @@ export async function determinaQuoteFatturazione(
       .select('adult_id, importo, etichetta')
       .eq('pagamento_id', pagamento.id)
     if (quote && quote.length > 0) {
-      return (quote as { adult_id: string; importo: number | string; etichetta: string | null }[]).map((q) => ({
+      const mapped = (quote as { adult_id: string; importo: number | string; etichetta: string | null }[]).map((q) => ({
         adultId: q.adult_id,
         importo: round2(Number(q.importo)),
         label: q.etichetta ?? '',
       }))
+      // Congruenza fiscale: la somma delle quote esplicite deve pareggiare il
+      // totale del pagamento (le quote potrebbero non essere state aggiornate se
+      // l'importo è cambiato). L'eventuale differenza va sulla prima quota, così
+      // Σ quote == totale e non si sotto/sovra-fattura.
+      const somma = round2(mapped.reduce((s, x) => s + x.importo, 0))
+      const diff = round2(totale - somma)
+      if (diff !== 0) mapped[0] = { ...mapped[0], importo: round2(mapped[0].importo + diff) }
+      return mapped
     }
     // 2b) proporzioni da retta_split_config scalate sull'importo del pagamento.
     const cfg = alunno.retta_split_config

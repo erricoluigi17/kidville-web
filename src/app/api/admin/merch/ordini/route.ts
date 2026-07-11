@@ -39,6 +39,7 @@ const postBodySchema = z.object({
     )
     .min(1, 'Aggiungi almeno una riga'),
   note: z.string().trim().max(500).nullish(),
+  idempotency_key: zUuid.optional(),
 })
 
 const patchBodySchema = z.object({
@@ -112,7 +113,7 @@ export async function POST(request: Request) {
 
     const b = await parseBody(request, postBodySchema)
     if ('response' in b) return b.response
-    const { alunno_id, righe, note } = b.data
+    const { alunno_id, righe, note, idempotency_key: idempotencyKey } = b.data
 
     const supabase = await createAdminClient()
     const scopeErr = await assertAlunnoInScope(supabase, auth.user, alunno_id)
@@ -154,15 +155,35 @@ export async function POST(request: Request) {
     }
     totale = Math.round(totale * 100) / 100
 
-    // 1) ordine (testata legacy: tutte le righe da_ordinare → 'inviato')
+    // 1) ordine (testata legacy: tutte le righe da_ordinare → 'inviato').
+    // Idempotenza: la stessa idempotency_key (doppio click/retry) NON crea un
+    // secondo ordine+addebito → si ritorna quello già creato.
     const statoTestata = derivaStatoTestata(righeOrdine.map(() => 'da_ordinare'))
-    const { data: ordine, error: ordErr } = await supabase
-      .from('divise_ordini')
-      .insert({ scuola_id: scuolaId, alunno_id, parent_id: null, stato: statoTestata, totale, note: note ?? null })
-      .select('id')
-      .single()
-    if (ordErr || !ordine) {
-      return NextResponse.json({ error: ordErr?.message ?? 'Creazione ordine fallita' }, { status: 500 })
+    const ordineRow: Record<string, unknown> = { scuola_id: scuolaId, alunno_id, parent_id: null, stato: statoTestata, totale, note: note ?? null }
+    if (idempotencyKey) ordineRow.idempotency_key = idempotencyKey
+    let ordRes = await supabase.from('divise_ordini').insert(ordineRow).select('id').single()
+    // DB non migrato (colonna idempotency_key assente): retry senza la chiave
+    if (ordRes.error && SCHEMA_MANCANTE.has(ordRes.error.code ?? '') && idempotencyKey) {
+      delete ordineRow.idempotency_key
+      ordRes = await supabase.from('divise_ordini').insert(ordineRow).select('id').single()
+    }
+    // retry/doppio invio con la stessa chiave → ritorna l'ordine già creato
+    if (ordRes.error?.code === '23505' && idempotencyKey) {
+      const { data: gia } = await supabase
+        .from('divise_ordini')
+        .select('id, pagamento_id, totale')
+        .eq('idempotency_key', idempotencyKey)
+        .maybeSingle()
+      if (gia) {
+        return NextResponse.json(
+          { success: true, data: { ordine_id: gia.id, pagamento_id: gia.pagamento_id, totale: gia.totale, idempotente: true } },
+          { status: 200 }
+        )
+      }
+    }
+    const ordine = ordRes.data
+    if (ordRes.error || !ordine) {
+      return NextResponse.json({ error: ordRes.error?.message ?? 'Creazione ordine fallita' }, { status: 500 })
     }
 
     // 2) righe con stato logistico (degrade: PGRST204 → senza stato/origine)

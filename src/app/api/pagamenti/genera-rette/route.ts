@@ -1,9 +1,10 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { parseData, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { resolveScuoleAttive } from '@/lib/auth/scope'
 
 // `anno` e `periodo` NON sono vincolati nel formato: storicamente un valore
 // malformato ricade sull'anteprima/generazione mensile del mese corrente
@@ -63,9 +64,19 @@ export async function GET(request: Request) {
     const q = parseQuery(request, getQuerySchema)
     if ('response' in q) return q.response
     const annoParam = q.data.anno
-    const scuolaId = q.data.scuola_id || auth.user.scuola_id
 
     const supabase = await createAdminClient()
+    // Scoping di sede: il scuola_id passato dal client vale solo se è una sede
+    // attiva dell'operatore, altrimenti si ricade sulla propria sede — mai un
+    // plesso esterno (preview roster/rette cross-tenant).
+    const sedi = await resolveScuoleAttive(request as NextRequest, supabase, auth.user)
+    const richiesta = q.data.scuola_id
+    const scuolaId =
+      richiesta && sedi.includes(richiesta)
+        ? richiesta
+        : auth.user.scuola_id && sedi.includes(auth.user.scuola_id)
+          ? auth.user.scuola_id
+          : sedi[0]
     const { data: cat } = await supabase
       .from('payment_categories').select('id').eq('slug', 'retta').is('scuola_id', null).maybeSingle()
 

@@ -1,9 +1,10 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff, requireUser } from '@/lib/auth/require-staff'
 import { parseBody, parseData } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { resolveScuoleAttive } from '@/lib/auth/scope'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // PATCH: merge parziale sui soli campi ammessi; i valori restano senza vincoli
@@ -63,6 +64,14 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     const pag = data as unknown as PagamentoDettaglio
 
     const isStaff = user.role === 'admin' || user.role === 'coordinator' || user.role === 'segreteria'
+
+    // scoping di sede (staff): il pagamento deve stare in una sede attiva
+    if (isStaff) {
+      const sedi = await resolveScuoleAttive(request as NextRequest, supabase, user)
+      if (!sedi.includes(String(pag.scuola_id))) {
+        return NextResponse.json({ error: 'Pagamento non trovato' }, { status: 404 })
+      }
+    }
 
     // scoping genitore
     let ownQuotaId: string | null = null
@@ -153,6 +162,13 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     updates.aggiornato_il = new Date().toISOString()
 
     const supabase = await createAdminClient()
+    // scoping di sede: non modificare pagamenti fuori dalle sedi attive
+    const { data: esistente } = await supabase.from('pagamenti').select('scuola_id').eq('id', id).maybeSingle()
+    if (!esistente) return NextResponse.json({ error: 'Pagamento non trovato' }, { status: 404 })
+    const sedi = await resolveScuoleAttive(request as NextRequest, supabase, auth.user)
+    if (!sedi.includes(String((esistente as { scuola_id: string }).scuola_id))) {
+      return NextResponse.json({ error: 'Pagamento non trovato' }, { status: 404 })
+    }
     const { data, error } = await supabase.from('pagamenti').update(updates).eq('id', id).select(SELECT).single()
     if (error) return NextResponse.json({ error: 'Errore aggiornamento', details: error.message }, { status: 500 })
 
@@ -182,6 +198,11 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
     const supabase = await createAdminClient()
     const { data: old } = await supabase.from('pagamenti').select('*').eq('id', id).maybeSingle()
     if (!old) return NextResponse.json({ error: 'Pagamento non trovato' }, { status: 404 })
+    // scoping di sede: non eliminare pagamenti fuori dalle sedi attive
+    const sediDel = await resolveScuoleAttive(request as NextRequest, supabase, user)
+    if (!sediDel.includes(String((old as { scuola_id: string }).scuola_id))) {
+      return NextResponse.json({ error: 'Pagamento non trovato' }, { status: 404 })
+    }
     const { error } = await supabase.from('pagamenti').delete().eq('id', id)
     if (error) return NextResponse.json({ error: 'Errore eliminazione', details: error.message }, { status: 500 })
 

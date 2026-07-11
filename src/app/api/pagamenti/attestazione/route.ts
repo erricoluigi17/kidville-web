@@ -1,7 +1,8 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
+import { resolveScuoleAttive } from '@/lib/auth/scope'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { calcolaAttestazione, type VoceAttestazione } from '@/lib/pagamenti/attestazione'
@@ -45,6 +46,13 @@ export async function GET(request: Request) {
         .eq('alunno_id', alunnoId)
         .maybeSingle()
       if (!legame) return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
+    } else {
+      // Staff: l'alunno deve appartenere a una sede attiva (niente PDF con
+      // codici fiscali di alunno/pagatore di un altro plesso).
+      const sedi = await resolveScuoleAttive(request as NextRequest, supabase, user)
+      if (!sedi.includes(String(alunno.scuola_id))) {
+        return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
+      }
     }
 
     // Pagamenti dell'alunno → incassi dell'anno solare (criterio di cassa).

@@ -54,6 +54,24 @@
 
 ---
 
+## 🗓️ Changelog — Test completo + correzione difetti Contabilità+Merchandise 2026-07-11 (branch `feat/fix-contabilita-merchandise`)
+
+**Test completo** del rilascio PR #15 (Contabilità Fase A + Merchandise Fase B): gate (eslint/tsc/vitest/build tutti verdi), review adversariale a 10 lenti (58 agenti, ogni rilievo confutato) e verifica read-only del DB di produzione (5 migrazioni allineate, advisor **0 ERROR**). Esito: **39 rilievi confermati** — 1 alto, 16 medi, 21 bassi, 0 critici. Referto navigabile prodotto come artifact.
+
+Correzione difetti in fasi (1 commit per fase, gate verde per fase):
+
+- **Fase 1 🟠 (ALTA)** — `PaymentsDashboard`: i KPI contavano due volte i piani rateali (contenitore `padre` + rate). Logica estratta in `calcolaTotaliPagamenti()` pura con guard `padre`; "Da incassare" non è più gonfiato in modo permanente. +test di regressione.
+- **Fase 2a 🟡** — `attestazione` 730: classificazione detraibile/non-tracciabile sul **netto** per voce (uno storno in contanti compensa il detraibile invece di gonfiarlo). `riconciliazione` conferma: update del movimento con **CAS ottimistico** + storno dell'incasso se la corsa è persa (anti doppio-incasso). +test.
+- **Fase 3 🟡** — scoping di sede su `pagamenti/[id]` (GET/PATCH/DELETE), `genera-rette` (GET) e `attestazione`: niente più lettura/modifica/PDF cross-sede per UUID (impatto pratico basso con sede unica, chiude il gap multi-sede). +test.
+- **Fase 4 🟡🔵** — magazzino: `giacenze` con filtro sede a livello DB prima del cap (no oversell da troncamento) + errori reali propagati invece di degradare a stock zero; `cambio-taglia` con guard sullo stato sorgente (una riga `annullato` non resuscita a prezzo 0); `export`/`da-ordinare` filtro sede a DB; `evadi-magazzino`/`consegna`/`checkin` contano e notificano solo le righe realmente transitate + post-check anti over-allocazione. +test.
+- **Fase 5 🟡** — frontend contabilità: reset del mese al cambio A.S.; stato di errore con banner+Riprova (niente KPI a 0,00 su load fallito); `StoricoPagamenti` genitore mostra residuo affidabile sugli split.
+- **Fase 6 🔵** — UX `/admin/merchandise`: conferme su evasione/annullo, empty-state, registra-arrivo non più no-op, dropdown ricerca non-stale, prezzo con virgola italiana, toggle catalogo con busy/errore, checkbox accessibili.
+- **Fase 7 🔵** — UX/grafica contabilità: rimossa fascia nera in `StudentDetailPanel`; skeleton KPI in loading; barra filtri nascosta in vista agenda; `aria-label` sui pulsanti icona (dashboard, FiscalePanel).
+
+**Pendenti** (in attesa di decisione/conferma): **numerazione fatture fiscali** (#7 IVA-XML, #8) — su indicazione: le fatture le numera Aruba, il contatore interno resta solo per le ricevute non fiscali (scelta rimozione emissione dalla web app vs numerazione Aruba da confermare); **migrazioni DB** (FK ricevute `ON DELETE`, FK articolo magazzino) da applicare a prod solo su conferma; copertura test aggiuntiva e rischi trasversali (timezone Europe/Rome, PII export log, idempotenza POST, atomicità) da valutare.
+
+---
+
 ## 🗓️ Changelog — Contabilità: redesign UX + moduli fiscale/solleciti/riconciliazione (Fase A) 2026-07-10 (branch `feat/contabilita-merchandise`)
 
 Redesign completo della sezione **Contabilità** (`/admin/pagamenti`, etichetta sidebar rinominata da "Pagamenti") in 12 step committati (A1-A12), con 3 nuove migrazioni (`20260710130000_contabilita_fiscale`, `20260710140000_contabilita_solleciti`, `20260710150000_contabilita_riconciliazione`) — **applicate a prod il 2026-07-11** (vedi Stato in fondo). Piano in `~/.claude/plans/dobbiamo-rendere-la-sezione-zippy-simon.md`. Fase B (Merchandise) a seguire sullo stesso branch.

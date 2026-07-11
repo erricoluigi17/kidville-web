@@ -108,8 +108,8 @@ export function MensaCalendar({ userId, studentId }: Props) {
     <div>
       <SaveCelebration show={!!celebra} message={celebra ?? ''} onDone={() => setCelebra(null)} />
 
-      {/* Saldo + navigazione settimana */}
-      <div className="flex items-center justify-between mb-4">
+      {/* Saldo + navigazione settimana — wrap sugli schermi stretti (320px) */}
+      <div className="flex flex-wrap items-center justify-between gap-y-2 mb-4">
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-kidville-green text-white">
             <Ticket size={15} />
@@ -125,19 +125,19 @@ export function MensaCalendar({ userId, studentId }: Props) {
             onClick={() => load()}
             disabled={loading}
             title="Aggiorna saldo"
-            className="w-8 h-8 rounded-full bg-white border-2 border-gray-200 flex items-center justify-center text-kidville-green disabled:opacity-40"
+            className="w-8 h-8 rounded-full bg-white border-2 border-kidville-line flex items-center justify-center text-kidville-green disabled:opacity-40"
           >
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
           </button>
         </div>
         <div className="flex items-center gap-1">
-          <button onClick={() => setWeekStart(addDays(weekStart, -7))} className="w-8 h-8 rounded-full bg-white border-2 border-gray-200 flex items-center justify-center text-kidville-green">
+          <button onClick={() => setWeekStart(addDays(weekStart, -7))} className="w-8 h-8 rounded-full bg-white border-2 border-kidville-line flex items-center justify-center text-kidville-green">
             <ChevronLeft size={16} />
           </button>
-          <span className="font-maven text-xs text-gray-500 w-28 text-center">
+          <span className="font-maven text-xs text-kidville-muted w-28 text-center">
             {weekStart.toLocaleDateString('it-IT', { day: 'numeric', month: 'short' })} – {addDays(weekStart, 6).toLocaleDateString('it-IT', { day: 'numeric', month: 'short' })}
           </span>
-          <button onClick={() => setWeekStart(addDays(weekStart, 7))} className="w-8 h-8 rounded-full bg-white border-2 border-gray-200 flex items-center justify-center text-kidville-green">
+          <button onClick={() => setWeekStart(addDays(weekStart, 7))} className="w-8 h-8 rounded-full bg-white border-2 border-kidville-line flex items-center justify-center text-kidville-green">
             <ChevronRight size={16} />
           </button>
         </div>
@@ -172,7 +172,7 @@ export function MensaCalendar({ userId, studentId }: Props) {
       ) : (
         <div className="space-y-2.5">
           {giorni.length === 0 && (
-            <p className="font-maven text-sm text-gray-400 text-center py-8">Nessun giorno mensa in questa settimana.</p>
+            <p className="font-maven text-sm text-kidville-muted text-center py-8">Nessun giorno mensa in questa settimana.</p>
           )}
           {giorni.map((g, idx) => {
             const d = new Date(`${g.data}T00:00:00Z`);
@@ -187,7 +187,7 @@ export function MensaCalendar({ userId, studentId }: Props) {
                 key={g.data}
                 initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: idx * 0.03 }}
-                className={`rounded-2xl border p-3 ${prenotato ? 'bg-kidville-success-soft/70 border-kidville-success/30' : 'bg-white border-gray-100'}`}
+                className={`rounded-2xl border p-3 ${prenotato ? 'bg-kidville-success-soft/70 border-kidville-success/30' : 'bg-white border-kidville-line'}`}
               >
                 <div className="flex items-start gap-3">
                   <div className={`flex flex-col items-center justify-center w-12 h-12 rounded-xl flex-shrink-0 ${prenotato ? 'bg-kidville-green text-kidville-yellow' : 'bg-kidville-cream text-kidville-green'}`}>
@@ -197,15 +197,15 @@ export function MensaCalendar({ userId, studentId }: Props) {
 
                   <div className="flex-1 min-w-0">
                     {g.chiuso ? (
-                      <div className="flex items-center gap-1.5 text-gray-400 font-maven text-sm py-2">
+                      <div className="flex items-center gap-1.5 text-kidville-muted font-maven text-sm py-2">
                         <CalendarOff size={14} /> Mensa chiusa {g.note ? `· ${g.note}` : ''}
                       </div>
                     ) : g.portate ? (
-                      <p className="font-maven text-[12px] text-gray-600 leading-snug">
+                      <p className="font-maven text-[12px] text-kidville-sub leading-snug">
                         {[g.portate.primo, g.portate.secondo, g.portate.contorno, g.portate.frutta].filter(Boolean).join(' · ') || 'Menu non ancora pubblicato'}
                       </p>
                     ) : (
-                      <p className="font-maven text-[12px] text-gray-400 py-1 flex items-center gap-1">
+                      <p className="font-maven text-[12px] text-kidville-muted py-1 flex items-center gap-1">
                         <UtensilsCrossed size={13} /> Menu non ancora pubblicato
                       </p>
                     )}
@@ -242,7 +242,7 @@ export function MensaCalendar({ userId, studentId }: Props) {
                           </button>
                         )}
                         {p?.origine === 'segreteria' && (
-                          <span className="ml-2 font-maven text-[10px] text-gray-400">inserito dalla segreteria</span>
+                          <span className="ml-2 font-maven text-[10px] text-kidville-muted">inserito dalla segreteria</span>
                         )}
                       </div>
                     )}

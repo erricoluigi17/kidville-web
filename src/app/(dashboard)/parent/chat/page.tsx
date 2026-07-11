@@ -406,20 +406,21 @@ function ParentChatContent() {
                     // dispositivo (100dvh reale), il campo resta sempre visibile in fondo
                     // sopra la safe-area; si esce con il tasto indietro in alto.
                     <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }}
-                        className="fixed inset-0 z-[60] bg-white flex flex-col overflow-hidden pb-[env(safe-area-inset-bottom)]">
-                        <div className="flex items-center gap-3 px-4 py-3 border-b border-kidville-line">
-                            <button onClick={() => setShowMobile('list')}
-                                className="w-8 h-8 rounded-xl bg-kidville-neutral-soft hover:bg-kidville-cream-dark flex items-center justify-center text-kidville-muted transition-colors">
-                                <ArrowLeft size={16} strokeWidth={1.5} />
+                        className="fixed inset-0 z-[60] bg-kidville-cream flex flex-col overflow-hidden pb-[env(safe-area-inset-bottom)]">
+                        {/* Header conversazione del design: barra verde, back white/15, avatar giallo */}
+                        <div className="flex items-center gap-2.5 bg-kidville-green px-3 py-2.5 pt-[max(10px,env(safe-area-inset-top))]">
+                            <button onClick={() => setShowMobile('list')} aria-label="Torna alla lista"
+                                className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-full bg-white/15 text-white transition-transform active:scale-95">
+                                <ArrowLeft size={18} strokeWidth={2.2} />
                             </button>
-                            <div className="w-9 h-9 rounded-full bg-kidville-green flex items-center justify-center font-barlow font-bold text-xs text-kidville-yellow">
+                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-kidville-yellow font-barlow text-sm font-extrabold text-kidville-green">
                                 {selectedThread.other_user.first_name[0]}{selectedThread.other_user.last_name[0]}
                             </div>
-                            <div>
-                                <p className="font-maven font-semibold text-sm text-kidville-green">
+                            <div className="min-w-0">
+                                <p className="truncate font-barlow text-[17px] font-extrabold uppercase leading-tight text-white">
                                     {selectedThread.other_user.first_name} {selectedThread.other_user.last_name}
                                 </p>
-                                <p className="font-maven text-[10px] text-kidville-muted">{selectedThread.student.nome}</p>
+                                <p className="truncate font-maven text-[11.5px] text-white/75">{selectedThread.student.nome}</p>
                             </div>
                         </div>
                         <ChatMessageArea

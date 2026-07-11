@@ -71,7 +71,7 @@ export function ChatInput({ onSend, disabled, placeholder }: Props) {
     };
 
     return (
-        <div className="border-t border-gray-100/60 bg-white/80 backdrop-blur-xl">
+        <div className="border-t border-kidville-line bg-white/95 backdrop-blur-xl">
             {/* Attachment preview */}
             {attachment && (
                 <div className="px-4 pt-3 flex items-center gap-2">
@@ -81,7 +81,7 @@ export function ChatInput({ onSend, disabled, placeholder }: Props) {
                     </div>
                     <button
                         onClick={() => setAttachment(null)}
-                        className="w-7 h-7 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-400 hover:text-gray-600 transition-colors"
+                        className="w-7 h-7 rounded-full bg-kidville-cream-dark flex items-center justify-center text-kidville-sub transition-colors hover:text-kidville-green"
                     >
                         <X size={12} strokeWidth={1.5} />
                     </button>
@@ -107,10 +107,11 @@ export function ChatInput({ onSend, disabled, placeholder }: Props) {
                     aria-hidden="true"
                     tabIndex={-1}
                 />
+                {/* Design Composer: allega = cerchio green-soft */}
                 <button
                     onClick={handleAttachClick}
                     disabled={disabled || uploading}
-                    className="w-10 h-10 rounded-full flex-shrink-0 flex items-center justify-center bg-gray-50 hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-50"
+                    className="w-10 h-10 rounded-full flex-shrink-0 flex items-center justify-center bg-kidville-green-soft text-kidville-green transition-transform active:scale-95 disabled:opacity-50"
                     aria-label={uploading ? 'Caricamento in corso' : 'Allega file'}
                 >
                     {uploading
@@ -128,19 +129,21 @@ export function ChatInput({ onSend, disabled, placeholder }: Props) {
                         disabled={disabled}
                         rows={1}
                         placeholder={placeholder ?? 'Scrivi un messaggio...'}
-                        className="w-full resize-none border-2 border-gray-200/60 rounded-2xl px-4 py-2.5 font-maven text-sm text-kidville-green bg-white/60 focus:outline-none focus:ring-2 focus:ring-kidville-green/20 focus:border-kidville-green/40 transition-all disabled:opacity-50 max-h-32 overflow-y-auto"
+                        className="w-full resize-none rounded-[22px] border border-kidville-line bg-white px-4 py-2.5 font-maven text-[13.5px] text-kidville-ink placeholder:text-kidville-muted focus:border-kidville-green focus:outline-none focus:ring-[3px] focus:ring-kidville-green/12 transition-all disabled:opacity-50 max-h-32 overflow-y-auto"
                         style={{ minHeight: '44px' }}
                     />
                 </div>
 
                 {/* Send button */}
+                {/* Design Composer: invio = cerchio 44 verde/giallo con glow */}
                 <button
                     onClick={handleSend}
                     disabled={disabled || uploading || (!text.trim() && !attachment)}
-                    className="w-10 h-10 rounded-full flex-shrink-0 flex items-center justify-center bg-kidville-green text-kidville-yellow hover:opacity-90 active:scale-95 transition-all disabled:opacity-30 disabled:cursor-not-allowed shadow-lg shadow-kidville-green/20"
+                    className="w-11 h-11 rounded-full flex-shrink-0 flex items-center justify-center bg-kidville-green text-kidville-yellow hover:bg-kidville-green-dark active:scale-95 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                    style={{ boxShadow: '0 8px 18px -10px rgba(0,84,75,.8)' }}
                     aria-label="Invia messaggio"
                 >
-                    <Send size={18} strokeWidth={1.5} />
+                    <Send size={19} strokeWidth={2} />
                 </button>
             </div>
         </div>

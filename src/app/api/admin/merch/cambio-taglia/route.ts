@@ -50,6 +50,10 @@ export async function POST(request: Request) {
     if (!riga) return NextResponse.json({ error: 'Riga non trovata' }, { status: 404 })
     const scuolaId = uno(riga.ordine)?.scuola_id
     if (!scuolaId || !plessi.includes(scuolaId)) return NextResponse.json({ error: 'Riga fuori dal tuo plesso' }, { status: 403 })
+    // Una riga annullata è terminale: non deve "resuscitare" in una riga attiva.
+    if (riga.stato === 'annullato') {
+      return NextResponse.json({ error: 'La riga è annullata: non è possibile cambiarne la taglia' }, { status: 409 })
+    }
 
     // Valida la nuova taglia contro il catalogo (se l'articolo ha taglie).
     if (riga.articolo_id) {

@@ -49,13 +49,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Solo le righe da ordinare possono essere evase da magazzino' }, { status: 409 })
     }
 
-    // Disponibilità corrente per articolo/taglia.
-    // NB: verifica e allocazione NON sono atomiche (giacenza derivata in
-    // applicazione, nessun lock DB). Il guard .eq('stato','da_ordinare') evita la
-    // doppia evasione della STESSA riga; una race fra DUE righe diverse sullo
-    // stesso articolo/taglia con stock=1 può in teoria over-allocare (stock −1).
-    // Accettato: contesto segreteria a bassa concorrenza; un lock/decremento
-    // condizionale lato DB è fuori dallo scope di questa fase.
+    // Disponibilità corrente per articolo/taglia. Verifica e allocazione non
+    // sono in un'unica transazione (giacenza derivata in applicazione): il guard
+    // .eq('stato','da_ordinare') evita la doppia evasione della STESSA riga, e un
+    // POST-CHECK dopo l'update rileva e annulla l'over-allocazione fra due righe
+    // diverse sullo stesso articolo/taglia (niente stock negativo committato).
     const giacenze = await caricaGiacenze(supabase, plessi)
     const disp = disponibileDi(giacenze, riga.articolo_id, riga.taglia ?? '')
     if (disp < riga.quantita) {
@@ -66,12 +64,31 @@ export async function POST(request: Request) {
     }
 
     const now = new Date().toISOString()
-    const { error: updErr } = await supabase
+    const { data: updatedRows, error: updErr } = await supabase
       .from('divise_ordini_righe')
       .update({ stato: 'arrivato', origine: 'magazzino', arrivato_il: now, ordine_fornitore_id: null })
       .eq('id', riga_id)
       .eq('stato', 'da_ordinare')
+      .select('id')
     if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 })
+    if (!updatedRows || updatedRows.length === 0) {
+      // un'altra richiesta ha già evaso questa riga: idempotente, niente notifica
+      return NextResponse.json({ success: true, data: { riga_id, giaEvasa: true } })
+    }
+
+    // Post-check anti over-allocazione: se dopo l'update la disponibilità è
+    // negativa (race con un'altra evasione), fai rollback e rifiuta.
+    const dispPost = disponibileDi(await caricaGiacenze(supabase, plessi), riga.articolo_id, riga.taglia ?? '')
+    if (dispPost < 0) {
+      await supabase
+        .from('divise_ordini_righe')
+        .update({ stato: 'da_ordinare', origine: 'fornitore', arrivato_il: null })
+        .eq('id', riga_id)
+      return NextResponse.json(
+        { error: 'Disponibilità esaurita da un’altra evasione concorrente', disponibile: dispPost + riga.quantita },
+        { status: 409 }
+      )
+    }
 
     await sincronizzaTestata(supabase, riga.ordine_id)
     const alunnoId = uno(riga.ordine)?.alunno_id

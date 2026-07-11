@@ -64,8 +64,10 @@ export async function GET(request: Request) {
       .from('divise_ordini_righe')
       .select('articolo_nome, taglia, quantita, prezzo_unitario, stato, origine, ordinato_il, arrivato_il, consegnato_il, ' +
         'ordine_fornitore:ordine_fornitore_id ( numero ), ' +
-        'ordine:ordine_id ( scuola_id, creato_il, alunni:alunno_id ( nome, cognome, classe_sezione ), pagamento:pagamento_id ( stato ) )')
-      .limit(5000)
+        'ordine:ordine_id!inner ( scuola_id, creato_il, alunni:alunno_id ( nome, cognome, classe_sezione ), pagamento:pagamento_id ( stato ) )')
+      .in('ordine.scuola_id', plessi)
+      .order('id', { ascending: true })
+      .limit(20000)
     const righe = error
       ? (SCHEMA_MANCANTE.has(error.code ?? '') ? [] : null)
       : ((data as unknown as RigaExport[]) ?? []).filter((r) => {

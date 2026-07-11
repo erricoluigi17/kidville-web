@@ -30,7 +30,18 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.maybeSingle = async () => ({ data: h.singleFor[table] ?? null, error: null })
       b.single = async () => ({ data: b._last ?? { id: `${table}-x` }, error: null })
       b.insert = (row: unknown) => { h.inserts.push({ table, row }); b._op = 'insert'; b._last = { id: `${table}-new`, ...(Array.isArray(row) ? {} : (row as object)) }; return b }
-      b.update = (row: unknown) => { h.updates.push({ table, row }); b._op = 'update'; return b }
+      b.update = (row: unknown) => {
+        h.updates.push({ table, row }); b._op = 'update'
+        // .update(...).eq/.in(...).select('id') ritorna le righe "aggiornate":
+        // quelle lette per questa tabella (rowsFor o singleFor).
+        const ret = h.singleFor[table] ? [h.singleFor[table]] : (h.rowsFor[table] ?? [])
+        const u: Record<string, unknown> = {}
+        u.eq = () => u
+        u.in = () => u
+        u.select = () => ({ then: (r: (v: unknown) => unknown) => r({ data: ret, error: null }) })
+        u.then = (r: (v: unknown) => unknown) => r({ data: null, error: null })
+        return u
+      }
       b.delete = () => { b._op = 'delete'; return b }
       b.then = (resolve: (v: unknown) => unknown) => resolve(b._op ? { data: null, error: null } : { data: h.rowsFor[table] ?? [], error: null })
       return b

@@ -92,14 +92,26 @@ export async function caricaGiacenze(supabase: SupabaseClient, plessi: string[])
     .from('merch_rettifiche')
     .select('articolo_id, articolo_nome, taglia, quantita_delta')
     .in('scuola_id', plessi)
-  const rettifiche: RettificaMov[] =
-    rett.error ? (SCHEMA_MANCANTE.has(rett.error.code ?? '') ? [] : []) : ((rett.data as unknown as RettificaMov[]) ?? [])
+  if (rett.error && !SCHEMA_MANCANTE.has(rett.error.code ?? '')) {
+    // Errore reale (permessi/rete): NON degradare a stock zero, altrimenti la
+    // giacenza sembra vuota e si può over-vendere. Propaga alla route (→ 5xx).
+    throw new Error(`giacenze: lettura rettifiche fallita (${rett.error.code}): ${rett.error.message}`)
+  }
+  const rettifiche: RettificaMov[] = rett.error ? [] : ((rett.data as unknown as RettificaMov[]) ?? [])
 
+  // Filtro per sede a livello DB (inner-join): il cap non deve mai troncare
+  // righe in-scope prima del filtro. `consegnato` è terminale e si accumula, ma
+  // il taglio ora si applica solo alle righe dei plessi richiesti.
   const rows = await supabase
     .from('divise_ordini_righe')
-    .select('articolo_id, articolo_nome, taglia, quantita, stato, origine, ordine:ordine_id ( scuola_id )')
+    .select('articolo_id, articolo_nome, taglia, quantita, stato, origine, ordine:ordine_id!inner ( scuola_id )')
     .in('stato', ['ordinato', 'arrivato', 'consegnato'])
-    .limit(5000)
+    .in('ordine.scuola_id', plessi)
+    .order('id', { ascending: true })
+    .limit(20000)
+  if (rows.error && !SCHEMA_MANCANTE.has(rows.error.code ?? '')) {
+    throw new Error(`giacenze: lettura righe fallita (${rows.error.code}): ${rows.error.message}`)
+  }
   type R = RigaMov & { ordine: { scuola_id?: string | null } | { scuola_id?: string | null }[] | null }
   const righe: RigaMov[] = rows.error
     ? []

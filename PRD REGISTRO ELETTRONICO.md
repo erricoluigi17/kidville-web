@@ -93,7 +93,7 @@ Cinque interventi sullo scadenziario contabilità (`/admin/pagamenti`) e sui tic
 - **D — Storico ticket per-alunno su ledger dedicato** (migr `20260711180000`): nuova tabella `mensa_ticket_movimenti` (ricarica/consumo/disdetta/rettifica + `saldo_dopo`), scritta going-forward da ricarica (`/api/pagamenti/ticket`) e prenotazioni (`/api/mensa/prenotazioni` POST/DELETE) in best-effort (il saldo `ticket_mensa` resta autoritativo), con backfill idempotente + riconciliazione di apertura. Nuovo `GET /api/pagamenti/ticket/storico` (staff, `requireStaff`+scope) mostra, cliccando l'alunno, tutti i ticket acquistati (con metodo/stato, "Gratuita" se costo 0) e i consumi/disdette.
 - **E — Morosità ticket (saldo negativo)** (`GET /api/pagamenti/ticket/morosi`, scoping `resolveScuoleAttive` + join `!inner` su alunni): banner rosso in cima al pannello ticket con gli alunni a saldo negativo, cliccabili per aprirne saldo+storico.
 
-**Pendente (su richiesta utente)**: applicazione a prod delle 2 migrazioni (`20260711170000`, `20260711180000`) + verifica advisor, poi PR→`main` e deploy. Fino ad allora la app degrada in modo graceful (storico vuoto, ledger non scritto) senza rompersi.
+**Rilascio**: 2 migrazioni **APPLICATE a prod** via MCP + verificate (parziale-scaduti 0, ledger quadra `SUM(delta)==saldo_ticket`, advisor 0 ERROR; versioni riallineate ai timestamp-file). Deploy via PR #16→`main`. **Hardening E2E flaky** (pre-esistenti, non correlati al lavoro: `teacher-attendance`/`teacher-agenda`/`public-iscrizione`): `test.slow()` + timeout espliciti generosi sui render/transizioni lenti sotto carico CI (gli elementi si renderizzano, solo tardi) — la diagnosi via artefatti Playwright ha escluso il loader (non presente negli snapshot di fallimento).
 
 ---
 

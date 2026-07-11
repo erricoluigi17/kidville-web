@@ -287,18 +287,14 @@ function LoginForm() {
         )}
 
         <form onSubmit={onSubmit} className={styles.card} aria-label="Accesso a Kidville">
-          <h1 className={styles.title}>
-            Ciao!<span className="sr-only"> — Accedi a Kidville</span>
-          </h1>
+          <h1 className={styles.title}>Benvenuto/a!</h1>
           {/* nodo persistente: React ne muta solo il testo, così il passaggio al
               picker viene annunciato in modo affidabile */}
           <p className={styles.subtitle} role="status">
             {profili ? (
               <>Sei registrato con più profili. Scegli con quale ruolo entrare.</>
             ) : (
-              <>
-                Riservato a personale e famiglie. Accesso <strong>solo su invito</strong> della Segreteria.
-              </>
+              <>Accedi al tuo account Kidville</>
             )}
           </p>
 
@@ -347,6 +343,11 @@ function LoginForm() {
                     type="email"
                     required
                     autoComplete="email"
+                    inputMode="email"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    enterKeyHint="next"
                     placeholder="nome@esempio.it"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
@@ -370,6 +371,10 @@ function LoginForm() {
                     type={showPassword ? 'text' : 'password'}
                     required
                     autoComplete="current-password"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    enterKeyHint="go"
                     placeholder="La tua password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}

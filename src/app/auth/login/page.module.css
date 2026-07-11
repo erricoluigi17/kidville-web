@@ -16,6 +16,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  /* niente lampo grigio al tap su iOS/Android (come nel design) */
+  -webkit-tap-highlight-color: transparent;
   /* Design: .screen ha crema pieno (--kv-cream), senza gradiente. È una crema
      più neutra di --color-kidville-cream (#FEF1E4, sfondo del resto dell'app):
      resta page-scoped, con il ribaltamento in Alto Contrasto in coda al file. */
@@ -241,6 +243,7 @@
   height: 34px;
   border: none;
   background: transparent;
+  touch-action: manipulation;
   /* Design: --kv-muted. Qui l'icona è l'unico segno visivo del controllo, quindi
      serve almeno 3:1: `muted` si ferma a 2,5:1. */
   color: var(--color-kidville-sub);
@@ -287,6 +290,7 @@
 
 /* ───────── Pulsante primario ───────── */
 .accedi {
+  touch-action: manipulation;
   margin-top: 24px;
   /* Design: 40px. Portato al minimo touch target (44px): sotto quella soglia il
      bersaglio è troppo piccolo su mobile. */
@@ -348,6 +352,43 @@
   font-size: 12.5px;
   color: var(--color-kidville-sub);
   box-shadow: 0 4px 12px -8px rgba(31, 61, 56, 0.4);
+}
+
+/* ───────── Telefoni bassi (iPhone SE & co.) ─────────
+   Alle proporzioni del design il contenuto sfora i 667px e "Accedi" finisce
+   sotto la piega: qui la colonna si compatta per far entrare tutto, CTA inclusa.
+   Sui telefoni normali (≥720px) restano i valori del mockup. */
+@media (max-height: 720px) {
+  .page {
+    padding: 12px 0 calc(12px + env(safe-area-inset-bottom));
+  }
+  .logo {
+    width: 168px;
+  }
+  .mascot {
+    height: 168px;
+    margin-bottom: -30px;
+  }
+  .title {
+    font-size: 32px;
+  }
+  .subtitle {
+    font-size: 14.5px;
+    margin-top: 7px;
+  }
+  .card {
+    padding: 22px 22px 20px;
+    border-radius: 28px;
+  }
+  .field {
+    margin-top: 18px;
+  }
+  .accedi {
+    margin-top: 20px;
+  }
+  .contrast {
+    margin-top: 10px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

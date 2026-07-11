@@ -11,6 +11,7 @@ const h = vi.hoisted(() => ({
   pagamento: null as Record<string, unknown> | null,
   inserts: [] as { table: string; row: Record<string, unknown> | Record<string, unknown>[] }[],
   updates: [] as { table: string; row: Record<string, unknown> }[],
+  updateRows: [{ id: 'mov-upd' }] as Record<string, unknown>[],
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
@@ -39,7 +40,15 @@ vi.mock('@/lib/supabase/server-client', () => ({
           then: (r: (v: unknown) => unknown) => r({ data: null, error: null }),
         }
       }
-      b.update = (row: Record<string, unknown>) => { h.updates.push({ table, row }); return b }
+      b.delete = () => b
+      b.update = (row: Record<string, unknown>) => {
+        h.updates.push({ table, row })
+        const u: Record<string, unknown> = {}
+        u.eq = () => u
+        u.select = () => ({ then: (r: (v: unknown) => unknown) => r({ data: h.updateRows, error: null }) })
+        u.then = (r: (v: unknown) => unknown) => r({ data: null, error: null })
+        return u
+      }
       b.then = (resolve: (v: unknown) => unknown) =>
         resolve({
           data:
@@ -81,6 +90,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   h.inserts = []
   h.updates = []
+  h.updateRows = [{ id: 'mov-upd' }]
   h.esistenti = []
   h.movimenti = []
   h.requireStaff.mockResolvedValue({ user: { id: 'staff-1', role: 'segreteria' } })
@@ -144,6 +154,14 @@ describe('PATCH /api/pagamenti/riconciliazione/[id]', () => {
   it('conferma di un movimento già confermato → 409', async () => {
     h.movimento = { ...h.movimento!, stato: 'confermato' }
     expect((await patch({ azione: 'conferma' })).status).toBe(409)
+  })
+
+  it('corsa persa (0 righe aggiornate dal CAS) → 409 e storno dell’incasso appena creato', async () => {
+    h.updateRows = [] // un altro operatore ha già confermato nel frattempo
+    const res = await patch({ azione: 'conferma' })
+    expect(res.status).toBe(409)
+    // l'incasso viene creato e poi stornato (delete su incassi)
+    expect(h.inserts.find((i) => i.table === 'incassi')).toBeTruthy()
   })
 
   it('ignora → stato ignorato senza incassi', async () => {

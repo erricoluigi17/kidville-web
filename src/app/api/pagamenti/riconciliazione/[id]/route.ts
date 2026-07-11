@@ -101,7 +101,10 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       return NextResponse.json({ error: 'Errore nella registrazione dell’incasso', details: errInc.message }, { status: 500 })
     }
 
-    await supabase
+    // CAS ottimistico: conferma solo se il movimento è ancora nello stato letto.
+    // Due conferme concorrenti creerebbero due incassi per lo stesso bonifico
+    // (#12): se la corsa è persa, storna l'incasso appena inserito.
+    const { data: updated, error: errUpd } = await supabase
       .from('riconciliazione_movimenti')
       .update({
         stato: 'confermato',
@@ -111,6 +114,12 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         confermato_il: new Date().toISOString(),
       })
       .eq('id', id)
+      .eq('stato', mov.stato)
+      .select('id')
+    if (errUpd || !updated || updated.length === 0) {
+      await supabase.from('incassi').delete().eq('id', (incasso as { id: string }).id)
+      return NextResponse.json({ error: 'Movimento già riconciliato da un altro operatore' }, { status: 409 })
+    }
 
     await logScrittura(supabase, {
       attore: auth.user,

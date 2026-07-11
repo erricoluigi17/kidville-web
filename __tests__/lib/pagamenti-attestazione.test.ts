@@ -43,3 +43,27 @@ describe('calcolaAttestazione', () => {
     expect(r.righe).toHaveLength(0)
   })
 })
+
+// Regressione #9: la classificazione detraibile/non-tracciabile deve avvenire
+// sul NETTO per voce. Prima del fix uno storno in contanti finiva nel bucket
+// "non tracciabile" senza scalare il detraibile dell'incasso che rettificava.
+describe('calcolaAttestazione — storni non tracciabili (#9)', () => {
+  it('lo storno in contanti azzera il detraibile della stessa voce', () => {
+    const r = calcolaAttestazione([
+      { importo: 100, metodo: 'bonifico', categoria_slug: 'retta', descrizione: 'Retta Marzo' },
+      { importo: -100, metodo: 'contanti', categoria_slug: 'retta', descrizione: 'Retta Marzo' },
+    ])
+    expect(r.versato).toBe(0)
+    expect(r.detraibile).toBe(0) // prima del fix restava 100
+    expect(r.nonTracciabile).toBe(0)
+  })
+
+  it('un pagamento anche solo in parte in contanti non è detraibile', () => {
+    const r = calcolaAttestazione([
+      { importo: 100, metodo: 'bonifico', categoria_slug: 'retta', descrizione: 'Retta Aprile' },
+      { importo: 50, metodo: 'contanti', categoria_slug: 'retta', descrizione: 'Retta Aprile' },
+    ])
+    expect(r.detraibile).toBe(0)
+    expect(r.nonTracciabile).toBe(150)
+  })
+})

@@ -32,20 +32,17 @@ const round2 = (n: number) => Math.round(n * 100) / 100
 
 export function calcolaAttestazione(voci: VoceAttestazione[]): RiepilogoAttestazione {
     let versato = 0
-    let detraibile = 0
-    let nonTracciabile = 0
-    let escluso = 0
     const byDescrizione = new Map<string, RigaAttestazione>()
 
+    // Aggregazione per descrizione sul NETTO (gli storni entrano col segno). La
+    // voce è tracciabile solo se OGNI incasso lo è: anche un contante di storno
+    // rende non detraibile l'intera voce (coerente con isTracciabile()).
     for (const v of voci) {
         const importo = Number(v.importo)
         if (Number.isNaN(importo)) continue
         versato += importo
         const isEscluso = !!v.categoria_slug && CATEGORIE_ESCLUSE_ADE.includes(v.categoria_slug)
         const tracc = metodoTracciabile(v.metodo)
-        if (isEscluso) escluso += importo
-        else if (tracc) detraibile += importo
-        else nonTracciabile += importo
 
         const key = v.descrizione || '—'
         const riga = byDescrizione.get(key) ?? {
@@ -57,7 +54,20 @@ export function calcolaAttestazione(voci: VoceAttestazione[]): RiepilogoAttestaz
         }
         riga.importo = round2(riga.importo + importo)
         riga.tracciabile = riga.tracciabile && tracc
+        riga.escluso = riga.escluso || isEscluso
         byDescrizione.set(key, riga)
+    }
+
+    // Classificazione DOPO l'aggregazione, sul netto per voce: così uno storno
+    // non tracciabile compensa il detraibile dell'incasso che rettifica, invece
+    // di gonfiare separatamente detraibile e nonTracciabile (#9).
+    let detraibile = 0
+    let nonTracciabile = 0
+    let escluso = 0
+    for (const riga of byDescrizione.values()) {
+        if (riga.escluso) escluso += riga.importo
+        else if (riga.tracciabile) detraibile += riga.importo
+        else nonTracciabile += riga.importo
     }
 
     return {

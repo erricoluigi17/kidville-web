@@ -55,6 +55,20 @@
 
 ---
 
+## 🗓️ Changelog — App genitore sulla linea design docente: AppBar persistente + header unificati 2026-07-12 (branch `feat/login-design-fidelity`)
+
+Re-skin coerente delle aree **genitore e docente** sul design dell'export Claude ("kidville web", cartella `ins/`): barra app verde persistente, hero gialla nelle home, card-header verde su tutte le sottopagine, pulsanti pill unificati. Gate verdi: **eslint 0 · vitest 1050/1050 · build ok**; verifica visiva Playwright (390×844) su docente/genitore/alto contrasto e regressione admin.
+
+- **AppBar persistente** (`src/components/features/shell/AppBar.tsx`, montata nei layout `/teacher` e `/parent`): wordmark Kidville **bianco** sempre presente (nuovo asset `public/logo-light.png`, estratto dal `LOGO_LIGHT` dell'export — quello di `index.html` è la variante gialla), back pill sulle sottopagine (derivazione statica del path padre + eccezioni `forms→modulistica`, `settings/locker→locker`; soppresso sotto ClasseShell e onboarding), campanella con **badge non-letti lato genitore** calcolato dagli endpoint esistenti (`/api/diary/students` + `/api/avvisi`, stessa cascata di `AvvisiPreview` — zero endpoint/colonne nuovi, vincolo drift DB E2E). Lato docente niente badge (non esiste read-state, v1).
+- **`PageHeaderCard`** (`src/components/ui/PageHeaderCard.tsx`): estrazione della card verde (DR) prima **copia-incollata su 8 pagine docente**; ora unico componente per docente E genitore. Badge conteggi **fuori dall'`<h1>`** (vincolo e2e `exact:true`); slot `subtitle`/`action` per pill sezione, chip alunno, icon button.
+- **`HeroCard`** (`src/components/features/shell/HeroCard.tsx`): hero gialla unificata delle due home (data SSR-safe interna, saluto fornito dalla pagina per i vincoli e2e, mascotte con fallback); wordmark/campanella interni **rimossi** (vivono nella AppBar). `greetingByHour` deduplicato in `src/lib/ui/greeting.ts`.
+- **Docente**: 8 header→componente a parità visiva; le 3 pagine divergenti (mensa, hub primaria, chat) allineate alla card; chat rititolata "Comunicazioni / Messaggi" (subtitle e2e invariato). `ClasseShell` sticky sotto la barra via `--kv-appbar-h` (fallback 0px → **/admin invariato**, verificato).
+- **Genitore (~19 pagine)**: tutte le sottopagine passano dall'header piatto alla card verde (copy: Comunicazioni/Avvisi·Messaggi, La giornata/Il mio diario·Segnala assenza, Momenti/Le mie foto, Documenti/Modulistica, Servizi/Mensa·Pagamenti·Armadietto, Didattica · Primaria/…); chip alunno nello slot `action` (pill white/15 + iniziali gialle); container normalizzati `px-4 pt-5 pb-24` (i `max-w-*` per-pagina erano inerti dentro la shell 430px); pulsanti → `Btn`/`btnClass` (etichette/id invariati per gli e2e); sweep grigi hardcoded → token `kidville-*` (modulistica ~42 righe, chat, diary — blocchi jsPDF intatti); chat: altezza pannello desktop compensata con `var(--kv-appbar-h)`.
+- **Alto contrasto**: `.kv-appbar`/`.kv-header-card` su sfondo nero con bordo (fix del bianco-su-bianco latente: `--color-kidville-green→#FFF` azzerava i testi bianchi degli header verdi). **Capacitor**: safe-area top dentro la barra (commit separato `d2d7938`, da validare su simulatore iOS).
+- **Nota nota bene**: mismatch di hydration **pre-esistente** della `TeacherBottomNav` (`?userId=null` in SSR) osservato durante la verifica — non introdotto né corretto in questo intervento.
+
+---
+
 ## 🗓️ Changelog — Login: allineamento 1:1 al design Claude + fix accessibilità 2026-07-12 (branch `feat/login-design-fidelity`)
 
 Ri-import del design **"Kidville - Login (standalone).html"** (MCP DesignSync, projectId `85d814d5-…`) e allineamento fedele di `/auth/login`, che nella prima implementazione (changelog sotto) aveva reinterpretato diversi valori. **Logica di autenticazione invariata**. Gate verdi: **eslint 0 · tsc 0 · vitest 1050/1050 · build ok**.

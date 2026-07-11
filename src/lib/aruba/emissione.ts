@@ -14,6 +14,8 @@ import { arubaSignin, arubaUpload, resolveArubaCredentials, type ArubaConfig } f
 import { buildFatturaElettronicaXml } from './fatturapa-xml'
 import { mapStatoAruba } from './stato'
 import { determinaQuoteFatturazione, resolveParentRegistry } from '@/lib/pagamenti/intestatari'
+import { bolloDovuto, type FiscaleConfig } from '@/lib/pagamenti/fiscale'
+import { getModuleConfig } from '@/lib/settings/module-config'
 
 export interface AttoreEmissione {
   id: string
@@ -96,6 +98,11 @@ export async function emettiFatturaPagamento(
     }
   }
 
+  // Bollo virtuale (A8): dovuto sui documenti esenti sopra soglia, se attivato
+  // in fiscale_config. getModuleConfig è fail-closed ({} se assente) → nessun
+  // cambiamento finché la scuola non lo configura.
+  const fiscaleCfg = (await getModuleConfig(supabase, 'fiscale_config', pag.scuola_id)) as FiscaleConfig
+
   // 3. determina le quote di fatturazione
   const alunno = (Array.isArray(pag.alunni) ? pag.alunni[0] : pag.alunni) as AlunnoNested | null
   const quote = await determinaQuoteFatturazione(
@@ -172,6 +179,15 @@ export async function emettiFatturaPagamento(
 
     const causale = multi ? `${causaleBase} — quota ${q.label || reg.first_name || 'genitore'}` : causaleBase
     const importoQuota = Number(q.importo)
+
+    // IVA per causale da aruba_config.iva[] (match per inclusione, case-insensitive);
+    // nessun match → default esente art. 10. Il bollo riguarda solo gli esenti.
+    const ivaEntry = (cfg.iva || []).find(
+      (v) => v.causale && causale.toLowerCase().includes(String(v.causale).toLowerCase())
+    )
+    const esente = !ivaEntry || Number(ivaEntry.aliquota) === 0
+    const bolloImporto = esente ? bolloDovuto(importoQuota, fiscaleCfg) : 0
+
     const xml = buildFatturaElettronicaXml({
       progressivoInvio: String(numero).padStart(5, '0'),
       numero: String(numero),
@@ -202,6 +218,8 @@ export async function emettiFatturaPagamento(
       },
       righe: [{ descrizione: causale, prezzoUnitario: importoQuota }],
       causale,
+      iva: ivaEntry ? { aliquota: Number(ivaEntry.aliquota), natura: ivaEntry.natura || undefined } : undefined,
+      bollo: bolloImporto > 0 ? { importo: bolloImporto } : undefined,
     })
 
     const baseRow = {
@@ -218,6 +236,7 @@ export async function emettiFatturaPagamento(
       quota_adult_id: q.adultId,
       quota_label: q.label || null,
       parent_registry_id: reg.id,
+      bollo_virtuale: bolloImporto > 0,
     }
 
     // invio Aruba (token condiviso fra le quote)

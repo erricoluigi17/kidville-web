@@ -1,14 +1,21 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Search, Filter, AlertTriangle, CheckCircle2, Clock, RefreshCw, Plus, Pencil, Layers } from 'lucide-react';
+import { Search, Filter, AlertTriangle, CheckCircle2, Clock, RefreshCw, Plus, Pencil, Layers, Eye, FileText, Download, X } from 'lucide-react';
 import { RegistraIncassoModal, PagamentoRow } from './RegistraIncassoModal';
 import { FatturaButton } from './FatturaButton';
+import { FatturaChip } from './FatturaChip';
+import { PagamentoCardMobile } from './PagamentoCardMobile';
+import { PagamentoDrawer } from './PagamentoDrawer';
 import { SospensioneToggle } from './SospensioneToggle';
 import { QuickAcquistoModal } from './QuickAcquistoModal';
 import { ModificaPagamentoModal } from './ModificaPagamentoModal';
 import { RateizzaModal } from './RateizzaModal';
+import { STATI_PAGAMENTO as STATI } from './stati';
+import { AgendaScadenze } from './AgendaScadenze';
+import { AGING_LABEL, bucketScadenze, type AgingBucketId } from '@/lib/pagamenti/aging';
 import { Badge } from '@/components/ui/Badge';
+import { StatCard } from '@/components/ui/cockpit';
 
 interface Categoria { id: string; nome: string; slug: string; colore?: string; icona?: string }
 interface Pagamento extends PagamentoRow {
@@ -24,13 +31,6 @@ interface Alunno {
     classe_sezione?: string | null; section_id?: string | null;
     stato?: string; importo_retta_mensile?: number | null;
 }
-
-const STATI: Record<string, { label: string; cls: string }> = {
-    da_pagare: { label: 'Da pagare', cls: 'bg-kidville-line text-kidville-ink' },
-    parziale: { label: 'Parziale', cls: 'bg-kidville-warn-soft text-kidville-warn' },
-    pagato: { label: 'Pagato', cls: 'bg-kidville-success-soft text-kidville-success' },
-    scaduto: { label: 'Scaduto', cls: 'bg-kidville-error-soft text-kidville-error' },
-};
 
 const MESI_IT = ['', 'Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic'];
 
@@ -55,6 +55,8 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
     const [selected, setSelected] = useState<Pagamento | null>(null);
     const [editing, setEditing] = useState<Pagamento | null>(null);
     const [rateizza, setRateizza] = useState<{ alunno: Alunno; pagamento: Pagamento } | null>(null);
+    const [drawer, setDrawer] = useState<Pagamento | null>(null);
+    const [agendaFiltro, setAgendaFiltro] = useState<AgingBucketId | null>(null);
     const [quick, setQuick] = useState<{ alunno: Alunno; categoria: Categoria } | null>(null);
     const [generando, setGenerando] = useState(false);
     const [arubaGated, setArubaGated] = useState(false);
@@ -149,14 +151,20 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
     }, [alunni, search, isRettaView, onlyMorosi, rettaByAlunno]);
 
     const totals = useMemo(() => {
-        let incassato = 0, daIncassare = 0, scaduto = 0;
+        let incassato = 0, daIncassare = 0, scaduto = 0, daFatturare = 0, nDaFatturare = 0;
         for (const p of pagamenti) {
             incassato += Number(p.importo_pagato || 0);
             const resto = Number(p.importo) - Number(p.importo_pagato || 0);
             if (resto > 0) daIncassare += resto;
             if (p.stato === 'scaduto') scaduto += resto;
+            // "Da fatturare": saldati senza fattura. I contenitori padre non si
+            // fatturano (si fatturano le rate), quindi restano fuori dal conto.
+            if (p.stato === 'pagato' && p.tipo !== 'padre' && (!p.fattura_stato || p.fattura_stato === 'non_richiesta')) {
+                daFatturare += Number(p.importo);
+                nDaFatturare += 1;
+            }
         }
-        return { incassato, daIncassare, scaduto };
+        return { incassato, daIncassare, scaduto, daFatturare, nDaFatturare };
     }, [pagamenti]);
 
     // genera la retta del mese selezionato (per chi non ce l'ha ancora)
@@ -175,6 +183,15 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
     };
 
     const mancantiRette = isRettaView ? alunniFiltrati.filter((a) => !rettaByAlunno.has(a.id)).length : 0;
+
+    // Vista agenda: pagamenti aperti del bucket selezionato, per scadenza crescente.
+    const oggiStr = now.toISOString().slice(0, 10);
+    const agendaItems = useMemo(() => {
+        if (!agendaFiltro) return [];
+        return bucketScadenze(pagamenti, oggiStr)[agendaFiltro].items
+            .slice()
+            .sort((a, b) => (a.scadenza || '').localeCompare(b.scadenza || ''));
+    }, [agendaFiltro, pagamenti, oggiStr]);
 
     const fattureScartate = pagamenti.filter((p) => p.fattura_stato === 'scartata').length;
     // Mappa alunno → sospeso (DL-021), derivata dal payload pagamenti.
@@ -205,12 +222,17 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                 </div>
             )}
 
-            {/* KPI */}
-            <div className="grid grid-cols-3 gap-3 mb-5">
-                <KPI icon={<CheckCircle2 size={16} />} label="Incassato" value={totals.incassato} color="text-kidville-success" />
-                <KPI icon={<Clock size={16} />} label="Da incassare" value={totals.daIncassare} color="text-kidville-warn" />
-                <KPI icon={<AlertTriangle size={16} />} label="Scaduto (morosità)" value={totals.scaduto} color="text-kidville-error" />
+            {/* KPI (StatCard cockpit): 2 colonne su mobile, 4 su desktop */}
+            <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
+                <StatCard icon={CheckCircle2} label="Incassato" value={`€ ${totals.incassato.toFixed(2)}`} tone="success" />
+                <StatCard icon={Clock} label="Da incassare" value={`€ ${totals.daIncassare.toFixed(2)}`} tone="warn" />
+                <StatCard icon={AlertTriangle} label="Scaduto (morosità)" value={`€ ${totals.scaduto.toFixed(2)}`} tone="error" />
+                <StatCard icon={FileText} label="Da fatturare" value={`€ ${totals.daFatturare.toFixed(2)}`}
+                    sub={totals.nDaFatturare > 0 ? `${totals.nDaFatturare} pagament${totals.nDaFatturare === 1 ? 'o' : 'i'}` : undefined} tone="info" />
             </div>
+
+            {/* Agenda scadenze / aging: i bucket filtrano la lista sottostante */}
+            <AgendaScadenze pagamenti={pagamenti} attivo={agendaFiltro} onSelect={setAgendaFiltro} />
 
             {/* Filtri */}
             <div className="flex flex-wrap items-center gap-2 mb-4">
@@ -249,6 +271,10 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                 <button onClick={() => { setLoading(true); load(); }} className="py-2 px-3 rounded-full border-2 border-kidville-line text-kidville-muted hover:text-kidville-green">
                     <RefreshCw size={14} />
                 </button>
+                <a href={`/api/pagamenti/export?tipo=scadenzario&userId=${userId}&scuola_id=${scuolaId}`} title="Esporta XLSX"
+                    className="py-2 px-3 rounded-full border-2 border-kidville-line text-kidville-muted hover:text-kidville-green">
+                    <Download size={14} />
+                </a>
             </div>
 
             {/* CTA generazione rette mancanti */}
@@ -267,11 +293,81 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
             {/* Corpo */}
             {loading ? (
                 <p className="font-maven text-sm text-kidville-muted py-8 text-center">Caricamento…</p>
+            ) : agendaFiltro ? (
+                /* ---- Vista AGENDA: pagamenti aperti del bucket, per scadenza ---- */
+                <>
+                <div className="mb-2 flex items-center justify-between gap-2">
+                    <p className="font-maven text-xs text-kidville-muted">
+                        <span className="font-bold text-kidville-green">{AGING_LABEL[agendaFiltro]}</span> · {agendaItems.length} pagament{agendaItems.length === 1 ? 'o' : 'i'} aperti
+                    </p>
+                    <button onClick={() => setAgendaFiltro(null)}
+                        className="inline-flex items-center gap-1 rounded-full border-2 border-kidville-line px-2.5 py-1 font-maven text-xs font-bold text-kidville-muted hover:border-kidville-green hover:text-kidville-green">
+                        <X size={12} /> Chiudi
+                    </button>
+                </div>
+                {agendaItems.length === 0 ? (
+                    <p className="font-maven text-sm text-kidville-muted py-8 text-center">Nessun pagamento in questo intervallo.</p>
+                ) : (
+                    <>
+                    <div className="hidden lg:block overflow-x-auto">
+                        <table className="w-full text-left">
+                            <thead>
+                                <tr className="font-maven text-xs text-kidville-muted uppercase">
+                                    <th className="py-2 px-2">Alunno</th>
+                                    <th className="py-2 px-2">Descrizione</th>
+                                    <th className="py-2 px-2">Scadenza</th>
+                                    <th className="py-2 px-2 text-right">Residuo</th>
+                                    <th className="py-2 px-2">Stato</th>
+                                    <th className="py-2 px-2"></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {agendaItems.map((p) => {
+                                    const st = STATI[p.stato] ?? STATI.da_pagare;
+                                    const residuo = Math.max(0, Number(p.importo) - Number(p.importo_pagato || 0));
+                                    return (
+                                        <tr key={p.id} className="border-t border-kidville-line font-maven text-sm">
+                                            <td className="py-2 px-2 text-kidville-green font-semibold">{p.alunni?.nome} {p.alunni?.cognome}</td>
+                                            <td className="py-2 px-2 text-kidville-ink">{p.descrizione}</td>
+                                            <td className="py-2 px-2 text-kidville-muted">{p.scadenza ? new Date(p.scadenza).toLocaleDateString('it-IT') : '—'}</td>
+                                            <td className="py-2 px-2 text-right font-bold text-kidville-green">€ {residuo.toFixed(2)}</td>
+                                            <td className="py-2 px-2">
+                                                <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold ${st.cls}`}>{st.label}</span>
+                                            </td>
+                                            <td className="py-2 px-2 text-right">
+                                                <div className="flex items-center justify-end gap-2">
+                                                    <button onClick={() => setSelected(p)}
+                                                        className="px-3 py-1 rounded-full bg-kidville-green text-white text-xs font-bold hover:opacity-90">Incassa</button>
+                                                    <button onClick={() => setDrawer(p)} title="Dettagli"
+                                                        className="text-kidville-muted hover:text-kidville-green"><Eye size={15} /></button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                    </div>
+                    <div className="space-y-2 lg:hidden">
+                        {agendaItems.map((p) => (
+                            <PagamentoCardMobile
+                                key={p.id}
+                                pagamento={p}
+                                alunnoLabel={`${p.alunni?.nome ?? ''} ${p.alunni?.cognome ?? ''}`.trim() || '—'}
+                                onIncassa={() => setSelected(p)}
+                                onApri={() => setDrawer(p)}
+                            />
+                        ))}
+                    </div>
+                    </>
+                )}
+                </>
             ) : alunniFiltrati.length === 0 ? (
                 <p className="font-maven text-sm text-kidville-muted py-8 text-center">Nessun alunno attivo trovato.</p>
             ) : isRettaView ? (
-                /* ---- Vista RETTE: una riga per alunno con la retta del mese ---- */
-                <div className="overflow-x-auto">
+                /* ---- Vista RETTE: tabella su desktop, card-list su mobile ---- */
+                <>
+                <div className="hidden lg:block overflow-x-auto">
                     <table className="w-full text-left">
                         <thead>
                             <tr className="font-maven text-xs text-kidville-muted uppercase">
@@ -300,9 +396,12 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                         <td className="py-2 px-2 text-right text-kidville-green">{p ? `€ ${Number(p.importo).toFixed(2)}` : '—'}</td>
                                         <td className="py-2 px-2 text-right text-kidville-muted">{p ? `€ ${Number(p.importo_pagato).toFixed(2)}` : '—'}</td>
                                         <td className="py-2 px-2">
-                                            {st
-                                                ? <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold ${st.cls}`}>{st.label}</span>
-                                                : <span className="inline-block px-2 py-0.5 rounded-full text-xs font-bold bg-kidville-cream text-kidville-muted">Non generata</span>}
+                                            <span className="inline-flex flex-wrap items-center gap-1">
+                                                {st
+                                                    ? <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold ${st.cls}`}>{st.label}</span>
+                                                    : <span className="inline-block px-2 py-0.5 rounded-full text-xs font-bold bg-kidville-cream text-kidville-muted">Non generata</span>}
+                                                {p && <FatturaChip stato={p.stato} fatturaStato={p.fattura_stato} />}
+                                            </span>
                                         </td>
                                         <td className="py-2 px-2 text-right">
                                             <div className="flex items-center justify-end gap-2">
@@ -312,6 +411,10 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                                 ) : p ? (
                                                     <FatturaButton pagamentoId={p.id} userId={userId} fatturaStato={p.fattura_stato} descrizione={p.descrizione} />
                                                 ) : null}
+                                                {p && (
+                                                    <button onClick={() => setDrawer(p)} title="Dettagli"
+                                                        className="text-kidville-muted hover:text-kidville-green"><Eye size={15} /></button>
+                                                )}
                                                 {p && (
                                                     <button onClick={() => setEditing(p)} title="Modifica"
                                                         className="text-kidville-muted hover:text-kidville-green"><Pencil size={15} /></button>
@@ -325,6 +428,31 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                         </tbody>
                     </table>
                 </div>
+                <div className="space-y-2 lg:hidden">
+                    {alunniFiltrati.map((a) => {
+                        const p = rettaByAlunno.get(a.id);
+                        if (!p) {
+                            return (
+                                <div key={a.id} className="flex items-center justify-between rounded-xl border-2 border-kidville-line bg-kidville-white p-3">
+                                    <p className="font-maven text-sm font-bold text-kidville-green">{a.nome} {a.cognome}</p>
+                                    <span className="inline-block rounded-full bg-kidville-cream px-2 py-0.5 text-xs font-bold text-kidville-muted">Non generata</span>
+                                </div>
+                            );
+                        }
+                        return (
+                            <PagamentoCardMobile
+                                key={a.id}
+                                pagamento={p}
+                                alunnoLabel={`${a.nome ?? ''} ${a.cognome ?? ''}`.trim()}
+                                sezioneLabel={a.classe_sezione}
+                                sospeso={!!sospesoByAlunno.get(a.id)}
+                                onIncassa={() => setSelected(p)}
+                                onApri={() => setDrawer(p)}
+                            />
+                        );
+                    })}
+                </div>
+                </>
             ) : (
                 /* ---- Vista CATEGORIA (una tantum): anagrafica cliccabile ---- */
                 <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
@@ -351,10 +479,13 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                                     {p.descrizione} · € {Number(p.importo).toFixed(2)}
                                                 </span>
                                                 <div className="flex items-center gap-1.5 shrink-0">
+                                                    <FatturaChip stato={p.stato} fatturaStato={p.fattura_stato} />
                                                     {p.tipo === 'singolo' && p.stato !== 'pagato' && (
                                                         <button onClick={() => setRateizza({ alunno: a, pagamento: p })} title="Dividi in acconti"
                                                             className="text-kidville-muted hover:text-kidville-green"><Layers size={13} /></button>
                                                     )}
+                                                    <button onClick={() => setDrawer(p)} title="Dettagli"
+                                                        className="text-kidville-muted hover:text-kidville-green"><Eye size={13} /></button>
                                                     <button onClick={() => setEditing(p)} title="Modifica"
                                                         className="text-kidville-muted hover:text-kidville-green"><Pencil size={13} /></button>
                                                 </div>
@@ -412,15 +543,24 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                     onDone={() => { setRateizza(null); load(); }}
                 />
             )}
-        </div>
-    );
-}
 
-function KPI({ icon, label, value, color }: { icon: React.ReactNode; label: string; value: number; color: string }) {
-    return (
-        <div className="bg-white rounded-xl border border-kidville-line p-3">
-            <div className={`flex items-center gap-1 ${color} mb-1`}>{icon}<span className="font-maven text-xs uppercase">{label}</span></div>
-            <p className="font-barlow font-black text-xl text-kidville-green">€ {value.toFixed(2)}</p>
+            {drawer && (
+                <PagamentoDrawer
+                    pagamento={drawer}
+                    userId={userId}
+                    onClose={() => setDrawer(null)}
+                    onIncassa={() => { setSelected(drawer); setDrawer(null); }}
+                    onModifica={() => { setEditing(drawer); setDrawer(null); }}
+                    onRateizza={() => {
+                        const a = alunni.find((x) => x.id === drawer.alunno_id);
+                        if (a) setRateizza({ alunno: a, pagamento: drawer });
+                        setDrawer(null);
+                    }}
+                    extra={
+                        <SospensioneToggle alunnoId={drawer.alunno_id} userId={userId} sospeso={!!sospesoByAlunno.get(drawer.alunno_id)} onChange={load} />
+                    }
+                />
+            )}
         </div>
     );
 }

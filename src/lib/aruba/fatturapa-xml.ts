@@ -2,9 +2,10 @@
  * Generatore XML FatturaPA 1.2.2 — tracciato per lo SDI via Aruba.
  *
  * Funzione PURA (nessun I/O): mappa un input strutturato sul tracciato
- * `FatturaElettronicaPrivati` (FPR12, B2C) con regole fiscali fisse per gli
- * enti scolastici (DL-018): IVA 0% / Natura N4 (esente art. 10 DPR 633/1972),
- * nessuna marca da bollo, IdTrasmittente = Aruba PEC (obbligatorio per il canale
+ * `FatturaElettronicaPrivati` (FPR12, B2C). IVA parametrica via `input.iva`
+ * (default storico: 0% / Natura N4, esente art. 10 DPR 633/1972) e marca da
+ * bollo virtuale via `input.bollo` (blocco DatiBollo, dovuta sugli esenti
+ * oltre € 77,47). IdTrasmittente = Aruba PEC (obbligatorio per il canale
  * API, altrimenti errore 0094).
  */
 
@@ -42,6 +43,13 @@ export interface RigaFattura {
   prezzoUnitario: number
 }
 
+export interface IvaFattura {
+  aliquota: number
+  /** Natura per aliquota 0 (es. N4); omessa → nessun tag Natura. */
+  natura?: string
+  riferimentoNormativo?: string
+}
+
 export interface FatturaPAInput {
   progressivoInvio: string
   numero: string
@@ -50,6 +58,10 @@ export interface FatturaPAInput {
   cessionario: CessionarioInput
   righe: RigaFattura[]
   causale?: string
+  /** IVA di righe/riepilogo; assente = esente art. 10 (default storico). */
+  iva?: IvaFattura
+  /** Bollo assolto in modo virtuale (documenti esenti oltre € 77,47). */
+  bollo?: { importo: number }
 }
 
 function esc(value: string): string {
@@ -82,6 +94,10 @@ export function buildFatturaElettronicaXml(input: FatturaPAInput): string {
   const { cedente, cessionario, righe } = input
   const totale = righe.reduce((acc, r) => acc + (r.quantita ?? 1) * r.prezzoUnitario, 0)
 
+  const iva = input.iva ?? { aliquota: 0, natura: NATURA_ESENTE, riferimentoNormativo: RIFERIMENTO_NORMATIVO }
+  const naturaXml = iva.natura ? `        <Natura>${esc(iva.natura)}</Natura>\n` : ''
+  const imposta = (totale * iva.aliquota) / 100
+
   const linee = righe
     .map((r, i) => {
       const q = r.quantita ?? 1
@@ -93,8 +109,8 @@ export function buildFatturaElettronicaXml(input: FatturaPAInput): string {
         `        <Quantita>${importo(q)}</Quantita>\n` +
         `        <PrezzoUnitario>${importo(r.prezzoUnitario)}</PrezzoUnitario>\n` +
         `        <PrezzoTotale>${importo(tot)}</PrezzoTotale>\n` +
-        `        <AliquotaIVA>0.00</AliquotaIVA>\n` +
-        `        <Natura>${NATURA_ESENTE}</Natura>\n` +
+        `        <AliquotaIVA>${importo(iva.aliquota)}</AliquotaIVA>\n` +
+        naturaXml +
         `      </DettaglioLinee>`
       )
     })
@@ -105,6 +121,16 @@ export function buildFatturaElettronicaXml(input: FatturaPAInput): string {
     : ''
   const causale = input.causale
     ? `        <Causale>${esc(input.causale)}</Causale>\n`
+    : ''
+  // Posizione da schema: DatiBollo sta tra Numero e ImportoTotaleDocumento.
+  const datiBollo = input.bollo
+    ? `        <DatiBollo>\n` +
+      `          <BolloVirtuale>SI</BolloVirtuale>\n` +
+      `          <ImportoBollo>${importo(input.bollo.importo)}</ImportoBollo>\n` +
+      `        </DatiBollo>\n`
+    : ''
+  const rifNormativo = iva.riferimentoNormativo
+    ? `        <RiferimentoNormativo>${esc(iva.riferimentoNormativo)}</RiferimentoNormativo>\n`
     : ''
 
   return (
@@ -155,6 +181,7 @@ export function buildFatturaElettronicaXml(input: FatturaPAInput): string {
     `        <Divisa>EUR</Divisa>\n` +
     `        <Data>${esc(input.data)}</Data>\n` +
     `        <Numero>${esc(input.numero)}</Numero>\n` +
+    datiBollo +
     `        <ImportoTotaleDocumento>${importo(totale)}</ImportoTotaleDocumento>\n` +
     causale +
     `      </DatiGeneraliDocumento>\n` +
@@ -162,11 +189,11 @@ export function buildFatturaElettronicaXml(input: FatturaPAInput): string {
     `    <DatiBeniServizi>\n` +
     linee +
     `\n      <DatiRiepilogo>\n` +
-    `        <AliquotaIVA>0.00</AliquotaIVA>\n` +
-    `        <Natura>${NATURA_ESENTE}</Natura>\n` +
+    `        <AliquotaIVA>${importo(iva.aliquota)}</AliquotaIVA>\n` +
+    naturaXml +
     `        <ImponibileImporto>${importo(totale)}</ImponibileImporto>\n` +
-    `        <Imposta>0.00</Imposta>\n` +
-    `        <RiferimentoNormativo>${RIFERIMENTO_NORMATIVO}</RiferimentoNormativo>\n` +
+    `        <Imposta>${importo(imposta)}</Imposta>\n` +
+    rifNormativo +
     `      </DatiRiepilogo>\n` +
     `    </DatiBeniServizi>\n` +
     `  </FatturaElettronicaBody>\n` +

@@ -33,7 +33,7 @@
 > | **Armadietto** | ✅ Operativo | `/teacher/locker`, `/parent/locker` | `/api/locker/*` |
 > | **Mensa** | ✅ Operativo | `/admin/mensa`, `/parent/mensa` | `/api/mensa/*` |
 > | **Chat** | ✅ Operativo | `/teacher/chat`, `/parent/chat` | `/api/chat/*` |
-> | **Pagamenti** | ✅ Operativo | `/admin/pagamenti`, `/parent/pagamenti` | `/api/pagamenti/*` |
+> | **Contabilità (Pagamenti)** | ✅ Operativo | `/admin/pagamenti` (6 viste), `/parent/pagamenti` | `/api/pagamenti/*` (+ ricevute numerate, attestazioni, export AdE/XLSX, solleciti, riconciliazione) |
 > | **Modulistica** | ✅ Operativo | `/admin/forms`, `/parent/forms` | `/api/forms/*` |
 > | **Foto/Video** | ✅ Operativo | `/teacher/gallery`, `/parent/gallery` | `/api/gallery/*` |
 >
@@ -51,6 +51,71 @@
 > | **Libretto web giustificazioni** | 🔶 Parziale | Fase 2 | Esiste preavviso assenza; manca giustificazione online con PIN dispositivo |
 > | **Interoperabilità SIDI / Piattaforma Unica** | ✅ Implementato (P5, DL-047..050) · 🔶 egress gated | Fase P5 | Import ZIP (parser pluggable), Fase A, frequentanti, genitori-alunni, certificati competenze D.M. 14/2024 + indicatore sync. **Trasmissione reale subordinata all'accreditamento ministeriale** |
 > | **Accessibilità AgID / Legge Stanca** | 🔶 Baseline (P1, DL-008) | Trasversale | Fatto: alto contrasto globale persistito, focus-ring, reduced-motion, Modal accessibile, landmark/skip-link/aria-current, smoke jest-axe. WCAG-AA = definition-of-done; audit AA per-pagina incrementale |
+
+---
+
+## 🗓️ Changelog — Contabilità: redesign UX + moduli fiscale/solleciti/riconciliazione (Fase A) 2026-07-10 (branch `feat/contabilita-merchandise`)
+
+Redesign completo della sezione **Contabilità** (`/admin/pagamenti`, etichetta sidebar rinominata da "Pagamenti") in 12 step committati (A1-A12), con 3 nuove migrazioni (`20260710130000_contabilita_fiscale`, `20260710140000_contabilita_solleciti`, `20260710150000_contabilita_riconciliazione`) — **applicate a prod il 2026-07-11** (vedi Stato in fondo). Piano in `~/.claude/plans/dobbiamo-rendere-la-sezione-zippy-simon.md`. Fase B (Merchandise) a seguire sullo stesso branch.
+
+### Shell & anti-errore (A1-A3)
+- Pagina a 6 viste deep-linkabili con `?vista=` (scadenzario · genera · solleciti · riconciliazione · fiscale · ticket): pills scrollabili su mobile, Tabs cockpit su desktop; viste secondarie lazy (`next/dynamic`).
+- KPI → `StatCard` responsive (2/4 colonne) col nuovo **"Da fatturare"**; `AgendaScadenze` (bucket aging cliccabili: scaduti >30gg / ≤30gg / settimana / 30gg) con vista agenda piatta; `FatturaChip` su ogni pagamento (Fatturata/In attesa SDI/Scartata/Da fatturare — **emissione sempre e solo manuale** via `FatturaButton`); `PagamentoDrawer` (timeline incassi/storni, quote, rate, tutte le azioni); card-list mobile al posto delle tabelle.
+- Anti-errore: warning **contanti = non detraibile** (RegistraIncasso e QuickAcquisto), bottone con importo esatto, anti-duplicato con "Conferma comunque" (stesso alunno/categoria/importo ±15gg), anteprima OBBLIGATORIA sul generatore per categoria (candidati reali + saltati-per-gruppo mostrati prima).
+- Fix: `GET /api/pagamenti` e `GET /api/pagamenti/[id]` ora riconoscono la **segreteria** come staff (prima ramo genitore → lista vuota/403).
+
+### Fiscale (A4-A8)
+- **Ricevute numerate** (`ricevute_emesse` + RPC `prossimo_numero_ricevuta`): emissione idempotente al primo download (una sola attiva per pagamento, indice parziale), snapshot intestatario/struttura/metodi, **annullo automatico su storno/modifica incasso** (numero bruciato con motivo); stesso numero per admin e genitore; conforme Bonus Nido INPS (denominazione+P.IVA, mensilità, PAGATO, metodo annotato = prova tracciabilità).
+- **Attestazione annuale 730** (`GET /api/pagamenti/attestazione`): criterio di cassa, versato vs **tracciabile detraibile** (contanti e divise/materiale esclusi); scaricabile da admin (vista Fiscale) e genitore ("Documenti fiscali" in `/parent/pagamenti`).
+- **Export comunicazione AdE** (`GET /api/pagamenti/export?tipo=ade&anno=`, obbligo dal 2022, scadenza 16/3): due fogli "Da comunicare" (CF alunno+pagatore) ed "Escluse" con motivo (opposizione — nuovo toggle `alunni.opposizione_ade` in anagrafica —, contanti, categorie escluse, CF mancante). Export scadenzario XLSX anche dalla toolbar.
+- **Marca da bollo virtuale** su FatturaPA (`<DatiBollo>` + `fatture_emesse.bollo_virtuale`) e ricevute, gated da `admin_settings.fiscale_config` (soglia 77,47/€2, default OFF → XML invariato); IVA parametrica per causale da `aruba_config.iva[]` (prima inutilizzata). Nuovo pannello settings "Dati fiscali & bollo".
+
+### Solleciti (A9-A10)
+- `solleciti_config` (3 livelli con template e segnaposto, cadenza minima, **automatico OFF di default**) + tabella `solleciti` (log col testo effettivo). Pannello settings dedicato.
+- Vista Solleciti: coda morosi con giorni ritardo/ultimo invio, selezione multipla, **anteprima obbligatoria** → conferma esplicita; email (Resend) + push; livelli sequenziali mai saltati.
+- `POST /api/pagamenti/solleciti/run` (`x-cron-secret`, nel regression-lock cron): refresh stati `scaduto` + invio automatico livelli 1-2 solo per scuole abilitate. **Sostituisce `genera_solleciti()` SQL (deprecata, mai schedulata)**; schedulazione pg_cron rinviata al deploy (come fattura/sync).
+
+### Riconciliazione bancaria (A11-A12)
+- Import CSV estratto conto (parser puro: separatori/intestazioni-sinonimo/importi it, SOLO accrediti; il file grezzo non si salva — PII), hash anti re-import per scuola, matcher a punteggio (+50 importo esatto, +25 nome in causale, +15 periodo, +10 descrizione) → suggerimento solo con best ≥60 e distacco ≥20, **mai auto-conferma**. Conferma → incasso `bonifico` con data operazione; ignora/riapri; coda persistente.
+
+### Verifica
+- Gate per ogni commit: `npx eslint . --max-warnings 0` → 0 · `npx vitest run` → 929/929 (116 test nuovi, TDD) · `npx tsc --noEmit` → 0 · `npm run build` → ok.
+- E2E: nuovo `e2e/admin-contabilita.spec.ts` (viste deep-link, KPI anche su viewport mobile) + `parent-pagamenti` esteso (download ricevuta = PDF vero). Tutte le route nuove degradano sul DB CI non migrato (42P01/PGRST204 → empty-state).
+
+### Rifiniture A14-A15 (2026-07-11): data di iscrizione + giorno di paga per alunno
+- **`alunni.data_iscrizione`** (migr. `20260710160000_contabilita_iscrizione_scadenze`, 4ª — **applicata a prod il 2026-07-11**): le rette si generano SOLO dal mese di iscrizione in poi — iscrizione precedente al 1° settembre = tutto l'anno; NULL = alunno storico, iscritto da sempre. Filtro replicato in `genera_rette_mensili` (CREATE OR REPLACE) e nella preview TS (con retry 42703 su DB non migrati). Campo in anagrafica (Classe e Stato) e nel form di creazione (default oggi).
+- **`alunni.giorno_scadenza_pagamenti`** (1-28, NULL = default scuola): "giorno di paga" per alunno (es. genitore che paga col 15 dello stipendio); usato dalla RPC via COALESCE col default `admin_settings.retta_giorno_scadenza` (5, già editabile in Impostazioni — etichetta chiarita). Al salvataggio le scadenze delle rette APERTE future vengono riallineate (`src/lib/pagamenti/scadenze.ts`), e uno "scaduto" torna aperto se la nuova scadenza è futura. Campo in anagrafica → Dati economici.
+- **Solo frequentanti in contabilità**: il filtro iscritto+sezione esisteva già in SQL e nei pannelli; chiuso l'unico gap (`FiscalePanel` attestazioni).
+
+**Stato**: Fase A + rifiniture A14-A15 COMPLETE su branch `feat/contabilita-merchandise` (15 commit, PR draft #15, CI verde). **Migrazioni 20260710* (fiscale · solleciti · riconciliazione · iscrizione_scadenze) APPLICATE a prod il 2026-07-11** — MCP Supabase non disponibile in questa sessione non-interattiva, applicate via `supabase db push --linked` (approvazione utente) sul progetto linkato `uimulkjyekgemjakmepp` (unica sede Kidville Giugliano). Verifiche verdi: le 4 risultano `remote` nello storico (`supabase migration list`), le 5 tabelle nuove (`ricevute_numerazione`, `ricevute_emesse`, `solleciti`, `riconciliazione_import`, `riconciliazione_movimenti`) esistono e sono vuote, le colonne nuove risolvono (`alunni.opposizione_ade/data_iscrizione/giorno_scadenza_pagamenti`, `fatture_emesse.bollo_virtuale`, `admin_settings.fiscale_config/solleciti_config`), la funzione `genera_rette_mensili` è stata sostituita col nuovo corpo (apply riuscito). Advisor: nessun ERROR nuovo atteso — tutte le tabelle nuove hanno RLS attiva + policy `service_role`, entrambe le funzioni fissano `search_path` (il `get_advisors` letterale richiede l'MCP, da rieseguire quando disponibile). Schedulazione pg_cron dei solleciti NON attivata (invio automatico resta OFF, si attiva al deploy col pattern fattura/sync). Fase B Merchandise a seguire (chat dedicata).
+
+---
+
+## 🗓️ Changelog — Merchandise: da "Divise" a gestione completa (Fase B) 2026-07-11 (branch `feat/contabilita-merchandise`)
+
+Il modulo minimale **Divise** diventa **Merchandise** (`/admin/merchandise`): catalogo multi-categoria, anagrafica fornitori, ordini creati dalla segreteria, ciclo logistico per riga, ordini d'acquisto (PO) numerati con PDF, giacenze automatiche, consegne con notifica ai genitori. 8 step committati (B1-B8), TDD. Piano in `~/.claude/plans/dobbiamo-rendere-la-sezione-zippy-simon.md`. **Decisioni utente vincolanti**: ordini SOLO dalla segreteria (il genitore vede l'addebito in Contabilità, niente più shop lato genitore), giacenze AUTOMATICHE, stato logistico PER RIGA, un PDF d'ordine PER FORNITORE.
+
+### DB (B1) — migrazione `20260711120000_merchandise` (idempotente, 5ª del branch, DA APPLICARE a prod)
+- Tabelle legacy `divise_*` **NON rinominate** (nessuna rottura su `intestatari.ts`/baseline/dati prod). Nuove: **`merch_fornitori`** (anagrafica per scuola), **`merch_ordini_fornitore`** (PO, uno per fornitore, `numero` UNIQUE per scuola) + **`merch_po_numerazione`** + RPC **`prossimo_numero_po`** (pattern fatture/ricevute, `service_role`), **`merch_rettifiche`** (movimenti magazzino → giacenza automatica).
+- `divise_articoli` += `categoria` (divisa/materiale/libri/gadget/altro), `fornitore_id`, `prezzo_acquisto`. `divise_ordini_righe` += **stato logistico PER RIGA** (da_ordinare/ordinato/arrivato/consegnato/annullato) + `origine` (fornitore/magazzino) + `ordine_fornitore_id` + `ordinato_il/arrivato_il/consegnato_il/consegnato_da` + `nota`; **backfill** degli stati dallo stato legacy della testata. RLS deny-by-default + policy `service_role` su ogni tabella nuova.
+
+### API (B2-B5, B8) — tutte sotto `/api/admin/merch/**`, requireStaff + zod + scoping + audit + degrade
+- **Move** delle 2 route admin (`divise/{articoli,ordini}` → `merch/{articoli,ordini}`); catalogo esteso con degrade (SELECT 42703 → colonne base, INSERT/UPDATE PGRST204 → record legacy).
+- **`fornitori`** CRUD; **`ordini`** POST creazione segreteria (`assertAlunnoInScope`, prezzi/snapshot **server-side**, taglia obbligatoria SOLO se l'articolo ha taglie — fix del bug latente, `parent_id NULL`, pagamento `da_pagare` categoria `divisa` con descrizione "Merchandise: …") + GET filtri `stato_riga`/`q` + embed pagamento.
+- **`da-ordinare`** (aggregato per fornitore: matrice articolo×taglia×qty + righe_ids, bucket "Senza fornitore"); **`ordini-fornitore`** (POST genera PO **PO-AAAA-NNN** + marca `ordinato`, o marca senza PO; GET; PATCH annulla → righe tornano `da_ordinare`); **`ordini-fornitore/pdf`** (PDF ristampabile, committente da fiscale/aruba config); **`ordini-fornitore/checkin`** (arrivi anche parziali, chiude il PO quando completo, **notifica genitori "arrivato"**).
+- **Giacenze automatiche** (`src/lib/merch/giacenze.ts`, formula pura `disponibile = Σ rettifiche − Σ righe magazzino arrivato/consegnato`): `giacenze` GET matrice+storico / POST rettifica; **`evadi-magazzino`** (`da_ordinare→arrivato` origine=magazzino, **409 se stock insufficiente**); **`consegna`** (`arrivato→consegnato`, **warning "non pagato" NON bloccante**, notifica genitori); **`righe`** PATCH transizione manuale (macchina a stati enforced); **`export`** XLSX flat; **`cambio-taglia`** (nuova riga a prezzo 0 `da_ordinare` + reso a stock opzionale).
+- Macchina a stati `src/lib/merch/stati.ts` (`puoTransire`, `derivaStatoTestata` → sincronizza il campo legacy `divise_ordini.stato`, `poCompleto`); notifiche `src/lib/merch/notify.ts` (via `enqueueNotifiche`, link a `/parent/pagamenti`); PDF `src/lib/merch/pdf.ts`.
+
+### UI & pulizia lato genitore (B6-B7)
+- Pagina cockpit **`/admin/merchandise`** (`?vista=` deep-link, responsive) con 4 KPI e 8 viste: Ordini (Drawer con stati/azioni per riga + warning non-saldato + cambio taglia + export XLSX), Nuovo ordine (ricerca alunno debounce), Da ordinare (per fornitore, Genera PO+PDF, evadi magazzino), Arrivi (check-in per PO + ristampa PDF), Consegne (banner ambra non-pagato), Catalogo (categoria/fornitore/prezzo acquisto), Giacenze (matrice + rettifiche), Fornitori (CRUD). Sidebar Operativo: **"Divise" (Shirt) → "Merchandise" (ShoppingBag)**; `/admin/divise` → `redirect('/admin/merchandise')`.
+- Ordini creati **solo dalla segreteria**: eliminati `/parent/divise` (pagina), `/api/parent/divise` (route) e la voce "Divise" della BottomNav genitore; `coverage-matrix` primaria-360 aggiornata. `intestatari.ts` con `parent_id NULL` ricade su intestatario/split standard (test di regressione).
+
+### Verifica
+- Gate per ogni commit: `npx eslint . --max-warnings 0` → 0 · `npx vitest run` → 1002/1002 (65 test nuovi, TDD) · `npx tsc --noEmit` → 0 · `npm run build` → ok.
+- Tutte le route nuove degradano sul DB E2E CI non migrato (42P01/42703 su SELECT, PGRST204 su INSERT/UPDATE, **PGRST200** su embed di relazioni nuove → empty-state/legacy).
+- **Review adversariale multi-agente** del diff Fase B prima del push (5 lenti → verifica scettica per-finding): 2 difetti confermati + hardening difensivo → fix nel commit finale: (1) `cambio-taglia` non chiudeva la riga originale (doppione consegnabile) → ora pre-consegna annulla l'originale, post-consegna reso a stock; (2) `evadi-magazzino` check-then-act non atomico (possibile over-allocazione con concorrenza reale) → guard `.eq('stato',…)` + limite documentato (bassa concorrenza segreteria, lock DB fuori scope); + rollback ordine su errore addebito, guard di stato su tutte le transizioni batch, degrade `PGRST200`.
+
+**Stato**: Fase B COMPLETA su branch `feat/contabilita-merchandise` (9 commit: B1-B8 + fix review). **Migrazione `20260711120000_merchandise` DA APPLICARE a prod** (con backfill stati righe) su conferma esplicita dell'utente — poi `get_advisors` = 0 ERROR (tutte le tabelle nuove hanno RLS + policy `service_role`, la RPC fissa `search_path`). Merge/deploy secondo AGENTS.md a valle della conferma.
 
 ---
 

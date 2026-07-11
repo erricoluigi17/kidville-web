@@ -21,7 +21,7 @@ import {
   Award,
   ShieldCheck,
   ChefHat,
-  Shirt,
+  ShoppingBag,
   MessageCircle,
   Menu,
   X,
@@ -75,7 +75,7 @@ const NAV_GROUPS: NavGroup[] = [
     title: 'Operativo',
     items: [
       { href: '/admin/armadietto', label: 'Armadietto', icon: Package },
-      { href: '/admin/divise', label: 'Divise', icon: Shirt },
+      { href: '/admin/merchandise', label: 'Merchandise', icon: ShoppingBag },
       { href: '/admin/mensa', label: 'Mensa', icon: UtensilsCrossed },
       { href: '/admin/mensa/cucina', label: 'Report Cucina', icon: ChefHat },
     ],
@@ -83,7 +83,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     title: 'Amministrazione',
     items: [
-      { href: '/admin/pagamenti', label: 'Pagamenti', icon: Euro },
+      { href: '/admin/pagamenti', label: 'Contabilità', icon: Euro },
       { href: '/admin/modulistica', label: 'Modulistica', icon: FileText },
       { href: '/admin/gdpr', label: 'Privacy & GDPR', icon: ShieldCheck },
     ],

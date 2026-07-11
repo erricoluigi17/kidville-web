@@ -26,6 +26,7 @@ vi.mock('@/lib/mensa/allergie-check', () => ({ controllaAllergie: vi.fn() }))
 import { POST as dispatchPOST } from '@/app/api/push/dispatch/route'
 import { POST as fatturaSyncPOST } from '@/app/api/pagamenti/fattura/sync/route'
 import { POST as allergiePOST } from '@/app/api/mensa/allergie-check/route'
+import { POST as sollecitiRunPOST } from '@/app/api/pagamenti/solleciti/run/route'
 
 function req(url: string, headers: Record<string, string> = {}): Request {
   return new Request(url, { method: 'POST', headers })
@@ -58,6 +59,16 @@ describe('x-cron-secret — route service-to-service', () => {
 
   it('pagamenti/fattura/sync: 401 con secret sbagliato', async () => {
     const res = await fatturaSyncPOST(req('http://localhost/api/pagamenti/fattura/sync', { 'x-cron-secret': 'sbagliato' }))
+    expect(res.status).toBe(401)
+  })
+
+  it('pagamenti/solleciti/run: 401 senza header', async () => {
+    const res = await sollecitiRunPOST(req('http://localhost/api/pagamenti/solleciti/run'))
+    expect(res.status).toBe(401)
+  })
+
+  it('pagamenti/solleciti/run: 401 con secret sbagliato', async () => {
+    const res = await sollecitiRunPOST(req('http://localhost/api/pagamenti/solleciti/run', { 'x-cron-secret': 'sbagliato' }))
     expect(res.status).toBe(401)
   })
 

@@ -62,7 +62,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     if (error || !data) return NextResponse.json({ error: 'Pagamento non trovato' }, { status: 404 })
     const pag = data as unknown as PagamentoDettaglio
 
-    const isStaff = user.role === 'admin' || user.role === 'coordinator'
+    const isStaff = user.role === 'admin' || user.role === 'coordinator' || user.role === 'segreteria'
 
     // scoping genitore
     let ownQuotaId: string | null = null

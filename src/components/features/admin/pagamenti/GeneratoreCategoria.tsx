@@ -32,10 +32,14 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
     const [loading, setLoading] = useState(false);
     const [done, setDone] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
+    // Anteprima OBBLIGATORIA: si genera solo sui candidati mostrati; qualunque
+    // modifica ai campi la invalida e riparte dall'anteprima.
+    const [anteprima, setAnteprima] = useState<{ candidati: Alunno[]; giaGenerati: number } | null>(null);
 
     // imposta categoria + suggerimenti di descrizione/gruppo coerenti
     const applyCategoria = useCallback((cat?: Categoria) => {
         setCategoriaId(cat?.id || '');
+        setAnteprima(null);
         if (cat) {
             setDescrizione(cat.nome);
             setGruppo(`${cat.slug || cat.nome.toLowerCase()}-${new Date().getFullYear()}`);
@@ -81,10 +85,28 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
         return arr;
     }, [importo, nRate, scadenza]);
 
-    const genera = async () => {
+    const caricaAnteprima = async () => {
         if (!descrizione.trim()) { setError('Inserisci una causale/descrizione'); return; }
         if (!importo || importo <= 0) { setError('Inserisci un importo maggiore di 0'); return; }
         if (target.length === 0) { setError('Nessun alunno nel target selezionato'); return; }
+        setLoading(true); setError(null); setDone(null);
+        try {
+            const qs = new URLSearchParams();
+            if (scuolaId) qs.set('scuola_id', scuolaId);
+            if (classe) qs.set('classe_sezione', classe);
+            if (gruppo.trim()) qs.set('gruppo', gruppo.trim());
+            const res = await fetch(`/api/pagamenti/genera?${qs.toString()}`, { headers: hdr(userId) });
+            const j = await res.json();
+            if (!res.ok || !j.success) { setError(j.error || "Errore nel calcolo dell'anteprima"); return; }
+            setAnteprima({ candidati: j.data.candidati || [], giaGenerati: j.data.gia_generati || 0 });
+        } catch {
+            setError('Errore di rete');
+        } finally { setLoading(false); }
+    };
+
+    const genera = async () => {
+        if (!anteprima) return;
+        if (anteprima.candidati.length === 0) { setError('Nessun alunno da generare (tutti già presenti nel gruppo)'); return; }
         setLoading(true); setError(null); setDone(null);
         try {
             const body: Record<string, unknown> = {
@@ -94,13 +116,14 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
                 scadenza,
                 obbligatorio,
                 gruppo: gruppo.trim() || null,
-                alunno_ids: target.map((a) => a.id),
+                alunno_ids: anteprima.candidati.map((a) => a.id),
             };
             if (acconti && nRate >= 2) body.rate = buildRate();
             const res = await fetch('/api/pagamenti/genera', { method: 'POST', headers: hdr(userId), body: JSON.stringify(body) });
             const j = await res.json();
             if (!res.ok) { setError(j.error || 'Errore nella generazione'); return; }
             setDone(`Generati ${j.data.generati} pagamenti${acconti ? ' rateali' : ''}.`);
+            setAnteprima(null);
         } catch {
             setError('Errore di rete');
         } finally { setLoading(false); }
@@ -118,7 +141,7 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
                 </div>
                 <div>
                     <label className="font-maven text-xs text-kidville-muted mb-1 block">Classe (vuoto = tutti gli iscritti)</label>
-                    <select value={classe} onChange={(e) => setClasse(e.target.value)}
+                    <select value={classe} onChange={(e) => { setClasse(e.target.value); setAnteprima(null); }}
                         className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:border-kidville-green">
                         <option value="">Tutti ({alunni.length})</option>
                         {classi.map((c) => <option key={c} value={c}>{c}</option>)}
@@ -126,37 +149,37 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
                 </div>
                 <div>
                     <label className="font-maven text-xs text-kidville-muted mb-1 block">Causale / descrizione</label>
-                    <input type="text" value={descrizione} onChange={(e) => setDescrizione(e.target.value)}
+                    <input type="text" value={descrizione} onChange={(e) => { setDescrizione(e.target.value); setAnteprima(null); }}
                         className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                     <div>
                         <label className="font-maven text-xs text-kidville-muted mb-1 block">Importo (€)</label>
                         <input type="number" min={0} step="0.01" value={importo || ''}
-                            onChange={(e) => setImporto(e.target.value === '' ? 0 : Number(e.target.value))}
+                            onChange={(e) => { setImporto(e.target.value === '' ? 0 : Number(e.target.value)); setAnteprima(null); }}
                             className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
                     </div>
                     <div>
                         <label className="font-maven text-xs text-kidville-muted mb-1 block">{acconti ? '1ª scadenza' : 'Scadenza'}</label>
-                        <input type="date" value={scadenza} onChange={(e) => setScadenza(e.target.value)}
+                        <input type="date" value={scadenza} onChange={(e) => { setScadenza(e.target.value); setAnteprima(null); }}
                             className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
                     </div>
                 </div>
                 <div>
                     <label className="font-maven text-xs text-kidville-muted mb-1 block">Gruppo (evita duplicati)</label>
-                    <input type="text" value={gruppo} onChange={(e) => setGruppo(e.target.value)}
+                    <input type="text" value={gruppo} onChange={(e) => { setGruppo(e.target.value); setAnteprima(null); }}
                         className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
                 </div>
             </div>
 
             <div className="flex flex-wrap items-center gap-4">
                 <label className="flex items-center gap-2 cursor-pointer">
-                    <input type="checkbox" checked={obbligatorio} onChange={(e) => setObbligatorio(e.target.checked)}
+                    <input type="checkbox" checked={obbligatorio} onChange={(e) => { setObbligatorio(e.target.checked); setAnteprima(null); }}
                         className="w-4 h-4 rounded border-kidville-muted text-kidville-green focus:ring-kidville-green" />
                     <span className="font-maven text-xs text-kidville-green">Obbligatorio</span>
                 </label>
                 <label className="flex items-center gap-2 cursor-pointer">
-                    <input type="checkbox" checked={acconti} onChange={(e) => setAcconti(e.target.checked)}
+                    <input type="checkbox" checked={acconti} onChange={(e) => { setAcconti(e.target.checked); setAnteprima(null); }}
                         className="w-4 h-4 rounded border-kidville-muted text-kidville-green focus:ring-kidville-green" />
                     <span className="font-maven text-xs text-kidville-green">Dividi in acconti</span>
                 </label>
@@ -164,12 +187,26 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
                     <div className="flex items-center gap-2">
                         <span className="font-maven text-xs text-kidville-muted">N° rate</span>
                         <input type="number" min={2} max={24} value={nRate}
-                            onChange={(e) => setNRate(Math.max(2, Number(e.target.value) || 2))}
+                            onChange={(e) => { setNRate(Math.max(2, Number(e.target.value) || 2)); setAnteprima(null); }}
                             className="w-16 border-2 border-kidville-line rounded-lg px-2 py-1 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
                         <span className="font-maven text-[11px] text-kidville-muted">mensili, ~€ {importo ? (importo / nRate).toFixed(2) : '0'} cad.</span>
                     </div>
                 )}
             </div>
+
+            {anteprima && !done && (
+                <div className="space-y-1 rounded-xl border-2 border-kidville-line bg-kidville-cream/50 p-4">
+                    <p className="font-maven text-sm font-bold text-kidville-green">Anteprima generazione</p>
+                    <p className="font-maven text-xs text-kidville-ink">
+                        Da generare: {anteprima.candidati.length} pagament{anteprima.candidati.length === 1 ? 'o' : 'i'} da € {importo.toFixed(2)}
+                        {acconti && nRate >= 2 ? ` in ${nRate} rate` : ''} · totale € {(anteprima.candidati.length * importo).toFixed(2)}
+                    </p>
+                    <p className="font-maven text-xs text-kidville-muted">Già presenti (saltati per gruppo): {anteprima.giaGenerati}</p>
+                    <p className="font-maven text-xs text-kidville-muted">
+                        Scadenza {acconti ? '1ª rata ' : ''}{new Date(scadenza).toLocaleDateString('it-IT')} · {classe || 'tutti gli iscritti'}
+                    </p>
+                </div>
+            )}
 
             {done && (
                 <div className="bg-kidville-success-soft text-kidville-success rounded-xl p-4 font-maven text-sm flex items-center gap-2">
@@ -178,11 +215,25 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
             )}
             {error && <p className="font-maven text-xs text-kidville-error">{error}</p>}
 
-            <button onClick={genera} disabled={loading}
-                className="px-5 py-2.5 rounded-full bg-kidville-green text-white font-maven font-bold text-sm flex items-center gap-2 disabled:opacity-50">
-                {loading ? <RefreshCw size={15} className="animate-spin" /> : <Layers size={15} />}
-                Genera per {target.length} alunni
-            </button>
+            {!anteprima ? (
+                <button onClick={caricaAnteprima} disabled={loading}
+                    className="px-5 py-2.5 rounded-full bg-kidville-green text-white font-maven font-bold text-sm flex items-center gap-2 disabled:opacity-50">
+                    {loading ? <RefreshCw size={15} className="animate-spin" /> : <Layers size={15} />}
+                    Anteprima ({target.length} alunni)
+                </button>
+            ) : (
+                <div className="flex flex-wrap gap-2">
+                    <button onClick={() => setAnteprima(null)} disabled={loading}
+                        className="px-5 py-2.5 rounded-full border-2 border-kidville-line text-kidville-muted font-maven font-bold text-sm hover:bg-kidville-cream disabled:opacity-50">
+                        Modifica
+                    </button>
+                    <button onClick={genera} disabled={loading || anteprima.candidati.length === 0}
+                        className="px-5 py-2.5 rounded-full bg-kidville-green text-white font-maven font-bold text-sm flex items-center gap-2 disabled:opacity-50">
+                        {loading ? <RefreshCw size={15} className="animate-spin" /> : <Layers size={15} />}
+                        Conferma generazione ({anteprima.candidati.length})
+                    </button>
+                </div>
+            )}
         </div>
     );
 }

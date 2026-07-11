@@ -22,5 +22,13 @@ test('lo storico mostra la retta aperta e la gita pagata', async ({ page }) => {
   // Voce saldata: badge "Pagato" e link Ricevuta.
   await expect(page.getByText('Gita E2E')).toBeVisible();
   await expect(page.getByText('Pagato', { exact: true })).toBeVisible();
-  await expect(page.getByRole('link', { name: 'Ricevuta' })).toBeVisible();
+  const ricevuta = page.getByRole('link', { name: 'Ricevuta' });
+  await expect(ricevuta).toBeVisible();
+
+  // Il download serve un PDF vero (numerato dove il registro esiste,
+  // fallback di cortesia sul DB CI non migrato: mai errore).
+  const href = await ricevuta.getAttribute('href');
+  const resp = await page.request.get(href!);
+  expect(resp.status()).toBe(200);
+  expect(resp.headers()['content-type']).toContain('application/pdf');
 });

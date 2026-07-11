@@ -125,6 +125,24 @@ export function StudentEconomicSection({ alunnoId, form, updateForm, parents }: 
                 </p>
             </div>
 
+            {/* Giorno di paga personalizzato */}
+            <div className="mb-4">
+                <label className={labelCls}>Giorno di pagamento della retta (1-28)</label>
+                <input
+                    type="number"
+                    min={1}
+                    max={28}
+                    value={(form.giorno_scadenza_pagamenti as number | null) ?? ''}
+                    onChange={(e) => updateForm('giorno_scadenza_pagamenti', e.target.value === '' ? null : Math.min(28, Math.max(1, Number(e.target.value))))}
+                    placeholder="Vuoto = default scuola (Impostazioni)"
+                    className={inputCls}
+                />
+                <p className="font-maven text-[11px] text-kidville-muted mt-1">
+                    Es. il genitore paga col 15 dello stipendio → 15: la retta scade quel giorno e dopo diventa morosa.
+                    Al salvataggio le rette future già generate vengono riallineate.
+                </p>
+            </div>
+
             {/* Genitori separati */}
             <div className="mb-3 flex items-center gap-3">
                 <label className="flex items-center gap-2 cursor-pointer">
@@ -229,6 +247,22 @@ export function StudentEconomicSection({ alunnoId, form, updateForm, parents }: 
                         ))}
                     </div>
                 )}
+            </div>
+
+            <div className="mt-4 border-t border-kidville-line pt-3">
+                <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                        type="checkbox"
+                        checked={!!form.opposizione_ade}
+                        onChange={(e) => updateForm('opposizione_ade', e.target.checked)}
+                        className="w-4 h-4 rounded border-kidville-muted text-kidville-green focus:ring-kidville-green"
+                    />
+                    <span className="font-maven text-sm text-kidville-green">Opposizione alla comunicazione spese AdE</span>
+                </label>
+                <p className="font-maven text-[11px] text-kidville-muted mt-1">
+                    Se attiva, le spese di questo alunno restano fuori dall&apos;export della comunicazione
+                    all&apos;Agenzia delle Entrate (precompilata dei genitori).
+                </p>
             </div>
         </section>
     );

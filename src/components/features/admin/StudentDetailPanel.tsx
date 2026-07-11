@@ -28,6 +28,8 @@ interface Student {
     zip_code?: string | null;
     classe_sezione?: string | null;
     stato?: string;
+    data_iscrizione?: string | null;
+    giorno_scadenza_pagamenti?: number | null;
     note_mediche?: string | null;
     allergeni?: string[] | null;
     allergies?: string | null;
@@ -405,6 +407,18 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                                     <option value="ritirato">Ritirato</option>
                                     <option value="sospeso">Sospeso</option>
                                 </select>
+                            </div>
+                            <div>
+                                <label className="font-maven text-xs text-kidville-muted mb-1 block">Data di iscrizione</label>
+                                <input
+                                    type="date"
+                                    value={(form.data_iscrizione as string) ?? ''}
+                                    onChange={e => updateForm('data_iscrizione', e.target.value || null)}
+                                    className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
+                                />
+                                <p className="font-maven text-[11px] text-kidville-muted mt-1">
+                                    Le rette partono dal mese di iscrizione (prima del 1° set = tutto l&apos;anno). Vuota = da sempre.
+                                </p>
                             </div>
                         </div>
                     </section>

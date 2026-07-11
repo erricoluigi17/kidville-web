@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Tag, Euro, AlertTriangle, Ticket, FileText, Plus, Trash2, Save, Lock } from 'lucide-react';
+import { Tag, Euro, AlertTriangle, Ticket, FileText, Plus, Trash2, Save, Lock, BellRing } from 'lucide-react';
+import { livelliEffettivi, type LivelloSollecito, type SollecitiConfig } from '@/lib/pagamenti/solleciti';
 
 interface Props { userId: string; scuolaId: string }
 
@@ -30,9 +31,136 @@ export function SettingsPanel({ userId, scuolaId }: Props) {
         <div>
             <CategorieManager userId={userId} scuolaId={scuolaId} />
             <RettaMorositaSettings userId={userId} scuolaId={scuolaId} />
+            <FiscaleSettings userId={userId} scuolaId={scuolaId} />
+            <SollecitiSettings userId={userId} scuolaId={scuolaId} />
             <TicketSettings userId={userId} scuolaId={scuolaId} />
             <ArubaSettings userId={userId} scuolaId={scuolaId} />
         </div>
+    );
+}
+
+// Template e cadenza dei solleciti: 3 livelli, testi con segnaposto. L'invio
+// automatico resta OFF finché non attivato (il run cron salta la scuola).
+function SollecitiSettings({ userId }: Props) {
+    const [cfg, setCfg] = useState<SollecitiConfig | null>(null);
+    const [saving, setSaving] = useState(false);
+    useEffect(() => {
+        fetch(`/api/admin/settings?userId=${userId}`, { headers: hdr(userId) })
+            .then(r => r.json())
+            .then(d => { if (d.success) setCfg((d.data.solleciti_config as SollecitiConfig) ?? {}); })
+            .catch(() => setCfg({}));
+    }, [userId]);
+    if (!cfg) return null;
+    const livelli = livelliEffettivi(cfg);
+    const setLivello = (i: number, patch: Partial<LivelloSollecito>) => {
+        const next = livelli.map((l, j) => (j === i ? { ...l, ...patch } : l));
+        setCfg({ ...cfg, livelli: next });
+    };
+    const save = async () => {
+        setSaving(true);
+        await fetch('/api/admin/settings', { method: 'PATCH', headers: hdr(userId), body: JSON.stringify({ solleciti_config: { ...cfg, livelli } }) });
+        setSaving(false);
+    };
+    return (
+        <section className={card}>
+            <h3 className={h3}><BellRing size={16} /> Solleciti di pagamento</h3>
+            <div className="flex flex-wrap items-center gap-4">
+                <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked={!!cfg.enabled} onChange={e => setCfg({ ...cfg, enabled: e.target.checked })} className="w-4 h-4 rounded text-kidville-green" />
+                    <span className="font-maven text-sm text-kidville-green">Invio automatico (cron) attivo</span>
+                </label>
+                <div className="flex items-center gap-2">
+                    <span className="font-maven text-xs text-kidville-muted">Cadenza minima fra due invii (gg)</span>
+                    <input type="number" min={1} value={cfg.cadenza_min_giorni ?? 7}
+                        onChange={e => setCfg({ ...cfg, cadenza_min_giorni: Math.max(1, Number(e.target.value) || 1) })}
+                        className={`${input} w-16`} />
+                </div>
+            </div>
+            <p className="font-maven text-[11px] text-kidville-muted mt-2">
+                Segnaposto: {'{alunno}'} {'{descrizione}'} {'{importo}'} {'{residuo}'} {'{scadenza}'} {'{scuola}'} {'{giorni_ritardo}'}
+            </p>
+            <div className="mt-3 space-y-4">
+                {livelli.map((l, i) => (
+                    <div key={i} className="rounded-xl border-2 border-kidville-line p-3">
+                        <div className="flex flex-wrap items-center gap-3 mb-2">
+                            <span className="font-barlow text-xs font-extrabold uppercase text-kidville-green">Livello {i + 1}</span>
+                            <span className="flex items-center gap-1.5 font-maven text-xs text-kidville-muted">
+                                dopo
+                                <input type="number" min={0} value={l.giorni_da_scadenza}
+                                    onChange={e => setLivello(i, { giorni_da_scadenza: Math.max(0, Number(e.target.value) || 0) })}
+                                    className={`${input} w-16`} />
+                                giorni dalla scadenza
+                            </span>
+                        </div>
+                        <input value={l.oggetto} onChange={e => setLivello(i, { oggetto: e.target.value })}
+                            placeholder="Oggetto email" className={`${input} w-full mb-2`} />
+                        <textarea value={l.testo} onChange={e => setLivello(i, { testo: e.target.value })} rows={3}
+                            className={`${input} w-full`} />
+                    </div>
+                ))}
+            </div>
+            <div className="mt-4"><button onClick={save} disabled={saving} className={btnPrimary}><Save size={14} /> {saving ? 'Salvataggio…' : 'Salva'}</button></div>
+        </section>
+    );
+}
+
+interface FiscaleCfg {
+    denominazione?: string; piva?: string; codice_fiscale?: string;
+    indirizzo?: string; cap?: string; comune?: string; provincia?: string;
+    bollo_enabled?: boolean; bollo_soglia?: number; bollo_importo?: number;
+    dicitura_bollo_ricevuta?: string;
+}
+
+// Dati struttura per ricevute/attestazioni (fallback: dati fiscali Aruba) e
+// marca da bollo sui documenti esenti IVA sopra soglia.
+function FiscaleSettings({ userId }: Props) {
+    const [cfg, setCfg] = useState<FiscaleCfg | null>(null);
+    const [saving, setSaving] = useState(false);
+    useEffect(() => {
+        fetch(`/api/admin/settings?userId=${userId}`, { headers: hdr(userId) })
+            .then(r => r.json())
+            .then(d => { if (d.success) setCfg((d.data.fiscale_config as FiscaleCfg) ?? {}); })
+            .catch(() => setCfg({}));
+    }, [userId]);
+    if (!cfg) return null;
+    const set = (k: keyof FiscaleCfg, v: unknown) => setCfg({ ...cfg, [k]: v });
+    const save = async () => {
+        setSaving(true);
+        await fetch('/api/admin/settings', { method: 'PATCH', headers: hdr(userId), body: JSON.stringify({ fiscale_config: cfg }) });
+        setSaving(false);
+    };
+    const campi: [keyof FiscaleCfg, string][] = [
+        ['denominazione', 'Denominazione struttura'], ['piva', 'Partita IVA'], ['codice_fiscale', 'Codice fiscale'],
+        ['indirizzo', 'Indirizzo'], ['cap', 'CAP'], ['comune', 'Comune'], ['provincia', 'Provincia'],
+    ];
+    return (
+        <section className={card}>
+            <h3 className={h3}><FileText size={16} /> Dati fiscali &amp; bollo</h3>
+            <p className="font-maven text-[11px] text-kidville-muted -mt-2 mb-3">
+                Compaiono su ricevute numerate e attestazioni (Bonus Nido/730). I campi vuoti ricadono sui dati fiscali Aruba.
+            </p>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                {campi.map(([k, l]) => (
+                    <div key={k}><label className={label}>{l}</label>
+                        <input value={(cfg[k] as string) ?? ''} onChange={e => set(k, e.target.value)} className={`${input} w-full`} /></div>
+                ))}
+            </div>
+            <label className="flex items-center gap-2 cursor-pointer mt-4">
+                <input type="checkbox" checked={!!cfg.bollo_enabled} onChange={e => set('bollo_enabled', e.target.checked)} className="w-4 h-4 rounded text-kidville-green" />
+                <span className="font-maven text-sm text-kidville-green">Marca da bollo €2 su documenti esenti IVA oltre soglia</span>
+            </label>
+            {cfg.bollo_enabled && (
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mt-3">
+                    <div><label className={label}>Soglia (€)</label>
+                        <input type="number" step="0.01" value={cfg.bollo_soglia ?? 77.47} onChange={e => set('bollo_soglia', Number(e.target.value))} className={`${input} w-full`} /></div>
+                    <div><label className={label}>Importo bollo (€)</label>
+                        <input type="number" step="0.01" value={cfg.bollo_importo ?? 2} onChange={e => set('bollo_importo', Number(e.target.value))} className={`${input} w-full`} /></div>
+                    <div className="col-span-2 md:col-span-1"><label className={label}>Dicitura su ricevuta</label>
+                        <input value={cfg.dicitura_bollo_ricevuta ?? ''} placeholder="Imposta di bollo assolta in modo virtuale…" onChange={e => set('dicitura_bollo_ricevuta', e.target.value)} className={`${input} w-full`} /></div>
+                </div>
+            )}
+            <div className="mt-4"><button onClick={save} disabled={saving} className={btnPrimary}><Save size={14} /> {saving ? 'Salvataggio…' : 'Salva'}</button></div>
+        </section>
     );
 }
 
@@ -100,8 +228,9 @@ function RettaMorositaSettings({ userId }: Props) {
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                 <div><label className={label}>Retta default (€)</label>
                     <input type="number" value={s.retta_default_importo || ''} onChange={e => setS({ ...s, retta_default_importo: Number(e.target.value) })} className={`${input} w-full`} /></div>
-                <div><label className={label}>Giorno scadenza (1-28)</label>
-                    <input type="number" min={1} max={28} value={s.retta_giorno_scadenza} onChange={e => setS({ ...s, retta_giorno_scadenza: Number(e.target.value) })} className={`${input} w-full`} /></div>
+                <div><label className={label}>Giorno scadenza retta — default per tutti (1-28)</label>
+                    <input type="number" min={1} max={28} value={s.retta_giorno_scadenza} onChange={e => setS({ ...s, retta_giorno_scadenza: Number(e.target.value) })} className={`${input} w-full`} />
+                    <p className="font-maven text-[10px] text-kidville-muted mt-0.5">Personalizzabile per singolo alunno dall&apos;anagrafica (Dati economici).</p></div>
                 <div><label className={label}>Visibile dal giorno (mese prec.)</label>
                     <input type="number" min={1} max={28} value={s.retta_giorno_visibilita ?? 25} onChange={e => setS({ ...s, retta_giorno_visibilita: Number(e.target.value) })} className={`${input} w-full`} /></div>
                 <div><label className={label}><AlertTriangle size={11} className="inline" /> Tolleranza insoluti (gg)</label>

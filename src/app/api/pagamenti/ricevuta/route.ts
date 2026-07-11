@@ -4,15 +4,24 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
-import { jsPDF } from 'jspdf'
+import { emettiORecuperaRicevuta, type PagamentoPerRicevuta } from '@/lib/pagamenti/ricevute'
+import { buildRicevutaPdf } from '@/lib/pagamenti/pdf'
+import { datiStruttura, isTracciabile } from '@/lib/pagamenti/fiscale'
 
 const getQuerySchema = z.object({
   pagamento_id: zUuid,
 })
 
-// GET /api/pagamenti/ricevuta?pagamento_id=&userId=  — ricevuta NON fiscale (DL-023).
-// Documento di cortesia per un pagamento SALDATO, indipendente dalla fattura
-// elettronica Aruba. Accesso: staff oppure genitore del bambino.
+const periodoIt = (p?: string | null) =>
+  p ? new Date(p).toLocaleDateString('it-IT', { month: 'long', year: 'numeric' }) : null
+
+// GET /api/pagamenti/ricevuta?pagamento_id=&userId= — ricevuta NUMERATA (A5).
+// Emissione idempotente al primo download (registro `ricevute_emesse`, una
+// sola ricevuta attiva per pagamento): admin e genitore scaricano la STESSA
+// ricevuta n. X/AAAA, con annotazione dei metodi (prova di tracciabilità per
+// la detrazione) e dati struttura (utile per il Bonus Nido INPS). Dove il
+// registro non esiste (DB e2e CI) degrada al PDF di cortesia senza numero.
+// Accesso: staff oppure genitore del bambino. Solo pagamenti SALDATI.
 export async function GET(request: Request) {
   try {
     const auth = await requireUser(request)
@@ -25,7 +34,7 @@ export async function GET(request: Request) {
     const supabase = await createAdminClient()
     const { data: pag } = await supabase
       .from('pagamenti')
-      .select('id, descrizione, importo, importo_pagato, stato, scadenza, alunno_id, alunni:alunno_id ( nome, cognome )')
+      .select('id, descrizione, importo, importo_pagato, stato, scadenza, periodo_competenza, alunno_id, scuola_id, alunni:alunno_id ( nome, cognome )')
       .eq('id', pagamentoId)
       .maybeSingle()
     if (!pag) return NextResponse.json({ error: 'Pagamento non trovato' }, { status: 404 })
@@ -45,30 +54,42 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'Ricevuta disponibile solo per pagamenti saldati' }, { status: 409 })
     }
 
-    const al = pag.alunni as unknown as { nome?: string; cognome?: string }
-    const doc = new jsPDF()
-    doc.setFontSize(18)
-    doc.text('Kidville — Ricevuta di pagamento', 20, 25)
-    doc.setFontSize(9)
-    doc.setTextColor(150)
-    doc.text('Documento di cortesia non fiscale. Per la fattura elettronica usare l’apposita funzione.', 20, 32)
-    doc.setTextColor(0)
-    doc.setFontSize(12)
-    doc.text(`Causale: ${pag.descrizione ?? '—'}`, 20, 50)
-    doc.text(`Intestatario: ${al?.nome ?? ''} ${al?.cognome ?? ''}`, 20, 58)
-    doc.text(`Scadenza: ${pag.scadenza ?? '—'}`, 20, 66)
-    doc.setFontSize(14)
-    doc.text(`Importo saldato: € ${Number(pag.importo_pagato ?? pag.importo).toFixed(2)}`, 20, 80)
-    doc.setFontSize(10)
-    doc.setTextColor(120)
-    doc.text('Stato: Pagato', 20, 90)
+    const esito = await emettiORecuperaRicevuta(supabase, pag as unknown as PagamentoPerRicevuta, { creatoDa: user.id })
+    if (!esito.ok) {
+      return NextResponse.json({ error: 'Errore nell’emissione della ricevuta', details: esito.messaggio }, { status: 500 })
+    }
+    const record = esito.legacy ? null : esito.record
 
-    const pdf = Buffer.from(doc.output('arraybuffer'))
+    const { data: incassi } = await supabase
+      .from('incassi')
+      .select('importo, data_incasso, metodo')
+      .eq('pagamento_id', pagamentoId)
+      .order('creato_il', { ascending: true })
+
+    const al = pag.alunni as unknown as { nome?: string; cognome?: string }
+    const positivi = (incassi || []).filter((i) => Number(i.importo) > 0)
+    const pdf = buildRicevutaPdf({
+      numero: record?.numero ?? null,
+      anno: record?.anno ?? null,
+      struttura: record?.dati_struttura ?? datiStruttura(null, null),
+      intestatario: record?.intestatario ?? null,
+      alunno: `${al?.nome ?? ''} ${al?.cognome ?? ''}`.trim(),
+      descrizione: pag.descrizione ?? '—',
+      periodo: periodoIt(record?.periodo_competenza ?? pag.periodo_competenza),
+      importo: record ? Number(record.importo) : Number(pag.importo_pagato ?? pag.importo),
+      incassi: incassi || [],
+      tracciabile: record?.tracciabile ?? isTracciabile(positivi.map((i) => i.metodo as string | null)),
+      bollo: record?.bollo ?? false,
+      dicituraBollo: record?.dati_struttura?.dicitura_bollo,
+      emessaIl: record ? new Date(record.creato_il).toLocaleDateString('it-IT') : undefined,
+    })
+
+    const filename = record ? `ricevuta-${record.numero}-${record.anno}.pdf` : `ricevuta-${pagamentoId.slice(0, 8)}.pdf`
     return new NextResponse(pdf, {
       status: 200,
       headers: {
         'Content-Type': 'application/pdf',
-        'Content-Disposition': `inline; filename="ricevuta-${pagamentoId.slice(0, 8)}.pdf"`,
+        'Content-Disposition': `inline; filename="${filename}"`,
       },
     })
   } catch (err) {

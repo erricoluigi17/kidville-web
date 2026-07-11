@@ -22,6 +22,10 @@ const getQuerySchema = z.object({
   scuola_id: zUuidQueryOpzionale,
   gruppo: z.string().optional(),
   periodo: z.string().optional(),
+  scadenza_da: z.string().optional(),
+  scadenza_a: z.string().optional(),
+  fattura_stato: z.enum(['non_richiesta', 'in_attesa', 'emessa', 'scartata']).or(z.literal('')).optional(),
+  solo_aperti: z.enum(['true', 'false']).optional(),
 })
 
 const postBodySchema = z.object({
@@ -63,7 +67,7 @@ export async function GET(request: NextRequest) {
 
     let query = supabase.from('pagamenti').select(SELECT).order('scadenza', { ascending: false })
 
-    const isStaff = user.role === 'admin' || user.role === 'coordinator'
+    const isStaff = user.role === 'admin' || user.role === 'coordinator' || user.role === 'segreteria'
 
     if (isStaff) {
       // I filtri sono validati solo nel ramo staff: il ramo genitore li ignora (come oggi).
@@ -80,6 +84,10 @@ export async function GET(request: NextRequest) {
       if (scuolaId && sediAttive.includes(scuolaId)) query = query.eq('scuola_id', scuolaId)
       if (gruppo) query = query.eq('gruppo', gruppo)
       if (periodo) query = query.eq('periodo_competenza', periodo)
+      if (q.data.scadenza_da) query = query.gte('scadenza', q.data.scadenza_da)
+      if (q.data.scadenza_a) query = query.lte('scadenza', q.data.scadenza_a)
+      if (q.data.fattura_stato) query = query.eq('fattura_stato', q.data.fattura_stato)
+      if (q.data.solo_aperti === 'true') query = query.in('stato', ['da_pagare', 'parziale', 'scaduto'])
     } else {
       // genitore: solo i propri figli
       const { data: legami } = await supabase

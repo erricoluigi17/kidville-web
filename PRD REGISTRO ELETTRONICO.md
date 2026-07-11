@@ -111,10 +111,11 @@ Il modulo minimale **Divise** diventa **Merchandise** (`/admin/merchandise`): ca
 - Ordini creati **solo dalla segreteria**: eliminati `/parent/divise` (pagina), `/api/parent/divise` (route) e la voce "Divise" della BottomNav genitore; `coverage-matrix` primaria-360 aggiornata. `intestatari.ts` con `parent_id NULL` ricade su intestatario/split standard (test di regressione).
 
 ### Verifica
-- Gate per ogni commit: `npx eslint . --max-warnings 0` → 0 · `npx vitest run` → 1001/1001 (64 test nuovi, TDD) · `npx tsc --noEmit` → 0 · `npm run build` → ok.
-- Tutte le route nuove degradano sul DB E2E CI non migrato (42P01/42703 su SELECT, PGRST204 su INSERT/UPDATE → empty-state/legacy).
+- Gate per ogni commit: `npx eslint . --max-warnings 0` → 0 · `npx vitest run` → 1002/1002 (65 test nuovi, TDD) · `npx tsc --noEmit` → 0 · `npm run build` → ok.
+- Tutte le route nuove degradano sul DB E2E CI non migrato (42P01/42703 su SELECT, PGRST204 su INSERT/UPDATE, **PGRST200** su embed di relazioni nuove → empty-state/legacy).
+- **Review adversariale multi-agente** del diff Fase B prima del push (5 lenti → verifica scettica per-finding): 2 difetti confermati + hardening difensivo → fix nel commit finale: (1) `cambio-taglia` non chiudeva la riga originale (doppione consegnabile) → ora pre-consegna annulla l'originale, post-consegna reso a stock; (2) `evadi-magazzino` check-then-act non atomico (possibile over-allocazione con concorrenza reale) → guard `.eq('stato',…)` + limite documentato (bassa concorrenza segreteria, lock DB fuori scope); + rollback ordine su errore addebito, guard di stato su tutte le transizioni batch, degrade `PGRST200`.
 
-**Stato**: Fase B COMPLETA su branch `feat/contabilita-merchandise` (8 commit B1-B8). **Migrazione `20260711120000_merchandise` DA APPLICARE a prod** (con backfill stati righe) su conferma esplicita dell'utente — poi `get_advisors` = 0 ERROR (tutte le tabelle nuove hanno RLS + policy `service_role`, la RPC fissa `search_path`). Merge/deploy secondo AGENTS.md a valle della conferma.
+**Stato**: Fase B COMPLETA su branch `feat/contabilita-merchandise` (9 commit: B1-B8 + fix review). **Migrazione `20260711120000_merchandise` DA APPLICARE a prod** (con backfill stati righe) su conferma esplicita dell'utente — poi `get_advisors` = 0 ERROR (tutte le tabelle nuove hanno RLS + policy `service_role`, la RPC fissa `search_path`). Merge/deploy secondo AGENTS.md a valle della conferma.
 
 ---
 

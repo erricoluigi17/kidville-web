@@ -33,6 +33,15 @@ export function puoTransire(da: StatoRiga, a: StatoRiga): boolean {
   return TRANSIZIONI[da]?.includes(a) ?? false
 }
 
+/**
+ * True se un PO è completo: almeno una riga attiva e tutte le attive
+ * (non annullate) sono arrivate o consegnate → il PO può essere chiuso.
+ */
+export function poCompleto(stati: StatoRiga[]): boolean {
+  const attive = stati.filter((s) => s !== 'annullato')
+  return attive.length > 0 && attive.every((s) => s === 'arrivato' || s === 'consegnato')
+}
+
 export type StatoTestata = 'inviato' | 'confermato' | 'consegnato' | 'annullato'
 
 /**

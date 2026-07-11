@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { derivaStatoTestata, puoTransire, type StatoRiga } from '@/lib/merch/stati'
+import { derivaStatoTestata, puoTransire, poCompleto, type StatoRiga } from '@/lib/merch/stati'
 
 describe('derivaStatoTestata', () => {
   it('tutte da_ordinare → inviato', () => {
@@ -43,5 +43,21 @@ describe('puoTransire', () => {
   })
   it.each(illegali)('blocca %s → %s', (da, a) => {
     expect(puoTransire(da, a)).toBe(false)
+  })
+})
+
+describe('poCompleto', () => {
+  it('true se tutte le attive sono arrivate/consegnate', () => {
+    expect(poCompleto(['arrivato', 'arrivato'])).toBe(true)
+    expect(poCompleto(['arrivato', 'consegnato'])).toBe(true)
+    expect(poCompleto(['arrivato', 'annullato'])).toBe(true) // ignora annullate
+  })
+  it('false se resta almeno una riga ordinato/da_ordinare', () => {
+    expect(poCompleto(['arrivato', 'ordinato'])).toBe(false)
+    expect(poCompleto(['da_ordinare'])).toBe(false)
+  })
+  it('false se nessuna riga attiva', () => {
+    expect(poCompleto(['annullato', 'annullato'])).toBe(false)
+    expect(poCompleto([])).toBe(false)
   })
 })

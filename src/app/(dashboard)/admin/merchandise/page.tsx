@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import type { LucideIcon } from 'lucide-react';
 import {
   ShoppingBag, Package, Truck, PackageCheck, ClipboardList, Boxes, Factory, ListChecks,
-  Plus, Minus, Search, Save, Trash2, Pencil, X, FileText, AlertTriangle, RefreshCw, Warehouse, Check,
+  Plus, Minus, Search, Save, Trash2, Pencil, X, FileText, AlertTriangle, RefreshCw, Warehouse, Check, Repeat, Download,
 } from 'lucide-react';
 import {
   CockpitPage, PageHeader, StatCard, Tabs, Drawer, Toolbar, CockpitSelect,
@@ -132,12 +132,19 @@ function OrdiniPanel({ userId, ordini, loading, reload }: { userId: string | nul
     setBusy(false);
     if (res.ok) reload(); else alert(res.error ?? 'Operazione non riuscita');
   };
+  const cambioTaglia = async (r: Riga) => {
+    const nuova = window.prompt(`Nuova taglia per ${r.articolo_nome} (attuale: ${r.taglia || '—'})`);
+    if (nuova == null || !nuova.trim()) return;
+    const reso = window.confirm('Il capo restituito rientra a magazzino (reso a stock)?');
+    await azione('cambio-taglia', 'POST', { riga_id: r.id, nuova_taglia: nuova.trim(), reso_a_stock: reso });
+  };
 
   return (
     <div className={CARD}>
       <Toolbar search={q} onSearch={setQ} placeholder="Cerca alunno…">
         <CockpitSelect value={filtro} onChange={setFiltro} options={[{ value: '', label: 'Tutti gli stati' }, ...(['da_ordinare', 'ordinato', 'arrivato', 'consegnato', 'annullato'] as StatoRiga[]).map((s) => ({ value: s, label: STATO_RIGA_LABEL[s] }))]} />
         <button type="button" className={BTN_GHOST} onClick={reload}><RefreshCw size={14} /> Aggiorna</button>
+        <button type="button" className={BTN_GHOST} onClick={() => window.open(url(userId, 'export'), '_blank')}><Download size={14} /> Esporta XLSX</button>
       </Toolbar>
 
       {loading ? <Spinner /> : filtrati.length === 0 ? (
@@ -191,6 +198,7 @@ function OrdiniPanel({ userId, ordini, loading, reload }: { userId: string | nul
                     {s === 'da_ordinare' && <button type="button" disabled={busy} className={BTN_GHOST} onClick={() => azione('evadi-magazzino', 'POST', { riga_id: r.id })}><Warehouse size={13} /> Evadi da magazzino</button>}
                     {s === 'ordinato' && <button type="button" disabled={busy} className={BTN_GHOST} onClick={() => azione('ordini-fornitore/checkin', 'POST', { righe_ids: [r.id] })}><Truck size={13} /> Registra arrivo</button>}
                     {s === 'arrivato' && <button type="button" disabled={busy} className={BTN_GHOST} onClick={() => azione('consegna', 'POST', { righe_ids: [r.id] })}><PackageCheck size={13} /> Consegna</button>}
+                    {s !== 'annullato' && <button type="button" disabled={busy} className={BTN_GHOST} onClick={() => cambioTaglia(r)}><Repeat size={13} /> Cambia taglia</button>}
                     {s !== 'consegnato' && s !== 'annullato' && <button type="button" disabled={busy} className={BTN_GHOST} onClick={() => azione('righe', 'PATCH', { riga_id: r.id, stato: 'annullato' })}><X size={13} /> Annulla riga</button>}
                   </div>
                 </div>

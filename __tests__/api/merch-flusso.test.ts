@@ -56,13 +56,16 @@ vi.mock('@/lib/supabase/server-client', () => ({
   }),
 }))
 
-import { POST as POGEN } from '@/app/api/admin/merch/ordini-fornitore/route'
+import { POST as POGEN, PATCH as ANNULLA } from '@/app/api/admin/merch/ordini-fornitore/route'
 import { POST as CHECKIN } from '@/app/api/admin/merch/ordini-fornitore/checkin/route'
+import { poCompleto } from '@/lib/merch/stati'
 
 const OF_URL = 'http://localhost/api/admin/merch/ordini-fornitore'
 const CI_URL = 'http://localhost/api/admin/merch/ordini-fornitore/checkin'
 const post = (url: string, body: unknown) =>
   new Request(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+const patch = (url: string, body: unknown) =>
+  new Request(url, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
 const FID = '55555555-5555-4555-8555-555555555555'
 const R1 = '11111111-1111-4111-8111-111111111111'
 const R2 = '22222222-2222-4222-8222-222222222222'
@@ -160,5 +163,53 @@ describe('POST /api/admin/merch/ordini-fornitore/checkin', () => {
   it('403 righe fuori dal plesso', async () => {
     ;(h.rowsFor.divise_ordini_righe[0].ordine as { scuola_id: string }).scuola_id = 'sc-ALTRO'
     expect((await CHECKIN(post(CI_URL, { righe_ids: [R1] }))).status).toBe(403)
+  })
+})
+
+// #17 — Rollback PO: annulla il PO, le righe 'ordinato' tornano 'da_ordinare'.
+describe('PATCH /api/admin/merch/ordini-fornitore (annulla PO)', () => {
+  it('404 se il PO non esiste', async () => {
+    h.singleFor.merch_ordini_fornitore = null
+    const res = await ANNULLA(patch(OF_URL, { id: FID, stato: 'annullato' }))
+    expect(res.status).toBe(404)
+  })
+
+  it('403 se il PO è fuori dal plesso', async () => {
+    h.singleFor.merch_ordini_fornitore = { id: FID, scuola_id: 'sc-ALTRO', stato: 'aperto' }
+    const res = await ANNULLA(patch(OF_URL, { id: FID, stato: 'annullato' }))
+    expect(res.status).toBe(403)
+  })
+
+  it('200 annulla il PO: righe → da_ordinare, PO → annullato', async () => {
+    h.singleFor.merch_ordini_fornitore = { id: FID, scuola_id: 'sc-1', stato: 'aperto' }
+    h.rowsFor.divise_ordini_righe = [{ id: 'r1', ordine_id: 'o1' }]
+    const res = await ANNULLA(patch(OF_URL, { id: FID, stato: 'annullato' }))
+    expect(res.status).toBe(200)
+    const rigaUpd = h.updates.find((u) => u.table === 'divise_ordini_righe')!.row as { stato: string }
+    expect(rigaUpd.stato).toBe('da_ordinare')
+    const poUpd = h.updates.find((u) => u.table === 'merch_ordini_fornitore')!.row as { stato: string }
+    expect(poUpd.stato).toBe('annullato')
+  })
+})
+
+// #33 — Chiusura PO al check-in: verifica della funzione pura poCompleto.
+// (Il mock ritorna la STESSA h.rowsFor.divise_ordini_righe per il check-in e per
+//  la ri-query interna di chiudiPOcompleti, quindi i due stati non sono
+//  distinguibili nel test d'integrazione: si copre la logica di chiusura qui.)
+describe('poCompleto (chiusura PO)', () => {
+  it('true se tutte le righe attive sono arrivate/consegnate', () => {
+    expect(poCompleto(['arrivato', 'consegnato'])).toBe(true)
+    expect(poCompleto(['consegnato', 'consegnato'])).toBe(true)
+  })
+
+  it('false se resta almeno una riga ordinata', () => {
+    expect(poCompleto(['ordinato', 'arrivato'])).toBe(false)
+    expect(poCompleto(['da_ordinare', 'arrivato'])).toBe(false)
+  })
+
+  it('le righe annullate sono ignorate; PO senza righe attive non è completo', () => {
+    expect(poCompleto(['arrivato', 'annullato'])).toBe(true)
+    expect(poCompleto(['annullato'])).toBe(false)
+    expect(poCompleto([])).toBe(false)
   })
 })

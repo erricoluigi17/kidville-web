@@ -170,6 +170,43 @@ describe('PATCH /api/pagamenti/riconciliazione/[id]', () => {
     expect(h.inserts.find((i) => i.table === 'incassi')).toBeUndefined()
     expect(h.updates.find((u) => u.table === 'riconciliazione_movimenti')!.row.stato).toBe('ignorato')
   })
+
+  it('riapri su movimento non confermato → 200 e stato da_abbinare senza incassi', async () => {
+    h.movimento = { ...h.movimento!, stato: 'suggerito' }
+    const res = await patch({ azione: 'riapri' })
+    expect(res.status).toBe(200)
+    expect(h.inserts.find((i) => i.table === 'incassi')).toBeUndefined()
+    expect(h.updates.find((u) => u.table === 'riconciliazione_movimenti')!.row.stato).toBe('da_abbinare')
+  })
+
+  it('riapri di un movimento già confermato → 409', async () => {
+    h.movimento = { ...h.movimento!, stato: 'confermato' }
+    expect((await patch({ azione: 'riapri' })).status).toBe(409)
+  })
+
+  it('ignora di un movimento già confermato → 409', async () => {
+    h.movimento = { ...h.movimento!, stato: 'confermato' }
+    expect((await patch({ azione: 'ignora' })).status).toBe(409)
+  })
+
+  it('conferma con pagamento in sede non attiva → 404', async () => {
+    h.pagamento = { id: PID, scuola_id: 'sc-99', stato: 'scaduto' }
+    const res = await patch({ azione: 'conferma' })
+    expect(res.status).toBe(404)
+    expect(h.inserts.find((i) => i.table === 'incassi')).toBeUndefined()
+  })
+
+  it('conferma con pagamento inesistente → 404', async () => {
+    h.pagamento = null
+    expect((await patch({ azione: 'conferma' })).status).toBe(404)
+  })
+
+  it('conferma senza pagamento_id e senza suggerimenti → 400', async () => {
+    h.movimento = { ...h.movimento!, suggerimenti: null }
+    const res = await patch({ azione: 'conferma' })
+    expect(res.status).toBe(400)
+    expect(h.inserts.find((i) => i.table === 'incassi')).toBeUndefined()
+  })
 })
 
 describe('GET /api/pagamenti/riconciliazione', () => {

@@ -9,6 +9,7 @@ const h = vi.hoisted(() => ({
   enqueue: vi.fn(),
   rowsFor: {} as Record<string, Record<string, unknown>[]>,
   singleFor: {} as Record<string, Record<string, unknown> | null>,
+  singleErr: {} as Record<string, { code: string } | null>,
   inserts: [] as { table: string; row: unknown }[],
   updates: [] as { table: string; row: unknown }[],
 }))
@@ -27,7 +28,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.or = () => b
       b.order = () => b
       b.limit = () => b
-      b.maybeSingle = async () => ({ data: h.singleFor[table] ?? null, error: null })
+      b.maybeSingle = async () => ({ data: h.singleErr[table] ? null : (h.singleFor[table] ?? null), error: h.singleErr[table] ?? null })
       b.single = async () => ({ data: b._last ?? { id: `${table}-x` }, error: null })
       b.insert = (row: unknown) => { h.inserts.push({ table, row }); b._op = 'insert'; b._last = { id: `${table}-new`, ...(Array.isArray(row) ? {} : (row as object)) }; return b }
       b.update = (row: unknown) => {
@@ -65,6 +66,7 @@ beforeEach(() => {
   h.enqueue.mockResolvedValue(undefined)
   h.rowsFor = {}
   h.singleFor = {}
+  h.singleErr = {}
   h.inserts = []; h.updates = []
 })
 
@@ -95,6 +97,24 @@ describe('POST /api/admin/merch/evadi-magazzino', () => {
     h.singleFor.divise_ordini_righe!.stato = 'ordinato'
     h.rowsFor.merch_rettifiche = [{ articolo_id: ART, taglia: 'M', quantita_delta: 9 }]
     expect((await EVADI(post('http://localhost/api/admin/merch/evadi-magazzino', { riga_id: R1 }))).status).toBe(409)
+  })
+
+  it('403 se la riga è fuori dal plesso', async () => {
+    h.singleFor.divise_ordini_righe = {
+      id: R1, stato: 'da_ordinare', ordine_id: 'o1', articolo_id: ART, articolo_nome: 'Polo', taglia: 'M', quantita: 2,
+      ordine: { scuola_id: 'sc-ALTRO', alunno_id: 'al-1' },
+    }
+    expect((await EVADI(post('http://localhost/api/admin/merch/evadi-magazzino', { riga_id: R1 }))).status).toBe(403)
+  })
+
+  it('404 se la riga non esiste', async () => {
+    h.singleFor.divise_ordini_righe = null
+    expect((await EVADI(post('http://localhost/api/admin/merch/evadi-magazzino', { riga_id: R1 }))).status).toBe(404)
+  })
+
+  it('503 se lo schema magazzino è mancante (DB non migrato)', async () => {
+    h.singleErr.divise_ordini_righe = { code: '42P01' }
+    expect((await EVADI(post('http://localhost/api/admin/merch/evadi-magazzino', { riga_id: R1 }))).status).toBe(503)
   })
 })
 

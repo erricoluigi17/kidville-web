@@ -55,6 +55,21 @@
 
 ---
 
+## 🗓️ Changelog — Login: implementazione dal design Claude ("Kidville · Login standalone") 2026-07-11 (branch `feat/fix-contabilita-merchandise`)
+
+Riscrittura della grafica di `/auth/login` importando il design **"Kidville - Login (standalone).html"** dal progetto Claude Design (MCP DesignSync, projectId `85d814d5-…`). Sostituisce il precedente tentativo di redesign login (mai committato, non presente nel working tree: su disco c'era ancora la versione storica "Accesso Kidville"/"Entra"). Nuovo CSS module co-locato `src/app/auth/login/page.module.css`; **logica di autenticazione invariata** (smistamento per ruolo M4B.3, picker multi-profilo `role="group"`, alto contrasto, degrado graceful, anti open-redirect). Gate tutti verdi: **eslint 0 · tsc 0 · vitest 1050/1050 · build ok**.
+
+- **Grafica (1:1 col design)**: sfondo crema con gradiente radiale + **blob organici d'angolo** (verde in alto-dx e basso-sx, giallo in basso-dx) e doodle outline tenui (stella/nuvola/cerchio/casa), tutti decorativi (`aria-hidden`, `pointer-events:none`). Wordmark **Kidville** grande (`public/logo-kidville.png`), **mascotte a figura intera su fondo trasparente** (`public/mascot-hero.png`) che sporge sopra la card bianca a bottom-sheet (raggio 34px, ombra morbida). Titolo **"Ciao!"** in Barlow Condensed verde, sottotitolo con il messaggio "solo su invito".
+- **Campi**: label verdi in grassetto, input con **icona guida inline** (busta/lucchetto, SVG inline) e per la password il toggle **occhio** show/hide; focus con bordo verde + alone. Link **"Password dimenticata?"** che rivela inline la nota "Contatta la Segreteria: riemette le credenziali via email". Bottone primario **"Accedi"** (verde, testo bianco, 60px, raggio 16px). Toggle "alto contrasto" preservato in fondo alla card.
+- **Asset**: `public/mascot-hero.png` rigenerata con **Higgsfield `remove_background`** su `public/mascot.png` (il chroma-key locale non era praticabile: sash/fascia del cappello sono gialli come lo sfondo → il flood-fill "bucava" la fascia). `public/mascot.png` (fondo giallo) resta invariata per le altre pagine.
+- **Alto Contrasto**: la card usa i token `--color-kidville-*` → rimappati da `html[data-contrast="high"]`; mascotte/logo/blob nascosti in HC; override mirati nel CSS module per testo bottone (nero) e bordi card. Rispetta `prefers-reduced-motion`.
+- **Copy/test**: il bottone submit passa da "Entra" a **"Accedi"** (fedeltà al design); aggiornati i 5 riferimenti nei test che lo cercavano (`e2e/fixtures.ts`, `e2e/auth.spec.ts`, `e2e/primaria-360/auth.setup.ts`, `e2e/primaria-360/journeys/50-logout.spec.ts`, `e2e/primaria-360/native/android-smoke.mjs`, `__tests__/components/login-smistamento.test.tsx`). Preservati intatti gli altri selettori load-bearing: `#email`/`#password`, label "Email"/"Password", alert `role="alert"` "Credenziali non valide", picker "Scelta del ruolo", toggle "alto contrasto" (`aria-pressed`).
+- **Verifica resa**: screenshot Playwright a viewport telefono su anteprima standalone con CSS/markup identici → match col design (logo, mascotte tucked, "Ciao!", campi con icone, "Accedi").
+
+**Pendente**: commit (working tree misto — solo i file del login) e deploy, su richiesta utente.
+
+---
+
 ## 🗓️ Changelog — Loader globale di pagina (flip 3D + riflesso) 2026-07-11 (branch `feat/fix-contabilita-merchandise`)
 
 Aggiunta la **schermata di caricamento a pagina intera** finora assente: nuovo `src/app/loading.tsx` (+ `src/app/loading.module.css`), il boundary di Suspense del segmento root che Next.js mostra automaticamente durante il caricamento delle pagine. Prima non esisteva alcun `loading.tsx` né un componente spinner condiviso (le pagine usavano ~112 spinner `animate-spin` copia-incollati inline). Gate tutti verdi: **eslint 0 · vitest 1050/1050 · build ok**.

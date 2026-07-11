@@ -17,7 +17,7 @@ setup('login account TEST 1A (26 personas)', async ({ browser }) => {
     await page.goto('/auth/login');
     await page.locator('#email').fill(acc.email);
     await page.locator('#password').fill(PASSWORD);
-    await page.getByRole('button', { name: 'Entra' }).click();
+    await page.getByRole('button', { name: 'Accedi' }).click();
 
     // Profilo singolo per tutti gli account di test → nessun picker; attende il landing.
     await expect(page).toHaveURL(acc.landing, { timeout: 30_000 });

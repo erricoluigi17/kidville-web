@@ -36,7 +36,7 @@ test('login ok genitore → /parent', async ({ page }) => {
 test('anonimo su /admin → redirect al login con next', async ({ page }) => {
   await page.goto('/admin');
   await page.waitForURL('**/auth/login?next=%2Fadmin');
-  await expect(page.getByRole('button', { name: 'Entra' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Accedi' })).toBeVisible();
 });
 
 test('anonimo su /parent → redirect al login con next', async ({ page }) => {

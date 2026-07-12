@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { isNotificaAbilitata } from '@/lib/notifiche/config'
 
 // =============================================================================
 // Core module-agnostico per accodare notifiche bufferizzate (servizio Push P1).
@@ -7,6 +8,10 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 // bufferMin`. Il dispatch effettivo (push) avviene quando il cron generico
 // drena il buffer (vedi notifiche_dispatch_tick + /api/push/dispatch).
 // Best-effort: gli errori non bloccano il flusso chiamante.
+//
+// Toggle per scuola (admin_settings.notifiche_config): passando `scuolaId` il
+// tipo viene verificato con isNotificaAbilitata (fail-open); senza scuolaId la
+// notifica è sempre accodata (comportamento storico).
 // =============================================================================
 
 export interface EnqueueNotificheParams {
@@ -19,6 +24,8 @@ export interface EnqueueNotificheParams {
   entitaId?: string | null
   /** Minuti di buffer prima che la notifica sia inviabile. Default 0 (subito). */
   bufferMin?: number
+  /** Scuola per il gate dei toggle notifiche (assente = nessun gate, fail-open). */
+  scuolaId?: string | null
 }
 
 export async function enqueueNotifiche(
@@ -27,6 +34,7 @@ export async function enqueueNotifiche(
 ): Promise<void> {
   const utenti = [...new Set(params.utenteIds ?? [])].filter(Boolean)
   if (utenti.length === 0) return
+  if (!(await isNotificaAbilitata(supabase, params.tipo, params.scuolaId ?? null))) return
 
   const programmato = new Date(Date.now() + (params.bufferMin ?? 0) * 60_000).toISOString()
   const rows = utenti.map((uid) => ({

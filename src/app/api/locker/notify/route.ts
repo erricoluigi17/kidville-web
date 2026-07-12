@@ -81,6 +81,7 @@ export async function POST(request: Request) {
         entitaTipo: 'armadietto',
         entitaId: alunnoId,
         bufferMin: 0,
+        scuolaId: (alunno.scuola_id as string | undefined) ?? null,
       })
     }
 

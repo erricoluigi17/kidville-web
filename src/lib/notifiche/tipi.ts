@@ -147,9 +147,9 @@ export const TIPI_NOTIFICA: Record<string, TipoNotifica> = {
     descrizione: 'Quando la domanda di iscrizione viene accolta o respinta',
   },
   credenziali: {
-    label: 'Credenziali rigenerate',
-    gruppo: 'genitore',
-    descrizione: 'Quando l’amministrazione rigenera le credenziali di accesso',
+    label: 'PDF credenziali pronto',
+    gruppo: 'staff',
+    descrizione: 'Quando il PDF delle credenziali rigenerate è pronto per il download',
   },
   panic_alert: {
     label: 'Panic alert',

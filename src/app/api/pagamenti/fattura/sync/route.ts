@@ -166,6 +166,7 @@ export async function POST(request: Request) {
           link: '/admin/pagamenti',
           entitaTipo: 'fattura',
           entitaId: f.id,
+          scuolaId: f.scuola_id,
         })
       }
     }

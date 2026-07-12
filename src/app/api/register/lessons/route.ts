@@ -5,6 +5,8 @@ import { requireDocente } from '@/lib/auth/require-staff';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zDataYMD, zUuid } from '@/lib/validation/common';
 import { assertClasseNomeInScope, scuoleDiUtente } from '@/lib/auth/scope';
+import { notificaEvento } from '@/lib/notifiche/triggers';
+import { genitoriDiClassi } from '@/lib/notifiche/destinatari';
 
 const getQuerySchema = z.object({
     classeSezione: z.string().min(1),
@@ -98,7 +100,7 @@ export async function POST(request: Request) {
         const plessi = await scuoleDiUtente(supabase, auth.user);
         const { data: sezioneRow } = await supabase
             .from('sections')
-            .select('scuola_id')
+            .select('id, scuola_id')
             .eq('name', classeSezione)
             .in('scuola_id', plessi)
             .limit(1)
@@ -147,6 +149,31 @@ export async function POST(request: Request) {
         if (firmaError) {
             console.error('Errore INSERT firma_docente:', firmaError);
             // Non blocchiamo il flusso: il registro è già salvato
+        }
+
+        // Notifica ai genitori della classe (best-effort) SOLO se ci sono
+        // compiti assegnati (l'argomento da solo non è un evento per famiglie).
+        // Stesso tipo/toggle del registro primaria; debounce sull'uuid della
+        // sezione: i salvataggi ora-per-ora collassano in una notifica sola
+        // (entita_id è uuid: niente chiavi sintetiche).
+        if (compiti) {
+            try {
+                const destinatari = await genitoriDiClassi(supabase, finalScuolaId, [classeSezione]);
+                await notificaEvento(supabase, {
+                    tipo: 'compiti',
+                    scuolaId: finalScuolaId ?? null,
+                    utenteIds: destinatari,
+                    titolo: `Compiti assegnati — ${classeSezione}`,
+                    corpo: compiti.slice(0, 140),
+                    link: '/parent/compiti',
+                    entitaTipo: 'registro',
+                    entitaId: (sezioneRow?.id as string | undefined) ?? null,
+                    bufferMin: 10,
+                    debounce: true,
+                });
+            } catch (e) {
+                console.error('Notifica compiti fallita (non bloccante):', e);
+            }
         }
 
         return NextResponse.json({ success: true, data: registroRow });

@@ -120,6 +120,11 @@ function TeacherDashboardInner() {
   const isEnabled = (key: string) => infanziaGradi.some((g) => me?.funzioni?.[g]?.[key] === true);
   // Gradi dal hook condiviso con bottom-nav e GradeWorldSwitch (fetch dedupato).
   const { hasPrimaria, isPrimariaOnly } = useTeacherGradi(userId ?? null);
+  // Un docente solo-primaria non deve vedere lessico 0-6 (né riferimenti a
+  // infanzia/nido): il mondo primaria parla di "classe" e "alunni".
+  const nounFigli = isPrimariaOnly ? 'alunni' : 'bambini';
+  const nounFiglioSing = isPrimariaOnly ? 'alunno' : 'bambino';
+  const nounGruppo = isPrimariaOnly ? 'classe' : 'sezione';
 
   // derivati
   const studentCount = students.length;
@@ -142,7 +147,9 @@ function TeacherDashboardInner() {
       {/* ── HERO (DR yellow card) — wordmark/campanella nella AppBar ───── */}
       <HeroCard
         title={`${greeting}${greeting ? '!' : ''}`}
-        subtitle={activeSection ? `Sezione ${activeSection} · ${studentCount} bambini` : 'La tua giornata in sezione'}
+        subtitle={activeSection
+          ? `${isPrimariaOnly ? 'Classe' : 'Sezione'} ${activeSection} · ${studentCount} ${nounFigli}`
+          : `La tua giornata in ${nounGruppo}`}
       />
 
       {/* ── GRADE WORLD SWITCH (solo docenti misti) ─────── */}
@@ -170,15 +177,6 @@ function TeacherDashboardInner() {
               </button>
             );
           })}
-        </div>
-      )}
-
-      {isPrimariaOnly && (
-        <div className="mt-5 rounded-2xl border border-dashed border-kidville-line bg-white/60 p-5 text-center">
-          <p className="font-maven text-sm text-kidville-muted">
-            Nessuna attività infanzia/nido per il tuo profilo.{' '}
-            <Link href={withUser('/teacher/primaria')} className="font-semibold text-kidville-green underline">Vai alla Primaria</Link>
-          </p>
         </div>
       )}
 
@@ -259,7 +257,7 @@ function TeacherDashboardInner() {
               <div className="min-w-0 flex-1">
                 <div className="font-barlow text-lg font-black uppercase leading-none text-kidville-green">Allergie e note mediche</div>
                 <div className="mt-0.5 font-maven text-[11.5px] text-kidville-yellow-dark">
-                  {allergie.length} {allergie.length === 1 ? 'bambino' : 'bambini'} da seguire · sezione {activeSection}
+                  {allergie.length} {allergie.length === 1 ? nounFiglioSing : nounFigli} da seguire · {nounGruppo} {activeSection}
                 </div>
               </div>
             </div>
@@ -299,7 +297,7 @@ function TeacherDashboardInner() {
             <div className="min-w-0 flex-1">
               <div className={`font-barlow text-lg font-black uppercase leading-none ${appelloFatto ? 'text-kidville-green' : 'text-white'}`}>Appello del giorno</div>
               <div className={`mt-1 font-maven text-xs ${appelloFatto ? 'text-kidville-ink' : 'text-white/80'}`}>
-                {appelloFatto ? `${presenti} presenti · ${assenti} assenti` : `Non ancora registrato · ${studentCount || ''} bambini`}
+                {appelloFatto ? `${presenti} presenti · ${assenti} assenti` : `Non ancora registrato · ${studentCount || ''} ${nounFigli}`}
               </div>
             </div>
             <span className={`rounded-pill px-2.5 py-1 font-barlow text-[10.5px] font-extrabold uppercase tracking-wide ${appelloFatto ? 'bg-kidville-success-soft text-kidville-success' : 'bg-kidville-yellow text-kidville-green'}`}>
@@ -363,9 +361,9 @@ function TeacherDashboardInner() {
       <section className="mt-6">
         <div className="mb-3 px-0.5">
           <Eyebrow>Agenda</Eyebrow>
-          <h2 className="font-barlow text-xl font-black uppercase leading-none text-kidville-green">La giornata in sezione</h2>
+          <h2 className="font-barlow text-xl font-black uppercase leading-none text-kidville-green">La giornata in {nounGruppo}</h2>
         </div>
-        <TeacherAgendaCard sezione={activeSection} userId={userId} />
+        <TeacherAgendaCard sezione={activeSection} userId={userId} gruppo={nounGruppo} />
       </section>
 
       {/* footer */}

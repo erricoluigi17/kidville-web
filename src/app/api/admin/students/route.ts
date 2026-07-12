@@ -7,6 +7,8 @@ import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { linkOrCreateParent } from '@/lib/anagrafiche/parents';
 import { riallineaScadenzeRetteFuture } from '@/lib/pagamenti/scadenze';
+import { notificaEvento } from '@/lib/notifiche/triggers';
+import { staffScuola } from '@/lib/notifiche/destinatari';
 
 // ============================================================
 // Anagrafica alunni — gated Segreteria+Direzione (DL-036) + audit
@@ -390,6 +392,32 @@ export async function PATCH(request: NextRequest) {
                     valorePrima: prima ?? null,
                     valoreDopo: updates,
                 });
+
+                // Allergie cambiate → avvisa cuoca/segreteria (best-effort,
+                // sicurezza mensa). Scatta solo se il valore è davvero diverso.
+                try {
+                    const allergieCambiate =
+                        ('allergies' in updates && updates.allergies !== prima.allergies) ||
+                        ('allergeni' in updates && JSON.stringify(updates.allergeni) !== JSON.stringify(prima.allergeni));
+                    if (allergieCambiate) {
+                        const scuolaId = (data?.scuola_id as string | undefined) ?? null;
+                        const destinatari = (await staffScuola(supabase, scuolaId, ['admin', 'coordinator', 'cuoca']))
+                            .filter((uid) => uid !== auth.user.id);
+                        await notificaEvento(supabase, {
+                            tipo: 'allergie_aggiornate',
+                            scuolaId,
+                            utenteIds: destinatari,
+                            titolo: 'Allergie aggiornate',
+                            corpo: `Le allergie di ${[data?.nome, data?.cognome].filter(Boolean).join(' ') || 'un alunno'} sono state aggiornate: verificare il menu.`,
+                            link: '/admin/mensa/cucina',
+                            entitaTipo: 'alunno',
+                            entitaId: id,
+                            bufferMin: 0,
+                        });
+                    }
+                } catch (e) {
+                    console.error('Notifica allergie aggiornate fallita (non bloccante):', e);
+                }
 
                 return NextResponse.json(data);
             } catch (err) {

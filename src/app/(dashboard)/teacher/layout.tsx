@@ -1,6 +1,7 @@
 import { Suspense } from 'react';
 import { AppBar } from '@/components/features/shell/AppBar';
 import TeacherBottomNav from '@/components/features/teacher/TeacherBottomNav';
+import { NativePushAutoRegister } from '@/components/providers/NativePushAutoRegister';
 import { requireArea } from '@/lib/auth/area-guard';
 
 // Cornice persistente dell'area Insegnante: AppBar verde (wordmark + back +
@@ -24,6 +25,10 @@ export default async function TeacherLayout({ children }: { children: React.Reac
       {/* AppBar usa useSearchParams (identità) → Suspense per il prerender. */}
       <Suspense fallback={<div className="bg-kidville-green" style={{ height: 'var(--kv-appbar-h, 58px)' }} />}>
         <AppBar area="teacher" />
+      </Suspense>
+      {/* Registrazione push nativa (solo shell Capacitor): usa useSearchParams → Suspense. */}
+      <Suspense fallback={null}>
+        <NativePushAutoRegister />
       </Suspense>
       <main id="content" className="pb-28">
         {children}

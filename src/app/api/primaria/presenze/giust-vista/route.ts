@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
 import { assertSezioneInScope } from '@/lib/auth/scope'
+import { notificaEvento } from '@/lib/notifiche/triggers'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 
@@ -45,6 +46,31 @@ export async function POST(request: NextRequest) {
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     if (!updated) return NextResponse.json({ error: 'Presenza non giustificata o inesistente' }, { status: 404 })
+
+    // Conferma al genitore che ha giustificato (best-effort).
+    try {
+      const genitoreId = (updated as { giustificata_da?: string | null }).giustificata_da
+      const alunnoId = (updated as { alunno_id?: string | null }).alunno_id
+      if (genitoreId && genitoreId !== userId) {
+        const { data: alunno } = await supabase
+          .from('alunni')
+          .select('nome, scuola_id')
+          .eq('id', alunnoId)
+          .maybeSingle()
+        await notificaEvento(supabase, {
+          tipo: 'giustifica_vista',
+          scuolaId: (alunno?.scuola_id as string | undefined) ?? null,
+          utenteIds: [genitoreId],
+          titolo: 'Giustifica presa in visione',
+          corpo: `La giustifica${alunno?.nome ? ` di ${alunno.nome}` : ''} è stata presa in visione dal docente.`,
+          link: '/parent/primaria/assenze',
+          entitaTipo: 'presenza',
+          entitaId: presenzaId,
+        })
+      }
+    } catch (e) {
+      console.error('Notifica giustifica vista fallita (non bloccante):', e)
+    }
 
     return NextResponse.json({ success: true, data: updated })
   } catch (err) {

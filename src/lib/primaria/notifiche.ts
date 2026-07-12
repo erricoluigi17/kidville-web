@@ -3,6 +3,7 @@ import type { AppUser } from '@/lib/auth/require-staff'
 import { getModuleConfig } from '@/lib/settings/module-config'
 import { docentiDiSezione } from '@/lib/sezioni/docenti'
 import { enqueueNotifiche } from '@/lib/push/enqueue'
+import { isNotificaAbilitata } from '@/lib/notifiche/config'
 
 interface EnqueueParams {
   alunnoIds: string[]
@@ -13,6 +14,18 @@ interface EnqueueParams {
   entitaTipo?: string
   entitaId?: string
   bufferMin?: number
+  /** Scuola per il gate dei toggle; se assente viene risolta dal primo alunno. */
+  scuolaId?: string | null
+}
+
+/** Risolve la scuola di un alunno (per il gate dei toggle). Best-effort. */
+async function scuolaDiAlunno(supabase: SupabaseClient, alunnoId: string): Promise<string | null> {
+  try {
+    const { data } = await supabase.from('alunni').select('scuola_id').eq('id', alunnoId).maybeSingle()
+    return (data?.scuola_id as string | undefined) ?? null
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -23,9 +36,13 @@ interface EnqueueParams {
  */
 export async function enqueueNotifichePerAlunni(
   supabase: SupabaseClient,
-  { alunnoIds, tipo, titolo, corpo, link, entitaTipo, entitaId, bufferMin = 10 }: EnqueueParams
+  { alunnoIds, tipo, titolo, corpo, link, entitaTipo, entitaId, bufferMin = 10, scuolaId }: EnqueueParams
 ): Promise<void> {
   if (!alunnoIds || alunnoIds.length === 0) return
+
+  // Gate toggle per scuola PRIMA di risolvere i genitori (risparmia la query).
+  const scuola = scuolaId !== undefined ? scuolaId : await scuolaDiAlunno(supabase, alunnoIds[0])
+  if (!(await isNotificaAbilitata(supabase, tipo, scuola))) return
 
   const { data: legami } = await supabase
     .from('legame_genitori_alunni')
@@ -57,9 +74,12 @@ export async function enqueueNotifichePerAlunni(
  */
 export async function enqueueDiarioGenitori(
   supabase: SupabaseClient,
-  { alunnoId, nome, bufferMin = 10 }: { alunnoId: string; nome?: string | null; bufferMin?: number },
+  { alunnoId, nome, bufferMin = 10, scuolaId }: { alunnoId: string; nome?: string | null; bufferMin?: number; scuolaId?: string | null },
 ): Promise<void> {
   if (!alunnoId) return
+  // Gate toggle per scuola prima del debounce (se disattivata, non tocca la coda).
+  const scuola = scuolaId !== undefined ? scuolaId : await scuolaDiAlunno(supabase, alunnoId)
+  if (!(await isNotificaAbilitata(supabase, 'diario', scuola))) return
   // Debounce: elimina le notifiche diario pending (non inviate) di questo figlio.
   try {
     await supabase
@@ -79,6 +99,7 @@ export async function enqueueDiarioGenitori(
     entitaTipo: 'diario',
     entitaId: alunnoId,
     bufferMin,
+    scuolaId: scuola,
   })
 }
 
@@ -102,12 +123,16 @@ export async function notificaTitolariScrittura(
     // Solo per scritture NON del docente titolare (segreteria/direzione/coordinator).
     if (opts.attore.role === 'educator') return
 
+    const scuola = opts.scuolaId ?? opts.attore.scuola_id
+    // Doppio gate in AND: il toggle storico segreteria_config.notifica_docente
+    // e il nuovo toggle notifiche_config.toggles.segreteria_scrittura.
     const cfg = await getModuleConfig<{ notifica_docente?: boolean }>(
       supabase,
       'segreteria_config',
-      opts.scuolaId ?? opts.attore.scuola_id,
+      scuola,
     )
     if (cfg?.notifica_docente === false) return // default: notifica attiva
+    if (!(await isNotificaAbilitata(supabase, 'segreteria_scrittura', scuola))) return
 
     const titolari = (await docentiDiSezione(supabase, opts.sectionId)).filter((id) => id !== opts.attore.id)
     if (titolari.length === 0) return

@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { rateLimit, clientIp } from '@/lib/security/rate-limit'
+import { notificaEvento } from '@/lib/notifiche/triggers'
+import { staffScuola } from '@/lib/notifiche/destinatari'
 import { parseBody } from '@/lib/validation/http'
 import type { EnrollmentSubmissionData } from '@/types/database.types'
 
@@ -79,6 +81,24 @@ export async function POST(request: NextRequest) {
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 })
+    }
+
+    // Notifica alla segreteria: nuova domanda dal form pubblico (best-effort).
+    try {
+      const destinatari = await staffScuola(supabase, scuolaId, ['admin', 'coordinator', 'segreteria'])
+      await notificaEvento(supabase, {
+        tipo: 'iscrizione_ricevuta',
+        scuolaId,
+        utenteIds: destinatari,
+        titolo: 'Nuova domanda di iscrizione',
+        corpo: 'È arrivata una nuova pre-iscrizione dal form pubblico.',
+        link: '/admin/iscrizioni',
+        entitaTipo: 'iscrizione',
+        entitaId: row.id,
+        bufferMin: 0,
+      })
+    } catch (e) {
+      console.error('Notifica iscrizione ricevuta fallita (non bloccante):', e)
     }
 
     return NextResponse.json({ id: row.id }, { status: 201 })

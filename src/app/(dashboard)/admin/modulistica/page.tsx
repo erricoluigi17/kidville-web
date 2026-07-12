@@ -4,7 +4,7 @@ import { Suspense, useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 import {
   FileText, Plus, UserCheck, Settings, Calendar, Users,
-  Trash2, Download, CheckCircle, ArrowRight, Upload, Shield, Inbox, Send
+  Trash2, Download, CheckCircle, ArrowRight, Upload, Shield, Inbox, Send, Stamp, X
 } from 'lucide-react';
 import { PageHeader } from '@/components/ui/cockpit';
 import { btnClass } from '@/components/ui/Btn';
@@ -35,6 +35,18 @@ interface FormTemplate {
   target_classes: string[];
   expiration_date: string | null;
   created_at: string;
+}
+
+/** Riga di documents-merge usata dal pannello «Protocolla» (moduli firmati). */
+interface ProtocollaItem {
+  student_id: string;
+  nome_alunno: string;
+  cognome_alunno: string;
+  signed: boolean;
+  submission_id?: string;
+  pdf_path?: string | null;
+  origine?: string;
+  created_at?: string;
 }
 
 // Metadati dei tre tipi di modulo per genitori iscritti
@@ -120,6 +132,11 @@ function ModulisticaInner() {
 
   // Notifications
   const [toast, setToast] = useState('');
+
+  // «Protocolla» moduli firmati (registro protocolli)
+  const [protocollaTarget, setProtocollaTarget] = useState<{ form: FormTemplate; className: string; items: ProtocollaItem[] } | null>(null);
+  const [protocollaBusy, setProtocollaBusy] = useState<string | null>(null);
+  const [protocollati, setProtocollati] = useState<Record<string, string>>({});
 
   const fetchInitialData = useCallback(async () => {
     if (!sedeCorrente) return; // sede ambigua: mostro l'avviso, nessuna fetch
@@ -337,6 +354,45 @@ function ModulisticaInner() {
     }
   };
 
+  // «Protocolla» (registro protocolli): elenca i moduli FIRMATI con PDF
+  // archiviato e li registra in INGRESSO con numero e fascia di segnatura.
+  const apriProtocolla = async (form: FormTemplate, className: string) => {
+    showToastMsg('⏳ Cerco i moduli firmati…');
+    try {
+      const res = await fetch(`/api/admin/documents-merge?form_id=${form.id}&class_name=${className}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Errore caricamento moduli');
+      const firmati = ((data.results || []) as ProtocollaItem[]).filter((r) => r.signed && r.pdf_path && r.submission_id);
+      if (firmati.length === 0) {
+        showToastMsg('❌ Nessun modulo firmato con PDF da protocollare in questa classe');
+        return;
+      }
+      setProtocollaTarget({ form, className, items: firmati });
+    } catch {
+      showToastMsg('❌ Errore nel caricamento dei moduli firmati');
+    }
+  };
+
+  const protocollaModulo = async (submissionId: string) => {
+    setProtocollaBusy(submissionId);
+    try {
+      const res = await fetch('/api/admin/protocolli/da-documento', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sorgente: 'modulo_firmato', id: submissionId }),
+      });
+      const data = await res.json();
+      if (!res.ok) { showToastMsg(`❌ ${data.error ?? 'Protocollazione non riuscita'}`); return; }
+      const numero = data.data?.numeroFormattato ?? '';
+      setProtocollati((prev) => ({ ...prev, [submissionId]: numero }));
+      showToastMsg(`✅ Modulo protocollato in ingresso: n. ${numero}`);
+    } catch {
+      showToastMsg('❌ Errore di rete nella protocollazione');
+    } finally {
+      setProtocollaBusy(null);
+    }
+  };
+
   // Merge PDF Simulator & Exporter (Client-side jsPDF)
   const handleExportMergePDF = async (form: FormTemplate, className: string) => {
     showToastMsg('⏳ Generazione report FES cumulativo...');
@@ -539,6 +595,16 @@ function ModulisticaInner() {
                           title={`Esporta consensi classe ${clsName}`}
                         >
                           <Download size={14} /> Merge {clsName}
+                        </button>
+                      ))}
+                      {form.target_scope !== 'external' && form.target_classes.map(clsName => (
+                        <button
+                          key={`prot-${clsName}`}
+                          onClick={() => apriProtocolla(form, clsName)}
+                          className="flex items-center gap-1.5 px-3.5 py-1.5 bg-kidville-info-soft text-kidville-info rounded-pill font-barlow font-bold text-xs uppercase hover:bg-kidville-info hover:text-white transition-colors"
+                          title={`Protocolla i moduli firmati della classe ${clsName}`}
+                        >
+                          <Stamp size={14} /> Protocolla {clsName}
                         </button>
                       ))}
 
@@ -1044,6 +1110,55 @@ function ModulisticaInner() {
             >
               Fatto / Chiudi
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Modal «Protocolla moduli firmati» (registro protocolli) */}
+      {protocollaTarget && (
+        <div className="fixed inset-0 bg-kidville-green/30 z-50 flex items-center justify-center p-4 animate-fadeIn" role="dialog" aria-modal="true">
+          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div>
+                <h3 className="font-barlow text-xl font-black uppercase text-kidville-green flex items-center gap-2">
+                  <Stamp size={20} /> Protocolla moduli firmati
+                </h3>
+                <p className="mt-0.5 font-maven text-sm text-kidville-muted">
+                  {protocollaTarget.form.title} — classe {protocollaTarget.className}
+                </p>
+              </div>
+              <button onClick={() => setProtocollaTarget(null)} aria-label="Chiudi" className="p-2 rounded-lg text-kidville-muted hover:bg-kidville-cream">
+                <X size={18} />
+              </button>
+            </div>
+            <ul className="max-h-[320px] overflow-y-auto divide-y divide-kidville-line">
+              {protocollaTarget.items.map((item) => (
+                <li key={item.submission_id} className="flex items-center justify-between gap-3 py-2.5">
+                  <div className="min-w-0">
+                    <p className="truncate font-maven text-sm font-semibold text-kidville-ink">{item.cognome_alunno} {item.nome_alunno}</p>
+                    <p className="font-maven text-[11.5px] text-kidville-muted">
+                      Firmato {item.origine === 'cartaceo' ? '(cartaceo acquisito)' : '(FES digitale)'}{item.created_at ? ` il ${new Date(item.created_at).toLocaleDateString('it-IT')}` : ''}
+                    </p>
+                  </div>
+                  {protocollati[item.submission_id ?? ''] ? (
+                    <span className="shrink-0 rounded-pill bg-kidville-success-soft px-2.5 py-1 font-maven text-[11.5px] font-bold text-kidville-success">
+                      n. {protocollati[item.submission_id ?? '']}
+                    </span>
+                  ) : (
+                    <button
+                      onClick={() => protocollaModulo(item.submission_id!)}
+                      disabled={protocollaBusy === item.submission_id}
+                      className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-kidville-green text-kidville-yellow rounded-pill font-barlow font-bold text-[11px] uppercase disabled:opacity-50"
+                    >
+                      <Stamp size={12} /> {protocollaBusy === item.submission_id ? 'In corso…' : 'Protocolla'}
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+            <p className="mt-3 font-maven text-[11.5px] text-kidville-muted">
+              Ogni modulo viene registrato in INGRESSO nel registro protocolli con numero e fascia di segnatura.
+            </p>
           </div>
         </div>
       )}

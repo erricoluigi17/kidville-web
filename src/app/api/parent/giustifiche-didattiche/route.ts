@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireParentOfStudent } from '@/lib/auth/require-parent'
+import { notificaEvento } from '@/lib/notifiche/triggers'
+import { docentiDiSezione } from '@/lib/sezioni/docenti'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 
@@ -60,6 +62,30 @@ export async function POST(request: NextRequest) {
       .single()
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+    // Notifica ai docenti della sezione (best-effort): giustifica didattica.
+    try {
+      const { data: anagrafica } = await supabase
+        .from('alunni')
+        .select('nome, cognome, scuola_id')
+        .eq('id', studentId)
+        .maybeSingle()
+      const docenti = (await docentiDiSezione(supabase, alunno.section_id as string)).filter((id) => id !== userId)
+      const nomeAlunno = [anagrafica?.nome, anagrafica?.cognome].filter(Boolean).join(' ') || 'un alunno'
+      await notificaEvento(supabase, {
+        tipo: 'giustifica_ricevuta',
+        scuolaId: (anagrafica?.scuola_id as string | undefined) ?? null,
+        utenteIds: docenti,
+        titolo: 'Giustifica didattica ricevuta',
+        corpo: `Il genitore di ${nomeAlunno} ha inviato una giustifica didattica per il ${data}.`,
+        link: `/teacher/primaria/${alunno.section_id}/appello`,
+        entitaTipo: 'giustifica_didattica',
+        entitaId: (inserted as { id?: string })?.id ?? null,
+      })
+    } catch (e) {
+      console.error('Notifica giustifica didattica fallita (non bloccante):', e)
+    }
+
     return NextResponse.json({ success: true, data: inserted }, { status: 201 })
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Errore interno'

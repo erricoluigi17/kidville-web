@@ -27,6 +27,8 @@ async function notifica(
   try {
     const genitori = await genitoriDiAlunno(supabase, alunnoId)
     if (genitori.length === 0) return
+    // Scuola dell'alunno per il gate dei toggle notifiche (best-effort).
+    const { data: alunno } = await supabase.from('alunni').select('scuola_id').eq('id', alunnoId).maybeSingle()
     await enqueueNotifiche(supabase, {
       utenteIds: genitori,
       tipo: n.tipo,
@@ -35,6 +37,7 @@ async function notifica(
       link: '/parent/pagamenti',
       entitaTipo: 'merch_ordine',
       entitaId: n.ordineId ?? null,
+      scuolaId: (alunno?.scuola_id as string | undefined) ?? null,
     })
   } catch (err) {
     console.error('[merch/notify] fallita (non bloccante):', err)

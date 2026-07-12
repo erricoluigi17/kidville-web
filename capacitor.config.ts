@@ -14,6 +14,13 @@ const config: CapacitorConfig = {
   appId: 'it.kidville.app',
   appName: 'Kidville',
   webDir: 'mobile/www',
+  plugins: {
+    PushNotifications: {
+      // iOS: mostra banner/suono/badge ANCHE con l'app in foreground
+      // (di default iOS sopprime le notifiche quando l'app è aperta).
+      presentationOptions: ['badge', 'sound', 'alert'],
+    },
+  },
   ...(serverUrl
     ? {
         server: {

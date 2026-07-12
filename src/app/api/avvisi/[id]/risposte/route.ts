@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
+import { notificaEvento } from '@/lib/notifiche/triggers';
 import { parseBody, parseData } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 
@@ -128,6 +129,44 @@ export async function POST(request: Request, { params }: RouteParams) {
         if (error) {
             console.error('Errore POST risposte:', error);
             return NextResponse.json({ error: error.message }, { status: 500 });
+        }
+
+        // Notifica all'autore dell'avviso (best-effort), solo alla PRIMA presa
+        // visione/risposta di questo genitore (le riaperture non ri-notificano).
+        // Buffer 60' + debounce per avviso → una notifica riassuntiva, non 30.
+        try {
+            const primaLettura = !existing;
+            const primaRisposta = risposta !== undefined && existing?.risposta == null;
+            if (primaLettura || primaRisposta) {
+                const { data: avviso } = await supabase
+                    .from('avvisi')
+                    .select('author_id, titolo, scuola_id')
+                    .eq('id', avvisoId)
+                    .maybeSingle();
+                if (avviso?.author_id && avviso.author_id !== parent_id) {
+                    const { data: autore } = await supabase
+                        .from('utenti')
+                        .select('role, ruolo')
+                        .eq('id', avviso.author_id)
+                        .maybeSingle();
+                    const ruoloAutore = ((autore?.role as string) || (autore?.ruolo as string) || '').toLowerCase();
+                    const areaStaff = ['admin', 'coordinator', 'segreteria'].includes(ruoloAutore);
+                    await notificaEvento(supabase, {
+                        tipo: 'avviso_risposta',
+                        scuolaId: (avviso.scuola_id as string | undefined) ?? null,
+                        utenteIds: [avviso.author_id as string],
+                        titolo: 'Nuove risposte al tuo avviso',
+                        corpo: `Ci sono nuove prese visione o adesioni per «${avviso.titolo}».`,
+                        link: areaStaff ? `/admin/avvisi/${avvisoId}` : '/teacher/avvisi',
+                        entitaTipo: 'avviso',
+                        entitaId: avvisoId,
+                        bufferMin: 60,
+                        debounce: true,
+                    });
+                }
+            }
+        } catch (e) {
+            console.error('Notifica risposta avviso fallita (non bloccante):', e);
         }
 
         return NextResponse.json(data);

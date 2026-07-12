@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { assertAlunnoInScope } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
+import { notificaEvento } from '@/lib/notifiche/triggers'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 
@@ -54,6 +55,27 @@ export async function POST(request: Request) {
       scuolaId: auth.user.scuola_id,
       valoreDopo: { sospeso, motivo: patch.sospeso_motivo },
     })
+
+    // Notifica formale al genitore (best-effort). Testo NEUTRO in push
+    // (privacy: il dettaglio si legge in-app); anche la riattivazione avvisa.
+    try {
+      const { data: alunno } = await supabase.from('alunni').select('scuola_id').eq('id', alunnoId).maybeSingle()
+      await notificaEvento(supabase, {
+        tipo: 'sospensione_morosita',
+        scuolaId: (alunno?.scuola_id as string | undefined) ?? auth.user.scuola_id ?? null,
+        alunnoIds: [alunnoId],
+        titolo: 'Avviso amministrativo',
+        corpo: sospeso
+          ? 'C’è una comunicazione amministrativa importante: apri la sezione Pagamenti.'
+          : 'Il servizio è stato riattivato. Dettagli nella sezione Pagamenti.',
+        link: '/parent/pagamenti',
+        entitaTipo: 'sospensione',
+        entitaId: alunnoId,
+        bufferMin: 0,
+      })
+    } catch (e) {
+      console.error('Notifica sospensione fallita (non bloccante):', e)
+    }
 
     return NextResponse.json({ success: true, data: { alunno_id: alunnoId, sospeso } })
   } catch (err) {

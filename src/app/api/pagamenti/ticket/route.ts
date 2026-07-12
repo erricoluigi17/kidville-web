@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff, requireUser } from '@/lib/auth/require-staff'
 import { assertAlunnoInScope } from '@/lib/auth/scope'
+import { notificaEvento } from '@/lib/notifiche/triggers'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 
@@ -112,6 +113,22 @@ export async function POST(request: Request) {
       saldo_dopo: nuovoSaldo, pagamento_id: pag.id, origine: 'segreteria', creato_da: user.id,
     })
     if (mErr) console.error('ticket: movimento ledger non registrato:', mErr.message)
+
+    // Conferma al genitore: ricarica registrata (best-effort).
+    try {
+      await notificaEvento(supabase, {
+        tipo: 'mensa_ricarica',
+        scuolaId: (scuolaId as string | undefined) ?? null,
+        alunnoIds: [alunno_id],
+        titolo: 'Ricarica mensa registrata',
+        corpo: `Ricaricati ${pezzi} ticket mensa: il saldo è di ${nuovoSaldo} pasti.`,
+        link: '/parent/mensa',
+        entitaTipo: 'ticket_mensa',
+        entitaId: alunno_id,
+      })
+    } catch (e) {
+      console.error('Notifica ricarica ticket fallita (non bloccante):', e)
+    }
 
     return NextResponse.json({ success: true, data: { saldo_ticket: nuovoSaldo, pagamento_id: pag.id } }, { status: 201 })
   } catch (err) {

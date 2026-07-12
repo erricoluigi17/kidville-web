@@ -4,6 +4,7 @@ import { requireStaff } from '@/lib/auth/require-staff'
 import { resolveScuoleAttive, resolveScuolaScrittura } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { sendEmail, credentialsEmailBody } from '@/lib/email/send'
+import { notificaEvento } from '@/lib/notifiche/triggers'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { z } from 'zod'
@@ -81,6 +82,31 @@ export async function PATCH(request: NextRequest) {
         azione: 'update',
         valoreDopo: { status: 'rejected' },
       })
+
+      // Esito al genitore SOLO se un account esiste già (match best-effort per
+      // email degli adulti dell'invio): la pre-iscrizione può essere anonima.
+      try {
+        const adulti = ((data as { data?: EnrollmentSubmissionData })?.data?.adults ?? []) as EnrollmentAdult[]
+        const emails = adulti.map((a) => a.email).filter((e): e is string => Boolean(e))
+        if (emails.length > 0) {
+          const { data: utenti } = await supabase.from('utenti').select('id').in('email', emails)
+          const destinatari = (utenti ?? []).map((u) => u.id as string)
+          await notificaEvento(supabase, {
+            tipo: 'iscrizione_esito',
+            scuolaId: ((data as { scuola_id?: string })?.scuola_id as string | undefined) ?? null,
+            utenteIds: destinatari,
+            titolo: 'Esito domanda di iscrizione',
+            corpo: 'La domanda di iscrizione non è stata accolta. Contatta la segreteria per i dettagli.',
+            link: '/parent',
+            entitaTipo: 'iscrizione',
+            entitaId: id,
+            bufferMin: 0,
+          })
+        }
+      } catch (e) {
+        console.error('Notifica esito iscrizione fallita (non bloccante):', e)
+      }
+
       return NextResponse.json(data)
     }
 
@@ -117,6 +143,7 @@ export async function PATCH(request: NextRequest) {
     const warnings: string[] = []
     let credentials: { email: string; password: string } | null = null
     let credentialsEmailSent = false
+    let referenteUserId: string | null = null
 
     // 2. ADULTI → parents (dedup per CF) + account per il referente
     const parentLinks: { parentId: string; role: string; isReferente: boolean }[] = []
@@ -215,6 +242,7 @@ export async function PATCH(request: NextRequest) {
           credentials = { email: adultEmail, password: tempPassword }
         }
         if (userId) {
+          referenteUserId = userId
           await supabase.from('utenti').upsert({
             id: userId,
             email: adultEmail,
@@ -367,6 +395,26 @@ export async function PATCH(request: NextRequest) {
       scuolaId,
       valoreDopo: { status: 'approved', created_students: createdStudents.length, linked_parents: parentLinks.length },
     })
+
+    // Esito al referente (best-effort): domanda accolta. Solo se l'import ha
+    // creato/agganciato un account utente.
+    try {
+      if (referenteUserId) {
+        await notificaEvento(supabase, {
+          tipo: 'iscrizione_esito',
+          scuolaId,
+          utenteIds: [referenteUserId],
+          titolo: 'Iscrizione accolta',
+          corpo: 'La domanda di iscrizione è stata accolta: benvenuti a Kidville!',
+          link: '/parent',
+          entitaTipo: 'iscrizione',
+          entitaId: id,
+          bufferMin: 0,
+        })
+      }
+    } catch (e) {
+      console.error('Notifica esito iscrizione fallita (non bloccante):', e)
+    }
 
     return NextResponse.json({
       success: true,

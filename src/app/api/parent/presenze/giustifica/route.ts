@@ -7,6 +7,8 @@ import { buildSignatureLog, extractRequestMeta } from '@/lib/fea/signature-log'
 import { recordSignerSlot } from '@/lib/fea/slots'
 import { logFeaEvent } from '@/lib/fea/audit'
 import { getModuleConfig } from '@/lib/settings/module-config'
+import { notificaEvento } from '@/lib/notifiche/triggers'
+import { docentiDiSezione } from '@/lib/sezioni/docenti'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 
@@ -135,6 +137,29 @@ export async function POST(request: NextRequest) {
         ip,
         userAgent,
       })
+    }
+
+    // Notifica ai docenti della sezione (best-effort): giustifica ricevuta.
+    try {
+      const { data: anagrafica } = await supabase
+        .from('alunni')
+        .select('nome, cognome')
+        .eq('id', studentId)
+        .maybeSingle()
+      const docenti = (await docentiDiSezione(supabase, alunno.section_id as string)).filter((id) => id !== userId)
+      const nomeAlunno = [anagrafica?.nome, anagrafica?.cognome].filter(Boolean).join(' ') || 'un alunno'
+      await notificaEvento(supabase, {
+        tipo: 'giustifica_ricevuta',
+        scuolaId: (alunno.scuola_id as string | undefined) ?? null,
+        utenteIds: docenti,
+        titolo: 'Giustifica ricevuta',
+        corpo: `Il genitore di ${nomeAlunno} ha giustificato l'assenza del ${data}.`,
+        link: `/teacher/primaria/${alunno.section_id}/appello`,
+        entitaTipo: 'presenza',
+        entitaId: (updated as { id?: string })?.id ?? null,
+      })
+    } catch (e) {
+      console.error('Notifica giustifica fallita (non bloccante):', e)
     }
 
     return NextResponse.json({ success: true, data: updated })

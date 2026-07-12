@@ -5,6 +5,8 @@ import { requireDocente } from '@/lib/auth/require-staff';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { alunniSenzaConsenso } from '@/lib/gallery/privacy';
+import { notificaEvento } from '@/lib/notifiche/triggers';
+import { genitoriDiAlunni, genitoriDiClassi, genitoriDiScuola } from '@/lib/notifiche/destinatari';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -203,6 +205,34 @@ export async function POST(request: Request) {
         if (error) {
             console.error('Errore POST gallery:', error);
             return NextResponse.json({ error: error.message }, { status: 500 });
+        }
+
+        // Notifica ai genitori interessati (best-effort): alunni taggati →
+        // classi target → broadcast a tutta la scuola. Buffer 30' + debounce
+        // per uploader: gli upload a raffica collassano in una notifica sola.
+        try {
+            const scuolaId = auth.user.scuola_id ?? null;
+            const tagged = (tag_students ?? []) as string[];
+            const classi = Array.isArray(target_classes) ? (target_classes as string[]).filter(Boolean) : [];
+            const destinatari = tagged.length > 0
+                ? await genitoriDiAlunni(supabase, tagged)
+                : classi.length > 0
+                    ? await genitoriDiClassi(supabase, scuolaId, classi)
+                    : await genitoriDiScuola(supabase, scuolaId);
+            await notificaEvento(supabase, {
+                tipo: 'galleria',
+                scuolaId,
+                utenteIds: destinatari,
+                titolo: 'Nuove foto in galleria',
+                corpo: caption ? `«${caption}»` : 'Sono state pubblicate nuove foto.',
+                link: '/parent/gallery',
+                entitaTipo: 'galleria',
+                entitaId: uploaded_by,
+                bufferMin: 30,
+                debounce: true,
+            });
+        } catch (e) {
+            console.error('Notifica galleria fallita (non bloccante):', e);
         }
 
         return NextResponse.json(data, { status: 201 });

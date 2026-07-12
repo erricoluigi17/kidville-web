@@ -2,6 +2,7 @@ import { Suspense } from 'react';
 import { AppBar } from '@/components/features/shell/AppBar';
 import BottomNav from '@/components/features/parent/BottomNav';
 import { ChildSwitcher } from '@/components/features/parent/ChildSwitcher';
+import { NativePushAutoRegister } from '@/components/providers/NativePushAutoRegister';
 import { requireArea } from '@/lib/auth/area-guard';
 
 export default async function ParentLayout({ children }: { children: React.ReactNode }) {
@@ -19,6 +20,10 @@ export default async function ParentLayout({ children }: { children: React.React
       {/* AppBar full-bleed (fuori dal vincolo 430px); usa useSearchParams → Suspense. */}
       <Suspense fallback={<div className="bg-kidville-green" style={{ height: 'var(--kv-appbar-h, 58px)' }} />}>
         <AppBar area="parent" />
+      </Suspense>
+      {/* Registrazione push nativa (solo shell Capacitor): usa useSearchParams → Suspense. */}
+      <Suspense fallback={null}>
+        <NativePushAutoRegister />
       </Suspense>
       <div className="relative max-w-[430px] mx-auto">
         {/* Selettore figlio (per genitori con più figli). Usa useSearchParams → Suspense. */}

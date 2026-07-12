@@ -5,6 +5,8 @@ import { getModuleConfig } from '@/lib/settings/module-config';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { scuoleDiUtente } from '@/lib/auth/scope';
 import { logScrittura } from '@/lib/audit/scrittura';
+import { notificaEvento } from '@/lib/notifiche/triggers';
+import { genitoriDiClassi, genitoriDiScuola } from '@/lib/notifiche/destinatari';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 
@@ -237,6 +239,39 @@ export async function POST(request: Request) {
             azione: 'insert', scuolaId: autore?.scuola_id ?? auth.user.scuola_id ?? null,
             valoreDopo: { id: (data as { id?: string })?.id, titolo, target_scope },
         });
+
+        // Notifica ai genitori destinatari (best-effort). UN solo enqueue con
+        // tipo per priorità: modulo firmabile > richiesta adesione > avviso —
+        // avviso, consenso e modulo sono lo stesso evento, mai doppioni.
+        try {
+            const scuolaId = (autore?.scuola_id ?? auth.user.scuola_id ?? null) as string | null;
+            const classiTarget = Array.isArray(target_classes) ? (target_classes as string[]).filter(Boolean) : [];
+            const globale = (target_scope ?? 'globale') === 'globale' || classiTarget.length === 0;
+            const destinatari = globale
+                ? await genitoriDiScuola(supabase, scuolaId)
+                : await genitoriDiClassi(supabase, scuolaId, classiTarget);
+            const tipoNotifica = form_model_id
+                ? 'modulo_da_compilare'
+                : (tipo === 'adesione' ? 'consenso_uscita' : 'avviso');
+            const titoloNotifica =
+                tipoNotifica === 'modulo_da_compilare' ? `Modulo da compilare: ${titolo}`
+                : tipoNotifica === 'consenso_uscita' ? `Richiesta di consenso: ${titolo}`
+                : `Nuovo avviso: ${titolo}`;
+            await notificaEvento(supabase, {
+                tipo: tipoNotifica,
+                scuolaId,
+                utenteIds: destinatari,
+                titolo: titoloNotifica,
+                corpo: contenuto.length > 140 ? `${contenuto.slice(0, 140)}…` : contenuto,
+                link: '/parent/avvisi',
+                entitaTipo: 'avviso',
+                entitaId: (data as { id?: string })?.id ?? null,
+                bufferMin: 10,
+                debounce: true,
+            });
+        } catch (e) {
+            console.error('Notifica avviso fallita (non bloccante):', e);
+        }
 
         return NextResponse.json(data, { status: 201 });
     } catch (error) {

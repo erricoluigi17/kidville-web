@@ -71,6 +71,7 @@ export async function POST(request: Request) {
                         entitaTipo: 'presenza',
                         entitaId: alunnoId,
                         bufferMin: 0,
+                        scuolaId: alunno.scuola_id as string,
                     });
                 }
             }
@@ -84,6 +85,7 @@ export async function POST(request: Request) {
                 entitaTipo: 'presenza',
                 entitaId: alunnoId,
                 bufferMin: 0,
+                scuolaId: (alunno?.scuola_id as string | undefined) ?? null,
             });
         } catch (notifyErr) {
             console.error('Panic Alert — notifica (non bloccante):', notifyErr);

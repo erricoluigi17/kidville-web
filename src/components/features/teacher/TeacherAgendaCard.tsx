@@ -43,7 +43,16 @@ function giornoMese(ymd: string): { giorno: string; mese: string } {
 const inputCls =
   'w-full rounded-input border border-kidville-line bg-white px-3 py-2 font-maven text-sm text-kidville-ink placeholder:text-kidville-muted focus:border-kidville-green focus:outline-none';
 
-export function TeacherAgendaCard({ sezione, userId }: { sezione: string; userId: string | null }) {
+export function TeacherAgendaCard({
+  sezione,
+  userId,
+  gruppo = 'sezione',
+}: {
+  sezione: string;
+  userId: string | null;
+  /** Lessico per grado: "sezione" (0-6) o "classe" (primaria). */
+  gruppo?: 'sezione' | 'classe';
+}) {
   const [eventi, setEventi] = useState<EventoAgenda[]>([]);
   const [loading, setLoading] = useState(true);
   const [titolo, setTitolo] = useState('');
@@ -74,7 +83,7 @@ export function TeacherAgendaCard({ sezione, userId }: { sezione: string; userId
     return (
       <div className="rounded-2xl border border-dashed border-kidville-line bg-white/60 p-5 text-center">
         <p className="font-maven text-[12.5px] leading-snug text-kidville-muted">
-          Nessuna sezione assegnata: l&apos;agenda apparirà qui.
+          Nessuna {gruppo} assegnata: l&apos;agenda apparirà qui.
         </p>
       </div>
     );
@@ -123,7 +132,7 @@ export function TeacherAgendaCard({ sezione, userId }: { sezione: string; userId
             <CalendarDays size={20} />
           </span>
           <p className="font-maven text-[12.5px] leading-snug text-kidville-muted">
-            Nessun evento in programma per la sezione.
+            Nessun evento in programma per la {gruppo}.
           </p>
         </div>
       ) : (

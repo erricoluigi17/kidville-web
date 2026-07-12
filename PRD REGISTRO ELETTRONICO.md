@@ -55,6 +55,13 @@
 
 ---
 
+## 🗓️ Changelog — Home docente senza lessico 0-6 per i solo-primaria 2026-07-12 (branch `fix/docente-primaria-home`)
+
+- **Rimosso il banner "Nessuna attività infanzia/nido per il tuo profilo · Vai alla Primaria"** (richiesta utente): per un docente solo-primaria nessun riferimento a infanzia/nido deve mai comparire — le funzioni 0-6 restano attivabili solo dalle impostazioni admin (eccezione E24 già gestita). La navigazione al mondo primaria è già garantita dal tab Registro e dalla scorciatoia.
+- **Lessico per grado** nella home docente: per i solo-primaria "Sezione"→"Classe" e "bambini"→"alunni" (sottotitolo hero, banner allergie, card appello, titolo agenda); `TeacherAgendaCard` con nuova prop `gruppo: 'sezione' | 'classe'` per gli empty-state.
+
+---
+
 ## 🗓️ Changelog — Docente per grado, testi neutri, hero dal prototipo, TEST tab gialla 2026-07-12 (branch `feat/docente-primaria-tab-giallo`)
 
 - **Gating docente per grado (mirror genitore)**: nuovo hook `useTeacherGradi` (`utenti.gradi` via `/api/primaria/me`, promise-cache condivisa tra home, GradeWorldSwitch e bottom-nav) + helper puro `visibileDocente`/`diarioVisibile` (14 unit test). Un docente **solo primaria** non vede più le voci 0-6: niente **Diario** né **Armadietto** nel menu, tab #2 = **Registro**; un solo-infanzia non vede Registro; i misti restano col comportamento per-URL. **Eccezione E24**: se l'admin attiva il diario 0-6 per la primaria (`diario_primaria_visibile`), la voce Diario ricompare. Scorciatoie della home per grado (Registro ora appare ai docenti con primaria; prima non compariva mai), banner allergie → "Vai al registro" per i solo-primaria. Coverage-matrix e2e: metadato `inNav` aggiornato per Diario/Armadietto.

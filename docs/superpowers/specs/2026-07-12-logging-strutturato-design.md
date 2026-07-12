@@ -112,7 +112,7 @@ Il punto d'installazione **non** è un provider React: `useEffect` di un compone
 - **Mai `response.clone()`** su ciò che non si consuma: farebbe un tee dello stream e bufferizzerebbe in memoria (il payload RSC è streaming).
 - **Nessun body loggato.** Il patch vede anche `POST /auth/v1/token`: loggare i body significherebbe scrivere password e JWT dei genitori.
 - **Flush con `navigator.sendBeacon`**, che **non passa da `fetch`**: il loop diventa impossibile *per costruzione*, non per convenzione.
-- **Coda persistita su IndexedDB** (`src/lib/offline/db.ts` esiste già), cap 20 eventi, drop dei più vecchi. `syncEngine` (25 `console.*`) gira **offline**: i suoi errori sono di Dexie/IndexedDB, invisibili al patch di `fetch` e alle boundary React. Senza coda persistita, i bug del percorso offline — che sono proprio quelli che servono — non arriverebbero mai.
+- **Coda persistita su `localStorage`**, cap 20 eventi, drop dei più vecchi, svuotata su `pagehide`/`visibilitychange`/`online`. `syncEngine` (25 `console.*`) gira **offline**: i suoi errori sono di Dexie/IndexedDB, invisibili al patch di `fetch` e alle boundary React. Senza coda persistita, i bug del percorso offline — che sono proprio quelli che servono — non arriverebbero mai. **Non IndexedDB**, benché `src/lib/offline/db.ts` esista già: `pagehide` è sincrono e IndexedDB è asincrono, quindi inaffidabile proprio nell'istante in cui la coda va svuotata. Venti eventi da poche centinaia di byte stanno comodamente in `localStorage`.
 - App nativa: l'origin è quello di produzione (`CAP_SERVER_URL`), il sink va chiamato con URL assoluto.
 
 ### 3.7 Tabella `app_log`

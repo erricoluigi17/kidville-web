@@ -12,6 +12,9 @@ interface HeroMascotProps {
   height: number;
   /** Distanza dal bordo destro della card, in px. */
   right?: number;
+  /** Preload dell'immagine: true solo per l'hero della home (LCP); gli header
+   *  di pagina lo lasciano false per non accumulare preload duplicati. */
+  priority?: boolean;
 }
 
 /**
@@ -22,7 +25,7 @@ interface HeroMascotProps {
  * TRASPARENTE (mascot-hero.png, derivata da mascot.png ufficiale): quella
  * originale ha lo sfondo giallo opaco e creerebbe una cucitura fuori card.
  */
-export function HeroMascot({ width, height, right = 20 }: HeroMascotProps) {
+export function HeroMascot({ width, height, right = 20, priority = false }: HeroMascotProps) {
   const [failed, setFailed] = useState(false);
 
   if (failed) {
@@ -47,7 +50,7 @@ export function HeroMascot({ width, height, right = 20 }: HeroMascotProps) {
         alt=""
         width={665}
         height={994}
-        priority
+        priority={priority}
         draggable={false}
         onError={() => setFailed(true)}
         className="h-auto w-full select-none"

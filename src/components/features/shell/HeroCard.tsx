@@ -62,7 +62,7 @@ export function HeroCard({
 
       {/* mascotte a mezzo busto (prototipo): il ritaglio è più alto della card
           → il cappello sbuca dal bordo alto, il busto si ferma al bordo basso */}
-      <HeroMascot width={150} height={180} right={20} />
+      <HeroMascot width={150} height={180} right={20} priority />
     </>
   );
 

@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
+import { parseQuery } from '@/lib/validation/http'
 import { getModuleConfig } from '@/lib/settings/module-config'
 import { notificaEvento } from '@/lib/notifiche/triggers'
 import { genitoriDiAlunni, genitoriDiClassi, genitoriDiScuola, staffScuola } from '@/lib/notifiche/destinatari'
@@ -21,6 +23,10 @@ import { genitoriDiAlunni, genitoriDiClassi, genitoriDiScuola, staffScuola } fro
 
 const MS_GIORNO = 86_400_000
 
+// Nessun parametro in ingresso (il body eventuale del cron non viene letto) —
+// schema vuoto per il lock zod-coverage, come /api/push/dispatch.
+const postQuerySchema = z.object({})
+
 function tabellaMancante(error: { code?: string; message?: string } | null): boolean {
   if (!error) return false
   return error.code === '42P01' || /does not exist|schema cache|could not find/i.test(error.message ?? '')
@@ -31,6 +37,9 @@ export async function POST(request: Request) {
   if (!secret || secret !== process.env.CRON_SECRET) {
     return NextResponse.json({ error: 'Non autorizzato' }, { status: 401 })
   }
+
+  const q = parseQuery(request, postQuerySchema)
+  if ('response' in q) return q.response
 
   const supabase = await createAdminClient()
   const oggi = new Date().toISOString().slice(0, 10)

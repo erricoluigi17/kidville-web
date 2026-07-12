@@ -55,7 +55,7 @@ export function AvvisiSettings({ userId }: { userId: string }) {
             </div>
 
             <SaveRow onSave={salva} saving={saving} msg={msg} error={error} />
-            <p className={hint}>I ruoli di pubblicazione sono applicati dal server al momento della creazione dell&apos;avviso.</p>
+            <p className={hint}>I ruoli di pubblicazione sono applicati automaticamente al momento della creazione dell&apos;avviso.</p>
         </section>
     );
 }

@@ -10,7 +10,7 @@ export default function RankingsPage() {
       <PageHeader
         icon={Trophy}
         title="Graduatorie"
-        subtitle="Classifiche automatiche con punteggi calcolati dal database — clicca su una riga per regolare"
+        subtitle="Classifiche con punteggi calcolati automaticamente — clicca su una riga per regolare"
       />
       <RankingTable />
     </CockpitPage>

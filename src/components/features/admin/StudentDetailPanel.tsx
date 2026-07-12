@@ -701,7 +701,7 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                     {showDeleteConfirm && (
                         <div className="bg-kidville-error-soft border border-kidville-error-soft rounded-xl p-3">
                             <p className="font-maven text-xs text-kidville-error">
-                                <strong>Attenzione:</strong> Questa azione è <strong>irreversibile</strong> e cancellerà tutti i dati dell&apos;alunno dal sistema (diario, presenze, armadietto). Un record audit verrà conservato.
+                                <strong>Attenzione:</strong> Questa azione è <strong>irreversibile</strong> e cancellerà tutti i dati dell&apos;alunno dal sistema (diario, presenze, armadietto). Una traccia di audit verrà conservata.
                             </p>
                             <button
                                 onClick={() => setShowDeleteConfirm(false)}

@@ -58,7 +58,7 @@ export function PresenzeSettings({ userId }: { userId: string }) {
             </div>
 
             <SaveRow onSave={salva} saving={saving} msg={msg} error={error} />
-            <p className={hint}>La finestra retroattiva e la firma OTP sono applicate dal server alla creazione delle giustifiche.</p>
+            <p className={hint}>La finestra retroattiva e la firma OTP sono applicate automaticamente alla creazione delle giustifiche.</p>
         </section>
     );
 }

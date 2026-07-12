@@ -117,7 +117,7 @@ function AnagraficaDetailInner() {
                 {Back}
                 <div className="rounded-card bg-kidville-white p-10 text-center shadow-sm">
                     <h2 className="font-barlow text-lg font-bold uppercase text-kidville-green">Anagrafica non disponibile</h2>
-                    <p className="font-maven mt-1 text-sm text-kidville-muted">Il record non esiste o non appartiene ai tuoi plessi.</p>
+                    <p className="font-maven mt-1 text-sm text-kidville-muted">L&apos;alunno non esiste o non appartiene ai tuoi plessi.</p>
                 </div>
             </CockpitPage>
         );

@@ -106,7 +106,7 @@ export async function POST(request: Request) {
       .in('hash_movimento', conHash.map((x) => x.hash))
     if (errEsistenti) {
       if (SCHEMA_MANCANTE.has(errEsistenti.code ?? '')) {
-        return NextResponse.json({ error: 'Riconciliazione non disponibile su questo database (migrazione da applicare)' }, { status: 503 })
+        return NextResponse.json({ error: 'Riconciliazione non ancora disponibile.' }, { status: 503 })
       }
       return NextResponse.json({ error: 'Errore nel controllo duplicati' }, { status: 500 })
     }

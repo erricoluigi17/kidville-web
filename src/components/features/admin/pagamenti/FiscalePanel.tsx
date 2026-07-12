@@ -125,7 +125,7 @@ export function FiscalePanel({ userId, scuolaId }: Props) {
                     <p className="py-6 text-center font-maven text-sm text-kidville-muted">Caricamento…</p>
                 ) : !disponibile ? (
                     <p className="py-6 text-center font-maven text-sm text-kidville-muted">
-                        Registro non ancora attivo su questo database (migrazione da applicare).
+                        Registro non ancora disponibile.
                     </p>
                 ) : ricevute.length === 0 ? (
                     <p className="py-6 text-center font-maven text-sm text-kidville-muted">Nessuna ricevuta emessa nel {anno}.</p>

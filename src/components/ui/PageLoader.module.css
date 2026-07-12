@@ -1,0 +1,118 @@
+/* =============================================================================
+   PageLoader — overlay di caricamento a pagina intera (variante "Riflesso").
+   Logo Kidville fermo + banda di luce che lo attraversa ogni 2.4s ed esce dal
+   bordo destro (non si ferma mai a metà). Usa i token --color-kidville-* (con
+   fallback) → si adatta all'alto contrasto (`data-contrast="high"`). Rispetta
+   prefers-reduced-motion. Nessun Suspense: è un overlay client, fratello del
+   contenuto, quindi NON interferisce con l'hydration delle pagine.
+   ============================================================================= */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-kidville-cream, #FEF1E4);
+  overflow: hidden;
+  transition: opacity .28s ease, visibility .28s ease;
+}
+.overlay[data-visible="true"]  { opacity: 1; visibility: visible; pointer-events: auto; }
+.overlay[data-visible="false"] { opacity: 0; visibility: hidden; pointer-events: none; }
+
+/* Failsafe CSS-only, indipendente dal JS: se per un errore di hydration/JS
+   l'overlay resta visibile, dopo 10s si auto-nasconde e smette di bloccare la
+   pagina. Nel caso normale il JS lo chiude in pochi ms (data-visible="false"),
+   il selettore non matcha più e l'animazione non entra mai in gioco. */
+.overlay[data-visible="true"] { animation: kvFailsafe 0.4s ease 10s forwards; }
+@keyframes kvFailsafe { to { opacity: 0; visibility: hidden; pointer-events: none; } }
+
+.srOnly {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* aloni morbidi di sfondo, coerenti con la login */
+.glow { position: absolute; border-radius: 50%; filter: blur(46px); pointer-events: none; }
+.glowA { width: 42vmin; height: 42vmin; background: var(--color-kidville-green-light, #E8F5F3);  top: -8vmin;  left: -6vmin;  opacity: .9; }
+.glowB { width: 38vmin; height: 38vmin; background: var(--color-kidville-yellow-light, #FFF8E1); bottom: -6vmin; right: -5vmin; opacity: .9; }
+
+.loader {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 26px;
+}
+
+.logobox {
+  position: relative;
+  width: min(240px, 62vw);
+  aspect-ratio: 2227 / 571;      /* proporzioni reali di logo-kidville.png */
+}
+.logo {
+  position: absolute;
+  inset: 0;
+  background: url(/logo-kidville.png) center / contain no-repeat;
+}
+
+/* riflesso: banda di luce mascherata sulla sagoma del logo. Parte fuori dal
+   bordo sinistro, attraversa ed ESCE dal bordo destro, restando fuori campo
+   fino a fine ciclo → non si ferma mai a metà. Durata 2.4s. */
+.sweep {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  -webkit-mask: url(/logo-kidville.png) center / contain no-repeat;
+          mask: url(/logo-kidville.png) center / contain no-repeat;
+  background-image: linear-gradient(100deg, transparent 0%, var(--kv-shine, rgba(255, 255, 255, .92)) 50%, transparent 100%);
+  background-repeat: no-repeat;
+  background-size: 170px 100%;
+  animation: kvSweep 2.4s linear infinite;
+  will-change: background-position;
+}
+
+.caption {
+  font-family: var(--font-maven, ui-sans-serif, system-ui, sans-serif);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  color: var(--color-kidville-muted, #9AA6A2);
+  margin: 0;
+  display: inline-flex;
+  gap: 2px;
+}
+.dot { animation: kvBlink 1.4s infinite both; }
+.dot:nth-child(2) { animation-delay: .2s; }
+.dot:nth-child(3) { animation-delay: .4s; }
+
+/* Un passaggio unico per ciclo: la banda entra da fuori a sinistra, attraversa
+   ed esce fuori a destra in 2.4s, poi ricomincia da capo (il salto avviene fuori
+   campo → loop pulito, senza il "giro e mezzo" del ritmo con pause). */
+@keyframes kvSweep {
+  from { background-position: -180px 0; }
+  to   { background-position: calc(100% + 180px) 0; }
+}
+@keyframes kvBlink { 0%, 100% { opacity: .2; } 50% { opacity: 1; } }
+
+/* alto contrasto: sfondo nero (via token) → logo reso in chiaro, riflesso giallo */
+:global([data-contrast="high"]) .logo { filter: brightness(0) invert(1); }
+:global([data-contrast="high"]) .sweep { --kv-shine: rgba(255, 229, 0, .9); }
+
+/* riduci il movimento: niente riflesso, solo un respiro lento */
+@media (prefers-reduced-motion: reduce) {
+  .sweep { display: none; }
+  .logo { animation: kvBreathe 3.2s ease-in-out infinite; }
+  .dot { animation: none; }
+}
+@keyframes kvBreathe {
+  0%, 100% { opacity: .78; }
+  50%      { opacity: 1; }
+}

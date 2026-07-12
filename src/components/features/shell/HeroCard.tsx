@@ -1,9 +1,8 @@
 'use client';
 
-import { useState } from 'react';
-import Image from 'next/image';
 import { motion } from 'framer-motion';
 import { useClientValue } from '@/lib/hooks/use-client-value';
+import { HeroMascot } from './HeroMascot';
 
 interface HeroCardProps {
   /** Contenuto dell'`<h1>` (saluto): lo fornisce la pagina perché gli e2e
@@ -15,29 +14,23 @@ interface HeroCardProps {
   subtitle?: React.ReactNode;
   /** Riga data "venerdì 29 maggio" sopra il saluto (SSR-safe). */
   showDate?: boolean;
-  /** Altezza mascotte in px: più alta della card, il cappello sbuca dal bordo. */
-  mascotHeight?: number;
   /** Entrata framer-motion (comportamento home genitore, ora anche docente). */
   animate?: boolean;
 }
 
 /**
- * Hero gialla delle home (DR yellow card): data, saluto Barlow 900, sottotitolo
- * e mascotte grande che scavalca il bordo alto (mockup utente). Wordmark e
- * campanella NON vivono più qui: stanno nella AppBar persistente. Usa la
- * mascotte TRASPARENTE (mascot-hero.png): quella ufficiale mascot.png ha lo
- * sfondo giallo opaco e creerebbe una cucitura visibile fuori dalla card.
+ * Hero gialla delle home (prototipo "tab gialla app"): data, saluto Barlow 900,
+ * sottotitolo e mascotte a MEZZO BUSTO che esce dal riquadro — cappello sopra
+ * il bordo alto, busto tagliato dal bordo basso (vedi HeroMascot). Wordmark e
+ * campanella NON vivono più qui: stanno nella AppBar persistente.
  */
 export function HeroCard({
   title,
   loading = false,
   subtitle,
   showDate = true,
-  mascotHeight = 178,
   animate = true,
 }: HeroCardProps) {
-  const [mascotFailed, setMascotFailed] = useState(false);
-
   // Data locale calcolata SOLO client-side (hydration-safe, come il saluto).
   const oggi = useClientValue(
     () => new Date().toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' }),
@@ -48,7 +41,7 @@ export function HeroCard({
     <>
       <div className="relative z-[2] px-5 pb-6 pt-5" style={{ maxWidth: '60%' }}>
         {showDate && (
-          <p className="mb-0.5 font-maven text-xs font-semibold capitalize text-kidville-green/70">
+          <p className="mb-0.5 font-maven text-xs font-semibold capitalize text-kidville-green">
             {oggi || ' '}
           </p>
         )}
@@ -67,27 +60,9 @@ export function HeroCard({
         {subtitle && <p className="mt-1.5 font-maven text-[13px] text-kidville-green/80">{subtitle}</p>}
       </div>
 
-      {/* mascotte trasparente (665×994): ancorata in basso, più alta della
-          card → il cappello scavalca il bordo (overflow visibile voluto) */}
-      <div className="pointer-events-none absolute bottom-0 right-2 z-[1] flex items-end justify-end">
-        {!mascotFailed ? (
-          <Image
-            src="/mascot-hero.png"
-            alt=""
-            width={133}
-            height={199}
-            priority
-            draggable={false}
-            onError={() => setMascotFailed(true)}
-            className="select-none object-contain object-bottom"
-            style={{ height: mascotHeight, width: 'auto' }}
-          />
-        ) : (
-          <div className="flex select-none items-center justify-center text-[80px] opacity-30" style={{ width: 150, height: 150 }}>
-            🎩
-          </div>
-        )}
-      </div>
+      {/* mascotte a mezzo busto (prototipo): il ritaglio è più alto della card
+          → il cappello sbuca dal bordo alto, il busto si ferma al bordo basso */}
+      <HeroMascot width={150} height={180} right={20} />
     </>
   );
 

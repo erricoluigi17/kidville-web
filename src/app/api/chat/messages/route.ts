@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
+import { notificaEvento, nomeUtente } from '@/lib/notifiche/triggers';
+import { controparteThread } from '@/lib/notifiche/destinatari';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid, zPaginazione } from '@/lib/validation/common';
 
@@ -115,6 +117,33 @@ export async function POST(request: Request) {
             .from('chat_threads')
             .update({ last_message_at: new Date().toISOString() })
             .eq('id', thread_id);
+
+        // Notifica alla controparte del thread (best-effort). Privacy: il corpo
+        // NON contiene il testo del messaggio, solo il nome del mittente. Il
+        // debounce per thread collassa le raffiche in un'unica notifica.
+        try {
+            const controparte = await controparteThread(supabase, thread_id, sender_id);
+            if (controparte) {
+                const [nome, mittente] = await Promise.all([
+                    nomeUtente(supabase, sender_id),
+                    supabase.from('utenti').select('scuola_id').eq('id', sender_id).maybeSingle(),
+                ]);
+                await notificaEvento(supabase, {
+                    tipo: controparte.versoGenitore ? 'chat_genitore' : 'chat_docente',
+                    scuolaId: (mittente.data?.scuola_id as string | undefined) ?? null,
+                    utenteIds: [controparte.utenteId],
+                    titolo: 'Nuovo messaggio in chat',
+                    corpo: nome ? `Hai un nuovo messaggio da ${nome}` : 'Hai un nuovo messaggio',
+                    link: controparte.versoGenitore ? '/parent/chat' : '/teacher/chat',
+                    entitaTipo: 'chat_thread',
+                    entitaId: thread_id,
+                    bufferMin: 0,
+                    debounce: true,
+                });
+            }
+        } catch (e) {
+            console.error('Notifica chat fallita (non bloccante):', e);
+        }
 
         return NextResponse.json(data, { status: 201 });
     } catch (error) {

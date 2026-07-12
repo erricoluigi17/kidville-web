@@ -110,6 +110,16 @@
 - **Fix bug visivo header (segnalazione utente)**: la mascotte sbordava di qualche pixel oltre l'angolo arrotondato in basso a destra della card (visibile su Appello/Mensa/Galleria). `HeroMascot` ora si aggancia a `right-0` con `borderBottomRightRadius` che replica l'angolo della card ospite (28px hero, 24px header) e margine visivo via padding interno: il ritaglio segue la curva, zero sbordi. Audit visivo su tutte le pagine docente + prod: in produzione il remap colori `.kv-tab-giallo` è attivo e corretto (pill leggibili); il dev server locale può servire un chunk CSS stantio dopo modifiche a `globals.css` → riavviare `next dev` per vederle.
 - **Empty-state armadietto** (`teacher/settings/locker`): "Nessuna sezione nido/infanzia disponibile." → "Nessuna sezione disponibile per l'armadietto." (niente riferimenti 0-6 ai docenti primaria).
 
+## 🗓️ Changelog — Loader globale di pagina hydration-safe (variante Riflesso) 2026-07-12 (branch `feat/page-loader`)
+
+Reintrodotto il **loader globale a pagina intera** (variante "Riflesso": logo Kidville fermo + banda di luce ogni 2,4 s), stavolta **hydration-safe** dopo il revert `6cdd620` (il vecchio root `app/loading.tsx` avvolgeva l'app in Suspense e in `next dev` bloccava l'`useEffect` dell'appello → "Caricamento alunni"). Gate verdi: **eslint 0 · vitest 1065/1065 · build ok**.
+
+- **Architettura**: NON è un `app/loading.tsx`/boundary Suspense. È un **overlay puramente client** (`src/components/ui/PageLoader.tsx` + `.module.css`) pilotato da `src/components/providers/GlobalLoader.tsx`, montato come **fratello** di `{children}` in `RootProviders` → il contenuto si idrata normalmente. Usa solo `usePathname` (mai `useSearchParams`, che deopterebbe l'app). Token `--color-kidville-*` → alto contrasto automatico; `prefers-reduced-motion` rispettato (niente riflesso/puntini).
+- **Trigger**: caricamento iniziale (nascosto al primo paint post-hydration, fallback 2 s) + navigazioni via click su link interni (bubble phase) + back/forward (gated sul pathname) + trigger imperativo `showPageLoader()` per `router.push`/`replace`. Anti-flash 180 ms, safety 4 s, **failsafe CSS-only** (auto-hide a 10 s se il JS non parte → mai blocco permanente).
+- **Verifica**: review adversariale multi-agente (4 lenti) → 10 fix (StrictMode/popstate/`window 'load'`/failsafe/patch pushState inerte rimosso/click bubble/live-region/safety/reduced-motion/rel). Lente hydration: **nessun rischio**. La resa è stata verificata a schermo nel dev server. ⚠️ La prova runtime dell'hydration dell'appello va lasciata alla **E2E `teacher-attendance` in CI** (il Browser pane locale non idrata l'app; anche il login non è interattivo lì).
+
+**Pendente**: push del branch + validazione E2E in CI prima del merge (è la rete che intercettò la regressione la volta scorsa).
+
 ---
 
 ## 🗓️ Changelog — Docente per grado, testi neutri, hero dal prototipo, TEST tab gialla 2026-07-12 (branch `feat/docente-primaria-tab-giallo`)

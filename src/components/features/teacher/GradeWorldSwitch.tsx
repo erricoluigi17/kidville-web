@@ -1,31 +1,20 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { Baby, BookOpen } from 'lucide-react';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
+import { useTeacherGradi } from '@/lib/auth/use-teacher-gradi';
 
 // Switch tra i "mondi" Infanzia/Nido e Primaria per i docenti misti.
-// Compare solo se il docente è abilitato a più di un grado.
+// Compare solo se il docente è abilitato a più di un grado (gradi via
+// useTeacherGradi: fetch condiviso con TeacherBottomNav e home).
 export function GradeWorldSwitch() {
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
-  const [gradi, setGradi] = useState<string[]>([]);
 
   const userId = getCurrentTeacherId(params);
-
-  useEffect(() => {
-    fetch(`/api/primaria/me?userId=${userId}`)
-      .then((r) => r.json())
-      .then((d) => {
-        if (d.success) setGradi(d.data.gradi ?? []);
-      })
-      .catch(() => {});
-  }, [userId]);
-
-  const hasInfanzia = gradi.includes('infanzia') || gradi.includes('nido');
-  const hasPrimaria = gradi.includes('primaria');
+  const { hasInfanzia, hasPrimaria } = useTeacherGradi(userId);
   if (!(hasInfanzia && hasPrimaria)) return null;
 
   const inPrimaria = pathname?.startsWith('/teacher/primaria');

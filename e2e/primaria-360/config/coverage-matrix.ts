@@ -71,14 +71,17 @@ export const TEACHER_ROUTES: RouteDef[] = [
   { label: 'Classe · scrutinio', path: `/teacher/primaria/${S}/scrutinio`, area: 'Registro' },
   { label: 'Classe · fascicolo', path: `/teacher/primaria/${S}/fascicolo`, area: 'Registro' },
   { label: 'Appello', path: '/teacher/attendance', inNav: true, area: 'In classe' },
-  { label: 'Diario', path: '/teacher/diary', inNav: true, area: 'In classe' },
+  // Gating per grado (2026-07-12): Diario e Armadietto sono in nav solo per i
+  // docenti con gradi infanzia/nido; i docenti primaria-360 (solo primaria) li
+  // raggiungono solo per URL diretto.
+  { label: 'Diario', path: '/teacher/diary', area: 'In classe' },
   { label: 'Registro (legacy)', path: '/teacher/register', area: 'In classe' },
   { label: 'Attività / compiti', path: '/teacher/tasks', inNav: true, area: 'Strumenti' },
   { label: 'Mensa (read-only)', path: '/teacher/mensa', inNav: true, area: 'Vita scolastica' },
   { label: 'Foto / gallery', path: '/teacher/gallery', inNav: true, area: 'Vita scolastica' },
   { label: 'Bacheca / avvisi', path: '/teacher/avvisi', inNav: true, area: 'Vita scolastica' },
   { label: 'Chat / messaggi', path: '/teacher/chat', inNav: true, area: 'Comunicazione' },
-  { label: 'Armadietto', path: '/teacher/locker', inNav: true, area: 'Strumenti' },
+  { label: 'Armadietto', path: '/teacher/locker', area: 'Strumenti' },
   { label: 'Modulistica', path: '/teacher/modulistica', inNav: true, area: 'Strumenti' },
   { label: 'Impostazioni armadietto', path: '/teacher/settings/locker', area: 'Strumenti' },
 ];

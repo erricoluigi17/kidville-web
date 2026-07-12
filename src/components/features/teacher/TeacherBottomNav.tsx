@@ -10,12 +10,16 @@ import {
   ListTodo, UtensilsCrossed, CalendarDays, User, X, ChevronRight,
 } from 'lucide-react';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
+import { useTeacherGradi } from '@/lib/auth/use-teacher-gradi';
+import { diarioVisibile, visibileDocente, type GradoVoce } from '@/lib/auth/teacher-gradi';
 import { LogoutMenuButton } from '@/components/ui/LogoutMenuButton';
 import { ContrastMenuButton } from '@/components/ui/ContrastMenuButton';
 
 // ============================================================================
 // TeacherBottomNav — bottom bar persistente del design (DR ins/screen-home.jsx
-// ShellTabBar + MenuSheet), mirror del pattern Genitore (parent/BottomNav).
+// ShellTabBar + MenuSheet), mirror del pattern Genitore (parent/BottomNav),
+// incluso il gating per grado (utenti.gradi via useTeacherGradi): un docente
+// solo-primaria non vede le voci 0-6 (Diario/Armadietto) e viceversa.
 // Naviga SOLO rotte teacher esistenti; le voci del DR senza rotta (Calendario /
 // Profilo) sono rese NON navigabili con badge "In arrivo". La Mensa ha ora una
 // vista docente read-only (/teacher/mensa).
@@ -29,6 +33,7 @@ interface MenuItem {
   icon: typeof Home;
   href: string | null; // null = funzione non ancora navigabile (no rotta reale)
   tint: string;
+  grado: GradoVoce;
   soon?: boolean;
 }
 
@@ -44,7 +49,11 @@ export default function TeacherBottomNav() {
   const userId = getCurrentTeacherId(search);
   const withUser = (href: string) => `${href}?userId=${userId}`;
 
-  // Mondo primaria attivo dal contesto di navigazione (no fetch extra).
+  // Gradi del docente (utenti.gradi): pilotano quali voci esistono. Finché il
+  // dato non è pronto — o per staff senza gradi — non si filtra nulla.
+  const tg = useTeacherGradi(userId);
+
+  // Mondo primaria attivo dal contesto di navigazione (fallback per i misti).
   const isPrimaria = pathname.startsWith('/teacher/primaria');
 
   // Menu raggruppato del DR (TEACHER_MENU), mappato alle rotte reali.
@@ -52,39 +61,54 @@ export default function TeacherBottomNav() {
     {
       label: 'In classe',
       items: [
-        { id: 'appello', label: 'Appello', sub: 'Presenze del giorno', icon: ClipboardCheck, href: '/teacher/attendance', tint: '#006A5F' },
-        { id: 'diario', label: 'Diario', sub: 'Schede giornaliere', icon: NotebookPen, href: '/teacher/diary', tint: '#2A6FDB' },
-        { id: 'registro', label: 'Registro', sub: 'Le mie classi · valutazioni', icon: BookOpen, href: '/teacher/primaria', tint: '#7A3FD0' },
-        { id: 'presenze', label: 'Presenze', sub: 'Riepilogo assenze', icon: Users, href: '/teacher/attendance', tint: '#43A047' },
+        { id: 'appello', label: 'Appello', sub: 'Presenze del giorno', icon: ClipboardCheck, href: '/teacher/attendance', tint: '#006A5F', grado: 'comune' },
+        { id: 'diario', label: 'Diario', sub: 'Schede giornaliere', icon: NotebookPen, href: '/teacher/diary', tint: '#2A6FDB', grado: 'infanzia' },
+        { id: 'registro', label: 'Registro', sub: 'Le mie classi · valutazioni', icon: BookOpen, href: '/teacher/primaria', tint: '#7A3FD0', grado: 'primaria' },
+        { id: 'presenze', label: 'Presenze', sub: 'Riepilogo assenze', icon: Users, href: '/teacher/attendance', tint: '#43A047', grado: 'comune' },
       ],
     },
     {
       label: 'Vita scolastica',
       items: [
-        { id: 'mensa', label: 'Mensa', sub: 'Prenotazioni pranzo', icon: UtensilsCrossed, href: '/teacher/mensa', tint: '#E6720A' },
-        { id: 'foto', label: 'Foto', sub: 'Galleria sezione', icon: Image, href: '/teacher/gallery', tint: '#006A5F' },
-        { id: 'bacheca', label: 'Bacheca', sub: 'Avvisi e comunicazioni', icon: Megaphone, href: '/teacher/avvisi', tint: '#E53935' },
-        { id: 'calendario', label: 'Calendario', sub: 'Eventi e uscite', icon: CalendarDays, href: null, tint: '#2A6FDB', soon: true },
+        { id: 'mensa', label: 'Mensa', sub: 'Prenotazioni pranzo', icon: UtensilsCrossed, href: '/teacher/mensa', tint: '#E6720A', grado: 'comune' },
+        { id: 'foto', label: 'Foto', sub: 'Galleria sezione', icon: Image, href: '/teacher/gallery', tint: '#006A5F', grado: 'comune' },
+        { id: 'bacheca', label: 'Bacheca', sub: 'Avvisi e comunicazioni', icon: Megaphone, href: '/teacher/avvisi', tint: '#E53935', grado: 'comune' },
+        { id: 'calendario', label: 'Calendario', sub: 'Eventi e uscite', icon: CalendarDays, href: null, tint: '#2A6FDB', grado: 'comune', soon: true },
       ],
     },
     {
       label: 'Strumenti',
       items: [
-        { id: 'attivita', label: 'Attività', sub: 'Attività e bacheca interna', icon: ListTodo, href: '/teacher/tasks', tint: '#1F8A5B' },
-        { id: 'armadietto', label: 'Armadietto', sub: 'Scorte e richieste', icon: Package, href: '/teacher/locker', tint: '#7A3FD0' },
-        { id: 'moduli', label: 'Moduli', sub: 'Form da gestire', icon: FileText, href: '/teacher/modulistica', tint: '#E6720A' },
-        { id: 'messaggi', label: 'Messaggi', sub: 'Chat con le famiglie', icon: MessageCircle, href: '/teacher/chat', tint: '#006A5F' },
-        { id: 'profilo', label: 'Profilo', sub: 'Account e impostazioni', icon: User, href: null, tint: '#7C8A84', soon: true },
+        { id: 'attivita', label: 'Attività', sub: 'Attività e bacheca interna', icon: ListTodo, href: '/teacher/tasks', tint: '#1F8A5B', grado: 'comune' },
+        { id: 'armadietto', label: 'Armadietto', sub: 'Scorte e richieste', icon: Package, href: '/teacher/locker', tint: '#7A3FD0', grado: 'infanzia' },
+        { id: 'moduli', label: 'Moduli', sub: 'Form da gestire', icon: FileText, href: '/teacher/modulistica', tint: '#E6720A', grado: 'comune' },
+        { id: 'messaggi', label: 'Messaggi', sub: 'Chat con le famiglie', icon: MessageCircle, href: '/teacher/chat', tint: '#006A5F', grado: 'comune' },
+        { id: 'profilo', label: 'Profilo', sub: 'Account e impostazioni', icon: User, href: null, tint: '#7C8A84', grado: 'comune', soon: true },
       ],
     },
   ];
 
+  // Gating per grado (mirror parent/BottomNav): il Diario segue anche
+  // l'eccezione E24 (diario 0-6 attivabile per la primaria dall'admin).
+  const voceVisibile = (it: MenuItem) =>
+    it.id === 'diario' ? diarioVisibile(tg) : visibileDocente(it.grado, tg);
+  const visibleGroups = groups
+    .map((g) => ({ ...g, items: g.items.filter(voceVisibile) }))
+    .filter((g) => g.items.length > 0);
+
   // Tab principali (ordine DR: Dashboard / Diario·Registro / Messaggi / Foto / Menu).
+  // Il 2° tab segue i gradi (solo-primaria → Registro, solo-infanzia → Diario);
+  // per i misti — o finché il dato non è pronto — resta il contesto di navigazione.
+  const secondTab = tg.ready && tg.isPrimariaOnly
+    ? { id: 'registro', label: 'Registro', icon: BookOpen, href: '/teacher/primaria' as const }
+    : tg.ready && tg.isInfanziaOnly
+      ? { id: 'diario', label: 'Diario', icon: NotebookPen, href: '/teacher/diary' as const }
+      : isPrimaria
+        ? { id: 'registro', label: 'Registro', icon: BookOpen, href: '/teacher/primaria' as const }
+        : { id: 'diario', label: 'Diario', icon: NotebookPen, href: '/teacher/diary' as const };
   const mainTabs = [
     { id: 'home', label: 'Dashboard', icon: Home, href: '/teacher' as const },
-    isPrimaria
-      ? { id: 'registro', label: 'Registro', icon: BookOpen, href: '/teacher/primaria' as const }
-      : { id: 'diario', label: 'Diario', icon: NotebookPen, href: '/teacher/diary' as const },
+    secondTab,
     { id: 'messaggi', label: 'Messaggi', icon: MessageCircle, href: '/teacher/chat' as const },
     { id: 'foto', label: 'Foto', icon: Image, href: '/teacher/gallery' as const },
     { id: 'menu', label: 'Menu', icon: LayoutGrid, href: null },
@@ -95,7 +119,7 @@ export default function TeacherBottomNav() {
     return pathname.startsWith(href);
   };
 
-  const isMenuSectionActive = groups.some((g) =>
+  const isMenuSectionActive = visibleGroups.some((g) =>
     g.items.some((i) => i.href && pathname.startsWith(i.href)),
   );
   // Mutua esclusività: il MENU non si accende sulle rotte già coperte da un tab
@@ -214,7 +238,7 @@ export default function TeacherBottomNav() {
                 </div>
 
                 <div className="flex flex-col gap-[18px]">
-                  {groups.map((g) => (
+                  {visibleGroups.map((g) => (
                     <div key={g.label}>
                       <p className="font-barlow font-extrabold text-[11px] uppercase tracking-[0.06em] text-kidville-muted mb-2 pl-1">
                         {g.label}

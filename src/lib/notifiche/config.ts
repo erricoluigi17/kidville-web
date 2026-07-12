@@ -9,7 +9,9 @@ import { tipoCanonico } from '@/lib/notifiche/tipi'
 // a prima dell'introduzione dei toggle.
 // =============================================================================
 
-export interface NotificheConfig {
+// `type` (non `interface`): serve l'index signature implicita per soddisfare
+// il vincolo `T extends Record<string, unknown>` di getModuleConfig.
+export type NotificheConfig = {
   toggles?: Record<string, boolean>
 }
 

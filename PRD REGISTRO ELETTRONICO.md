@@ -55,6 +55,18 @@
 
 ---
 
+## 🗓️ Changelog — Loader globale di pagina hydration-safe (variante Riflesso) 2026-07-12 (branch `feat/page-loader`)
+
+Reintrodotto il **loader globale a pagina intera** (variante "Riflesso": logo Kidville fermo + banda di luce ogni 2,4 s), stavolta **hydration-safe** dopo il revert `6cdd620` (il vecchio root `app/loading.tsx` avvolgeva l'app in Suspense e in `next dev` bloccava l'`useEffect` dell'appello → "Caricamento alunni"). Gate verdi: **eslint 0 · vitest 1065/1065 · build ok**.
+
+- **Architettura**: NON è un `app/loading.tsx`/boundary Suspense. È un **overlay puramente client** (`src/components/ui/PageLoader.tsx` + `.module.css`) pilotato da `src/components/providers/GlobalLoader.tsx`, montato come **fratello** di `{children}` in `RootProviders` → il contenuto si idrata normalmente. Usa solo `usePathname` (mai `useSearchParams`, che deopterebbe l'app). Token `--color-kidville-*` → alto contrasto automatico; `prefers-reduced-motion` rispettato (niente riflesso/puntini).
+- **Trigger**: caricamento iniziale (nascosto al primo paint post-hydration, fallback 2 s) + navigazioni via click su link interni (bubble phase) + back/forward (gated sul pathname) + trigger imperativo `showPageLoader()` per `router.push`/`replace`. Anti-flash 180 ms, safety 4 s, **failsafe CSS-only** (auto-hide a 10 s se il JS non parte → mai blocco permanente).
+- **Verifica**: review adversariale multi-agente (4 lenti) → 10 fix (StrictMode/popstate/`window 'load'`/failsafe/patch pushState inerte rimosso/click bubble/live-region/safety/reduced-motion/rel). Lente hydration: **nessun rischio**. La resa è stata verificata a schermo nel dev server. ⚠️ La prova runtime dell'hydration dell'appello va lasciata alla **E2E `teacher-attendance` in CI** (il Browser pane locale non idrata l'app; anche il login non è interattivo lì).
+
+**Pendente**: push del branch + validazione E2E in CI prima del merge (è la rete che intercettò la regressione la volta scorsa).
+
+---
+
 ## 🗓️ Changelog — Docente per grado, testi neutri, hero dal prototipo, TEST tab gialla 2026-07-12 (branch `feat/docente-primaria-tab-giallo`)
 
 - **Gating docente per grado (mirror genitore)**: nuovo hook `useTeacherGradi` (`utenti.gradi` via `/api/primaria/me`, promise-cache condivisa tra home, GradeWorldSwitch e bottom-nav) + helper puro `visibileDocente`/`diarioVisibile` (14 unit test). Un docente **solo primaria** non vede più le voci 0-6: niente **Diario** né **Armadietto** nel menu, tab #2 = **Registro**; un solo-infanzia non vede Registro; i misti restano col comportamento per-URL. **Eccezione E24**: se l'admin attiva il diario 0-6 per la primaria (`diario_primaria_visibile`), la voce Diario ricompare. Scorciatoie della home per grado (Registro ora appare ai docenti con primaria; prima non compariva mai), banner allergie → "Vai al registro" per i solo-primaria. Coverage-matrix e2e: metadato `inNav` aggiornato per Diario/Armadietto.

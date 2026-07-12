@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import {
     Settings, CreditCard, GraduationCap, LayoutGrid, NotebookPen, CalendarCheck,
     StickyNote, Megaphone, MessageCircle, Images, Package, FileSignature,
-    UtensilsCrossed, BookOpenCheck,
+    UtensilsCrossed, BookOpenCheck, BellRing,
 } from 'lucide-react';
 import { SettingsPanel } from '@/components/features/admin/settings/SettingsPanel';
 import { DidatticaPrimariaPanel } from '@/components/features/admin/primaria/DidatticaPrimariaPanel';
@@ -20,6 +20,7 @@ import { ChatSettings } from '@/components/features/admin/settings/ChatSettings'
 import { GalleriaSettings } from '@/components/features/admin/settings/GalleriaSettings';
 import { ArmadiettoSettings } from '@/components/features/admin/settings/ArmadiettoSettings';
 import { ModulisticaSettings } from '@/components/features/admin/settings/ModulisticaSettings';
+import { NotificheSettings } from '@/components/features/admin/settings/NotificheSettings';
 import { PageHeader } from '@/components/ui/cockpit';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { SedeRequired } from '@/lib/context/sede-context';
@@ -29,7 +30,7 @@ type Sezione =
     | 'pagamenti' | 'modulistica'
     | 'didattica' | 'pagelle' | 'diario' | 'presenze' | 'note'
     | 'mensa' | 'armadietto'
-    | 'avvisi' | 'chat' | 'galleria';
+    | 'avvisi' | 'chat' | 'galleria' | 'notifiche';
 
 interface Voce { id: Sezione; label: string; icon: React.ReactNode }
 interface Gruppo { label: string; voci: Voce[] }
@@ -69,6 +70,7 @@ const GRUPPI: Gruppo[] = [
             { id: 'avvisi', label: 'Avvisi', icon: <Megaphone size={15} /> },
             { id: 'chat', label: 'Chat', icon: <MessageCircle size={15} /> },
             { id: 'galleria', label: 'Galleria', icon: <Images size={15} /> },
+            { id: 'notifiche', label: 'Notifiche', icon: <BellRing size={15} /> },
         ],
     },
 ];
@@ -169,6 +171,7 @@ function Inner() {
                         {userId && sezione === 'avvisi' && <AvvisiSettings userId={userId} />}
                         {userId && sezione === 'chat' && <ChatSettings userId={userId} />}
                         {userId && sezione === 'galleria' && <GalleriaSettings userId={userId} />}
+                        {userId && sezione === 'notifiche' && <NotificheSettings userId={userId} />}
                     </main>
                 </div>
             </div>

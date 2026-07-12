@@ -12,7 +12,7 @@ const h = vi.hoisted(() => ({
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: h.logScrittura }))
-vi.mock('@/lib/email/send', () => ({ sendEmail: async () => true, credentialsEmailBody: () => 'x' }))
+vi.mock('@/lib/email/send', () => ({ sendEmail: async () => true, sendEmailDetailed: async () => ({ ok: true, error: null }), credentialsEmailBody: () => 'x' }))
 
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({

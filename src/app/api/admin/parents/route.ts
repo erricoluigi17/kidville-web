@@ -18,17 +18,14 @@ const getQuerySchema = z.object({
     student_id: z.union([zUuid, z.literal('')]).optional(),
 });
 
-// POST — due azioni sul discriminante `action`.
-const inviteBodySchema = z.object({
-    action: z.literal('invite'),
-    // Sostituisce il 400 manuale 'Email mancante'; nessun vincolo di formato (come oggi).
-    email: z.string().min(1, 'Email mancante'),
-});
-
+// POST — unica azione: `create_parent`. (La vecchia azione `invite` è stata
+// rimossa: creava un auth.users orfano — nessun ponte, nessuna riga `utenti` —
+// e nessuna UI la usava più; l'identità di accesso ora nasce completa dentro
+// linkOrCreateParent, vedi S6bis.)
 // `create_parent` spalma il resto del body nell'insert (...parentData):
 // .loose() preserva le chiavi extra (fiscal_code, first_name, ecc.).
 // I campi mappati a mano restano liberi: oggi accettano qualunque valore.
-const createParentBodySchema = z
+const postBodySchema = z
     .object({
         action: z.literal('create_parent'),
         // ''/null oggi saltano il collegamento allo studente: preservati.
@@ -44,11 +41,6 @@ const createParentBodySchema = z
         residence_city: z.unknown().optional(),
     })
     .loose();
-
-const postBodySchema = z.discriminatedUnion('action', [
-    inviteBodySchema,
-    createParentBodySchema,
-]);
 
 // Il body (meno id) viene spalmato in update(dataToUpdate): .loose() preserva le chiavi extra.
 const patchBodySchema = z
@@ -100,29 +92,29 @@ export async function POST(request: NextRequest) {
     try {
         const supabase = await createAdminClient();
 
-        if (body.action === 'invite') {
-            const { email } = body;
-
-            const { data, error } = await supabase.auth.admin.inviteUserByEmail(email);
-
-            if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-            return NextResponse.json({ success: true, message: 'Invito inviato a ' + email, data });
+        try {
+            const { parentId, created, credenzialiEmail, identitaErrore } = await linkOrCreateParent(supabase, auth.user, {
+                studentId: (body.student_id as string) || null,
+                payload: body as Record<string, unknown>,
+            });
+            // L'esito dell'invio automatico delle credenziali NON resta silenzioso:
+            // un fallimento diventa warning esplicito (con motivo) nella risposta.
+            const warning = credenzialiEmail && !credenzialiEmail.inviata
+                ? `Anagrafica salvata e account creato, ma email credenziali NON inviata a ${credenzialiEmail.email}: ${credenzialiEmail.errore ?? 'motivo sconosciuto'}. Usare "Rigenera credenziali" dopo aver risolto.`
+                : identitaErrore
+                    ? `Anagrafica salvata, ma account di accesso non creato: ${identitaErrore}`
+                    : undefined;
+            return NextResponse.json({
+                success: true,
+                parent_id: parentId,
+                created,
+                credenziali_email: credenzialiEmail ?? null,
+                ...(warning ? { warning } : {}),
+            });
+        } catch (e) {
+            console.error('[create_parent]', (e as Error).message);
+            return NextResponse.json({ error: (e as Error).message }, { status: 500 });
         }
-
-        if (body.action === 'create_parent') {
-            try {
-                const { parentId, created } = await linkOrCreateParent(supabase, auth.user, {
-                    studentId: (body.student_id as string) || null,
-                    payload: body as Record<string, unknown>,
-                });
-                return NextResponse.json({ success: true, parent_id: parentId, created });
-            } catch (e) {
-                console.error('[create_parent]', (e as Error).message);
-                return NextResponse.json({ error: (e as Error).message }, { status: 500 });
-            }
-        }
-
-        return NextResponse.json({ error: 'Azione non supportata' }, { status: 400 });
     } catch (err) {
         console.error('Errore POST /api/admin/parents:', err);
         return NextResponse.json({ error: 'Errore interno del server' }, { status: 500 });

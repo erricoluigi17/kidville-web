@@ -1,15 +1,21 @@
-import { randomBytes } from 'crypto';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { ensureUtentiRow, resolveScuolaId, randomPassword } from './parent-identity';
+
+export { randomPassword };
 
 /**
  * Backfill identità auth per i GENITORI (P0/S6).
  *
  * Lo STAFF è già auth-backed (`utenti.id` FK → `auth.users`): non serve backfill;
  * l'eventuale staff senza password si ripara on-demand via "Rigenera credenziali"
- * (S11). Qui creiamo un `auth.users` per ogni `parents` con email e senza
- * `auth_user_id`, deduplicando per email, e scriviamo `parents.auth_user_id`.
+ * (S11). Qui completiamo l'identità di ogni `parents` con email e senza
+ * `auth_user_id`: account `auth.users` (dedup per email), ponte
+ * `parents.auth_user_id` e riga `utenti` ruolo 'genitore' (senza quest'ultima il
+ * login riesce ma ogni route dati risponde 401 — vedi parent-identity.ts).
  *
  * Idempotente: i parents già bindati sono esclusi dalla query; le email già
- * presenti in `auth.users` vengono riusate (no doppioni).
+ * presenti in `auth.users` vengono riusate (no doppioni); le righe `utenti`
+ * esistenti non vengono toccate (un docente-genitore conserva il ruolo staff).
  */
 
 export interface BackfillReport {
@@ -19,32 +25,17 @@ export interface BackfillReport {
   created: number;
   reused: number;
   bound: number;
+  /** righe `utenti` ruolo 'genitore' create (solo run reale: 0 in dryRun) */
+  utentiCreated: number;
   skippedNoEmail: number;
   errors: Array<{ id: string; email?: string; error: string }>;
-}
-
-// Interfaccia minima del client admin (service-role) che usiamo.
-interface AdminLike {
-  from: (table: string) => {
-    select: (cols: string) => { is: (col: string, val: null) => Promise<{ data: unknown; error: { message: string } | null }> };
-    update: (vals: { auth_user_id: string }) => { eq: (col: string, id: string) => Promise<{ error: { message: string } | null }> };
-  };
-  auth: {
-    admin: {
-      listUsers: (opts?: { page?: number; perPage?: number }) => Promise<{ data: { users: Array<{ id: string; email?: string | null }> } | null; error: { message: string } | null }>;
-      createUser: (attrs: { email: string; email_confirm?: boolean; password?: string }) => Promise<{ data: { user: { id: string } | null }; error: { message: string } | null }>;
-    };
-  };
 }
 
 interface ParentRow {
   id: string;
   emails: string[] | null;
-}
-
-/** Password iniziale forte e non indovinabile (le credenziali reali si emettono via S11). */
-export function randomPassword(): string {
-  return randomBytes(18).toString('base64url') + 'Aa1!';
+  first_name?: string | null;
+  last_name?: string | null;
 }
 
 function firstEmail(emails: string[] | null): string | null {
@@ -55,7 +46,7 @@ function firstEmail(emails: string[] | null): string | null {
 
 const PER_PAGE = 100;
 
-async function buildEmailIndex(admin: AdminLike): Promise<Map<string, string>> {
+async function buildEmailIndex(admin: SupabaseClient): Promise<Map<string, string>> {
   const map = new Map<string, string>();
   let page = 1;
   for (;;) {
@@ -70,8 +61,8 @@ async function buildEmailIndex(admin: AdminLike): Promise<Map<string, string>> {
 }
 
 export async function backfillParentsAuth(
-  admin: AdminLike,
-  { dryRun }: { dryRun: boolean }
+  admin: SupabaseClient,
+  { dryRun, scuolaId }: { dryRun: boolean; scuolaId?: string | null }
 ): Promise<BackfillReport> {
   const report: BackfillReport = {
     target: 'parents',
@@ -80,19 +71,23 @@ export async function backfillParentsAuth(
     created: 0,
     reused: 0,
     bound: 0,
+    utentiCreated: 0,
     skippedNoEmail: 0,
     errors: [],
   };
 
   const { data, error } = await admin
     .from('parents')
-    .select('id, emails')
+    .select('id, emails, first_name, last_name')
     .is('auth_user_id', null);
   if (error) throw new Error(error.message);
   const parents = (data as ParentRow[]) ?? [];
   report.total = parents.length;
 
   const emailToId = await buildEmailIndex(admin);
+  // utenti.scuola_id è NOT NULL: senza una scuola risolvibile il passo `utenti`
+  // fallisce per-parent con messaggio parlante (il bind resta comunque fatto).
+  const scuola = dryRun ? null : await resolveScuolaId(admin, scuolaId ?? null);
 
   for (const p of parents) {
     const email = firstEmail(p.emails);
@@ -135,6 +130,19 @@ export async function backfillParentsAuth(
         continue;
       }
       report.bound++;
+
+      const utenti = await ensureUtentiRow(admin, {
+        id: authId,
+        email,
+        nome: p.first_name ?? null,
+        cognome: p.last_name ?? null,
+        scuolaId: scuola,
+      });
+      if (utenti.error) {
+        report.errors.push({ id: p.id, email, error: `utenti: ${utenti.error}` });
+        continue;
+      }
+      if (utenti.created) report.utentiCreated++;
     } catch (e) {
       report.errors.push({ id: p.id, email, error: e instanceof Error ? e.message : String(e) });
     }

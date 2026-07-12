@@ -195,15 +195,21 @@ export async function POST(request: NextRequest) {
 
         // Salvataggio atomico dei genitori collegati (opzionale): ogni voce viene
         // creata e collegata; gli errori per-genitore sono riportati senza
-        // compromettere l'alunno già creato.
-        const parentsResults: { label: string; ok: boolean; error?: string }[] = [];
+        // compromettere l'alunno già creato. `credenziali_email` riporta l'esito
+        // dell'invio automatico delle credenziali (S6bis) per gli account nuovi.
+        const parentsResults: {
+            label: string;
+            ok: boolean;
+            error?: string;
+            credenziali_email?: { email: string; inviata: boolean; errore: string | null } | null;
+        }[] = [];
         if (Array.isArray(body.parents) && data?.id) {
             for (let i = 0; i < body.parents.length; i++) {
                 const p = (body.parents[i] ?? {}) as Record<string, unknown>;
                 const label = `${p.first_name ?? ''} ${p.last_name ?? ''}`.trim() || `Genitore ${i + 1}`;
                 try {
-                    await linkOrCreateParent(supabase, auth.user, { studentId: data.id as string, payload: p });
-                    parentsResults.push({ label, ok: true });
+                    const r = await linkOrCreateParent(supabase, auth.user, { studentId: data.id as string, payload: p });
+                    parentsResults.push({ label, ok: true, credenziali_email: r.credenzialiEmail ?? null });
                 } catch (e) {
                     parentsResults.push({ label, ok: false, error: (e as Error).message });
                 }

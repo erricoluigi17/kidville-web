@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "576445470202",
+    "project_id": "kidville-registro-elettronico",
+    "storage_bucket": "kidville-registro-elettronico.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:576445470202:android:87234a190be8f261e90043",
+        "android_client_info": {
+          "package_name": "it.kidville.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAe7ArqVJ_ftwdjJNd-eJe-VKoTSjFc0Bk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

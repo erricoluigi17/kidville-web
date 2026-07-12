@@ -78,16 +78,40 @@ export function suggerisciCampi(testo: string): CampiSuggeriti {
 }
 
 /**
- * Testo integrale del PDF via unpdf (build serverless di PDF.js).
- * Import dinamico: le route che non analizzano non caricano la libreria.
- * Mai un errore: un PDF illeggibile/scansione restituisce stringa vuota.
+ * Testo integrale del PDF via unpdf/PDF.js, con RIGHE PRESERVATE: l'a-capo
+ * viene ricostruito dal salto di coordinata Y degli item (l'extractText di
+ * unpdf appiattirebbe tutto su una riga e le euristiche "^OGGETTO:" non
+ * scatterebbero — bug scoperto in collaudo live). Import dinamico: le route
+ * che non analizzano non caricano la libreria. Mai un errore: un PDF
+ * illeggibile/scansione restituisce stringa vuota.
  */
 export async function estraiTesto(buf: Uint8Array): Promise<string> {
   try {
-    const { extractText, getDocumentProxy } = await import('unpdf')
-    const doc = await getDocumentProxy(buf)
-    const { text } = await extractText(doc, { mergePages: true })
-    return typeof text === 'string' ? text : ''
+    const { getDocumentProxy } = await import('unpdf')
+    // COPIA difensiva: PDF.js "trasferisce" (detacha) l'ArrayBuffer che riceve;
+    // senza copia il chiamante si ritroverebbe con byte inutilizzabili
+    // (scoperto in collaudo live: il timbro dopo l'estrazione esplodeva).
+    const doc = await getDocumentProxy(buf.slice())
+    let testo = ''
+    for (let i = 1; i <= doc.numPages; i++) {
+      const pagina = await doc.getPage(i)
+      const contenuto = await pagina.getTextContent()
+      let ultimaY: number | null = null
+      for (const item of contenuto.items as Array<{ str?: string; transform?: number[] }>) {
+        if (typeof item.str !== 'string' || item.str.length === 0) continue
+        const y = item.transform?.[5]
+        if (ultimaY !== null && typeof y === 'number' && Math.abs(y - ultimaY) > 2) {
+          testo += '\n'
+        } else if (testo && !testo.endsWith('\n')) {
+          testo += ' '
+        }
+        testo += item.str
+        if (typeof y === 'number') ultimaY = y
+      }
+      testo += '\n'
+      ultimaY = null
+    }
+    return testo
   } catch {
     return ''
   }

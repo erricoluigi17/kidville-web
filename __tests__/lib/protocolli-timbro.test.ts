@@ -58,6 +58,38 @@ describe('applicaSegnatura (fascia in testa alla 1ª pagina, decisione #9)', () 
   })
 })
 
+describe('estraiTesto preserva le righe (le euristiche richiedono "OGGETTO:" a inizio riga)', () => {
+  it('un PDF multilinea produce righe distinte e suggerisciCampi trova i campi', async () => {
+    const doc = await PDFDocument.create()
+    const font = await doc.embedFont(StandardFonts.Helvetica)
+    const p = doc.addPage(A4)
+    p.drawText('COMUNE DI GIUGLIANO IN CAMPANIA', { x: 50, y: 780, size: 13, font })
+    p.drawText('Prot. n. 98765/2026 del 01/07/2026', { x: 50, y: 755, size: 11, font })
+    p.drawText('OGGETTO: Collaudo registro protocolli Kidville', { x: 50, y: 720, size: 12, font })
+    p.drawText('Testo di prova del documento.', { x: 50, y: 690, size: 11, font })
+    const bytes = await doc.save()
+
+    const { suggerisciCampi } = await import('@/lib/protocolli/estrai')
+    const campi = suggerisciCampi(await estraiTesto(bytes))
+    expect(campi.oggetto).toBe('Collaudo registro protocolli Kidville')
+    expect(campi.mittente).toBe('COMUNE DI GIUGLIANO IN CAMPANIA')
+    expect(campi.rifProtMittente).toBe('98765/2026')
+    expect(campi.rifDataMittente).toBe('2026-07-01')
+  })
+})
+
+describe('estraiTesto NON consuma il buffer (PDF.js detacha l\'ArrayBuffer passato)', () => {
+  it('dopo l\'estrazione i byte restano usabili (es. per il timbro)', async () => {
+    const bytes = await pdfDiProva()
+    await estraiTesto(bytes)
+    // Se il buffer fosse stato trasferito a PDF.js, slice() lancerebbe
+    // "Cannot perform %TypedArray%.prototype.slice on a detached ArrayBuffer".
+    expect(bytes.slice(0, 5).length).toBe(5)
+    const timbrato = await applicaSegnatura(bytes, { righe: RIGHE })
+    expect((await estraiTesto(timbrato)).includes('Prot. n. 0000042/2026')).toBe(true)
+  })
+})
+
 describe('immagineInPdf (decisione #7: JPG/PNG convertite e poi timbrate)', () => {
   it('avvolge una PNG in un PDF A4 a pagina singola con l\'immagine incorporata', async () => {
     const pdf = await immagineInPdf(PNG_1x1, 'image/png')

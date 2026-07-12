@@ -208,9 +208,9 @@ export const TIPI_NOTIFICA: Record<string, TipoNotifica> = {
     sicurezza: true,
   },
   allergie_aggiornate: {
-    label: 'Allergie aggiornate dal genitore',
+    label: 'Allergie di un alunno aggiornate',
     gruppo: 'staff',
-    descrizione: 'Quando un genitore modifica le allergie del figlio',
+    descrizione: 'Quando l’anagrafica cambia le allergie di un alunno (→ cuoca e segreteria)',
   },
   modulo_compilato: {
     label: 'Modulo compilato ricevuto',

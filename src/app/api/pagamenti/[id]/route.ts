@@ -6,6 +6,7 @@ import { parseBody, parseData } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { resolveScuoleAttive } from '@/lib/auth/scope'
 import { annullaRicevutaAttiva } from '@/lib/pagamenti/ricevute'
+import { notificaEvento } from '@/lib/notifiche/triggers'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // PATCH: merge parziale sui soli campi ammessi; i valori restano senza vincoli
@@ -164,7 +165,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
 
     const supabase = await createAdminClient()
     // scoping di sede: non modificare pagamenti fuori dalle sedi attive
-    const { data: esistente } = await supabase.from('pagamenti').select('scuola_id').eq('id', id).maybeSingle()
+    const { data: esistente } = await supabase.from('pagamenti').select('scuola_id, stato, alunno_id, descrizione').eq('id', id).maybeSingle()
     if (!esistente) return NextResponse.json({ error: 'Pagamento non trovato' }, { status: 404 })
     const sedi = await resolveScuoleAttive(request as NextRequest, supabase, auth.user)
     if (!sedi.includes(String((esistente as { scuola_id: string }).scuola_id))) {
@@ -184,6 +185,27 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       } else {
         await supabase.rpc('ricalcola_stato_pagamento', { p_id: id }).then(() => {}, () => {})
       }
+    }
+
+    // Conferma al genitore SOLO sulla transizione manuale stato → 'pagato'
+    // (gli incassi hanno già la loro notifica in /api/pagamenti/incassi).
+    try {
+      const prev = esistente as { stato?: string | null; alunno_id?: string | null; scuola_id?: string | null; descrizione?: string | null }
+      if (updates.stato === 'pagato' && prev.stato !== 'pagato' && prev.alunno_id) {
+        await notificaEvento(supabase, {
+          tipo: 'pagamento_registrato',
+          scuolaId: prev.scuola_id ?? null,
+          alunnoIds: [prev.alunno_id],
+          titolo: 'Pagamento registrato',
+          corpo: `${prev.descrizione ?? 'Pagamento'} risulta saldato. La ricevuta è disponibile.`,
+          link: '/parent/pagamenti',
+          entitaTipo: 'pagamento',
+          entitaId: id,
+          debounce: true,
+        })
+      }
+    } catch (e) {
+      console.error('Notifica pagamento saldato fallita (non bloccante):', e)
     }
 
     return NextResponse.json({ success: true, data })

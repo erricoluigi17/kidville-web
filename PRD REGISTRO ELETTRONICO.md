@@ -65,6 +65,10 @@
 - **Gotcha registrato**: il token FCM è stabile, ma la mappatura FCM↔APNs si aggiorna solo quando l'app chiama `registerForRemoteNotifications` — che nel nostro flusso avviene **dopo il login** (`NativePushAutoRegister`). Se l'app resta sulla schermata di accesso, FCM accetta il messaggio (200) ma APNs non lo consegna: nei collaudi va sempre fatto prima il login.
 - **Restano** (fuori dal perimetro push): collaudo Android su emulatore/device (config già completa) e pubblicazione sugli store.
 
+
+## 🗓️ Changelog — Loader di pagina: comparsa "solo sui caricamenti lenti" 2026-07-12 (branch `feat/loader-slow-loads`)
+
+Ritocco al comportamento del loader globale ([[loader]] `GlobalLoader`): oltre all'anti-flash già presente (niente loader sotto ~180 ms, quindi le navigazioni istantanee restano pulite), quando l'overlay **compare** su un caricamento lento ora resta a schermo per una **durata minima di ~0,7 s** (`MIN_VISIBLE_MS`). Prima spariva appena la pagina era pronta → mostrava solo un frammento del riflesso, praticamente invisibile; ora sui caricamenti realmente lenti è ben visibile. L'avvio dell'app resta invariato (visibile solo se il boot è lento). Gate: **eslint 0 · vitest 1065 · build ok**.
 ## 🗓️ Changelog — Cron prod risvegliati (Vault) + env Vercel complete 2026-07-12 sera (branch `fix/docente-primaria-home`)
 
 - **Scoperta**: TUTTI i cron pg di produzione (notifiche-dispatch 5′, mensa-allergie 07:00, fatture-SDI 30′) erano **no-op silenziosi dal reset DB del 2026-07-04**: le GUC `app.*` non erano mai state riconfigurate e su questo progetto `ALTER DATABASE … SET app.*` è **negato anche al ruolo postgres** (42501, pure dal SQL editor). Da qui il backlog di ~530 notifiche mai spedite (drenato in collaudo).

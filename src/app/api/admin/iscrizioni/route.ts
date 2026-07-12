@@ -3,7 +3,8 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { resolveScuoleAttive, resolveScuolaScrittura } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
-import { sendEmail, credentialsEmailBody } from '@/lib/email/send'
+import { ensureParentIdentity } from '@/lib/auth/parent-identity'
+import { sendEmailDetailed, credentialsEmailBody } from '@/lib/email/send'
 import { notificaEvento } from '@/lib/notifiche/triggers'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
@@ -152,15 +153,19 @@ export async function PATCH(request: NextRequest) {
       const a = adults[ai] as EnrollmentAdult
       const isReferente = ai === referenteIndex
       let parentId: string | null = null
+      let parentAuthId: string | null = null
 
       // Dedup per codice fiscale
       if (a.fiscal_code) {
         const { data: existing } = await supabase
           .from('parents')
-          .select('id')
+          .select('id, auth_user_id')
           .eq('fiscal_code', a.fiscal_code)
           .maybeSingle()
-        if (existing) parentId = existing.id
+        if (existing) {
+          parentId = existing.id
+          parentAuthId = (existing as { auth_user_id?: string | null }).auth_user_id ?? null
+        }
       }
 
       // Crea il genitore se non esiste (mirror di /api/admin/parents create_parent: insert senza id)
@@ -218,54 +223,40 @@ export async function PATCH(request: NextRequest) {
         })
       }
 
-      // Account di accesso per il referente (se ha email)
+      // Account di accesso per il referente (se ha email) — S6bis: identità
+      // COMPLETA (auth.users + riga `utenti` + ponte parents.auth_user_id) via
+      // helper condiviso. Il vecchio blocco creava solo auth+utenti senza ponte
+      // (genitore che entrava ma non risolveva i figli) e upsertava `utenti` con
+      // una colonna inesistente in prod (password_segreta → PGRST204 silenzioso)
+      // rischiando pure di sovrascrivere il ruolo di uno staff omonimo.
       const adultEmail = a.email ? String(a.email) : ''
-      if (isReferente && adultEmail) {
-        const tempPassword = 'Kidville_' + Math.random().toString(36).substring(2, 9)
-        const { data: authData, error: authErr } = await supabase.auth.admin.createUser({
-          email: adultEmail,
-          password: tempPassword,
-          email_confirm: true,
-          user_metadata: { first_name: a.first_name, last_name: a.last_name, role: 'parent' },
-        })
-        let userId: string | null = null
-        if (authErr) {
-          if (authErr.message.includes('already') || authErr.message.includes('exists')) {
-            const { data: u } = await supabase.from('utenti').select('id').eq('email', adultEmail).maybeSingle()
-            userId = u?.id ?? null
-            credentials = { email: adultEmail, password: '(account già esistente)' }
-          } else {
-            warnings.push(`Account referente: ${authErr.message}`)
-          }
-        } else {
-          userId = authData.user.id
-          credentials = { email: adultEmail, password: tempPassword }
-        }
-        if (userId) {
-          referenteUserId = userId
-          await supabase.from('utenti').upsert({
-            id: userId,
-            email: adultEmail,
-            password_segreta: credentials?.password ?? tempPassword,
-            nome: a.first_name,
-            cognome: a.last_name,
-            cellulare: a.phone ?? null,
-            ruolo: 'genitore',
-            scuola_id: scuolaId,
-            attivo: true,
-          })
+      if (isReferente && adultEmail && parentId) {
+        const identita = await ensureParentIdentity(supabase, {
+          id: parentId,
+          auth_user_id: parentAuthId,
+          emails: [adultEmail],
+          first_name: a.first_name != null ? String(a.first_name) : null,
+          last_name: a.last_name != null ? String(a.last_name) : null,
+          phone: a.phone != null ? String(a.phone) : null,
+        }, { scuolaId })
+        if (identita.ok) {
+          referenteUserId = identita.authUserId
+          credentials = { email: adultEmail, password: identita.password ?? '(account già esistente)' }
 
           // Invio automatico delle credenziali (solo per un account appena creato)
-          if (!authErr) {
-            credentialsEmailSent = await sendEmail({
+          if (identita.createdAuth && identita.password) {
+            const invio = await sendEmailDetailed({
               to: adultEmail,
               subject: 'Le tue credenziali di accesso — Kidville',
-              text: credentialsEmailBody(a.first_name != null ? String(a.first_name) : null, adultEmail, tempPassword),
+              text: credentialsEmailBody(a.first_name != null ? String(a.first_name) : null, adultEmail, identita.password),
             })
-            if (!credentialsEmailSent) {
-              warnings.push('Email credenziali non inviata (provider non configurato) — comunicarle manualmente al referente.')
+            credentialsEmailSent = invio.ok
+            if (!invio.ok) {
+              warnings.push(`Email credenziali NON inviata a ${adultEmail}: ${invio.error ?? 'motivo sconosciuto'} — comunicarle manualmente al referente.`)
             }
           }
+        } else if (identita.reason !== 'no_email') {
+          warnings.push(`Account referente: ${identita.message}`)
         }
       }
 

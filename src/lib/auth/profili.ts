@@ -6,10 +6,13 @@ import type { AppRole } from './require-staff'
  * Profili disponibili per un utente autenticato (M4B) — base dello smistamento
  * per ruolo: un solo link di accesso, poi ognuno atterra sulla propria area.
  *
- * Modello DB (P0/S4): lo staff (e i genitori-demo) stanno in `utenti` con
- * `utenti.id == auth.uid()`; i genitori REALI stanno in `parents` col ponte
- * `parents.auth_user_id == auth.uid()` (nessuna riga in `utenti`). Un DOPPIO
- * profilo (es. docente che è anche genitore) è la presenza di entrambe le righe.
+ * Modello DB (P0/S4 + S6bis): lo staff sta in `utenti` con `utenti.id ==
+ * auth.uid()`. Anche i genitori REALI hanno la riga `utenti` (ruolo 'genitore':
+ * è l'unica tabella letta da loadAppUser — senza, il login riesce ma le route
+ * dati rispondono 401) PIÙ il ponte `parents.auth_user_id == auth.uid()`.
+ * Un DOPPIO profilo (es. docente che è anche genitore) è una riga `utenti` con
+ * ruolo staff + il ponte genitore sullo stesso auth.uid: qui sotto produce due
+ * profili distinti.
  */
 
 export interface Profilo {

@@ -1,6 +1,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { AppUser } from '@/lib/auth/require-staff';
 import { logScrittura } from '@/lib/audit/scrittura';
+import { ensureParentIdentity, firstEmail } from '@/lib/auth/parent-identity';
+import { sendEmailDetailed, credentialsEmailBody } from '@/lib/email/send';
 
 // =============================================================================
 // Helper condiviso creazione/collegamento genitore (anagrafica).
@@ -43,6 +45,10 @@ export interface ParentPayload {
 export interface LinkOrCreateParentResult {
   parentId: string;
   created: boolean;
+  /** Esito dell'invio automatico delle credenziali (solo se l'account è stato creato ora). */
+  credenzialiEmail?: { email: string; inviata: boolean; errore: string | null };
+  /** Identità di accesso non completata (email presente ma creazione fallita). */
+  identitaErrore?: string;
 }
 
 const str = (v: unknown): string => (typeof v === 'string' ? v : v == null ? '' : String(v));
@@ -101,15 +107,40 @@ export async function linkOrCreateParent(
 
   let parentId: string | null = null;
   let created = false;
+  // Dati per l'identità di accesso (punto 4 sotto): dal record per i nuovi,
+  // dalla riga esistente per i riusi via CF.
+  let identityInput = {
+    id: '',
+    auth_user_id: null as string | null,
+    emails: record.emails,
+    first_name: record.first_name as string | null,
+    last_name: record.last_name as string | null,
+    phone: (Array.isArray(record.phone_numbers) && typeof record.phone_numbers[0] === 'string'
+      ? (record.phone_numbers[0] as string)
+      : null),
+  };
 
   // 1. Genitore già esistente per CF (solo se il CF è valorizzato).
   if (record.fiscal_code) {
     const { data: existing } = await supabase
       .from('parents')
-      .select('id')
+      .select('id, auth_user_id, emails, first_name, last_name')
       .eq('fiscal_code', record.fiscal_code)
       .maybeSingle();
-    if (existing) parentId = existing.id;
+    if (existing) {
+      parentId = existing.id;
+      identityInput = {
+        ...identityInput,
+        auth_user_id: (existing as { auth_user_id?: string | null }).auth_user_id ?? null,
+        // L'anagrafica com'è a DB ha priorità; il payload copre solo il caso
+        // riga storica senza email.
+        emails: firstEmail((existing as { emails?: unknown }).emails)
+          ? (existing as { emails?: unknown }).emails
+          : record.emails,
+        first_name: (existing as { first_name?: string | null }).first_name ?? null,
+        last_name: (existing as { last_name?: string | null }).last_name ?? null,
+      };
+    }
   }
 
   // 2. Altrimenti crea il genitore.
@@ -130,6 +161,7 @@ export async function linkOrCreateParent(
   }
 
   if (!parentId) throw new Error('Creazione del genitore non riuscita');
+  identityInput.id = parentId;
 
   // 3. Collega il genitore allo studente.
   if (studentId) {
@@ -152,5 +184,52 @@ export async function linkOrCreateParent(
     });
   }
 
-  return { parentId, created };
+  // 4. Identità di accesso (auth.users + utenti + ponte) — S6bis. Best-effort:
+  //    un fallimento qui non annulla il salvataggio anagrafico, perché l'invio
+  //    credenziali (S11) è auto-riparante e completa i pezzi mancanti al primo
+  //    utilizzo. I record-staff della tab Staff (citizenship=ruolo) non sono
+  //    genitori dell'app: per loro nessun account.
+  let credenzialiEmail: LinkOrCreateParentResult['credenzialiEmail'];
+  let identitaErrore: string | undefined;
+  if (!STAFF_ROLES.includes(role)) {
+    const identita = await ensureParentIdentity(supabase, identityInput, {
+      scuolaId: actor.scuola_id ?? null,
+    });
+    if (identita.ok && (identita.createdAuth || identita.createdUtenti || identita.boundNow)) {
+      // Account APPENA creato → invio AUTOMATICO delle credenziali (nessun
+      // passaggio manuale della Segreteria). Un account riusato ha già le sue.
+      let emailed: boolean | null = null;
+      let emailError: string | null = null;
+      if (identita.createdAuth && identita.password) {
+        const invio = await sendEmailDetailed({
+          to: identita.email,
+          subject: 'Le tue credenziali di accesso — Kidville',
+          text: credentialsEmailBody(identityInput.first_name, identita.email, identita.password),
+        });
+        emailed = invio.ok;
+        emailError = invio.error;
+        credenzialiEmail = { email: identita.email, inviata: invio.ok, errore: invio.error };
+      }
+      await logScrittura(supabase, {
+        attore: actor,
+        entitaTipo: 'credenziali',
+        entitaId: parentId,
+        azione: 'insert',
+        valoreDopo: {
+          auto: 'creazione-anagrafica',
+          authUserId: identita.authUserId,
+          createdAuth: identita.createdAuth,
+          createdUtenti: identita.createdUtenti,
+          emailed,
+          emailError,
+        },
+      });
+    } else if (!identita.ok && identita.reason !== 'no_email') {
+      // Senza email è il caso normale "solo anagrafica": nessun rumore.
+      identitaErrore = identita.message;
+      console.warn(`[anagrafiche/parents] identità genitore non completata (${parentId}): ${identita.message}`);
+    }
+  }
+
+  return { parentId, created, credenzialiEmail, identitaErrore };
 }

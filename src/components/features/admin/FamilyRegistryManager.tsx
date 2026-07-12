@@ -24,7 +24,13 @@ export function FamilyRegistryManager() {
     const [activeTab, setActiveTab] = useState('alunno');
     const [saving, setSaving] = useState(false);
     const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
-    const [savedSummary, setSavedSummary] = useState<{ studentName: string; parents: number; failed: { label: string; error?: string }[] } | null>(null);
+    const [savedSummary, setSavedSummary] = useState<{
+        studentName: string;
+        parents: number;
+        failed: { label: string; error?: string }[];
+        // Esiti dell'invio automatico delle credenziali (S6bis) per gli account nuovi.
+        credenziali: { label: string; email: string; inviata: boolean; errore: string | null }[];
+    } | null>(null);
 
     // Ref imperativi: ogni form resta auto-contenuto ma espone validate()/reset().
     // Tutti i form restano MONTATI (solo l'attivo è visibile) così lo stato e i ref
@@ -96,14 +102,27 @@ export function FamilyRegistryManager() {
                 throw new Error(e.error || 'Errore nel salvataggio dell’alunno');
             }
             const student = await sres.json();
-            const results: { label: string; ok: boolean; error?: string }[] = Array.isArray(student.parents) ? student.parents : [];
+            const results: {
+                label: string;
+                ok: boolean;
+                error?: string;
+                credenziali_email?: { email: string; inviata: boolean; errore: string | null } | null;
+            }[] = Array.isArray(student.parents) ? student.parents : [];
             const failed = results.filter(r => !r.ok).map(r => ({ label: r.label, error: r.error }));
+            const credenziali = results
+                .filter(r => r.ok && r.credenziali_email)
+                .map(r => ({ label: r.label, ...r.credenziali_email! }));
 
             const studentName = `${String(sv.data.nome ?? '')} ${String(sv.data.cognome ?? '')}`.trim();
             if (failed.length) {
                 showToast({ type: 'error', message: `Alunno salvato, ma errore su: ${failed.map(f => f.label).join(', ')}.` });
+            } else {
+                const nonInviate = credenziali.filter(c => !c.inviata);
+                if (nonInviate.length) {
+                    showToast({ type: 'error', message: `Credenziali NON inviate via email a: ${nonInviate.map(c => c.label).join(', ')}.` });
+                }
             }
-            setSavedSummary({ studentName, parents: results.filter(r => r.ok).length, failed });
+            setSavedSummary({ studentName, parents: results.filter(r => r.ok).length, failed, credenziali });
         } catch (err) {
             showToast({ type: 'error', message: (err as Error).message });
         } finally {
@@ -159,6 +178,20 @@ export function FamilyRegistryManager() {
                             <p className="mt-2 font-maven text-xs text-kidville-muted">
                                 L&apos;alunno è stato salvato. Puoi riaggiungere questi genitori dalla scheda dell&apos;alunno.
                             </p>
+                        </div>
+                    )}
+                    {savedSummary.credenziali.length > 0 && (
+                        <div className="w-full max-w-md rounded-2xl border border-kidville-green/20 bg-kidville-cream/60 p-4 text-left">
+                            <p className="font-barlow font-bold text-kidville-green uppercase text-sm">Credenziali di accesso</p>
+                            <ul className="mt-2 space-y-1">
+                                {savedSummary.credenziali.map((c, i) => (
+                                    <li key={i} className={`font-maven text-xs ${c.inviata ? 'text-kidville-green' : 'text-kidville-error'}`}>
+                                        <b>{c.label}</b> ({c.email}) — {c.inviata
+                                            ? 'email con le credenziali inviata ✓'
+                                            : `email NON inviata: ${c.errore ?? 'motivo sconosciuto'}. Usa "Rigenera credenziali" dalla scheda genitore.`}
+                                    </li>
+                                ))}
+                            </ul>
                         </div>
                     )}
                     <div className="flex gap-3 mt-2">

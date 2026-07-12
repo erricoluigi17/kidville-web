@@ -2,8 +2,14 @@
  * Util email condiviso.
  *
  * Usa Resend se `RESEND_API_KEY` è configurato, altrimenti fa fallback su log
- * server-side (modalità dev/senza provider) e ritorna `false`.
+ * server-side (modalità dev/senza provider) e ritorna esito negativo.
  * Mittente di default sovrascrivibile con `OTP_FROM_EMAIL`.
+ *
+ * ⚠️ DELIVERABILITY: finché su Resend non è verificato il dominio kidville.it,
+ * il mittente resta `onboarding@resend.dev` (sandbox) e Resend CONSEGNA SOLO
+ * all'indirizzo del titolare dell'account — ogni altro destinatario è rifiutato
+ * con 403. Dopo la verifica del dominio impostare in produzione
+ * `OTP_FROM_EMAIL="Kidville <noreply@kidville.it>"`.
  */
 
 export interface SendEmailParams {
@@ -12,14 +18,24 @@ export interface SendEmailParams {
   text: string
 }
 
+export interface SendEmailResult {
+  ok: boolean
+  /** Motivo del fallimento, già leggibile (per warning UI/audit). Null se ok. */
+  error: string | null
+}
+
 const DEFAULT_FROM = 'Kidville <onboarding@resend.dev>'
 
-/** Invia un'email. Ritorna true se consegnata al provider, false in fallback/errore. */
-export async function sendEmail({ to, subject, text }: SendEmailParams): Promise<boolean> {
+/**
+ * Invia un'email e riporta l'ESITO CON MOTIVO. Il corpo dell'errore Resend
+ * viene letto e propagato: un rifiuto (es. sandbox: "solo verso il proprio
+ * indirizzo") non deve mai ridursi a un generico "non inviata".
+ */
+export async function sendEmailDetailed({ to, subject, text }: SendEmailParams): Promise<SendEmailResult> {
   const apiKey = process.env.RESEND_API_KEY
   if (!apiKey) {
     console.log(`[EMAIL] (provider non configurato) → ${to}\n  Oggetto: ${subject}\n  ${text.replace(/\n/g, '\n  ')}`)
-    return false
+    return { ok: false, error: 'provider email non configurato (RESEND_API_KEY assente)' }
   }
   try {
     const res = await fetch('https://api.resend.com/emails', {
@@ -36,13 +52,31 @@ export async function sendEmail({ to, subject, text }: SendEmailParams): Promise
       }),
     })
     if (!res.ok) {
-      console.error(`[EMAIL] Invio fallito (${res.status}) per ${to}`)
+      let dettaglio = ''
+      try {
+        const raw = await res.text()
+        try {
+          dettaglio = (JSON.parse(raw) as { message?: string }).message ?? raw
+        } catch {
+          dettaglio = raw
+        }
+      } catch {
+        /* corpo illeggibile: resta il solo status */
+      }
+      const errore = `rifiutato dal provider email (${res.status})${dettaglio ? `: ${dettaglio}` : ''}`
+      console.error(`[EMAIL] Invio fallito per ${to} — ${errore}`)
+      return { ok: false, error: errore }
     }
-    return res.ok
+    return { ok: true, error: null }
   } catch (err) {
     console.error('[EMAIL] Invio email fallito:', err)
-    return false
+    return { ok: false, error: 'errore di rete verso il provider email' }
   }
+}
+
+/** Invia un'email. Ritorna true se consegnata al provider, false in fallback/errore. */
+export async function sendEmail(params: SendEmailParams): Promise<boolean> {
+  return (await sendEmailDetailed(params)).ok
 }
 
 /** Corpo dell'email con le credenziali di accesso all'area genitori. */

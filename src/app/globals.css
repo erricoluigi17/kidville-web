@@ -237,3 +237,12 @@ body {
   background-color: var(--color-kidville-yellow);
   color: #000000;
 }
+/* Alto contrasto: le utility colore sono INLINE (`@theme inline` incorpora il
+   valore hex nella utility), quindi i testi verdi del header giallo NON
+   seguono i token rimappati e resterebbero verde-scuro su fondo nero →
+   bianco esplicito. */
+[data-contrast="high"] .kv-tab-giallo .text-kidville-green,
+[data-contrast="high"] .kv-tab-giallo .text-kidville-green-dark,
+[data-contrast="high"] .kv-tab-giallo .text-kidville-green-dark\/80 {
+  color: #FFFFFF;
+}

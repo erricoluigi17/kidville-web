@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { FileSignature } from 'lucide-react';
 import { useAdminSettings } from './useAdminSettings';
 import { card, h3, hint, input, label } from './ui';
-import { CheckField, NumberField, PillMultiSelect, SaveRow, ComingSoonBadge } from './fields';
+import { CheckField, NumberField, PillMultiSelect, SaveRow } from './fields';
 
 interface ModulisticaConfig {
     firma_otp_richiesta: boolean;
@@ -47,7 +47,7 @@ export function ModulisticaSettings({ userId }: { userId: string }) {
 
             <div className="grid grid-cols-2 gap-3 mt-4">
                 <NumberField value={cfg.promemoria_giorni ?? 3} min={1} max={30} onChange={(v) => set({ promemoria_giorni: v })}>
-                    <>Promemoria moduli non compilati (giorni) <ComingSoonBadge /></>
+                    Promemoria moduli non compilati (giorni)
                 </NumberField>
                 <div>
                     <label className={label}>Formato export submissions</label>

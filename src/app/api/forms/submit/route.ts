@@ -4,6 +4,8 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { rateLimit, clientIp } from '@/lib/security/rate-limit'
 import { assertGenitoreNonSospeso } from '@/lib/pagamenti/sospensione'
 import { estraiConsensi, consensiObbligatoriMancanti } from '@/lib/forms/consensi'
+import { notificaEvento } from '@/lib/notifiche/triggers'
+import { staffScuola, scuolaUnicaReale } from '@/lib/notifiche/destinatari'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import type { FormSchemaConfig, FormSubmissionData } from '@/types/database.types'
@@ -48,7 +50,7 @@ export async function POST(request: Request) {
     // Carica lo schema del modello per snapshot consensi + guard server-side.
     const { data: model } = await supabase
       .from('form_models')
-      .select('schema')
+      .select('schema, title')
       .eq('id', modelId)
       .maybeSingle()
     const pages = ((model?.schema as FormSchemaConfig | undefined)?.pages) ?? []
@@ -81,6 +83,32 @@ export async function POST(request: Request) {
         { error: insertErr instanceof Error ? insertErr.message : 'Creazione submission fallita' },
         { status: 500 }
       )
+    }
+
+    // Notifica alla segreteria: modulo compilato (best-effort). Debounce per
+    // modello + buffer 60' → una notifica riassuntiva, non una per invio.
+    try {
+      let scuolaId: string | null = null
+      if (userId) {
+        const { data: u } = await supabase.from('utenti').select('scuola_id').eq('id', userId).maybeSingle()
+        scuolaId = (u?.scuola_id as string | undefined) ?? null
+      }
+      if (!scuolaId) scuolaId = await scuolaUnicaReale(supabase)
+      const destinatari = await staffScuola(supabase, scuolaId, ['admin', 'coordinator', 'segreteria'])
+      await notificaEvento(supabase, {
+        tipo: 'modulo_compilato',
+        scuolaId,
+        utenteIds: destinatari,
+        titolo: 'Modulo compilato ricevuto',
+        corpo: `Ci sono nuove compilazioni per «${(model as { title?: string } | null)?.title ?? 'un modulo'}».`,
+        link: '/admin/modulistica',
+        entitaTipo: 'form_model',
+        entitaId: modelId,
+        bufferMin: 60,
+        debounce: true,
+      })
+    } catch (e) {
+      console.error('Notifica modulo compilato fallita (non bloccante):', e)
     }
 
     return NextResponse.json({ id: submission.id }, { status: 201 })

@@ -70,6 +70,23 @@ export async function staffScuola(
   }
 }
 
+/**
+ * Id dell'unica scuola reale del deployment (esclude le sedi E2E, stessa
+ * euristica di /api/iscrizione). Null se ambiguo — fallback per i flussi
+ * pubblici/anonimi dove la scuola non è deducibile dal contesto.
+ */
+export async function scuolaUnicaReale(supabase: SupabaseClient): Promise<string | null> {
+  try {
+    const { data } = await supabase.from('schools').select('id, nome')
+    const tutte = (data ?? []) as { id: string; nome: string }[]
+    const reali = tutte.filter((s) => !s.id.startsWith('e2e00000') && !/e2e/i.test(s.nome))
+    if (reali.length === 1) return reali[0].id
+    return tutte.length === 1 ? tutte[0].id : null
+  } catch {
+    return null
+  }
+}
+
 /** L'altro partecipante di un thread chat (genitore ↔ docente). */
 export async function controparteThread(
   supabase: SupabaseClient,

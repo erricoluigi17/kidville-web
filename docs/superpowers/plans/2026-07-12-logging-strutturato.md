@@ -63,6 +63,15 @@
 
 ## Task 1: Redazione a lista bianca (il lock anti-PII)
 
+> **✅ COMPLETATO** (commit `f7986fc` + `0419c32`). La review adversariale ha trovato **tre falle nella lista bianca proposta qui sotto**, tutte corrette nel codice reale. **Chi legge questo piano per i task successivi deve conoscerle**, perché il codice dei task 3, 4, 5, 9 e 13 qui sotto le reintrodurrebbe:
+>
+> 1. **`livello` NON è un metadato: è la valutazione delle competenze** (D.M. 14/2024, valori A–D). Era in `IN_CHIARO`; con `alunno_id` che passa come uuid, la valutazione di un bambino identificabile finiva in chiaro. **Spostato in `SEGRETI`.**
+>    → **Trappola per i task successivi:** il livello di log va emesso come **campo separato, fuori da `redact()`**. Se il logger passasse l'intero record `{ livello: 'error', … }` dentro `redact()`, il livello diventerebbe `[redatto]` e i log sarebbero inutilizzabili. `redact()` si applica **solo al payload/contesto, mai all'involucro**.
+> 2. **`path`/`route`/`url` contengono credenziali**: il token del modulo pubblico **è un segmento di path** (`/m/[token]`), e le query string contengono `?userId=`, `?email=`. **Ora passano da `redigiPath()`** (esportata da `redact.ts`), che taglia la query e normalizza i segmenti: uuid → `[id]`, ≥16 caratteri → `[tok]`, sole cifre → `[n]`.
+>    → **Ovunque, nei task successivi, un path va salvato/loggato come `redigiPath(pathname)`, mai grezzo.**
+> 3. **Il salt dell'hash era pubblicato in un repo pubblico** (`?? 'kidville-log'`): l'hash "correlabile" era invertibile per forza bruta su qualche centinaio di nomi. Ora `hashCorrelabile` è **fail-closed**: senza `LOG_HASH_SALT` restituisce `[redatto]`, mai un hash debole.
+>    → **Azione operativa aperta:** impostare `LOG_HASH_SALT` su Vercel (`openssl rand -hex 32`, tutti gli ambienti). Finché non c'è, nomi/email/CF escono tutti come `[redatto]` indistinguibili e la correlazione è persa.
+
 Questo è il task più importante del piano. Tutto il resto dipende da qui: se questa funzione lascia passare un dato, il logging diventa una fuga di dati sanitari di minori.
 
 **Files:**
@@ -344,6 +353,25 @@ git commit -m "feat(logging): redazione a lista bianca + lock anti-PII"
 ## Task 2: Serializzatore fail-open
 
 Un `JSON.stringify` su un oggetto ciclico o su un `BigInt` **lancia**. Se lancia dentro il logger, ogni richiesta di tutte le 239 route diventa un 500.
+
+> **⚠️ REQUISITO AGGIUNTIVO emerso dal Task 1 — il messaggio d'errore aggira la redazione dal basso.**
+>
+> `descriviErrore()` legge `err.message` e lo mette nel log **senza passare da `redact()`** (giustamente: la redazione è a lista bianca *per chiave*, e un messaggio d'errore non ha chiavi). Ma i messaggi di Postgres **contengono i valori**:
+>
+> ```
+> duplicate key value violates unique constraint "parents_email_key"
+> DETAIL: Key (email)=(mario.rossi@example.com) already exists.
+> ```
+>
+> Cioè l'email di un genitore finisce nei log di Vercel e su `app_log`, scavalcando tutto l'apparato di redazione. Idem per i vincoli su codice fiscale e telefono.
+>
+> **`descriviErrore` deve quindi sanificare il messaggio** con un `sanificaMessaggio(msg: string): string` che maschera i valori incorporati:
+> - `Key (colonna)=(valore)` → `Key (colonna)=(…)` — è il pattern di Postgres per ogni violazione di vincolo;
+> - le sottostringhe che sono indirizzi email → `[email]`;
+> - i codici fiscali italiani (16 caratteri alfanumerici nella forma canonica) → `[cf]`;
+> - troncamento a 500 caratteri.
+>
+> Questa è **difesa in profondità**, non il presidio principale: le euristiche sui valori danno falsi negativi (e per questo la spec le vieta come *unico* meccanismo), ma qui non c'è una chiave su cui applicare la lista bianca, quindi sono il meglio disponibile. Lo **stack invece resta in chiaro**: i frame sono path di file sorgente, non contengono dati personali, e redigerli renderebbe il logger inutile proprio nel momento in cui serve.
 
 **Files:**
 - Create: `src/lib/logging/serialize.ts`
@@ -1146,6 +1174,8 @@ export function withRoute<A extends [Request, ...unknown[]]>(
             /* url malformato: il log vale comunque */
         }
 
+        // NB: `path` va normalizzato con redigiPath (vedi nota in testa al Task 1):
+        // il pathname grezzo contiene il token del modulo pubblico (/m/<token>).
         const t0 = Date.now();
         return conContesto({ requestId, path }, async () => {
             try {

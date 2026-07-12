@@ -141,7 +141,7 @@ export function RiconciliazionePanel({ userId, scuolaId }: Props) {
                 <p className="py-8 text-center font-maven text-sm text-kidville-muted">Caricamento…</p>
             ) : !disponibile ? (
                 <p className="py-8 text-center font-maven text-sm text-kidville-muted">
-                    Riconciliazione non ancora attiva su questo database (migrazione da applicare).
+                    Riconciliazione non ancora disponibile.
                 </p>
             ) : daLavorare.length === 0 ? (
                 <p className="py-8 text-center font-maven text-sm text-kidville-muted">

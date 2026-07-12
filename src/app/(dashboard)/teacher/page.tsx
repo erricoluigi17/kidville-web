@@ -7,22 +7,24 @@ import {
   ChevronRight, Check, AlertTriangle, Eye, Users,
 } from 'lucide-react';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
+import { useTeacherGradi } from '@/lib/auth/use-teacher-gradi';
 import { useClientValue } from '@/lib/hooks/use-client-value';
 import { greetingByHour } from '@/lib/ui/greeting';
 import { HeroCard } from '@/components/features/shell/HeroCard';
 import { GradeWorldSwitch } from '@/components/features/teacher/GradeWorldSwitch';
 import { TeacherAgendaCard } from '@/components/features/teacher/TeacherAgendaCard';
 
-// Scorciatoie del giorno (DR ScorciatoieBlock). Le voci didattiche sono gated
-// dalla matrice funzioni (admin_settings.funzioni_matrice); comunica/attività
-// sono sempre disponibili. Tutte puntano a rotte reali.
+// Scorciatoie del giorno (DR ScorciatoieBlock), con `grado` come le voci della
+// bottom-nav: le voci 0-6 sono gated dalla matrice funzioni
+// (admin_settings.funzioni_matrice), quella primaria dai gradi del docente;
+// comunica/attività sono sempre disponibili. Tutte puntano a rotte reali.
 const SHORTCUTS = [
-  { key: 'appello', eyebrow: 'Presenze', title: 'Appello', icon: ClipboardCheck, tint: '#006A5F', href: '/teacher/attendance', always: true },
-  { key: 'diario', eyebrow: 'Giornata', title: 'Diario', icon: NotebookPen, tint: '#2A6FDB', href: '/teacher/diary', always: false },
-  { key: 'registro', eyebrow: 'Valutazioni', title: 'Registro', icon: BookOpen, tint: '#7A3FD0', href: '/teacher/primaria', always: false },
-  { key: 'gallery', eyebrow: 'Galleria', title: 'Foto del giorno', icon: Images, tint: '#006A5F', href: '/teacher/gallery', always: false },
-  { key: 'comunica', eyebrow: 'Famiglie', title: 'Comunica', icon: Megaphone, tint: '#E53935', href: '/teacher/avvisi', always: true },
-  { key: 'attivita', eyebrow: 'Staff', title: 'Attività', icon: ListTodo, tint: '#1F8A5B', href: '/teacher/tasks', always: true },
+  { key: 'appello', eyebrow: 'Presenze', title: 'Appello', icon: ClipboardCheck, tint: '#006A5F', href: '/teacher/attendance', always: true, grado: 'comune' },
+  { key: 'diario', eyebrow: 'Giornata', title: 'Diario', icon: NotebookPen, tint: '#2A6FDB', href: '/teacher/diary', always: false, grado: 'infanzia' },
+  { key: 'registro', eyebrow: 'Valutazioni', title: 'Registro', icon: BookOpen, tint: '#7A3FD0', href: '/teacher/primaria', always: false, grado: 'primaria' },
+  { key: 'gallery', eyebrow: 'Galleria', title: 'Foto del giorno', icon: Images, tint: '#006A5F', href: '/teacher/gallery', always: false, grado: 'infanzia' },
+  { key: 'comunica', eyebrow: 'Famiglie', title: 'Comunica', icon: Megaphone, tint: '#E53935', href: '/teacher/avvisi', always: true, grado: 'comune' },
+  { key: 'attivita', eyebrow: 'Staff', title: 'Attività', icon: ListTodo, tint: '#1F8A5B', href: '/teacher/tasks', always: true, grado: 'comune' },
 ] as const;
 
 const GRADO_LABEL: Record<string, string> = { infanzia: 'Infanzia', nido: 'Nido', primaria: 'Primaria' };
@@ -116,7 +118,8 @@ function TeacherDashboardInner() {
 
   const infanziaGradi = useMemo(() => (me?.gradi ?? []).filter((g) => g === 'infanzia' || g === 'nido'), [me]);
   const isEnabled = (key: string) => infanziaGradi.some((g) => me?.funzioni?.[g]?.[key] === true);
-  const isPrimariaOnly = infanziaGradi.length === 0 && (me?.gradi ?? []).includes('primaria');
+  // Gradi dal hook condiviso con bottom-nav e GradeWorldSwitch (fetch dedupato).
+  const { hasPrimaria, isPrimariaOnly } = useTeacherGradi(userId ?? null);
 
   // derivati
   const studentCount = students.length;
@@ -128,7 +131,11 @@ function TeacherDashboardInner() {
   const assenti = presenze.filter((p) => p.stato === 'assente').length;
 
   const avvisiRecenti = avvisi.slice(0, 3);
-  const shortcuts = SHORTCUTS.filter((s) => s.always || isEnabled(s.key));
+  // Voci primaria: bastano i gradi (l'hub /teacher/primaria aggrega più
+  // funzioni); voci 0-6: resta il gate della matrice funzioni.
+  const shortcuts = SHORTCUTS.filter((s) =>
+    s.always || (s.grado === 'primaria' ? hasPrimaria : isEnabled(s.key)),
+  );
 
   return (
     <div className="mx-auto max-w-[460px] px-4 pt-5">
@@ -269,9 +276,11 @@ function TeacherDashboardInner() {
                 </div>
               ))}
             </div>
-            <Link href={withUser('/teacher/diary')}
+            <Link href={withUser(isPrimariaOnly ? '/teacher/primaria' : '/teacher/diary')}
               className="flex w-full items-center justify-center gap-1.5 border-t border-kidville-line bg-kidville-cream py-2.5 font-barlow text-xs font-extrabold uppercase tracking-wide text-kidville-green">
-              <NotebookPen size={15} /> Vedi nel diario <ChevronRight size={14} strokeWidth={2.4} />
+              {isPrimariaOnly ? <BookOpen size={15} /> : <NotebookPen size={15} />}
+              {isPrimariaOnly ? 'Vai al registro' : 'Vedi nel diario'}
+              <ChevronRight size={14} strokeWidth={2.4} />
             </Link>
           </div>
         </section>

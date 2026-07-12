@@ -3,10 +3,10 @@
 import { useState, useEffect, useCallback, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import {
-    Settings, Plus, Trash2, ToggleLeft, ToggleRight,
-    ChevronUp, ChevronDown, Package, Save, ArrowLeft,
+    Plus, Trash2, ToggleLeft, ToggleRight,
+    ChevronUp, ChevronDown, Package, Save,
 } from 'lucide-react';
-import Link from 'next/link';
+import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { SezioniMultiSelect } from '@/components/features/admin/SezioniMultiSelect';
 
@@ -173,23 +173,11 @@ function LockerSettingsInner() {
     return (
         <div className="mx-auto max-w-[460px] px-4 pt-5">
             {/* Header verde (DR) */}
-            <div className="rounded-3xl bg-kidville-green px-5 py-5" style={{ boxShadow: '0 16px 34px -18px rgba(0,60,52,.6)' }}>
-                <div className="flex items-center gap-3">
-                    <Link href="/teacher/locker"
-                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/15 text-white transition-colors hover:bg-white/25">
-                        <ArrowLeft size={18} />
-                    </Link>
-                    <div>
-                        <p className="font-barlow text-[11px] font-bold uppercase tracking-[0.14em] text-kidville-yellow">Armadietto</p>
-                        <h1 className="flex items-center gap-2 font-barlow text-2xl font-black uppercase tracking-wide text-white">
-                            <Settings size={20} className="text-kidville-yellow" /> Materiali
-                        </h1>
-                    </div>
-                </div>
-                <p className="mt-2 font-maven text-xs text-white/80">
-                    Configura i materiali che i genitori consegnano quotidianamente
-                </p>
-            </div>
+            <PageHeaderCard
+                eyebrow="Armadietto"
+                title="Materiali"
+                subtitle="Configura i materiali che i genitori consegnano quotidianamente"
+            />
 
             {/* Filtro classe */}
             <div className="mt-5 mb-6 flex gap-2 overflow-x-auto pb-1">

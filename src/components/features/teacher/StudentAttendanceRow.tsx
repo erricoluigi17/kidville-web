@@ -88,7 +88,7 @@ export function StudentAttendanceRow({ student, record, onSetStato, onCheckoutCl
     return (
         <motion.div
             layout
-            className="bg-white p-4 rounded-2xl shadow-sm flex items-center justify-between border-l-4 transition-colors hover:bg-kidville-cream"
+            className="bg-white p-4 rounded-2xl shadow-sm flex flex-wrap items-center justify-between gap-y-2 border-l-4 transition-colors hover:bg-kidville-cream"
             style={{ borderLeftColor: borderColor }}
         >
             {/* Avatar + Info studente */}
@@ -115,8 +115,8 @@ export function StudentAttendanceRow({ student, record, onSetStato, onCheckoutCl
                 </div>
             </div>
 
-            {/* Controlli stato */}
-            <div className="flex items-center gap-1.5 flex-shrink-0">
+            {/* Controlli stato — wrap sotto il nome sugli schermi stretti (320px) */}
+            <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5">
                 {isLoading ? (
                     <div className="w-6 h-6 border-2 border-kidville-green border-t-transparent rounded-full animate-spin" />
                 ) : !hasStato ? (

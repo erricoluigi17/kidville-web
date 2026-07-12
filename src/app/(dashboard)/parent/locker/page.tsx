@@ -9,6 +9,8 @@ import {
     MonthlyLockerTable,
     type StudentInfo,
 } from '@/components/features/teacher/locker/MonthlyLockerTable';
+import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
+import { Btn } from '@/components/ui/Btn';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 
 interface LockerRequest {
@@ -207,7 +209,7 @@ function LockerInner() {
 
     if (ready && !studentId) {
         return (
-            <div className="max-w-lg mx-auto p-4 flex flex-col items-center justify-center min-h-[60vh] gap-4 text-center">
+            <div className="px-4 pt-5 pb-24 flex flex-col items-center justify-center min-h-[60vh] gap-4 text-center">
                 <Package size={40} className="text-kidville-muted" />
                 <p className="font-maven text-kidville-muted">Nessun bambino collegato a questo profilo.</p>
             </div>
@@ -216,7 +218,7 @@ function LockerInner() {
 
     if (isLoading) {
         return (
-            <div className="max-w-lg mx-auto p-4 flex flex-col items-center justify-center min-h-[60vh] gap-4">
+            <div className="px-4 pt-5 pb-24 flex flex-col items-center justify-center min-h-[60vh] gap-4">
                 <div className="w-10 h-10 border-4 border-kidville-green/30 border-t-kidville-green rounded-full animate-spin" />
                 <p className="font-maven text-kidville-muted">Caricamento armadietto...</p>
             </div>
@@ -224,42 +226,36 @@ function LockerInner() {
     }
 
     return (
-        <div className="max-w-2xl mx-auto p-4 sm:p-6">
+        <div className="px-4 pt-5 pb-24">
             {/* ── Header ── */}
-            <div className="flex items-center justify-between mb-2">
-                <div>
-                    <p className="font-barlow font-bold text-[11px] uppercase tracking-[0.14em] text-kidville-yellow-dark">
-                        Servizi
-                    </p>
-                    <h1 className="font-barlow font-black text-3xl text-kidville-green uppercase tracking-wide leading-none">
-                        Armadietto
-                    </h1>
-                </div>
-                <div className="flex items-center gap-2">
-                    {/* Badge LIVE */}
-                    <span className={`flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-bold transition-all
-                        ${realtimePulse ? 'bg-kidville-success text-white scale-110' : 'bg-kidville-success-soft text-kidville-success'}`}>
-                        <Zap size={10} className={realtimePulse ? 'animate-bounce' : ''} /> LIVE
-                    </span>
-                    <button
-                        onClick={() => { fetchData(); if (activeTab === 'monthly') fetchMonthly(month); }}
-                        className="p-2 rounded-xl text-kidville-muted hover:text-kidville-green hover:bg-kidville-neutral-soft transition-colors"
-                        title="Aggiorna">
-                        <RefreshCw size={16} />
-                    </button>
-                </div>
-            </div>
-            <div className="flex items-center justify-between mb-5">
-                <p className="font-maven text-kidville-muted">Materiale scolastico di {childName}</p>
-                {lastUpdated && (
-                    <p className="text-[10px] text-kidville-success font-maven">
-                        Aggiornato alle {lastUpdated.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                    </p>
-                )}
-            </div>
+            <PageHeaderCard
+                eyebrow="Servizi"
+                title="Armadietto"
+                subtitle={<>Materiale scolastico di {childName}</>}
+                action={
+                    <>
+                        {/* Badge LIVE */}
+                        <span className={`flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-bold transition-all
+                            ${realtimePulse ? 'bg-kidville-success text-white scale-110' : 'bg-kidville-success-soft text-kidville-success'}`}>
+                            <Zap size={10} className={realtimePulse ? 'animate-bounce' : ''} /> LIVE
+                        </span>
+                        <button
+                            onClick={() => { fetchData(); if (activeTab === 'monthly') fetchMonthly(month); }}
+                            className="flex h-9 w-9 items-center justify-center rounded-full bg-white/15 text-white transition-colors hover:bg-white/25"
+                            title="Aggiorna">
+                            <RefreshCw size={16} />
+                        </button>
+                    </>
+                }
+            />
+            {lastUpdated && (
+                <p className="mt-2 px-1 font-maven text-[11px] text-kidville-muted">
+                    Aggiornato alle {lastUpdated.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                </p>
+            )}
 
             {/* ── Tab switcher ── */}
-            <div className="flex bg-kidville-neutral-soft rounded-xl p-1 gap-1 mb-6 self-start w-fit">
+            <div className="flex bg-kidville-neutral-soft rounded-xl p-1 gap-1 mt-5 mb-6 self-start w-fit">
                 <button
                     id="tab-overview-btn"
                     onClick={() => setActiveTab('overview')}
@@ -328,11 +324,13 @@ function LockerInner() {
                                                 </p>
                                             </div>
                                         </div>
-                                        <button
+                                        <Btn
                                             id={`acknowledge-${req.id}-btn`}
                                             onClick={() => handleAcknowledge(req.id)}
                                             disabled={savingId === req.id}
-                                            className="w-full mt-3 h-11 rounded-pill bg-kidville-green text-kidville-yellow font-barlow font-black uppercase tracking-wide hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                                            variant="primary"
+                                            size="md"
+                                            className="w-full mt-3"
                                         >
                                             {savingId === req.id ? (
                                                 <div className="w-4 h-4 border-2 border-kidville-yellow/40 border-t-kidville-yellow rounded-full animate-spin" />
@@ -342,7 +340,7 @@ function LockerInner() {
                                                     Preso in carico
                                                 </>
                                             )}
-                                        </button>
+                                        </Btn>
                                     </div>
                                 ))}
                             </div>

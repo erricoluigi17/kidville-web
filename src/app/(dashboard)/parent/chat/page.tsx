@@ -10,6 +10,8 @@ import { ChatListSkeleton } from '@/components/features/chat/ChatListSkeleton';
 import { useUnreadNotifications } from '@/components/features/chat/useUnreadNotifications';
 import { useChatRealtime } from '@/components/features/chat/useChatRealtime';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
+import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
+import { Btn } from '@/components/ui/Btn';
 
 interface Contact {
     user_id: string;
@@ -297,41 +299,37 @@ function ParentChatContent() {
     }
 
     return (
-        <div className="max-w-5xl mx-auto p-4 sm:p-6">
-            <div className="flex items-start justify-between mb-4">
-                <div>
-                    <p className="font-barlow font-bold text-[11px] uppercase tracking-[0.14em] text-kidville-yellow-dark">
-                        Comunicazioni
-                    </p>
-                    <div className="flex items-center gap-3">
-                        <h1 className="font-barlow font-black text-3xl text-kidville-green uppercase tracking-wide leading-none">
-                            Messaggi
-                        </h1>
-                        <AnimatePresence>
-                            {unreadCount > 0 && (
-                                <motion.span
-                                    initial={{ scale: 0, opacity: 0 }}
-                                    animate={{ scale: 1, opacity: 1 }}
-                                    exit={{ scale: 0, opacity: 0 }}
-                                    transition={{ type: 'spring', stiffness: 500, damping: 25 }}
-                                    className="inline-flex items-center justify-center min-w-[24px] h-6 px-2 rounded-full bg-kidville-yellow text-kidville-green font-barlow font-bold text-xs shadow-sm"
-                                >
-                                    {unreadCount > 99 ? '99+' : unreadCount}
-                                </motion.span>
-                            )}
-                        </AnimatePresence>
-                    </div>
-                    <p className="font-maven text-gray-500 mt-1">
-                        Chatta con gli insegnanti{childrenNames.length > 0 ? ` di ${childrenNames.join(' e ')}` : ''}
-                    </p>
-                </div>
-                <button
-                    onClick={() => { setShowNewChat(true); setLoadingContacts(true); loadContacts(); }}
-                    className="flex items-center gap-2 px-4 py-2.5 bg-kidville-green text-kidville-yellow font-barlow font-bold text-sm uppercase rounded-2xl hover:opacity-90 active:scale-[0.98] transition-all shadow-lg shadow-kidville-green/20"
-                >
-                    <Plus size={16} strokeWidth={1.5} /> Nuova Chat
-                </button>
-            </div>
+        <div className="px-4 pt-5 pb-24">
+            <PageHeaderCard
+                eyebrow="Comunicazioni"
+                title="Messaggi"
+                className="mb-4"
+                badge={
+                    <AnimatePresence>
+                        {unreadCount > 0 && (
+                            <motion.span
+                                initial={{ scale: 0, opacity: 0 }}
+                                animate={{ scale: 1, opacity: 1 }}
+                                exit={{ scale: 0, opacity: 0 }}
+                                transition={{ type: 'spring', stiffness: 500, damping: 25 }}
+                                className="inline-flex items-center justify-center min-w-[24px] h-6 px-2 rounded-full bg-kidville-yellow text-kidville-green font-barlow font-bold text-xs shadow-sm"
+                            >
+                                {unreadCount > 99 ? '99+' : unreadCount}
+                            </motion.span>
+                        )}
+                    </AnimatePresence>
+                }
+                subtitle={<>Chatta con gli insegnanti{childrenNames.length > 0 ? ` di ${childrenNames.join(' e ')}` : ''}</>}
+                action={
+                    <Btn
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => { setShowNewChat(true); setLoadingContacts(true); loadContacts(); }}
+                    >
+                        <Plus size={16} strokeWidth={1.5} /> Nuova Chat
+                    </Btn>
+                }
+            />
 
             {chatCfg && !chatCfg.in_orario && (
                 <div className="mb-4 rounded-2xl bg-kidville-yellow-soft border border-kidville-yellow/40 px-4 py-3 font-maven text-sm text-kidville-yellow-dark">
@@ -344,7 +342,7 @@ function ParentChatContent() {
                 spingeva il composer SOTTO la bottom nav fissa (irraggiungibile
                 anche scrollando). Col margine lo scroll libera il composer;
                 senza banner la resa iniziale è identica (spazio sotto la fold). */}
-            <div className="hidden md:flex gap-4 h-[calc(100vh-200px)] min-h-[500px] mb-24">
+            <div className="hidden md:flex gap-4 h-[calc(100vh-200px-var(--kv-appbar-h,0px))] min-h-[500px] mb-24">
                 <div className="w-80 flex-shrink-0 bg-white rounded-3xl border border-kidville-line shadow-sm overflow-hidden flex flex-col">
                     <div className="px-4 py-3 border-b border-kidville-line">
                         <p className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide">Insegnanti</p>
@@ -366,7 +364,7 @@ function ParentChatContent() {
                                     <p className="font-maven font-semibold text-sm text-kidville-green">
                                         {selectedThread.other_user.first_name} {selectedThread.other_user.last_name}
                                     </p>
-                                    <p className="font-maven text-[11px] text-gray-400">
+                                    <p className="font-maven text-[11px] text-kidville-muted">
                                         Insegnante • {selectedThread.student.classe_sezione}
                                     </p>
                                 </div>
@@ -388,7 +386,7 @@ function ParentChatContent() {
                                     <MessageSquare size={32} className="text-kidville-green" strokeWidth={1.5} />
                                 </div>
                                 <p className="font-barlow font-bold text-lg text-kidville-green uppercase mb-1">Seleziona un insegnante</p>
-                                <p className="font-maven text-sm text-gray-400">Scegli dalla lista o premi &quot;Nuova Chat&quot;</p>
+                                <p className="font-maven text-sm text-kidville-muted">Scegli dalla lista o premi &quot;Nuova Chat&quot;</p>
                             </div>
                         </div>
                     )}
@@ -408,20 +406,21 @@ function ParentChatContent() {
                     // dispositivo (100dvh reale), il campo resta sempre visibile in fondo
                     // sopra la safe-area; si esce con il tasto indietro in alto.
                     <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }}
-                        className="fixed inset-0 z-[60] bg-white flex flex-col overflow-hidden pb-[env(safe-area-inset-bottom)]">
-                        <div className="flex items-center gap-3 px-4 py-3 border-b border-kidville-line">
-                            <button onClick={() => setShowMobile('list')}
-                                className="w-8 h-8 rounded-xl bg-gray-50 hover:bg-gray-100 flex items-center justify-center text-gray-500 transition-colors">
-                                <ArrowLeft size={16} strokeWidth={1.5} />
+                        className="fixed inset-0 z-[60] bg-kidville-cream flex flex-col overflow-hidden pb-[env(safe-area-inset-bottom)]">
+                        {/* Header conversazione del design: barra verde, back white/15, avatar giallo */}
+                        <div className="flex items-center gap-2.5 bg-kidville-green px-3 py-2.5 pt-[max(10px,env(safe-area-inset-top))]">
+                            <button onClick={() => setShowMobile('list')} aria-label="Torna alla lista"
+                                className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-full bg-white/15 text-white transition-transform active:scale-95">
+                                <ArrowLeft size={18} strokeWidth={2.2} />
                             </button>
-                            <div className="w-9 h-9 rounded-full bg-kidville-green flex items-center justify-center font-barlow font-bold text-xs text-kidville-yellow">
+                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-kidville-yellow font-barlow text-sm font-extrabold text-kidville-green">
                                 {selectedThread.other_user.first_name[0]}{selectedThread.other_user.last_name[0]}
                             </div>
-                            <div>
-                                <p className="font-maven font-semibold text-sm text-kidville-green">
+                            <div className="min-w-0">
+                                <p className="truncate font-barlow text-[17px] font-extrabold uppercase leading-tight text-white">
                                     {selectedThread.other_user.first_name} {selectedThread.other_user.last_name}
                                 </p>
-                                <p className="font-maven text-[10px] text-gray-400">{selectedThread.student.nome}</p>
+                                <p className="truncate font-maven text-[11.5px] text-white/75">{selectedThread.student.nome}</p>
                             </div>
                         </div>
                         <ChatMessageArea
@@ -449,13 +448,13 @@ function ParentChatContent() {
                             exit={{ opacity: 0, y: 20, scale: 0.97 }}
                             className="fixed inset-4 sm:inset-auto sm:top-1/2 sm:left-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 sm:w-full sm:max-w-md bg-white rounded-3xl shadow-2xl z-50 flex flex-col max-h-[80vh] overflow-hidden"
                         >
-                            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+                            <div className="flex items-center justify-between px-6 py-4 border-b border-kidville-line">
                                 <div className="flex items-center gap-2">
                                     <UserPlus size={18} className="text-kidville-green" strokeWidth={1.5} />
                                     <h2 className="font-barlow font-black text-lg text-kidville-green uppercase tracking-wide">Nuova Chat</h2>
                                 </div>
                                 <button onClick={() => setShowNewChat(false)}
-                                    className="w-8 h-8 rounded-xl bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-400">
+                                    className="w-8 h-8 rounded-xl bg-kidville-neutral-soft hover:bg-kidville-cream-dark flex items-center justify-center text-kidville-muted">
                                     <X size={14} strokeWidth={1.5} />
                                 </button>
                             </div>
@@ -463,17 +462,17 @@ function ParentChatContent() {
                                 {loadingContacts ? (
                                     <div className="flex flex-col items-center py-8 gap-3">
                                         <div className="w-7 h-7 border-[3px] border-kidville-green/20 border-t-kidville-green rounded-full animate-spin" />
-                                        <p className="font-maven text-sm text-gray-400">Caricamento contatti...</p>
+                                        <p className="font-maven text-sm text-kidville-muted">Caricamento contatti...</p>
                                     </div>
                                 ) : contacts.length === 0 ? (
                                     <div className="flex flex-col items-center py-8 text-center">
-                                        <p className="font-maven text-sm text-gray-400">
+                                        <p className="font-maven text-sm text-kidville-muted">
                                             Hai già una conversazione con tutte le maestre disponibili! 🎉
                                         </p>
                                     </div>
                                 ) : (
                                     <div className="space-y-2">
-                                        <p className="font-maven text-xs text-gray-400 mb-3">
+                                        <p className="font-maven text-xs text-kidville-muted mb-3">
                                             Seleziona un insegnante per iniziare una conversazione
                                         </p>
                                         {contacts.map((contact, idx) => {
@@ -494,7 +493,7 @@ function ParentChatContent() {
                                                         <p className="font-maven font-semibold text-sm text-kidville-green truncate">
                                                             {contact.user_name}
                                                         </p>
-                                                        <p className="font-maven text-xs text-gray-400 truncate">
+                                                        <p className="font-maven text-xs text-kidville-muted truncate">
                                                             Insegnante di {contact.student_name} • {contact.sezione}
                                                         </p>
                                                     </div>
@@ -516,7 +515,7 @@ function ParentChatContent() {
 export default function ParentChatPage() {
     return (
         <Suspense fallback={
-            <div className="max-w-5xl mx-auto p-4 sm:p-6 flex flex-col items-center justify-center min-h-[60vh] gap-4">
+            <div className="px-4 pt-5 pb-24 flex flex-col items-center justify-center min-h-[60vh] gap-4">
                 <div className="w-10 h-10 border-4 border-kidville-green/30 border-t-kidville-green rounded-full animate-spin" />
             </div>
         }>

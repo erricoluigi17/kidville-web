@@ -159,8 +159,10 @@ export default function ValutazioniPage() {
     ? suggerisciGiudizio(scalaValori, numAnnot)
     : null;
 
+  // grid-cols-1 esplicito: minmax(0,1fr) clampa la colonna al contenitore
+  // (senza template la colonna auto segue il min-content e sfora a 320px).
   return (
-    <div className="grid gap-4 md:grid-cols-2">
+    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
       {/* Banner conformità O.M. 3/2025 (DR) */}
       <div className="flex items-start gap-2.5 rounded-xl border border-kidville-warn/25 bg-kidville-warn-soft px-3.5 py-3 md:col-span-2">
         <Lock size={16} className="mt-0.5 shrink-0 text-kidville-warn" />
@@ -175,11 +177,12 @@ export default function ValutazioniPage() {
         </h2>
 
         <div className="grid grid-cols-2 gap-2 mb-3">
-          <select value={alunnoId} onChange={(e) => setAlunnoId(e.target.value)} className="font-maven rounded-pill border border-kidville-line px-3 py-2 text-sm">
+          {/* min-w-0: senza, il min-content delle option lunghe sfonda la grid a 320px */}
+          <select value={alunnoId} onChange={(e) => setAlunnoId(e.target.value)} className="w-full min-w-0 font-maven rounded-pill border border-kidville-line px-3 py-2 text-sm">
             <option value="">Alunno…</option>
             {alunni.map((a) => <option key={a.id} value={a.id}>{a.cognome} {a.nome}</option>)}
           </select>
-          <select value={materiaId} onChange={(e) => setMateriaId(e.target.value)} className="font-maven rounded-pill border border-kidville-line px-3 py-2 text-sm">
+          <select value={materiaId} onChange={(e) => setMateriaId(e.target.value)} className="w-full min-w-0 font-maven rounded-pill border border-kidville-line px-3 py-2 text-sm">
             <option value="">Materia…</option>
             {materie.map((m) => <option key={m.id} value={m.id}>{m.nome}</option>)}
           </select>
@@ -359,9 +362,9 @@ function DimToggle({ label, value, options, onChange }: {
   label: string; value: string; options: [string, unknown][]; onChange: (v: unknown) => void;
 }) {
   return (
-    <div className="flex items-center justify-between">
+    <div className="flex flex-wrap items-center justify-between gap-y-1">
       <span className="font-maven text-sm text-kidville-ink">{label}</span>
-      <div className="flex gap-1">
+      <div className="flex flex-wrap justify-end gap-1">
         {options.map(([lbl, val]) => {
           const active = String(val) === String(value) || lbl === value;
           return (

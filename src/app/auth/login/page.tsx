@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import Image from 'next/image';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { getSupabase } from '@/lib/supabase/browser-client';
@@ -41,33 +41,51 @@ function EyeIcon({ off }: { off: boolean }) {
   );
 }
 
-/** Sfondo decorativo (blob organici + iconcine), nascosto in Alto Contrasto. */
+/**
+ * Sfondo decorativo, nascosto in Alto Contrasto.
+ * Blob e iconcine ripresi dal design "Kidville · Login (standalone)": i path
+ * sono quelli originali (spazio 402×874), ritagliati per angolo così restano
+ * agganciati ai bordi del viewport anche su schermi larghi.
+ */
 function BackgroundDeco() {
   return (
     <div className={styles.deco} aria-hidden="true">
-      <svg className={`${styles.blob} ${styles.blobTR}`} viewBox="0 0 200 200" fill="currentColor">
-        <path d="M40,0 C120,0 200,0 200,80 C200,150 150,190 90,180 C30,170 0,120 10,60 C16,22 8,0 40,0 Z" />
+      {/* cuneo verde in alto a destra */}
+      <svg className={`${styles.blob} ${styles.blobTop}`} viewBox="318 0 84 250">
+        <path
+          className={styles.fillGreen}
+          d="M402,0 L402,250 C 358,246 336,224 326,186 C 317,152 324,100 318,52 C 315,30 318,12 326,0 Z"
+        />
       </svg>
-      <svg className={`${styles.blob} ${styles.blobBL}`} viewBox="0 0 200 200" fill="currentColor">
-        <path d="M0,60 C40,150 100,200 160,200 L0,200 Z" />
+
+      {/* collina verde/teal in basso a sinistra */}
+      <svg className={`${styles.blob} ${styles.blobBottomLeft}`} viewBox="0 742 190 132">
+        <path className={styles.fillTeal} d="M0,874 L0,742 C 40,724 100,732 146,772 C 176,798 188,840 190,874 Z" />
+        <path className={styles.fillGreen} d="M0,874 L0,792 C 30,780 76,786 108,812 C 132,831 144,854 146,874 Z" />
       </svg>
-      <svg className={`${styles.blob} ${styles.blobBR}`} viewBox="0 0 200 200" fill="currentColor">
-        <path d="M200,70 C120,80 60,130 50,200 L200,200 Z" />
+
+      {/* collina gialla + onda verde in basso a destra */}
+      <svg className={`${styles.blob} ${styles.blobBottomRight}`} viewBox="234 718 168 156">
+        <path className={styles.fillYellow} d="M402,874 L402,762 C 362,766 306,776 270,810 C 246,832 236,856 234,874 Z" />
+        <path className={styles.fillGreen} d="M402,720 C 348,728 298,750 272,788 C 306,760 356,752 402,768 Z" />
       </svg>
-      <svg className={`${styles.ico} ${styles.icoStar}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinejoin="round">
-        <path d="M12 3l2.6 5.9 6.4.6-4.8 4.3 1.4 6.3L12 17.8 6.4 20.1l1.4-6.3L3 9.5l6.4-.6L12 3z" />
-      </svg>
-      <svg className={`${styles.ico} ${styles.icoCloud}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinejoin="round">
-        <path d="M7 18h10a3.8 3.8 0 0 0 .5-7.6 5.4 5.4 0 0 0-10.5-1.3A3.7 3.7 0 0 0 7 18z" />
-      </svg>
-      <svg className={`${styles.ico} ${styles.icoRing}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6}>
-        <circle cx="12" cy="12" r="9" />
-      </svg>
-      <svg className={`${styles.ico} ${styles.icoHouse}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
-        <path d="M4 11l8-6 8 6" />
-        <path d="M6 10v9h12v-9" />
-        <path d="M10 19v-5h4v5" />
-      </svg>
+
+      <div className={styles.icons}>
+        <svg className={`${styles.ico} ${styles.icoStar}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinejoin="round">
+          <path d="M12 3l2.6 5.9 6.4.6-4.8 4.3 1.4 6.3L12 17.8 6.4 20.1l1.4-6.3L3 9.5l6.4-.6L12 3z" />
+        </svg>
+        <svg className={`${styles.ico} ${styles.icoCloud}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinejoin="round">
+          <path d="M7 18h10a3.8 3.8 0 0 0 .5-7.6 5.4 5.4 0 0 0-10.5-1.3A3.7 3.7 0 0 0 7 18z" />
+        </svg>
+        <svg className={`${styles.ico} ${styles.icoRing}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6}>
+          <circle cx="12" cy="12" r="9" />
+        </svg>
+        <svg className={`${styles.ico} ${styles.icoHouse}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+          <path d="M4 11l8-6 8 6" />
+          <path d="M6 10v9h12v-9" />
+          <path d="M10 19v-5h4v5" />
+        </svg>
+      </div>
     </div>
   );
 }
@@ -125,8 +143,10 @@ function LoginForm() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [showForgot, setShowForgot] = useState(false);
-  // Alto contrasto: stato globale (provider + cookie SSR), non più locale.
-  const { highContrast, toggle: toggleContrast } = useAccessibility();
+  // Alto contrasto: qui si legge soltanto (per nascondere mascotte e decori). Il
+  // toggle vive nei menu account di tutte le aree (ContrastMenuButton), non più
+  // in questa pagina: la login deve restare a tutto schermo, senza scroll.
+  const { highContrast } = useAccessibility();
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   // ≥2 profili → step inline di scelta ruolo nella stessa card.
@@ -134,6 +154,14 @@ function LoginForm() {
   // Con ?scegli=1 il primo paint attende /api/me: niente flash del form
   // credenziali prima del picker (resta la card con titolo e sottotitolo).
   const [attesa, setAttesa] = useState(scegli);
+  const gruppoRuoli = useRef<HTMLDivElement>(null);
+
+  // Lo swap credenziali → picker smonta il bottone che ha il focus: senza questo
+  // il focus finisce su <body>. Si punta il contenitore, non il primo bottone,
+  // così un Invio ancora premuto non lo attiva.
+  useEffect(() => {
+    if (profili) gruppoRuoli.current?.focus();
+  }, [profili]);
 
   useEffect(() => {
     if (!scegli) return;
@@ -248,39 +276,48 @@ function LoginForm() {
       {!highContrast && <BackgroundDeco />}
 
       <div className={styles.scene}>
+        {/* logo trim su next/image; il CSS decide la larghezza reale. Resta anche in
+            Alto Contrasto (invertito in bianco): è l'unica identificazione del brand. */}
+        <div className={styles.logo}>
+          <Image src="/logo-kidville.png" alt="Kidville" width={2227} height={571} priority />
+        </div>
+        {/* mascotte a figura intera (cutout trasparente), sporge sulla card */}
         {!highContrast && (
-          <>
-            {/* logo trim su next/image; il CSS decide la larghezza reale */}
-            <div className={styles.logo}>
-              <Image src="/logo-kidville.png" alt="Kidville" width={2227} height={571} priority />
-            </div>
-            {/* mascotte a figura intera (cutout trasparente), sporge sulla card */}
-            <div className={styles.mascot}>
-              <Image src="/mascot-hero.png" alt="" aria-hidden width={665} height={994} priority />
-            </div>
-          </>
+          <div className={styles.mascot}>
+            <Image src="/mascot-hero.png" alt="" aria-hidden width={665} height={994} priority />
+          </div>
         )}
 
         <form onSubmit={onSubmit} className={styles.card} aria-label="Accesso a Kidville">
-          <h1 className={styles.title}>Ciao!</h1>
-          <p className={styles.subtitle}>
+          <h1 className={styles.title}>Benvenuto/a!</h1>
+          {/* nodo persistente: React ne muta solo il testo, così il passaggio al
+              picker viene annunciato in modo affidabile */}
+          <p className={styles.subtitle} role="status">
             {profili ? (
               <>Sei registrato con più profili. Scegli con quale ruolo entrare.</>
             ) : (
-              <>
-                Riservato a personale e famiglie. Accesso <strong>solo su invito</strong> della Segreteria.
-              </>
+              <>Accedi al tuo account Kidville</>
             )}
           </p>
 
           {error && (
-            <div role="alert" className={styles.alert}>
+            <div role="alert" id="login-error" className={styles.alert}>
               {error}
             </div>
           )}
 
-          {attesa ? null : profili ? (
-            <div role="group" aria-label="Scelta del ruolo" style={{ marginTop: 24 }}>
+          {attesa ? (
+            <p className={styles.forgotNote} role="status" style={{ marginTop: 24 }}>
+              Caricamento dei profili…
+            </p>
+          ) : profili ? (
+            <div
+              ref={gruppoRuoli}
+              tabIndex={-1}
+              role="group"
+              aria-label="Scelta del ruolo"
+              style={{ marginTop: 24 }}
+            >
               {profili.map((p) => (
                 <button
                   key={p.ruolo}
@@ -308,10 +345,17 @@ function LoginForm() {
                     type="email"
                     required
                     autoComplete="email"
+                    inputMode="email"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    enterKeyHint="next"
                     placeholder="nome@esempio.it"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     className={styles.input}
+                    aria-invalid={Boolean(error)}
+                    aria-describedby={error ? 'login-error' : undefined}
                   />
                 </div>
               </div>
@@ -329,41 +373,51 @@ function LoginForm() {
                     type={showPassword ? 'text' : 'password'}
                     required
                     autoComplete="current-password"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    enterKeyHint="go"
                     placeholder="La tua password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     className={styles.input}
+                    aria-invalid={Boolean(error)}
+                    aria-describedby={error ? 'login-error' : undefined}
                   />
+                  {/* nome statico + aria-pressed: un aria-label che cambia insieme
+                      allo stato farebbe annunciare "Nascondi password, premuto" */}
                   <button
                     type="button"
                     onClick={() => setShowPassword((s) => !s)}
                     className={styles.eye}
                     aria-pressed={showPassword}
-                    aria-label={showPassword ? 'Nascondi password' : 'Mostra password'}
+                    aria-label="Mostra password"
                   >
                     <EyeIcon off={showPassword} />
                   </button>
                 </div>
               </div>
 
-              <button type="button" className={styles.forgot} onClick={() => setShowForgot((s) => !s)} aria-expanded={showForgot}>
+              <button
+                type="button"
+                className={styles.forgot}
+                onClick={() => setShowForgot((s) => !s)}
+                aria-expanded={showForgot}
+                aria-controls="forgot-note"
+              >
                 Password dimenticata?
               </button>
               {showForgot && (
-                <p className={styles.forgotNote}>
+                <p id="forgot-note" className={styles.forgotNote}>
                   Contatta la Segreteria: riemette le credenziali via email. L’accesso è solo su invito.
                 </p>
               )}
 
-              <button type="submit" disabled={loading} className={styles.accedi}>
+              <button type="submit" disabled={loading} aria-busy={loading} className={styles.accedi}>
                 {loading ? 'Accesso…' : 'Accedi'}
               </button>
             </>
           )}
-
-          <button type="button" onClick={toggleContrast} className={styles.contrast} aria-pressed={highContrast}>
-            {highContrast ? 'Disattiva alto contrasto' : 'Attiva alto contrasto'}
-          </button>
         </form>
       </div>
     </div>

@@ -4,6 +4,7 @@ import { useState, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Users, WifiOff } from 'lucide-react';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
+import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { useDiaryDay, DiaryEventEditor } from '@/components/features/teacher/diary/DiaryEventEditor';
 
 // Pagina mobile del docente: chrome (header, selettore sezione, filtri) attorno
@@ -68,10 +69,7 @@ function TeacherDiaryInner() {
     if (sezioniLoaded && !sezione) {
         return (
             <div className="mx-auto max-w-[460px] px-4 pt-5">
-                <div className="rounded-3xl bg-kidville-green px-5 py-5" style={{ boxShadow: '0 16px 34px -18px rgba(0,60,52,.6)' }}>
-                    <p className="font-barlow text-[11px] font-bold uppercase tracking-[0.14em] text-kidville-yellow">In sezione</p>
-                    <h1 className="font-barlow text-3xl font-black uppercase tracking-wide text-white">Diario del giorno</h1>
-                </div>
+                <PageHeaderCard eyebrow="In sezione" title="Diario del giorno" />
                 <div className="mt-4 rounded-3xl border border-kidville-line bg-white p-8 text-center shadow-sm">
                     <p className="font-maven text-sm text-kidville-muted">
                         {soloPrimariaNascosta ? (
@@ -98,13 +96,15 @@ function TeacherDiaryInner() {
         <div className="mx-auto max-w-[460px] px-4 pt-5">
 
             {/* Header verde (DR) */}
-            <div className="rounded-3xl bg-kidville-green px-5 py-5" style={{ boxShadow: '0 16px 34px -18px rgba(0,60,52,.6)' }}>
-                <p className="font-barlow text-[11px] font-bold uppercase tracking-[0.14em] text-kidville-yellow">In sezione</p>
-                <h1 className="font-barlow text-3xl font-black uppercase tracking-wide text-white">Diario del giorno</h1>
-                <p className="mt-1.5 font-maven text-xs capitalize text-white/80">
-                    Sezione {sezione} • {new Date().toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' })}
-                </p>
-            </div>
+            <PageHeaderCard
+                eyebrow="In sezione"
+                title="Diario del giorno"
+                subtitle={
+                    <span className="capitalize">
+                        Sezione {sezione} • {new Date().toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' })}
+                    </span>
+                }
+            />
 
             {/* Selettore sezione (solo con più sezioni assegnate) */}
             {sezioni.length > 1 && (

@@ -1,61 +1,119 @@
 /* =============================================================================
    Login — resa 1:1 dal design "Kidville · Login (standalone)" (Claude Design).
-   Sfondo crema + blob organici + mascotte a figura intera che sporge dalla card
-   bianca (bottom-sheet). Colori via token --color-kidville-* (globals.css), così
-   l'Alto Contrasto (html[data-contrast="high"]) rimappa tutto automaticamente;
-   i pochi override HC necessari sono in coda.
+   Il design è un mockup su schermo 402×874: qui le misure sono riportate fedeli
+   (logo 208, mascotte 278 che scavalca la card di 40px, card top con radius 34)
+   ma la pagina resta fluida. I blob angolari sono a COLORI PIENI del brand come
+   nel design, non sbiaditi.
+
+   Colori via token --color-kidville-* (globals.css), così l'Alto Contrasto
+   (html[data-contrast="high"]) rimappa tutto automaticamente; gli scostamenti
+   voluti dal design (touch target del bottone) sono annotati sul posto.
    ============================================================================= */
 
 .page {
   position: relative;
-  min-height: 100dvh;
+  /* Tutto lo schermo, senza scroll: la login deve stare in una schermata sola.
+     `dvh` segue la barra degli indirizzi mobile che si apre/chiude. La deroga
+     per schermi molto bassi (landscape) è in fondo al file. */
+  height: 100dvh;
+  overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 28px 16px calc(28px + env(safe-area-inset-bottom));
-  overflow: hidden;
-  background: radial-gradient(130% 120% at 50% 0%, #fff7ec 0%, var(--color-kidville-cream) 62%);
+  /* niente lampo grigio al tap su iOS/Android (come nel design) */
+  -webkit-tap-highlight-color: transparent;
+  /* Design: .screen ha crema pieno (--kv-cream), senza gradiente. È una crema
+     più neutra di --color-kidville-cream (#FEF1E4, sfondo del resto dell'app):
+     resta page-scoped, con il ribaltamento in Alto Contrasto in coda al file. */
+  background: #faf6ef;
+  /* Il margine orizzontale (18px) lo mette .scene: qui sommerebbe e stringerebbe la card. */
+  padding: 16px 0 calc(16px + env(safe-area-inset-bottom));
 }
 
-/* ───────── Sfondo decorativo (blob + iconcine) ───────── */
+/* ───────── Sfondo decorativo ─────────
+   Due livelli: i blob restano agganciati agli angoli del viewport (su telefono
+   coincidono con gli angoli dello schermo del design), le iconcine seguono la
+   colonna centrale così su desktop non scappano ai bordi. */
 .deco {
   position: absolute;
   inset: 0;
   z-index: 0;
   pointer-events: none;
-  overflow: hidden;
+  overflow: hidden; /* taglia la parte fuori schermo del cuneo in alto */
 }
+
+/* Blob angolari — path e colori presi dal design (deco-svg, viewBox 402×874). */
 .blob {
   position: absolute;
-  opacity: 0.9;
+  display: block;
 }
-.blobTR { top: -70px; right: -60px; width: 240px; color: var(--color-kidville-green); opacity: 0.10; }
-.blobBL { bottom: -50px; left: -70px; width: 260px; color: var(--color-kidville-green); opacity: 0.10; }
-.blobBR { bottom: -60px; right: -50px; width: 210px; color: var(--color-kidville-yellow); opacity: 0.16; }
+/* Cuneo verde in alto a destra: nel design è traslato di -175px oltre il bordo. */
+.blobTop {
+  top: -175px;
+  right: 0;
+  width: 84px;
+  height: 250px;
+  color: var(--color-kidville-green);
+}
+.blobBottomLeft {
+  bottom: 0;
+  left: 0;
+  width: 190px;
+  height: 132px;
+}
+.blobBottomRight {
+  bottom: 0;
+  right: 0;
+  width: 168px;
+  height: 156px;
+}
+.fillGreen {
+  fill: var(--color-kidville-green);
+}
+.fillTeal {
+  fill: #0a8072; /* accento del design, senza token: la deco non esiste in Alto Contrasto */
+}
+.fillYellow {
+  fill: var(--color-kidville-yellow);
+}
+
+/* Iconcine: coordinate del design, ancorate alla colonna centrale. */
+.icons {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100%;
+  max-width: 402px;
+}
 .ico {
   position: absolute;
-  color: var(--color-kidville-green);
-  opacity: 0.10;
+  color: var(--color-kidville-green-dark);
+  opacity: 0.11;
 }
-.icoStar { top: 12%; left: 8%; width: 34px; }
-.icoCloud { top: 9%; right: 10%; width: 46px; opacity: 0.08; }
-.icoRing { top: 40%; right: 6%; width: 40px; }
-.icoHouse { top: 44%; left: 6%; width: 40px; }
+.icoStar { top: 120px; left: 34px; width: 36px; }
+.icoCloud { top: 150px; right: 104px; width: 50px; opacity: 0.09; }
+.icoRing { top: 300px; right: 30px; width: 44px; }
+.icoHouse { top: 352px; left: 24px; width: 44px; }
 
 /* ───────── Colonna centrale ───────── */
 .scene {
   position: relative;
   z-index: 1;
   width: 100%;
-  max-width: 430px;
+  /* Design: schermo 402 con card a 18px per lato → colonna 402, card 366. */
+  max-width: 402px;
+  padding: 0 18px;
   display: flex;
   flex-direction: column;
   align-items: center;
 }
 
 .logo {
-  width: min(208px, 58%);
-  margin: 0 0 2px;
+  width: 208px;
+  max-width: 62%;
+  margin-bottom: 5px;
 }
 .logo img {
   width: 100%;
@@ -64,11 +122,12 @@
 }
 
 .mascot {
-  height: clamp(184px, 32vh, 252px);
-  margin-bottom: -24px;
+  /* Design: 278px con sovrapposizione di 40px sulla card. */
+  height: clamp(196px, 33vh, 278px);
+  margin-bottom: -40px;
   z-index: 2;
   pointer-events: none;
-  filter: drop-shadow(0 18px 22px rgba(31, 61, 56, 0.16));
+  filter: drop-shadow(0 18px 22px rgba(31, 61, 56, 0.14));
 }
 .mascot img {
   height: 100%;
@@ -85,9 +144,9 @@
   border: 1px solid transparent;
   border-radius: 34px;
   box-shadow:
-    0 24px 50px -18px rgba(31, 61, 56, 0.22),
-    0 6px 18px -10px rgba(31, 61, 56, 0.12);
-  padding: 30px 24px 24px;
+    0 24px 50px -18px rgba(31, 61, 56, 0.34),
+    0 6px 18px -10px rgba(31, 61, 56, 0.15);
+  padding: 30px 26px 26px;
   display: flex;
   flex-direction: column;
 }
@@ -95,7 +154,7 @@
 .title {
   font-family: var(--font-barlow);
   font-weight: 700;
-  font-size: 40px;
+  font-size: 38px;
   line-height: 1;
   color: var(--color-kidville-green);
   text-align: center;
@@ -104,19 +163,21 @@
 .subtitle {
   font-family: var(--font-maven);
   font-weight: 500;
-  font-size: 15px;
+  font-size: 15.5px;
   line-height: 1.4;
-  color: #66716c;
+  color: var(--color-kidville-sub);
   text-align: center;
-  margin: 9px 4px 0;
+  margin: 9px 0 0;
 }
 
 .alert {
   margin-top: 18px;
   border-radius: 12px;
-  border: 1px solid rgba(229, 57, 53, 0.3);
+  border: 1px solid color-mix(in srgb, var(--color-kidville-error) 30%, transparent);
   background: var(--color-kidville-error-soft);
-  color: var(--color-kidville-error);
+  /* Rosso più scuro del token base: #E53935 su #FDECEC è 3,7:1, sotto il 4,5:1
+     richiesto a 14px — ed è l'informazione più critica della pagina. */
+  color: var(--color-kidville-error-strong);
   padding: 10px 12px;
   font-size: 14px;
   font-family: var(--font-maven);
@@ -126,13 +187,14 @@
 .field {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-top: 22px;
+  gap: 9px;
+  margin-top: 26px;
 }
 .label {
   font-family: var(--font-maven);
   font-weight: 700;
-  font-size: 15px;
+  font-size: 16px;
+  letter-spacing: 0.005em;
   color: var(--color-kidville-green);
 }
 .inwrap {
@@ -161,9 +223,10 @@
   padding: 0 14px 0 46px;
   font-family: var(--font-maven);
   font-weight: 500;
-  font-size: 14.5px;
+  font-size: 16px; /* design 14.5px: alzato a 16 per non far zoomare iOS al focus */
   color: var(--color-kidville-ink);
-  outline: none;
+  /* NB: niente `outline: none` (c'è nel design). Qui azzererebbe anche l'anello
+     di focus globale da tastiera: il bordo verde da solo non basta. */
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 .hasEye .input {
@@ -175,7 +238,7 @@
 }
 .input:focus {
   border-color: var(--color-kidville-green);
-  box-shadow: 0 0 0 3.5px rgba(0, 106, 95, 0.12);
+  box-shadow: 0 0 0 3.5px rgba(0, 106, 95, 0.11);
 }
 .eye {
   position: absolute;
@@ -184,13 +247,22 @@
   height: 34px;
   border: none;
   background: transparent;
-  color: var(--color-kidville-muted);
+  touch-action: manipulation;
+  /* Design: --kv-muted. Qui l'icona è l'unico segno visivo del controllo, quindi
+     serve almeno 3:1: `muted` si ferma a 2,5:1. */
+  color: var(--color-kidville-sub);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   border-radius: 10px;
   transition: color 0.15s ease, background 0.15s ease;
+}
+/* Area cliccabile portata a 44×44 senza cambiare l'aspetto del bottone (34×34). */
+.eye::before {
+  content: '';
+  position: absolute;
+  inset: -5px;
 }
 .eye:hover {
   color: var(--color-kidville-green);
@@ -203,23 +275,31 @@
   background: none;
   border: none;
   cursor: pointer;
+  padding: 4px 0;
   font-family: var(--font-maven);
   font-weight: 600;
   font-size: 14px;
   color: var(--color-kidville-green);
+}
+.forgot:hover {
+  color: var(--color-kidville-green-dark);
 }
 .forgotNote {
   margin-top: 10px;
   font-family: var(--font-maven);
   font-size: 12.5px;
   line-height: 1.45;
-  color: #66716c;
+  color: var(--color-kidville-sub);
 }
 
 /* ───────── Pulsante primario ───────── */
 .accedi {
+  touch-action: manipulation;
   margin-top: 24px;
-  height: 60px;
+  /* Design: 40px. Portato al minimo touch target (44px): sotto quella soglia il
+     bersaglio è troppo piccolo su mobile. */
+  height: 44px;
+  flex-shrink: 0;
   width: 100%;
   border: none;
   cursor: pointer;
@@ -233,7 +313,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 14px 26px -12px rgba(0, 84, 75, 0.5);
+  box-shadow: 0 14px 26px -12px rgba(0, 84, 75, 0.6);
   transition: transform 0.15s cubic-bezier(0.34, 1.4, 0.44, 1), background 0.15s ease;
 }
 .accedi:hover {
@@ -243,48 +323,131 @@
 .accedi:active {
   transform: scale(0.98);
 }
+/* Niente `opacity`: sbiadire il verde sul bianco porta l'etichetta "Accesso…" a
+   2,8:1 proprio quando va letta. Si scurisce invece il fondo. */
 .accedi:disabled {
-  opacity: 0.6;
-  cursor: default;
+  background: var(--color-kidville-green-dark);
+  box-shadow: none;
+  cursor: progress;
   transform: none;
 }
 
-/* Scelta ruolo (≥2 profili) — stesso peso visivo del pulsante primario. */
+/* Scelta ruolo (≥2 profili) — stesso peso visivo del pulsante primario.
+   Nel design l'unico Barlow è l'h1: il picker eredita la tipografia del CTA. */
 .roleBtn {
   composes: accedi;
   margin-top: 0;
   margin-bottom: 12px;
-  font-family: var(--font-barlow);
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
-  font-size: 20px;
 }
 
-.contrast {
-  margin-top: 20px;
-  width: 100%;
-  text-align: center;
-  background: none;
-  border: none;
-  cursor: pointer;
-  font-family: var(--font-maven);
-  font-size: 12.5px;
-  color: #66716c;
-  text-decoration: underline;
+/* Il toggle Alto Contrasto non vive più qui: sta nei menu account di tutte le
+   aree (ContrastMenuButton). Nel design la card chiude con "Accedi". */
+
+/* ───────── Telefoni bassi (iPhone SE & co.) ─────────
+   Alle proporzioni del design il contenuto sfora i 667px e "Accedi" finisce
+   sotto la piega: qui la colonna si compatta per far entrare tutto, CTA inclusa.
+   Sui telefoni normali (≥720px) restano i valori del mockup. */
+@media (max-height: 720px) {
+  .page {
+    padding: 12px 0 calc(12px + env(safe-area-inset-bottom));
+  }
+  .logo {
+    width: 168px;
+  }
+  .mascot {
+    height: 168px;
+    margin-bottom: -30px;
+  }
+  .title {
+    font-size: 32px;
+  }
+  .subtitle {
+    font-size: 14.5px;
+    margin-top: 7px;
+  }
+  .card {
+    padding: 22px 22px 20px;
+    border-radius: 28px;
+  }
+  .field {
+    margin-top: 18px;
+  }
+  .accedi {
+    margin-top: 20px;
+  }
 }
 
-/* ───────── Alto Contrasto — override mirati ───────── */
+/* Telefoni molto bassi (SE 1ª gen, 568px): con `overflow:hidden` ciò che non
+   entra viene TAGLIATO, non scrollato — quindi qui la colonna va stretta ancora,
+   altrimenti il logo finisce mozzato. */
+@media (max-height: 600px) {
+  .logo {
+    width: 140px;
+  }
+  .mascot {
+    height: 124px;
+    margin-bottom: -24px;
+  }
+  .title {
+    font-size: 28px;
+  }
+  .card {
+    padding: 18px 20px 16px;
+  }
+  .field {
+    margin-top: 14px;
+  }
+  .input {
+    height: 42px;
+  }
+  .accedi {
+    margin-top: 16px;
+  }
+}
+
+/* Landscape / schermi molto bassi: qui NON c'è modo di far entrare tutto senza
+   rimpicciolire il form oltre il leggibile. Meglio restituire lo scroll che
+   tagliare via il bottone "Accedi". */
+@media (max-height: 480px) {
+  .page {
+    height: auto;
+    min-height: 100dvh;
+    overflow: visible;
+  }
+  .mascot,
+  .logo {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .accedi,
+  .accedi:hover,
+  .accedi:active {
+    transition: background 0.15s ease;
+    transform: none;
+  }
+}
+
+/* ───────── Alto Contrasto — override mirati ─────────
+   La crema è cablata (design), quindi qui va ribaltata a mano. */
+:global(html[data-contrast="high"]) .page {
+  background: #000;
+}
 :global(html[data-contrast="high"]) .card {
   border-color: var(--color-kidville-line);
+}
+/* Il wordmark resta (è l'unica identificazione del brand), invertito in bianco:
+   il PNG verde su nero sarebbe ~3,5:1. La mascotte, decorativa, sparisce. */
+:global(html[data-contrast="high"]) .logo img {
+  filter: brightness(0) invert(1);
+}
+:global(html[data-contrast="high"]) .logo {
+  margin-bottom: 22px; /* recupera lo stacco che dava il -40px della mascotte */
 }
 :global(html[data-contrast="high"]) .accedi,
 :global(html[data-contrast="high"]) .roleBtn {
   color: #000;
   border: 1px solid #fff;
   box-shadow: none;
-}
-:global(html[data-contrast="high"]) .subtitle,
-:global(html[data-contrast="high"]) .forgotNote,
-:global(html[data-contrast="high"]) .contrast {
-  color: var(--color-kidville-muted);
 }

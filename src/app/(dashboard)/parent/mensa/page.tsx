@@ -3,6 +3,7 @@
 import { Suspense, useState, useEffect } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { MensaCalendar } from '@/components/features/parent/mensa/MensaCalendar';
+import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 
 /** Banner pericolo allergeni (DL-043): il menù di oggi contiene allergeni del figlio. */
@@ -35,16 +36,13 @@ function Inner() {
   const { parentId, studentId, ready } = useParentIdentity();
 
   return (
-    <div className="px-4 pt-6 pb-24">
-      <header className="mb-5">
-        <p className="font-barlow font-bold text-[11px] uppercase tracking-[0.14em] text-kidville-yellow-dark">
-          Servizi
-        </p>
-        <h1 className="font-barlow font-black text-2xl text-kidville-green uppercase tracking-wide leading-none">
-          Mensa
-        </h1>
-        <p className="font-maven text-xs text-kidville-muted mt-1">Prenota il pranzo e consulta il menù della settimana.</p>
-      </header>
+    <div className="px-4 pt-5 pb-24">
+      <PageHeaderCard
+        eyebrow="Servizi"
+        title="Mensa"
+        subtitle="Prenota il pranzo e consulta il menù della settimana."
+        className="mb-5"
+      />
       {!ready || !parentId ? (
         <div className="py-12 flex justify-center"><div className="w-7 h-7 border-[3px] border-kidville-green/20 border-t-kidville-green rounded-full animate-spin" /></div>
       ) : !studentId ? (
@@ -61,7 +59,7 @@ function Inner() {
 
 export default function ParentMensaPage() {
   return (
-    <Suspense fallback={<div className="p-8 font-maven text-gray-400">Caricamento…</div>}>
+    <Suspense fallback={<div className="p-8 font-maven text-kidville-muted">Caricamento…</div>}>
       <Inner />
     </Suspense>
   );

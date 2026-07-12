@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronLeft, ChevronRight, Camera, ChevronDown, GraduationCap } from 'lucide-react';
 import { getEventConfig } from '@/components/features/teacher/diary/eventConfig';
+import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 import { useChildSchoolType } from '@/lib/auth/use-child-school-type';
 import { UMORE_CONFIG, umoreFromDettagli, umoreNarrative } from '@/lib/diary/umore';
@@ -202,7 +203,7 @@ function EventCard({ entry, index }: { entry: DiaryEntry; index: number }) {
         entry.tipo_evento,
         entry.dettagli,
     );
-    const borderColor = config.accentColor.split(' ').find(c => c.startsWith('border-')) ?? 'border-gray-100';
+    const borderColor = config.accentColor.split(' ').find(c => c.startsWith('border-')) ?? 'border-kidville-line';
 
     return (
         <motion.div
@@ -220,7 +221,7 @@ function EventCard({ entry, index }: { entry: DiaryEntry; index: number }) {
                     <p className={`font-barlow font-black text-sm uppercase tracking-wide ${config.accentColor.split(' ').find(c => c.startsWith('text-')) ?? 'text-kidville-green'}`}>
                         {config.label}
                     </p>
-                    <p className="font-maven text-[11px] text-gray-400">
+                    <p className="font-maven text-[11px] text-kidville-muted">
                         {formatTime(entry.timestamp_evento)}
                     </p>
                 </div>
@@ -230,12 +231,12 @@ function EventCard({ entry, index }: { entry: DiaryEntry; index: number }) {
             {/* Narrazione prima persona */}
             <div className="space-y-1.5 pl-1">
                 {lines.map((line, i) => (
-                    <p key={i} className="font-maven text-sm text-gray-700 leading-relaxed">
+                    <p key={i} className="font-maven text-sm text-kidville-ink leading-relaxed">
                         {line}
                     </p>
                 ))}
                 {entry.note && (
-                    <p className="font-maven text-sm text-gray-400 italic mt-2 pt-2 border-t border-gray-50">
+                    <p className="font-maven text-sm text-kidville-muted italic mt-2 pt-2 border-t border-kidville-line/60">
                         💬 &ldquo;{entry.note}&rdquo;
                     </p>
                 )}
@@ -266,13 +267,13 @@ function PhotosSection({ photos }: { photos: MediaItem[] }) {
                         <p className="font-barlow font-black text-sm uppercase tracking-wide text-pink-600">
                             Le foto di oggi
                         </p>
-                        <p className="font-maven text-[11px] text-gray-400">
+                        <p className="font-maven text-[11px] text-kidville-muted">
                             {photos.length} {photos.length === 1 ? 'foto' : 'foto'} scattate dalla maestra
                         </p>
                     </div>
                 </div>
                 <motion.div animate={{ rotate: open ? 180 : 0 }} transition={{ duration: 0.2 }}>
-                    <ChevronDown size={16} className="text-gray-400" strokeWidth={1.5} />
+                    <ChevronDown size={16} className="text-kidville-muted" strokeWidth={1.5} />
                 </motion.div>
             </button>
             <AnimatePresence>
@@ -284,7 +285,7 @@ function PhotosSection({ photos }: { photos: MediaItem[] }) {
                         transition={{ duration: 0.25 }}
                         className="overflow-hidden"
                     >
-                        <div className="px-4 pb-4 pt-0 border-t border-gray-50 bg-black/5 rounded-b-3xl">
+                        <div className="px-4 pb-4 pt-0 border-t border-kidville-line/60 bg-black/5 rounded-b-3xl">
                             <MediaGrid items={photos} showActions />
                         </div>
                     </motion.div>
@@ -405,40 +406,38 @@ function ParentDiaryContent() {
     }
 
     return (
-        <div className="w-full max-w-lg mx-auto p-4 sm:p-6 pb-24">
+        <div className="px-4 pt-5 pb-24">
 
-            {/* Header: titolo + chip nome bambino */}
-            <div className="flex items-start justify-between mb-6">
-                <div>
-                    <p className="font-barlow font-bold text-[11px] uppercase tracking-[0.14em] text-kidville-yellow-dark">
-                        Diario
-                    </p>
-                    <h1 className="font-barlow font-black text-3xl text-kidville-green uppercase tracking-wide leading-none">
-                        Il mio diario
-                    </h1>
-                    <p className="font-maven text-kidville-muted mt-1 text-sm">
-                        La giornata a scuola, raccontata da me 🌈
-                    </p>
-                </div>
-                {/* Chip nome bambino — top right */}
-                <div className="flex items-center gap-2 bg-white rounded-2xl border border-kidville-line shadow-sm px-3 py-2 ml-3 flex-shrink-0">
-                    <div className="w-8 h-8 rounded-full bg-kidville-green flex items-center justify-center font-barlow font-black text-xs text-kidville-yellow flex-shrink-0">
-                        {initials}
+            {/* Header verde (DR): titolo + chip nome bambino */}
+            <PageHeaderCard
+                eyebrow="La giornata"
+                title="Il mio diario"
+                subtitle="La giornata a scuola, raccontata da me 🌈"
+                className="mb-6"
+                action={
+                    <div className="flex items-center gap-2 rounded-pill bg-white/15 py-1 pl-1 pr-3">
+                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-kidville-yellow font-barlow text-xs font-extrabold text-kidville-green">
+                            {initials}
+                        </span>
+                        <span className="min-w-0">
+                            <span className="block truncate font-barlow text-xs font-extrabold uppercase leading-none text-white">
+                                {studentName ?? '...'}
+                            </span>
+                            {classe && (
+                                <span className="block truncate font-maven text-[10px] text-white/70">
+                                    {classe}
+                                </span>
+                            )}
+                        </span>
                     </div>
-                    <div className="text-right">
-                        <p className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide leading-tight">
-                            {studentName ?? '...'}
-                        </p>
-                        {classe && <p className="font-maven text-[10px] text-gray-400">{classe}</p>}
-                    </div>
-                </div>
-            </div>
+                }
+            />
 
             {/* Navigazione giorno */}
             <div className="flex items-center justify-between mb-5 bg-white rounded-2xl border border-kidville-line shadow-sm px-4 py-3">
                 <button
                     onClick={() => goDay(-1)}
-                    className="w-9 h-9 rounded-xl bg-gray-50 hover:bg-gray-100 flex items-center justify-center text-gray-500 transition-colors"
+                    className="w-9 h-9 rounded-xl bg-kidville-neutral-soft hover:bg-kidville-cream-dark flex items-center justify-center text-kidville-muted transition-colors"
                 >
                     <ChevronLeft size={18} strokeWidth={1.5} />
                 </button>
@@ -447,7 +446,7 @@ function ParentDiaryContent() {
                     <p className="font-barlow font-black text-base text-kidville-green uppercase tracking-wide">
                         {formatDayLabel(dateKey)}
                     </p>
-                    <p className="font-maven text-xs text-gray-400">
+                    <p className="font-maven text-xs text-kidville-muted">
                         {new Date(dateKey + 'T12:00:00').toLocaleDateString('it-IT', {
                             day: 'numeric', month: 'long', year: 'numeric',
                         })}
@@ -459,8 +458,8 @@ function ParentDiaryContent() {
                     disabled={isToday}
                     className={`w-9 h-9 rounded-xl flex items-center justify-center transition-colors ${
                         isToday
-                            ? 'bg-gray-50 text-gray-200 cursor-not-allowed'
-                            : 'bg-gray-50 hover:bg-gray-100 text-gray-500'
+                            ? 'bg-kidville-neutral-soft text-kidville-line cursor-not-allowed'
+                            : 'bg-kidville-neutral-soft hover:bg-kidville-cream-dark text-kidville-muted'
                     }`}
                 >
                     <ChevronRight size={18} strokeWidth={1.5} />
@@ -482,7 +481,7 @@ function ParentDiaryContent() {
                     {loading && (
                         <div className="flex flex-col items-center justify-center py-20 gap-3">
                             <div className="w-7 h-7 border-[3px] border-kidville-green/20 border-t-kidville-green rounded-full animate-spin" />
-                            <p className="font-maven text-sm text-gray-400">Un attimo...</p>
+                            <p className="font-maven text-sm text-kidville-muted">Un attimo...</p>
                         </div>
                     )}
 
@@ -495,7 +494,7 @@ function ParentDiaryContent() {
                             <h2 className="font-barlow font-bold text-xl text-kidville-green uppercase mb-2">
                                 Nessuna voce
                             </h2>
-                            <p className="font-maven text-gray-400 max-w-xs text-sm">
+                            <p className="font-maven text-kidville-muted max-w-xs text-sm">
                                 La maestra non ha ancora compilato il diario per questo giorno.
                             </p>
                         </div>
@@ -533,11 +532,11 @@ function ParentDiaryContent() {
                                         </div>
                                         <div className="flex-1">
                                             <p className="font-barlow font-black text-sm uppercase tracking-wide text-kidville-success">Entrata</p>
-                                            <p className="font-maven text-[11px] text-gray-400">{checkIn}</p>
+                                            <p className="font-maven text-[11px] text-kidville-muted">{checkIn}</p>
                                         </div>
                                         <span className="text-2xl">👋</span>
                                     </div>
-                                    <p className="font-maven text-sm text-gray-700 leading-relaxed pl-1 mt-2">
+                                    <p className="font-maven text-sm text-kidville-ink leading-relaxed pl-1 mt-2">
                                         Sono arrivato/a a scuola alle {checkIn}!
                                     </p>
                                 </motion.div>
@@ -554,7 +553,7 @@ function ParentDiaryContent() {
 
             {/* Footer */}
             <div className="mt-8 p-4 bg-white rounded-2xl border border-kidville-line text-center">
-                <p className="font-maven text-xs text-gray-400">
+                <p className="font-maven text-xs text-kidville-muted">
                     📋 Le informazioni sono visibili per i 14 giorni precedenti.<br />
                     Per lo storico completo contatta la segreteria.
                 </p>
@@ -566,7 +565,7 @@ function ParentDiaryContent() {
 export default function ParentDiaryPage() {
     return (
         <Suspense fallback={
-            <div className="max-w-lg mx-auto p-4 sm:p-6 flex flex-col items-center justify-center min-h-[60vh] gap-4">
+            <div className="px-4 pt-5 pb-24 flex flex-col items-center justify-center min-h-[60vh] gap-4">
                 <div className="w-10 h-10 border-4 border-kidville-green/30 border-t-kidville-green rounded-full animate-spin" />
             </div>
         }>

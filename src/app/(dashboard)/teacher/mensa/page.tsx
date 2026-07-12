@@ -7,9 +7,10 @@
 
 import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { UtensilsCrossed, AlertTriangle, RefreshCw, CalendarDays } from 'lucide-react';
+import { AlertTriangle, RefreshCw, CalendarDays } from 'lucide-react';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { allergeneLabel, allergeneEmoji } from '@/lib/mensa/allergeni';
+import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 
 interface AlunnoReport { id: string; nome: string; classe: string; allergeni: string[]; conflitti: unknown[] }
 interface ClasseReport { classe: string; conteggio: number; alunni: AlunnoReport[] }
@@ -70,14 +71,14 @@ function MensaDocente() {
   const aggiorna = () => { setLoading(true); setReloadKey((k) => k + 1); };
 
   return (
-    <div className="mx-auto max-w-[520px] px-4 pt-6">
-      <div className="mb-4">
-        <p className="font-barlow font-bold text-[11px] uppercase tracking-[0.14em] text-kidville-yellow-dark">Vita scolastica</p>
-        <h1 className="font-barlow text-2xl font-black uppercase tracking-wide leading-none text-kidville-green flex items-center gap-2">
-          <UtensilsCrossed size={22} /> Mensa
-        </h1>
-        <p className="mt-1 font-maven text-sm text-kidville-muted">Prenotazioni pranzo della classe (sola lettura).</p>
-      </div>
+    <div className="mx-auto max-w-[460px] px-4 pt-6">
+      {/* Header verde (DR) */}
+      <PageHeaderCard
+        eyebrow="Vita scolastica"
+        title="Mensa"
+        subtitle="Prenotazioni pranzo della classe (sola lettura)."
+        className="mb-4"
+      />
 
       {/* Controlli: sezione + data */}
       <div className="mb-4 space-y-3">

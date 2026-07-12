@@ -56,22 +56,18 @@ function groupByDate(messages: ChatMessage[]): { date: string; messages: ChatMes
     return groups;
 }
 
-/** Separatore visivo "Nuovi Messaggi" stile Kidville/WhatsApp */
+/** Separatore "Nuovi Messaggi" — pillola del design (non-letto = giallo, mai rosso). */
 function UnreadSeparator() {
     return (
         <motion.div
             initial={{ opacity: 0, scaleX: 0.8 }}
             animate={{ opacity: 1, scaleX: 1 }}
             transition={{ duration: 0.3, ease: 'easeOut' }}
-            className="flex items-center gap-3 my-5 px-2"
+            className="my-5 flex justify-center"
         >
-            <div className="flex-1 h-px bg-kidville-success/40" />
-            <span className="flex items-center gap-2 text-kidville-success text-xs font-bold font-barlow uppercase tracking-widest px-4 py-1.5 rounded-full bg-kidville-success-soft border border-kidville-success/40 shadow-sm whitespace-nowrap">
-                <span className="w-2 h-2 rounded-full bg-kidville-success animate-pulse" />
+            <span className="whitespace-nowrap rounded-pill border border-kidville-yellow bg-kidville-yellow-soft px-3 py-1 font-barlow text-[10.5px] font-extrabold uppercase tracking-[0.08em] text-kidville-yellow-dark">
                 Nuovi Messaggi
-                <span className="w-2 h-2 rounded-full bg-kidville-success animate-pulse" />
             </span>
-            <div className="flex-1 h-px bg-kidville-success/40" />
         </motion.div>
     );
 }
@@ -100,11 +96,18 @@ function MessageBubble({ msg, isMine, currentUserId }: { msg: ChatMessage; isMin
     };
 
     return (
-        <div className={`max-w-[75%] rounded-2xl px-4 py-2.5 shadow-sm ${
-            isMine
-                ? 'bg-kidville-green text-white rounded-br-md'
-                : 'bg-kidville-white border border-kidville-line text-kidville-ink rounded-bl-md'
-        }`}>
+        <div
+            className={`max-w-[min(270px,80%)] px-3 py-2 ${
+                isMine
+                    ? 'rounded-[18px] rounded-br-[6px] bg-kidville-green text-white'
+                    : 'rounded-[18px] rounded-bl-[6px] border border-kidville-line bg-kidville-white text-kidville-ink'
+            }`}
+            style={{
+                boxShadow: isMine
+                    ? '0 8px 20px -14px rgba(0,84,75,.7)'
+                    : '0 1px 2px rgba(0,84,75,.05), 0 8px 22px -20px rgba(0,84,75,.3)',
+            }}
+        >
             {/* Attachment preview */}
             {msg.attachment_url && msg.attachment_type === 'image' && (
                 <div className="mb-2 rounded-xl overflow-hidden">
@@ -131,8 +134,8 @@ function MessageBubble({ msg, isMine, currentUserId }: { msg: ChatMessage; isMin
                 )
             )}
 
-            {/* Text */}
-            <p className={`font-maven text-sm leading-relaxed ${isMine ? 'text-white' : 'text-kidville-ink'}`}>
+            {/* Text (design: Maven 13.5px, interlinea 1.42) */}
+            <p className={`font-maven text-[13.5px] leading-[1.42] ${isMine ? 'text-white' : 'text-kidville-ink'}`}>
                 {msg.content}
             </p>
 
@@ -144,14 +147,15 @@ function MessageBubble({ msg, isMine, currentUserId }: { msg: ChatMessage; isMin
                             🌐 {translated}
                         </p>
                     )}
+                    {/* Chip "Traduci" del design (pill green-soft, Barlow 800) */}
                     <button
                         onClick={handleTranslate}
                         disabled={translating}
-                        className="mt-1 inline-flex items-center gap-1 text-[11px] font-maven text-kidville-muted hover:text-kidville-green transition-colors disabled:opacity-50"
+                        className="mt-1.5 inline-flex items-center gap-1 rounded-pill bg-kidville-green-soft px-2 py-0.5 font-barlow text-[10px] font-extrabold uppercase tracking-wide text-kidville-green transition-colors disabled:opacity-50"
                     >
                         {translating
                             ? <Loader2 size={11} className="animate-spin" />
-                            : <Languages size={11} strokeWidth={1.5} />}
+                            : <Languages size={11} strokeWidth={2} />}
                         {translated ? 'Mostra originale' : 'Traduci'}
                     </button>
                 </>
@@ -269,7 +273,7 @@ export function ChatMessageArea({
 
     if (loading) {
         return (
-            <div className="flex-1 flex items-center justify-center">
+            <div className="flex-1 flex items-center justify-center bg-kidville-cream/50">
                 <div className="flex flex-col items-center gap-3">
                     <div className="w-7 h-7 border-[3px] border-kidville-green/20 border-t-kidville-green rounded-full animate-spin" />
                     <p className="font-maven text-sm text-kidville-muted">Caricamento messaggi...</p>
@@ -280,7 +284,7 @@ export function ChatMessageArea({
 
     if (messages.length === 0) {
         return (
-            <div className="flex-1 flex items-center justify-center px-4">
+            <div className="flex-1 flex items-center justify-center px-4 bg-kidville-cream/50">
                 <div className="text-center">
                     <div className="w-20 h-20 bg-kidville-cream rounded-full flex items-center justify-center mx-auto mb-4 text-3xl">
                         💬
@@ -299,14 +303,14 @@ export function ChatMessageArea({
     const groups = groupByDate(messages);
 
     return (
-        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+        <div className="flex-1 overflow-y-auto bg-kidville-cream/50 px-4 py-4 space-y-4">
             {groups.map((group) => (
                 <div key={group.date}>
-                    {/* Date separator */}
-                    <div className="flex items-center gap-3 my-4">
-                        <div className="flex-1 h-px bg-kidville-line" />
-                        <span className="font-maven text-[11px] text-kidville-muted px-2">{group.date}</span>
-                        <div className="flex-1 h-px bg-kidville-line" />
+                    {/* Separatore giorno — pillola del design */}
+                    <div className="my-4 flex justify-center">
+                        <span className="rounded-pill border border-kidville-line bg-white/70 px-3 py-1 font-barlow text-[10.5px] font-extrabold uppercase tracking-[0.08em] text-kidville-muted">
+                            {group.date}
+                        </span>
                     </div>
 
                     {/* Messages */}

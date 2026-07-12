@@ -20,6 +20,7 @@
   --color-kidville-yellow-soft: #FBF0DD;
   --color-kidville-cream-dark: #F6E4D2;
   --color-kidville-error-soft: #FDECEC;
+  --color-kidville-error-strong: #C62828;  /* testo d'errore su error-soft (4,9:1) */
   --color-kidville-success-soft: #E7F3E8;
 
   /* ── Stati semantici cockpit (segreteria/admin) ── */
@@ -32,6 +33,7 @@
 
   /* ── Testo / linee ── */
   --color-kidville-ink: #1F3D38;
+  --color-kidville-sub: #55615C;   /* testo secondario (design --kv-sub) */
   --color-kidville-muted: #9AA6A2;
   --color-kidville-line: #EFE7DC;
 
@@ -87,6 +89,25 @@ body {
 .cap-native body {
   padding-top: env(safe-area-inset-top);
 }
+/* AppBar persistente (teacher/parent): la barra verde deve dipingere SOTTO il
+   notch e lo sticky non deve infilarsi sotto il testo della status bar. Il
+   margine negativo annulla il padding-top del body SOLO nelle shell che hanno
+   la barra ([data-kv-shell]); il padding rientra dentro la barra stessa.
+   Nel browser web env() = 0 → nessun effetto. */
+/* Altezza della AppBar persistente: 58px sul web; nella shell nativa cresce
+   dell'inset (la barra ingloba la status bar). Definita QUI e non inline nei
+   layout, così l'override .cap-native può vincere. Usata da sticky (ClasseShell)
+   e calc() delle altezze (chat). */
+[data-kv-shell] {
+  --kv-appbar-h: 58px;
+}
+.cap-native [data-kv-shell] {
+  margin-top: calc(-1 * env(safe-area-inset-top));
+  --kv-appbar-h: calc(58px + env(safe-area-inset-top));
+}
+.cap-native [data-kv-shell] .kv-appbar {
+  padding-top: env(safe-area-inset-top);
+}
 
 /* =============================================================================
    Cockpit Direzione/Segreteria — la cornice persistente (sidebar) non deve MAI
@@ -126,6 +147,7 @@ body {
   --color-kidville-yellow-soft: #1A1A1A;
   --color-kidville-cream-dark: #000000;
   --color-kidville-error-soft: #000000;
+  --color-kidville-error-strong: #FF5252;
   --color-kidville-success-soft: #000000;
   --color-kidville-warn: #FFB300;
   --color-kidville-warn-soft: #1A1A1A;
@@ -134,6 +156,7 @@ body {
   --color-kidville-neutral: #E0E0E0;
   --color-kidville-neutral-soft: #1A1A1A;
   --color-kidville-ink: #FFFFFF;
+  --color-kidville-sub: #E0E0E0;
   --color-kidville-muted: #E0E0E0;
   --color-kidville-line: #8A8A8A;
 }
@@ -148,6 +171,14 @@ body {
 [data-contrast="high"] *:focus-visible {
   outline: 3px solid #FFE500;
   outline-offset: 2px;
+}
+/* AppBar e card-header verdi: in alto contrasto --color-kidville-green diventa
+   #FFF e il testo bianco sparirebbe (bug latente degli header verdi inline).
+   Sfondo nero con bordo: wordmark bianco, pill white/15 e gialli restano leggibili. */
+[data-contrast="high"] .kv-appbar,
+[data-contrast="high"] .kv-header-card {
+  background: #000000;
+  box-shadow: inset 0 0 0 1px #8A8A8A;
 }
 
 /* Focus-ring visibile anche in modalità normale (baseline WCAG). */

@@ -1,4 +1,5 @@
 import { Suspense } from 'react';
+import { AppBar } from '@/components/features/shell/AppBar';
 import BottomNav from '@/components/features/parent/BottomNav';
 import { ChildSwitcher } from '@/components/features/parent/ChildSwitcher';
 import { requireArea } from '@/lib/auth/area-guard';
@@ -8,14 +9,18 @@ export default async function ParentLayout({ children }: { children: React.React
   // /parent finisce su /teacher, un doppio profilo senza scelta torna al login.
   await requireArea('parent');
   return (
-    <div className="min-h-screen bg-kidville-cream">
+    <div className="min-h-screen bg-kidville-cream" data-kv-shell>
       <a
         href="#content"
         className="sr-only focus:not-sr-only focus:absolute focus:z-[100] focus:top-2 focus:left-2 focus:rounded-lg focus:bg-kidville-green focus:px-3 focus:py-2 focus:text-kidville-yellow"
       >
         Salta al contenuto
       </a>
-      <div className="relative max-w-[430px] mx-auto min-h-screen">
+      {/* AppBar full-bleed (fuori dal vincolo 430px); usa useSearchParams → Suspense. */}
+      <Suspense fallback={<div className="bg-kidville-green" style={{ height: 'var(--kv-appbar-h, 58px)' }} />}>
+        <AppBar area="parent" />
+      </Suspense>
+      <div className="relative max-w-[430px] mx-auto">
         {/* Selettore figlio (per genitori con più figli). Usa useSearchParams → Suspense. */}
         <Suspense fallback={null}>
           <ChildSwitcher />

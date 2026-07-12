@@ -2,6 +2,8 @@
 
 import { Suspense, useState } from 'react';
 import { CheckCircle, CalendarX2, AlertTriangle } from 'lucide-react';
+import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
+import { Btn } from '@/components/ui/Btn';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 
 function AttendanceInner() {
@@ -42,37 +44,36 @@ function AttendanceInner() {
 
     if (isSubmitted) {
         return (
-            <div className="max-w-md mx-auto mt-10 rounded-card bg-kidville-white p-6 text-center shadow-sm">
-                <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-kidville-success-soft text-kidville-success">
-                    <CheckCircle size={32} />
+            <div className="px-4 pt-5 pb-24">
+                <div className="rounded-card bg-kidville-white p-6 text-center shadow-sm">
+                    <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-kidville-success-soft text-kidville-success">
+                        <CheckCircle size={32} />
+                    </div>
+                    <h2 className="mb-2 font-barlow text-2xl font-black uppercase text-kidville-green">Assenza comunicata</h2>
+                    <p className="mb-6 font-maven text-kidville-muted">
+                        La scuola è stata notificata dell&apos;assenza del {new Date(data + 'T12:00:00').toLocaleDateString('it-IT')}. Grazie per la collaborazione.
+                    </p>
+                    <Btn
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => { setIsSubmitted(false); setReason(''); setData(today); }}
+                    >
+                        Comunica un&apos;altra assenza
+                    </Btn>
                 </div>
-                <h2 className="mb-2 font-barlow text-2xl font-black uppercase text-kidville-green">Assenza comunicata</h2>
-                <p className="mb-6 font-maven text-kidville-muted">
-                    La scuola è stata notificata dell&apos;assenza del {new Date(data + 'T12:00:00').toLocaleDateString('it-IT')}. Grazie per la collaborazione.
-                </p>
-                <button
-                    onClick={() => { setIsSubmitted(false); setReason(''); setData(today); }}
-                    className="h-10 rounded-pill bg-kidville-cream px-6 font-maven text-kidville-green transition-colors hover:bg-kidville-green hover:text-kidville-yellow"
-                >
-                    Comunica un&apos;altra assenza
-                </button>
             </div>
         );
     }
 
     return (
-        <div className="max-w-md mx-auto p-4 sm:p-6">
-            <div className="mb-6">
-                <p className="font-barlow text-[11px] font-bold uppercase tracking-[0.14em] text-kidville-yellow-dark">
-                    La giornata
-                </p>
-                <h1 className="font-barlow text-3xl font-black uppercase leading-none tracking-wide text-kidville-green">
-                    Segnala assenza
-                </h1>
-                <p className="mt-1 font-maven text-kidville-muted">Comunica un&apos;assenza alla scuola</p>
-            </div>
+        <div className="px-4 pt-5 pb-24">
+            <PageHeaderCard
+                eyebrow="La giornata"
+                title="Segnala assenza"
+                subtitle="Comunica un'assenza alla scuola"
+            />
 
-            <form onSubmit={handleSubmit} className="rounded-card bg-kidville-white p-6 shadow-sm">
+            <form onSubmit={handleSubmit} className="mt-5 rounded-card bg-kidville-white p-6 shadow-sm">
                 {/* Icona DR */}
                 <div className="mb-4 flex items-center gap-3">
                     <span className="flex h-11 w-11 items-center justify-center rounded-[14px] bg-kidville-error-soft text-kidville-error">
@@ -104,13 +105,15 @@ function AttendanceInner() {
                     </div>
                 )}
 
-                <button
+                <Btn
                     type="submit"
+                    variant="primary"
+                    size="lg"
                     disabled={!ready || submitting}
-                    className="mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-pill bg-kidville-green font-barlow text-lg font-bold uppercase tracking-wide text-kidville-yellow transition-opacity hover:opacity-90 disabled:opacity-50"
+                    className="mt-4 w-full"
                 >
                     {submitting ? 'Invio…' : 'Comunica assenza'}
-                </button>
+                </Btn>
             </form>
         </div>
     );
@@ -118,7 +121,7 @@ function AttendanceInner() {
 
 export default function ParentAttendancePage() {
     return (
-        <Suspense fallback={<div className="p-8 font-maven text-kidville-muted">Caricamento…</div>}>
+        <Suspense fallback={<div className="px-4 pt-5 pb-24 font-maven text-kidville-muted">Caricamento…</div>}>
             <AttendanceInner />
         </Suspense>
     );

@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback, Suspense } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Upload, Tag, WifiOff } from 'lucide-react';
+import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
+import { Btn } from '@/components/ui/Btn';
 import { MediaGrid, MediaItem } from '@/components/features/gallery/MediaGrid';
 import { MediaUploader } from '@/components/features/gallery/MediaUploader';
 import { StudentTagger } from '@/components/features/gallery/StudentTagger';
@@ -365,11 +367,11 @@ function TeacherGalleryContent() {
             )}
 
             {/* Header verde (DR) */}
-            <div className="rounded-3xl bg-kidville-green px-5 py-5" style={{ boxShadow: '0 16px 34px -18px rgba(0,60,52,.6)' }}>
-                <p className="font-barlow text-[11px] font-bold uppercase tracking-[0.14em] text-kidville-yellow">Momenti</p>
-                <h1 className="font-barlow text-3xl font-black uppercase tracking-wide text-white">Galleria</h1>
-                <p className="mt-1.5 font-maven text-xs text-white/80">Foto e video della sezione {sezione || '…'}</p>
-            </div>
+            <PageHeaderCard
+                eyebrow="Momenti"
+                title="Galleria"
+                subtitle={<>Foto e video della sezione {sezione || '…'}</>}
+            />
 
             {/* Controlli (sezione + step) */}
             <div className="mt-3 flex flex-wrap items-center gap-3">
@@ -393,16 +395,14 @@ function TeacherGalleryContent() {
 
                 <div className="ml-auto flex items-center gap-2">
                     {step === 'gallery' && (
-                        <button onClick={() => setStep('upload')}
-                            className="flex items-center gap-2 rounded-pill bg-kidville-green px-4 py-2.5 font-barlow text-sm font-bold uppercase text-kidville-yellow transition-all active:scale-[0.98]">
+                        <Btn variant="primary" size="sm" onClick={() => setStep('upload')}>
                             <Upload size={16} strokeWidth={1.5} /> Carica
-                        </button>
+                        </Btn>
                     )}
                     {step !== 'gallery' && (
-                        <button onClick={() => { setStep('gallery'); setUploadedFiles([]); setActiveFileIndex(0); }}
-                            className="rounded-pill bg-kidville-green-soft px-4 py-2.5 font-maven text-sm font-semibold text-kidville-green transition-all hover:bg-kidville-cream-dark">
+                        <Btn variant="ghost" size="sm" onClick={() => { setStep('gallery'); setUploadedFiles([]); setActiveFileIndex(0); }}>
                             Annulla
-                        </button>
+                        </Btn>
                     )}
                 </div>
             </div>

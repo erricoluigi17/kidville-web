@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ChevronDown, LogOut } from 'lucide-react';
 import { doLogout } from '@/lib/auth/logout';
+import { ContrastMenuButton } from '@/components/ui/ContrastMenuButton';
 
 // Menu utente della TopBar cockpit (Direzione/Segreteria): rende cliccabile il
 // blocco avatar+ruolo e apre un piccolo dropdown con "Esci". Prima non esisteva
@@ -63,6 +64,10 @@ export function UserMenu({ ruoloLabel }: { ruoloLabel: string }) {
           aria-label="Account"
           className="absolute right-0 top-[calc(100%+8px)] z-50 w-52 overflow-hidden rounded-2xl border border-kidville-line bg-kidville-white py-1 shadow-2xl"
         >
+          <ContrastMenuButton
+            iconSize={17}
+            className="flex w-full items-center gap-2.5 px-4 py-2.5 font-maven text-sm font-semibold text-kidville-ink transition-colors hover:bg-kidville-green-soft"
+          />
           <button
             type="button"
             role="menuitem"

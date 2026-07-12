@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { AlertTriangle, CheckSquare, FileText, BarChart3, BookOpen, CalendarDays, ChevronRight } from 'lucide-react';
+import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 
 const SEZIONI = [
   { href: '/parent/lezioni', label: 'Lezioni', sub: 'Argomenti e compiti', icon: BookOpen, bg: 'bg-kidville-info-soft', fg: 'text-kidville-info' },
@@ -14,15 +15,12 @@ const SEZIONI = [
 
 export default function PrimariahubPage() {
   return (
-    <div className="px-4 pt-6 pb-24">
-      <div className="mb-5">
-        <p className="font-barlow font-bold text-[11px] uppercase tracking-[0.14em] text-kidville-yellow-dark">
-          Didattica · Primaria
-        </p>
-        <h1 className="font-barlow text-2xl font-black text-kidville-green uppercase tracking-wide leading-none">
-          Scuola Primaria
-        </h1>
-      </div>
+    <div className="px-4 pt-5 pb-24">
+      <PageHeaderCard
+        eyebrow="Didattica · Primaria"
+        title="Scuola Primaria"
+        className="mb-5"
+      />
 
       <div className="space-y-3">
         {SEZIONI.map((s) => {

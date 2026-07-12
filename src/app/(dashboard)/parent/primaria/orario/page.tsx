@@ -2,6 +2,7 @@
 
 import { Suspense, useEffect, useState } from 'react';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
+import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 
 interface Campanella { id: string; giorno_settimana: number; ordine: number; ora_inizio: string | null; ora_fine: string | null; tipo: string | null }
 interface OrarioVoce {
@@ -32,15 +33,8 @@ function OrarioGenitore() {
     orario.find((o) => o.giorno_settimana === giorno && o.campanella_id === campanellaId);
 
   return (
-    <div className="px-4 pt-6 pb-24">
-      <div className="mb-4">
-        <p className="font-barlow font-bold text-[11px] uppercase tracking-[0.14em] text-kidville-yellow-dark">
-          Didattica · Primaria
-        </p>
-        <h1 className="font-barlow text-2xl font-black text-kidville-green uppercase tracking-wide leading-none">
-          Orario settimanale
-        </h1>
-      </div>
+    <div className="px-4 pt-5 pb-24">
+      <PageHeaderCard eyebrow="Didattica · Primaria" title="Orario settimanale" className="mb-4" />
 
       {loading ? (
         <p className="font-maven text-sm text-kidville-muted">Caricamento…</p>
@@ -79,7 +73,7 @@ function OrarioGenitore() {
 
 export default function OrarioGenitorePage() {
   return (
-    <Suspense fallback={<div className="p-8 font-maven text-kidville-muted">Caricamento…</div>}>
+    <Suspense fallback={<div className="px-4 pt-5 pb-24 font-maven text-kidville-muted">Caricamento…</div>}>
       <OrarioGenitore />
     </Suspense>
   );

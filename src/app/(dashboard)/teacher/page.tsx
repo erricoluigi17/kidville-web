@@ -2,13 +2,14 @@
 
 import { useEffect, useMemo, useState, Suspense } from 'react';
 import Link from 'next/link';
-import Image from 'next/image';
 import {
   BookOpen, ClipboardCheck, NotebookPen, Images, Megaphone, ListTodo,
-  Bell, ChevronRight, Check, AlertTriangle, Eye, Users,
+  ChevronRight, Check, AlertTriangle, Eye, Users,
 } from 'lucide-react';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { useClientValue } from '@/lib/hooks/use-client-value';
+import { greetingByHour } from '@/lib/ui/greeting';
+import { HeroCard } from '@/components/features/shell/HeroCard';
 import { GradeWorldSwitch } from '@/components/features/teacher/GradeWorldSwitch';
 import { TeacherAgendaCard } from '@/components/features/teacher/TeacherAgendaCard';
 
@@ -51,14 +52,6 @@ function relDate(iso: string) {
   }
 }
 
-// Saluto neutro (non di genere) e coerente con l'ora, come lato genitore.
-function greetingByHour() {
-  const h = new Date().getHours();
-  if (h < 12) return 'Buongiorno';
-  if (h < 18) return 'Buon pomeriggio';
-  return 'Buonasera';
-}
-
 function TeacherDashboardInner() {
   const { userId } = useSessionIdentity();
   // La home docente semina i link dell'app: con identità non risolta il
@@ -73,13 +66,9 @@ function TeacherDashboardInner() {
   const [presenze, setPresenze] = useState<Presenza[]>([]);
   const [avvisi, setAvvisi] = useState<Avviso[]>([]);
 
-  // Saluto e data dipendono dall'ora/fuso locale: calcolati SOLO client-side
-  // (SSR-safe) per evitare il mismatch di hydration server-UTC vs browser.
+  // Saluto dipendente dall'ora locale: SOLO client-side (SSR-safe, hydration).
+  // La riga data è interna alla HeroCard.
   const greeting = useClientValue(greetingByHour, '');
-  const oggi = useClientValue(
-    () => new Date().toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' }),
-    '',
-  );
 
   // me (gradi/funzioni) + sezioni + avvisi: 3 fetch indipendenti in UN solo
   // effect con Promise.all. Esiti gestiti per-fetch (catch silenziosi
@@ -143,32 +132,11 @@ function TeacherDashboardInner() {
 
   return (
     <div className="mx-auto max-w-[460px] px-4 pt-5">
-      {/* ── HERO (DR yellow card) ───────────────────────── */}
-      <div
-        className="relative overflow-hidden rounded-3xl bg-kidville-yellow px-5 pb-5 pt-4"
-        style={{ minHeight: 116, boxShadow: '0 14px 30px -16px rgba(230,177,0,.7)' }}
-      >
-        <div className="relative z-10 max-w-[68%]">
-          <p className="font-maven text-xs font-semibold capitalize text-kidville-green/70">{oggi}</p>
-          <h1 className="mt-1 font-barlow text-3xl font-black uppercase leading-[0.96] text-kidville-green">
-            {greeting}{greeting ? '!' : ''}
-          </h1>
-          <p className="mt-1.5 font-maven text-xs font-semibold text-kidville-green/75">
-            {activeSection ? `Sezione ${activeSection} · ${studentCount} bambini` : 'La tua giornata in sezione'}
-          </p>
-        </div>
-        <Link
-          href={withUser('/teacher/avvisi')}
-          aria-label="Comunicazioni"
-          className="absolute right-4 top-4 z-10 flex h-9 w-9 items-center justify-center rounded-full bg-kidville-green/12 text-kidville-green"
-        >
-          <Bell size={18} />
-        </Link>
-        {/* M9.5: mascotte statica su next/image (intrinseco 792×1040 in scala).
-            Rimpicciolita (h-36→h-28) per non finire sotto la campanella in alto a destra. */}
-        <Image src="/mascot.png" alt="" width={198} height={260} priority draggable={false}
-          className="pointer-events-none absolute -bottom-2 right-[-6px] z-0 h-28 w-auto select-none" />
-      </div>
+      {/* ── HERO (DR yellow card) — wordmark/campanella nella AppBar ───── */}
+      <HeroCard
+        title={`${greeting}${greeting ? '!' : ''}`}
+        subtitle={activeSection ? `Sezione ${activeSection} · ${studentCount} bambini` : 'La tua giornata in sezione'}
+      />
 
       {/* ── GRADE WORLD SWITCH (solo docenti misti) ─────── */}
       <div className="mt-4">

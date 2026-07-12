@@ -20,24 +20,20 @@ export function ChatListSkeleton() {
     const rows = [0, 1, 2, 3, 4];
     return (
         <div
-            className="max-w-5xl mx-auto p-4 sm:p-6 animate-pulse"
+            className="px-4 pt-5 pb-24 animate-pulse"
             aria-busy="true"
             aria-label="Caricamento chat"
         >
-            {/* Header */}
-            <div className="mb-4">
-                <div className="h-3 w-28 rounded bg-kidville-line/70 mb-2" />
-                <div className="h-8 w-44 rounded-lg bg-kidville-line/70 mb-2" />
-                <div className="h-3 w-64 max-w-[70%] rounded bg-kidville-line/50" />
-            </div>
+            {/* Header — sagoma della card verde (PageHeaderCard) */}
+            <div className="mb-4 h-[104px] rounded-3xl bg-kidville-line/70" />
 
             {/* Desktop: due colonne (lista + area conversazione) */}
-            <div className="hidden md:flex gap-4 h-[calc(100vh-200px)] min-h-[500px] mb-24">
+            <div className="hidden md:flex gap-4 h-[calc(100vh-200px-var(--kv-appbar-h,0px))] min-h-[500px] mb-24">
                 <div className="w-80 flex-shrink-0 bg-white rounded-3xl border border-kidville-line shadow-sm overflow-hidden">
                     <div className="px-4 py-3 border-b border-kidville-line">
                         <div className="h-3 w-24 rounded bg-kidville-line/70" />
                     </div>
-                    <div className="divide-y divide-gray-100/60">
+                    <div className="divide-y divide-kidville-line/70">
                         {rows.map(i => <SkeletonRow key={i} />)}
                     </div>
                 </div>
@@ -48,7 +44,7 @@ export function ChatListSkeleton() {
 
             {/* Mobile: singolo pannello lista */}
             <div className="md:hidden bg-white rounded-3xl border border-kidville-line shadow-sm overflow-hidden">
-                <div className="divide-y divide-gray-100/60">
+                <div className="divide-y divide-kidville-line/70">
                     {rows.map(i => <SkeletonRow key={i} />)}
                 </div>
             </div>

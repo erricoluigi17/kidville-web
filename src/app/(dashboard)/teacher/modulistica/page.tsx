@@ -6,6 +6,7 @@ import {
   AlertCircle, Upload, Check, Bell, Calendar
 } from 'lucide-react';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
+import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 
 interface StudentSemaforo {
   student_id: string;
@@ -195,13 +196,11 @@ export default function TeacherModulisticaPage() {
   return (
     <div className="mx-auto flex w-full max-w-[460px] flex-1 flex-col px-4 pt-5">
       {/* Header verde (DR) */}
-      <div className="rounded-3xl bg-kidville-green px-5 py-5" style={{ boxShadow: '0 16px 34px -18px rgba(0,60,52,.6)' }}>
-        <p className="font-barlow text-[11px] font-bold uppercase tracking-[0.14em] text-kidville-yellow">Documenti</p>
-        <h1 className="flex items-center gap-2 font-barlow text-3xl font-black uppercase tracking-wide text-white">
-          <FileText size={26} className="text-kidville-yellow" /> Modulistica
-        </h1>
-        <p className="mt-1.5 font-maven text-xs text-white/80">Consensi e certificati · Sezione {className || '…'}</p>
-      </div>
+      <PageHeaderCard
+        eyebrow="Documenti"
+        title="Modulistica"
+        subtitle={<>Consensi e certificati · Sezione {className || '…'}</>}
+      />
 
       {availableSections.length > 1 && (
         <div className="mt-3 flex items-center gap-2">

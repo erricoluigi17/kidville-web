@@ -44,4 +44,17 @@ export async function setupNativeShell(navigate: (path: string) => void): Promis
   } catch {
     // plugin App non disponibile: ignora
   }
+
+  // 4. Tap su una push nativa → deep-link sul link della notifica. Il payload
+  //    FCM include data.url (vedi src/lib/push/native-push.ts); si accettano
+  //    solo percorsi interni ('/...') — mai URL esterni.
+  try {
+    const { PushNotifications } = await import('@capacitor/push-notifications')
+    void PushNotifications.addListener('pushNotificationActionPerformed', (action) => {
+      const url = (action.notification?.data as { url?: string } | undefined)?.url
+      if (typeof url === 'string' && url.startsWith('/')) navigate(url)
+    })
+  } catch {
+    // plugin PushNotifications non disponibile: ignora
+  }
 }

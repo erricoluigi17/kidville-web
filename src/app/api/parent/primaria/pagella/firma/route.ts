@@ -6,6 +6,8 @@ import { getUserEmail, verifyTicket, codeHash } from '@/lib/auth/otp-ticket'
 import { buildSignatureLog, extractRequestMeta } from '@/lib/fea/signature-log'
 import { recordSignerSlot } from '@/lib/fea/slots'
 import { logFeaEvent } from '@/lib/fea/audit'
+import { notificaEvento, nomeUtente } from '@/lib/notifiche/triggers'
+import { docentiDiSezione } from '@/lib/sezioni/docenti'
 import { parseBody } from '@/lib/validation/http'
 
 // Id laschi (non zUuid): il comportamento attuale accetta qualsiasi stringa non
@@ -91,6 +93,31 @@ export async function POST(request: NextRequest) {
         ip,
         userAgent,
       })
+    }
+
+    // Notifica ai docenti della sezione: pagella firmata (best-effort).
+    try {
+      const { data: alunno } = await supabase
+        .from('alunni')
+        .select('nome, cognome, section_id, scuola_id')
+        .eq('id', studentId)
+        .maybeSingle()
+      const docenti = (await docentiDiSezione(supabase, alunno?.section_id as string)).filter((id) => id !== userId)
+      if (docenti.length > 0) {
+        const firmatario = await nomeUtente(supabase, userId)
+        await notificaEvento(supabase, {
+          tipo: 'firma_ricevuta',
+          scuolaId: (alunno?.scuola_id as string | undefined) ?? null,
+          utenteIds: docenti,
+          titolo: 'Pagella firmata dal genitore',
+          corpo: `${firmatario ?? 'Un genitore'} ha firmato la pagella di ${[alunno?.nome, alunno?.cognome].filter(Boolean).join(' ') || 'un alunno'}.`,
+          link: '/teacher/primaria',
+          entitaTipo: 'pagella',
+          entitaId: scrutinioId,
+        })
+      }
+    } catch (e) {
+      console.error('Notifica firma pagella fallita (non bloccante):', e)
     }
 
     return NextResponse.json({ success: true, data })

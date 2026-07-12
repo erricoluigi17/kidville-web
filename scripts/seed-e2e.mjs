@@ -62,6 +62,8 @@ export const IDS = {
   AVVISO: 'e2e00000-0000-4000-8000-000000000401',
   EVENTO: 'e2e00000-0000-4000-8000-000000000501',
   NOTIFICA: 'e2e00000-0000-4000-8000-000000000601',
+  NOTIFICA_GENITORE: 'e2e00000-0000-4000-8000-000000000602',
+  NOTIFICA_DOCENTE: 'e2e00000-0000-4000-8000-000000000603',
   PAG_APERTO: 'e2e00000-0000-4000-8000-000000000701',
   PAG_PAGATO: 'e2e00000-0000-4000-8000-000000000702',
   FORM_MODEL: 'e2e00000-0000-4000-8000-000000000801',
@@ -275,11 +277,21 @@ async function main() {
     orario_inizio: '09:30', visibile_genitori: true, creato_da: IDS.ADMIN,
   }));
 
-  // 11. Notifica non letta per l'admin (centro notifiche)
-  must('notifiche', await db.from('notifiche').insert({
-    id: IDS.NOTIFICA, utente_id: IDS.ADMIN, tipo: 'sistema',
-    titolo: 'Notifica E2E', corpo: 'Notifica seminata per la suite Playwright.', letta_il: null,
-  }));
+  // 11. Notifiche non lette per admin, genitore e docente (centri notifiche)
+  must('notifiche', await db.from('notifiche').insert([
+    {
+      id: IDS.NOTIFICA, utente_id: IDS.ADMIN, tipo: 'sistema',
+      titolo: 'Notifica E2E', corpo: 'Notifica seminata per la suite Playwright.', letta_il: null,
+    },
+    {
+      id: IDS.NOTIFICA_GENITORE, utente_id: IDS.GENITORE, tipo: 'sistema',
+      titolo: 'Notifica genitore E2E', corpo: 'Notifica seminata per il pannello campanella genitore.', letta_il: null,
+    },
+    {
+      id: IDS.NOTIFICA_DOCENTE, utente_id: IDS.DOCENTE, tipo: 'sistema',
+      titolo: 'Notifica docente E2E', corpo: 'Notifica seminata per il pannello campanella docente.', letta_il: null,
+    },
+  ]));
 
   // 12. Pagamenti di Aurora (uno aperto + uno pagato)
   must('pagamenti', await db.from('pagamenti').insert([

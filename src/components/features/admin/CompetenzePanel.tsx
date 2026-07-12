@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { Award, Download, PenLine, Save } from 'lucide-react'
+import { Award, Download, PenLine, Save, Stamp } from 'lucide-react'
 import { COMPETENZE_CHIAVE, LIVELLI, COMPETENZE_SIGNIFICATIVE_CODICE } from '@/lib/competenze/modello'
 import { cx } from '@/lib/ui/cx'
 import { Badge } from '@/components/ui/Badge'
@@ -110,6 +110,22 @@ export function CompetenzePanel({ userId }: { userId: string }) {
       if (!r.ok) { setMsg(d.error ?? 'Generazione fallita'); return }
       setMsg('Certificato generato e firmato.')
       await loadCerts(sectionId)
+    } finally { setBusy(null) }
+  }
+
+  // «Protocolla» (registro protocolli): registra il PDF già archiviato in
+  // USCITA con numero e fascia di segnatura, senza scaricarlo e ricaricarlo.
+  async function protocolla(c: Cert) {
+    setBusy(`prot:${c.id}`); setMsg(null)
+    try {
+      const r = await fetch(`/api/admin/protocolli/da-documento?userId=${userId}`, {
+        method: 'POST', headers: hdr(),
+        body: JSON.stringify({ sorgente: 'certificato_competenze', id: c.id }),
+      })
+      const d = await r.json()
+      if (!r.ok) { setMsg(d.error ?? 'Protocollazione non riuscita'); return }
+      setMsg(`Certificato protocollato in uscita: n. ${d.data?.numeroFormattato ?? ''}.`)
+      if (d.data?.downloadTimbrato) window.open(d.data.downloadTimbrato, '_blank')
     } finally { setBusy(null) }
   }
 
@@ -234,7 +250,10 @@ export function CompetenzePanel({ userId }: { userId: string }) {
                 <button onClick={() => save(selected)} disabled={busy === `save:${selected.id}`} className="inline-flex h-9 items-center gap-1.5 rounded-pill bg-kidville-green-soft px-3.5 font-barlow text-[11px] font-black uppercase text-kidville-green disabled:opacity-50"><Save size={13} /> Salva livelli</button>
                 <button onClick={() => genera(selected)} disabled={busy === `gen:${selected.id}`} className="inline-flex h-9 items-center gap-1.5 rounded-pill bg-kidville-yellow px-3.5 font-barlow text-[11px] font-black uppercase text-kidville-green disabled:opacity-50"><PenLine size={13} /> Genera e firma</button>
                 {(selected.stato === 'generato' || selected.stato === 'firmato') && (
-                  <button onClick={() => download(selected)} className="inline-flex h-9 items-center gap-1.5 rounded-pill bg-kidville-green px-3.5 font-barlow text-[11px] font-black uppercase text-kidville-yellow"><Download size={13} /> Scarica PDF</button>
+                  <>
+                    <button onClick={() => download(selected)} className="inline-flex h-9 items-center gap-1.5 rounded-pill bg-kidville-green px-3.5 font-barlow text-[11px] font-black uppercase text-kidville-yellow"><Download size={13} /> Scarica PDF</button>
+                    <button onClick={() => protocolla(selected)} disabled={busy === `prot:${selected.id}`} className="inline-flex h-9 items-center gap-1.5 rounded-pill bg-kidville-info-soft px-3.5 font-barlow text-[11px] font-black uppercase text-kidville-info disabled:opacity-50"><Stamp size={13} /> Protocolla</button>
+                  </>
                 )}
               </div>
             </section>

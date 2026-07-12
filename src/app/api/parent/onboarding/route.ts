@@ -3,6 +3,8 @@ import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
 import { consensiMancanti, CONSENSI_RICHIESTI } from '@/lib/onboarding/consensi'
+import { notificaEvento, nomeUtente } from '@/lib/notifiche/triggers'
+import { staffScuola, scuolaUnicaReale } from '@/lib/notifiche/destinatari'
 import { parseBody } from '@/lib/validation/http'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
@@ -53,6 +55,26 @@ export async function POST(request: Request) {
     // bindato (auth_user_id) e ha fornito una password.
     if (password && parent?.auth_user_id) {
       await admin.auth.admin.updateUserById(parent.auth_user_id as string, { password: String(password) })
+    }
+
+    // Notifica alla segreteria: onboarding completato (best-effort).
+    try {
+      const scuolaId = auth.user.scuola_id ?? (await scuolaUnicaReale(admin))
+      const destinatari = await staffScuola(admin, scuolaId, ['admin', 'coordinator', 'segreteria'])
+      const nome = await nomeUtente(admin, auth.user.id)
+      await notificaEvento(admin, {
+        tipo: 'onboarding_completato',
+        scuolaId,
+        utenteIds: destinatari,
+        titolo: 'Onboarding genitore completato',
+        corpo: `${nome ?? 'Un genitore'} ha completato la registrazione iniziale.`,
+        link: '/admin/students',
+        entitaTipo: 'onboarding',
+        entitaId: auth.user.id,
+        bufferMin: 60,
+      })
+    } catch (e) {
+      console.error('Notifica onboarding fallita (non bloccante):', e)
     }
 
     return NextResponse.json({ success: true, onboarded: true })

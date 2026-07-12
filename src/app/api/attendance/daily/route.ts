@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
+import { notificaEvento } from '@/lib/notifiche/triggers';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zDataYMD, zUuid } from '@/lib/validation/common';
 
@@ -94,12 +95,21 @@ export async function POST(request: NextRequest) {
         // le policy scolastiche su presenze e l'aggregato realtime li richiedono.
         const { data: alunno } = await supabase
             .from('alunni')
-            .select('scuola_id, section_id')
+            .select('nome, scuola_id, section_id')
             .eq('id', alunno_id)
             .maybeSingle();
         if (!alunno) {
             return NextResponse.json({ error: 'Alunno non trovato.' }, { status: 404 });
         }
+
+        // Stato precedente del giorno: la notifica di assenza allo 0-6 scatta
+        // solo alla PRIMA marcatura 'assente' (i ri-salvataggi non duplicano).
+        const { data: prima } = await supabase
+            .from('presenze')
+            .select('stato')
+            .eq('alunno_id', alunno_id)
+            .eq('data', data)
+            .maybeSingle();
 
         const record = {
             alunno_id,
@@ -125,6 +135,36 @@ export async function POST(request: NextRequest) {
                 { error: 'Errore salvataggio presenza.', details: error.message },
                 { status: 500 }
             );
+        }
+
+        // Notifica di assenza ai genitori (best-effort). Allo 0-6 il genitore
+        // non può comunicare assenze in anticipo → si notifica SEMPRE la prima
+        // marcatura assente (testo neutro); la correzione entro il buffer 10'
+        // (assente → presente/ritardo) revoca la notifica pending.
+        try {
+            if (stato === 'assente' && prima?.stato !== 'assente') {
+                await notificaEvento(supabase, {
+                    tipo: 'assenza_non_comunicata',
+                    scuolaId: (alunno.scuola_id as string | undefined) ?? null,
+                    alunnoIds: [alunno_id],
+                    titolo: 'Assenza registrata all’appello',
+                    corpo: `${alunno.nome ?? 'Tuo figlio'} è stato segnato assente oggi.`,
+                    link: '/parent/attendance',
+                    entitaTipo: 'presenza',
+                    entitaId: alunno_id,
+                    bufferMin: 10,
+                    debounce: true,
+                });
+            } else if (stato !== 'assente' && prima?.stato === 'assente') {
+                await supabase
+                    .from('notifiche')
+                    .delete()
+                    .eq('tipo', 'assenza_non_comunicata')
+                    .eq('entita_id', alunno_id)
+                    .is('push_inviata_il', null);
+            }
+        } catch (e) {
+            console.error('Notifica assenza 0-6 fallita (non bloccante):', e);
         }
 
         return NextResponse.json(result, { status: 200 });

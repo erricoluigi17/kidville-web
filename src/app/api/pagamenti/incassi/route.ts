@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { applyOverpaymentSpill } from '@/lib/pagamenti/spill'
+import { notificaEvento } from '@/lib/notifiche/triggers'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 
@@ -74,7 +75,7 @@ export async function POST(request: Request) {
     // verifica esistenza pagamento
     const { data: pag, error: pErr } = await supabase
       .from('pagamenti')
-      .select('id, importo, importo_pagato, parent_payment_id')
+      .select('id, importo, importo_pagato, parent_payment_id, alunno_id, scuola_id, descrizione')
       .eq('id', pagamento_id)
       .maybeSingle()
     if (pErr || !pag) {
@@ -121,6 +122,27 @@ export async function POST(request: Request) {
       .select('id, importo, importo_pagato, stato, data_incasso')
       .eq('id', pagamento_id)
       .maybeSingle()
+
+    // Conferma al genitore: pagamento registrato (best-effort). Il debounce
+    // per pagamento collassa gli incassi multipli ravvicinati.
+    try {
+      if (pag.alunno_id) {
+        const saldato = aggiornato?.stato === 'pagato'
+        await notificaEvento(supabase, {
+          tipo: 'pagamento_registrato',
+          scuolaId: (pag.scuola_id as string | undefined) ?? null,
+          alunnoIds: [pag.alunno_id as string],
+          titolo: saldato ? 'Pagamento registrato' : 'Acconto registrato',
+          corpo: `${pag.descrizione ?? 'Pagamento'}: registrato un incasso di ${importo} €.${saldato ? ' La ricevuta è disponibile.' : ''}`,
+          link: '/parent/pagamenti',
+          entitaTipo: 'pagamento',
+          entitaId: pagamento_id,
+          debounce: true,
+        })
+      }
+    } catch (e) {
+      console.error('Notifica incasso fallita (non bloccante):', e)
+    }
 
     return NextResponse.json({ success: true, data: { incasso, pagamento: aggiornato, spills } }, { status: 201 })
   } catch (err) {

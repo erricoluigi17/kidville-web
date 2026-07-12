@@ -1,13 +1,30 @@
 import UIKit
 import Capacitor
+#if canImport(FirebaseCore)
+import FirebaseCore
+import FirebaseMessaging
+#endif
 
 @UIApplicationMain
 class AppDelegate: UIResponder, UIApplicationDelegate {
 
     var window: UIWindow?
 
+    /// true solo se il progetto Firebase è configurato (GoogleService-Info.plist
+    /// nel bundle E pacchetto SPM firebase-ios-sdk aggiunto al target App).
+    private var firebaseAttivo = false
+
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        // Override point for customization after application launch.
+        // Push FCM (gated, vedi docs/mobile.md): Firebase si attiva solo se il
+        // progetto è configurato. Senza, la registrazione push prosegue col
+        // token APNs grezzo (utile in dev; il server invia via FCM HTTP v1,
+        // quindi l'egress reale richiede il token FCM).
+        #if canImport(FirebaseCore)
+        if Bundle.main.path(forResource: "GoogleService-Info", ofType: "plist") != nil {
+            FirebaseApp.configure()
+            firebaseAttivo = true
+        }
+        #endif
         return true
     }
 
@@ -46,4 +63,35 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         return ApplicationDelegateProxy.shared.application(application, continue: userActivity, restorationHandler: restorationHandler)
     }
 
+    // MARK: - Push nativa (@capacitor/push-notifications)
+    // Questi due hook sono OBBLIGATORI per Capacitor su iOS: senza, l'evento
+    // `registration` del plugin non scatta mai e il token non arriva a
+    // /api/push/subscribe (registerNativePush resta appeso senza esito).
+
+    func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        #if canImport(FirebaseMessaging)
+        if firebaseAttivo {
+            // Il server invia via FCM HTTP v1: al plugin va consegnato il token
+            // FCM (stringa), non l'APNs grezzo. Il plugin Capacitor gestisce
+            // entrambi i tipi (Data → hex, String → passata com'è).
+            Messaging.messaging().apnsToken = deviceToken
+            Messaging.messaging().token { token, error in
+                if let token = token {
+                    NotificationCenter.default.post(name: .capacitorDidRegisterForRemoteNotifications, object: token)
+                } else {
+                    NotificationCenter.default.post(
+                        name: .capacitorDidFailToRegisterForRemoteNotifications,
+                        object: error ?? NSError(domain: "FCMToken", code: -1)
+                    )
+                }
+            }
+            return
+        }
+        #endif
+        NotificationCenter.default.post(name: .capacitorDidRegisterForRemoteNotifications, object: deviceToken)
+    }
+
+    func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        NotificationCenter.default.post(name: .capacitorDidFailToRegisterForRemoteNotifications, object: error)
+    }
 }

@@ -182,7 +182,7 @@ function LockerSettingsInner() {
             {/* Filtro classe */}
             <div className="mt-5 mb-6 flex gap-2 overflow-x-auto pb-1">
                 {sezioniReali.length === 0 && (
-                    <span className="font-maven text-xs text-kidville-muted py-2">Nessuna sezione nido/infanzia disponibile.</span>
+                    <span className="font-maven text-xs text-kidville-muted py-2">Nessuna sezione disponibile per l&apos;armadietto.</span>
                 )}
                 {sezioniReali.map(c => (
                     <button key={c} onClick={() => setClasseFilter(c)}

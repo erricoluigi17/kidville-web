@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { sendPush } from '@/lib/push/web-push'
 import { allergeneLabel, type ConflittoAllergia } from '@/lib/mensa/allergeni'
 import { docentiDiSezione } from '@/lib/sezioni/docenti'
+import { isNotificaAbilitata } from '@/lib/notifiche/config'
 
 const PORTATA_LABEL: Record<string, string> = { primo: 'primo', secondo: 'secondo', contorno: 'contorno', frutta: 'frutta' }
 
@@ -72,6 +73,7 @@ export async function notificaAllergie(
 ): Promise<{ inviata: boolean }> {
   try {
     if (opts.conflitti.length === 0) return { inviata: false }
+    if (!(await isNotificaAbilitata(supabase, 'mensa_allergia', opts.scuolaId))) return { inviata: false }
     const link = `/admin/mensa/cucina?data=${opts.data}`
 
     // dedup: già notificato per questo alunno + questa data?
@@ -111,6 +113,10 @@ export async function notificaSaldoBasso(
   opts: { alunnoId: string; saldo: number; nomeAlunno?: string | null }
 ): Promise<void> {
   try {
+    // Gate toggle: scuola risolta dall'alunno (best-effort, fail-open).
+    const { data: alunno } = await supabase.from('alunni').select('scuola_id').eq('id', opts.alunnoId).maybeSingle()
+    if (!(await isNotificaAbilitata(supabase, 'mensa_saldo_basso', (alunno?.scuola_id as string | undefined) ?? null))) return
+
     // genitori legati all'alunno
     const { data: legami } = await supabase
       .from('legame_genitori_alunni')

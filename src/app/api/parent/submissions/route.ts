@@ -4,6 +4,8 @@ import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireUser } from '@/lib/auth/require-staff';
 import { genitoreHasFiglio } from '@/lib/anagrafiche/legami';
 import { persistSignedSubmission } from '@/lib/forms/persist-submission';
+import { notificaEvento } from '@/lib/notifiche/triggers';
+import { staffScuola, scuolaUnicaReale } from '@/lib/notifiche/destinatari';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 
@@ -59,6 +61,32 @@ export async function POST(request: NextRequest) {
 
     if (result.error) {
       return NextResponse.json({ error: result.error }, { status: result.status });
+    }
+
+    // Notifica alla segreteria: modulo firmato ricevuto (best-effort).
+    try {
+      let scuolaId: string | null = null;
+      if (student_id) {
+        const { data: alunno } = await supabase.from('alunni').select('scuola_id').eq('id', student_id).maybeSingle();
+        scuolaId = (alunno?.scuola_id as string | undefined) ?? null;
+      }
+      if (!scuolaId) scuolaId = auth.user.scuola_id ?? (await scuolaUnicaReale(supabase));
+      const destinatari = await staffScuola(supabase, scuolaId, ['admin', 'coordinator', 'segreteria']);
+      const { data: tpl } = await supabase.from('forms_templates').select('title').eq('id', form_id).maybeSingle();
+      await notificaEvento(supabase, {
+        tipo: 'modulo_compilato',
+        scuolaId,
+        utenteIds: destinatari,
+        titolo: 'Modulo compilato ricevuto',
+        corpo: `Ci sono nuove compilazioni per «${(tpl as { title?: string } | null)?.title ?? 'un modulo'}».`,
+        link: '/admin/modulistica',
+        entitaTipo: 'forms_template',
+        entitaId: form_id,
+        bufferMin: 60,
+        debounce: true,
+      });
+    } catch (e) {
+      console.error('Notifica modulo firmato fallita (non bloccante):', e);
     }
 
     return NextResponse.json(result.submission, { status: 201 });

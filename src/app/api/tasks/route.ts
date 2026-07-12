@@ -5,6 +5,7 @@ import { requireDocente } from '@/lib/auth/require-staff';
 import { scuoleDiUtente } from '@/lib/auth/scope';
 import { nomiSezioniDiUtente } from '@/lib/sezioni/docenti';
 import { logScrittura } from '@/lib/audit/scrittura';
+import { notificaEvento } from '@/lib/notifiche/triggers';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
@@ -468,6 +469,26 @@ export async function POST(request: Request) {
             attore: auth.user, entitaTipo: 'task', entitaId: (data as { id?: string })?.id ?? null,
             azione: 'insert', scuolaId: auth.user.scuola_id ?? null, valoreDopo: { id: (data as { id?: string })?.id, titolo },
         });
+
+        // Notifica agli assegnatari (best-effort), escluso l'autore stesso.
+        try {
+            const destinatari = assignees.filter((uid) => uid && uid !== auth.user.id);
+            if (destinatari.length > 0) {
+                await notificaEvento(supabase, {
+                    tipo: 'task_assegnato',
+                    scuolaId: auth.user.scuola_id ?? null,
+                    utenteIds: destinatari,
+                    titolo: 'Nuovo incarico assegnato',
+                    corpo: titolo,
+                    link: '/teacher/tasks',
+                    entitaTipo: 'task',
+                    entitaId: (data as { id?: string })?.id ?? null,
+                    bufferMin: 0,
+                });
+            }
+        } catch (e) {
+            console.error('Notifica task assegnato fallita (non bloccante):', e);
+        }
 
         return NextResponse.json(decodeRow(data as Record<string, unknown>), { status: 201 });
     } catch (error) {

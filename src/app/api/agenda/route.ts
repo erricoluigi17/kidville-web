@@ -273,6 +273,7 @@ export async function POST(request: Request) {
           link: '/parent',
           entitaTipo: 'agenda',
           entitaId: evento?.id as string | undefined,
+          scuolaId,
         })
       } catch (e) {
         console.error('Notifiche agenda fallite (non bloccante):', e)

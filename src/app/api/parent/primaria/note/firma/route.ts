@@ -6,6 +6,7 @@ import { getUserEmail, verifyTicket, codeHash } from '@/lib/auth/otp-ticket'
 import { buildSignatureLog, extractRequestMeta } from '@/lib/fea/signature-log'
 import { recordSignerSlot } from '@/lib/fea/slots'
 import { logFeaEvent } from '@/lib/fea/audit'
+import { notificaEvento, nomeUtente } from '@/lib/notifiche/triggers'
 import { parseBody } from '@/lib/validation/http'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
@@ -109,6 +110,36 @@ export async function POST(request: NextRequest) {
         ip,
         userAgent,
       })
+    }
+
+    // Notifica al docente autore della nota: firma ricevuta (best-effort).
+    try {
+      const { data: notaAutore } = await supabase
+        .from('note_disciplinari')
+        .select('maestra_id')
+        .eq('id', notaId)
+        .maybeSingle()
+      const maestraId = notaAutore?.maestra_id as string | undefined
+      if (maestraId && maestraId !== userId) {
+        const { data: alunno } = await supabase
+          .from('alunni')
+          .select('nome, cognome, scuola_id')
+          .eq('id', nota.alunno_id)
+          .maybeSingle()
+        const firmatario = await nomeUtente(supabase, userId)
+        await notificaEvento(supabase, {
+          tipo: 'firma_ricevuta',
+          scuolaId: (alunno?.scuola_id as string | undefined) ?? null,
+          utenteIds: [maestraId],
+          titolo: 'Nota firmata dal genitore',
+          corpo: `${firmatario ?? 'Un genitore'} ha firmato la nota di ${[alunno?.nome, alunno?.cognome].filter(Boolean).join(' ') || 'un alunno'}.`,
+          link: '/teacher/primaria',
+          entitaTipo: 'nota',
+          entitaId: notaId,
+        })
+      }
+    } catch (e) {
+      console.error('Notifica firma nota fallita (non bloccante):', e)
     }
 
     return NextResponse.json({ success: true, data })

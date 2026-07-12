@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { resolveScuoleAttive } from '@/lib/auth/scope'
+import { notificaEvento } from '@/lib/notifiche/triggers'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 
@@ -150,6 +151,7 @@ export async function POST(request: Request) {
     const categoriaId = body.categoria_id ?? null
 
     let generati = 0
+    const alunniGenerati: string[] = []
 
     if (rate) {
       // valida che la somma delle rate coincida col totale
@@ -177,6 +179,7 @@ export async function POST(request: Request) {
         const { error: rErr } = await supabase.from('pagamenti').insert(figlie)
         if (rErr) { await supabase.from('pagamenti').delete().eq('id', padre.id); continue }
         generati += 1
+        alunniGenerati.push(aId)
       }
     } else {
       const records = alunnoIds.map((aId) => ({
@@ -190,6 +193,7 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: 'Errore nella generazione', details: error.message }, { status: 500 })
       }
       generati = created?.length ?? 0
+      alunniGenerati.push(...alunnoIds)
     }
 
     await supabase.from('registro_modifiche').insert({
@@ -199,6 +203,20 @@ export async function POST(request: Request) {
       nuovo_valore: { categoria_id: categoriaId, descrizione, gruppo, generati, rate: !!rate },
       utente_id: user.id,
     }).then(() => {}, () => {})
+
+    // Notifica ai genitori: nuovo dovuto disponibile (best-effort). UNA
+    // notifica per genitore (dedup nel wrapper), mai una per pagamento.
+    if (alunniGenerati.length > 0) {
+      await notificaEvento(supabase, {
+        tipo: 'pagamento_emesso',
+        scuolaId: (body.scuola_id || user.scuola_id) ?? null,
+        alunnoIds: alunniGenerati,
+        titolo: 'Nuovo pagamento disponibile',
+        corpo: `${descrizione}: trovi il dettaglio nella sezione Pagamenti.`,
+        link: '/parent/pagamenti',
+        entitaTipo: 'pagamento',
+      })
+    }
 
     return NextResponse.json({ success: true, data: { generati } }, { status: 201 })
   } catch (err) {

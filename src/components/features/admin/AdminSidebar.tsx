@@ -23,6 +23,7 @@ import {
   ChefHat,
   ShoppingBag,
   MessageCircle,
+  Stamp,
   Menu,
   X,
 } from 'lucide-react';
@@ -89,6 +90,9 @@ const NAV_GROUPS: NavGroup[] = [
     title: 'Amministrazione',
     items: [
       { href: '/admin/pagamenti', label: 'Contabilità', icon: Euro },
+      // Registro protocolli: riservato ad admin+segreteria (decisione spec
+      // 2026-07-12); primo uso reale del campo `roles` (il gate vero è nelle API).
+      { href: '/admin/protocolli', label: 'Protocollo', icon: Stamp, roles: ['admin', 'segreteria'] },
       { href: '/admin/modulistica', label: 'Modulistica', icon: FileText },
       { href: '/admin/gdpr', label: 'Privacy & GDPR', icon: ShieldCheck },
     ],

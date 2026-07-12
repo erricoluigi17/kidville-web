@@ -4,8 +4,9 @@ import { Capacitor } from '@capacitor/core'
 
 // Registrazione push NATIVA (Capacitor iOS/Android) lato client. Su web tutte le
 // funzioni sono no-op: la push web resta gestita dal service worker (PushOptIn).
-// L'identità è dalla sessione (cookie condiviso con la WebView), quindi il token
-// viene inviato a /api/push/subscribe senza passare userId.
+// L'identità è dalla sessione (cookie condiviso con la WebView); l'eventuale
+// `userId` viaggia come header x-user-id di fallback legacy (identità
+// localStorage del genitore) — il server preferisce comunque la sessione.
 
 /** true se l'app gira nella shell nativa Capacitor. Su web/SSR → false. */
 export function isNativeApp(): boolean {
@@ -23,7 +24,7 @@ let lastToken: string | null = null
  * Richiede il permesso, registra la push nativa e invia il token a
  * /api/push/subscribe con la piattaforma. No-op (con esito) su web.
  */
-export async function registerNativePush(): Promise<{ ok: boolean; error?: string }> {
+export async function registerNativePush(userId?: string | null): Promise<{ ok: boolean; error?: string }> {
   if (!isNativeApp()) return { ok: false, error: 'not_native' }
   try {
     const { PushNotifications } = await import('@capacitor/push-notifications')
@@ -41,7 +42,7 @@ export async function registerNativePush(): Promise<{ ok: boolean; error?: strin
         lastToken = token.value
         fetch('/api/push/subscribe', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...(userId ? { 'x-user-id': userId } : {}) },
           body: JSON.stringify({ token: token.value, platform: Capacitor.getPlatform() }),
         })
           .then((res) => done(res.ok ? { ok: true } : { ok: false, error: 'subscribe_failed' }))

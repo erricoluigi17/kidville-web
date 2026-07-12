@@ -5,6 +5,7 @@ import { requireStaff } from '@/lib/auth/require-staff'
 import { parseData, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { resolveScuoleAttive } from '@/lib/auth/scope'
+import { notificaEvento } from '@/lib/notifiche/triggers'
 
 // `anno` e `periodo` NON sono vincolati nel formato: storicamente un valore
 // malformato ricade sull'anteprima/generazione mensile del mese corrente
@@ -220,6 +221,40 @@ export async function POST(request: Request) {
       nuovo_valore: { periodo, generati: data },
       utente_id: auth.user.id,
     }).then(() => {}, () => {})
+
+    // Notifica ai genitori le rette appena generate e GIÀ visibili (rispetta
+    // visibile_dal: niente notifiche per dovuti non ancora mostrati). Una
+    // notifica per genitore, raggruppata per scuola (gate toggle per sede).
+    if (typeof data === 'number' && data > 0) {
+      try {
+        const oggi = new Date().toISOString().slice(0, 10)
+        const { data: nuove } = await supabase
+          .from('pagamenti')
+          .select('alunno_id, scuola_id, visibile_dal')
+          .eq('periodo_competenza', periodo)
+          .eq('gruppo', `retta-${periodo.slice(0, 7)}`)
+        const perScuola = new Map<string, string[]>()
+        for (const p of (nuove ?? []) as Array<{ alunno_id: string; scuola_id: string | null; visibile_dal: string | null }>) {
+          if (p.visibile_dal && p.visibile_dal > oggi) continue
+          const key = p.scuola_id ?? ''
+          perScuola.set(key, [...(perScuola.get(key) ?? []), p.alunno_id])
+        }
+        const mese = `${periodo.slice(5, 7)}/${periodo.slice(0, 4)}`
+        for (const [scuolaId, alunni] of perScuola) {
+          await notificaEvento(supabase, {
+            tipo: 'pagamento_emesso',
+            scuolaId: scuolaId || null,
+            alunnoIds: alunni,
+            titolo: `Retta ${mese} disponibile`,
+            corpo: 'La nuova retta è disponibile nella sezione Pagamenti.',
+            link: '/parent/pagamenti',
+            entitaTipo: 'pagamento',
+          })
+        }
+      } catch (e) {
+        console.error('Notifica rette generate fallita (non bloccante):', e)
+      }
+    }
 
     return NextResponse.json({ success: true, data: { periodo, generati: data } })
   } catch (err) {

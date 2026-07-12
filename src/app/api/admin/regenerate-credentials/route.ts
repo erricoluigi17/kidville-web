@@ -116,6 +116,7 @@ export async function POST(request: Request) {
       link: `/api/admin/credentials-pdf?key=${encodeURIComponent(pdfKey)}`,
       entitaTipo: 'credenziali',
       entitaId: targetId,
+      scuolaId: auth.user.scuola_id ?? null,
     });
     pdfPronto = true;
   } catch (e) {

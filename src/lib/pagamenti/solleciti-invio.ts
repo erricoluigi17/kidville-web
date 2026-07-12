@@ -163,6 +163,7 @@ export async function sollecitaPagamenti(
                 titolo: oggetto,
                 corpo: `Residuo ${ctx.residuo} — ${ctx.descrizione}`,
                 link: '/parent/pagamenti',
+                scuolaId: pag.scuola_id,
             })
         } catch {
             // push best-effort

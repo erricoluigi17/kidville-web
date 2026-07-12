@@ -100,7 +100,7 @@ export function PageHeaderCard({
         {action && <div className="flex shrink-0 items-center gap-1.5">{action}</div>}
       </div>
       {children && mascotte ? <div className="relative z-[2]">{children}</div> : children}
-      {mascotte && <HeroMascot width={92} height={112} right={14} />}
+      {mascotte && <HeroMascot width={92} height={112} insetRight={14} radius={24} />}
     </header>
   );
 }

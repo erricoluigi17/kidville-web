@@ -3,6 +3,7 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { motion } from 'framer-motion';
 import { Check, CheckCheck, Languages, Loader2 } from 'lucide-react';
+import { sembraItaliano } from '@/lib/translate/lingua';
 
 export interface ChatMessage {
     id: string;
@@ -78,6 +79,12 @@ function MessageBubble({ msg, isMine, currentUserId }: { msg: ChatMessage; isMin
     const [translating, setTranslating] = useState(false);
     const [unavailable, setUnavailable] = useState(false);
 
+    // «Traduci» compare SOLO se una delle due lingue non è l'italiano:
+    // il messaggio in arrivo non sembra italiano (mittente straniero) oppure
+    // il dispositivo di chi legge non è in italiano (lettore straniero).
+    const linguaDispositivo = (typeof navigator !== 'undefined' ? navigator.language : 'it').split('-')[0] || 'it';
+    const mostraTraduci = linguaDispositivo !== 'it' || !sembraItaliano(msg.content ?? '');
+
     const handleTranslate = async () => {
         if (translated) { setTranslated(null); return; } // toggle: nascondi
         setTranslating(true);
@@ -139,8 +146,8 @@ function MessageBubble({ msg, isMine, currentUserId }: { msg: ChatMessage; isMin
                 {msg.content}
             </p>
 
-            {/* Traduzione (solo messaggi in ingresso) */}
-            {!isMine && msg.content?.trim() && !unavailable && (
+            {/* Traduzione (solo messaggi in ingresso, e solo se serve davvero) */}
+            {!isMine && msg.content?.trim() && !unavailable && mostraTraduci && (
                 <>
                     {translated && (
                         <p className="font-maven text-sm leading-relaxed text-kidville-green mt-1.5 pt-1.5 border-t border-kidville-line italic">

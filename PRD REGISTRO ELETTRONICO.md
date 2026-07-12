@@ -58,6 +58,34 @@
 
 ---
 
+## 🗓️ Changelog — Identità genitore completa alla creazione + invio credenziali auto-riparante (S6bis) 2026-07-12 (branch `fix/identita-genitore`)
+
+- **Problema segnalato**: creando un'anagrafica genitore e provando a inviare le credenziali, la Segreteria riceveva `409 "Genitore senza account auth: eseguire prima il backfill (S6)"` — un vicolo cieco: la route del backfill in produzione risponde 404 by design (`sealDangerous`), e comunque NON creava la riga `utenti`, indispensabile (senza, il login riesce ma ogni route dati risponde 401 "Utente non trovato" perché `loadAppUser` legge solo `utenti`).
+- **Causa radice**: l'identità di un genitore vive in 4 record senza alcun automatismo che li allinei (zero trigger su `auth.users`, verificato): `auth.users` + `utenti` ruolo genitore + ponte `parents.auth_user_id` (UNIQUE) + legame col figlio. Ogni flusso ne creava un sottoinsieme diverso: anagrafica (`linkOrCreateParent`) solo `parents`+legame; approvazione iscrizioni auth+`utenti` ma senza ponte (genitore che entra e non vede i figli) e con upsert `utenti` **rotto in prod** (colonna `password_segreta` inesistente → PGRST204 silenzioso) e capace di sovrascrivere il ruolo di uno staff omonimo; backfill S6 auth+ponte ma senza `utenti`.
+- **Fix — nuovo modulo unico `src/lib/auth/parent-identity.ts`** (`ensureParentIdentity`, idempotente, non lancia mai): crea/riusa l'account per email (dedup, scansione paginata), scrive il ponte (23505 → messaggio parlante "email già di un'altra anagrafica"), garantisce la riga `utenti` ruolo `genitore` SOLO se manca (un docente-genitore conserva il ruolo staff; `email/nome/cognome/scuola_id` NOT NULL rispettati, colonne generate mai scritte). Innestato in:
+  - `linkOrCreateParent` (anagrafica: POST `/api/admin/parents` e POST `/api/admin/students`): ogni genitore con email nasce con identità completa (best-effort + audit `credenziali`; i record-staff della tab Staff esclusi);
+  - `POST /api/admin/regenerate-credentials`: **auto-riparante** — completa i pezzi mancanti e procede; il 409 S6 non esiste più (rimpiazzato da 400 "senza email" azionabile, 409 conflitto email, 500). Risposta con `identita_creata`;
+  - approvazione iscrizioni (`/api/admin/iscrizioni`): identità completa per il referente (ponte incluso), niente più `password_segreta`, ruoli staff mai sovrascritti;
+  - backfill S6 (`backfillParentsAuth`): ora crea anche `utenti` (report `utentiCreated`).
+- **Rimosso codice morto pericoloso**: azione `invite` di `/api/admin/parents` (creava `auth.users` orfani senza ponte né `utenti`) + `ParentRegistryForm.tsx` (mai importato).
+- **Dati prod riparati** (script una tantum `scripts/repair_parent_identities.mjs`, dry-run + apply): 12 anagrafiche con email completate — 10 "Madre Test PRI" ricucite agli account test esistenti (solo ponte), 2 reali (`giuseppe grande`, `luigi vvvv`) con account+profilo nuovi. 1 anagrafica senza email esclusa (va completata in anagrafica). Nessuna email inviata dallo script.
+- **Test**: nuovo `__tests__/lib/parent-identity.test.ts` (13 casi: idempotenza, conflitti, fallback mono-sede, ruolo staff preservato, client monco); aggiornati `regenerate-credentials.test.ts` (auto-riparazione al posto del 409) e `backfill-parents.test.ts` (riga `utenti`).
+
+## 🗓️ Changelog — 🎉 PUSH NATIVA COMPLETA su iOS **E ANDROID** 2026-07-12 notte (branch `fix/apns-collaudo`)
+
+### Android — collaudo superato su emulatore
+- **APK compilato** (`assembleDebug`, 7,7 MB) con `CAP_SERVER_URL=https://app.kidville.it` (punta alla PROD) e installato sull'AVD `Medium_Phone_API_36.1` (API 36, con Play Services). **JDK 21 obbligatorio**: usare quello incluso in Android Studio (`/Applications/Android Studio.app/Contents/jbr/…`) — il JDK di sistema è il 25 e Gradle non lo digerisce.
+- **Catena verificata end-to-end**: login in app → **token FCM `android` registrato** in `push_subscriptions` (auto-registrazione + permesso runtime Android 13+) → riga in `notifiche` → `notifiche_dispatch_tick()` → dispatch prod → **`{native_inviate: 2}`** (iOS+Android insieme) → **notifica nella tendina Android** → **tap = deep-link corretto**: app aperta sulla pagina **Avvisi**, badge campanella a 2. ✅
+- **Fix applicato**: mancava il **canale notifiche di default** (FirebaseMessaging avvisava `Missing Default Notification Channel metadata` e usava un canale di ripiego) → aggiunta `meta-data com.google.firebase.messaging.default_notification_channel_id` in `AndroidManifest.xml` + stringa `kidville_notifiche`. Verificato: avviso sparito.
+
+### iOS — APNs collegata
+
+- **APNs Auth Key creata e collegata**: iscrizione Apple Developer Program attivata (team **`B5ULCGG2V3`** — è il team personale *promosso a pagamento*, NON il `6B67YBF64P` che appariva negli errori di propagazione). Key **`G2XN848ZNY`** («Kidville Push», ambiente **Sandbox & Production**, Team Scoped) creata su developer.apple.com e caricata su **Firebase → Cloud Messaging** su ENTRAMBE le righe (sviluppo + produzione) dell'app `it.kidville.app`. Il file `.p8` è in `~/.kidville/` (fuori dal repo, non ri-scaricabile da Apple).
+- **Collaudo end-to-end SUPERATO** (simulatore iPhone 17 Pro, Apple Silicon): (1) invio diretto FCM v1 → **HTTP 200** (prima: 401 `THIRD_PARTY_AUTH_ERROR`) e **banner realmente consegnato** sulla lock screen; (2) flusso di **PRODUZIONE completo**: riga in `notifiche` → `SELECT notifiche_dispatch_tick()` (pg_cron) → pg_net → `https://app.kidville.it/api/push/dispatch` → risposta **`{native_inviate: 1}`** → notifica sul dispositivo + badge campanella a 1 nell'app. La catena DB → cron → dispatch → FCM → APNs → iPhone è verificata in ogni anello.
+- **Gotcha registrato**: il token FCM è stabile, ma la mappatura FCM↔APNs si aggiorna solo quando l'app chiama `registerForRemoteNotifications` — che nel nostro flusso avviene **dopo il login** (`NativePushAutoRegister`). Se l'app resta sulla schermata di accesso, FCM accetta il messaggio (200) ma APNs non lo consegna: nei collaudi va sempre fatto prima il login.
+- **Restano** (fuori dal perimetro push): collaudo Android su emulatore/device (config già completa) e pubblicazione sugli store.
+
+
 ## 🗓️ Changelog — Loader di pagina: comparsa "solo sui caricamenti lenti" 2026-07-12 (branch `feat/loader-slow-loads`)
 
 Ritocco al comportamento del loader globale ([[loader]] `GlobalLoader`): oltre all'anti-flash già presente (niente loader sotto ~180 ms, quindi le navigazioni istantanee restano pulite), quando l'overlay **compare** su un caricamento lento ora resta a schermo per una **durata minima di ~0,7 s** (`MIN_VISIBLE_MS`). Prima spariva appena la pagina era pronta → mostrava solo un frammento del riflesso, praticamente invisibile; ora sui caricamenti realmente lenti è ben visibile. L'avvio dell'app resta invariato (visibile solo se il boot è lento). Gate: **eslint 0 · vitest 1065 · build ok**.

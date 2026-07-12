@@ -4,4 +4,6 @@
     <string name="title_activity_main">Kidville</string>
     <string name="package_name">it.kidville.app</string>
     <string name="custom_url_scheme">it.kidville.app</string>
+    <!-- Canale notifiche di default per le push FCM (vedi AndroidManifest). -->
+    <string name="default_notification_channel_id">kidville_notifiche</string>
 </resources>

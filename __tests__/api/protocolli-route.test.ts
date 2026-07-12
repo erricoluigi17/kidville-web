@@ -75,6 +75,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
 
 import { GET, POST, PATCH, DELETE } from '@/app/api/admin/protocolli/route'
 import { POST as POST_UPLOAD_URL } from '@/app/api/admin/protocolli/upload-url/route'
+import { POST as POST_RETTIFICA } from '@/app/api/admin/protocolli/rettifica/route'
 
 const URL_BASE = 'http://localhost/api/admin/protocolli'
 const reqJson = (method: string, body: unknown, url = URL_BASE) =>
@@ -180,6 +181,45 @@ describe('DELETE /api/admin/protocolli (solo admin, senza audit)', () => {
     h.tabelle.protocolli = { data: null, error: null }
     const res = await DELETE(new Request(urlDelete, { method: 'DELETE' }) as never)
     expect(res.status).toBe(404)
+  })
+})
+
+describe('POST /api/admin/protocolli/rettifica (solo admin, decisioni #25-26)', () => {
+  const ID = '11111111-2222-3333-4444-555555555555'
+  const recordAttivo = {
+    id: ID, scuola_id: 's-1', anno: 2026, numero: 3, tipo: 'ingresso',
+    data_registrazione: '2026-07-12T08:00:00Z', annullata_at: null,
+    file_originale: 's-1/2026/0000003-originale.pdf', file_timbrato: 's-1/2026/0000003-timbrato.pdf',
+  }
+  const comeAdmin = () => {
+    h.appUser = { id: 'u-1', role: 'admin', scuola_id: 's-1' }
+    h.tabelle.utenti_scuole = { data: [], error: null }
+  }
+
+  it('403 per la segreteria (potere riservato all\'admin)', async () => {
+    const res = await POST_RETTIFICA(reqJson('POST', { id: ID, oggetto: 'Nuovo' }) as never)
+    expect(res.status).toBe(403)
+  })
+  it('400 zod senza alcun campo da rettificare', async () => {
+    comeAdmin()
+    const res = await POST_RETTIFICA(reqJson('POST', { id: ID }) as never)
+    expect(res.status).toBe(400)
+  })
+  it('409 su registrazione annullata (l\'annullamento è definitivo)', async () => {
+    comeAdmin()
+    h.tabelle.protocolli = { data: { ...recordAttivo, annullata_at: '2026-07-12T09:00:00Z' }, error: null }
+    const res = await POST_RETTIFICA(reqJson('POST', { id: ID, oggetto: 'Nuovo' }) as never)
+    expect(res.status).toBe(409)
+  })
+  it('rettifica testuale: passa dalla rpc dedicata, numero intatto, NESSUN logScrittura', async () => {
+    comeAdmin()
+    h.tabelle.protocolli = { data: recordAttivo, error: null }
+    h.rpc = { data: { ...recordAttivo, oggetto: 'Oggetto corretto' }, error: null }
+    const res = await POST_RETTIFICA(reqJson('POST', { id: ID, oggetto: 'Oggetto corretto', mittente: null }) as never)
+    expect(res.status).toBe(200)
+    const j = await res.json()
+    expect(j.data.record.numero).toBe(3)
+    expect(h.logScrittura).not.toHaveBeenCalled()
   })
 })
 

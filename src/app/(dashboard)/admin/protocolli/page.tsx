@@ -13,7 +13,7 @@ import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Stamp, Inbox, Send, RefreshCw, Hash, Plus, FileText, Download, ShieldCheck,
   AlertTriangle, Search, Trash2, Ban, Link2, Paperclip, Settings2, X, FileDown,
-  FileSpreadsheet, Loader2, CheckCircle2, UploadCloud, Siren,
+  FileSpreadsheet, Loader2, CheckCircle2, UploadCloud, Siren, Pencil,
 } from 'lucide-react';
 import {
   CockpitPage, PageHeader, StatCard, Drawer, Toolbar, CockpitSelect,
@@ -862,6 +862,13 @@ function DettaglioDrawer({ userId, id, isAdmin, categorie, onApri, onClose, onCh
   const [motivo, setMotivo] = useState('');
   const [note, setNote] = useState('');
   const [noteSalvate, setNoteSalvate] = useState(false);
+  // Rettifica (solo admin, decisioni #25-26): sostituzione file + dati descrittivi
+  const [inEdit, setInEdit] = useState(false);
+  const [sostituendo, setSostituendo] = useState(false);
+  const [editVals, setEditVals] = useState({
+    oggetto: '', mittente: '', destinatario: '', mezzo: '',
+    rifProt: '', rifData: '', allegatiDescr: '',
+  });
 
   const carica = useCallback(async () => {
     try {
@@ -915,6 +922,64 @@ function DettaglioDrawer({ userId, id, isAdmin, categorie, onApri, onClose, onCh
     onClose();
   };
 
+  // «Sostituisci file» (admin): nuovo documento, STESSO numero/data — il timbro
+  // viene rigenerato identico e l'impronta ricalcolata. Nessuna traccia.
+  const sostituisciFile = async (file: File | null) => {
+    if (!file || !rec) return;
+    setSostituendo(true);
+    try {
+      const up = await caricaSuStaging(userId, file, 'principale');
+      if ('error' in up) { mostraToast(`❌ ${up.error}`); return; }
+      const res = await jsend(userId, 'rettifica', 'POST', {
+        id, stagingPath: up.path, nomeFile: file.name, mime: mimeDaFile(file),
+      });
+      if (!res.ok) { mostraToast(`❌ ${res.error ?? 'Sostituzione non riuscita'}`); return; }
+      mostraToast(`✅ Documento sostituito — Prot. n. ${numeroFmt(rec.numero, rec.anno)} invariato`);
+      onChange();
+      void carica();
+    } finally {
+      setSostituendo(false);
+    }
+  };
+
+  const apriModifica = () => {
+    if (!rec) return;
+    setEditVals({
+      oggetto: rec.oggetto,
+      mittente: rec.mittente ?? '',
+      destinatario: rec.destinatario ?? '',
+      mezzo: rec.mezzo ?? '',
+      rifProt: rec.rif_prot_mittente ?? '',
+      rifData: rec.rif_data_mittente ?? '',
+      allegatiDescr: rec.allegati_descrizione ?? '',
+    });
+    setInEdit(true);
+  };
+
+  const salvaRettifica = async () => {
+    if (!rec) return;
+    const body: Record<string, unknown> = { id };
+    if (editVals.oggetto.trim() && editVals.oggetto.trim() !== rec.oggetto) body.oggetto = editVals.oggetto.trim();
+    const nullable = (chiave: string, nuovo: string, vecchio: string | null) => {
+      if (nuovo.trim() !== (vecchio ?? '')) body[chiave] = nuovo.trim() || null;
+    };
+    nullable('mittente', editVals.mittente, rec.mittente);
+    nullable('destinatario', editVals.destinatario, rec.destinatario);
+    nullable('mezzo', editVals.mezzo, rec.mezzo);
+    nullable('rifProtMittente', editVals.rifProt, rec.rif_prot_mittente);
+    nullable('rifDataMittente', editVals.rifData, rec.rif_data_mittente);
+    nullable('allegatiDescrizione', editVals.allegatiDescr, rec.allegati_descrizione);
+    if (Object.keys(body).length === 1) { setInEdit(false); return; }
+    setBusy(true);
+    const res = await jsend(userId, 'rettifica', 'POST', body);
+    setBusy(false);
+    if (!res.ok) { mostraToast(`❌ ${res.error ?? 'Rettifica non riuscita'}`); return; }
+    mostraToast('✅ Dati rettificati — numero e data invariati');
+    setInEdit(false);
+    onChange();
+    void carica();
+  };
+
   const salvaCampo = async (patch: { noteInterne?: string | null; categoriaId?: string | null; collegatoAId?: string | null }) => {
     setBusy(true);
     const res = await jsend(userId, '', 'PATCH', { id, azione: 'aggiorna', ...patch });
@@ -945,15 +1010,69 @@ function DettaglioDrawer({ userId, id, isAdmin, categorie, onApri, onClose, onCh
             </div>
           )}
 
-          <Campo label="Oggetto" value={<span className={cx(rec.annullata_at && 'line-through')}>{rec.oggetto}</span>} />
-          <div className="grid grid-cols-2 gap-3">
-            {rec.mittente && <Campo label="Mittente" value={rec.mittente} />}
-            {rec.destinatario && <Campo label="Destinatario" value={rec.destinatario} />}
-            {rec.mezzo && <Campo label="Mezzo" value={rec.mezzo} />}
-            {rec.rif_prot_mittente && <Campo label="Prot. mittente" value={`${rec.rif_prot_mittente}${rec.rif_data_mittente ? ` del ${dataIt(rec.rif_data_mittente)}` : ''}`} />}
-            {rec.file_nome_originale && <Campo label="File originale" value={rec.file_nome_originale} />}
-            {rec.allegati_descrizione && <Campo label="Allegati" value={rec.allegati_descrizione} />}
-          </div>
+          {!inEdit ? (
+            <>
+              <Campo label="Oggetto" value={<span className={cx(rec.annullata_at && 'line-through')}>{rec.oggetto}</span>} />
+              <div className="grid grid-cols-2 gap-3">
+                {rec.mittente && <Campo label="Mittente" value={rec.mittente} />}
+                {rec.destinatario && <Campo label="Destinatario" value={rec.destinatario} />}
+                {rec.mezzo && <Campo label="Mezzo" value={rec.mezzo} />}
+                {rec.rif_prot_mittente && <Campo label="Prot. mittente" value={`${rec.rif_prot_mittente}${rec.rif_data_mittente ? ` del ${dataIt(rec.rif_data_mittente)}` : ''}`} />}
+                {rec.file_nome_originale && <Campo label="File originale" value={rec.file_nome_originale} />}
+                {rec.allegati_descrizione && <Campo label="Allegati" value={rec.allegati_descrizione} />}
+              </div>
+            </>
+          ) : (
+            <div className="flex flex-col gap-3 rounded-card bg-kidville-warn-soft/40 p-3">
+              <p className="font-barlow text-[12px] font-bold uppercase text-kidville-warn">
+                Rettifica dati (solo admin) — numero, data e tipo restano invariati
+              </p>
+              <div>
+                <label className={LABEL}>Oggetto *</label>
+                <input className={INPUT} value={editVals.oggetto} maxLength={500}
+                  onChange={(e) => setEditVals((p) => ({ ...p, oggetto: e.target.value }))} />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className={LABEL}>Mittente</label>
+                  <input className={INPUT} value={editVals.mittente} maxLength={300}
+                    onChange={(e) => setEditVals((p) => ({ ...p, mittente: e.target.value }))} />
+                </div>
+                <div>
+                  <label className={LABEL}>Destinatario</label>
+                  <input className={INPUT} value={editVals.destinatario} maxLength={300}
+                    onChange={(e) => setEditVals((p) => ({ ...p, destinatario: e.target.value }))} />
+                </div>
+                <div>
+                  <label className={LABEL}>Mezzo</label>
+                  <CockpitSelect className="w-full" value={editVals.mezzo}
+                    onChange={(v) => setEditVals((p) => ({ ...p, mezzo: v }))}
+                    options={[{ value: '', label: '—' }, ...MEZZI.map((m) => ({ value: m, label: m }))]} />
+                </div>
+                <div>
+                  <label className={LABEL}>Prot. mittente</label>
+                  <input className={INPUT} value={editVals.rifProt} maxLength={60}
+                    onChange={(e) => setEditVals((p) => ({ ...p, rifProt: e.target.value }))} />
+                </div>
+                <div>
+                  <label className={LABEL}>Data doc. mittente</label>
+                  <DateField className={INPUT} value={editVals.rifData}
+                    onChange={(iso) => setEditVals((p) => ({ ...p, rifData: iso }))} />
+                </div>
+                <div>
+                  <label className={LABEL}>Descrizione allegati</label>
+                  <input className={INPUT} value={editVals.allegatiDescr} maxLength={500}
+                    onChange={(e) => setEditVals((p) => ({ ...p, allegatiDescr: e.target.value }))} />
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <button type="button" className={BTN_PRIMARY} disabled={busy || !editVals.oggetto.trim()} onClick={() => void salvaRettifica()}>
+                  <Pencil size={14} /> Salva rettifica
+                </button>
+                <button type="button" className={BTN_GHOST} onClick={() => setInEdit(false)}>Annulla modifiche</button>
+              </div>
+            </div>
+          )}
 
           <div className="flex flex-wrap gap-2">
             <button type="button" className={BTN_PRIMARY} onClick={() => void scarica('timbrato')}><Download size={14} /> PDF timbrato</button>
@@ -963,6 +1082,20 @@ function DettaglioDrawer({ userId, id, isAdmin, categorie, onApri, onClose, onCh
                 <Paperclip size={12} /> {al.nome.length > 24 ? `${al.nome.slice(0, 22)}…` : al.nome}
               </button>
             ))}
+            {isAdmin && !rec.annullata_at && (
+              <>
+                <label className={cx(BTN_GHOST, 'cursor-pointer', sostituendo && 'pointer-events-none opacity-50')} title="Sostituisce il documento: stesso numero e stessa data, timbro rigenerato, impronta ricalcolata">
+                  {sostituendo ? <Loader2 size={13} className="animate-spin" /> : <UploadCloud size={13} />} Sostituisci file
+                  <input type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden"
+                    onChange={(e) => { void sostituisciFile(e.target.files?.[0] ?? null); e.target.value = ''; }} />
+                </label>
+                {!inEdit && (
+                  <button type="button" className={BTN_GHOST} onClick={apriModifica}>
+                    <Pencil size={13} /> Modifica dati
+                  </button>
+                )}
+              </>
+            )}
           </div>
 
           <div className="rounded-card bg-kidville-cream/70 p-3">

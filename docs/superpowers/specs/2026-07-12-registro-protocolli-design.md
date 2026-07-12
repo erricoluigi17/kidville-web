@@ -34,7 +34,9 @@ DPR 445/2000: **art. 53** (registrazione non modificabile di numero/data/mittent
 | 21 | «Protocolla» su doc dell'app | Certificati competenze (uscita) + moduli firmati modulistica (ingresso), dal PDF già archiviato. |
 | 22 | Documenti su richiesta | «Genera documento»: Certificato di frequenza · di iscrizione · Nulla osta · testo libero, su carta intestata, alunno selezionabile, protocollato in uscita in un click. |
 | 23 | Statistiche | Card cockpit: registrazioni anno · ripartizione I/U/Int · ultimo numero. |
-| 24 | Altro | Nessun'altra funzione (perimetro chiuso dall'utente). |
+| 24 | Altro | ~~Nessun'altra funzione~~ (superata dalle #25-26, richieste dall'utente il 2026-07-12 dopo la chiusura del perimetro iniziale). |
+| 25 | Rettifica (solo admin) | L'admin può SOSTITUIRE il documento (originale rimpiazzato, timbro RIGENERATO con lo stesso numero/anno/tipo e la stessa data/ora, impronta ricalcolata) e correggere i dati descrittivi: oggetto, mittente/destinatario, mezzo, riferimenti del mittente, descrizione allegati, nome file. IMMUTABILI sempre: scuola, anno, numero, tipo, data di registrazione, emergenza, autore. Vietata sulle registrazioni annullate. Attuazione: migr `20260712200000` — trigger WORM con GUC `app.protocollo_admin_update` (COALESCE obbligatorio sul current_setting!) + funzione SECURITY DEFINER `protocollo_rettifica(id, patch jsonb)`; route `POST /api/admin/protocolli/rettifica` (gate `['admin']`); UI scheda: «Sostituisci file» + «Modifica dati». |
+| 26 | Traccia della rettifica | NESSUNA, nemmeno tecnica (coerente con la decisione #6): niente logScrittura, nessun badge. La registrazione appare come se fosse sempre stata così. |
 
 ## Approcci valutati (sintesi trade-off → scelte)
 - **Upload**: diretto client→storage con signed upload URL (scelto: file fino a 25 MB) vs multipart via API (scartato: limite body ~4,5 MB Vercel).

@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { randomUUID } from 'node:crypto';
 import { redact, redigiPath } from './redact';
 import { serializza } from './serialize';
 
@@ -18,9 +19,11 @@ import { serializza } from './serialize';
  * Regola d'oro dell'intero modulo: NIENTE qui dentro può lanciare. Un throw nel
  * logger trasforma una 200 in 500 su tutte le route.
  *
- * Questo modulo importa `node:async_hooks`: NON deve essere importato dal
- * middleware (che gira su Edge) né da codice client. Se accade, `npm run build`
- * fallisce rumorosamente — ed è il comportamento voluto.
+ * RUNTIME: è codice server-only. NON è però vero che importarlo dal middleware farebbe
+ * fallire la build per via di `node:async_hooks`: l'Edge Runtime di Next quel modulo lo
+ * ESPONE. A saltare sarebbe semmai `node:crypto` (qui sotto, e transitivamente da
+ * `redact.ts`), che l'Edge rifiuta. Una rete c'è, quindi, ma è quella e passa da un altro
+ * import: non è una garanzia che questo modulo possa promettere di suo.
  */
 
 export interface ContestoRichiesta {
@@ -36,10 +39,10 @@ export interface ContestoRichiesta {
     /**
      * Payload già validato e GIÀ REDATTO da `impostaPayload`; stampato solo se la richiesta
      * fallisce. Chi lo emette NON deve ri-redigerlo: una seconda passata di `redact` rifarebbe
-     * `[redatto:str/40]` su `[redatto:str/…]` e cancellerebbe i marcatori (`[payload-troppo-grande]`
-     * diventerebbe una stringa redatta come un'altra).
+     * `[redatto:str/40]` su `[redatto:str/…]` e cancellerebbe i marcatori
+     * (`[payload-troppo-grande]` diventerebbe una stringa redatta come un'altra).
      */
-    payload?: Record<string, unknown>;
+    payload?: Readonly<Record<string, unknown>>;
 }
 
 const als = new AsyncLocalStorage<ContestoRichiesta>();
@@ -64,7 +67,17 @@ const als = new AsyncLocalStorage<ContestoRichiesta>();
  */
 const alsLogger = new AsyncLocalStorage<true>();
 
-export function contesto(): ContestoRichiesta | undefined {
+/**
+ * Il contesto è di SOLA LETTURA. Le scritture passano da `impostaUtente`/`impostaPayload`,
+ * che sono i due punti dove valgono redazione, cap e conteggio degli slot. Consegnare lo
+ * store nudo significherebbe che un qualunque call-site può scrivere
+ * `contesto()!.payload = { body: await req.json() }` — PII grezza in un campo che l'emittente
+ * ha l'ordine di NON ri-redigere — o riscrivere `userId`, attribuendo le righe alla persona
+ * sbagliata. È lo stesso argomento per cui `redigiPath` e `redact` stanno dentro questo modulo
+ * e non nelle 239 route: non lasciare la scelta al chiamante.
+ * `Readonly` è solo un tipo: costo a runtime zero, e lo store interno resta mutabile.
+ */
+export function contesto(): Readonly<ContestoRichiesta> | undefined {
     return als.getStore();
 }
 
@@ -79,15 +92,41 @@ export function contesto(): ContestoRichiesta | undefined {
  * significa che nessun chiamante può sbagliare, invece di sperare che ogni chiamante ricordi.
  * (Ed è anche l'unica forma utile per correlare: si aggrega per route, non per id.)
  *
- * Gli errori di `fn` NON vengono ingoiati: il contesto osserva, non interferisce.
+ * Il valore di ritorno di `fn` è restituito tale e quale, e gli errori di `fn` NON vengono
+ * ingoiati: il contesto osserva, non interferisce.
  */
 export function conContesto<T>(
     iniziale: ContestoRichiesta,
     fn: () => Promise<T>,
 ): Promise<T> {
     // Copia: lo store è mutabile (`impostaUtente`) e non deve essere l'oggetto del chiamante.
-    const store: ContestoRichiesta = { ...iniziale, path: pathSicuro(iniziale.path) };
+    const store: ContestoRichiesta = {
+        ...iniziale,
+        requestId: requestIdSicuro(iniziale.requestId),
+        path: pathSicuro(iniziale.path),
+    };
     return als.run(store, fn);
+}
+
+/**
+ * Il requestId arriva tipicamente da un header (`x-request-id`, `x-vercel-id`): è INPUT DEL
+ * CLIENT. Finisce in ogni riga di un formato A RIGHE, quindi un `\n` nel valore non è un
+ * carattere strano: è una riga di log FALSA, scritta da chi fa la richiesta. Stesso argomento
+ * del path — non ci si affida alla buona educazione del chiamante.
+ *
+ * Fail-closed: ciò che non è un id plausibile non viene ripulito, viene SOSTITUITO. Un id
+ * "aggiustato" correlerebbe male e in silenzio; un id nuovo correla bene, e la richiesta
+ * resta ritrovabile dagli altri campi.
+ */
+const REQUEST_ID_PLAUSIBILE = /^[A-Za-z0-9_:.-]{1,64}$/;
+
+function requestIdSicuro(v: unknown): string {
+    try {
+        if (typeof v === 'string' && REQUEST_ID_PLAUSIBILE.test(v)) return v;
+        return randomUUID();
+    } catch {
+        return '[request-id-illeggibile]';
+    }
 }
 
 /** `redigiPath` su un path che potrebbe non essere una stringa (chiamante JS, path assente). */
@@ -119,12 +158,21 @@ export function impostaUtente(u: {
     if (u.scuolaId) s.scuolaId = u.scuolaId;
 }
 
-/** Non più di 4 slot: una route può chiamare parseData/parseQuery/parseBody più volte. */
+/**
+ * Quattro slot: i tre canonici (`body`, `query`, `params`) più uno di margine, perché
+ * `parseData` è chiamata anche sui campi estratti a mano da un multipart. Il quinto sarebbe
+ * già un chiamante che si inventa un vocabolario: si scarta, marcando.
+ */
 const PAYLOAD_SLOT_MAX = 4;
-/** Tetto in caratteri del singolo slot, misurato DOPO la redazione. */
-const PAYLOAD_PESO_MAX = 2_000;
+/**
+ * Tetto del singolo slot in CARATTERI (UTF-16), misurato DOPO la redazione. Non sono byte:
+ * qui il vincolo è la RAM trattenuta fino a fine richiesta, non la riga di Vercel (che ha il
+ * suo cap, in byte, dove il logger la emette con `serializza`).
+ */
+const PAYLOAD_CARATTERI_MAX = 2_000;
 /** Marcatore degli slot scartati: un log che tace su ciò che ha perso è un log che mente. */
 const SLOT_SCARTATI = '[…]';
+const CONTEGGIO_SCARTATI = /^\[\+(\d+) /;
 
 /**
  * Deposita il payload validato di una richiesta. `dove` = 'body' | 'query' | 'params'.
@@ -137,30 +185,45 @@ const SLOT_SCARTATI = '[…]';
  *
  * Redigere al deposito è anche ciò che tiene a bada la RAM: `redact` tronca gli array a 20
  * elementi, gli oggetti a 40 chiavi e la profondità a 5, quindi di un import da 5.000 record
- * non resta il body intero appeso al contesto fino a fine richiesta. Sopra `PAYLOAD_PESO_MAX`
- * anche il residuo redatto viene buttato: per un log di diagnosi 2 KB di payload bastano.
+ * non resta il body intero appeso al contesto fino a fine richiesta. Sopra
+ * `PAYLOAD_CARATTERI_MAX` anche il residuo redatto viene buttato: per sapere *cosa* si stava
+ * tentando, 2.000 caratteri bastano.
  */
 export function impostaPayload(dove: string, valore: unknown): void {
     const s = als.getStore();
     if (!s) return;
     try {
-        const payload: Record<string, unknown> = { ...(s.payload ?? {}) };
+        // Prototipo nullo, come in `redact.ts`: `dove` oggi è interno, ma su un oggetto
+        // letterale `'toString' in payload` sarebbe true (aggirando il conteggio degli slot)
+        // e `impostaPayload('__proto__', …)` scriverebbe il prototipo. Difendersi costa una riga.
+        const payload: Record<string, unknown> = Object.assign(Object.create(null), s.payload);
 
-        const slotUsati = Object.keys(payload).filter((k) => k !== SLOT_SCARTATI).length;
-        if (!(dove in payload) && slotUsati >= PAYLOAD_SLOT_MAX) {
-            payload[SLOT_SCARTATI] = '[slot in eccesso: scartati]';
+        if (!Object.hasOwn(payload, dove) && slotUsati(payload) >= PAYLOAD_SLOT_MAX) {
+            payload[SLOT_SCARTATI] = `[+${scartatiFinora(payload) + 1} slot scartati]`;
             s.payload = payload;
             return;
         }
 
         const redatto = redact(valore);
         // `serializza` non lancia e tronca da sé: qui serve solo a PESARE il residuo.
-        const troppoGrande = serializza(redatto, PAYLOAD_PESO_MAX + 1).length > PAYLOAD_PESO_MAX;
+        const troppoGrande =
+            serializza(redatto, PAYLOAD_CARATTERI_MAX + 1).length > PAYLOAD_CARATTERI_MAX;
         payload[dove] = troppoGrande ? '[payload-troppo-grande]' : redatto;
         s.payload = payload;
     } catch {
         // Il contesto è osservabilità: non può far fallire la richiesta che sta osservando.
     }
+}
+
+function slotUsati(payload: Record<string, unknown>): number {
+    return Object.keys(payload).filter((k) => k !== SLOT_SCARTATI).length;
+}
+
+function scartatiFinora(payload: Record<string, unknown>): number {
+    const marcatore = payload[SLOT_SCARTATI];
+    if (typeof marcatore !== 'string') return 0;
+    const m = CONTEGGIO_SCARTATI.exec(marcatore);
+    return m === null ? 0 : Number(m[1]);
 }
 
 export function inLogger(): boolean {
@@ -173,21 +236,24 @@ export function inLogger(): boolean {
  * logga l'errore), `inLogger()` è true e la seconda emissione viene scartata: senza questa
  * guardia si otterrebbe una ricorsione fino all'esaurimento della memoria.
  *
- * Ritorna `undefined` quando l'emissione è stata scartata — il chiamante non deve distinguere:
- * un log perso è il male minore, un log ricorsivo abbatte la funzione.
+ * NON LANCIA E NON RIGETTA MAI, per nessun input:
+ *  - un `fn` non-async che lancia ha tipo `() => never`, che passa il typecheck di
+ *    `() => Promise<T>`: senza il try il throw uscirebbe SINCRONO, scavalcando il `.catch`
+ *    di un chiamante fire-and-forget e finendo nella route;
+ *  - e una promise RIFIUTATA non sarebbe più sicura: il chiamante naturale è
+ *    `void entraNelLogger(…)`, e su Node ≥ 15 una unhandled rejection ABBATTE IL PROCESSO —
+ *    peggio del 500 che questo modulo esiste per evitare.
  *
- * Funziona anche FUORI da una richiesta (cron, boot): vedi `alsLogger`.
+ * Entrambi i casi si risolvono quindi a `undefined`, che è già il valore dell'emissione
+ * scartata: se il male minore è un log perso — ed è la premessa di tutto il modulo — vale
+ * anche quando a fallire è il logger stesso. Chi vuole sapere che l'emissione non è andata
+ * lo deduce da `undefined`; chi non guarda, non muore.
  */
 export function entraNelLogger<T>(fn: () => Promise<T>): Promise<T | undefined> {
     if (inLogger()) return Promise.resolve(undefined);
     try {
-        return alsLogger.run(true, fn);
-    } catch (e) {
-        // Ritorna SEMPRE una promise, non lancia mai in modo sincrono. `() => { throw … }` ha
-        // tipo `() => never` ed è assegnabile a `() => Promise<T>`: un `fn` non-async che lancia
-        // passa il typecheck. E il logger si usa fire-and-forget (`entraNelLogger(…).catch(…)`),
-        // dove un throw sincrono scavalca il `.catch` e finisce nella route — cioè esattamente
-        // la 200-che-diventa-500 che questo modulo esiste per non causare.
-        return Promise.reject(e);
+        return Promise.resolve(alsLogger.run(true, fn)).catch(() => undefined);
+    } catch {
+        return Promise.resolve(undefined);
     }
 }

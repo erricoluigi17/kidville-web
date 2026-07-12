@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
+import { enqueueNotifichePerAlunni } from '@/lib/primaria/notifiche';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 
@@ -110,6 +111,19 @@ export async function POST(request: Request) {
             console.error('Errore INSERT note_disciplinari:', dbError);
             return NextResponse.json({ error: 'Errore nel salvataggio della nota', details: dbError.message }, { status: 500 });
         }
+
+        // Notifica ai genitori (best-effort) — allineata al registro primaria:
+        // stesso tipo/toggle (nota / nota_firma) e stesso buffer 10'.
+        try {
+            await enqueueNotifichePerAlunni(supabase, {
+                alunnoIds,
+                tipo: richiedeFirma ? 'nota_firma' : 'nota',
+                titolo: richiedeFirma ? 'Nuova nota — richiesta firma' : 'Nuova nota',
+                corpo: testo.slice(0, 140),
+                link: '/parent/diary',
+                entitaTipo: 'nota',
+            });
+        } catch { /* non bloccare */ }
 
         return NextResponse.json({ success: true, data, count: data?.length ?? 0 });
 

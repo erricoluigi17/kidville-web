@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireUser } from '@/lib/auth/require-staff';
+import { notificaEvento, nomeUtente } from '@/lib/notifiche/triggers';
 import { parseBody } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 
@@ -63,6 +64,36 @@ export async function POST(request: Request) {
         if (dbError) {
             console.error('Errore firma nota:', dbError);
             return NextResponse.json({ error: 'Errore durante la firma', details: dbError.message }, { status: 500 });
+        }
+
+        // Notifica al docente autore: firma ricevuta (best-effort).
+        try {
+            const { data: notaFull } = await supabase
+                .from('note_disciplinari')
+                .select('maestra_id')
+                .eq('id', notaId)
+                .maybeSingle();
+            const maestraId = notaFull?.maestra_id as string | undefined;
+            if (maestraId && maestraId !== userId) {
+                const { data: alunno } = await supabase
+                    .from('alunni')
+                    .select('nome, cognome, scuola_id')
+                    .eq('id', nota.alunno_id)
+                    .maybeSingle();
+                const firmatario = await nomeUtente(supabase, userId);
+                await notificaEvento(supabase, {
+                    tipo: 'firma_ricevuta',
+                    scuolaId: (alunno?.scuola_id as string | undefined) ?? null,
+                    utenteIds: [maestraId],
+                    titolo: 'Nota firmata dal genitore',
+                    corpo: `${firmatario ?? 'Un genitore'} ha firmato la nota di ${[alunno?.nome, alunno?.cognome].filter(Boolean).join(' ') || 'un alunno'}.`,
+                    link: '/teacher/diary',
+                    entitaTipo: 'nota',
+                    entitaId: notaId,
+                });
+            }
+        } catch (e) {
+            console.error('Notifica firma nota fallita (non bloccante):', e);
         }
 
         return NextResponse.json({ success: true, message: 'Nota firmata con successo', ip });

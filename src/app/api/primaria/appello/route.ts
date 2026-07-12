@@ -5,6 +5,7 @@ import { requireDocente } from '@/lib/auth/require-staff'
 import { assertSezioneInScope, assertAlunniInSezione } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { notificaTitolariScrittura } from '@/lib/primaria/notifiche'
+import { notificaEvento } from '@/lib/notifiche/triggers'
 import { parseBody, parseData, parseQuery } from '@/lib/validation/http'
 import { zDataYMD, zUuid } from '@/lib/validation/common'
 
@@ -148,6 +149,60 @@ export async function POST(request: NextRequest) {
       valoreDopo: saved ?? [],
     })
     await notificaTitolariScrittura(supabase, { attore: auth.user, sectionId, area: 'appello', link: `/teacher/primaria/${sectionId}/appello` })
+
+    // Notifica "assenza all'appello" ai genitori (best-effort). Scatta SOLO per
+    // chi DIVENTA assente senza assenza comunicata (giustificata/giustificata_da
+    // sulla riga preesistente = il genitore aveva avvisato). Il buffer 10' è la
+    // finestra di correzione: assente → presente/ritardo revoca la pending.
+    try {
+      const primaByAlunno = new Map(
+        ((prima ?? []) as Array<{ alunno_id: string; stato?: string | null; giustificata?: boolean | null; giustificata_da?: string | null }>)
+          .map((p) => [p.alunno_id, p]),
+      )
+      const { data: sezione } = await supabase.from('sections').select('scuola_id').eq('id', sectionId).maybeSingle()
+      const scuolaId = (sezione?.scuola_id as string | undefined) ?? null
+
+      const revocati = records
+        .filter((r) => r.stato !== 'assente' && primaByAlunno.get(r.alunnoId)?.stato === 'assente')
+        .map((r) => r.alunnoId)
+      for (const alunnoId of revocati) {
+        await supabase
+          .from('notifiche')
+          .delete()
+          .eq('tipo', 'assenza_non_comunicata')
+          .eq('entita_id', alunnoId)
+          .is('push_inviata_il', null)
+      }
+
+      const nuoviAssenti = records
+        .filter((r) => {
+          if (r.stato !== 'assente') return false
+          const p = primaByAlunno.get(r.alunnoId)
+          if (p?.stato === 'assente') return false // ri-salvataggio: già gestito
+          if (p?.giustificata || p?.giustificata_da) return false // assenza comunicata
+          return true
+        })
+        .map((r) => r.alunnoId)
+      if (nuoviAssenti.length > 0) {
+        const { data: anagrafiche } = await supabase.from('alunni').select('id, nome').in('id', nuoviAssenti)
+        for (const a of (anagrafiche ?? []) as Array<{ id: string; nome?: string | null }>) {
+          await notificaEvento(supabase, {
+            tipo: 'assenza_non_comunicata',
+            scuolaId,
+            alunnoIds: [a.id],
+            titolo: 'Assenza registrata all’appello',
+            corpo: `${a.nome ?? 'Tuo figlio'} è risultato assente oggi senza un'assenza comunicata. Ricordati di giustificare.`,
+            link: '/parent/primaria/assenze',
+            entitaTipo: 'presenza',
+            entitaId: a.id,
+            bufferMin: 10,
+            debounce: true,
+          })
+        }
+      }
+    } catch (e) {
+      console.error('Notifica assenza appello fallita (non bloccante):', e)
+    }
 
     return NextResponse.json({ success: true, data: saved ?? [] })
   } catch (err) {

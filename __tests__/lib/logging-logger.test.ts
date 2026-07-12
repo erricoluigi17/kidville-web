@@ -24,6 +24,47 @@ describe('formattaRiga — marker + logfmt', () => {
         expect(formattaRiga('KV_ERR', {}).split(' ')[0]).toMatch(/^[A-Z_]+$/);
     });
 
+    it('una CHIAVE forgiata non può fabbricare una seconda riga di log col marker', () => {
+        // Le chiavi non vengono quotate: un `\n` nella chiave spezzerebbe la riga, e la
+        // seconda metà arriverebbe a Vercel col suo bravo marker — non un log invisibile,
+        // un log che MENTE.
+        const riga = formattaRiga('KV_EVT', {
+            provider: 'resend',
+            ['x\nKV_OK rid=vittima ms']: 1,
+        } as Record<string, Valore>);
+        expect(riga).not.toContain('\n');
+        expect(riga).not.toContain('KV_OK');
+        expect(riga).not.toContain('vittima');
+        expect(riga).toContain('provider=resend'); // i campi sani restano
+        expect(riga).toContain('scartate=1'); // e il log dice ciò che ha buttato
+    });
+
+    it('scarta anche le chiavi con spazi, `=` o virgolette (sfaserebbero le coppie)', () => {
+        expect(formattaRiga('KV_OK', { 'a=b': 1 } as Record<string, Valore>)).toBe('KV_OK scartate=1');
+        expect(formattaRiga('KV_OK', { 'a b': 1 } as Record<string, Valore>)).toBe('KV_OK scartate=1');
+        expect(formattaRiga('KV_OK', { 'a"b': 1 } as Record<string, Valore>)).toBe('KV_OK scartate=1');
+    });
+
+    it('un getter che lancia costa QUEL campo, non l\'intera riga (Object.entries li invoca)', () => {
+        const campi: Record<string, Valore> = { provider: 'resend', esito: 'inviata' };
+        Object.defineProperty(campi, 'boom', {
+            enumerable: true,
+            get() { throw new Error('getter ostile'); },
+        });
+        const riga = formattaRiga('KV_EVT', campi);
+        expect(riga).toContain('provider=resend');
+        expect(riga).toContain('esito=inviata');
+        expect(riga).toContain('boom=[campo-illeggibile]');
+    });
+
+    it('i valori stringa passano da sanificaMessaggio: un\'email non esce in chiaro da NESSUN campo', () => {
+        const riga = formattaRiga('KV_EVT', { destinatario: 'mario.rossi@example.com', esito: 'ok' });
+        expect(riga).not.toContain('mario.rossi');
+        expect(riga).not.toContain('example.com');
+        expect(riga).toContain('destinatario=[email]');
+        expect(riga).toContain('esito=ok'); // i metadati restano perfettamente leggibili
+    });
+
     it('tiene 0 e false (sono informazione, non vuoto)', () => {
         expect(formattaRiga('KV_OK', { n: 0, ok: false })).toBe('KV_OK n=0 ok=false');
     });
@@ -70,6 +111,10 @@ describe('allowlist degli eventi persistiti', () => {
     it('NON include gli eventi ad alto volume', () => {
         expect(EVENTI_PERSISTITI.has('route')).toBe(false);
         expect(EVENTI_PERSISTITI.has('db')).toBe(false);
+    });
+
+    it('include `config`: una variabile critica assente in prod deve sopravvivere alla retention di Vercel', () => {
+        expect(EVENTI_PERSISTITI.has('config')).toBe(true);
     });
 
     it('warn ed error si persistono sempre; un info solo se è un evento in allowlist', () => {
@@ -156,11 +201,12 @@ describe('logger — emissione reale (guardia SILENZIOSO disattivata)', () => {
         const riga = err.mock.calls[0][0] as string;
         expect(riga.startsWith('KV_ERR ')).toBe(true);
         expect(riga).toContain('op=crea-alunno');
-        expect(riga).toContain('stato=500');
         expect(riga).toContain('ms=7');
         expect(riga).toContain('msg="qualcosa è esploso"');
         // Lo stack NON sta sulla riga: mangerebbe il budget dei 3.500 caratteri.
         expect(riga).not.toContain('at ');
+        // Lo status HTTP nemmeno: Vercel lo conosce già come metadato di piattaforma.
+        expect(riga).not.toContain('stato=');
 
         const nativo = err.mock.calls[1][0];
         expect(nativo).toBeInstanceOf(Error);
@@ -189,11 +235,33 @@ describe('logger — emissione reale (guardia SILENZIOSO disattivata)', () => {
         ev('cron', 'error', { azione: 'solleciti' }, new Error('timeout'));
         expect(err.mock.calls[1][0]).toContain('KV_ERR evt=cron azione=solleciti');
         expect(err.mock.calls[1][0]).toContain('msg=timeout');
-        // Con un err presente esce anche l'Error nativo.
+        // Con un err presente, e livello `error`, esce anche l'Error nativo.
         expect(err.mock.calls[2][0]).toBeInstanceOf(Error);
         // `console.warn` non viene MAI usato: su Vercel, nelle funzioni non-streaming, non
         // produce il livello `warning` ma `error`, e inquinerebbe il filtro degli errori.
         expect(warn).not.toHaveBeenCalled();
+    });
+
+    it('l\'Error nativo esce SOLO per livello error: un info/warn non deve inquinare il flusso errori', async () => {
+        const { logEvento: ev } = await caricaRumoroso();
+
+        ev('push', 'info', { provider: 'fcm' }, new Error('token rifiutato'));
+        expect(log).toHaveBeenCalledTimes(1);
+        expect(err).not.toHaveBeenCalled(); // niente Error nativo: `get_runtime_errors` non lo vedrà
+
+        ev('push', 'warn', { provider: 'fcm' }, new Error('token rifiutato'));
+        expect(err).toHaveBeenCalledTimes(1); // solo la riga KV_WARN
+        expect(err.mock.calls[0][0]).toContain('KV_WARN');
+        expect((err.mock.calls as unknown[][]).some((c) => c[0] instanceof Error)).toBe(false);
+    });
+
+    it('il contesto vince anche in logOk (un chiamante JS non può falsificare il rid)', async () => {
+        const { logOk: ok, conContesto } = await caricaRumoroso();
+        await conContesto({ requestId: 'vero', path: '/api/x' }, async () => {
+            (ok as (c: Record<string, unknown>) => void)({ ms: 1, rid: 'FALSO' });
+        });
+        expect(log.mock.calls[0][0]).toContain('rid=vero');
+        expect(log.mock.calls[0][0]).not.toContain('FALSO');
     });
 
     it('persiste solo ciò che va persistito, e mai in modo rientrante', async () => {
@@ -365,15 +433,57 @@ describe('logger — fail-open: nulla di ciò che sta qui dentro può rompere un
         await new Promise((r) => setTimeout(r, 0));
     });
 
-    it('un valore ostile costa QUEL campo, non l\'intera riga', async () => {
+    it('un valore ostile costa QUEL campo, non l\'intera riga — toString E getter', async () => {
         const log = vi.spyOn(console, 'log').mockImplementation(() => {});
         vi.spyOn(console, 'error').mockImplementation(() => {});
         const { logEvento: ev } = await caricaRumoroso();
-        const ostile = { toString() { throw new Error('no'); } } as unknown as Valore;
-        expect(() => ev('email', 'info', { provider: 'resend', x: ostile })).not.toThrow();
+
+        const campi: Record<string, Valore> = {
+            provider: 'resend',
+            x: { toString() { throw new Error('no'); } } as unknown as Valore,
+        };
+        // Il getter è il caso che il test PRECEDENTE non copriva: `Object.entries` lo invoca
+        // mentre costruisce l'array, quindi non basta un try dentro `quota` — il try va messo
+        // attorno alla LETTURA. Un test sul solo `toString` resterebbe verde col difetto.
+        Object.defineProperty(campi, 'boom', {
+            enumerable: true,
+            get() { throw new Error('getter ostile'); },
+        });
+
+        expect(() => ev('email', 'info', campi)).not.toThrow();
+        expect(log).toHaveBeenCalledTimes(1); // la riga esce comunque
         const riga = log.mock.calls[0][0] as string;
         expect(riga).toContain('provider=resend'); // il campo sano sopravvive
-        expect(riga).toContain('x=[campo-illeggibile]');
+        expect(riga).toContain('boom=[campo-illeggibile]'); // il getter costa solo sé stesso
+        // L'oggetto non passa da `String()` (direbbe `[object Object]`, e ne invocherebbe il
+        // `toString` ostile): passa da `serializza`, che non chiama `toString` e non lancia.
+        expect(riga).toContain('x=');
+        expect(riga).not.toContain('[object Object]');
+    });
+
+    it('la scrittura su app_log non può ricorrere (e il suo fallimento resta visibile)', async () => {
+        const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const rif: { logger?: typeof import('@/lib/logging/logger') } = {};
+        // Il Task 8: l'insert su Supabase fallisce, e il suo gestore d'errore logga.
+        const appLog = vi.fn(async () => {
+            rif.logger?.logErrore({ operazione: 'app_log' }, new Error('insert fallita'));
+            throw new Error('insert fallita');
+        });
+        vi.resetModules();
+        vi.doMock('@/lib/logging/app-log', () => ({ appLog }));
+        rif.logger = await import('@/lib/logging/logger');
+
+        rif.logger.logErrore({ operazione: 'route-x' }, new Error('boom'));
+        await new Promise((r) => setTimeout(r, 0));
+
+        // Una sola scrittura: la persistenza rientrante è stata scartata da `inLogger()`.
+        // Senza la guardia, si ricorrerebbe fino all'esaurimento della memoria.
+        expect(appLog).toHaveBeenCalledTimes(1);
+        // …ma la riga del fallimento interno è USCITA su console: mettere la guardia anche
+        // sull'emissione renderebbe muto un `app_log` rotto proprio dove ce ne accorgeremmo.
+        const righe = errSpy.mock.calls.map((c) => String(c[0]));
+        expect(righe.some((r) => r.includes('op=app_log'))).toBe(true);
+        expect(righe.some((r) => r.includes('op=route-x'))).toBe(true);
     });
 
     it('un errore ostile (getter che lanciano) non fa saltare la route', async () => {

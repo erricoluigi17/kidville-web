@@ -28,8 +28,17 @@ export const PROTOCOLLO_MAX_BYTES = PROTOCOLLO_MAX_MB * 1024 * 1024
 export const MIME_AMMESSI = ['application/pdf', 'image/jpeg', 'image/png'] as const
 export type MimeAmmesso = (typeof MIME_AMMESSI)[number]
 
-/** Codici Postgres/PostgREST di schema assente (DB E2E CI mai migrato). */
-export const SCHEMA_MANCANTE = new Set(['42P01', '42703', 'PGRST200', 'PGRST204', 'PGRST205'])
+/** Codici Postgres/PostgREST di schema assente (DB E2E CI mai migrato):
+ *  tabelle/colonne/relazioni mancanti + funzioni RPC non ancora migrate. */
+export const SCHEMA_MANCANTE = new Set([
+  '42P01',
+  '42703',
+  'PGRST200',
+  'PGRST204',
+  'PGRST205',
+  '42883',
+  'PGRST202',
+])
 
 const ESTENSIONE_PER_MIME: Record<MimeAmmesso, string> = {
   'application/pdf': 'pdf',

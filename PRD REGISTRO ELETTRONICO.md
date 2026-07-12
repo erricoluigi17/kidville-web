@@ -23,6 +23,7 @@
 > | `armadietto` | Inventario materiali a scalare | Schema creato, non ancora popolato |
 > | `ticket_mensa` | Saldo ticket pasto prepagato (running int per alunno) | Schema creato, non ancora popolato |
 > | `mensa_ticket_movimenti` | Ledger movimenti ticket (ricarica/consumo/disdetta/rettifica + `saldo_dopo`) — storico e morosità | ✅ RLS + policy service_role |
+> | `protocolli` (+ `protocolli_allegati`, `protocolli_categorie`, `protocolli_numerazione`) | Registro di protocollo DPR 445/2000: trigger WORM (annullo una-tantum art. 54; DELETE solo via `protocollo_elimina()` senza tracce), numerazione atomica per scuola/anno, titolario con seed | ✅ RLS + policy service_role |
 > | `pagamenti` | Scadenziario rette e quote | Schema creato, non ancora popolato |
 >
 > ### Moduli Implementati
@@ -36,6 +37,7 @@
 > | **Chat** | ✅ Operativo | `/teacher/chat`, `/parent/chat` | `/api/chat/*` |
 > | **Contabilità (Pagamenti)** | ✅ Operativo | `/admin/pagamenti` (6 viste), `/parent/pagamenti` | `/api/pagamenti/*` (+ ricevute numerate, attestazioni, export AdE/XLSX, solleciti, riconciliazione) |
 > | **Modulistica** | ✅ Operativo | `/admin/forms`, `/parent/forms` | `/api/forms/*` |
+> | **Registro Protocolli** | ✅ Operativo (solo admin+segreteria) | `/admin/protocolli` | `/api/admin/protocolli/*` (upload-url diretto, analizza, registrazione/annullo/eliminazione, file firmati, verifica integrità, categorie, export XLSX/PDF, da-documento, genera-documento) |
 > | **Foto/Video** | ✅ Operativo | `/teacher/gallery`, `/parent/gallery` | `/api/gallery/*` |
 >
 > ### 🎓 Moduli Normativi Scuola Primaria (gap da colmare)
@@ -54,6 +56,17 @@
 > | **Accessibilità AgID / Legge Stanca** | 🔶 Baseline (P1, DL-008) | Trasversale | Fatto: alto contrasto globale persistito, focus-ring, reduced-motion, Modal accessibile, landmark/skip-link/aria-current, smoke jest-axe. WCAG-AA = definition-of-done; audit AA per-pagina incrementale |
 
 ---
+
+## 🗓️ Changelog — Registro Protocolli DPR 445/2000 (admin+segreteria) 2026-07-12 (branch `fix/docente-primaria-home`)
+
+- **Nuovo modulo `/admin/protocolli`** (voce sidebar "Protocollo", gruppo Amministrazione, `roles: ['admin','segreteria']` — primo uso reale del gating per-voce). Perimetro definito con **24 decisioni approvate una-per-una dall'utente**; spec completo in `docs/superpowers/specs/2026-07-12-registro-protocolli-design.md`.
+- **Registrazione a norma (art. 53)**: numero `0000042/2026` (≥7 cifre, azzeramento annuale, per sede — funzione atomica `prossimo_numero_protocollo`), data/ora automatiche, mittente/destinatario, oggetto, **impronta SHA-256**, mezzo, riferimenti del documento del mittente, categoria (titolario configurabile, 7 default), allegati multipli, collegamenti "risponde al prot. n. X", inserimento **da registro di emergenza** (data/ora dichiarata + badge).
+- **Fascia di segnatura (art. 55)** con pdf-lib in testa alla 1ª pagina — pagina originale incorporata e riscalata, **nulla viene mai coperto**: logo + denominazione + numero + tipo + data/ora italiana (corretta anche su runtime UTC). Foto JPG/PNG convertite in PDF e timbrate. **Originale intatto + copia timbrata** conservati per sempre nel bucket privato `protocollo`, download SOLO via URL firmato.
+- **Upload diretto client→storage** con URL firmato (fino a 25 MB, oltre il limite body Vercel) + **auto-compilazione dei campi** dal testo del PDF (unpdf + euristiche "OGGETTO:", "Prot. n. … del …", intestazione mittente) + **avviso duplicati non bloccante** via impronta.
+- **Immutabilità WORM a livello DB** (trigger validi anche per service_role): mutabili solo note/categoria/collegamento; **annullamento a norma art. 54** (riga visibile barrata, motivo obbligatorio + data + operatore, definitivo); **eliminazione totale SOLO admin** via `protocollo_elimina()` (GUC transaction-locale), file compresi, **senza alcuna traccia nemmeno tecnica** (scelta esplicita dell'utente; i buchi di numerazione che ne derivano sono accettati).
+- **«Verifica integrità»** (ricalcolo impronta dall'archivio), **export XLSX + PDF impaginato** sui filtri attivi (righe annullate visibili col motivo; il registro giornaliero è l'export del singolo giorno), **«Genera documento»** su richiesta (certificato di frequenza/iscrizione — riuso builder self-service —, nulla osta, testo libero su carta intestata; protocollato in USCITA in un click), **pulsanti «Protocolla»** sui certificati competenze (uscita) e sui moduli firmati della modulistica (ingresso, via documents-merge).
+- **Migrazione** `20260712150000_registro_protocolli.sql` applicata in prod via MCP (advisor security 0 ERROR). DB E2E CI non migrato → la GET degrada (`nonMigrato`) e la pagina rende l'empty-state dedicato: spec `e2e/admin-protocolli.spec.ts` + voce `/admin/protocolli` in coverage-matrix. **52 test nuovi** (lib in TDD: segnatura, euristiche, timbro con verifica testuale via unpdf, store, documenti, carta intestata; route: gate 401/403, DELETE solo admin senza audit, degradazione, zod). Nuove dipendenze: `pdf-lib`, `unpdf`.
+- **Fuori scope dichiarato** (decisioni utente): conservazione a norma accreditata, segnatura XML AgID, snapshot giornaliero automatico, OCR/AI, tracciamento dei download, audit interno su crea/annulla/elimina, protocollazione automatica email/PEC, moduli del sistema legacy senza `pdf_path`.
 
 ## 🗓️ Changelog — Home docente senza lessico 0-6 per i solo-primaria 2026-07-12 (branch `fix/docente-primaria-home`)
 

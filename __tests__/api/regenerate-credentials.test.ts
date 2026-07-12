@@ -7,6 +7,7 @@ const h = vi.hoisted(() => ({
   logScrittura: vi.fn(),
   ensureIdentity: vi.fn(),
   adminRow: { data: null as unknown, error: null as unknown },
+  utentiRuolo: { data: null as unknown, error: null as unknown },
   updateError: null as { message: string } | null,
   updates: [] as Array<{ id: string; attrs: { password?: string; email_confirm?: boolean } }>,
 }));
@@ -28,8 +29,14 @@ vi.mock('@/lib/auth/parent-identity', async (importOriginal) => {
 });
 vi.mock('@supabase/supabase-js', () => ({
   createClient: () => ({
-    from: () => ({
-      select: () => ({ eq: () => ({ maybeSingle: () => Promise.resolve(h.adminRow) }) }),
+    // select('ruolo') su utenti = guard anti-lockout; il resto usa adminRow.
+    from: (table: string) => ({
+      select: (cols?: string) => ({
+        eq: () => ({
+          maybeSingle: () =>
+            Promise.resolve(table === 'utenti' && cols === 'ruolo' ? h.utentiRuolo : h.adminRow),
+        }),
+      }),
     }),
     auth: {
       admin: {
@@ -57,6 +64,7 @@ describe('POST /api/admin/regenerate-credentials (DL-005)', () => {
     h.requireStaff.mockResolvedValue({ user: { id: 'admin-1', role: 'segreteria', scuola_id: 's1' } });
     h.sendEmail.mockResolvedValue({ ok: true, error: null });
     h.adminRow = { data: null, error: null };
+    h.utentiRuolo = { data: { ruolo: 'genitore' }, error: null };
     h.updateError = null;
     h.updates = [];
     // Default: identità già presente → riusa auth_user_id; se assente la ripara.
@@ -151,6 +159,19 @@ describe('POST /api/admin/regenerate-credentials (DL-005)', () => {
     const res = await POST(req({ targetKind: 'parent', targetId: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1' }));
     expect(res.status).toBe(500);
     expect(h.updates).toHaveLength(0);
+  });
+
+  it("guard anti-lockout: l'email dell'anagrafica appartiene a un account STAFF → 409, nessun reset", async () => {
+    // Caso reale: anagrafica di prova con l'email del titolare (sandbox Resend)
+    // o docente-genitore — il reset cambierebbe la password del login staff.
+    h.adminRow = { data: { id: 'p1', auth_user_id: 'auth-admin', emails: ['admin@x.it'], first_name: 'Luigi', last_name: null }, error: null };
+    h.utentiRuolo = { data: { ruolo: 'admin' }, error: null };
+    const res = await POST(req({ targetKind: 'parent', targetId: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1' }));
+    const data = await res.json();
+    expect(res.status).toBe(409);
+    expect(data.error).toMatch(/account staff \(admin\)/);
+    expect(h.updates).toHaveLength(0);
+    expect(h.sendEmail).not.toHaveBeenCalled();
   });
 
   it('staff: usa utenti.id come auth id (nessuna riparazione identità)', async () => {

@@ -86,6 +86,22 @@ export async function POST(request: Request) {
     }
     authId = identita.authUserId;
     identitaCreata = identita.createdAuth || identita.createdUtenti || identita.boundNow;
+
+    // Guard anti-lockout: se l'email dell'anagrafica corrisponde a un account
+    // STAFF (incluso il caso docente-che-è-anche-genitore), il reset da qui
+    // cambierebbe la password di QUEL login — admin compreso (es. anagrafica di
+    // prova con l'email del titolare in sandbox Resend). Le credenziali staff
+    // si gestiscono dal pannello Staff.
+    const { data: profilo } = await admin.from('utenti').select('ruolo').eq('id', authId).maybeSingle();
+    const ruoloAccount = (profilo as { ruolo?: string } | null)?.ruolo ?? null;
+    if (ruoloAccount && ruoloAccount !== 'genitore') {
+      return NextResponse.json(
+        {
+          error: `L'email di questa anagrafica corrisponde a un account staff (${ruoloAccount}): rigenerare le credenziali dal pannello Staff, oppure correggere l'email del genitore.`,
+        },
+        { status: 409 }
+      );
+    }
   } else {
     // staff: utenti.id È l'auth.users id (FK utenti_id_fkey)
     const { data } = await admin.from('utenti').select('id, email, nome').eq('id', targetId).maybeSingle();

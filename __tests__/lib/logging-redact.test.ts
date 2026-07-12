@@ -121,6 +121,47 @@ describe('redact — lista bianca', () => {
         expect(out.alunno_id).toBe('3f2504e0-4f89-11d3-9a0c-0305e82c3301'); // resta debuggabile
     });
 
+    it('la valutazione di un minore è redatta anche quando è un NUMERO', () => {
+        // La lista bianca chiude le stringhe, non i numeri: senza le radici sensibili
+        // questi passerebbero tutti in chiaro accanto a un alunno_id. Sono chiavi REALI:
+        // voto_numerico (api/grades), media (api/primaria/prospetto: media per materia).
+        const out = redact({
+            alunno_id: '3f2504e0-4f89-11d3-9a0c-0305e82c3301',
+            voto_numerico: 7,
+            media: 4.5,
+            giudizio: 8,
+            votoNumerico: 9,
+            punteggio: 100,
+        }) as Record<string, unknown>;
+        expect(out.voto_numerico).toBe('[redatto]');
+        expect(out.media).toBe('[redatto]');
+        expect(out.giudizio).toBe('[redatto]');
+        expect(out.votoNumerico).toBe('[redatto]'); // camelCase: normalizzazione della chiave
+        expect(out.punteggio).toBe('[redatto]');
+        expect(out.alunno_id).toBe('3f2504e0-4f89-11d3-9a0c-0305e82c3301'); // resta debuggabile
+    });
+
+    it('la chiave è confrontata NORMALIZZATA (maiuscole, camelCase, trattini)', () => {
+        const out = redact({
+            PASSWORD: 'Segreta.2026!',
+            newPassword: 'Altra.2026!',
+            'CODICE-FISCALE': 'RSSMRA80A01H501U',
+            Livello: 'D',
+        }) as Record<string, string>;
+        expect(out.PASSWORD).toBe('[redatto]');
+        // senza normalizzazione uscirebbe "[redatto:str/11]": ne rivelerebbe la lunghezza
+        expect(out.newPassword).toBe('[redatto]');
+        expect(out['CODICE-FISCALE']).toMatch(/^#[0-9a-f]{8}$/);
+        expect(out.Livello).toBe('[redatto]');
+    });
+
+    it('`codice` non è in chiaro: la competenza viaggia anche come Livello.codice', () => {
+        // src/lib/competenze/modello.ts → `codice: 'A' | 'B' | 'C' | 'D'`
+        const out = redact({ codice: 'A' }) as Record<string, string>;
+        expect(out.codice).not.toBe('A');
+        expect(out.codice).toBe('[redatto:str/1]');
+    });
+
     it('redigiPath tiene il PATTERN e butta token, id e query string', () => {
         // Il token del modulo pubblico è un SEGMENTO di path (`/m/[token]`): è una
         // capability. E le query string trasportano ?userId=, ?email=, ?token=.
@@ -128,6 +169,22 @@ describe('redact — lista bianca', () => {
         expect(redigiPath('/api/admin/parents/3f2504e0-4f89-11d3-9a0c-0305e82c3301')).toBe('/api/admin/parents/[id]');
         expect(redigiPath('/api/genitori?email=x@y.z')).toBe('/api/genitori');
         expect(redigiPath('/api/alunni/42')).toBe('/api/alunni/[n]');
+    });
+
+    it('redigiPath NON distrugge i nomi di route legittimi (19 nel repo sono ≥16 char)', () => {
+        // Se bastasse la lunghezza, queste due route collasserebbero nello stesso
+        // pattern e il log perderebbe la sua unica funzione: sapere chi è stato colpito.
+        expect(redigiPath('/api/medical-certificates/3')).toBe('/api/medical-certificates/[n]');
+        expect(redigiPath('/api/giustifiche-didattiche/12')).toBe('/api/giustifiche-didattiche/[n]');
+        // ma ciò che SEMBRA opaco (lungo + con cifre) resta [tok]
+        expect(redigiPath('/api/public/forms/tok_live_9f8e7d6c5b4a3210/submit')).toBe('/api/public/forms/[tok]/submit');
+    });
+
+    it('redigiPath regge i casi limite', () => {
+        expect(redigiPath('')).toBe('');
+        expect(redigiPath('api/alunni')).toBe('api/alunni');
+        expect(redigiPath('?email=x@y.z')).toBe('');
+        expect(redigiPath('https://app.kidville.it/m/tok_live_9f8e7d6c5b4a3210')).toBe('https://app.kidville.it/m/[tok]');
     });
 
     it('le chiavi path/route/url non escono mai grezze da redact', () => {
@@ -216,6 +273,66 @@ describe('redact — lista bianca', () => {
         expect(({} as Record<string, unknown>).inquinato).toBeUndefined();
         expect(out.tipo).toBe('x');
         expect(() => JSON.stringify(out)).not.toThrow();
+    });
+
+    it('un Error non sparisce (ma il suo message resta redatto)', () => {
+        // message/stack NON sono enumerabili: senza un ramo dedicato Object.keys non li
+        // vede e l'errore uscirebbe come {} — e chi cabla il logger, vedendo {}, sarebbe
+        // tentato di bypassare redact() proprio per gli errori.
+        const err = new Error('utente genitore@example.com non trovato');
+        const out = redact(err) as Record<string, unknown>;
+        expect(out.name).toBe('Error');
+        expect(out.message).toBe('[redatto:str/39]');
+        expect(JSON.stringify(out)).not.toContain('genitore@example.com');
+        expect(Array.isArray(out.stack)).toBe(true);
+        expect((out.stack as string[]).length).toBeLessThanOrEqual(5);
+    });
+
+    it('i guardrail anti-esplosione producono un output VERO, non solo "non lancia"', () => {
+        const prof = redact({ a: { b: { c: { d: { e: { f: 1 } } } } } }) as { a: { b: { c: { d: { e: unknown } } } } };
+        expect(prof.a.b.c.d.e).toBe('[profondità-max]');
+
+        const elenco = redact({ elenco: Array.from({ length: 25 }, (_, i) => i) }) as { elenco: unknown[] };
+        expect(elenco.elenco).toHaveLength(21); // 20 elementi + il marcatore
+        expect(elenco.elenco[20]).toBe('[+5 elementi]');
+
+        const tante: Record<string, number> = {};
+        for (let i = 0; i < 45; i++) tante[`k${i}`] = i;
+        const chiavi = redact(tante) as Record<string, unknown>;
+        expect(Object.keys(chiavi)).toHaveLength(41); // 40 chiavi + il marcatore
+        expect(chiavi['[…]']).toBe('[+5 chiavi]');
+    });
+
+    it('date, bigint e symbol non fanno saltare la redazione', () => {
+        const out = redact({
+            creato: new Date('2026-07-12T10:30:00Z'),
+            rotta: new Date('non-una-data'),
+            grande: BigInt(10),
+            simbolo: Symbol('x'),
+        }) as Record<string, unknown>;
+        expect(out.creato).toBe('2026-07-12T10:30:00.000Z');
+        expect(out.rotta).toBe('[data-invalida]'); // .toISOString() su data invalida LANCIA
+        expect(out.grande).toBe('10n');
+        expect(out.simbolo).toBe('[symbol]');
+    });
+
+    it('un riferimento CONDIVISO non è un ciclo (il dato non deve sparire)', () => {
+        const condiviso = { tipo: 'assenza' };
+        const out = redact({ a: condiviso, b: condiviso }) as Record<string, Record<string, unknown>>;
+        expect(out.a.tipo).toBe('assenza');
+        expect(out.b.tipo).toBe('assenza'); // NON '[ciclo]'
+
+        const ciclico: Record<string, unknown> = { tipo: 'x' };
+        ciclico.self = ciclico;
+        const cic = redact(ciclico) as Record<string, unknown>;
+        expect(cic.self).toBe('[ciclo]'); // il ciclo VERO invece si riconosce
+    });
+
+    it('hashCorrelabile non correla il FALSO: un oggetto non diventa un hash', () => {
+        // String({...}) è "[object Object]" per qualunque oggetto: l'hash sarebbe
+        // identico per persone diverse. Un hash che correla il falso è peggio di niente.
+        expect(hashCorrelabile({ first: 'Mario' })).toBe('[redatto]');
+        expect((redact({ nome: { first: 'Mario' } }) as Record<string, string>).nome).toBe('[redatto]');
     });
 
     it('hashCorrelabile è deterministico e corto', () => {

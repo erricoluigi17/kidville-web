@@ -4,14 +4,20 @@ import { useState } from 'react';
 import Image from 'next/image';
 
 interface HeroMascotProps {
-  /** Larghezza del ritaglio in px. */
+  /** Larghezza visibile della mascotte in px. */
   width: number;
   /** Altezza del ritaglio in px: quando supera l'altezza della card il
    *  cappello sbuca dal bordo alto. Tenerla sotto width × 1,49 (rapporto
    *  della figura), altrimenti l'immagine non riempie il ritaglio in basso. */
   height: number;
-  /** Distanza dal bordo destro della card, in px. */
-  right?: number;
+  /** Margine visivo dal bordo destro della card, in px (padding interno:
+   *  il ritaglio resta agganciato a right-0 così l'angolo coincide con
+   *  quello della card). */
+  insetRight?: number;
+  /** Raggio dell'angolo BASSO-DESTRA della card ospite: il ritaglio lo
+   *  replica, altrimenti la mascotte sborderebbe di qualche pixel sul
+   *  fondo pagina dove la card curva (bug visivo). */
+  radius?: number;
   /** Preload dell'immagine: true solo per l'hero della home (LCP); gli header
    *  di pagina lo lasciano false per non accumulare preload duplicati. */
   priority?: boolean;
@@ -25,15 +31,15 @@ interface HeroMascotProps {
  * TRASPARENTE (mascot-hero.png, derivata da mascot.png ufficiale): quella
  * originale ha lo sfondo giallo opaco e creerebbe una cucitura fuori card.
  */
-export function HeroMascot({ width, height, right = 20, priority = false }: HeroMascotProps) {
+export function HeroMascot({ width, height, insetRight = 20, radius = 24, priority = false }: HeroMascotProps) {
   const [failed, setFailed] = useState(false);
 
   if (failed) {
     return (
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute bottom-0 z-[1] flex select-none items-end justify-center text-[64px] opacity-30"
-        style={{ right, width, height: Math.min(height, 96) }}
+        className="pointer-events-none absolute bottom-0 right-0 z-[1] flex select-none items-end justify-center text-[64px] opacity-30"
+        style={{ width: width + insetRight, paddingRight: insetRight, height: Math.min(height, 96) }}
       >
         🎩
       </div>
@@ -42,8 +48,13 @@ export function HeroMascot({ width, height, right = 20, priority = false }: Hero
   return (
     <div
       aria-hidden="true"
-      className="pointer-events-none absolute bottom-0 z-[1] overflow-hidden"
-      style={{ right, width, height }}
+      className="pointer-events-none absolute bottom-0 right-0 z-[1] overflow-hidden"
+      style={{
+        width: width + insetRight,
+        height,
+        paddingRight: insetRight,
+        borderBottomRightRadius: radius,
+      }}
     >
       <Image
         src="/mascot-hero.png"

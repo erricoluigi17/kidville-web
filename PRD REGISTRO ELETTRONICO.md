@@ -59,6 +59,8 @@
 
 - **Rimosso il banner "Nessuna attività infanzia/nido per il tuo profilo · Vai alla Primaria"** (richiesta utente): per un docente solo-primaria nessun riferimento a infanzia/nido deve mai comparire — le funzioni 0-6 restano attivabili solo dalle impostazioni admin (eccezione E24 già gestita). La navigazione al mondo primaria è già garantita dal tab Registro e dalla scorciatoia.
 - **Lessico per grado** nella home docente: per i solo-primaria "Sezione"→"Classe" e "bambini"→"alunni" (sottotitolo hero, banner allergie, card appello, titolo agenda); `TeacherAgendaCard` con nuova prop `gruppo: 'sezione' | 'classe'` per gli empty-state.
+- **Fix bug visivo header (segnalazione utente)**: la mascotte sbordava di qualche pixel oltre l'angolo arrotondato in basso a destra della card (visibile su Appello/Mensa/Galleria). `HeroMascot` ora si aggancia a `right-0` con `borderBottomRightRadius` che replica l'angolo della card ospite (28px hero, 24px header) e margine visivo via padding interno: il ritaglio segue la curva, zero sbordi. Audit visivo su tutte le pagine docente + prod: in produzione il remap colori `.kv-tab-giallo` è attivo e corretto (pill leggibili); il dev server locale può servire un chunk CSS stantio dopo modifiche a `globals.css` → riavviare `next dev` per vederle.
+- **Empty-state armadietto** (`teacher/settings/locker`): "Nessuna sezione nido/infanzia disponibile." → "Nessuna sezione disponibile per l'armadietto." (niente riferimenti 0-6 ai docenti primaria).
 
 ---
 

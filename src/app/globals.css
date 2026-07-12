@@ -198,3 +198,42 @@ body {
     scroll-behavior: auto !important;
   }
 }
+
+/* =============================================================================
+   TEST reversibile "tab gialla" (2026-07-12) — attivo solo quando
+   PageHeaderCard applica la classe marker `.kv-tab-giallo` (flag
+   TAB_GIALLO_OVUNQUE in src/lib/ui/tab-theme.ts). Gli slot action/children dei
+   chiamanti sono disegnati per il fondo verde: qui i loro colori vengono
+   rimappati su corrispettivi leggibili sul giallo, SENZA toccare i 28 file.
+   I selettori discendenti (0,2,0) vincono sulle utility singole (0,1,0); col
+   flag a false la classe sparisce e il blocco è inerte. In alto contrasto vale
+   comunque l'override `.kv-header-card` (fondo nero) e i token rimappati
+   (green→#FFF) restano leggibili.
+   ============================================================================= */
+.kv-tab-giallo .text-white,
+.kv-tab-giallo .text-white\/70,
+.kv-tab-giallo .text-white\/75,
+.kv-tab-giallo .text-white\/80,
+.kv-tab-giallo .text-kidville-yellow {
+  color: var(--color-kidville-green-dark);
+}
+.kv-tab-giallo .bg-white\/15 {
+  background-color: color-mix(in srgb, var(--color-kidville-green) 12%, transparent);
+}
+.kv-tab-giallo .bg-white\/25 {
+  background-color: color-mix(in srgb, var(--color-kidville-green) 22%, transparent);
+}
+/* Pill/badge gialli: su card gialla si invertono (verde con testo giallo).
+   Va tenuto DOPO il remap dei testi: a parità di specificità il colore della
+   pill deve vincere. */
+.kv-tab-giallo .bg-kidville-yellow {
+  background-color: var(--color-kidville-green);
+  color: var(--color-kidville-yellow);
+}
+/* Alto contrasto: il verde rimappa a #FFF — la pill invertita diventerebbe
+   bianca con testo giallo (illeggibile su card nera): torna gialla con testo
+   nero, la coppia HC canonica. */
+[data-contrast="high"] .kv-tab-giallo .bg-kidville-yellow {
+  background-color: var(--color-kidville-yellow);
+  color: #000000;
+}

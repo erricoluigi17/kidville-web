@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { redact, hashCorrelabile } from '@/lib/logging/redact';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { redact, hashCorrelabile, redigiPath } from '@/lib/logging/redact';
 
 /**
  * Campione REALE del dominio: se anche un solo valore sopravvive alla redazione,
@@ -37,6 +37,15 @@ const CAMPIONE = {
 };
 
 describe('redact — lista bianca', () => {
+    // L'hash è FAIL-CLOSED: senza salt non produce un hash debole ma "[redatto]".
+    // I test che verificano la FORMA dell'hash devono quindi fornire un salt.
+    beforeEach(() => {
+        vi.stubEnv('LOG_HASH_SALT', 'salt-di-test');
+    });
+    afterEach(() => {
+        vi.unstubAllEnvs();
+    });
+
     it('nessun valore del campione sopravvive', () => {
         const redatto = redact(CAMPIONE) as Record<string, unknown>;
         const out = JSON.stringify(redatto);
@@ -98,6 +107,53 @@ describe('redact — lista bianca', () => {
         expect(a.email).toMatch(/^#[0-9a-f]{8}$/);
     });
 
+    it('`livello` è la VALUTAZIONE di un minore, non il livello di log', () => {
+        // Competenze D.M. 14/2024: `livello` vale A|B|C|D e viaggia insieme ad
+        // `alunno_id` (uuid, in chiaro). In lista bianca sarebbe la valutazione di un
+        // bambino identificabile, scritta nei log di Vercel.
+        const out = redact({
+            alunno_id: '3f2504e0-4f89-11d3-9a0c-0305e82c3301',
+            competenza_codice: 'imparare_a_imparare',
+            livello: 'D',
+        }) as Record<string, unknown>;
+        expect(out.livello).toBe('[redatto]');
+        expect(JSON.stringify(out)).not.toContain('"D"');
+        expect(out.alunno_id).toBe('3f2504e0-4f89-11d3-9a0c-0305e82c3301'); // resta debuggabile
+    });
+
+    it('redigiPath tiene il PATTERN e butta token, id e query string', () => {
+        // Il token del modulo pubblico è un SEGMENTO di path (`/m/[token]`): è una
+        // capability. E le query string trasportano ?userId=, ?email=, ?token=.
+        expect(redigiPath('/m/8f3a9c2e-secretissimo-token-firma')).toBe('/m/[tok]');
+        expect(redigiPath('/api/admin/parents/3f2504e0-4f89-11d3-9a0c-0305e82c3301')).toBe('/api/admin/parents/[id]');
+        expect(redigiPath('/api/genitori?email=x@y.z')).toBe('/api/genitori');
+        expect(redigiPath('/api/alunni/42')).toBe('/api/alunni/[n]');
+    });
+
+    it('le chiavi path/route/url non escono mai grezze da redact', () => {
+        const out = redact({
+            path: '/m/8f3a9c2e-secretissimo-token-firma',
+            route: '/api/genitori?email=mario.rossi@gmail.com',
+            url: '/api/public/forms/tok_live_9f8e7d6c5b4a3210/submit',
+        }) as Record<string, string>;
+        expect(out.path).toBe('/m/[tok]');
+        expect(out.route).toBe('/api/genitori');
+        expect(out.url).toBe('/api/public/forms/[tok]/submit');
+        const json = JSON.stringify(out);
+        expect(json).not.toContain('secretissimo');
+        expect(json).not.toContain('mario.rossi');
+        expect(json).not.toContain('tok_live');
+    });
+
+    it('senza LOG_HASH_SALT l’hash è FAIL-CLOSED (niente hash debole)', () => {
+        // Il repo è pubblico: con il salt noto e poche centinaia di input possibili,
+        // l'hash sarebbe invertibile per forza bruta. Meglio nessun hash.
+        vi.stubEnv('LOG_HASH_SALT', undefined);
+        expect(hashCorrelabile('genitore@example.com')).toBe('[redatto]');
+        const out = redact({ email: 'genitore@example.com' }) as Record<string, string>;
+        expect(out.email).toBe('[redatto]');
+    });
+
     it('i SEGRETI spariscono anche se numerici o uuid', () => {
         const out = redact({
             voto: 7,
@@ -141,6 +197,25 @@ describe('redact — lista bianca', () => {
     it('una chiave sconosciuta con valore stringa è redatta (default chiuso)', () => {
         const out = redact({ campo_inventato_domani: 'dato sensibilissimo' }) as Record<string, string>;
         expect(out.campo_inventato_domani).toBe('[redatto:str/19]');
+    });
+
+    it('un getter che lancia costa UN campo, non l’intera riga di log', () => {
+        const out = redact({
+            tipo: 'assenza',
+            get esplode(): string { throw new Error('boom'); },
+            stato: 'confermato',
+        }) as Record<string, unknown>;
+        expect(out.tipo).toBe('assenza');
+        expect(out.stato).toBe('confermato');
+        expect(out.esplode).toBe('[campo-illeggibile]');
+    });
+
+    it('un body ostile con __proto__ non inquina Object.prototype', () => {
+        const ostile: unknown = JSON.parse('{"__proto__": {"inquinato": true}, "tipo": "x"}');
+        const out = redact(ostile) as Record<string, unknown>;
+        expect(({} as Record<string, unknown>).inquinato).toBeUndefined();
+        expect(out.tipo).toBe('x');
+        expect(() => JSON.stringify(out)).not.toThrow();
     });
 
     it('hashCorrelabile è deterministico e corto', () => {

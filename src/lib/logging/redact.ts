@@ -15,7 +15,10 @@ const SEGRETI = new Set([
     'password', 'password_temporanea', 'nuova_password', 'token', 'access_token',
     'refresh_token', 'secret', 'apikey', 'api_key', 'authorization', 'cookie',
     'code', 'otp', 'firma', 'signature', 'hash', 'iban', 'piva',
-    'voto', 'valutazione', 'giudizio_globale',
+    // Valutazioni: `livello` NON è il livello di log, è il giudizio delle competenze
+    // D.M. 14/2024 (A|B|C|D). Accanto a un `alunno_id` (uuid, che passa in chiaro)
+    // equivale a scrivere nei log la valutazione di un bambino identificabile.
+    'voto', 'valutazione', 'giudizio_globale', 'livello',
 ]);
 
 /** Sostituiti da un hash stabile: identità non leggibile ma CORRELABILE. */
@@ -25,15 +28,23 @@ const DA_HASHARE = new Set([
 ]);
 
 /**
+ * Path e URL: MAI in chiaro. In questo repo il token del modulo pubblico è un
+ * SEGMENTO di path (`/m/[token]`, `/api/public/forms/[token]/submit`) ed è una
+ * capability; le query string trasportano `?userId=`, `?email=`, `?token=`.
+ * Passano da `redigiPath`, che ne tiene il solo pattern.
+ */
+const CHIAVI_PATH = new Set(['path', 'route', 'url']);
+
+/**
  * Le uniche chiavi il cui valore STRINGA esce in chiaro. Sono metadati di
  * dominio: dicono cosa stava succedendo, non a chi.
  */
 const IN_CHIARO = new Set([
     'tipo', 'tipo_evento', 'stato', 'esito', 'azione', 'operazione', 'metodo',
-    'ordine', 'periodo', 'anno', 'anno_scolastico', 'mese', 'cadenza', 'livello',
+    'ordine', 'periodo', 'anno', 'anno_scolastico', 'mese', 'cadenza',
     'ruolo', 'grado', 'classe_sezione', 'sezione', 'bucket', 'mime', 'content_type',
     'estensione', 'formato', 'canale', 'piattaforma', 'ambiente', 'provider',
-    'codice', 'error_code', 'evento', 'entita_tipo', 'route', 'path',
+    'codice', 'error_code', 'evento', 'entita_tipo',
 ]);
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -45,20 +56,56 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
  */
 const DATA_ISO = /^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2})?(\.\d+)?(Z|[+-]\d{2}:?\d{2})?)?$/;
 
+const SOLE_CIFRE = /^\d+$/;
+
 const PROFONDITA_MAX = 5;
 const ELEMENTI_MAX = 20;
 const CHIAVI_MAX = 40;
 const STRINGA_IN_CHIARO_MAX = 120;
+const SEGMENTO_OPACO_MIN = 16;
 
-const SALT = process.env.LOG_HASH_SALT ?? 'kidville-log';
-
-/** Hash stabile e corto: permette di dire "è sempre lo stesso genitore" senza dire chi. */
+/**
+ * Hash stabile e corto: permette di dire "è sempre lo stesso genitore" senza dire chi.
+ *
+ * FAIL-CLOSED: senza `LOG_HASH_SALT` non produce un hash debole, redige e basta.
+ * Questo repo è pubblico: con il salt noto e uno spazio di input minuscolo (le poche
+ * centinaia di nomi/email/telefoni di una scuola) l'hash sarebbe invertibile per forza
+ * bruta in un attimo, e la pseudonimizzazione sarebbe solo nominale. Nessun hash è
+ * meglio di un hash reversibile. Il salt NON si genera a runtime: un salt casuale per
+ * processo spezzerebbe la correlazione tra lambda diverse, che è l'unica ragione per
+ * cui questo hash esiste.
+ */
 export function hashCorrelabile(valore: unknown): string {
-    return '#' + createHash('sha256').update(SALT + String(valore)).digest('hex').slice(0, 8);
+    const salt = process.env.LOG_HASH_SALT;
+    if (!salt) return '[redatto]';
+    return '#' + createHash('sha256').update(salt + String(valore)).digest('hex').slice(0, 8);
+}
+
+/**
+ * Riduce un path al suo PATTERN: via la query string, e ogni segmento che possa essere
+ * un identificativo, una credenziale o un dato viene sostituito da un segnaposto.
+ * `/m/8f3a9c2e-secretissimo-token` → `/m/[tok]`, `/api/alunni/42` → `/api/alunni/[n]`.
+ */
+export function redigiPath(v: string): string {
+    const senzaQuery = v.split('?')[0].split('#')[0];
+    return senzaQuery
+        .split('/')
+        .map((seg) => {
+            if (seg === '') return seg;
+            if (UUID.test(seg)) return '[id]';
+            if (seg.length >= SEGMENTO_OPACO_MIN) return '[tok]';
+            if (SOLE_CIFRE.test(seg)) return '[n]';
+            return seg;
+        })
+        .join('/');
 }
 
 function redigiStringa(v: string): string {
     return `[redatto:str/${v.length}]`;
+}
+
+function tronca(v: string): string {
+    return v.length > STRINGA_IN_CHIARO_MAX ? v.slice(0, STRINGA_IN_CHIARO_MAX) + '…' : v;
 }
 
 /** Un valore stringa esce in chiaro solo se è "auto-descrittivo" (uuid o data). */
@@ -80,8 +127,10 @@ function redactValore(chiave: string | null, v: unknown, prof: number, visti: We
     if (v instanceof Date) return v.toISOString();
 
     if (typeof v === 'string') {
-        if (chiave !== null && IN_CHIARO.has(chiave.toLowerCase())) {
-            return v.length > STRINGA_IN_CHIARO_MAX ? v.slice(0, STRINGA_IN_CHIARO_MAX) + '…' : v;
+        if (chiave !== null) {
+            const k = chiave.toLowerCase();
+            if (CHIAVI_PATH.has(k)) return tronca(redigiPath(v));
+            if (IN_CHIARO.has(k)) return tronca(v);
         }
         if (stringaAutoDescrittiva(v)) return v;
         return redigiStringa(v);
@@ -99,14 +148,24 @@ function redactValore(chiave: string | null, v: unknown, prof: number, visti: We
     if (typeof v === 'object') {
         if (visti.has(v as object)) return '[ciclo]';
         visti.add(v as object);
-        const out: Record<string, unknown> = {};
+        // Object.create(null): il body di una richiesta è input non fidato, e su un
+        // oggetto letterale `out['__proto__'] = …` invocherebbe il setter del prototipo.
+        const out: Record<string, unknown> = Object.create(null);
+        // Object.keys (non Object.entries): entries INVOCA i getter, quindi un getter
+        // che lancia farebbe collassare l'intero oggetto. Qui si legge campo per campo,
+        // dentro un try: si perde il campo rotto, non tutta la riga di log.
+        const chiavi = Object.keys(v as object);
         let n = 0;
-        for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+        for (const k of chiavi) {
             if (n++ >= CHIAVI_MAX) {
-                out['[…]'] = `[+${Object.keys(v as object).length - CHIAVI_MAX} chiavi]`;
+                out['[…]'] = `[+${chiavi.length - CHIAVI_MAX} chiavi]`;
                 break;
             }
-            out[k] = redactValore(k, val, prof + 1, visti);
+            try {
+                out[k] = redactValore(k, (v as Record<string, unknown>)[k], prof + 1, visti);
+            } catch {
+                out[k] = '[campo-illeggibile]';
+            }
         }
         return out;
     }

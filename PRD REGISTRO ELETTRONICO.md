@@ -58,6 +58,13 @@
 
 ---
 
+## 🗓️ Changelog — 🎉 PUSH NATIVA iOS COMPLETA (APNs collegata) 2026-07-12 notte (branch `fix/apns-collaudo`)
+
+- **APNs Auth Key creata e collegata**: iscrizione Apple Developer Program attivata (team **`B5ULCGG2V3`** — è il team personale *promosso a pagamento*, NON il `6B67YBF64P` che appariva negli errori di propagazione). Key **`G2XN848ZNY`** («Kidville Push», ambiente **Sandbox & Production**, Team Scoped) creata su developer.apple.com e caricata su **Firebase → Cloud Messaging** su ENTRAMBE le righe (sviluppo + produzione) dell'app `it.kidville.app`. Il file `.p8` è in `~/.kidville/` (fuori dal repo, non ri-scaricabile da Apple).
+- **Collaudo end-to-end SUPERATO** (simulatore iPhone 17 Pro, Apple Silicon): (1) invio diretto FCM v1 → **HTTP 200** (prima: 401 `THIRD_PARTY_AUTH_ERROR`) e **banner realmente consegnato** sulla lock screen; (2) flusso di **PRODUZIONE completo**: riga in `notifiche` → `SELECT notifiche_dispatch_tick()` (pg_cron) → pg_net → `https://app.kidville.it/api/push/dispatch` → risposta **`{native_inviate: 1}`** → notifica sul dispositivo + badge campanella a 1 nell'app. La catena DB → cron → dispatch → FCM → APNs → iPhone è verificata in ogni anello.
+- **Gotcha registrato**: il token FCM è stabile, ma la mappatura FCM↔APNs si aggiorna solo quando l'app chiama `registerForRemoteNotifications` — che nel nostro flusso avviene **dopo il login** (`NativePushAutoRegister`). Se l'app resta sulla schermata di accesso, FCM accetta il messaggio (200) ma APNs non lo consegna: nei collaudi va sempre fatto prima il login.
+- **Restano** (fuori dal perimetro push): collaudo Android su emulatore/device (config già completa) e pubblicazione sugli store.
+
 ## 🗓️ Changelog — Cron prod risvegliati (Vault) + env Vercel complete 2026-07-12 sera (branch `fix/docente-primaria-home`)
 
 - **Scoperta**: TUTTI i cron pg di produzione (notifiche-dispatch 5′, mensa-allergie 07:00, fatture-SDI 30′) erano **no-op silenziosi dal reset DB del 2026-07-04**: le GUC `app.*` non erano mai state riconfigurate e su questo progetto `ALTER DATABASE … SET app.*` è **negato anche al ruolo postgres** (42501, pure dal SQL editor). Da qui il backlog di ~530 notifiche mai spedite (drenato in collaudo).

@@ -21,12 +21,16 @@ const postBodySchema = z.object({
 });
 
 /**
- * POST /api/admin/regenerate-credentials  (DL-005)  — staff (incl. Segreteria)
+ * POST /api/admin/regenerate-credentials  (DL-005)
  * Body: { targetKind: 'parent' | 'staff', targetId }
  *
  * Genera una nuova password random per l'utente target e la invia automaticamente
  * via email. È il flusso di recupero credenziali presidiato dalla Segreteria:
  * nessun self-service "password dimenticata". Tracciato in audit (entita 'credenziali').
+ *
+ * ⚠️ AUTORIZZAZIONE (T3): i GENITORI possono essere resettati da tutto lo staff di
+ * gestione (Segreteria inclusa); le credenziali dello STAFF, invece, solo dalla
+ * Direzione (`admin`/`coordinator`) — controllo esplicito sotto.
  *
  * AUTO-RIPARANTE (S6bis): se il genitore non ha ancora un'identità di accesso
  * completa (account auth, riga `utenti`, ponte `parents.auth_user_id`) la crea
@@ -41,6 +45,15 @@ export const POST = withRoute('admin/regenerate-credentials:POST', async (reques
   const b = await parseBody(request, postBodySchema);
   if ('response' in b) return b.response;
   const { targetKind, targetId } = b.data;
+
+  // Le credenziali dello STAFF sono un'operazione di Direzione (T3): la Segreteria
+  // può resettare le credenziali dei GENITORI, non quelle del personale.
+  if (targetKind === 'staff' && auth.user.role !== 'admin' && auth.user.role !== 'coordinator') {
+    return NextResponse.json(
+      { error: 'Credenziali staff: operazione riservata alla Direzione' },
+      { status: 403 }
+    );
+  }
 
   const missingEnv = requireEnv('NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY');
   if (missingEnv) return missingEnv;

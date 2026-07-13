@@ -27,7 +27,8 @@ function ParentGalleryContent() {
             let url = `/api/gallery?studentId=${studentId}&limit=${LIMIT}&offset=${currentOffset}`;
             if (parentId) url += `&parentId=${parentId}`;
 
-            const res = await fetch(url).catch(() => null);
+            // La GET galleria è gated: identità anche via header (oltre alla sessione).
+            const res = await fetch(url, parentId ? { headers: { 'x-user-id': parentId } } : undefined).catch(() => null);
             if (res?.ok) {
                 const data = await res.json();
                 const fetchedMedia = data.media ?? [];

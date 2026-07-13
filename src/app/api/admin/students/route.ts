@@ -102,6 +102,8 @@ const patchBodySchema = z.object({
     section_id: z.unknown().optional(),
     importo_retta_mensile: z.unknown().optional(),
     opposizione_ade: z.unknown().optional(),
+    // Liberatoria foto/video (galleria): toggle admin sull'anagrafica alunno.
+    consenso_privacy: z.unknown().optional(),
     data_iscrizione: z.unknown().optional(),
     giorno_scadenza_pagamenti: z.unknown().optional(),
     genitori_separati: z.unknown().optional(),
@@ -350,7 +352,7 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
             try {
                 const updates: Record<string, unknown> = {};
                 const allowedFields = ['classe_sezione', 'stato', 'note_mediche', 'bes', 'note_bes', 'nome', 'cognome', 'data_nascita', 'codice_fiscale', 'gender', 'citizenship', 'birth_nation', 'birth_province', 'birth_city', 'residence_address', 'residence_street_number', 'residence_city', 'residence_province', 'zip_code', 'allergies', 'allergeni', 'invoice_holder_type', 'invoice_holder_details', 'is_bes_dsa', 'usa_pannolino', 'section_id',
-                    'importo_retta_mensile', 'genitori_separati', 'retta_split_config', 'intestatario_fatture', 'opposizione_ade',
+                    'importo_retta_mensile', 'genitori_separati', 'retta_split_config', 'intestatario_fatture', 'opposizione_ade', 'consenso_privacy',
                     'data_iscrizione', 'giorno_scadenza_pagamenti'];
 
                 for (const field of allowedFields) {

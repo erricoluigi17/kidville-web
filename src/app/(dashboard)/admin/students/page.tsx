@@ -8,6 +8,7 @@ import { BulkAssignBar } from '@/components/features/admin/BulkAssignBar';
 import { SectionsView } from '@/components/features/admin/SectionsView';
 import { CockpitPage, PageHeader, Tabs, StatCard } from '@/components/ui/cockpit';
 import { btnClass } from '@/components/ui/Btn';
+import { labelRuolo } from '@/lib/auth/ruoli';
 import { useSediAttive } from '@/lib/context/sede-context';
 
 interface Student {
@@ -26,6 +27,10 @@ interface Student {
   note_bes?: string | null;
   emails?: string[];
   phone_numbers?: string[];
+  // Campi popolati solo per la tab Staff (elenco da `utenti`).
+  ruolo?: string;
+  sede_nome?: string;
+  classi_count?: number;
 }
 
 
@@ -64,6 +69,14 @@ function AdminStudentsInner() {
     fetch('/api/admin/gruppi-mensa', { headers: hdr }).then(r => r.json()).then(d => { if (d?.success) setMensaGroups(d.data ?? []); }).catch(() => {});
   }, [reFetchKey]);
 
+  // Toast stabile (setter di stato = identità stabile): definito prima delle fetch
+  // così `fetchStaff` può usarlo nelle dipendenze senza ricrearsi a ogni render.
+  const showToastMsg = useCallback((msg: string) => {
+    setToastMessage(msg);
+    setShowToast(true);
+    setTimeout(() => setShowToast(false), 3000);
+  }, []);
+
   const fetchStudents = useCallback(async () => {
     try {
       const res = await fetch(`/api/admin/students?limit=1000`, { headers: { 'x-sedi': reFetchKey } });
@@ -88,18 +101,37 @@ function AdminStudentsInner() {
     }
   }, [reFetchKey]);
 
+  // Personale reale da `utenti` via /api/admin/staff (non più il workaround su
+  // parents.citizenship, che teneva la tab sempre vuota). L'errore non resta mai
+  // silenzioso: lista svuotata + toast col motivo.
   const fetchStaff = useCallback(async () => {
     try {
-      const res = await fetch(`/api/admin/parents`, { headers: { 'x-sedi': reFetchKey } });
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        // Filtra solo educatori e coordinatori (memorizzati in citizenship come workaround)
-        setStudents(data.filter((d: { citizenship?: string }) => ['educator', 'coordinator', 'admin'].includes(d.citizenship ?? '')));
+      const res = await fetch('/api/admin/staff', { headers: { 'x-sedi': reFetchKey } });
+      const j = await res.json().catch(() => null);
+      if (!res.ok || !j?.success) {
+        setStudents([]);
+        showToastMsg(`❌ ${(j && j.error) || 'Errore nel caricamento dello staff'}`);
+        return;
       }
+      const sedi = new Map<string, string>((j.schools ?? []).map((s: { id: string; nome: string }) => [s.id, s.nome]));
+      const nClassi = new Map<string, number>();
+      for (const a of (j.assegnazioni ?? []) as { utente_id: string }[]) {
+        nClassi.set(a.utente_id, (nClassi.get(a.utente_id) ?? 0) + 1);
+      }
+      const rows: Student[] = (j.data ?? []).map((u: { id: string; nome?: string; cognome?: string; email?: string | null; ruolo: string; scuola_id?: string | null }) => ({
+        id: u.id,
+        nome: u.nome,
+        cognome: u.cognome,
+        emails: u.email ? [u.email] : [],
+        ruolo: u.ruolo,
+        sede_nome: u.scuola_id ? (sedi.get(u.scuola_id) ?? '—') : '—',
+        classi_count: nClassi.get(u.id) ?? 0,
+      }));
+      setStudents(rows);
     } finally {
       setIsLoading(false);
     }
-  }, [reFetchKey]);
+  }, [reFetchKey, showToastMsg]);
 
   // NB: lo spinner viene attivato dal cambio tab (onChange dei Tabs), non qui:
   // setState sincrono negli effect è vietato (react-hooks/set-state-in-effect).
@@ -223,16 +255,21 @@ function AdminStudentsInner() {
     const rows = filteredStudents;
     if (rows.length === 0) { showToastMsg('Nessun dato da esportare'); return; }
     const isChild = viewType === 'child';
+    const isStaff = viewType === 'staff';
     const headers = isChild
       ? ['Cognome', 'Nome', 'Codice Fiscale', 'Classe', 'Stato']
-      : ['Cognome', 'Nome', 'Codice Fiscale', 'Email', 'Telefono'];
+      : isStaff
+        ? ['Cognome', 'Nome', 'Email', 'Ruolo', 'Sede']
+        : ['Cognome', 'Nome', 'Codice Fiscale', 'Email', 'Telefono'];
     const lines = rows.map((s) => {
       const cognome = s.cognome ?? s.last_name ?? '';
       const nome = s.nome ?? s.first_name ?? '';
       const cf = s.codice_fiscale ?? s.fiscal_code ?? '';
       const cols = isChild
         ? [cognome, nome, cf, s.classe_sezione ?? '', s.stato ?? '']
-        : [cognome, nome, cf, s.emails?.[0] ?? '', s.phone_numbers?.[0] ?? ''];
+        : isStaff
+          ? [cognome, nome, s.emails?.[0] ?? '', labelRuolo(s.ruolo ?? ''), s.sede_nome ?? '']
+          : [cognome, nome, cf, s.emails?.[0] ?? '', s.phone_numbers?.[0] ?? ''];
       return cols.map((c) => csvCell(String(c))).join(',');
     });
     const csv = [headers.join(','), ...lines].join('\n');
@@ -244,12 +281,6 @@ function AdminStudentsInner() {
     a.click();
     URL.revokeObjectURL(url);
     showToastMsg(`✅ Esportati ${rows.length} record in CSV`);
-  };
-
-  const showToastMsg = (msg: string) => {
-    setToastMessage(msg);
-    setShowToast(true);
-    setTimeout(() => setShowToast(false), 3000);
   };
 
   if (isLoading) {
@@ -275,9 +306,12 @@ function AdminStudentsInner() {
             >
               <FileDown size={16} /> Esporta
             </button>
-            <button onClick={() => (window.location.href = '/admin/students/new')} className={btnClass('primary', 'md')}>
-              <UserPlus size={18} /> Nuovo {viewType === 'child' ? 'Alunno' : 'Genitore'}
-            </button>
+            {/* Lo staff non si crea da qui (gestione RBAC dedicata): niente "Nuovo". */}
+            {viewType !== 'staff' && (
+              <button onClick={() => (window.location.href = '/admin/students/new')} className={btnClass('primary', 'md')}>
+                <UserPlus size={18} /> Nuovo {viewType === 'child' ? 'Alunno' : 'Genitore'}
+              </button>
+            )}
           </>
         }
       />
@@ -305,7 +339,9 @@ function AdminStudentsInner() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-kidville-muted" size={18} />
           <input
             type="text"
-            placeholder="Cerca per nome, cognome o codice fiscale..."
+            // Lo staff non ha codice fiscale in anagrafica: placeholder coerente
+            // (il filtro resta lo stesso, cerca su nome/cognome).
+            placeholder={viewType === 'staff' ? 'Cerca per nome o cognome...' : 'Cerca per nome, cognome o codice fiscale...'}
             value={searchTerm}
             onChange={e => setSearchTerm(e.target.value)}
             className="w-full pl-10 pr-4 py-2.5 border-2 border-kidville-line rounded-xl font-maven text-sm focus:outline-none focus:border-kidville-green transition-colors"
@@ -368,23 +404,26 @@ function AdminStudentsInner() {
             onToggleSelect={handleToggleSelect}
             onToggleSelectAll={handleToggleSelectAll}
             onStudentClick={openDetail}
-            currentTypeFilter={viewType === 'staff' ? 'adult' : viewType}
+            currentTypeFilter={viewType as 'child' | 'adult' | 'staff'}
           />
 
-          {/* Floating Bulk Bar */}
-          <BulkAssignBar
-            selectedCount={selectedIds.size}
-            availableClasses={availableSections.map(s => s.name)}
-            targetClass={targetClass}
-            onTargetClassChange={setTargetClass}
-            onAssign={handleBulkAssign}
-            onClear={() => setSelectedIds(new Set())}
-            isAssigning={isAssigning}
-            mensaGroups={mensaGroups}
-            targetMensa={targetMensa}
-            onTargetMensaChange={setTargetMensa}
-            onAssignMensa={handleBulkAssignMensa}
-          />
+          {/* Floating Bulk Bar — non per lo staff: la sua PATCH agisce su `alunni`
+              (assegnazione classe/mensa), priva di senso per il personale. */}
+          {viewType !== 'staff' && (
+            <BulkAssignBar
+              selectedCount={selectedIds.size}
+              availableClasses={availableSections.map(s => s.name)}
+              targetClass={targetClass}
+              onTargetClassChange={setTargetClass}
+              onAssign={handleBulkAssign}
+              onClear={() => setSelectedIds(new Set())}
+              isAssigning={isAssigning}
+              mensaGroups={mensaGroups}
+              targetMensa={targetMensa}
+              onTargetMensaChange={setTargetMensa}
+              onAssignMensa={handleBulkAssignMensa}
+            />
+          )}
 
         </>
       )}

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createClient, createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
+import { requireParentOfStudent } from '@/lib/auth/require-parent';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { alunniSenzaConsenso } from '@/lib/gallery/privacy';
@@ -45,7 +46,9 @@ const deleteQuerySchema = z.object({
 
 const patchBodySchema = z.object({
     id: zUuid,
-    userId: zUuid,
+    // Retro-compatibilità: i client storici lo mandano ancora, ma l'identità
+    // viene SOLO dal gate (il valore del body è ignorato, anti-spoof).
+    userId: zUuid.optional(),
     tag_students: z.array(z.string()).nullish(),
     is_broadcast: z.boolean().nullish(),
     target_classes: z.array(z.string()).nullish(),
@@ -63,6 +66,24 @@ export const GET = withRoute('gallery:GET', async (request: Request) => {
         const { studentId, classe, date } = q.data;
         const limit = Math.min(Math.max(parseInt(q.data.limit ?? '30') || 30, 1), 100);
         const offset = Math.max(parseInt(q.data.offset ?? '0') || 0, 0);
+
+        // Gate identità: mai più lettura anonima. Con studentId il gate verifica
+        // anche il legame genitore↔alunno (401 anonimo / 403 figlio altrui;
+        // staff/docente passa); senza studentId (lista/classe) la lettura è
+        // riservata a staff/docente.
+        const auth = studentId
+            ? await requireParentOfStudent(request, studentId)
+            : await requireDocente(request);
+        if (auth.response) return auth.response;
+
+        // Genitore: il parentId storico in query deve coincidere con l'identità
+        // reale del gate (anti-IDOR sul parametro; il legame è già verificato).
+        if (auth.user.role === 'genitore' && q.data.parentId && q.data.parentId !== auth.user.id) {
+            return NextResponse.json(
+                { error: 'Non sei autorizzato a visualizzare i media di questo studente' },
+                { status: 403 }
+            );
+        }
 
         const supabase = await createAdminClient();
 
@@ -174,15 +195,33 @@ export const POST = withRoute('gallery:POST', async (request: Request) => {
         // L'uploader è l'utente del gate (no spoofing del campo uploaded_by).
         const uploaded_by = auth.user.id;
 
+        // Broadcast = comunicazione istituzionale: riservata alla Direzione
+        // (admin/coordinatore). La UI lo nasconde già agli educatori; qui lo
+        // impone anche il server.
+        if (is_broadcast === true && !['admin', 'coordinator'].includes(auth.user.role)) {
+            return NextResponse.json(
+                { error: 'Solo la Direzione (admin o coordinatore) può pubblicare in broadcast.' },
+                { status: 403 }
+            );
+        }
+
         const supabase = await createAdminClient();
 
         // Privacy Lock (DL-041): inibisce il tagging di alunni senza consenso privacy
         // (liberatoria foto), tranne nelle foto broadcast (istituzionali).
         const senza = await alunniSenzaConsenso(supabase, tag_students, is_broadcast ?? false);
         if (senza.length > 0) {
+            // Privacy Lock scattato: nel log SOLO conteggi (mai nomi/id dei bambini,
+            // che restano nel corpo della risposta per la UI dell'insegnante).
+            logEvento('galleria', 'info', {
+                operazione: 'gallery:POST',
+                esito: 'liberatoria-mancante',
+                taggati: new Set(tag_students ?? []).size,
+                senzaConsenso: senza.length,
+            });
             return NextResponse.json(
                 {
-                    error: 'Consenso privacy mancante: questi bambini non possono essere taggati nelle foto.',
+                    error: 'Foto di gruppo non pubblicabile: alcuni bambini taggati non hanno la liberatoria foto. Rimuovili dai tag oppure pubblica per ognuno una foto singola (visibile solo ai suoi genitori).',
                     nomi: senza.map((s) => s.nome),
                     ids: senza.map((s) => s.id),
                 },
@@ -208,6 +247,16 @@ export const POST = withRoute('gallery:POST', async (request: Request) => {
             logErrore({ operazione: 'gallery:POST', stato: 500, evento: 'db' }, error);
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
+
+        // Evento critico → si logga anche il SUCCESSO (solo conteggi/flag, nessun
+        // dato personale): senza, "nessun log" non distinguerebbe "pubblicata" da
+        // "non è mai partito niente".
+        logEvento('galleria', 'info', {
+            operazione: 'gallery:POST',
+            esito: 'pubblicata',
+            nTag: (tag_students ?? []).length,
+            broadcast: is_broadcast ?? false,
+        });
 
         // Notifica ai genitori interessati (best-effort): alunni taggati →
         // classi target → broadcast a tutta la scuola. Buffer 30' + debounce
@@ -395,12 +444,20 @@ export const DELETE = withRoute('gallery:DELETE', async (request: Request) => {
 });
 
 // PATCH /api/gallery
-// Body: { id, userId, tag_students, is_broadcast, target_classes, caption }
+// Body: { id, tag_students, is_broadcast, target_classes, caption }
+// (il campo `userId` nel body è tollerato per retro-compatibilità ma ignorato)
 export const PATCH = withRoute('gallery:PATCH', async (request: Request) => {
     try {
+        const auth = await requireDocente(request);
+        if (auth.response) return auth.response;
+
         const b = await parseBody(request, patchBodySchema);
         if ('response' in b) return b.response;
-        const { id, userId, tag_students, is_broadcast, target_classes, caption } = b.data;
+        const { id, tag_students, is_broadcast, target_classes, caption } = b.data;
+
+        // Identità dal gate (sessione o header), MAI dal body: un userId
+        // arbitrario nel body non può più impersonare un altro utente.
+        const userId = auth.user.id;
 
         const supabase = await createAdminClient();
 
@@ -498,6 +555,19 @@ export const PATCH = withRoute('gallery:PATCH', async (request: Request) => {
             );
         }
 
+        // Broadcast è operazione di Direzione (admin/coordinatore): un
+        // non-direzione non può né impostare/mantenere broadcast=true né
+        // cambiare il flag su un media esistente.
+        const isDirezione = ['admin', 'coordinator'].includes(auth.user.role);
+        const broadcastEffettivo = (is_broadcast !== undefined ? is_broadcast : media.is_broadcast) === true;
+        const cambiaBroadcast = is_broadcast !== undefined && (is_broadcast === true) !== (media.is_broadcast === true);
+        if (!isDirezione && (broadcastEffettivo || cambiaBroadcast)) {
+            return NextResponse.json(
+                { error: 'Solo la Direzione (admin o coordinatore) può gestire i media in broadcast.' },
+                { status: 403 }
+            );
+        }
+
         // 3. Esegui l'aggiornamento
         // Privacy Lock (DL-041): valida i tag EFFETTIVI quando si modificano tag/broadcast.
         if (tag_students !== undefined || is_broadcast !== undefined) {
@@ -505,9 +575,16 @@ export const PATCH = withRoute('gallery:PATCH', async (request: Request) => {
             const effTags = tag_students !== undefined ? tag_students : media.tag_students;
             const senza = await alunniSenzaConsenso(supabase, effTags, effBroadcast ?? false);
             if (senza.length > 0) {
+                // Come nel POST: nel log solo conteggi, mai nomi/id dei bambini.
+                logEvento('galleria', 'info', {
+                    operazione: 'gallery:PATCH',
+                    esito: 'liberatoria-mancante',
+                    taggati: Array.isArray(effTags) ? new Set(effTags).size : 0,
+                    senzaConsenso: senza.length,
+                });
                 return NextResponse.json(
                     {
-                        error: 'Consenso privacy mancante: questi bambini non possono essere taggati nelle foto.',
+                        error: 'Foto di gruppo non pubblicabile: alcuni bambini taggati non hanno la liberatoria foto. Rimuovili dai tag oppure pubblica per ognuno una foto singola (visibile solo ai suoi genitori).',
                         nomi: senza.map((s) => s.nome),
                         ids: senza.map((s) => s.id),
                     },

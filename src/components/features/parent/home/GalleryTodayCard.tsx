@@ -25,7 +25,8 @@ export function GalleryTodayCard({ studentId, parentId, href }: Props) {
     if (!studentId || !parentId) return
     let active = true
     const today = new Date().toISOString().split('T')[0]
-    fetch(`/api/gallery?studentId=${studentId}&date=${today}&parentId=${parentId}`)
+    // GET gated: identità anche via header (oltre alla sessione).
+    fetch(`/api/gallery?studentId=${studentId}&date=${today}&parentId=${parentId}`, { headers: { 'x-user-id': parentId } })
       .then((r) => (r.ok ? r.json() : null))
       .then((j) => {
         if (active && typeof j?.total === 'number') setTotal(j.total)

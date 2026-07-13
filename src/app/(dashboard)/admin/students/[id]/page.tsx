@@ -6,6 +6,7 @@ import { ArrowLeft, Loader2 } from 'lucide-react';
 import { CockpitPage } from '@/components/ui/cockpit';
 import { StudentDetailPanel } from '@/components/features/admin/StudentDetailPanel';
 import { ParentDetailPanel } from '@/components/features/admin/ParentDetailPanel';
+import { StaffDetailPanel } from '@/components/features/admin/StaffDetailPanel';
 
 // Scheda anagrafica a TUTTA AREA (sidebar + TopBar del cockpit restano). Sostituisce
 // il pannello laterale (drawer) che si apriva sopra la lista: apertura full-screen,
@@ -23,10 +24,11 @@ function AnagraficaDetailInner() {
     const id = params?.id;
     const kind = (search.get('kind') as Kind) || 'child';
     const userId = search.get('userId');
-    const isParent = kind === 'adult' || kind === 'staff';
+    const isParent = kind === 'adult';
+    const isStaff = kind === 'staff';
 
     const [student, setStudent] = useState<StudentRecord | null>(null);
-    const [isLoading, setIsLoading] = useState(!isParent); // il genitore lo carica il suo pannello
+    const [isLoading, setIsLoading] = useState(!isParent && !isStaff); // genitore/staff caricano dal proprio pannello
     const [notFound, setNotFound] = useState(false);
     const [toast, setToast] = useState<string | null>(null);
 
@@ -40,8 +42,9 @@ function AnagraficaDetailInner() {
     const goBack = useCallback(() => router.push(backHref), [router, backHref]);
 
     // Carica l'alunno completo (genitori + delegati + dati economici + fratelli).
+    // Genitore e staff hanno pannelli auto-caricanti dedicati: qui non si fetcha.
     useEffect(() => {
-        if (isParent || !id) return;
+        if (isParent || isStaff || !id) return;
         const load = async () => {
             try {
                 const res = await fetch(`/api/admin/students/${id}`).catch(() => null);
@@ -57,7 +60,7 @@ function AnagraficaDetailInner() {
             }
         };
         load();
-    }, [id, isParent]);
+    }, [id, isParent, isStaff]);
 
     const flash = (msg: string) => {
         setToast(msg);
@@ -111,7 +114,7 @@ function AnagraficaDetailInner() {
         );
     }
 
-    if (notFound || (!isParent && !student)) {
+    if (notFound || (!isParent && !isStaff && !student)) {
         return (
             <CockpitPage max={960}>
                 {Back}
@@ -133,6 +136,8 @@ function AnagraficaDetailInner() {
                     onClose={goBack}
                     onSave={handleSaveParent}
                 />
+            ) : isStaff ? (
+                <StaffDetailPanel staffId={id!} onClose={goBack} />
             ) : (
                 <StudentDetailPanel
                     variant="page"

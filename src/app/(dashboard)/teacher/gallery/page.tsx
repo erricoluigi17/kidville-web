@@ -48,10 +48,13 @@ function TeacherGalleryContent() {
     const [availableSections, setAvailableSections] = useState<string[]>([]);
 
     const loadMedia = useCallback(async () => {
-        if (!sezione) return;
+        // La GET galleria è gated: serve l'identità (sessione o header).
+        if (!sezione || !teacherId) return;
         try {
             // Seleziona media per la sezione del docente
-            const res = await fetch(`/api/gallery?classe=${sezione}`).catch(() => null);
+            const res = await fetch(`/api/gallery?classe=${sezione}`, {
+                headers: { 'x-user-id': teacherId },
+            }).catch(() => null);
             if (res?.ok) {
                 const data = await res.json().catch(() => null);
                 setMedia(data?.media ?? []);
@@ -59,7 +62,7 @@ function TeacherGalleryContent() {
         } finally {
             setLoading(false);
         }
-    }, [sezione]);
+    }, [sezione, teacherId]);
 
     const loadStudents = useCallback(async () => {
         if (!sezione) return;
@@ -261,12 +264,14 @@ function TeacherGalleryContent() {
 
                     const uploadRes = await fetch('/api/gallery/upload', {
                         method: 'POST',
+                        // FormData: NIENTE Content-Type (lo imposta il browser col boundary).
+                        headers: { 'x-user-id': teacherId },
                         body: formData
                     });
 
                     if (!uploadRes.ok) {
-                        const uploadErrData = await uploadRes.json();
-                        throw new Error(uploadErrData.error || 'Errore caricamento file su storage');
+                        const uploadErrData = await uploadRes.json().catch(() => ({} as Record<string, unknown>));
+                        throw new Error(`«${f.file.name}»: ${uploadErrData.error || 'Errore durante il caricamento del file'}`);
                     }
 
                     const { fileUrl } = await uploadRes.json();
@@ -274,7 +279,7 @@ function TeacherGalleryContent() {
                     // Crea il record nel DB
                     const res = await fetch('/api/gallery', {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: { 'Content-Type': 'application/json', 'x-user-id': teacherId },
                         body: JSON.stringify({
                             uploaded_by: teacherId,
                             file_url: fileUrl,
@@ -287,8 +292,11 @@ function TeacherGalleryContent() {
                     });
 
                     if (!res.ok) {
-                        const errData = await res.json();
-                        throw new Error(errData.error || 'Errore salvataggio metadati');
+                        const errData = await res.json().catch(() => ({} as Record<string, unknown>));
+                        // Il 422 del Privacy Lock porta `nomi` (bambini senza liberatoria):
+                        // mostriamoli così l'insegnante sa chi togliere dai tag.
+                        const dettagli = Array.isArray(errData.nomi) && errData.nomi.length > 0 ? ` (${(errData.nomi as string[]).join(', ')})` : '';
+                        throw new Error(`«${f.file.name}»: ${errData.error || 'Errore durante il salvataggio'}${dettagli}`);
                     }
                 }
             }
@@ -305,7 +313,7 @@ function TeacherGalleryContent() {
             setActiveFileIndex(0);
         } catch (err) {
             console.error('Errore durante l\'upload:', err);
-            alert('Si è verificato un errore durante il caricamento.');
+            alert(err instanceof Error && err.message ? err.message : 'Si è verificato un errore durante il caricamento.');
         } finally {
             setUploading(false);
         }
@@ -336,7 +344,7 @@ function TeacherGalleryContent() {
         try {
             const res = await fetch('/api/gallery', {
                 method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'x-user-id': teacherId },
                 body: JSON.stringify({
                     id: mediaId,
                     userId: teacherId,

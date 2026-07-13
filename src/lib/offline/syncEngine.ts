@@ -281,6 +281,9 @@ export async function syncPendingGalleryMedia() {
 
                 const uploadRes = await fetch('/api/gallery/upload', {
                     method: 'POST',
+                    // Identità via header (il campo form userId non è letto dal gate).
+                    // FormData: NIENTE Content-Type (lo imposta il browser col boundary).
+                    headers: { 'x-user-id': item.uploaded_by },
                     body: formData
                 });
 
@@ -296,7 +299,7 @@ export async function syncPendingGalleryMedia() {
                 // 2. Salva il record nel database tramite l'API POST
                 const response = await fetch('/api/gallery', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', 'x-user-id': item.uploaded_by },
                     body: JSON.stringify({
                         uploaded_by: item.uploaded_by,
                         file_url: fileUrl,

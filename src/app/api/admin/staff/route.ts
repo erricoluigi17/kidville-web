@@ -11,6 +11,9 @@ import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
 
 const DIREZIONE = ['admin', 'coordinator'] as const
+// Lettura estesa alla Segreteria (T3): l'elenco del personale è consultabile anche
+// dalla Segreteria; le SCRITTURE (PATCH) restano riservate alla Direzione.
+const LETTURA = [...DIREZIONE, 'segreteria'] as const
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({}) // nessun parametro in ingresso
@@ -27,10 +30,11 @@ const patchBodySchema = z.object({
   section_ids: z.unknown().optional(),
 })
 
-// GET /api/admin/staff — elenco personale (esclude i genitori). Solo Direzione.
+// GET /api/admin/staff — elenco personale (esclude i genitori). Lettura estesa
+// alla Segreteria; le scritture (PATCH) restano riservate alla Direzione.
 export const GET = withRoute('admin/staff:GET', async (request: Request) => {
   try {
-    const auth = await requireStaff(request, [...DIREZIONE])
+    const auth = await requireStaff(request, [...LETTURA])
     if (auth.response) return auth.response
     const q = parseQuery(request, getQuerySchema)
     if ('response' in q) return q.response

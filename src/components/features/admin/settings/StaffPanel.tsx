@@ -3,18 +3,25 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Users, Loader2, Pencil, Check, X, ShieldCheck, KeyRound } from 'lucide-react';
 import { RUOLI_ASSEGNABILI, labelRuolo } from '@/lib/auth/ruoli';
+import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 
 interface StaffUser { id: string; nome?: string; cognome?: string; email?: string; ruolo: string; scuola_id?: string; gradi?: string[] }
 interface School { id: string; nome: string }
 interface Section { id: string; name: string; scuola_id: string }
 
-// Pannello gestione Staff RBAC (DL-028) — riservato alla Direzione (gate server).
+// Pannello gestione Staff RBAC (DL-028) — lista leggibile da tutto lo staff di
+// gestione (Segreteria inclusa, T3); le AZIONI (modifica, rigenera credenziali)
+// restano della Direzione: affordance nascoste ai non-Direzione, così nessun
+// bottone che finisce sempre in un alert 403 (il gate vero resta sul server).
 export function StaffPanel({ userId }: { userId: string }) {
+  const { role } = useSessionIdentity();
+  const canEdit = role === 'admin' || role === 'coordinator';
   const [staff, setStaff] = useState<StaffUser[]>([]);
   const [schools, setSchools] = useState<School[]>([]);
   const [sections, setSections] = useState<Section[]>([]);
   const [asseg, setAsseg] = useState<{ utente_id: string; section_id: string }[]>([]);
   const [loading, setLoading] = useState(true);
+  const [errore, setErrore] = useState<string | null>(null);
   const [editId, setEditId] = useState<string | null>(null);
   const [draft, setDraft] = useState<{ ruolo: string; scuola_id: string; section_ids: string[] }>({ ruolo: '', scuola_id: '', section_ids: [] });
   const [saving, setSaving] = useState(false);
@@ -25,10 +32,15 @@ export function StaffPanel({ userId }: { userId: string }) {
     // (react-hooks set-state-in-effect); refetch senza spinner, accettato.
     try {
       const res = await fetch('/api/admin/staff', { headers: { 'x-user-id': userId } });
-      const j = await res.json();
-      if (j.success) {
-        setStaff(j.data); setSchools(j.schools ?? []); setSections(j.sections ?? []); setAsseg(j.assegnazioni ?? []);
+      const j = await res.json().catch(() => null);
+      // Mai una lista eternamente vuota che nasconde un errore: se il fetch non
+      // riesce, si mostra il motivo (T3).
+      if (!res.ok || !j?.success) {
+        setErrore(j?.error || 'Errore di caricamento dello staff');
+        return;
       }
+      setErrore(null);
+      setStaff(j.data); setSchools(j.schools ?? []); setSections(j.sections ?? []); setAsseg(j.assegnazioni ?? []);
     } finally { setLoading(false); }
   }, [userId]);
 
@@ -81,12 +93,14 @@ export function StaffPanel({ userId }: { userId: string }) {
 
   if (loading) return <div className="flex items-center gap-2 text-kidville-muted p-6"><Loader2 className="animate-spin" size={16} /> Caricamento staff…</div>;
 
+  if (errore) return <div className="rounded-xl border border-kidville-error/30 bg-kidville-error-soft p-4 font-maven text-sm text-kidville-error">{errore}</div>;
+
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2 text-kidville-green">
         <Users size={18} />
         <h3 className="font-barlow font-black uppercase tracking-wide">Gestione Staff (RBAC)</h3>
-        <span className="ml-2 inline-flex items-center gap-1 text-[11px] text-kidville-muted"><ShieldCheck size={12} /> solo Direzione</span>
+        <span className="ml-2 inline-flex items-center gap-1 text-[11px] text-kidville-muted"><ShieldCheck size={12} /> modifiche solo Direzione</span>
       </div>
 
       <div className="space-y-2">
@@ -103,10 +117,16 @@ export function StaffPanel({ userId }: { userId: string }) {
                 {!isEditing ? (
                   <div className="flex items-center gap-2 shrink-0">
                     <span className="px-2 py-0.5 rounded-full bg-kidville-cream text-kidville-green text-[11px] font-bold">{labelRuolo(u.ruolo)}</span>
-                    <button onClick={() => rigenera(u)} disabled={regenId === u.id} className="text-kidville-muted hover:text-kidville-green disabled:opacity-40" title="Rigenera credenziali">
-                      {regenId === u.id ? <Loader2 size={15} className="animate-spin" /> : <KeyRound size={15} />}
-                    </button>
-                    <button onClick={() => apri(u)} className="text-kidville-muted hover:text-kidville-green" title="Modifica"><Pencil size={15} /></button>
+                    {/* Azioni solo Direzione: alla Segreteria (sola lettura) non si
+                        mostrano bottoni destinati a fallire col 403 del server. */}
+                    {canEdit && (
+                      <>
+                        <button onClick={() => rigenera(u)} disabled={regenId === u.id} className="text-kidville-muted hover:text-kidville-green disabled:opacity-40" title="Rigenera credenziali">
+                          {regenId === u.id ? <Loader2 size={15} className="animate-spin" /> : <KeyRound size={15} />}
+                        </button>
+                        <button onClick={() => apri(u)} className="text-kidville-muted hover:text-kidville-green" title="Modifica"><Pencil size={15} /></button>
+                      </>
+                    )}
                   </div>
                 ) : (
                   <div className="flex items-center gap-1.5 shrink-0">

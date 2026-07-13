@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { appLog as appLogSilenzioso } from '@/lib/logging/app-log';
+import {
+    appLog as appLogSilenzioso,
+    appLogBatch as appLogBatchSilenzioso,
+} from '@/lib/logging/app-log';
 
 /**
  * Il SINK: la riga che finisce in `app_log`.
@@ -46,12 +49,20 @@ async function carica(): Promise<Modulo> {
     }
 }
 
-/** La riga che il sink ha spedito alla RPC (la prima, o quella della chiamata `n`). */
-function rigaSpedita(n = 0): Record<string, unknown> {
+/** Le righe spedite alla RPC dalla chiamata `n`. `appLog` ne manda una; `appLogBatch`, tutte. */
+function righeSpedite(n = 0): Record<string, unknown>[] {
     const [nome, args] = rpc.mock.calls[n] as [string, { righe: Record<string, unknown>[] }];
     expect(nome).toBe('app_log_registra');
-    expect(args.righe).toHaveLength(1);
-    return args.righe[0];
+    return args.righe;
+}
+
+/** La riga che il sink ha spedito alla RPC (la prima, o quella della chiamata `n`). */
+function rigaSpedita(n = 0): Record<string, unknown> {
+    const righe = righeSpedite(n);
+    // `appLog` è `appLogBatch` di UNA riga: se questa lunghezza cambiasse, il conteggio delle
+    // chiamate RPC di mezzo file starebbe misurando un'altra cosa.
+    expect(righe).toHaveLength(1);
+    return righe[0];
 }
 
 function erroreConStack(messaggio: string, stack: string): { message: string; stack: string } {
@@ -448,7 +459,7 @@ describe('ricorsione', () => {
         rpc.mockResolvedValue({ data: null, error: { code: '23505', message: 'duplicate key' } });
         await m.appLog({ livello: 'error', evento: 'db', messaggio: 'uno' });
 
-        const righe = spiaErr.mock.calls.map((c) => String(c[0])).join('\n');
+        const righe = spiaErr.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
         expect(righe).toContain('KV_ERR');
         expect(righe).toContain('app_log_registra');
         expect(righe).toContain('esito=fallito');
@@ -460,7 +471,7 @@ describe('ricorsione', () => {
         await m.appLog({ livello: 'error', evento: 'db', messaggio: 'uno' });
         await m.appLog({ livello: 'error', evento: 'db', messaggio: 'due' });
 
-        const righe = spiaErr.mock.calls.map((c) => String(c[0])).join('\n');
+        const righe = spiaErr.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
         expect(righe).toContain('esito=schema-assente');
         expect(righe.match(/schema-assente/g)).toHaveLength(1);
     });
@@ -525,7 +536,7 @@ describe('fail-open', () => {
         createLogClient.mockRejectedValueOnce(new Error('SUPABASE_SERVICE_ROLE_KEY mancante'));
         await expect(m.appLog({ livello: 'error', evento: 'db', messaggio: 'x' }))
             .resolves.toBeUndefined();
-        expect(spiaErr.mock.calls.map((c) => String(c[0])).join('\n')).toContain('esito=eccezione');
+        expect(spiaErr.mock.calls.map((c: unknown[]) => String(c[0])).join('\n')).toContain('esito=eccezione');
     });
 
     it('una RigaLog che arriva da JS non tipizzato non rompe niente', async () => {
@@ -559,7 +570,112 @@ describe('fail-open', () => {
 });
 
 /* ════════════════════════════════════════════════════════════════════════════
- * 7. LA GUARDIA. Il test più importante del file: `.env.local` punta a PRODUZIONE.
+ * 7. IL BATCH — un round-trip, non venti.
+ *
+ * `/api/logs` ingerisce fino a 20 eventi per richiesta, ed è una route ANONIMA: con un
+ * `await appLog(...)` dentro il ciclo erano 20 chiamate RPC SEQUENZIALI al DB per una sola
+ * POST che chiunque può fare 30 volte al minuto. La RPC accetta un array da sempre.
+ *
+ * Il batch non è un percorso di scrittura NUOVO: `appLog` È `appLogBatch` di una riga sola.
+ * Perciò qui si verifica soprattutto che il batch non abbia perso per strada nessuna delle
+ * proprietà che rendono `appLog` sicura — breaker, anti-ricorsione, fail-open, silenzio.
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+describe('appLogBatch — venti righe, UNA chiamata', () => {
+    const batch = (n: number) => Array.from({ length: n }, (_, i) => ({
+        livello: 'error' as const,
+        evento: 'client:js',
+        messaggio: `errore ${i}`,
+        sorgente: 'client' as const,
+    }));
+
+    it('spedisce l\'intero array in un solo round-trip, in ordine', async () => {
+        const m = await carica();
+        await m.appLogBatch(batch(20));
+
+        // Sul codice difettoso (un `await appLog` per evento) questa riga diceva 20.
+        expect(rpc).toHaveBeenCalledTimes(1);
+        expect(createLogClient).toHaveBeenCalledTimes(1);
+
+        const righe = righeSpedite();
+        expect(righe).toHaveLength(20);
+        expect(righe.map((r) => r.messaggio)).toEqual(batch(20).map((r) => r.messaggio));
+        expect(righe.every((r) => r.sorgente === 'client')).toBe(true);
+    });
+
+    it('ogni riga del batch prende i campi di CORRELAZIONE dal contesto, una per una', async () => {
+        const m = await carica();
+        const uid = '11111111-2222-3333-4444-555555555555';
+        await m.conContesto({ requestId: 'rid-9', path: '/api/logs' }, async () => {
+            m.impostaUtente({ userId: uid, ruolo: 'genitore' });
+            await m.appLogBatch([
+                { livello: 'error', evento: 'client:js', messaggio: 'uno' },
+                { livello: 'warn', evento: 'client:fetch', messaggio: 'due' },
+            ]);
+        });
+
+        const righe = righeSpedite();
+        expect(righe).toHaveLength(2);
+        expect(righe.every((r) => r.request_id === 'rid-9')).toBe(true);
+        expect(righe.every((r) => r.utente_id === uid)).toBe(true);
+        expect(righe.every((r) => r.utente_ruolo === 'genitore')).toBe(true);
+        // Due guasti diversi restano due righe: l'impronta si calcola PER RIGA, non per batch.
+        expect(righe[0].fingerprint).not.toBe(righe[1].fingerprint);
+    });
+
+    it('un batch VUOTO non spende un round-trip', async () => {
+        const m = await carica();
+        await m.appLogBatch([]);
+        expect(rpc).not.toHaveBeenCalled();
+        expect(createLogClient).not.toHaveBeenCalled();
+    });
+
+    it('il BREAKER vale anche per il batch (il DB E2E non ha la RPC)', async () => {
+        const m = await carica();
+        rpc.mockResolvedValueOnce({ data: null, error: { code: 'PGRST202', message: 'schema cache' } });
+        await m.appLogBatch(batch(3));
+        await m.appLogBatch(batch(3));
+        expect(rpc).toHaveBeenCalledTimes(1); // la seconda non parte nemmeno
+    });
+
+    it('una riga ILLEGGIBILE costa sé stessa, non le altre diciannove', async () => {
+        // Su una route di ingestione le righe accanto sono log VERI di guasti VERI, e nessuno
+        // le rispedirà: `sendBeacon` non riporta l'esito e il client ha già svuotato la coda.
+        const m = await carica();
+        await m.appLogBatch([
+            { livello: 'error', evento: 'client:js', messaggio: 'buona' },
+            null as never,
+            { livello: 'warn', evento: 'client:fetch', messaggio: 'anche questa' },
+        ]);
+
+        const righe = righeSpedite();
+        expect(righe).toHaveLength(2);
+        expect(righe.map((r) => r.messaggio)).toEqual(['buona', 'anche questa']);
+        // E la riga persa NON è persa in silenzio: esce su console (mai in tabella — sarebbe
+        // il primo giro di una ricorsione).
+        expect(spiaErr.mock.calls.map((c: unknown[]) => String(c[0])).join('\n')).toContain('riga-illeggibile');
+    });
+
+    it('non lancia mai, nemmeno se il chiamante non è tipizzato', async () => {
+        const m = await carica();
+        await expect(m.appLogBatch(null as never)).resolves.toBeUndefined();
+        await expect(m.appLogBatch('boh' as never)).resolves.toBeUndefined();
+        expect(rpc).not.toHaveBeenCalled();
+    });
+
+    it('la catena resta marcata: un log emesso DENTRO il batch non torna in tabella', async () => {
+        const m = await carica();
+        rpc.mockImplementationOnce(async () => {
+            m.logEvento('db', 'error', { operazione: 'annidato' }, new Error('dentro il logger'));
+            return { data: 1, error: null };
+        });
+        await m.appLogBatch(batch(5));
+        expect(rpc).toHaveBeenCalledTimes(1);
+    });
+});
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * 8. LA GUARDIA. Il test più importante del file: `.env.local` punta a PRODUZIONE.
  * ════════════════════════════════════════════════════════════════════════════ */
 
 describe('silenzioso nei test', () => {
@@ -567,6 +683,9 @@ describe('silenzioso nei test', () => {
         // `appLogSilenzioso` è importato staticamente, cioè con VITEST attivo: la guardia è
         // stata valutata al caricamento e vale `true`. Nessuna chiamata deve partire.
         await appLogSilenzioso({ livello: 'error', evento: 'db', messaggio: 'NON deve arrivare in prod' });
+        // Stessa guardia sul batch: è la porta che `/api/logs` apre a chiunque, e nei test
+        // viene invocata come una route qualunque.
+        await appLogBatchSilenzioso([{ livello: 'error', evento: 'db', messaggio: 'nemmeno questa' }]);
         expect(rpc).not.toHaveBeenCalled();
         expect(createLogClient).not.toHaveBeenCalled();
     });

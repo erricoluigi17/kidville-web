@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { after } from 'next/server';
 import { contesto, entraNelLogger, inLogger } from './context';
+import { redigiPath } from './redact';
 import { serializza } from './serialize';
 import { logEvento } from './logger';
 import { createLogClient } from '../supabase/server-client';
@@ -58,6 +59,26 @@ export interface RigaLog {
     statoHttp?: number;
     sorgente?: 'server' | 'client';
     piattaforma?: 'web' | 'ios' | 'android';
+    /**
+     * L'UNICO campo di correlazione che il chiamante può portare, e l'eccezione ha una
+     * ragione precisa: esiste UN caso in cui il contesto della richiesta NON sa dove il
+     * guasto è avvenuto — i log del CLIENT (`/api/logs`). Lì `contesto().path` vale
+     * `/api/logs` per ogni riga, cioè il nome del CAMION, non del luogo dell'incidente: la
+     * colonna `route` direbbe «/api/logs» su tutti gli errori del browser, e la query «quante
+     * volte si rompe questa pagina» non si potrebbe più fare. La pagina la sa solo il client.
+     *
+     * NON VIOLA L'INVARIANTE «un chiamante non falsifica le chiavi di correlazione», e per
+     * due motivi cumulativi:
+     *  1. nessun chiamante SERVER lo passa (lo lasciano `undefined` e vince il contesto, come
+     *     prima): l'invariante regge esattamente dov'era;
+     *  2. per il client la rotta È il dato che sta riportando, non un'etichetta di correlazione
+     *     che si attribuisce — e comunque non arriva mai grezza in tabella: passa da
+     *     `redigiPath` (in questo repo il path è una CREDENZIALE: `/m/<token>`) e dal cap della
+     *     RPC. Al massimo un client ostile si auto-attribuisce una pagina sbagliata: sporca la
+     *     propria riga, non quelle altrui. `utente_id`, `request_id` e `scuola_id` — le chiavi
+     *     con cui si correla fra RICHIESTE — restano indisponibili al chiamante.
+     */
+    route?: string;
     contestoExtra?: Record<string, unknown>;
 }
 
@@ -123,6 +144,15 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const PIATTAFORME = new Set(['web', 'ios', 'android']);
 
+/**
+ * Tetto della `route`, uguale al `left(r->>'route', 200)` della RPC. Va applicato ANCHE qui,
+ * e non è una ridondanza pigra: l'impronta si calcola su questo valore, la RPC tronca DOPO.
+ * Senza il cap, due rotte che differiscono solo oltre il duecentesimo carattere finirebbero
+ * in colonna identiche ma con impronte diverse — due righe che dicono la stessa cosa, cioè
+ * il contrario di ciò che la deduplica serve a fare.
+ */
+const ROUTE_MAX = 200;
+
 /** Tetto del `contesto` jsonb. Il troncamento vero lo rifà anche la RPC: qui si risparmia banda. */
 const CONTESTO_MAX = 8_000;
 /** Tetto del singolo campo quando il contesto intero non ci sta e va ricostruito pezzo per pezzo. */
@@ -141,18 +171,47 @@ const FRAME_IMPRONTA = 3;
 const FRAME = /^\s*at\s/;
 
 /**
- * Scrive la riga in tabella. Fire-and-forget: il chiamante (`persisti`, in `logger.ts`) non
+ * Scrive UNA riga in tabella. Fire-and-forget: il chiamante (`persisti`, in `logger.ts`) non
  * aspetta, e non deve aspettare — l'osservabilità non sta sul percorso critico della risposta.
+ *
+ * È `appLogBatch` con un elemento solo: UN SOLO percorso di scrittura, non due. Due copie della
+ * stessa logica (breaker, guardia, marca della catena, `after()`, fail-open) sarebbero due copie
+ * da tenere allineate — e la prima a divergere silenziosamente sarebbe quella meno usata.
  */
 export async function appLog(riga: RigaLog): Promise<void> {
+    await appLogBatch([riga]);
+}
+
+/**
+ * Scrive PIÙ righe in UN SOLO round-trip.
+ *
+ * PERCHÉ ESISTE. `/api/logs` ingerisce fino a 20 eventi per richiesta, ed è una route ANONIMA:
+ * un `await appLog(...)` dentro il ciclo significava 20 chiamate RPC SEQUENZIALI — 20 round-trip
+ * al DB — per una singola POST che chiunque può fare, 30 volte al minuto per ip. La RPC
+ * `app_log_registra` accetta GIÀ un array (`{ righe: [...] }`): il batch non è
+ * un'ottimizzazione, è l'uso corretto di un'interfaccia che c'era da subito.
+ *
+ * Conserva TUTTE le proprietà di `appLog`, perché è lo stesso identico percorso: guardia
+ * SILENZIOSO, circuit breaker, marca della catena async (anti-ricorsione), `after()` per non
+ * farsi congelare la lambda sotto i piedi, e nessun ramo che possa lanciare.
+ *
+ * UN BATCH VUOTO NON PARTE: `righe: []` sarebbe un round-trip per non scrivere niente.
+ */
+export async function appLogBatch(righe: RigaLog[]): Promise<void> {
     if (SILENZIOSO) return;
     // Il breaker si controlla PRIMA di tutto: se lo schema non c'è, non si costruisce nemmeno
     // il client. Su un E2E questo è il ramo che gira migliaia di volte.
     if (schemaMancante) return;
 
     try {
+        // `Array.isArray` e non `righe.length`: questa funzione è esportata, e il logger è
+        // chiamato anche da JS non tipizzato — un `undefined` qui non deve costare un TypeError
+        // dentro il percorso di logging.
+        const lista = Array.isArray(righe) ? righe : [];
+        if (lista.length === 0) return;
+
         const esegui = (): Promise<void> => {
-            const scrittura = scrivi(riga);
+            const scrittura = scrivi(lista);
             mantieniViva(scrittura);
             return scrittura;
         };
@@ -194,10 +253,15 @@ function mantieniViva(scrittura: Promise<unknown>): void {
 }
 
 /** Non rigetta MAI: ogni fallimento esce su console e si ferma qui. */
-async function scrivi(riga: RigaLog): Promise<void> {
+async function scrivi(righe: RigaLog[]): Promise<void> {
     try {
+        const composte = componiTutte(righe);
+        // Tutte le righe erano illeggibili (o non ce n'era nessuna): non si spende un round-trip
+        // per spedire un array vuoto. Il fatto è già stato raccontato su console da `componiTutte`.
+        if (composte.length === 0) return;
+
         const supabase = await createLogClient();
-        const { error } = await supabase.rpc('app_log_registra', { righe: [componi(riga)] });
+        const { error } = await supabase.rpc('app_log_registra', { righe: composte });
         if (!error) return;
 
         if (schemaAssente(error)) {
@@ -256,6 +320,30 @@ function schemaAssente(err: unknown): boolean {
 }
 
 /**
+ * Compone il batch, UNA RIGA ALLA VOLTA.
+ *
+ * Il try è PER RIGA e non attorno al ciclo, ed è la stessa disciplina di `perCampo` qui sotto,
+ * di `redact.ts` e di `/api/logs`: una riga illeggibile (un `null` arrivato da JS non tipizzato,
+ * un getter ostile) costa SÉ STESSA, non le altre diciannove che le stavano accanto — e quelle
+ * altre, su una route di ingestione, sono log veri di guasti veri che nessuno rispedirà.
+ *
+ * Il `catch` LOGGA (regola 6: un catch muto è un bug), e logga dove si può: su console, mai in
+ * tabella — `segnala` usa `{ persisti: false }`, perché scrivere su `app_log` per raccontare che
+ * una riga di `app_log` non si compone sarebbe il primo giro di una ricorsione.
+ */
+function componiTutte(righe: RigaLog[]): Record<string, unknown>[] {
+    const out: Record<string, unknown>[] = [];
+    for (const riga of righe) {
+        try {
+            out.push(componi(riga));
+        } catch (err) {
+            segnala('error', 'riga-illeggibile', err);
+        }
+    }
+    return out;
+}
+
+/**
  * La riga come la vuole la RPC: chiavi in snake_case, uguali ai nomi delle colonne.
  *
  * I campi di CORRELAZIONE (route, utente, sede, request id) NON stanno in `RigaLog`: il logger
@@ -273,7 +361,7 @@ function componi(riga: RigaLog): Record<string, unknown> {
     const messaggio = testo(riga.messaggio) ?? '';
     const stack = testo(riga.stack);
     const codice = testo(riga.codice);
-    const route = testo(c?.path);
+    const route = rotta(riga.route, c?.path);
     const statoHttp = intero(riga.statoHttp);
     const utenteId = comeUuid(c?.userId);
     const scuolaId = comeUuid(c?.scuolaId);
@@ -451,6 +539,29 @@ function intero(v: unknown): number | undefined {
         return typeof v === 'number' && Number.isInteger(v) ? v : undefined;
     } catch {
         return undefined;
+    }
+}
+
+/**
+ * La rotta della riga: quella del CONTESTO, salvo che il chiamante ne porti una propria
+ * (vedi `RigaLog.route` — è il caso dei log del client, e solo quello).
+ *
+ * `redigiPath` si applica QUI e non lo si chiede al chiamante, per lo stesso motivo per cui
+ * `conContesto` normalizza il `path` da sé: l'unico modo di garantire che nei log non finisca
+ * mai un `/m/<token>` — che in questo repo è una capability — è non lasciare la scelta a chi
+ * chiama. Il path del contesto è GIÀ ridotto a pattern: ripassarlo da `redigiPath` sarebbe
+ * innocuo ma inutile, e su un pattern (`/api/parents/[id]`) non c'è più nulla da ridurre.
+ */
+function rotta(propria: unknown, dalContesto: unknown): string | undefined {
+    const grezza = testo(propria);
+    if (grezza === undefined) return testo(dalContesto);
+    try {
+        return redigiPath(grezza).slice(0, ROUTE_MAX);
+    } catch {
+        // Un log che tace su ciò che ha perso è un log che mente: si dice che la rotta
+        // c'era e non si è potuta leggere, invece di ricadere in silenzio su `/api/logs`
+        // — che sarebbe la rotta SBAGLIATA, e una colonna che mente è peggio di una che manca.
+        return '[route-illeggibile]';
     }
 }
 

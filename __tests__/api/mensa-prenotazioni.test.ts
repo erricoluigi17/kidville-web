@@ -13,6 +13,7 @@ const h = vi.hoisted(() => ({
   requireUser: vi.fn(),
   entroCutoff: vi.fn(),
   genitoreHasFiglio: vi.fn(),
+  logEvento: vi.fn(),
   alunno: null as Record<string, unknown> | null,
   saldo: 5,
   existingPren: null as Record<string, unknown> | null,
@@ -36,6 +37,13 @@ vi.mock('@/lib/mensa/resolveMenu', () => ({ resolveMenuGiorno: () => h.menu }))
 vi.mock('@/lib/mensa/notify', () => ({ notificaSaldoBasso: async () => {} }))
 vi.mock('@/lib/mensa/allergie-check', () => ({ controllaAllergie: async () => {} }))
 vi.mock('@/lib/anagrafiche/legami', () => ({ genitoreHasFiglio: h.genitoreHasFiglio }))
+// Appendice logging: si spia SOLO logEvento (il resto resta reale e silenzioso
+// sotto VITEST). Gli eventi di dominio mensa hanno `evento` = 'mensa'; quelli di
+// `withRoute` ('route') e del ledger ('db') si filtrano via.
+vi.mock('@/lib/logging/logger', async (originale) => ({
+  ...(await originale<typeof import('@/lib/logging/logger')>()),
+  logEvento: h.logEvento,
+}))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
     from: (table: string) => {
@@ -80,6 +88,9 @@ const postReq = (body: unknown) =>
   })
 const delReq = (qs: string) => new Request(`http://localhost/api/mensa/prenotazioni?${qs}`, { method: 'DELETE' })
 
+// Solo gli eventi di dominio mensa (via il rumore 'route'/'db' degli altri log).
+const eventiMensa = () => h.logEvento.mock.calls.filter((c) => c[0] === 'mensa')
+
 beforeEach(() => {
   vi.clearAllMocks()
   h.saldo = 5
@@ -109,6 +120,10 @@ describe('POST /api/mensa/prenotazioni', () => {
     expect(h.prenUpserts[0].ticket_scalato).toBe(1)
     // ledger: consumo -1 con saldo_dopo 4
     expect(h.ledger[0]).toMatchObject({ tipo: 'consumo', delta: -1, saldo_dopo: 4, origine: 'genitore' })
+    // Appendice logging: successo dell'evento critico (conteggi/saldo/origine); nessun saldo-negativo.
+    const ev = eventiMensa()
+    expect(ev).toHaveLength(1)
+    expect(ev[0][2]).toMatchObject({ operazione: 'mensa/prenotazioni:POST', esito: 'prenotazione', esitiOk: 1, esitiKo: 0, saldoDopo: 4, origine: 'genitore' })
   })
 
   it('genitore con saldo 0 → esito bloccato "Saldo ticket esaurito", nessuna scrittura', async () => {
@@ -182,6 +197,12 @@ describe('POST /api/mensa/prenotazioni', () => {
     expect(h.prenUpserts[0].stato).toBe('prenotato')
     expect(h.prenUpserts[0].ticket_scalato).toBe(1)
     expect(h.ledger[0]).toMatchObject({ tipo: 'consumo', delta: -1, saldo_dopo: -1, origine: 'segreteria' })
+    // Appendice logging: successo + segnale dedicato "saldo-negativo" (alunno confluisce nei morosi).
+    const ev = eventiMensa()
+    expect(ev.map((c) => (c[2] as { esito?: string; tipo?: string }).esito ?? (c[2] as { tipo?: string }).tipo))
+      .toEqual(expect.arrayContaining(['prenotazione', 'saldo-negativo']))
+    const neg = ev.find((c) => (c[2] as { tipo?: string }).tipo === 'saldo-negativo')
+    expect(neg?.[2]).toMatchObject({ operazione: 'mensa/prenotazioni:POST', tipo: 'saldo-negativo', alunno_id: ALUNNO, saldo: -1, origine: 'segreteria' })
   })
 })
 
@@ -196,6 +217,10 @@ describe('DELETE /api/mensa/prenotazioni', () => {
     expect(h.saldoWrites).toEqual([5])
     expect(h.prenUpdates[0].stato).toBe('disdetto')
     expect(h.ledger[0]).toMatchObject({ tipo: 'disdetta', delta: 1, saldo_dopo: 5, origine: 'disdetta' })
+    // Appendice logging: successo della disdetta (saldo dopo riaccredito + origine).
+    const ev = eventiMensa()
+    expect(ev).toHaveLength(1)
+    expect(ev[0][2]).toMatchObject({ operazione: 'mensa/prenotazioni:DELETE', esito: 'disdetta', saldoDopo: 5, origine: 'genitore' })
   })
 
   it('genitore oltre cutoff → 400, nessun riaccredito', async () => {

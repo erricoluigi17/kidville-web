@@ -211,6 +211,14 @@ export const POST = withRoute('gallery:POST', async (request: Request) => {
         // (liberatoria foto), tranne nelle foto broadcast (istituzionali).
         const senza = await alunniSenzaConsenso(supabase, tag_students, is_broadcast ?? false);
         if (senza.length > 0) {
+            // Privacy Lock scattato: nel log SOLO conteggi (mai nomi/id dei bambini,
+            // che restano nel corpo della risposta per la UI dell'insegnante).
+            logEvento('galleria', 'info', {
+                operazione: 'gallery:POST',
+                esito: 'liberatoria-mancante',
+                taggati: new Set(tag_students ?? []).size,
+                senzaConsenso: senza.length,
+            });
             return NextResponse.json(
                 {
                     error: 'Foto di gruppo non pubblicabile: alcuni bambini taggati non hanno la liberatoria foto. Rimuovili dai tag oppure pubblica per ognuno una foto singola (visibile solo ai suoi genitori).',
@@ -239,6 +247,16 @@ export const POST = withRoute('gallery:POST', async (request: Request) => {
             logErrore({ operazione: 'gallery:POST', stato: 500, evento: 'db' }, error);
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
+
+        // Evento critico → si logga anche il SUCCESSO (solo conteggi/flag, nessun
+        // dato personale): senza, "nessun log" non distinguerebbe "pubblicata" da
+        // "non è mai partito niente".
+        logEvento('galleria', 'info', {
+            operazione: 'gallery:POST',
+            esito: 'pubblicata',
+            nTag: (tag_students ?? []).length,
+            broadcast: is_broadcast ?? false,
+        });
 
         // Notifica ai genitori interessati (best-effort): alunni taggati →
         // classi target → broadcast a tutta la scuola. Buffer 30' + debounce
@@ -557,6 +575,13 @@ export const PATCH = withRoute('gallery:PATCH', async (request: Request) => {
             const effTags = tag_students !== undefined ? tag_students : media.tag_students;
             const senza = await alunniSenzaConsenso(supabase, effTags, effBroadcast ?? false);
             if (senza.length > 0) {
+                // Come nel POST: nel log solo conteggi, mai nomi/id dei bambini.
+                logEvento('galleria', 'info', {
+                    operazione: 'gallery:PATCH',
+                    esito: 'liberatoria-mancante',
+                    taggati: Array.isArray(effTags) ? new Set(effTags).size : 0,
+                    senzaConsenso: senza.length,
+                });
                 return NextResponse.json(
                     {
                         error: 'Foto di gruppo non pubblicabile: alcuni bambini taggati non hanno la liberatoria foto. Rimuovili dai tag oppure pubblica per ognuno una foto singola (visibile solo ai suoi genitori).',

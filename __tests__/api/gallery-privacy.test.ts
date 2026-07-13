@@ -14,6 +14,7 @@ const USER_ID = '22222222-2222-4222-8222-222222222222'
 
 const h = vi.hoisted(() => ({
   requireDocente: vi.fn(),
+  logEvento: vi.fn(),
   alunni: [] as Array<Record<string, unknown>>,
   inserted: null as Record<string, unknown> | null,
   updated: null as Record<string, unknown> | null,
@@ -22,6 +23,13 @@ const h = vi.hoisted(() => ({
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireDocente: h.requireDocente }))
+// Appendice logging: si spia SOLO logEvento (il resto del logger resta reale e
+// silenzioso sotto VITEST). Gli eventi di dominio della galleria hanno `evento`
+// = 'galleria'; quelli di `withRoute` hanno 'route' e vanno filtrati via.
+vi.mock('@/lib/logging/logger', async (originale) => ({
+  ...(await originale<typeof import('@/lib/logging/logger')>()),
+  logEvento: h.logEvento,
+}))
 vi.mock('@/lib/supabase/server-client', () => ({
   createClient: async () => ({ auth: { getUser: async () => ({ data: { user: null } }) } }),
   createAdminClient: async () => ({
@@ -58,6 +66,9 @@ const postReq = (body: unknown) =>
 const patchReq = (body: unknown) =>
   new Request('http://localhost/api/gallery', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
 
+// Solo gli eventi di dominio della galleria (via il rumore di `route` di withRoute).
+const eventiGalleria = () => h.logEvento.mock.calls.filter((c) => c[0] === 'galleria')
+
 beforeEach(() => {
   vi.clearAllMocks()
   h.requireDocente.mockResolvedValue({ user: { id: 'ed1', role: 'educator', scuola_id: 'sc-1' } })
@@ -83,12 +94,25 @@ describe('POST /api/gallery — Privacy Lock', () => {
     expect(j.nomi).toContain('Bea Verdi')
     expect(j.ids).toContain('b')
     expect(h.inserted).toBeNull()
+    // Appendice logging: SOLO conteggi nel log, MAI nomi/id dei bambini.
+    const ev = eventiGalleria()
+    expect(ev).toHaveLength(1)
+    expect(ev[0][1]).toBe('info')
+    expect(ev[0][2]).toMatchObject({ operazione: 'gallery:POST', esito: 'liberatoria-mancante', taggati: 2, senzaConsenso: 1 })
+    // privacy: nessun nome/id nel payload del log
+    expect(JSON.stringify(ev[0][2])).not.toContain('Bea')
+    expect(Object.keys(ev[0][2] as object)).not.toContain('nomi')
+    expect(Object.keys(ev[0][2] as object)).not.toContain('ids')
   })
 
   it('201 foto PRIVATA: singolo taggato SENZA liberatoria è pubblicabile', async () => {
     const res = await POST(postReq({ file_url: 'u', tag_students: ['b'], is_broadcast: false }))
     expect(res.status).toBe(201)
     expect(h.inserted).toMatchObject({ tag_students: ['b'] })
+    // Appendice logging: l'evento critico logga anche il SUCCESSO (conteggi/flag).
+    const ev = eventiGalleria()
+    expect(ev).toHaveLength(1)
+    expect(ev[0][2]).toMatchObject({ operazione: 'gallery:POST', esito: 'pubblicata', nTag: 1, broadcast: false })
   })
 
   it('201 se tutti i taggati hanno consenso', async () => {
@@ -125,6 +149,11 @@ describe('PATCH /api/gallery — Privacy Lock su modifica tag', () => {
     expect(j.nomi).toContain('Bea Verdi')
     expect(j.ids).toContain('b')
     expect(h.updated).toBeNull()
+    // Appendice logging: PATCH come POST — solo conteggi, niente nomi/id.
+    const ev = eventiGalleria()
+    expect(ev).toHaveLength(1)
+    expect(ev[0][2]).toMatchObject({ operazione: 'gallery:PATCH', esito: 'liberatoria-mancante', taggati: 2, senzaConsenso: 1 })
+    expect(JSON.stringify(ev[0][2])).not.toContain('Bea')
   })
 
   it('422 togliendo il broadcast se i tag EFFETTIVI (dal DB, body senza tag_students) sono un gruppo non conforme', async () => {

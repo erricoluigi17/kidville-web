@@ -210,6 +210,31 @@ export const POST = withRoute('mensa/prenotazioni:POST', async (request: Request
       }
     }
 
+    // Evento critico (movimento ticket) → si logga anche il SUCCESSO: solo
+    // conteggi/saldo/origine, nessun dato personale.
+    const esitiOk = esiti.filter((e) => e.ok).length
+    const esitiKo = esiti.length - esitiOk
+    logEvento('mensa', 'info', {
+      operazione: 'mensa/prenotazioni:POST',
+      esito: 'prenotazione',
+      esitiOk,
+      esitiKo,
+      saldoDopo: saldo,
+      origine,
+    })
+    // Lo staff ha forzato una prenotazione portando il saldo in NEGATIVO (l'alunno
+    // confluisce nei morosi): segnale dedicato. `alunno_id` è uuid → in chiaro per
+    // la lista bianca; nessun nome né dato personale.
+    if (isStaff && saldo < 0 && esitiOk > 0) {
+      logEvento('mensa', 'info', {
+        operazione: 'mensa/prenotazioni:POST',
+        tipo: 'saldo-negativo',
+        alunno_id: alunnoId,
+        saldo,
+        origine,
+      })
+    }
+
     return NextResponse.json({ success: true, data: { saldo, esiti } }, { status: 201 })
   } catch (err) {
     logErrore({ operazione: 'mensa/prenotazioni:POST', stato: 500 }, err)
@@ -274,6 +299,15 @@ export const DELETE = withRoute('mensa/prenotazioni:DELETE', async (request: Req
         tipo: 'disdetta',
       }, mErr)
     }
+
+    // Evento critico (riaccredito ticket) → si logga anche il SUCCESSO: saldo dopo
+    // il riaccredito + origine (staff che forza fuori orario vs genitore). No PII.
+    logEvento('mensa', 'info', {
+      operazione: 'mensa/prenotazioni:DELETE',
+      esito: 'disdetta',
+      saldoDopo: saldo,
+      origine: isStaff ? 'segreteria' : 'genitore',
+    })
 
     return NextResponse.json({ success: true, data: { saldo } })
   } catch (err) {

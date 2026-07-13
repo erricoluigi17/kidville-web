@@ -200,7 +200,10 @@ describe('logger — emissione reale (guardia SILENZIOSO disattivata)', () => {
         expect(err).toHaveBeenCalledTimes(2);
         const riga = err.mock.calls[0][0] as string;
         expect(riga.startsWith('KV_ERR ')).toBe(true);
-        expect(riga).toContain('op=crea-alunno');
+        // `rt=`, non `op=`: il nome della rotta ha UNA sola chiave su tutti i marker, perché
+        // su Vercel la ricerca è full-text (in tabella, invece, resta `operazione`).
+        expect(riga).toContain('rt=crea-alunno');
+        expect(riga).not.toContain('op=');
         expect(riga).toContain('ms=7');
         expect(riga).toContain('msg="qualcosa è esploso"');
         // Lo stack NON sta sulla riga: mangerebbe il budget dei 3.500 caratteri.
@@ -279,6 +282,44 @@ describe('logger — emissione reale (guardia SILENZIOSO disattivata)', () => {
         ev('db', 'warn', { esito: 'lento' });
         expect(appLog).toHaveBeenCalledTimes(2);
         expect(appLog.mock.calls[1][0]).toMatchObject({ livello: 'warn', evento: 'db' });
+    });
+
+    it('lo status HTTP va in COLONNA (statoHttp), non solo dentro il JSONB dei campi', async () => {
+        const { logEvento: ev, appLog } = await caricaRumoroso();
+
+        // La riga di esito di `withRoute` per un 5xx: senza questo, `stato_http` sarebbe NULL
+        // e i 5xx non si potrebbero filtrare in SQL — si dovrebbe scavare nel JSONB.
+        ev('route', 'error', { operazione: 'admin/students:POST', stato: 500, ms: 3 });
+        expect(appLog.mock.calls[0][0]).toMatchObject({
+            livello: 'error',
+            evento: 'route',
+            // `messaggio` è il nome della rotta, NON la stringa "500": è la colonna che si
+            // legge per prima, e "cinquecento" non dice niente su 239 route.
+            messaggio: 'admin/students:POST',
+            statoHttp: 500,
+        });
+
+        // …ma solo se è un NUMERO: negli eventi di dominio `stato` vale anche 'inviata'.
+        ev('email', 'info', { provider: 'resend', stato: 'inviata' });
+        expect(appLog.mock.calls[1][0].statoHttp).toBeUndefined();
+        expect(appLog.mock.calls[1][0].messaggio).toBe('inviata');
+    });
+
+    it('logErrore alza la marca "errore già loggato" (è lui ad avere lo stack vero)', async () => {
+        const { logErrore: le, conContesto, erroreGiaLoggato } = await caricaRumoroso();
+
+        await conContesto({ requestId: 'r', path: '/api/x' }, async () => {
+            expect(erroreGiaLoggato()).toBe(false);
+            le({ operazione: 'x:POST' }, new Error('boom'));
+            // La legge `withRoute`: senza, un `catch { logErrore(err); return 500 }` produrrebbe
+            // DUE righe per lo stesso guasto, e la seconda senza stack.
+            expect(erroreGiaLoggato()).toBe(true);
+        });
+
+        // Fuori da una richiesta è un no-op silenzioso: non c'è dove tenerla che non sia
+        // condiviso con le altre richieste in volo.
+        expect(() => le({ operazione: 'cron' }, new Error('boom'))).not.toThrow();
+        expect(erroreGiaLoggato()).toBe(false);
     });
 
     it('i campi del chiamante finiscono REDATTI nella riga persistita (difesa in profondità)', async () => {
@@ -482,8 +523,8 @@ describe('logger — fail-open: nulla di ciò che sta qui dentro può rompere un
         // …ma la riga del fallimento interno è USCITA su console: mettere la guardia anche
         // sull'emissione renderebbe muto un `app_log` rotto proprio dove ce ne accorgeremmo.
         const righe = errSpy.mock.calls.map((c) => String(c[0]));
-        expect(righe.some((r) => r.includes('op=app_log'))).toBe(true);
-        expect(righe.some((r) => r.includes('op=route-x'))).toBe(true);
+        expect(righe.some((r) => r.includes('rt=app_log'))).toBe(true);
+        expect(righe.some((r) => r.includes('rt=route-x'))).toBe(true);
     });
 
     it('un errore ostile (getter che lanciano) non fa saltare la route', async () => {

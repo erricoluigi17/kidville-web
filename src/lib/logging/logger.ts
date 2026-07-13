@@ -1,4 +1,4 @@
-import { contesto, inLogger, entraNelLogger } from './context';
+import { contesto, inLogger, entraNelLogger, segnalaErroreLoggato } from './context';
 import { descriviErrore, sanificaMessaggio, serializza, type ErroreDescritto } from './serialize';
 import { redact } from './redact';
 import { appLog, type RigaLog } from './app-log';
@@ -19,6 +19,20 @@ import { appLog, type RigaLog } from './app-log';
  *   codice d'errore del provider, esito).
  * - Solo `console.log` e `console.error`. `console.warn` NON produce il livello
  *   `warning` nelle funzioni non-streaming: produce `error`, e inquinerebbe il filtro.
+ *
+ * IL NOME DELLA ROTTA HA UNA CHIAVE SOLA PER CANALE, e non è la stessa nei due canali:
+ *
+ *  - sulla RIGA (Vercel) è SEMPRE `rt=`, per tutti e tre i marker. Su Vercel la ricerca è
+ *    full-text: se lo stesso nome uscisse come `rt=` sui successi, `op=` sugli errori e
+ *    `operazione=` sugli eventi, non esisterebbe UNA query per "tutti i log della route X" —
+ *    ne servirebbero tre, e chi indaga non saprebbe di doverle fare.
+ *  - nella riga PERSISTITA è `operazione`, e non può essere `rt`: `redact()` è a lista bianca
+ *    PER CHIAVE, `operazione` è in lista e `rt` no, quindi in tabella `rt` uscirebbe come
+ *    `[redatto:str/24]` — cioè la riga non direbbe più QUALE route ha fallito, che è il dato
+ *    più importante che ha.
+ *
+ * Perciò il CHIAMANTE passa sempre `operazione` (l'unico nome che sopravvive ai due canali) e
+ * la traduzione in `rt` avviene qui, una volta sola, per tutti.
  *
  * Regola d'oro dell'intero modulo: NIENTE qui dentro può lanciare. Un throw nel logger
  * trasforma una 200 in 500 su tutte le 239 route del progetto. Ogni emissione è avvolta
@@ -249,6 +263,11 @@ export function logErrore(
     err: unknown,
 ): void {
     try {
+        // Chi chiama `logErrore` ha in mano l'errore VERO, con il suo stack: da qui in poi,
+        // per questa richiesta, il guasto è registrato. `withRoute` legge questa marca e
+        // rinuncia alla propria riga di esito sul 5xx, che sarebbe un doppione più povero.
+        segnalaErroreLoggato();
+
         const d = descriviErrore(err);
         const c = contesto();
         // Un errore Supabase avvolto (`new Error('…', { cause })`) ha il codice sulla CAUSA:
@@ -282,7 +301,10 @@ export function logErrore(
         // a interrogare in SQL senza dover incrociare i log della piattaforma.
         scriviErrore(formattaRiga('KV_ERR', {
             ...campiDelContesto(),
-            op: campi.operazione,
+            // `rt`, non `op`: una chiave sola per il nome della rotta su tutti e tre i marker
+            // (vedi la doc in testa al modulo). In TABELLA la stessa cosa viaggia come
+            // `operazione`, che è la chiave che sopravvive alla lista bianca di `redact`.
+            rt: campi.operazione,
             evt: campi.evento,
             code: codice,
             ms: campi.ms,
@@ -341,6 +363,11 @@ export function logEvento(
             messaggio: d ? d.messaggio : testoEvento(evento, campi),
             stack: d?.stack,
             codice,
+            // Lo status HTTP va in COLONNA, non solo dentro `campi`: è il primo filtro di
+            // qualunque query ("dammi i 5xx di ieri"), e sepolto in un JSONB non è né ovvio
+            // né indicizzabile. Solo se `stato` è un NUMERO: negli eventi di dominio la stessa
+            // chiave vale anche 'inviata', 'scaduto' — quello non è uno status HTTP.
+            statoHttp: numeroDi(campi, 'stato'),
             sorgente: 'server',
             contestoExtra: {
                 campi: redact(campi),
@@ -353,7 +380,7 @@ export function logEvento(
 
         if (SILENZIOSO) return;
 
-        const riga = unisci({ ...campiDelContesto(), evt: evento }, campi);
+        const riga = unisci({ ...campiDelContesto(), evt: evento }, perLaRiga(campi));
         if (d) {
             // Assegnati DOPO l'unione: quando c'è un errore, è l'errore la verità, non i campi.
             if (codice) riga.code = codice;
@@ -381,10 +408,50 @@ export function logEvento(
     }
 }
 
-/** Messaggio della riga persistita quando l'evento non porta un errore: il campo più parlante che c'è. */
+/**
+ * Il nome della rotta sulla riga è `rt`, in tabella è `operazione` (vedi la doc in testa al
+ * modulo). Il chiamante ne passa UNO, `operazione`; la riga lo rinomina, nella stessa
+ * posizione (l'ordine dei campi è il budget: chi viene dopo è chi il taglio mangia per primo).
+ *
+ * Non lancia: al peggio restituisce i campi originali, e sulla riga si legge `operazione=`
+ * invece di `rt=`. Un log meno comodo, non un log perso.
+ */
+function perLaRiga(campi: Record<string, Valore>): Record<string, Valore> {
+    try {
+        if (!Object.hasOwn(campi, 'operazione')) return campi;
+        const out: Record<string, Valore> = {};
+        for (const k of Object.keys(campi)) {
+            if (k === 'operazione') out.rt = campi.operazione;
+            else out[k] = campi[k];
+        }
+        return out;
+    } catch {
+        return campi;
+    }
+}
+
+/** Legge un campo NUMERICO dei campi del chiamante, senza fidarsi né del tipo né dei getter. */
+function numeroDi(campi: Record<string, Valore>, chiave: string): number | undefined {
+    try {
+        const v = campi[chiave];
+        return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
+    } catch {
+        return undefined;
+    }
+}
+
+/**
+ * Messaggio della riga persistita quando l'evento non porta un errore: il campo più parlante
+ * che c'è.
+ *
+ * `operazione` sta PRIMA di `stato` e non è un dettaglio: senza, la riga di un 5xx emessa da
+ * `withRoute` (campi: operazione, stato, ms) avrebbe come `messaggio` la stringa "500" — la
+ * colonna che un umano legge per prima, e su cui si fanno le query, direbbe "cinquecento" su
+ * 239 route. Il nome della rotta è il minimo sindacale per capire di cosa si parla.
+ */
 function testoEvento(evento: string, campi: Record<string, Valore>): string {
     try {
-        const v = [campi.msg, campi.esito, campi.stato].find(pieno);
+        const v = [campi.msg, campi.esito, campi.operazione, campi.stato].find(pieno);
         return sanificaMessaggio(v === undefined ? evento : String(v));
     } catch {
         return evento;

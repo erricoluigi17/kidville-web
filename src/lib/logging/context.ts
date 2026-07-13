@@ -31,11 +31,24 @@ export interface ContestoRichiesta {
     /**
      * SEMPRE un pattern di route, mai il path grezzo: ci pensa `conContesto`.
      * Vedi lì il perché (in questo repo il path È una credenziale).
+     *
+     * ⚠️ NON È UN CAMPO MORTO, anche se oggi nessun emettitore lo stampa: le righe di Vercel
+     * non lo portano di proposito (la piattaforma conosce già metodo e path come metadati
+     * suoi), ma il Task 8 popola da qui la colonna `app_log.route` — che è ciò che rende
+     * interrogabile in SQL "quante volte ha fallito QUESTA route". Non rimuoverlo.
      */
     path: string;
     userId?: string;
     ruolo?: string;
     scuolaId?: string;
+    /**
+     * "Per questa richiesta un errore è GIÀ stato loggato, con lo stack vero, da chi lo aveva
+     * in mano." La alza `logErrore`; la legge `withRoute`, che senza di essa emetterebbe una
+     * SECONDA riga per lo stesso guasto — la meno informativa delle due (un 5xx esplicito è
+     * quasi sempre un `catch` che ha già loggato la causa). Su 239 route sarebbe il doppio
+     * delle righe, e il budget dichiarato è "1-2 righe per richiesta, non dieci".
+     */
+    erroreLoggato?: boolean;
     /**
      * Payload già validato e GIÀ REDATTO da `impostaPayload`; stampato solo se la richiesta
      * fallisce. Chi lo emette NON deve ri-redigerlo: una seconda passata di `redact` rifarebbe
@@ -156,6 +169,25 @@ export function impostaUtente(u: {
     if (u.userId) s.userId = u.userId;
     if (u.ruolo) s.ruolo = u.ruolo;
     if (u.scuolaId) s.scuolaId = u.scuolaId;
+}
+
+/**
+ * Marca la richiesta corrente come "errore già loggato". La chiama `logErrore`, che è
+ * l'unico punto del sistema che vede l'errore VERO (con il suo stack).
+ *
+ * Fuori da una richiesta è un no-op, come `impostaUtente`: senza store non c'è nessun posto
+ * dove tenerla che non sia condiviso con le altre richieste in volo. Conseguenza voluta: in
+ * un cron non c'è deduplica, e va bene — non c'è nemmeno un wrapper che duplichi.
+ */
+export function segnalaErroreLoggato(): void {
+    const s = als.getStore();
+    if (!s) return;
+    s.erroreLoggato = true;
+}
+
+/** Vera se `logErrore` è già passato per questa richiesta. Fuori da una richiesta: falsa. */
+export function erroreGiaLoggato(): boolean {
+    return als.getStore()?.erroreLoggato === true;
 }
 
 /**

@@ -1,4 +1,4 @@
-import { conContesto, contesto } from './context';
+import { conContesto, contesto, erroreGiaLoggato } from './context';
 import { logErrore, logEvento, logOk } from './logger';
 
 /**
@@ -34,40 +34,61 @@ import { logErrore, logEvento, logOk } from './logger';
  *   semantica in produzione (Next non vedrebbe più l'errore) e romperebbe i test che
  *   asseriscono i 500 espliciti delle route.
  *
- * POLITICA DEI LIVELLI (un 4xx non è un guasto del server):
+ * POLITICA DEI LIVELLI (un 4xx non è un guasto del server — ma non sono tutti uguali):
  *
- *   2xx/3xx        → `logOk`                    KV_OK, console.log, MAI in tabella.
- *   4xx            → `logEvento(…, 'info', …)`  KV_EVT, console.log, MAI in tabella.
- *   5xx esplicito  → `logEvento(…, 'error', …)` KV_ERR + riga in tabella, MA nessun Error.
- *   eccezione      → `logErrore`                KV_ERR + Error VERO (stack vero) + tabella.
+ *   2xx/3xx                → `logOk`                    KV_OK,  mai in tabella
+ *   401/403/404/altri 4xx  → `logEvento(…, 'info', …)`  KV_EVT, mai in tabella
+ *   408/409/413/429        → `logEvento(…, 'warn', …)`  KV_WARN + TABELLA
+ *   400 da AUTENTICATO     → `logEvento(…, 'warn', …)`  KV_WARN + TABELLA
+ *   5xx esplicito          → `logEvento(…, 'error', …)` KV_ERR  + TABELLA, ma solo se
+ *                                                       nessuno ha già loggato l'errore vero
+ *   eccezione              → `logErrore`                KV_ERR + Error VERO (stack vero)
+ *                                                       + TABELLA, poi re-throw
  *
- * Perché i 4xx a `info` e non a `warn`: `vaPersistito()` persiste error E warn, e i 401/403
- * dei gate sono frequentissimi (una sessione scaduta ne produce a raffica). A `warn`
- * finirebbero tutti in `app_log`, che diventerebbe una tabella di rumore in cui gli errori
- * veri non si trovano più. Restano comunque visibili su Vercel, che è dove si guarda un
- * "perché questa chiamata mi dà 403" — e dove lo status HTTP è già un metadato di piattaforma.
+ * Perché 401/403/404 a `info`: `vaPersistito()` persiste error E warn, e questi 4xx sono
+ * frequentissimi (una sessione scaduta ne produce a raffica). A `warn` finirebbero tutti in
+ * `app_log`, che diventerebbe una tabella di rumore in cui gli errori veri non si trovano più.
+ * Restano visibili su Vercel, che è dove si guarda un "perché questa chiamata mi dà 403".
+ *
+ * Perché 408/409/413/429 NO: non sono "risposte corrette a richieste sbagliate", sono
+ * ANOMALIE. Il 429 soprattutto: il repo lo restituisce su route NON autenticate e rivolte
+ * all'esterno (`public/forms/[token]/submit`, `forms/send-otp`, gli upload), e un burst di 429
+ * è il segnale di un abuso o di un credential-stuffing. Lasciarlo solo su Vercel — ritenzione
+ * di un giorno, nessun SQL — vuol dire non poterlo né contare né correlare nel tempo. Stessa
+ * logica per 409 (due scritture che si pestano) e 413 (payload oltre il limite: o un client
+ * rotto, o qualcuno che ci prova). Il 408 è la richiesta che non è mai arrivata intera.
+ *
+ * Perché il 400 dipende dall'autenticazione: un 400 di validazione zod da un utente LOGGATO è
+ * un bug del NOSTRO client (ha spedito un payload che il nostro stesso schema rifiuta), ed è
+ * il segnale più utile che abbiamo — con il payload già nel contesto, per giunta. Lo stesso
+ * 400 da un anonimo su un endpoint pubblico è quasi sempre rumore, o un bot che sonda. Il
+ * discriminante è `contesto()?.userId`, che a quel punto il gate ha già depositato.
  *
  * Perché per un 5xx NON si fabbrica un errore: `logErrore` emette un Error NATIVO su console,
  * e `get_runtime_errors` di Vercel raggruppa per NOME dell'errore. Un `new Error('http_500')`
  * inventato dal wrapper si presenterebbe come un `Error` senza stack utile (punterebbe qui
- * dentro), mescolato agli errori veri: raggruppamento inquinato, stack che indica il logger
- * come colpevole. Un 5xx esplicito, poi, è quasi sempre il `catch` della route che ha già
- * l'errore VERO in mano: sarà quel `catch` a chiamare `logErrore` con lo stack buono
- * (Fase 2). Il wrapper registra l'ESITO, non inventa una causa.
+ * dentro), mescolato agli errori veri: raggruppamento inquinato, stack che accusa il logger.
+ * Il wrapper registra l'ESITO, non inventa una causa.
  *
- * Conseguenza pratica: per il 5xx lo status finisce in `contesto_extra.campi.stato`
- * (JSONB, interrogabile) e non nella colonna `stato_http`, che `logEvento` non sa
- * riempire. La colonna la riempie `logErrore` — cioè la riga che porta la causa vera.
- *
- * Perché il nome della rotta viaggia come `operazione` e non come `rt` nelle righe di
- * fallimento: `redact()` è a lista bianca PER CHIAVE e `operazione` è in lista, `rt` no.
- * Su una riga persistita `rt: 'admin/parents/[id]:POST'` diventerebbe `[redatto:str/24]`
- * e la riga in tabella non direbbe più QUALE route ha fallito — il dato più importante
- * che ha. Su `logOk` (che non persiste nulla) resta `rt`, che è il campo previsto dalla
- * sua firma.
+ * DEDUPLICA DEL 5xx: il pattern dominante del repo è `catch { logErrore(err); return 500 }`.
+ * Senza guardia, quella richiesta produrrebbe DUE righe in `app_log` e due KV_ERR su Vercel —
+ * e la nostra è la più povera delle due: niente stack, niente causa. Perciò `logErrore` alza
+ * una marca nel contesto e qui la si legge: se l'errore è già registrato da chi lo aveva in
+ * mano, il wrapper tace. Se invece la route ha risposto 500 senza loggare nulla, la riga del
+ * wrapper è l'unica traccia che esista e va emessa.
+ * Il ramo ECCEZIONE, invece, la marca NON la guarda: un'eccezione che sfugge è il guasto più
+ * grave che ci sia e va loggata comunque — che nella stessa richiesta sia già stato registrato
+ * un altro errore non vuol dire che sia LO STESSO errore.
  */
 
 type Handler<A extends unknown[]> = (...args: A) => Response | Promise<Response>;
+
+/**
+ * I 4xx che non sono "la route ha funzionato e ha detto no", ma anomalie da conservare.
+ * Volutamente CORTA: ogni codice qui dentro è una riga in più in tabella, moltiplicata per
+ * il traffico di 239 route.
+ */
+const ANOMALIE_4XX = new Set([408, 409, 413, 429]);
 
 /**
  * `A` è inferito dall'handler, quindi la firma della funzione avvolta è IDENTICA a quella
@@ -82,36 +103,43 @@ export function withRoute<A extends [Request, ...unknown[]]>(
 ): (...args: A) => Promise<Response> {
     return async (...args: A): Promise<Response> => {
         const t0 = Date.now();
+
+        const esegui = async (): Promise<Response> => {
+            // L'id NORMALIZZATO, cioè quello che finirà davvero nei log. È questo che si
+            // riflette sulla risposta: rimandare indietro l'header grezzo del client
+            // significherebbe promettergli una correlazione che non esiste (nei log c'è
+            // un altro id) — e riflettergli un valore arbitrario che lui controlla.
+            const rid = contesto()?.requestId;
+
+            let res: Response;
+            try {
+                res = await handler(...args);
+            } catch (err) {
+                // Loggato con l'errore VERO (stack vero) e RILANCIATO: il wrapper osserva,
+                // non decide. `senzaLanciare` perché un logger che esplode non deve poter
+                // sostituire l'errore della route con il proprio.
+                senzaLanciare(() => logErrore({ operazione: nome, ms: Date.now() - t0, stato: 500 }, err));
+                throw err;
+            }
+
+            senzaLanciare(() => registraEsito(nome, res, Date.now() - t0));
+            senzaLanciare(() => rifletti(res, rid));
+            return res;
+        };
+
+        // Rientranza: se siamo GIÀ dentro una richiesta (una route wrappata invocata come
+        // funzione da un'altra), si RIUSA il contesto aperto. Aprirne un secondo conierebbe
+        // un secondo requestId, e le righe della stessa richiesta smetterebbero di correlare.
+        // Oggi nel repo non capita; costa un `if`, e se capitasse nessuno se ne accorgerebbe
+        // leggendo i log — se ne accorgerebbe non trovandoli.
+        if (contesto()) return esegui();
+
         // Il requestId NON viene generato qui: si passa il valore grezzo dell'header (o la
-        // stringa vuota) e lo normalizza `conContesto` — che sostituisce ciò che non è un id
+        // stringa vuota) e lo normalizza `conContesto`, che sostituisce ciò che non è un id
         // plausibile. Due vantaggi: la logica anti-forgiatura sta in un posto solo, e non
         // serve `crypto.randomUUID()`, che non è garantito ovunque (sotto jsdom il repo lo
         // polyfilla a mano su `window`) e che qui sarebbe un throw del wrapper.
-        return conContesto(
-            { requestId: requestIdGrezzo(args[0]), path: pathDi(args[0]) },
-            async () => {
-                // L'id NORMALIZZATO, cioè quello che finirà davvero nei log. È questo che si
-                // riflette sulla risposta: rimandare indietro l'header grezzo del client
-                // significherebbe promettergli una correlazione che non esiste (nei log c'è
-                // un altro id) — e riflettergli un valore arbitrario che lui controlla.
-                const rid = contesto()?.requestId;
-
-                let res: Response;
-                try {
-                    res = await handler(...args);
-                } catch (err) {
-                    // Loggato con l'errore VERO (stack vero) e RILANCIATO: il wrapper osserva,
-                    // non decide. `senzaLanciare` perché un logger che esplode non deve poter
-                    // sostituire l'errore della route con il proprio.
-                    senzaLanciare(() => logErrore({ operazione: nome, ms: Date.now() - t0, stato: 500 }, err));
-                    throw err;
-                }
-
-                senzaLanciare(() => registraEsito(nome, res, Date.now() - t0));
-                senzaLanciare(() => rifletti(res, rid));
-                return res;
-            },
-        );
+        return conContesto({ requestId: requestIdGrezzo(args[0]), path: pathDi(args[0]) }, esegui);
     };
 }
 
@@ -120,25 +148,44 @@ function senzaLanciare(fn: () => void): void {
     try {
         fn();
     } catch {
-        // I tre logger sono già fail-open per costruzione; questo try è la rete che regge
-        // se un domani smettessero di esserlo. Su 239 route non è paranoia, è il costo di
-        // una riga.
+        // I tre logger sono già fail-open per costruzione; questo try è la rete che regge se
+        // un domani smettessero di esserlo. Su 239 route non è paranoia, è il costo di una riga.
     }
 }
 
+/**
+ * Il nome della rotta viaggia SEMPRE come `operazione`: è una chiave della lista bianca di
+ * `redact`, quindi sopravvive in chiaro nella riga PERSISTITA — dove `rt` diventerebbe
+ * `[redatto:str/24]` e la riga non direbbe più QUALE route ha fallito. Sulla riga di Vercel
+ * lo rinomina `logEvento` in `rt=`, che è la chiave unica dei tre marker.
+ */
 function registraEsito(nome: string, res: unknown, ms: number): void {
     const stato = statoDi(res);
-    // Status illeggibile (handler che non restituisce una Response): non è un errore
+
+    // Status illeggibile (handler che non restituisce una Response): non è un guasto
     // dimostrabile, e il wrapper non inventa guasti. Resta la riga di esito.
     if (stato === undefined || stato < 400) {
         logOk({ ms, rt: nome });
         return;
     }
+
     if (stato < 500) {
-        logEvento('route', 'info', { operazione: nome, stato, ms });
+        logEvento('route', livello4xx(stato), { operazione: nome, stato, ms });
         return;
     }
+
+    // L'errore vero è già stato registrato da chi lo aveva in mano, con lo stack: una seconda
+    // riga sarebbe un doppione più povero. Vedi "DEDUPLICA DEL 5xx" in testa al modulo.
+    if (erroreGiaLoggato()) return;
     logEvento('route', 'error', { operazione: nome, stato, ms });
+}
+
+function livello4xx(stato: number): 'info' | 'warn' {
+    if (ANOMALIE_4XX.has(stato)) return 'warn';
+    // Un 400 con una sessione aperta: il payload che zod ha rifiutato l'ha spedito il NOSTRO
+    // client. È un bug nostro, e va in tabella.
+    if (stato === 400 && !!contesto()?.userId) return 'warn';
+    return 'info';
 }
 
 /**

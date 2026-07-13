@@ -182,7 +182,7 @@ describe('fetch strumentato — emissione reale', () => {
             const f = crea(async () => risposta(`{"code":"C${stato}","message":"boom"}`, stato));
             await f('https://x.supabase.co/rest/v1/alunni', { method: 'POST' });
 
-            const righe = err.mock.calls.map((c) => String(c[0]));
+            const righe: string[] = err.mock.calls.map((c: unknown[]) => String(c[0]));
             expect(righe.some((r) => r.startsWith('KV_ERR ')), `stato ${stato}`).toBe(true);
             expect(appLog).toHaveBeenCalledTimes(1);
             expect(appLog.mock.calls[0][0].livello, `stato ${stato}`).toBe('error');
@@ -198,7 +198,9 @@ describe('fetch strumentato — emissione reale', () => {
         const riga = String(err.mock.calls[0][0]);
         expect(riga).toContain('KV_ERR');
         expect(riga).toContain('evt=db');
-        expect(riga).toContain('operazione=pippo');
+        // Il nome dell'operazione esce come `rt=` su TUTTI i marker: su Vercel la ricerca è
+        // full-text, e una chiave diversa per canale vorrebbe dire una query per canale.
+        expect(riga).toContain('rt=pippo');
         expect(riga).toContain('metodo=POST');
         expect(riga).toContain('stato=404');
         expect(riga).toContain('code=42P01');
@@ -226,7 +228,7 @@ describe('fetch strumentato — emissione reale', () => {
         // Il codice applicativo non si è accorto di nulla…
         expect(catchScattato).toBe(false);
         // …ma il fetch strumentato sì.
-        const righe = err.mock.calls.map((c) => String(c[0]));
+        const righe: string[] = err.mock.calls.map((c: unknown[]) => String(c[0]));
         expect(righe.some((r) => r.startsWith('KV_ERR ') && r.includes('42P01'))).toBe(true);
         expect(appLog).toHaveBeenCalledTimes(1);
         expect(appLog.mock.calls[0][0].livello).toBe('error');

@@ -7,6 +7,8 @@ import { logScrittura } from '@/lib/audit/scrittura'
 import { notificaEvento } from '@/lib/notifiche/triggers'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // Comportamento storico preservato: `sospeso` conta solo se strettamente === true,
 // `motivo` è usato solo se stringa — qualunque altro valore è tollerato (→ false/null).
@@ -20,7 +22,7 @@ const postBodySchema = z.object({
 // POST /api/admin/pagamenti/sospensione  (Direzione) — sospende/riattiva un alunno
 // per morosità (DL-021). Body: { userId, alunno_id, sospeso: boolean, motivo? }.
 // Azione manuale e consapevole, riservata alla Direzione (admin/coordinator).
-export async function POST(request: Request) {
+export const POST = withRoute('admin/pagamenti/sospensione:POST', async (request: Request) => {
   try {
     const auth = await requireStaff(request, ['admin', 'coordinator'])
     if (auth.response) return auth.response
@@ -79,7 +81,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ success: true, data: { alunno_id: alunnoId, sospeso } })
   } catch (err) {
-    console.error('Errore API POST sospensione:', err)
+    logErrore({ operazione: 'admin/pagamenti/sospensione:POST', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

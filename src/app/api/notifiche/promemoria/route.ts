@@ -6,6 +6,7 @@ import { getModuleConfig } from '@/lib/settings/module-config'
 import { notificaEvento } from '@/lib/notifiche/triggers'
 import { genitoriDiAlunni, genitoriDiClassi, genitoriDiScuola, staffScuola } from '@/lib/notifiche/destinatari'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { withRoute } from '@/lib/logging/with-route'
 
 // =============================================================================
 // POST /api/notifiche/promemoria — giro promemoria GIORNALIERO.
@@ -60,7 +61,7 @@ function seFallita(error: { code?: string; message?: string } | null, azione: st
   throw new Error(`${JOB}: ${azione} fallita`, { cause: error })
 }
 
-export async function POST(request: Request) {
+export const POST = withRoute('notifiche/promemoria:POST', async (request: Request) => {
   const t0 = Date.now()
   try {
     const secret = request.headers.get('x-cron-secret')
@@ -354,4 +355,4 @@ export async function POST(request: Request) {
     logErrore({ operazione: JOB, evento: 'cron', ms: Date.now() - t0, stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

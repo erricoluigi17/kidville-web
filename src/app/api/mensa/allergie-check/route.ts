@@ -8,6 +8,7 @@ import type { ResolveOptions } from '@/lib/mensa/resolveMenu'
 import { parseData, parseQuery } from '@/lib/validation/http'
 import { zDataYMD } from '@/lib/validation/common'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { withRoute } from '@/lib/logging/with-route'
 
 // Battito cardiaco del cron: pg_net chiama in fire-and-forget con `EXCEPTION WHEN OTHERS
 // THEN null`, quindi un job che non parte non lascia traccia — si sorveglia l'ASSENZA.
@@ -72,7 +73,7 @@ function queryFallita(azione: string, error: unknown, t0: number, canale: string
 //   verifica i conflitti allergia↔menu e avvisa segreteria/cuoca/insegnanti.
 //   Auth: header `x-cron-secret` (chiamata dal cron) OPPURE staff (manuale).
 //   Idempotente per (alunno, data) grazie al dedup in notificaAllergie.
-export async function POST(request: Request) {
+export const POST = withRoute('mensa/allergie-check:POST', async (request: Request) => {
   const t0 = Date.now()
   try {
     const secret = request.headers.get('x-cron-secret')
@@ -198,4 +199,4 @@ export async function POST(request: Request) {
     logErrore({ operazione: JOB, evento: 'cron', ms: Date.now() - t0, stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

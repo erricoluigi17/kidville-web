@@ -5,6 +5,8 @@ import { requireStaff } from '@/lib/auth/require-staff'
 import { calcolaDelibera, type EsitoAmmissione } from '@/lib/forms/delibera'
 import { parseBody, parseData } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 const ESITI_VALIDI = ['ammesso', 'lista_attesa', 'non_ammesso'] as const satisfies readonly EsitoAmmissione[]
 
@@ -32,7 +34,7 @@ const postBulkSchema = z.object({
 // POST /api/forms/delibera  (staff) — delibera ammissioni (DL-025).
 //  • bulk:     { modelId, posti, soglia }  → calcola e assegna gli esiti
 //  • override: { submissionId, esito, note? } → forza l'esito di un candidato
-export async function POST(request: Request) {
+export const POST = withRoute('forms/delibera:POST', async (request: Request) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -95,7 +97,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ success: true, data: { totale: esiti.length, conteggi } })
   } catch (err) {
-    console.error('Errore API POST delibera:', err)
+    logErrore({ operazione: 'forms/delibera:POST', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

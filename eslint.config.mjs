@@ -19,6 +19,11 @@ const eslintConfig = defineConfig([
     // Harness one-off del test 360° Primaria (script Playwright + tooling): non
     // è codice applicativo spedito, gira solo su richiesta. Escluso dal gate.
     "e2e/primaria-360/**",
+    // Le sessioni parallele di Claude Code creano i propri worktree qui dentro:
+    // COPIE COMPLETE del repo, su un ALTRO branch. Senza questa esclusione il gate
+    // di questo branch fallisce per il codice di un branch diverso — e chi legge il
+    // rosso non ha modo di capire che non è suo. (Stessa esclusione in vitest.config.ts.)
+    ".claude/**",
   ]),
 ]);
 

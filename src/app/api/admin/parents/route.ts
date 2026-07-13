@@ -6,6 +6,8 @@ import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { linkOrCreateParent } from '@/lib/anagrafiche/parents';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore } from '@/lib/logging/logger';
 
 // ============================================================
 // Anagrafica genitori — gated Segreteria+Direzione (DL-036) + audit
@@ -49,7 +51,7 @@ const patchBodySchema = z
     })
     .loose();
 
-export async function GET(request: NextRequest) {
+export const GET = withRoute('admin/parents:GET', async (request: NextRequest) => {
     const auth = await requireStaff(request);
     if (auth.response) return auth.response;
     const q = parseQuery(request, getQuerySchema);
@@ -78,12 +80,12 @@ export async function GET(request: NextRequest) {
 
         return NextResponse.json(data);
     } catch (err) {
-        console.error('Errore GET /api/admin/parents:', err);
+        logErrore({ operazione: 'admin/parents:GET', stato: 500 }, err);
         return NextResponse.json({ error: 'Errore interno del server' }, { status: 500 });
     }
-}
+});
 
-export async function POST(request: NextRequest) {
+export const POST = withRoute('admin/parents:POST', async (request: NextRequest) => {
     const auth = await requireStaff(request);
     if (auth.response) return auth.response;
     const parsed = await parseBody(request, postBodySchema);
@@ -112,16 +114,16 @@ export async function POST(request: NextRequest) {
                 ...(warning ? { warning } : {}),
             });
         } catch (e) {
-            console.error('[create_parent]', (e as Error).message);
+            logErrore({ operazione: 'admin/parents:POST', stato: 500 }, e);
             return NextResponse.json({ error: (e as Error).message }, { status: 500 });
         }
     } catch (err) {
-        console.error('Errore POST /api/admin/parents:', err);
+        logErrore({ operazione: 'admin/parents:POST', stato: 500 }, err);
         return NextResponse.json({ error: 'Errore interno del server' }, { status: 500 });
     }
-}
+});
 
-export async function PATCH(request: NextRequest) {
+export const PATCH = withRoute('admin/parents:PATCH', async (request: NextRequest) => {
     const auth = await requireStaff(request);
     if (auth.response) return auth.response;
     const parsed = await parseBody(request, patchBodySchema);
@@ -159,7 +161,7 @@ export async function PATCH(request: NextRequest) {
 
         return NextResponse.json({ success: true, data });
     } catch (err) {
-        console.error('Errore PATCH /api/admin/parents:', err);
+        logErrore({ operazione: 'admin/parents:PATCH', stato: 500 }, err);
         return NextResponse.json({ error: 'Errore interno del server' }, { status: 500 });
     }
-}
+});

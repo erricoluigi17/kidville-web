@@ -4,6 +4,8 @@ import { createClient, createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { assertClasseNomeInScope } from '@/lib/auth/scope';
 import { parseQuery } from '@/lib/validation/http';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore } from '@/lib/logging/logger';
 
 /**
  * GET /api/attendance/delegates?sezione=Girasoli
@@ -16,7 +18,7 @@ const getQuerySchema = z.object({
     sezione: z.string().min(1, 'sezione obbligatoria'),
 });
 
-export async function GET(request: NextRequest) {
+export const GET = withRoute('attendance/delegates:GET', async (request: NextRequest) => {
     const auth = await requireDocente(request);
     if (auth.response) return auth.response;
 
@@ -75,7 +77,7 @@ export async function GET(request: NextRequest) {
         // Nessun delegato trovato — ritorna array vuoto (non errore)
         return NextResponse.json([]);
     } catch (err) {
-        console.error('[/api/attendance/delegates] Error:', err);
+        logErrore({ operazione: 'attendance/delegates:GET', stato: 200 }, err);
         return NextResponse.json([]);
     }
-}
+});

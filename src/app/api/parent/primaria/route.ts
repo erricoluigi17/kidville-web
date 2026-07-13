@@ -3,6 +3,8 @@ import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
 import { parseQuery } from '@/lib/validation/http'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // studentId lasco (niente zUuid): un valore non-GUID oggi degrada a 404 dalla
@@ -15,7 +17,7 @@ const getQuerySchema = z.object({
 // Vista genitore (read-only) del registro primaria del figlio, con OSCURAMENTO:
 // gli argomenti/compiti "propri" del docente di sostegno sono visibili solo se il
 // figlio è tra i destinatari. Valutazioni mostrate dopo il buffer notifica.
-export async function GET(request: NextRequest) {
+export const GET = withRoute('parent/primaria:GET', async (request: NextRequest) => {
   // Gate sessione (M5.6): sostituisce il vecchio check di sola presenza
   // dell'header x-user-id (spoofabile post-M4).
   const auth = await requireUser(request)
@@ -137,7 +139,8 @@ export async function GET(request: NextRequest) {
       data: { schoolType, child: alunno, lezioni, valutazioni: valutazioni ?? [], note: note ?? [], assenze: assenze ?? [], materie: materie ?? [] },
     })
   } catch (err) {
+    logErrore({ operazione: 'parent/primaria:GET', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

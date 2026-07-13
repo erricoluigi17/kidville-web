@@ -5,6 +5,8 @@ import { requireStaff } from '@/lib/auth/require-staff'
 import { parseBody, parseData } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { annullaRicevutaAttiva } from '@/lib/pagamenti/ricevute'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 const patchBodySchema = z
   .object({
@@ -27,7 +29,7 @@ const patchBodySchema = z
 // PATCH /api/pagamenti/incassi/[id]  (staff) — correzione di un incasso registrato
 // Body: { userId, importo?, data_incasso?, metodo?, note? }
 // Lo stato del pagamento è ricalcolato automaticamente dal trigger su `incassi`.
-export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
+export const PATCH = withRoute('pagamenti/incassi/[id]:PATCH', async (request: Request, context: { params: Promise<{ id: string }> }) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -77,13 +79,13 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
 
     return NextResponse.json({ success: true, data: { incasso, pagamento } })
   } catch (err) {
-    console.error('Errore API PATCH incasso:', err)
+    logErrore({ operazione: 'pagamenti/incassi/[id]:PATCH', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})
 
 // DELETE /api/pagamenti/incassi/[id]  (staff) — storno di un incasso (variante REST path)
-export async function DELETE(request: Request, context: { params: Promise<{ id: string }> }) {
+export const DELETE = withRoute('pagamenti/incassi/[id]:DELETE', async (request: Request, context: { params: Promise<{ id: string }> }) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -111,7 +113,7 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
 
     return NextResponse.json({ success: true })
   } catch (err) {
-    console.error('Errore API DELETE incasso:', err)
+    logErrore({ operazione: 'pagamenti/incassi/[id]:DELETE', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

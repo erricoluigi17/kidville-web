@@ -4,6 +4,8 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
 import { parseData, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // Stringa vuota trattata come assente: preserva i default falsy pre-esistenti
 // ('' !== 'true' → false in GET; `if (body.id)` truthy in PATCH).
@@ -22,7 +24,7 @@ const patchBodySchema = z.object({
 })
 
 // GET /api/notifiche?userId=&solo_non_lette=  — notifiche dell'utente corrente
-export async function GET(request: Request) {
+export const GET = withRoute('notifiche:GET', async (request: Request) => {
   try {
     const auth = await requireUser(request)
     if (auth.response) return auth.response
@@ -44,14 +46,14 @@ export async function GET(request: Request) {
     const nonLette = (data || []).filter((n) => !n.letta_il).length
     return NextResponse.json({ success: true, data, non_lette: nonLette })
   } catch (err) {
-    console.error('Errore API GET notifiche:', err)
+    logErrore({ operazione: 'notifiche:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})
 
 // PATCH /api/notifiche  — segna letta una notifica (o tutte)
 // Body: { userId, id? }  (senza id = segna tutte come lette)
-export async function PATCH(request: Request) {
+export const PATCH = withRoute('notifiche:PATCH', async (request: Request) => {
   try {
     const auth = await requireUser(request)
     if (auth.response) return auth.response
@@ -68,7 +70,7 @@ export async function PATCH(request: Request) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json({ success: true })
   } catch (err) {
-    console.error('Errore API PATCH notifiche:', err)
+    logErrore({ operazione: 'notifiche:PATCH', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { resolveScuoleAttive } from '@/lib/auth/scope'
 import { parseQuery } from '@/lib/validation/http'
+import { withRoute } from '@/lib/logging/with-route'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({}) // nessun parametro in ingresso
@@ -22,7 +23,7 @@ function ymKey(d: Date) {
  * form_submissions). Riservato allo staff via requireStaff. Vedi piano in
  * .claude/plans per i contratti.
  */
-export async function GET(request: NextRequest) {
+export const GET = withRoute('admin/dashboard:GET', async (request: NextRequest) => {
   const auth = await requireStaff(request)
   if (auth.response) return auth.response
 
@@ -191,4 +192,4 @@ export async function GET(request: NextRequest) {
       iscrizioni: alertIscrizioni,
     },
   })
-}
+})

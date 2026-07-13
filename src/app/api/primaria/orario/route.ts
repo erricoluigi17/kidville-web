@@ -5,6 +5,8 @@ import { requireDocente } from '@/lib/auth/require-staff'
 import { assertSezioneInScope } from '@/lib/auth/scope'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 const getQuerySchema = z.object({
   sectionId: zUuid,
@@ -13,7 +15,7 @@ const getQuerySchema = z.object({
 // GET /api/primaria/orario?sectionId=&userId=
 // Orario settimanale in SOLA LETTURA (personale docente/segreteria): campanelle + griglia.
 // (Il genitore consulta l'orario dalle proprie pagine /api/parent/**.)
-export async function GET(request: NextRequest) {
+export const GET = withRoute('primaria/orario:GET', async (request: NextRequest) => {
   try {
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
@@ -35,7 +37,8 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ success: true, data: { campanelle: campanelle ?? [], orario: orario ?? [] } })
   } catch (err) {
+    logErrore({ operazione: 'primaria/orario:GET', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

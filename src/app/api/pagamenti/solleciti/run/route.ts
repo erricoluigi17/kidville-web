@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { sollecitaPagamenti } from '@/lib/pagamenti/solleciti-invio'
 import type { SollecitiConfig } from '@/lib/pagamenti/solleciti'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { withRoute } from '@/lib/logging/with-route'
 
 // Corpo vuoto ammesso: la route è service-to-service (zod per il lock di copertura).
 const bodySchema = z.object({}).passthrough().optional()
@@ -40,7 +41,7 @@ function queryFallita(azione: string, error: unknown, t0: number): NextResponse 
 // mai schedulata): prima aggiorna gli stati `scaduto`, poi invia i solleciti
 // SOLO per le scuole con solleciti_config.enabled (default off), livelli 1-2
 // (il 3° resta manuale), pagamenti obbligatori.
-export async function POST(request: Request) {
+export const POST = withRoute('pagamenti/solleciti/run:POST', async (request: Request) => {
   const t0 = Date.now()
   try {
     const secret = request.headers.get('x-cron-secret')
@@ -164,4 +165,4 @@ export async function POST(request: Request) {
     logErrore({ operazione: JOB, evento: 'cron', ms: Date.now() - t0, stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

@@ -5,6 +5,7 @@ import { requireDocente } from '@/lib/auth/require-staff';
 import { scuoleDiUtente } from '@/lib/auth/scope';
 import { parseQuery } from '@/lib/validation/http';
 import { zUuid, zDataYMD } from '@/lib/validation/common';
+import { withRoute } from '@/lib/logging/with-route';
 
 // Singolo alunno per id.
 const getByIdQuerySchema = z.object({
@@ -25,7 +26,7 @@ const getBySezioneQuerySchema = z.object({
 // GET /api/diary/students?sezione=<classe>&onlyPresent=true   → solo presenti oggi
 // GET /api/diary/students?classeSezione=3A&onlyPresent=true&date=2026-05-17
 // GET /api/diary/students?id=uuid                             → singolo alunno
-export async function GET(request: NextRequest) {
+export const GET = withRoute('diary/students:GET', async (request: NextRequest) => {
     const supabase = await createAdminClient();
     const params = request.nextUrl.searchParams;
 
@@ -152,4 +153,4 @@ export async function GET(request: NextRequest) {
     }
 
     return NextResponse.json(enrichedAlunni);
-}
+});

@@ -5,6 +5,8 @@ import { requireStaff, requireUser } from '@/lib/auth/require-staff'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { resolveScuoleAttive, assertAlunnoInScope } from '@/lib/auth/scope'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // Uuid opzionale da query string: stringa vuota trattata come assente
@@ -57,7 +59,7 @@ const SELECT = `
 //   staff  -> tutti i pagamenti (filtri: alunno_id, stato, categoria_id, scuola_id, gruppo, periodo)
 //   parent -> solo i pagamenti dei propri figli; per gli split, solo se ha una quota
 // Query: ?userId=<id> (modello auth app-level) + filtri opzionali
-export async function GET(request: NextRequest) {
+export const GET = withRoute('pagamenti:GET', async (request: NextRequest) => {
   try {
     const auth = await requireUser(request)
     if (auth.response) return auth.response
@@ -139,15 +141,15 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ success: true, data: rows })
   } catch (err) {
-    console.error('Errore API GET pagamenti:', err)
+    logErrore({ operazione: 'pagamenti:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})
 
 // POST /api/pagamenti  (staff) — crea un pagamento singolo
 // Body: { userId, alunno_id, scuola_id?, descrizione, importo, scadenza, categoria_id?,
 //         tipo?, obbligatorio?, periodo_competenza?, gruppo? }
-export async function POST(request: Request) {
+export const POST = withRoute('pagamenti:POST', async (request: Request) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -196,7 +198,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ success: true, data }, { status: 201 })
   } catch (err) {
-    console.error('Errore API POST pagamenti:', err)
+    logErrore({ operazione: 'pagamenti:POST', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

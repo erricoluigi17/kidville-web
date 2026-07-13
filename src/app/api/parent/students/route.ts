@@ -5,13 +5,15 @@ import { requireUser } from '@/lib/auth/require-staff'
 import { parseQuery } from '@/lib/validation/http'
 import { getFigliDiGenitore } from '@/lib/anagrafiche/legami'
 import { parseAnagraficaSede, type AnagraficaSede } from '@/lib/scuole/anagrafica'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // `userId` in query è consumato dal gate identità (requireUser), non dall'handler.
 const getQuerySchema = z.object({}) // nessun parametro in ingresso
 
 // GET /api/parent/students?userId=  — lista degli alunni collegati al genitore.
-export async function GET(request: Request) {
+export const GET = withRoute('parent/students:GET', async (request: Request) => {
   try {
     const auth = await requireUser(request)
     if (auth.response) return auth.response
@@ -70,7 +72,7 @@ export async function GET(request: Request) {
 
     return NextResponse.json({ success: true, data: enriched })
   } catch (err) {
-    console.error('GET /api/parent/students:', err)
+    logErrore({ operazione: 'parent/students:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

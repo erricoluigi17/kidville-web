@@ -6,6 +6,8 @@ import { logScrittura } from '@/lib/audit/scrittura'
 import { normalizzaScuola } from '@/lib/scuole/validate'
 import { zAnagraficaSede, normalizzaAnagraficaSede } from '@/lib/scuole/anagrafica'
 import { parseBody, parseQuery } from '@/lib/validation/http'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // Multi-Sede CRUD (DL-033). Riservato alla Direzione (admin/coordinator).
 // Aggiungi / rinomina / disattiva (soft) + config isolata per sede. Service-role
@@ -43,7 +45,7 @@ const patchBodySchema = z.object({
   anagrafica: zAnagraficaSede.optional(),
 })
 
-export async function GET(request: Request) {
+export const GET = withRoute('admin/schools:GET', async (request: Request) => {
   const auth = await requireStaff(request, [...DIREZIONE])
   if (auth.response) return auth.response
 
@@ -57,9 +59,9 @@ export async function GET(request: Request) {
     .order('nome', { ascending: true })
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json(data ?? [])
-}
+})
 
-export async function POST(request: Request) {
+export const POST = withRoute('admin/schools:POST', async (request: Request) => {
   const auth = await requireStaff(request, [...DIREZIONE])
   if (auth.response) return auth.response
 
@@ -87,14 +89,15 @@ export async function POST(request: Request) {
     })
     return NextResponse.json(data, { status: 201 })
   } catch (err) {
+    logErrore({ operazione: 'admin/schools:POST', stato: 500 }, err)
     return NextResponse.json(
       { error: err instanceof Error ? err.message : 'Errore interno' },
       { status: 500 }
     )
   }
-}
+})
 
-export async function PATCH(request: Request) {
+export const PATCH = withRoute('admin/schools:PATCH', async (request: Request) => {
   const auth = await requireStaff(request, [...DIREZIONE])
   if (auth.response) return auth.response
 
@@ -145,9 +148,10 @@ export async function PATCH(request: Request) {
     })
     return NextResponse.json(data)
   } catch (err) {
+    logErrore({ operazione: 'admin/schools:PATCH', stato: 500 }, err)
     return NextResponse.json(
       { error: err instanceof Error ? err.message : 'Errore interno' },
       { status: 500 }
     )
   }
-}
+})

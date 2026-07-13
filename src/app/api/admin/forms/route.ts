@@ -4,6 +4,8 @@ import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente, requireStaff } from '@/lib/auth/require-staff';
 import { resolveScuoleAttive, resolveScuolaScrittura } from '@/lib/auth/scope';
 import { parseBody, parseQuery } from '@/lib/validation/http';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore } from '@/lib/logging/logger';
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // Gli id restano stringhe libere (niente zUuid): oggi il codice non impone
@@ -43,141 +45,145 @@ const deleteBodySchema = z.object({
 });
 
 // GET: Recupera tutti i moduli creati
-export async function GET(request: NextRequest) {
-  // Gap auth segnalato in M3, chiuso in M9. La lista è letta anche dalla
-  // modulistica DOCENTE (semaforo autorizzazioni) → requireDocente, non Staff.
-  const auth = await requireDocente(request);
-  if (auth.response) return auth.response;
+export const GET = withRoute('admin/forms:GET', async (request: NextRequest) => {
+    // Gap auth segnalato in M3, chiuso in M9. La lista è letta anche dalla
+    // modulistica DOCENTE (semaforo autorizzazioni) → requireDocente, non Staff.
+    const auth = await requireDocente(request);
+    if (auth.response) return auth.response;
 
-  const q = parseQuery(request, getQuerySchema);
-  if ('response' in q) return q.response;
+    const q = parseQuery(request, getQuerySchema);
+    if ('response' in q) return q.response;
 
-  try {
-    const supabase = await createAdminClient();
-    const sedi = await resolveScuoleAttive(request, supabase, auth.user);
+    try {
+      const supabase = await createAdminClient();
+      const sedi = await resolveScuoleAttive(request, supabase, auth.user);
 
-    const { data, error } = await supabase
-      .from('forms_templates')
-      .select('*')
-      .in('scuola_id', sedi)
-      .order('created_at', { ascending: false });
+      const { data, error } = await supabase
+        .from('forms_templates')
+        .select('*')
+        .in('scuola_id', sedi)
+        .order('created_at', { ascending: false });
 
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
+
+      return NextResponse.json(data);
+    } catch (err) {
+      logErrore({ operazione: 'admin/forms:GET', stato: 500 }, err);
+      const message = err instanceof Error && err.message ? err.message : 'Errore interno';
+      return NextResponse.json({ error: message }, { status: 500 });
     }
-
-    return NextResponse.json(data);
-  } catch (err) {
-    const message = err instanceof Error && err.message ? err.message : 'Errore interno';
-    return NextResponse.json({ error: message }, { status: 500 });
-  }
-}
+});
 
 // POST: Crea un nuovo modulo
-export async function POST(request: NextRequest) {
-  // Gap auth segnalato in M3, chiuso in M9: mutazioni riservate allo staff.
-  const auth = await requireStaff(request);
-  if (auth.response) return auth.response;
+export const POST = withRoute('admin/forms:POST', async (request: NextRequest) => {
+    // Gap auth segnalato in M3, chiuso in M9: mutazioni riservate allo staff.
+    const auth = await requireStaff(request);
+    if (auth.response) return auth.response;
 
-  const b = await parseBody(request, postBodySchema);
-  if ('response' in b) return b.response;
+    const b = await parseBody(request, postBodySchema);
+    if ('response' in b) return b.response;
 
-  try {
-    const { title, description, fields, target_scope, target_classes, expiration_date, scuola_id, form_type } = b.data;
+    try {
+      const { title, description, fields, target_scope, target_classes, expiration_date, scuola_id, form_type } = b.data;
 
-    const supabase = await createAdminClient();
+      const supabase = await createAdminClient();
 
-    const sw = await resolveScuolaScrittura(request, supabase, auth.user, scuola_id ?? undefined);
-    if (sw.response) return sw.response;
+      const sw = await resolveScuolaScrittura(request, supabase, auth.user, scuola_id ?? undefined);
+      if (sw.response) return sw.response;
 
-    const record = {
-      scuola_id: sw.scuolaId,
-      title,
-      description: description || '',
-      form_type,
-      fields: fields || [],
-      target_scope: target_scope || 'class',
-      target_classes: target_classes || [],
-      expiration_date: expiration_date || null
-    };
+      const record = {
+        scuola_id: sw.scuolaId,
+        title,
+        description: description || '',
+        form_type,
+        fields: fields || [],
+        target_scope: target_scope || 'class',
+        target_classes: target_classes || [],
+        expiration_date: expiration_date || null
+      };
 
-    const { data, error } = await supabase
-      .from('forms_templates')
-      .insert(record)
-      .select()
-      .single();
+      const { data, error } = await supabase
+        .from('forms_templates')
+        .insert(record)
+        .select()
+        .single();
 
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
+
+      return NextResponse.json(data, { status: 201 });
+    } catch (err) {
+      logErrore({ operazione: 'admin/forms:POST', stato: 500 }, err);
+      const message = err instanceof Error && err.message ? err.message : 'Errore interno';
+      return NextResponse.json({ error: message }, { status: 500 });
     }
-
-    return NextResponse.json(data, { status: 201 });
-  } catch (err) {
-    const message = err instanceof Error && err.message ? err.message : 'Errore interno';
-    return NextResponse.json({ error: message }, { status: 500 });
-  }
-}
+});
 
 // PATCH: Aggiorna la data di scadenza o altri campi
-export async function PATCH(request: NextRequest) {
-  const auth = await requireStaff(request);
-  if (auth.response) return auth.response;
+export const PATCH = withRoute('admin/forms:PATCH', async (request: NextRequest) => {
+    const auth = await requireStaff(request);
+    if (auth.response) return auth.response;
 
-  const b = await parseBody(request, patchBodySchema);
-  if ('response' in b) return b.response;
+    const b = await parseBody(request, patchBodySchema);
+    if ('response' in b) return b.response;
 
-  try {
-    const { id, expiration_date, title, description, target_classes } = b.data;
+    try {
+      const { id, expiration_date, title, description, target_classes } = b.data;
 
-    const supabase = await createAdminClient();
-    const updates: Record<string, unknown> = {};
+      const supabase = await createAdminClient();
+      const updates: Record<string, unknown> = {};
 
-    if (expiration_date !== undefined) updates.expiration_date = expiration_date;
-    if (title !== undefined) updates.title = title;
-    if (description !== undefined) updates.description = description;
-    if (target_classes !== undefined) updates.target_classes = target_classes;
+      if (expiration_date !== undefined) updates.expiration_date = expiration_date;
+      if (title !== undefined) updates.title = title;
+      if (description !== undefined) updates.description = description;
+      if (target_classes !== undefined) updates.target_classes = target_classes;
 
-    const { data, error } = await supabase
-      .from('forms_templates')
-      .update(updates)
-      .eq('id', id)
-      .select()
-      .single();
+      const { data, error } = await supabase
+        .from('forms_templates')
+        .update(updates)
+        .eq('id', id)
+        .select()
+        .single();
 
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
+
+      return NextResponse.json(data);
+    } catch (err) {
+      logErrore({ operazione: 'admin/forms:PATCH', stato: 500 }, err);
+      const message = err instanceof Error && err.message ? err.message : 'Errore interno';
+      return NextResponse.json({ error: message }, { status: 500 });
     }
-
-    return NextResponse.json(data);
-  } catch (err) {
-    const message = err instanceof Error && err.message ? err.message : 'Errore interno';
-    return NextResponse.json({ error: message }, { status: 500 });
-  }
-}
+});
 
 // DELETE: Elimina un modulo
-export async function DELETE(request: NextRequest) {
-  const auth = await requireStaff(request);
-  if (auth.response) return auth.response;
+export const DELETE = withRoute('admin/forms:DELETE', async (request: NextRequest) => {
+    const auth = await requireStaff(request);
+    if (auth.response) return auth.response;
 
-  const b = await parseBody(request, deleteBodySchema);
-  if ('response' in b) return b.response;
+    const b = await parseBody(request, deleteBodySchema);
+    if ('response' in b) return b.response;
 
-  try {
-    const supabase = await createAdminClient();
+    try {
+      const supabase = await createAdminClient();
 
-    const { error } = await supabase
-      .from('forms_templates')
-      .delete()
-      .eq('id', b.data.id);
+      const { error } = await supabase
+        .from('forms_templates')
+        .delete()
+        .eq('id', b.data.id);
 
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
+
+      return NextResponse.json({ success: true });
+    } catch (err) {
+      logErrore({ operazione: 'admin/forms:DELETE', stato: 500 }, err);
+      const message = err instanceof Error && err.message ? err.message : 'Errore interno';
+      return NextResponse.json({ error: message }, { status: 500 });
     }
-
-    return NextResponse.json({ success: true });
-  } catch (err) {
-    const message = err instanceof Error && err.message ? err.message : 'Errore interno';
-    return NextResponse.json({ error: message }, { status: 500 });
-  }
-}
+});

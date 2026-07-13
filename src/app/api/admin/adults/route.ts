@@ -4,6 +4,8 @@ import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireStaff } from '@/lib/auth/require-staff';
 import { resolveScuoleAttive, resolveScuolaScrittura } from '@/lib/auth/scope';
 import { parseBody, parseQuery } from '@/lib/validation/http';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore } from '@/lib/logging/logger';
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({
@@ -22,7 +24,7 @@ const postBodySchema = z.object({
 
 // GET /api/admin/adults?role=educator
 // Returns staff from utenti table (adults table not available in public schema)
-export async function GET(request: NextRequest) {
+export const GET = withRoute('admin/adults:GET', async (request: NextRequest) => {
     // Gap auth segnalato in M3, chiuso in M9: anagrafica staff (nomi+email)
     // riservata allo staff di gestione.
     const auth = await requireStaff(request);
@@ -71,14 +73,15 @@ export async function GET(request: NextRequest) {
 
         return NextResponse.json(normalized);
     } catch (err: unknown) {
+        logErrore({ operazione: 'admin/adults:GET', stato: 500 }, err);
         const msg = err instanceof Error ? err.message : String(err);
         return NextResponse.json({ error: 'Errore interno del server', details: msg }, { status: 500 });
     }
-}
+});
 
 // POST /api/admin/adults
 // Creates a new staff user in auth + utenti
-export async function POST(request: NextRequest) {
+export const POST = withRoute('admin/adults:POST', async (request: NextRequest) => {
     // Gap auth segnalato in M3, chiuso in M9: creava utenze staff (auth+utenti)
     // SENZA gate — privilege escalation. Riservato allo staff di gestione
     // (la creazione staff con RBAC completo resta su /api/admin/staff, P3.4a).
@@ -143,7 +146,8 @@ export async function POST(request: NextRequest) {
         }, { status: 201 });
 
     } catch (err: unknown) {
+        logErrore({ operazione: 'admin/adults:POST', stato: 500 }, err);
         const msg = err instanceof Error ? err.message : String(err);
         return NextResponse.json({ error: 'Errore interno del server', details: msg }, { status: 500 });
     }
-}
+});

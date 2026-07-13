@@ -5,6 +5,8 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { publicFormUrl } from '@/lib/forms/publish'
 import { parseBody } from '@/lib/validation/http'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // Pubblica / ritira un modello del Form Builder (DL-030). Gated alla Segreteria.
 // publish: genera (o riusa) il public_token e imposta published_at → link /m/{token}.
@@ -23,7 +25,7 @@ const postBodySchema = z.object({
   access_mode: z.unknown().optional(),
 })
 
-export async function POST(request: Request) {
+export const POST = withRoute('admin/form-models/publish:POST', async (request: Request) => {
   const auth = await requireStaff(request)
   if (auth.response) return auth.response
 
@@ -76,9 +78,10 @@ export async function POST(request: Request) {
       url: publicFormUrl(token),
     })
   } catch (err) {
+    logErrore({ operazione: 'admin/form-models/publish:POST', stato: 500 }, err)
     return NextResponse.json(
       { error: err instanceof Error ? err.message : 'Errore interno' },
       { status: 500 }
     )
   }
-}
+})

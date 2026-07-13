@@ -6,6 +6,8 @@ import { assertClasseNomeInScope } from '@/lib/auth/scope';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore } from '@/lib/logging/logger';
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 /** '' equivale ad assente (i check truthy pre-esistenti restano invariati). */
@@ -43,7 +45,7 @@ const deleteQuerySchema = z.object({
  * Ritorna i materiali configurati per la classe.
  * Se la tabella non esiste ancora, ritorna i materiali di default.
  */
-export async function GET(request: NextRequest) {
+export const GET = withRoute('locker/materials:GET', async (request: NextRequest) => {
     const q = parseQuery(request, getQuerySchema);
     if ('response' in q) return q.response;
     const classeSezione = q.data.classe_sezione ?? null;
@@ -70,14 +72,14 @@ export async function GET(request: NextRequest) {
     } catch {
         return NextResponse.json(MATERIALI_DEFAULT);
     }
-}
+});
 
 /**
  * POST /api/locker/materials
  * Crea o aggiorna un materiale nella configurazione.
  * Body: { classe_sezione, nome, icona?, unita?, livello_allerta?, livello_emergenza?, ordine? }
  */
-export async function POST(request: NextRequest) {
+export const POST = withRoute('locker/materials:POST', async (request: NextRequest) => {
     try {
         const auth = await requireDocente(request);
         if (auth.response) return auth.response;
@@ -141,15 +143,16 @@ export async function POST(request: NextRequest) {
 
         return NextResponse.json({ success: true, data: result });
     } catch (err) {
+        logErrore({ operazione: 'locker/materials:POST', stato: 500 }, err);
         return NextResponse.json({ error: err instanceof Error ? err.message : 'Errore interno' }, { status: 500 });
     }
-}
+});
 
 /**
  * PATCH /api/locker/materials — toggle attivo o aggiorna ordine
  * Body: { id, attivo? | ordine? }
  */
-export async function PATCH(request: NextRequest) {
+export const PATCH = withRoute('locker/materials:PATCH', async (request: NextRequest) => {
     try {
         const auth = await requireDocente(request);
         if (auth.response) return auth.response;
@@ -173,14 +176,15 @@ export async function PATCH(request: NextRequest) {
         });
         return NextResponse.json({ success: true, data });
     } catch (err) {
+        logErrore({ operazione: 'locker/materials:PATCH', stato: 500 }, err);
         return NextResponse.json({ error: err instanceof Error ? err.message : 'Errore interno' }, { status: 500 });
     }
-}
+});
 
 /**
  * DELETE /api/locker/materials?id=xxx
  */
-export async function DELETE(request: NextRequest) {
+export const DELETE = withRoute('locker/materials:DELETE', async (request: NextRequest) => {
     try {
         const auth = await requireDocente(request);
         if (auth.response) return auth.response;
@@ -203,9 +207,10 @@ export async function DELETE(request: NextRequest) {
         });
         return NextResponse.json({ success: true });
     } catch (err) {
+        logErrore({ operazione: 'locker/materials:DELETE', stato: 500 }, err);
         return NextResponse.json({ error: err instanceof Error ? err.message : 'Errore interno' }, { status: 500 });
     }
-}
+});
 
 // ── Default fallback ──────────────────────────────────────────────────────────
 export const MATERIALI_DEFAULT = [

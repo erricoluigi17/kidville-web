@@ -3,25 +3,26 @@ import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { sealDangerous } from '@/lib/security/seal';
 import { parseQuery } from '@/lib/validation/http';
+import { withRoute } from '@/lib/logging/with-route';
 
 const getQuerySchema = z.object({}); // nessun parametro in ingresso
 const postQuerySchema = z.object({}); // nessun parametro in ingresso (il body non viene letto)
 
-export async function GET(request: Request) {
+export const GET = withRoute('seed-db:GET', async (request: Request) => {
     const sealed = await sealDangerous(request);
     if (sealed) return sealed;
     const q = parseQuery(request, getQuerySchema);
     if ('response' in q) return q.response;
     return seed();
-}
+});
 
-export async function POST(request: Request) {
+export const POST = withRoute('seed-db:POST', async (request: Request) => {
     const sealed = await sealDangerous(request);
     if (sealed) return sealed;
     const q = parseQuery(request, postQuerySchema);
     if ('response' in q) return q.response;
     return seed();
-}
+});
 
 async function seed() {
     const supabase = await createAdminClient();

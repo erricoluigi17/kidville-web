@@ -6,6 +6,8 @@ import { scuoleDiUtente } from '@/lib/auth/scope';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody, parseData } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore } from '@/lib/logging/logger';
 
 interface RouteParams {
     params: Promise<{ id: string }>;
@@ -37,7 +39,7 @@ async function assertAvvisoInScope(
 
 // GET /api/avvisi/[id]
 // Singolo avviso (deep-link del dettaglio cockpit /admin/avvisi/[id]).
-export async function GET(request: Request, { params }: RouteParams) {
+export const GET = withRoute('avvisi/[id]:GET', async (request: Request, { params }: RouteParams) => {
     try {
         const auth = await requireDocente(request);
         if (auth.response) return auth.response;
@@ -80,14 +82,14 @@ export async function GET(request: Request, { params }: RouteParams) {
             } : { first_name: '?', last_name: '?', role: 'unknown' },
         });
     } catch (error) {
-        console.error('Errore API GET avviso:', error);
+        logErrore({ operazione: 'avvisi/[id]:GET', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
     }
-}
+});
 
 // PUT /api/avvisi/[id]
 // Body: { titolo, contenuto, tipo, target_scope, target_classes, scadenza, attachment_url }
-export async function PUT(request: Request, { params }: RouteParams) {
+export const PUT = withRoute('avvisi/[id]:PUT', async (request: Request, { params }: RouteParams) => {
     try {
         const auth = await requireDocente(request);
         if (auth.response) return auth.response;
@@ -130,13 +132,13 @@ export async function PUT(request: Request, { params }: RouteParams) {
 
         return NextResponse.json(data);
     } catch (error) {
-        console.error('Errore API PUT avvisi:', error);
+        logErrore({ operazione: 'avvisi/[id]:PUT', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
     }
-}
+});
 
 // DELETE /api/avvisi/[id]
-export async function DELETE(request: Request, { params }: RouteParams) {
+export const DELETE = withRoute('avvisi/[id]:DELETE', async (request: Request, { params }: RouteParams) => {
     try {
         const auth = await requireDocente(request);
         if (auth.response) return auth.response;
@@ -164,7 +166,7 @@ export async function DELETE(request: Request, { params }: RouteParams) {
 
         return NextResponse.json({ success: true });
     } catch (error) {
-        console.error('Errore API DELETE avvisi:', error);
+        logErrore({ operazione: 'avvisi/[id]:DELETE', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
     }
-}
+});

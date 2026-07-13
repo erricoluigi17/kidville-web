@@ -8,6 +8,8 @@ import { enqueueNotifichePerAlunni } from '@/lib/primaria/notifiche'
 import { rateLimit } from '@/lib/security/rate-limit'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid, zDataYMD } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 // Agenda condivisa (M6, piano-app-100): eventi/uscite/scadenze/riunioni di
@@ -81,7 +83,7 @@ async function sezionePerNomeInScope(
 }
 
 // GET /api/agenda — genitore: ?alunno_id= ; staff: [?sezione=][&from=YYYY-MM-DD]
-export async function GET(request: Request) {
+export const GET = withRoute('agenda:GET', async (request: Request) => {
   try {
     const auth = await requireUser(request)
     if (auth.response) return auth.response
@@ -179,13 +181,13 @@ export async function GET(request: Request) {
     if (error) throw error
     return NextResponse.json({ success: true, data: eventi ?? [] })
   } catch (error) {
-    console.error('Errore GET /api/agenda:', error)
+    logErrore({ operazione: 'agenda:GET', stato: 500 }, error)
     return NextResponse.json({ error: 'Errore nel caricamento agenda' }, { status: 500 })
   }
-}
+})
 
 // POST /api/agenda — crea un evento (staff; educator solo proprie sezioni).
-export async function POST(request: Request) {
+export const POST = withRoute('agenda:POST', async (request: Request) => {
   try {
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
@@ -282,13 +284,13 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ success: true, data: evento }, { status: 201 })
   } catch (error) {
-    console.error('Errore POST /api/agenda:', error)
+    logErrore({ operazione: 'agenda:POST', stato: 500 }, error)
     return NextResponse.json({ error: 'Errore nella creazione evento' }, { status: 500 })
   }
-}
+})
 
 // DELETE /api/agenda?id= — creatore-o-direzione (admin, nei propri plessi).
-export async function DELETE(request: Request) {
+export const DELETE = withRoute('agenda:DELETE', async (request: Request) => {
   try {
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
@@ -324,7 +326,7 @@ export async function DELETE(request: Request) {
     if (error) throw error
     return NextResponse.json({ success: true })
   } catch (error) {
-    console.error('Errore DELETE /api/agenda:', error)
+    logErrore({ operazione: 'agenda:DELETE', stato: 500 }, error)
     return NextResponse.json({ error: "Errore nell'eliminazione evento" }, { status: 500 })
   }
-}
+})

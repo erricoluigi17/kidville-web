@@ -3,14 +3,16 @@ import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireStaff } from '@/lib/auth/require-staff';
 import { parseData } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore } from '@/lib/logging/logger';
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // Unico input: il param dinamico [id], usato come uuid su parents.id.
 
-export async function GET(
+export const GET = withRoute('admin/parents/[id]:GET', async (
     request: NextRequest,
     context: { params: Promise<{ id: string }> }
-) {
+) => {
     try {
         // Gap auth segnalato in M3, chiuso in M9: fascicolo completo del
         // genitore (PII + figli + co-genitori) riservato allo staff.
@@ -58,7 +60,7 @@ export async function GET(
 
         return NextResponse.json(data);
     } catch (err) {
-        console.error(`Errore GET /api/admin/parents/[id]:`, err);
+        logErrore({ operazione: 'admin/parents/[id]:GET', stato: 500 }, err);
         return NextResponse.json({ error: 'Errore interno del server' }, { status: 500 });
     }
-}
+});

@@ -5,6 +5,7 @@ import { sendPush, vapidConfigured } from '@/lib/push/web-push'
 import { sendNativePush, fcmConfigured } from '@/lib/push/native-push'
 import { parseQuery } from '@/lib/validation/http'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { withRoute } from '@/lib/logging/with-route'
 
 const postQuerySchema = z.object({}) // nessun parametro in ingresso (il body eventuale del cron non viene letto)
 
@@ -84,7 +85,7 @@ function queryFallita(azione: string, error: unknown, t0: number): NextResponse 
 // POST /api/push/dispatch — invio Web Push delle notifiche non ancora inviate.
 // SERVICE-TO-SERVICE: richiede header `x-cron-secret`. NON chiamabile dal browser.
 // Lo invoca il cron (pg_net) dopo aver inserito le notifiche, oppure manualmente.
-export async function POST(request: Request) {
+export const POST = withRoute('push/dispatch:POST', async (request: Request) => {
   const t0 = Date.now()
   try {
     const secret = request.headers.get('x-cron-secret')
@@ -262,4 +263,4 @@ export async function POST(request: Request) {
     logErrore({ operazione: JOB, evento: 'cron', ms: Date.now() - t0, stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

@@ -4,6 +4,8 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
 import { vapidConfigured } from '@/lib/push/web-push'
 import { parseBody, parseQuery } from '@/lib/validation/http'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // L'eventuale `userId` nel body/header e' ignorato: si usa sempre l'utente autenticato.
 // Due varianti: Web Push (subscription VAPID) oppure token NATIVO (Capacitor iOS/Android).
@@ -35,7 +37,7 @@ const deleteQuerySchema = z.object({
 // POST /api/push/subscribe  — registra la subscription push dell'utente autenticato.
 // Body web:    { subscription: { endpoint, keys: { p256dh, auth } } }
 // Body nativo: { token, platform: 'ios' | 'android' }
-export async function POST(request: Request) {
+export const POST = withRoute('push/subscribe:POST', async (request: Request) => {
   try {
     const auth = await requireUser(request)
     if (auth.response) return auth.response
@@ -92,14 +94,14 @@ export async function POST(request: Request) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json({ success: true }, { status: 201 })
   } catch (err) {
-    console.error('Errore API POST subscribe:', err)
+    logErrore({ operazione: 'push/subscribe:POST', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})
 
 // DELETE /api/push/subscribe?endpoint=...  — rimuove la subscription (web o nativa:
 // per i token nativi `endpoint` contiene il token stesso).
-export async function DELETE(request: Request) {
+export const DELETE = withRoute('push/subscribe:DELETE', async (request: Request) => {
   try {
     const auth = await requireUser(request)
     if (auth.response) return auth.response
@@ -111,7 +113,7 @@ export async function DELETE(request: Request) {
     await supabase.from('push_subscriptions').delete().eq('endpoint', endpoint).eq('utente_id', auth.user.id)
     return NextResponse.json({ success: true })
   } catch (err) {
-    console.error('Errore API DELETE subscribe:', err)
+    logErrore({ operazione: 'push/subscribe:DELETE', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

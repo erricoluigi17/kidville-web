@@ -3,11 +3,13 @@ import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireStaff } from '@/lib/auth/require-staff';
 import { parseData } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore } from '@/lib/logging/logger';
 
 // GET /api/admin/form-models/[id] — modello completo (incl. schema) per il
 // builder in modifica. Gate staff. Sostituisce l'assenza di caricamento: il
 // builder ora apre un modello esistente con tutti i suoi campi.
-export async function GET(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+export const GET = withRoute('admin/form-models/[id]:GET', async (request: NextRequest, context: { params: Promise<{ id: string }> }) => {
   const auth = await requireStaff(request);
   if (auth.response) return auth.response;
   const { id: rawId } = await context.params;
@@ -25,7 +27,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
     if (!data) return NextResponse.json({ error: 'Modello non trovato' }, { status: 404 });
     return NextResponse.json(data);
   } catch (err) {
-    console.error('Errore GET /api/admin/form-models/[id]:', err);
+    logErrore({ operazione: 'admin/form-models/[id]:GET', stato: 500 }, err);
     return NextResponse.json({ error: 'Errore interno del server' }, { status: 500 });
   }
-}
+});

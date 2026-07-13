@@ -5,6 +5,8 @@ import { requireDocente } from '@/lib/auth/require-staff';
 import { notificaEvento } from '@/lib/notifiche/triggers';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zDataYMD, zUuid } from '@/lib/validation/common';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore } from '@/lib/logging/logger';
 
 /**
  * GET /api/attendance/daily?data=YYYY-MM-DD&sezione=<classe>
@@ -32,7 +34,7 @@ const postBodySchema = z.object({
     orario_uscita: z.string().nullable().optional(),
 });
 
-export async function GET(request: NextRequest) {
+export const GET = withRoute('attendance/daily:GET', async (request: NextRequest) => {
     const auth = await requireDocente(request);
     if (auth.response) return auth.response;
 
@@ -75,12 +77,12 @@ export async function GET(request: NextRequest) {
 
         return NextResponse.json(rows ?? []);
     } catch (err) {
-        console.error('[GET /api/attendance/daily] Unexpected:', err);
+        logErrore({ operazione: 'attendance/daily:GET', stato: 200 }, err);
         return NextResponse.json([]);
     }
-}
+});
 
-export async function POST(request: NextRequest) {
+export const POST = withRoute('attendance/daily:POST', async (request: NextRequest) => {
     try {
         const auth = await requireDocente(request);
         if (auth.response) return auth.response;
@@ -169,7 +171,7 @@ export async function POST(request: NextRequest) {
 
         return NextResponse.json(result, { status: 200 });
     } catch (err) {
-        console.error('[POST /api/attendance/daily] Unexpected:', err);
+        logErrore({ operazione: 'attendance/daily:POST', stato: 500 }, err);
         return NextResponse.json({ error: 'Errore interno del server.' }, { status: 500 });
     }
-}
+});

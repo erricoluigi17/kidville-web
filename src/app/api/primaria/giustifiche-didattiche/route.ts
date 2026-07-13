@@ -5,6 +5,8 @@ import { requireDocente } from '@/lib/auth/require-staff'
 import { assertSezioneInScope, assertAlunniInSezione } from '@/lib/auth/scope'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // `data` resta stringa permissiva (il DB accetta anche formati non YYYY-MM-DD,
@@ -25,7 +27,7 @@ const postBodySchema = z.object({
 
 // GET /api/primaria/giustifiche-didattiche?sectionId=&data=&userId=
 // Elenco delle giustifiche didattiche (impreparato) per la classe/giorno.
-export async function GET(request: NextRequest) {
+export const GET = withRoute('primaria/giustifiche-didattiche:GET', async (request: NextRequest) => {
   try {
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
@@ -47,15 +49,16 @@ export async function GET(request: NextRequest) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json({ success: true, data: rows ?? [] })
   } catch (err) {
+    logErrore({ operazione: 'primaria/giustifiche-didattiche:GET', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})
 
 // POST /api/primaria/giustifiche-didattiche?userId=
 // body: { sectionId, alunnoId, data, motivo?, materiaId? }
 // Il docente registra "impreparato giustificato" durante la lezione.
-export async function POST(request: NextRequest) {
+export const POST = withRoute('primaria/giustifiche-didattiche:POST', async (request: NextRequest) => {
   try {
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
@@ -86,7 +89,8 @@ export async function POST(request: NextRequest) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json({ success: true, data: inserted }, { status: 201 })
   } catch (err) {
+    logErrore({ operazione: 'primaria/giustifiche-didattiche:POST', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

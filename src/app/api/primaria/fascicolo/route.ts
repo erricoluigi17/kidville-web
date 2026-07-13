@@ -7,6 +7,8 @@ import { logScrittura } from '@/lib/audit/scrittura'
 import { notificaTitolariScrittura } from '@/lib/primaria/notifiche'
 import { parseData, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 const BUCKET = 'sensitive_documents'
 const MAX_SIZE = 15 * 1024 * 1024 // 15MB
@@ -32,7 +34,7 @@ const postFormSchema = z.object({
 
 // GET /api/primaria/fascicolo?alunnoId=&userId=
 // Lista dei documenti del fascicolo (RBAC ristretto + audit).
-export async function GET(request: NextRequest) {
+export const GET = withRoute('primaria/fascicolo:GET', async (request: NextRequest) => {
   try {
     const { userId } = await resolveIdentity(request)
     if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
@@ -58,13 +60,14 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ success: true, data: data ?? [] })
   } catch (err) {
+    logErrore({ operazione: 'primaria/fascicolo:GET', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})
 
 // POST /api/primaria/fascicolo  (multipart: file, alunnoId, documentType, descrizione?, expiryDate?, userId)
-export async function POST(request: NextRequest) {
+export const POST = withRoute('primaria/fascicolo:POST', async (request: NextRequest) => {
   try {
     const formData = await request.formData()
     // Identità dalla richiesta (sessione o header/query legacy), MAI dal formData:
@@ -149,7 +152,8 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true, data }, { status: 201 })
   } catch (err) {
+    logErrore({ operazione: 'primaria/fascicolo:POST', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

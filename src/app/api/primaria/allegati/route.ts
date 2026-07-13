@@ -7,6 +7,8 @@ import { parseData, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { AppUser } from '@/lib/auth/require-staff'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 const getQuerySchema = z.object({
   registroId: zUuid,
@@ -39,7 +41,7 @@ const MAX_IMG = 3 * 1024 * 1024 // 3MB
 const IMG_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif']
 
 // GET /api/primaria/allegati?registroId=&userId=
-export async function GET(request: NextRequest) {
+export const GET = withRoute('primaria/allegati:GET', async (request: NextRequest) => {
   try {
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
@@ -59,13 +61,14 @@ export async function GET(request: NextRequest) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json({ success: true, data: data ?? [] })
   } catch (err) {
+    logErrore({ operazione: 'primaria/allegati:GET', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})
 
 // POST /api/primaria/allegati  (multipart: file, registroId, ambito?, userId)
-export async function POST(request: NextRequest) {
+export const POST = withRoute('primaria/allegati:POST', async (request: NextRequest) => {
   try {
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
@@ -134,7 +137,8 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true, data }, { status: 201 })
   } catch (err) {
+    logErrore({ operazione: 'primaria/allegati:POST', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

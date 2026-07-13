@@ -6,6 +6,8 @@ import { applyOverpaymentSpill } from '@/lib/pagamenti/spill'
 import { notificaEvento } from '@/lib/notifiche/triggers'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 const getQuerySchema = z.object({
   pagamento_id: zUuid,
@@ -30,7 +32,7 @@ const deleteQuerySchema = z.object({
 // GET /api/pagamenti/incassi?pagamento_id=xxx&userId=yyy
 // Ledger di un pagamento (staff). I genitori leggono gli incassi tramite il
 // dettaglio pagamento (route [id]) con scoping RLS-equivalente.
-export async function GET(request: Request) {
+export const GET = withRoute('pagamenti/incassi:GET', async (request: Request) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -51,15 +53,15 @@ export async function GET(request: Request) {
     }
     return NextResponse.json({ success: true, data })
   } catch (err) {
-    console.error('Errore API GET incassi:', err)
+    logErrore({ operazione: 'pagamenti/incassi:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})
 
 // POST /api/pagamenti/incassi  (staff) — registra una ricevuta
 // Body: { userId, pagamento_id, importo, data_incasso?, metodo?, note?, quota_id?, spill? }
 // Supporta pagamenti parziali; con spill=true riporta l'eccedenza sulla rata successiva.
-export async function POST(request: Request) {
+export const POST = withRoute('pagamenti/incassi:POST', async (request: Request) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -146,13 +148,13 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ success: true, data: { incasso, pagamento: aggiornato, spills } }, { status: 201 })
   } catch (err) {
-    console.error('Errore API POST incassi:', err)
+    logErrore({ operazione: 'pagamenti/incassi:POST', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})
 
 // DELETE /api/pagamenti/incassi?id=xxx&userId=yyy  (staff) — storno di un incasso
-export async function DELETE(request: Request) {
+export const DELETE = withRoute('pagamenti/incassi:DELETE', async (request: Request) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -180,7 +182,7 @@ export async function DELETE(request: Request) {
 
     return NextResponse.json({ success: true })
   } catch (err) {
-    console.error('Errore API DELETE incassi:', err)
+    logErrore({ operazione: 'pagamenti/incassi:DELETE', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

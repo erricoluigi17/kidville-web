@@ -4,6 +4,8 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireParentOfStudent } from '@/lib/auth/require-parent'
 import { CERTIFICATI_BUCKET } from '@/lib/competenze/certificato-store'
 import { parseQuery } from '@/lib/validation/http'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // `userId` in query è consumato dal gate identità (getRequestUserId), non qui.
@@ -16,7 +18,7 @@ const getQuerySchema = z.object({
 // GET /api/parent/competenze?studentId=&userId=
 // Certificati delle Competenze del figlio (solo generati/firmati), con URL di
 // download firmato. Nessun leak: se il figlio non è collegato, lista vuota.
-export async function GET(request: NextRequest) {
+export const GET = withRoute('parent/competenze:GET', async (request: NextRequest) => {
   try {
     const q = parseQuery(request, getQuerySchema)
     if ('response' in q) return q.response
@@ -45,7 +47,8 @@ export async function GET(request: NextRequest) {
     }
     return NextResponse.json({ success: true, data: out })
   } catch (err) {
+    logErrore({ operazione: 'parent/competenze:GET', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

@@ -11,6 +11,7 @@ import {
 import { mapStatoAruba, aggregaFatturaStato, type RigaFatturaAgg } from '@/lib/aruba/stato'
 import { enqueueNotifiche } from '@/lib/push/enqueue'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { withRoute } from '@/lib/logging/with-route'
 
 // POST /api/pagamenti/fattura/sync — polling stato SDI delle fatture in volo.
 // SERVICE-TO-SERVICE: richiede header `x-cron-secret` (pattern push/dispatch).
@@ -56,7 +57,7 @@ function queryFallita(azione: string, error: unknown, t0: number, scuolaId?: str
   return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
 }
 
-export async function POST(request: Request) {
+export const POST = withRoute('pagamenti/fattura/sync:POST', async (request: Request) => {
   const t0 = Date.now()
   try {
     const secret = request.headers.get('x-cron-secret')
@@ -318,4 +319,4 @@ export async function POST(request: Request) {
     logErrore({ operazione: JOB, evento: 'cron', ms: Date.now() - t0, stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

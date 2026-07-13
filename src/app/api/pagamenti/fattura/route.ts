@@ -6,6 +6,8 @@ import { emettiFatturaPagamento } from '@/lib/aruba/emissione'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { jsPDF } from 'jspdf'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // causale: il comportamento pre-esistente accetta qualsiasi tipo e la usa solo
 // se è una stringa non vuota → unknown().optional(), il typeof resta nell'handler.
@@ -56,7 +58,7 @@ async function anteprimaPdf(opts: {
 
 // POST /api/pagamenti/fattura  (staff) — "Invia Fattura" → emissione REALE Aruba/SDI.
 // Body: { userId, pagamento_id, causale? }. Richiede pagamento saldato.
-export async function POST(request: Request) {
+export const POST = withRoute('pagamenti/fattura:POST', async (request: Request) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -84,16 +86,16 @@ export async function POST(request: Request) {
       data: { fattura_stato: esito.fatturaStato, numero: esito.numero, fattura_id: esito.uploadFileName },
     })
   } catch (err) {
-    console.error('Errore API POST fattura:', err)
+    logErrore({ operazione: 'pagamenti/fattura:POST', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})
 
 // GET /api/pagamenti/fattura?pagamento_id=&userId=  — scarica la copia di cortesia.
 // Accesso: staff oppure genitore del bambino. Preferisce il PDF reale di Aruba
 // (storage `fatture`), con fallback a un'anteprima generata finché lo SDI non
 // ha restituito il documento.
-export async function GET(request: Request) {
+export const GET = withRoute('pagamenti/fattura:GET', async (request: Request) => {
   try {
     const auth = await requireUser(request)
     if (auth.response) return auth.response
@@ -198,7 +200,7 @@ export async function GET(request: Request) {
       importo: Number(pag.importo),
     })
   } catch (err) {
-    console.error('Errore API GET fattura:', err)
+    logErrore({ operazione: 'pagamenti/fattura:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

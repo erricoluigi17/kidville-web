@@ -4,6 +4,8 @@ import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireUser } from '@/lib/auth/require-staff';
 import { getModuleConfig } from '@/lib/settings/module-config';
 import { parseQuery } from '@/lib/validation/http';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore } from '@/lib/logging/logger';
 
 // Permissivo (niente zUuid): oggi un valore non-UUID degrada ai default di
 // getModuleConfig (200 con config vuota), non deve diventare un 400.
@@ -13,7 +15,7 @@ const getQuerySchema = z.object({
 
 // GET /api/chat/config — config chat per il client (banner fuori orario, abilitazione).
 // Leggibile da genitori e docenti: contiene solo parametri non sensibili.
-export async function GET(request: Request) {
+export const GET = withRoute('chat/config:GET', async (request: Request) => {
     // Gap auth segnalato in M3, chiuso in M9: leggibile da qualsiasi utente
     // AUTENTICATO (genitori e docenti), mai in anonimo.
     const auth = await requireUser(request);
@@ -55,7 +57,7 @@ export async function GET(request: Request) {
             },
         });
     } catch (err) {
-        console.error('Errore API GET chat/config:', err);
+        logErrore({ operazione: 'chat/config:GET', stato: 500 }, err);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
     }
-}
+});

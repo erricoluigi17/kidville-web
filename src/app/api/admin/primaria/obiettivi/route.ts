@@ -5,6 +5,8 @@ import { requireStaff, requireDocente } from '@/lib/auth/require-staff'
 import { resolveScuolaScrittura } from '@/lib/auth/scope'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ============================================================
 // Obiettivi di apprendimento (curricolo) — materia × livello.
@@ -40,7 +42,7 @@ const deleteQuerySchema = z.object({
 })
 
 // GET /api/admin/primaria/obiettivi?scuolaId=&materiaCodice=&livello=
-export async function GET(request: NextRequest) {
+export const GET = withRoute('admin/primaria/obiettivi:GET', async (request: NextRequest) => {
   const auth = await requireDocente(request)
   if (auth.response) return auth.response
 
@@ -66,14 +68,15 @@ export async function GET(request: NextRequest) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json({ success: true, data: data ?? [] })
   } catch (err) {
+    logErrore({ operazione: 'admin/primaria/obiettivi:GET', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})
 
 // POST /api/admin/primaria/obiettivi
 //   body: { scuolaId, materiaCodice, livello, codice?, descrizione }
-export async function POST(request: NextRequest) {
+export const POST = withRoute('admin/primaria/obiettivi:POST', async (request: NextRequest) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -101,13 +104,14 @@ export async function POST(request: NextRequest) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json({ success: true, data }, { status: 201 })
   } catch (err) {
+    logErrore({ operazione: 'admin/primaria/obiettivi:POST', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})
 
 // PATCH /api/admin/primaria/obiettivi  body: { id, ...updates }
-export async function PATCH(request: NextRequest) {
+export const PATCH = withRoute('admin/primaria/obiettivi:PATCH', async (request: NextRequest) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -127,13 +131,14 @@ export async function PATCH(request: NextRequest) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json({ success: true, data })
   } catch (err) {
+    logErrore({ operazione: 'admin/primaria/obiettivi:PATCH', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})
 
 // DELETE /api/admin/primaria/obiettivi?id=
-export async function DELETE(request: NextRequest) {
+export const DELETE = withRoute('admin/primaria/obiettivi:DELETE', async (request: NextRequest) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -147,7 +152,8 @@ export async function DELETE(request: NextRequest) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json({ success: true })
   } catch (err) {
+    logErrore({ operazione: 'admin/primaria/obiettivi:DELETE', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

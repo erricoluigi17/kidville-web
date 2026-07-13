@@ -5,6 +5,8 @@ import { enqueueNotifiche } from '@/lib/push/enqueue';
 import { enqueueNotifichePerAlunni } from '@/lib/primaria/notifiche';
 import { parseBody } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore } from '@/lib/logging/logger';
 
 // Ruoli che presidiano l'uscita: ricevono il Panic Alert in tempo reale.
 const STAFF_PANIC = new Set(['segreteria', 'admin', 'coordinator']);
@@ -13,7 +15,7 @@ const postBodySchema = z.object({
     alunnoId: zUuid,
 });
 
-export async function POST(request: Request) {
+export const POST = withRoute('panic-alert:POST', async (request: Request) => {
     try {
         const supabase = await createClient();
 
@@ -94,7 +96,7 @@ export async function POST(request: Request) {
         return NextResponse.json({ success: true, message: 'Panic Alert registrato' });
 
     } catch (error) {
-        console.error('Errore API Panic Alert:', error);
+        logErrore({ operazione: 'panic-alert:POST', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
     }
-}
+})

@@ -5,6 +5,8 @@ import { rateLimit, clientIp } from '@/lib/security/rate-limit'
 import { estraiConsensi, consensiObbligatoriMancanti } from '@/lib/forms/consensi'
 import { accessoConsentito } from '@/lib/forms/publish'
 import { parseBody, parseData } from '@/lib/validation/http'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 import type { FormSchemaConfig, FormSubmissionData } from '@/types/database.types'
 
 // Submission ANONIMA di un modello pubblicato (DL-030). Token-scoped, service-role.
@@ -19,10 +21,10 @@ const postBodySchema = z.object({
   data: z.unknown().refine((v) => Boolean(v), { message: 'data obbligatorio' }),
 })
 
-export async function POST(
+export const POST = withRoute('public/forms/[token]/submit:POST', async (
   request: Request,
   { params }: { params: Promise<{ token: string }> }
-) {
+) => {
   const rl = rateLimit(`public-submit:${clientIp(request)}`, { limit: 20, windowMs: 10 * 60 * 1000 })
   if (!rl.ok) {
     return NextResponse.json(
@@ -86,9 +88,10 @@ export async function POST(
     }
     return NextResponse.json({ id: submission.id }, { status: 201 })
   } catch (err) {
+    logErrore({ operazione: 'public/forms/[token]/submit:POST', stato: 500 }, err)
     return NextResponse.json(
       { error: err instanceof Error ? err.message : 'Errore interno' },
       { status: 500 }
     )
   }
-}
+})

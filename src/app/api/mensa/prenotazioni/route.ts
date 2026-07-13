@@ -9,6 +9,8 @@ import { controllaAllergie } from '@/lib/mensa/allergie-check'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid, zDataYMD } from '@/lib/validation/common'
 import { genitoreHasFiglio } from '@/lib/anagrafiche/legami'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 const getQuerySchema = z.object({
   alunno_id: zUuid,
@@ -48,7 +50,7 @@ async function setSaldo(supabase: Awaited<ReturnType<typeof createAdminClient>>,
 // GET /api/mensa/prenotazioni?userId=&alunno_id=&from=&to=
 //   genitore -> solo propri figli; staff -> qualsiasi alunno.
 //   Ritorna { saldo, prenotazioni: [{data, stato, origine}] }.
-export async function GET(request: Request) {
+export const GET = withRoute('mensa/prenotazioni:GET', async (request: Request) => {
   try {
     const auth = await requireUser(request)
     if (auth.response) return auth.response
@@ -88,16 +90,16 @@ export async function GET(request: Request) {
 
     return NextResponse.json({ success: true, data: { saldo, prenotazioni: pren ?? [], cutoffOra } })
   } catch (err) {
-    console.error('Errore API GET mensa/prenotazioni:', err)
+    logErrore({ operazione: 'mensa/prenotazioni:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})
 
 // POST /api/mensa/prenotazioni
 // Body: { userId, alunno_id, date: string|string[], origine? }
 //   genitore: origine='genitore', blocco se saldo <= 0; rispetta cutoff/giorni attivi.
 //   staff: origine='segreteria', può forzare (saldo va negativo); rispetta solo giorni attivi.
-export async function POST(request: Request) {
+export const POST = withRoute('mensa/prenotazioni:POST', async (request: Request) => {
   try {
     const auth = await requireUser(request)
     if (auth.response) return auth.response
@@ -192,14 +194,14 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ success: true, data: { saldo, esiti } }, { status: 201 })
   } catch (err) {
-    console.error('Errore API POST mensa/prenotazioni:', err)
+    logErrore({ operazione: 'mensa/prenotazioni:POST', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})
 
 // DELETE /api/mensa/prenotazioni?userId=&alunno_id=&data=
 //   disdici: riaccredita il ticket se entro cutoff (genitore) o sempre (staff, entro cutoff giorni futuri).
-export async function DELETE(request: Request) {
+export const DELETE = withRoute('mensa/prenotazioni:DELETE', async (request: Request) => {
   try {
     const auth = await requireUser(request)
     if (auth.response) return auth.response
@@ -245,7 +247,7 @@ export async function DELETE(request: Request) {
 
     return NextResponse.json({ success: true, data: { saldo } })
   } catch (err) {
-    console.error('Errore API DELETE mensa/prenotazioni:', err)
+    logErrore({ operazione: 'mensa/prenotazioni:DELETE', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

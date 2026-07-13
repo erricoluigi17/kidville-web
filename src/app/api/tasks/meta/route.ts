@@ -4,13 +4,15 @@ import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { scuoleDiUtente } from '@/lib/auth/scope';
 import { parseQuery } from '@/lib/validation/http';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore } from '@/lib/logging/logger';
 
 export const dynamic = 'force-dynamic';
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({}); // nessun parametro in ingresso
 
-export async function GET(request: Request) {
+export const GET = withRoute('tasks/meta:GET', async (request: Request) => {
     try {
         const auth = await requireDocente(request);
         if (auth.response) return auth.response;
@@ -78,7 +80,7 @@ export async function GET(request: Request) {
 
         return NextResponse.json({ staff, students, classes });
     } catch (error) {
-        console.error('Errore API GET /api/tasks/meta:', error);
+        logErrore({ operazione: 'tasks/meta:GET', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
     }
-}
+});

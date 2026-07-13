@@ -6,6 +6,8 @@ import { logScrittura } from '@/lib/audit/scrittura'
 import { patchAlunno, patchParent, confermaValida } from '@/lib/gdpr/anonimizza'
 import { parentHaAltriFigliIscritti } from '@/lib/gdpr/orfano'
 import { parseBody } from '@/lib/validation/http'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // `alunno_id`: contratto storico permissivo (qualunque stringa non vuota; id
@@ -24,7 +26,7 @@ const postBodySchema = z.object({
 
 const DIREZIONE = ['admin', 'coordinator'] as const
 
-export async function POST(request: Request) {
+export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) => {
   const auth = await requireStaff(request, [...DIREZIONE])
   if (auth.response) return auth.response
 
@@ -122,9 +124,10 @@ export async function POST(request: Request) {
       file_rimossi: fileAlunno.length,
     })
   } catch (err) {
+    logErrore({ operazione: 'admin/gdpr/erase:POST', stato: 500 }, err)
     return NextResponse.json(
       { error: err instanceof Error ? err.message : 'Errore interno' },
       { status: 500 }
     )
   }
-}
+})

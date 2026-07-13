@@ -3,6 +3,8 @@ import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { parseBody } from '@/lib/validation/http'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // POST — sostituisce il 400 manuale 'title e schema sono obbligatori'.
@@ -28,7 +30,7 @@ const patchBodySchema = z
   .loose()
 
 // POST: crea un nuovo modello form (bypassa RLS via service-role)
-export async function POST(request: Request) {
+export const POST = withRoute('admin/form-models:POST', async (request: Request) => {
   const auth = await requireStaff(request)
   if (auth.response) return auth.response
   const b = await parseBody(request, postBodySchema)
@@ -56,15 +58,16 @@ export async function POST(request: Request) {
 
     return NextResponse.json(data, { status: 201 })
   } catch (err) {
+    logErrore({ operazione: 'admin/form-models:POST', stato: 500 }, err)
     return NextResponse.json(
       { error: err instanceof Error ? err.message : 'Errore interno' },
       { status: 500 }
     )
   }
-}
+})
 
 // PATCH: aggiorna un modello form esistente
-export async function PATCH(request: Request) {
+export const PATCH = withRoute('admin/form-models:PATCH', async (request: Request) => {
   const auth = await requireStaff(request)
   if (auth.response) return auth.response
   const b = await parseBody(request, patchBodySchema)
@@ -86,9 +89,10 @@ export async function PATCH(request: Request) {
 
     return NextResponse.json(data)
   } catch (err) {
+    logErrore({ operazione: 'admin/form-models:PATCH', stato: 500 }, err)
     return NextResponse.json(
       { error: err instanceof Error ? err.message : 'Errore interno' },
       { status: 500 }
     )
   }
-}
+})

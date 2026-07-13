@@ -4,6 +4,8 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // GET /api/pagamenti/fattura/list?pagamento_id=  — elenco delle fatture (quote)
 // emesse per un pagamento. Usato dalla UI quando un pagamento ha PIÙ fatture
@@ -24,7 +26,7 @@ interface RigaFattura {
   sdi_stato_label: string | null
 }
 
-export async function GET(request: Request) {
+export const GET = withRoute('pagamenti/fattura/list:GET', async (request: Request) => {
   try {
     const auth = await requireUser(request)
     if (auth.response) return auth.response
@@ -87,7 +89,7 @@ export async function GET(request: Request) {
 
     return NextResponse.json({ success: true, data: fatture })
   } catch (err) {
-    console.error('Errore API GET fattura/list:', err)
+    logErrore({ operazione: 'pagamenti/fattura/list:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

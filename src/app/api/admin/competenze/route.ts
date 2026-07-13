@@ -6,6 +6,8 @@ import { logScrittura } from '@/lib/audit/scrittura'
 import { seedCertificato } from '@/lib/competenze/certificato-store'
 import { COMPETENZE_SIGNIFICATIVE_CODICE } from '@/lib/competenze/modello'
 import { parseBody, parseQuery } from '@/lib/validation/http'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // Gli id restano stringhe libere (niente zUuid): oggi il codice non impone
@@ -38,7 +40,7 @@ const patchBodySchema = z.object({
 })
 
 // GET /api/admin/competenze?sectionId=&userId=  — elenco certificati della sezione.
-export async function GET(request: NextRequest) {
+export const GET = withRoute('admin/competenze:GET', async (request: NextRequest) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -54,14 +56,15 @@ export async function GET(request: NextRequest) {
       .order('created_at', { ascending: false })
     return NextResponse.json({ success: true, data: certs ?? [] })
   } catch (err) {
+    logErrore({ operazione: 'admin/competenze:GET', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})
 
 // POST /api/admin/competenze?userId=  — crea/riallinea le bozze (1 alunno o intera classe).
 // body: { sectionId, alunnoId? }. Guard livello-5/scrutinio-chiuso da seedCertificato.
-export async function POST(request: NextRequest) {
+export const POST = withRoute('admin/competenze:POST', async (request: NextRequest) => {
   try {
     const auth = await requireStaff(request, ['admin', 'coordinator'])
     if (auth.response) return auth.response
@@ -100,14 +103,15 @@ export async function POST(request: NextRequest) {
     if (creati === 0 && firstErrStatus) return NextResponse.json({ error: errori[0].error, errori }, { status: firstErrStatus })
     return NextResponse.json({ success: true, creati, totale: alunniIds.length, errori })
   } catch (err) {
+    logErrore({ operazione: 'admin/competenze:POST', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})
 
 // PATCH /api/admin/competenze?userId=  — modifica livelli + competenze significative.
 // body: { certificatoId, livelli: [{competenza_codice, livello, note?}], competenzeSignificative? }
-export async function PATCH(request: NextRequest) {
+export const PATCH = withRoute('admin/competenze:PATCH', async (request: NextRequest) => {
   try {
     const auth = await requireStaff(request, ['admin', 'coordinator'])
     if (auth.response) return auth.response
@@ -138,7 +142,8 @@ export async function PATCH(request: NextRequest) {
     })
     return NextResponse.json({ success: true })
   } catch (err) {
+    logErrore({ operazione: 'admin/competenze:PATCH', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

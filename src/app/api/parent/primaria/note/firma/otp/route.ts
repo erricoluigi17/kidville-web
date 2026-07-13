@@ -6,6 +6,8 @@ import { sendOtp } from '@/lib/auth/otp-ticket'
 import { logFeaEvent } from '@/lib/fea/audit'
 import { extractRequestMeta } from '@/lib/fea/signature-log'
 import { parseQuery } from '@/lib/validation/http'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // `userId` in query è consumato dal gate identità (getRequestUserId), non
@@ -14,7 +16,7 @@ const postQuerySchema = z.object({}) // nessun parametro in ingresso
 
 // POST /api/parent/primaria/note/firma/otp?userId=
 // Invia un OTP via email al genitore per firmare la presa visione di una nota.
-export async function POST(request: NextRequest) {
+export const POST = withRoute('parent/primaria/note/firma/otp:POST', async (request: NextRequest) => {
   try {
     const userId = getRequestUserId(request)
     if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
@@ -34,7 +36,8 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true, data: res })
   } catch (err) {
+    logErrore({ operazione: 'parent/primaria/note/firma/otp:POST', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

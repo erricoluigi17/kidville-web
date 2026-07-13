@@ -4,6 +4,7 @@ import { createClient } from '@supabase/supabase-js';
 import { requireStaff } from '@/lib/auth/require-staff';
 import { requireEnv } from '@/lib/security/require-env';
 import { parseQuery } from '@/lib/validation/http';
+import { withRoute } from '@/lib/logging/with-route';
 
 // GET /api/admin/credentials-pdf?key=<uuid>-<timestamp>.pdf
 // Scarica il PDF credenziali dal bucket privato. Riservato allo staff (il link è
@@ -13,7 +14,7 @@ const getQuerySchema = z.object({
   key: z.string().regex(/^[0-9a-fA-F-]+-\d+\.pdf$/, 'key non valida'),
 });
 
-export async function GET(request: NextRequest) {
+export const GET = withRoute('admin/credentials-pdf:GET', async (request: NextRequest) => {
   const auth = await requireStaff(request);
   if (auth.response) return auth.response;
 
@@ -38,4 +39,4 @@ export async function GET(request: NextRequest) {
       'Cache-Control': 'no-store',
     },
   });
-}
+});

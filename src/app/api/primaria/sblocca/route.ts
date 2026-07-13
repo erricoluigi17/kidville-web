@@ -5,6 +5,8 @@ import { requireStaff } from '@/lib/auth/require-staff'
 import { assertSezioneInScope } from '@/lib/auth/scope'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 const ENTITA_TIPI = ['registro', 'valutazione', 'nota'] as const
 
@@ -19,7 +21,7 @@ const postBodySchema = z.object({
 // Override diretto del dirigente sul vincolo temporale. Riservato allo staff
 // (admin/coordinator = dirigenza). Registra la motivazione in sblocchi_audit.
 // body: { entitaTipo: 'registro'|'valutazione'|'nota', entitaId, motivazione }
-export async function POST(request: NextRequest) {
+export const POST = withRoute('primaria/sblocca:POST', async (request: NextRequest) => {
   try {
     const auth = await requireStaff(request, ['admin', 'coordinator'])
     if (auth.response) return auth.response
@@ -57,7 +59,8 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true, data })
   } catch (err) {
+    logErrore({ operazione: 'primaria/sblocca:POST', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

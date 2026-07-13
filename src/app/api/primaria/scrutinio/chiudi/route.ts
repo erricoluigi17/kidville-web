@@ -5,6 +5,8 @@ import { requireStaff } from '@/lib/auth/require-staff'
 import { assertSezioneInScope } from '@/lib/auth/scope'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const postBodySchema = z.object({
@@ -16,7 +18,7 @@ const postBodySchema = z.object({
 // Valida la completezza (ogni alunno ha un giudizio per ogni disciplina + comportamento),
 // blocca lo scrutinio e notifica i genitori della disponibilità della pagella.
 // body: { scrutinioId }
-export async function POST(request: NextRequest) {
+export const POST = withRoute('primaria/scrutinio/chiudi:POST', async (request: NextRequest) => {
   try {
     const auth = await requireStaff(request, ['admin', 'coordinator'])
     if (auth.response) return auth.response
@@ -90,7 +92,8 @@ export async function POST(request: NextRequest) {
     // genitori: la visibilità avviene con la pubblicazione (/scrutinio/pubblica).
     return NextResponse.json({ success: true, data: closed })
   } catch (err) {
+    logErrore({ operazione: 'primaria/scrutinio/chiudi:POST', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

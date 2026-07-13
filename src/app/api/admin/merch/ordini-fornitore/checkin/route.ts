@@ -9,6 +9,8 @@ import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { sincronizzaTestata, poCompleto, type StatoRiga } from '@/lib/merch/stati'
 import { notificaMerchArrivato } from '@/lib/merch/notify'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // POST /api/admin/merch/ordini-fornitore/checkin — check-in arrivi (anche parziali):
 // le righe indicate passano 'ordinato' → 'arrivato'. Un PO viene chiuso quando
@@ -33,7 +35,7 @@ async function chiudiPOcompleti(supabase: SupabaseClient, poIds: string[]): Prom
   }
 }
 
-export async function POST(request: Request) {
+export const POST = withRoute('admin/merch/ordini-fornitore/checkin:POST', async (request: Request) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -105,7 +107,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ success: true, data: { arrivate: righeOk.length } })
   } catch (err) {
-    console.error('Errore API POST merch/ordini-fornitore/checkin:', err)
+    logErrore({ operazione: 'admin/merch/ordini-fornitore/checkin:POST', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

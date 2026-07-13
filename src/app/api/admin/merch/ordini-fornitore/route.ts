@@ -8,6 +8,8 @@ import { logScrittura } from '@/lib/audit/scrittura'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { sincronizzaTestata } from '@/lib/merch/stati'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // Ordini d'acquisto (PO) al fornitore — un PO per fornitore.
 //  GET   lista PO dei plessi con righe collegate.
@@ -34,7 +36,7 @@ async function syncTestate(supabase: SupabaseClient, ordineIds: string[]): Promi
 }
 
 // GET — lista PO dei plessi dell'utente (con righe collegate)
-export async function GET(request: Request) {
+export const GET = withRoute('admin/merch/ordini-fornitore:GET', async (request: Request) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -56,13 +58,13 @@ export async function GET(request: Request) {
     }
     return NextResponse.json({ success: true, data: data ?? [] })
   } catch (err) {
-    console.error('Errore API GET merch/ordini-fornitore:', err)
+    logErrore({ operazione: 'admin/merch/ordini-fornitore:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})
 
 // POST — genera un PO per un fornitore (o marca ordinato senza PO)
-export async function POST(request: Request) {
+export const POST = withRoute('admin/merch/ordini-fornitore:POST', async (request: Request) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -144,13 +146,13 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ success: true, data: { po, righe: righe_ids.length } }, { status: 201 })
   } catch (err) {
-    console.error('Errore API POST merch/ordini-fornitore:', err)
+    logErrore({ operazione: 'admin/merch/ordini-fornitore:POST', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})
 
 // PATCH — annulla un PO: le righe collegate tornano 'da_ordinare'
-export async function PATCH(request: Request) {
+export const PATCH = withRoute('admin/merch/ordini-fornitore:PATCH', async (request: Request) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -194,7 +196,7 @@ export async function PATCH(request: Request) {
     })
     return NextResponse.json({ success: true })
   } catch (err) {
-    console.error('Errore API PATCH merch/ordini-fornitore:', err)
+    logErrore({ operazione: 'admin/merch/ordini-fornitore:PATCH', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

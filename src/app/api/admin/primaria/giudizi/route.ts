@@ -5,6 +5,8 @@ import { requireStaff, requireDocente } from '@/lib/auth/require-staff'
 import { resolveScuolaScrittura } from '@/lib/auth/scope'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ============================================================
 // Configurazione giudizi: scala sintetica + template descrittivi.
@@ -49,7 +51,7 @@ const deleteQuerySchema = z.object({
 })
 
 // GET /api/admin/primaria/giudizi?scuolaId=
-export async function GET(request: NextRequest) {
+export const GET = withRoute('admin/primaria/giudizi:GET', async (request: NextRequest) => {
   try {
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
@@ -73,13 +75,14 @@ export async function GET(request: NextRequest) {
     ])
     return NextResponse.json({ success: true, data: { scala: scala ?? [], template: template ?? [] } })
   } catch (err) {
+    logErrore({ operazione: 'admin/primaria/giudizi:GET', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})
 
 // POST /api/admin/primaria/giudizi?action=scala|template
-export async function POST(request: NextRequest) {
+export const POST = withRoute('admin/primaria/giudizi:POST', async (request: NextRequest) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -168,13 +171,14 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ error: 'action non riconosciuta' }, { status: 400 })
   } catch (err) {
+    logErrore({ operazione: 'admin/primaria/giudizi:POST', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})
 
 // DELETE /api/admin/primaria/giudizi?tipo=scala|template&id=
-export async function DELETE(request: NextRequest) {
+export const DELETE = withRoute('admin/primaria/giudizi:DELETE', async (request: NextRequest) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -192,7 +196,8 @@ export async function DELETE(request: NextRequest) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json({ success: true })
   } catch (err) {
+    logErrore({ operazione: 'admin/primaria/giudizi:DELETE', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

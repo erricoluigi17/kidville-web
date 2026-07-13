@@ -6,6 +6,8 @@ import { notificaEvento } from '@/lib/notifiche/triggers'
 import { docentiDiSezione } from '@/lib/sezioni/docenti'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // `data` resta stringa permissiva (oggi il DB accetta anche formati non YYYY-MM-DD);
@@ -20,7 +22,7 @@ const postBodySchema = z.object({
 // POST /api/parent/giustifiche-didattiche?userId=
 // body: { studentId, data, motivo?, materiaId? }
 // Il genitore dichiara l'alunno impreparato a priori. Solo primaria.
-export async function POST(request: NextRequest) {
+export const POST = withRoute('parent/giustifiche-didattiche:POST', async (request: NextRequest) => {
   try {
     const b = await parseBody(request, postBodySchema)
     if ('response' in b) return b.response
@@ -88,7 +90,8 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true, data: inserted }, { status: 201 })
   } catch (err) {
+    logErrore({ operazione: 'parent/giustifiche-didattiche:POST', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

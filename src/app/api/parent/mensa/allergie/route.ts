@@ -7,6 +7,7 @@ import { zUuid, zDataYMD } from '@/lib/validation/common'
 import { loadResolveOptions } from '@/lib/mensa/server'
 import { resolveMenuGiorno } from '@/lib/mensa/resolveMenu'
 import { allergeniAlunno, conflittiAllergie, allergeneLabel } from '@/lib/mensa/allergeni'
+import { withRoute } from '@/lib/logging/with-route'
 
 const getQuerySchema = z.object({
   alunno_id: zUuid,
@@ -16,7 +17,7 @@ const getQuerySchema = z.object({
 // GET /api/parent/mensa/allergie?alunno_id=&date= — icona pericolo allergeni
 // lato genitore (DL-043): incrocia gli allergeni del figlio col menu del giorno.
 // Riusa gli helper puri già usati dal job cuoca/segreteria.
-export async function GET(request: Request) {
+export const GET = withRoute('parent/mensa/allergie:GET', async (request: Request) => {
   const q = parseQuery(request, getQuerySchema)
   if ('response' in q) return q.response
   const alunnoId = q.data.alunno_id
@@ -51,4 +52,4 @@ export async function GET(request: Request) {
     allergeni,
     menu_attivo: menu.attivo && !menu.chiuso,
   })
-}
+})

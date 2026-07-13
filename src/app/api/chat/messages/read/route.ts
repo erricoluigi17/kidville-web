@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { parseBody } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore } from '@/lib/logging/logger';
 
 const patchBodySchema = z.object({
     messageIds: z.array(zUuid).min(1, 'messageIds è obbligatorio e non può essere vuoto'),
@@ -17,7 +19,7 @@ const patchBodySchema = z.object({
  * Usato dall'IntersectionObserver in ChatMessageArea per aggiornare
  * read_at man mano che i messaggi entrano nel viewport.
  */
-export async function PATCH(request: Request) {
+export const PATCH = withRoute('chat/messages/read:PATCH', async (request: Request) => {
     try {
         const b = await parseBody(request, patchBodySchema);
         if ('response' in b) return b.response;
@@ -40,7 +42,7 @@ export async function PATCH(request: Request) {
 
         return NextResponse.json({ success: true, updated: messageIds.length });
     } catch (error) {
-        console.error('Errore API PATCH messages/read:', error);
+        logErrore({ operazione: 'chat/messages/read:PATCH', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
     }
-}
+});

@@ -6,6 +6,8 @@ import { parseData, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { resolveScuoleAttive } from '@/lib/auth/scope'
 import { notificaEvento } from '@/lib/notifiche/triggers'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // `anno` e `periodo` NON sono vincolati nel formato: storicamente un valore
 // malformato ricade sull'anteprima/generazione mensile del mese corrente
@@ -57,7 +59,7 @@ function iscrittoEntro(a: { data_iscrizione?: string | null }, periodo: string):
 // GET /api/pagamenti/genera-rette?userId=&periodo=YYYY-MM | &anno=YYYY [&scuola_id=]  (staff)
 // Preview: alunni candidati alla generazione retta per il mese (periodo) o per l'intero
 // anno scolastico (anno = anno di inizio, set->giu).
-export async function GET(request: Request) {
+export const GET = withRoute('pagamenti/genera-rette:GET', async (request: Request) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -165,15 +167,15 @@ export async function GET(request: Request) {
       data: { periodo, candidati, gia_generati: giaFatti.size, retta_default: rettaDefault, totale_previsto: totale },
     })
   } catch (err) {
-    console.error('Errore API GET genera-rette:', err)
+    logErrore({ operazione: 'pagamenti/genera-rette:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})
 
 // POST /api/pagamenti/genera-rette  (staff) — conferma generazione
 // Body: { userId, periodo?: 'YYYY-MM' }  -> singolo mese
 //   oppure { userId, anno: 2026 }        -> intero anno scolastico (set->giu)
-export async function POST(request: Request) {
+export const POST = withRoute('pagamenti/genera-rette:POST', async (request: Request) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -258,7 +260,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ success: true, data: { periodo, generati: data } })
   } catch (err) {
-    console.error('Errore API POST genera-rette:', err)
+    logErrore({ operazione: 'pagamenti/genera-rette:POST', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

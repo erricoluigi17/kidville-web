@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireStaff } from '@/lib/auth/require-staff';
 import { parseQuery } from '@/lib/validation/http';
+import { withRoute } from '@/lib/logging/with-route';
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // `attoreId`/`entitaTipo`: filtri opzionali, qualunque stringa (contratto storico
@@ -21,7 +22,7 @@ const getQuerySchema = z.object({
  * (`audit_scritture_docente`), filtrabile per attore e tipo entità. Riusa il log
  * esistente (registro docente + credenziali + anagrafica).
  */
-export async function GET(request: Request) {
+export const GET = withRoute('admin/audit:GET', async (request: Request) => {
   const auth = await requireStaff(request);
   if (auth.response) return auth.response;
 
@@ -41,4 +42,4 @@ export async function GET(request: Request) {
   const { data, error } = await q;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ data: data ?? [] });
-}
+});

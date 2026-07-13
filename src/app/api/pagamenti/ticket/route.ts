@@ -6,6 +6,8 @@ import { assertAlunnoInScope } from '@/lib/auth/scope'
 import { notificaEvento } from '@/lib/notifiche/triggers'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 const getQuerySchema = z.object({
   alunno_id: zUuid,
@@ -22,7 +24,7 @@ const postBodySchema = z.object({
 
 // GET /api/pagamenti/ticket?alunno_id=&userId=
 //   staff -> saldo di qualsiasi alunno; genitore -> solo dei propri figli
-export async function GET(request: Request) {
+export const GET = withRoute('pagamenti/ticket:GET', async (request: Request) => {
   try {
     const auth = await requireUser(request)
     if (auth.response) return auth.response
@@ -44,15 +46,15 @@ export async function GET(request: Request) {
       .from('ticket_mensa').select('alunno_id, saldo_ticket, ultimo_carico').eq('alunno_id', alunnoId).maybeSingle()
     return NextResponse.json({ success: true, data: data ?? { alunno_id: alunnoId, saldo_ticket: 0, ultimo_carico: null } })
   } catch (err) {
-    console.error('Errore API GET ticket:', err)
+    logErrore({ operazione: 'pagamenti/ticket:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})
 
 // POST /api/pagamenti/ticket  (staff) — ricarica ticket mensa
 // Body: { userId, alunno_id, pezzi, costo, metodo? }  (scuola_id derivato dall'alunno)
 // Un'unica azione: incrementa saldo_ticket E crea un pagamento Mensa già saldato.
-export async function POST(request: Request) {
+export const POST = withRoute('pagamenti/ticket:POST', async (request: Request) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -132,7 +134,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ success: true, data: { saldo_ticket: nuovoSaldo, pagamento_id: pag.id } }, { status: 201 })
   } catch (err) {
-    console.error('Errore API POST ticket:', err)
+    logErrore({ operazione: 'pagamenti/ticket:POST', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

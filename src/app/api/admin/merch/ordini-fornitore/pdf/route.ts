@@ -8,13 +8,15 @@ import { zUuid } from '@/lib/validation/common'
 import { getModuleConfig } from '@/lib/settings/module-config'
 import { datiStruttura, type ArubaFiscalConfig, type FiscaleConfig } from '@/lib/pagamenti/fiscale'
 import { buildOrdineFornitorePdf } from '@/lib/merch/pdf'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // GET /api/admin/merch/ordini-fornitore/pdf?id= — PDF (ristampabile) del PO al
 // fornitore: intestazione committente (scuola) + fornitore + matrice articolo/taglia.
 
 const getQuerySchema = z.object({ id: zUuid })
 
-export async function GET(request: Request) {
+export const GET = withRoute('admin/merch/ordini-fornitore/pdf:GET', async (request: Request) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -77,7 +79,7 @@ export async function GET(request: Request) {
       },
     })
   } catch (err) {
-    console.error('Errore API GET merch/ordini-fornitore/pdf:', err)
+    logErrore({ operazione: 'admin/merch/ordini-fornitore/pdf:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

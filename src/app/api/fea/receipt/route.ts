@@ -5,6 +5,8 @@ import { getRequestUserId } from '@/lib/auth/require-staff'
 import { buildReceiptPdf } from '@/lib/fea/receipt-pdf'
 import { parseQuery } from '@/lib/validation/http'
 import type { ReceiptPayload, SignatureLog } from '@/lib/fea/types'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // GET /api/fea/receipt?entita=pagella|giustifica|forms&id=<entitaId>&userId=
 // Ricevuta di firma inattaccabile on-demand (FEA in-house, DL-001). Servita solo
@@ -64,7 +66,7 @@ async function resolveEntita(
   }
 }
 
-export async function GET(request: NextRequest) {
+export const GET = withRoute('fea/receipt:GET', async (request: NextRequest) => {
   try {
     const userId = getRequestUserId(request)
     if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
@@ -102,7 +104,8 @@ export async function GET(request: NextRequest) {
       },
     })
   } catch (err) {
+    logErrore({ operazione: 'fea/receipt:GET', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

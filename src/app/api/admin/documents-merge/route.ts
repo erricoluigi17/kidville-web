@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore } from '@/lib/logging/logger';
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // form_id è forms_templates.id (PK uuid); class_name è la sezione (testo libero).
@@ -11,7 +13,7 @@ const getQuerySchema = z.object({
   class_name: z.string().min(1, 'class_name è obbligatorio'),
 });
 
-export async function GET(request: NextRequest) {
+export const GET = withRoute('admin/documents-merge:GET', async (request: NextRequest) => {
   try {
     const q = parseQuery(request, getQuerySchema);
     if ('response' in q) return q.response;
@@ -91,10 +93,10 @@ export async function GET(request: NextRequest) {
       results: mergedData
     });
   } catch (err) {
-    console.error('Errore GET /api/admin/documents-merge:', err);
+    logErrore({ operazione: 'admin/documents-merge:GET', stato: 500 }, err);
     return NextResponse.json(
       { error: err instanceof Error ? err.message : 'Errore interno' },
       { status: 500 }
     );
   }
-}
+});

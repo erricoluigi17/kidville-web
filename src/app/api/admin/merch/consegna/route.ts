@@ -8,6 +8,8 @@ import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { sincronizzaTestata } from '@/lib/merch/stati'
 import { notificaMerchConsegnato } from '@/lib/merch/notify'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // POST /api/admin/merch/consegna — consegna all'alunno le righe ARRIVATE
 // (arrivato → consegnato). Restituisce l'eventuale warning "pagamento non
@@ -17,7 +19,7 @@ const SCHEMA_MANCANTE = new Set(['42P01', '42703', 'PGRST200', 'PGRST204', 'PGRS
 const bodySchema = z.object({ righe_ids: z.array(zUuid).min(1, 'Seleziona almeno una riga') })
 const uno = <T>(v: T | T[] | null | undefined): T | null => (Array.isArray(v) ? (v[0] ?? null) : (v ?? null))
 
-export async function POST(request: Request) {
+export const POST = withRoute('admin/merch/consegna:POST', async (request: Request) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -105,7 +107,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ success: true, data: { consegnate: righeOk.length, warnings } })
   } catch (err) {
-    console.error('Errore API POST merch/consegna:', err)
+    logErrore({ operazione: 'admin/merch/consegna:POST', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

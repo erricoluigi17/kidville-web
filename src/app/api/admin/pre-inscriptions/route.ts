@@ -5,6 +5,8 @@ import { requireStaff } from '@/lib/auth/require-staff';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { resolveScuoleAttive } from '@/lib/auth/scope';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore } from '@/lib/logging/logger';
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({}); // nessun parametro in ingresso
@@ -35,7 +37,7 @@ const patchBodySchema = z.object({
 });
 
 // GET: Recupera tutte le pre-iscrizioni (Sala d'attesa)
-export async function GET(request: NextRequest) {
+export const GET = withRoute('admin/pre-inscriptions:GET', async (request: NextRequest) => {
   try {
     // Gap auth segnalato in M3, chiuso in M9: la sala d'attesa (PII dei
     // richiedenti) è dello staff. Il POST resta PUBBLICO: è la sottomissione
@@ -59,12 +61,13 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(data);
   } catch (err) {
+    logErrore({ operazione: 'admin/pre-inscriptions:GET', stato: 500 }, err);
     return NextResponse.json({ error: err instanceof Error ? err.message : 'Errore interno' }, { status: 500 });
   }
-}
+});
 
 // POST: Sottomissione da parte del genitore (Portale Onboarding Pubblico)
-export async function POST(request: NextRequest) {
+export const POST = withRoute('admin/pre-inscriptions:POST', async (request: NextRequest) => {
   try {
     const b = await parseBody(request, postBodySchema);
     if ('response' in b) return b.response;
@@ -115,12 +118,13 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(data, { status: 201 });
   } catch (err) {
+    logErrore({ operazione: 'admin/pre-inscriptions:POST', stato: 500 }, err);
     return NextResponse.json({ error: err instanceof Error ? err.message : 'Errore interno' }, { status: 500 });
   }
-}
+});
 
 // PATCH: Approvazione (Sala d'attesa) o Rifiuto
-export async function PATCH(request: NextRequest) {
+export const PATCH = withRoute('admin/pre-inscriptions:PATCH', async (request: NextRequest) => {
   try {
     const auth = await requireStaff(request);
     if (auth.response) return auth.response;
@@ -303,7 +307,7 @@ export async function PATCH(request: NextRequest) {
 
     return NextResponse.json({ error: 'Stato non valido' }, { status: 400 });
   } catch (err) {
-    console.error('Errore PATCH /api/admin/pre-inscriptions:', err);
+    logErrore({ operazione: 'admin/pre-inscriptions:PATCH', stato: 500 }, err);
     return NextResponse.json({ error: err instanceof Error ? err.message : 'Errore interno' }, { status: 500 });
   }
-}
+});

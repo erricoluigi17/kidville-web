@@ -7,6 +7,8 @@ import { zDataYMD, zUuid } from '@/lib/validation/common';
 import { assertClasseNomeInScope, scuoleDiUtente } from '@/lib/auth/scope';
 import { notificaEvento } from '@/lib/notifiche/triggers';
 import { genitoriDiClassi } from '@/lib/notifiche/destinatari';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore } from '@/lib/logging/logger';
 
 const getQuerySchema = z.object({
     classeSezione: z.string().min(1),
@@ -28,7 +30,7 @@ const postBodySchema = z.object({
 
 // GET /api/register/lessons?classeSezione=3A&data=2026-05-13
 // Gate docente (M5.6): la route era raggiungibile senza identità post-M4.
-export async function GET(request: Request) {
+export const GET = withRoute('register/lessons:GET', async (request: Request) => {
     const auth = await requireDocente(request);
     if (auth.response) return auth.response;
 
@@ -68,16 +70,16 @@ export async function GET(request: Request) {
         return NextResponse.json({ success: true, data: registroRows });
 
     } catch (error) {
-        console.error('Errore API GET Lezioni:', error);
+        logErrore({ operazione: 'register/lessons:GET', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
     }
-}
+})
 
 // POST /api/register/lessons
 // Body: { classeSezione, scuolaId, data, oraLezione, materia, argomento, compiti, dataConsegnaCompiti }
 // Gate docente (M5.6): scrittura su registro_orario; la firma usa l'identità
 // risolta dal gate (niente fallback dev post-M4).
-export async function POST(request: Request) {
+export const POST = withRoute('register/lessons:POST', async (request: Request) => {
     const auth = await requireDocente(request);
     if (auth.response) return auth.response;
 
@@ -179,7 +181,7 @@ export async function POST(request: Request) {
         return NextResponse.json({ success: true, data: registroRow });
 
     } catch (error) {
-        console.error('Errore API POST Lezioni:', error);
+        logErrore({ operazione: 'register/lessons:POST', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
     }
-}
+})

@@ -7,7 +7,9 @@ import { POST } from '@/app/api/auth/logout/route'
 
 describe('POST /api/auth/logout', () => {
   it('200 e azzera kv-active-role e sedi_attive (Max-Age=0)', async () => {
-    const res = await POST()
+    // La Request ora è obbligatoria: `withRoute` la vuole per aprire il contesto della
+    // richiesta (requestId + path). L'handler non la usa — il logout non ha input.
+    const res = await POST(new Request('http://localhost/api/auth/logout', { method: 'POST' }))
     expect(res.status).toBe(200)
     const j = await res.json()
     expect(j).toMatchObject({ ok: true })

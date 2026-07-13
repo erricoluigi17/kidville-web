@@ -4,6 +4,7 @@ import { resolveIdentity, loadAppUser, type AppRole } from '@/lib/auth/require-s
 import { getSessionProfili } from '@/lib/auth/profili'
 import { ACTIVE_ROLE_COOKIE, areaForRole, RUOLI_APP } from '@/lib/auth/active-role'
 import { parseBody } from '@/lib/validation/http'
+import { withRoute } from '@/lib/logging/with-route'
 
 // POST /api/auth/active-role — setta SERVER-SIDE il cookie `kv-active-role`
 // (M4B.2): il ruolo attivo di chi ha più profili. Il valore è validato contro
@@ -15,7 +16,7 @@ const postSchema = z.object({
   ruolo: z.enum(RUOLI_APP as [AppRole, ...AppRole[]]),
 })
 
-export async function POST(request: Request) {
+export const POST = withRoute('auth/active-role:POST', async (request: Request) => {
   const { userId } = await resolveIdentity(request)
   if (!userId) {
     return NextResponse.json({ error: 'Non autenticato: userId mancante' }, { status: 401 })
@@ -50,4 +51,4 @@ export async function POST(request: Request) {
     maxAge: 60 * 60 * 24 * 180,
   })
   return res
-}
+})

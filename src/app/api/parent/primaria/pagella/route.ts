@@ -3,6 +3,8 @@ import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireParentOfStudent } from '@/lib/auth/require-parent'
 import { parseQuery } from '@/lib/validation/http'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // Id lasco (non zUuid): il comportamento attuale accetta qualsiasi stringa non
 // vuota (il lookup su `alunni` fa comunque da gate con 404).
@@ -13,7 +15,7 @@ const getQuerySchema = z.object({
 // GET /api/parent/primaria/pagella?studentId=&userId=
 // Lista delle pagelle disponibili (scrutini chiusi) per il figlio, con i metadati
 // del periodo. Il download del PDF avviene via /api/primaria/pagella.
-export async function GET(request: NextRequest) {
+export const GET = withRoute('parent/primaria/pagella:GET', async (request: NextRequest) => {
   try {
     const q = parseQuery(request, getQuerySchema)
     if ('response' in q) return q.response
@@ -69,7 +71,8 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ success: true, data: pagelle })
   } catch (err) {
+    logErrore({ operazione: 'parent/primaria/pagella:GET', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

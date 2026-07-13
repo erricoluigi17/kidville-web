@@ -8,6 +8,8 @@ import { getUserEmail, sendOtp, verifyTicket, codeHash } from '@/lib/auth/otp-ti
 import { buildSignatureLog, extractRequestMeta } from '@/lib/fea/signature-log'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3/M4) ─────────────────────────────────────
 // L'identità del firmatario viene dal gate (requireUser): il `parent_id`
@@ -36,7 +38,7 @@ const patchBodySchema = z.object({
 })
 
 // ── POST: genera e invia il codice OTP via email, ritorna il ticket firmato ──
-export async function POST(request: NextRequest) {
+export const POST = withRoute('parent/forms/otp:POST', async (request: NextRequest) => {
   try {
     const auth = await requireUser(request)
     if (auth.response) return auth.response
@@ -54,14 +56,14 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(res)
   } catch (err) {
-    console.error('Errore POST /api/parent/forms/otp:', err)
+    logErrore({ operazione: 'parent/forms/otp:POST', stato: 500 }, err)
     const message = err instanceof Error && err.message ? err.message : 'Errore interno'
     return NextResponse.json({ error: message }, { status: 500 })
   }
-}
+})
 
 // ── PATCH: verifica l'OTP e finalizza la firma (FES) persistendo la submission ──
-export async function PATCH(request: NextRequest) {
+export const PATCH = withRoute('parent/forms/otp:PATCH', async (request: NextRequest) => {
   try {
     const auth = await requireUser(request)
     if (auth.response) return auth.response
@@ -122,8 +124,8 @@ export async function PATCH(request: NextRequest) {
 
     return NextResponse.json({ ok: true, submission: result.submission, signature_log }, { status: 201 })
   } catch (err) {
-    console.error('Errore PATCH /api/parent/forms/otp:', err)
+    logErrore({ operazione: 'parent/forms/otp:PATCH', stato: 500 }, err)
     const message = err instanceof Error && err.message ? err.message : 'Errore interno'
     return NextResponse.json({ error: message }, { status: 500 })
   }
-}
+})

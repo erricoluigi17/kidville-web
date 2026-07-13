@@ -4,6 +4,8 @@ import { requireUser } from '@/lib/auth/require-staff'
 import { rateLimit, clientIp } from '@/lib/security/rate-limit'
 import { translateText } from '@/lib/translate/claude'
 import { parseBody } from '@/lib/validation/http'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // text/targetLang: oggi qualsiasi valore truthy è accettato e poi convertito con
 // String(...) prima della chiamata a translateText; lo schema replica esattamente
@@ -18,7 +20,7 @@ const postBodySchema = z.object({
 // Gated (qualsiasi utente autenticato) + rate-limit anti-abuso. Delega a
 // `translateText` (Claude haiku); 503 se il servizio non è configurato (manca
 // ANTHROPIC_API_KEY) così l'UI può nascondere/disabilitare il pulsante.
-export async function POST(request: Request) {
+export const POST = withRoute('chat/translate:POST', async (request: Request) => {
   const auth = await requireUser(request)
   if (auth.response) return auth.response
 
@@ -46,7 +48,7 @@ export async function POST(request: Request) {
     }
     return NextResponse.json({ translated: res.translated })
   } catch (err) {
-    console.error('Errore POST /api/chat/translate:', err)
+    logErrore({ operazione: 'chat/translate:POST', stato: 500 }, err)
     return NextResponse.json({ error: 'Errore interno' }, { status: 500 })
   }
-}
+})

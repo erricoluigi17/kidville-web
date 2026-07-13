@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { parseQuery } from '@/lib/validation/http'
+import { withRoute } from '@/lib/logging/with-route'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({}) // nessun parametro in ingresso
@@ -12,7 +13,7 @@ const getQuerySchema = z.object({}) // nessun parametro in ingresso
 
 const DIREZIONE = ['admin', 'coordinator'] as const
 
-export async function GET(request: Request) {
+export const GET = withRoute('admin/gdpr/candidates:GET', async (request: Request) => {
   const auth = await requireStaff(request, [...DIREZIONE])
   if (auth.response) return auth.response
 
@@ -59,4 +60,4 @@ export async function GET(request: Request) {
   })
 
   return NextResponse.json(result)
-}
+})

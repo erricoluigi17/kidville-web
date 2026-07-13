@@ -6,6 +6,8 @@ import { scuoleDiUtente } from '@/lib/auth/scope';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody, parseData } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore } from '@/lib/logging/logger';
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // Tutti i campi del body sono opzionali (merge parziale sul payload JSON).
@@ -118,10 +120,10 @@ interface RouteParams {
 }
 
 // PUT /api/tasks/[id]
-export async function PUT(
+export const PUT = withRoute('tasks/[id]:PUT', async (
     request: Request,
     { params }: RouteParams
-) {
+) => {
     try {
         const auth = await requireDocente(request);
         if (auth.response) return auth.response;
@@ -260,16 +262,16 @@ export async function PUT(
             ...payload,
         });
     } catch (error) {
-        console.error('Errore API PUT /api/tasks/[id]:', error);
+        logErrore({ operazione: 'tasks/[id]:PUT', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
     }
-}
+});
 
 // DELETE /api/tasks/[id]
-export async function DELETE(
+export const DELETE = withRoute('tasks/[id]:DELETE', async (
     request: Request,
     { params }: RouteParams
-) {
+) => {
     try {
         const auth = await requireDocente(request);
         if (auth.response) return auth.response;
@@ -303,7 +305,7 @@ export async function DELETE(
 
         return NextResponse.json({ success: true, message: 'Task eliminato con successo' });
     } catch (error) {
-        console.error('Errore API DELETE /api/tasks/[id]:', error);
+        logErrore({ operazione: 'tasks/[id]:DELETE', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
     }
-}
+});

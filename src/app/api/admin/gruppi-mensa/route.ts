@@ -5,6 +5,8 @@ import { requireStaff } from '@/lib/auth/require-staff'
 import { resolveScuoleAttive, resolveScuolaScrittura } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { parseBody, parseQuery } from '@/lib/validation/http'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // scuola_id permissivo (niente zUuid: nei test/dati seed circolano id non-UUID);
@@ -22,7 +24,7 @@ const postBodySchema = z.object({
 })
 
 // GET /api/admin/gruppi-mensa?scuola_id=&userId=  — elenco gruppi mensa.
-export async function GET(request: NextRequest) {
+export const GET = withRoute('admin/gruppi-mensa:GET', async (request: NextRequest) => {
   const auth = await requireStaff(request)
   if (auth.response) return auth.response
   const q = parseQuery(request, getQuerySchema)
@@ -38,13 +40,14 @@ export async function GET(request: NextRequest) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json({ success: true, data: data ?? [] })
   } catch (err) {
+    logErrore({ operazione: 'admin/gruppi-mensa:GET', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})
 
 // POST /api/admin/gruppi-mensa?userId=  — crea un gruppo mensa. body: { nome, scuola_id? }
-export async function POST(request: NextRequest) {
+export const POST = withRoute('admin/gruppi-mensa:POST', async (request: NextRequest) => {
   const auth = await requireStaff(request)
   if (auth.response) return auth.response
   const b = await parseBody(request, postBodySchema)
@@ -72,7 +75,8 @@ export async function POST(request: NextRequest) {
     })
     return NextResponse.json({ success: true, data })
   } catch (err) {
+    logErrore({ operazione: 'admin/gruppi-mensa:POST', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

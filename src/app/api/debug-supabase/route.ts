@@ -3,10 +3,11 @@ import { z } from 'zod';
 import { createClient } from '@/lib/supabase/server-client';
 import { sealDangerous } from '@/lib/security/seal';
 import { parseQuery } from '@/lib/validation/http';
+import { withRoute } from '@/lib/logging/with-route';
 
 const getQuerySchema = z.object({}); // nessun parametro in ingresso
 
-export async function GET(request: Request) {
+export const GET = withRoute('debug-supabase:GET', async (request: Request) => {
     const sealed = await sealDangerous(request);
     if (sealed) return sealed;
     const q = parseQuery(request, getQuerySchema);
@@ -25,4 +26,4 @@ export async function GET(request: Request) {
         schools: { count: schools?.length ?? 0, error: sErr?.message },
         eventi_diario: { count: eventi?.length ?? 0, error: eErr?.message },
     });
-}
+});

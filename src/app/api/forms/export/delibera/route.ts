@@ -5,6 +5,8 @@ import { requireStaff } from '@/lib/auth/require-staff'
 import { jsPDF } from 'jspdf'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({
@@ -27,7 +29,7 @@ function candidatoLabel(data: Record<string, unknown>): string {
 }
 
 // GET /api/forms/export/delibera?modelId=&userId=  (staff) — PDF della delibera (DL-025).
-export async function GET(request: Request) {
+export const GET = withRoute('forms/export/delibera:GET', async (request: Request) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -91,7 +93,7 @@ export async function GET(request: Request) {
       },
     })
   } catch (err) {
-    console.error('Errore API GET delibera PDF:', err)
+    logErrore({ operazione: 'forms/export/delibera:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

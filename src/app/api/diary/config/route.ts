@@ -4,6 +4,8 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
 import { getModuleConfig } from '@/lib/settings/module-config'
 import { parseQuery } from '@/lib/validation/http'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({}) // nessun parametro (l'eventuale ?userId= legacy è ignorato)
@@ -13,7 +15,7 @@ const getQuerySchema = z.object({}) // nessun parametro (l'eventuale ?userId= le
 // evento abilitati dall'amministrazione (oggi usato per 'umore'); espone anche
 // `diario_primaria_visibile` (fail-open: default true) così la pagina
 // `/teacher/diary` può nascondere le sezioni primaria se l'admin lo disattiva.
-export async function GET(request: Request) {
+export const GET = withRoute('diary/config:GET', async (request: Request) => {
   const auth = await requireDocente(request)
   if (auth.response) return auth.response
 
@@ -34,7 +36,7 @@ export async function GET(request: Request) {
       diario_primaria_visibile: cfg.diario_primaria_visibile === true,
     })
   } catch (err) {
-    console.error('Errore GET /api/diary/config:', err)
+    logErrore({ operazione: 'diary/config:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Errore interno' }, { status: 500 })
   }
-}
+})

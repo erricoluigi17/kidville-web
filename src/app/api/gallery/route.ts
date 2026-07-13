@@ -7,6 +7,8 @@ import { zUuid } from '@/lib/validation/common';
 import { alunniSenzaConsenso } from '@/lib/gallery/privacy';
 import { notificaEvento } from '@/lib/notifiche/triggers';
 import { genitoriDiAlunni, genitoriDiClassi, genitoriDiScuola } from '@/lib/notifiche/destinatari';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore } from '@/lib/logging/logger';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -54,7 +56,7 @@ const patchBodySchema = z.object({
 // Lista media con filtri (studentId per genitore, classe per insegnante).
 // Filtri e paginazione applicati in SQL (.or + .range): niente scarico dell'intera
 // tabella con filtro/slice in memoria. Contratto risposta invariato: { media, total }.
-export async function GET(request: Request) {
+export const GET = withRoute('gallery:GET', async (request: Request) => {
     try {
         const q = parseQuery(request, getQuerySchema);
         if ('response' in q) return q.response;
@@ -146,14 +148,14 @@ export async function GET(request: Request) {
 
         return NextResponse.json({ media: enriched, total: count ?? 0 });
     } catch (error) {
-        console.error('Errore API GET gallery:', error);
+        logErrore({ operazione: 'gallery:GET', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
     }
-}
+});
 
 // POST /api/gallery
 // Body: { uploaded_by, file_url, file_type?, caption?, tag_students?, is_broadcast?, target_classes? }
-export async function POST(request: Request) {
+export const POST = withRoute('gallery:POST', async (request: Request) => {
     try {
         const auth = await requireDocente(request);
         if (auth.response) return auth.response;
@@ -237,14 +239,14 @@ export async function POST(request: Request) {
 
         return NextResponse.json(data, { status: 201 });
     } catch (error) {
-        console.error('Errore API POST gallery:', error);
+        logErrore({ operazione: 'gallery:POST', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
     }
-}
+});
 
 // DELETE /api/gallery?id=xxx&userId=yyy
 // Cancella un media con controllo granularizzato dei ruoli
-export async function DELETE(request: Request) {
+export const DELETE = withRoute('gallery:DELETE', async (request: Request) => {
     try {
         const q = parseQuery(request, deleteQuerySchema);
         if ('response' in q) return q.response;
@@ -381,14 +383,14 @@ export async function DELETE(request: Request) {
 
         return NextResponse.json({ success: true });
     } catch (error) {
-        console.error('Errore API DELETE gallery:', error);
+        logErrore({ operazione: 'gallery:DELETE', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
     }
-}
+});
 
 // PATCH /api/gallery
 // Body: { id, userId, tag_students, is_broadcast, target_classes, caption }
-export async function PATCH(request: Request) {
+export const PATCH = withRoute('gallery:PATCH', async (request: Request) => {
     try {
         const b = await parseBody(request, patchBodySchema);
         if ('response' in b) return b.response;
@@ -528,8 +530,8 @@ export async function PATCH(request: Request) {
 
         return NextResponse.json(updatedMedia);
     } catch (error) {
-        console.error('Errore API PATCH gallery:', error);
+        logErrore({ operazione: 'gallery:PATCH', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
     }
-}
+});
 

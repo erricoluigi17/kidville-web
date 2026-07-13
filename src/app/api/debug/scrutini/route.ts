@@ -4,12 +4,14 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { sealDangerous } from '@/lib/security/seal'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 const getQuerySchema = z.object({
   parentId: zUuid,
 })
 
-export async function GET(request: NextRequest) {
+export const GET = withRoute('debug/scrutini:GET', async (request: NextRequest) => {
   const sealed = await sealDangerous(request)
   if (sealed) return sealed
   const q = parseQuery(request, getQuerySchema)
@@ -69,6 +71,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(result)
   } catch (err) {
+    logErrore({ operazione: 'debug/scrutini:GET', stato: 500 }, err)
     return NextResponse.json({ crash: String(err) }, { status: 500 })
   }
-}
+})

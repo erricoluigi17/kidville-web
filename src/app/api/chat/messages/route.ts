@@ -5,6 +5,8 @@ import { notificaEvento, nomeUtente } from '@/lib/notifiche/triggers';
 import { controparteThread } from '@/lib/notifiche/destinatari';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid, zPaginazione } from '@/lib/validation/common';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore } from '@/lib/logging/logger';
 
 // markRead='' è ammesso per retro-compatibilità: equivale ad assente (nessun mark-read).
 const getQuerySchema = z.object({
@@ -23,7 +25,7 @@ const postBodySchema = z.object({
 
 // GET /api/chat/messages?threadId=xxx&limit=50&offset=0&markRead=userId
 // Lista messaggi per un thread con paginazione
-export async function GET(request: Request) {
+export const GET = withRoute('chat/messages:GET', async (request: Request) => {
     try {
         const q = parseQuery(request, getQuerySchema);
         if ('response' in q) return q.response;
@@ -79,14 +81,14 @@ export async function GET(request: Request) {
 
         return NextResponse.json({ messages: data ?? [], total: count ?? 0 });
     } catch (error) {
-        console.error('Errore API GET messages:', error);
+        logErrore({ operazione: 'chat/messages:GET', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
     }
-}
+});
 
 // POST /api/chat/messages
 // Body: { thread_id, sender_id, content, attachment_url?, attachment_type? }
-export async function POST(request: Request) {
+export const POST = withRoute('chat/messages:POST', async (request: Request) => {
     try {
         const b = await parseBody(request, postBodySchema);
         if ('response' in b) return b.response;
@@ -147,7 +149,7 @@ export async function POST(request: Request) {
 
         return NextResponse.json(data, { status: 201 });
     } catch (error) {
-        console.error('Errore API POST messages:', error);
+        logErrore({ operazione: 'chat/messages:POST', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
     }
-}
+});

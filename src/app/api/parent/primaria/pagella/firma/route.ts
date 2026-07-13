@@ -9,6 +9,8 @@ import { logFeaEvent } from '@/lib/fea/audit'
 import { notificaEvento, nomeUtente } from '@/lib/notifiche/triggers'
 import { docentiDiSezione } from '@/lib/sezioni/docenti'
 import { parseBody } from '@/lib/validation/http'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // Id laschi (non zUuid): il comportamento attuale accetta qualsiasi stringa non
 // vuota (il lookup su `scrutini` fa da gate con 404). I campi OTP restano
@@ -26,7 +28,7 @@ const postBodySchema = z.object({
 // body: { scrutinioId, studentId, code, expiry, ticket }
 // Il genitore firma (OTP/FES) l'avvenuta ricezione della pagella. Una volta
 // firmata, può vederne i giudizi a schermo e scaricare il PDF.
-export async function POST(request: NextRequest) {
+export const POST = withRoute('parent/primaria/pagella/firma:POST', async (request: NextRequest) => {
   try {
     const b = await parseBody(request, postBodySchema)
     if ('response' in b) return b.response
@@ -122,7 +124,8 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true, data })
   } catch (err) {
+    logErrore({ operazione: 'parent/primaria/pagella/firma:POST', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

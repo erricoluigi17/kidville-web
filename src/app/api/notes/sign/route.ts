@@ -5,12 +5,14 @@ import { requireUser } from '@/lib/auth/require-staff';
 import { notificaEvento, nomeUtente } from '@/lib/notifiche/triggers';
 import { parseBody } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore } from '@/lib/logging/logger';
 
 const postBodySchema = z.object({
     notaId: zUuid,
 });
 
-export async function POST(request: Request) {
+export const POST = withRoute('notes/sign:POST', async (request: Request) => {
     try {
         // Gap auth segnalato in M3, chiuso in M9: prima firmava con un
         // FALLBACK DEMO senza sessione. Ora: utente autenticato + legame
@@ -99,7 +101,7 @@ export async function POST(request: Request) {
         return NextResponse.json({ success: true, message: 'Nota firmata con successo', ip });
 
     } catch (error) {
-        console.error('Errore API Firma Nota:', error);
+        logErrore({ operazione: 'notes/sign:POST', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
     }
-}
+});

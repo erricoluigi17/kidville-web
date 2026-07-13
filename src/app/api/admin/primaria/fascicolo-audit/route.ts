@@ -4,6 +4,8 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 const getQuerySchema = z.object({
   // '' oggi equivale ad assente (filtro saltato): normalizzato prima della validazione
@@ -14,7 +16,7 @@ const getQuerySchema = z.object({
 
 // GET /api/admin/primaria/fascicolo-audit?alunnoId=&limit=&userId=
 // Vista di sola lettura del log accessi al fascicolo (immodificabile). Solo staff.
-export async function GET(request: NextRequest) {
+export const GET = withRoute('admin/primaria/fascicolo-audit:GET', async (request: NextRequest) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -36,7 +38,8 @@ export async function GET(request: NextRequest) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json({ success: true, data: data ?? [] })
   } catch (err) {
+    logErrore({ operazione: 'admin/primaria/fascicolo-audit:GET', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { parseData } from '@/lib/validation/http';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore } from '@/lib/logging/logger';
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // Il file si valida come presenza/istanza; il contenuto non è materia di zod.
@@ -10,7 +12,7 @@ const postFormSchema = z.object({
     file: z.instanceof(File, { error: 'Nessun file fornito' }),
 });
 
-export async function POST(request: Request) {
+export const POST = withRoute('tasks/upload:POST', async (request: Request) => {
     try {
         const auth = await requireDocente(request);
         if (auth.response) return auth.response;
@@ -50,7 +52,7 @@ export async function POST(request: Request) {
             type: file.type
         });
     } catch (error) {
-        console.error('Errore API upload:', error);
+        logErrore({ operazione: 'tasks/upload:POST', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
     }
-}
+});

@@ -11,7 +11,16 @@ import { logErrore } from '@/lib/logging/logger';
  * GET /api/attendance/delegates?sezione=Girasoli
  *
  * Restituisce i delegati autorizzati al ritiro per gli alunni della sezione specificata.
- * I delegati sono dalla tabella `delegati` (vecchia) oppure `delegates` (nuova).
+ * Unica fonte: la tabella `delegates`.
+ *
+ * ── PERCHÉ NON SI SONDA PIÙ `delegati` ───────────────────────────────────────
+ * Questa route interrogava prima la tabella `delegati` (schema originale) e ripiegava su
+ * `delegates`. Ma `delegati` NON ESISTE più: il DB è stato ripulito il 2026-07-04, e nello
+ * schema live c'è solo `delegates`. La sonda non falliva in modo visibile — PostgREST
+ * risponde 404 e il codice ripiegava in silenzio — quindi nessuno se n'era accorto: è stato
+ * il logging strutturato, appena messo in produzione, a mostrarla (una riga `livello=error`
+ * su OGNI chiamata, cioè rumore ricorrente nel canale che serve a trovare i guasti veri).
+ * Costava anche un round-trip in più a ogni appello, per una tabella che non tornerà.
  */
 
 const getQuerySchema = z.object({
@@ -32,25 +41,7 @@ export const GET = withRoute('attendance/delegates:GET', async (request: NextReq
 
         const supabase = await createClient();
 
-        // Prova prima la tabella `delegati` (schema originale)
-        const { data: delegatiData, error: delegatiError } = await supabase
-            .from('delegati')
-            .select(`
-                id,
-                alunno_id,
-                nome,
-                relazione,
-                foto_url,
-                alunni!inner ( classe_sezione )
-            `)
-            .eq('alunni.classe_sezione', sezione);
-
-        if (!delegatiError && delegatiData && delegatiData.length > 0) {
-            return NextResponse.json(delegatiData);
-        }
-
-        // Fallback: tabella `delegates` (schema extended)
-        const { data: delegatesData, error: delegatesError } = await supabase
+        const { data, error } = await supabase
             .from('delegates')
             .select(`
                 id,
@@ -62,21 +53,28 @@ export const GET = withRoute('attendance/delegates:GET', async (request: NextReq
             `)
             .eq('alunni.classe_sezione', sezione);
 
-        if (!delegatesError && delegatesData) {
-            // Mappa al formato atteso dal frontend
-            const mapped = delegatesData.map((d: { id: string; student_id: string; first_name: string; last_name: string }) => ({
-                id: d.id,
-                alunno_id: d.student_id,
-                nome: `${d.first_name} ${d.last_name}`,
-                relazione: 'Delegato',
-                foto_url: null,
-            }));
-            return NextResponse.json(mapped);
+        if (error) {
+            // PostgREST non lancia: ritorna { error }. Prima questo errore veniva SCARTATO dalla
+            // destrutturazione e la route rispondeva `[]` — cioè «nessun delegato» quando in realtà
+            // la lettura si era rotta. Un elenco vuoto, al ritiro, è la direzione SICURA (nessuno
+            // autorizzato: si chiama il genitore), e per questo si continua a rispondere `[]` invece
+            // di rompere l'appello. Ma la differenza fra «non ci sono delegati» e «non si è potuto
+            // leggere» ora esiste da qualche parte, e quel posto sono i log.
+            logErrore({ operazione: 'attendance/delegates:GET', evento: 'db', stato: 200 }, error);
+            return NextResponse.json([]);
         }
 
-        // Nessun delegato trovato — ritorna array vuoto (non errore)
-        return NextResponse.json([]);
+        // Mappa al formato atteso dal frontend.
+        const mapped = (data ?? []).map((d: { id: string; student_id: string; first_name: string; last_name: string }) => ({
+            id: d.id,
+            alunno_id: d.student_id,
+            nome: `${d.first_name} ${d.last_name}`,
+            relazione: 'Delegato',
+            foto_url: null,
+        }));
+        return NextResponse.json(mapped);
     } catch (err) {
+        // Fail-closed come sopra: si risponde con l'elenco vuoto, ma il guasto non è muto.
         logErrore({ operazione: 'attendance/delegates:GET', stato: 200 }, err);
         return NextResponse.json([]);
     }

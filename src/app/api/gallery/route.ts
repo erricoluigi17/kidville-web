@@ -180,7 +180,7 @@ export async function POST(request: Request) {
         if (senza.length > 0) {
             return NextResponse.json(
                 {
-                    error: 'Consenso privacy mancante: questi bambini non possono essere taggati nelle foto.',
+                    error: 'Foto di gruppo non pubblicabile: alcuni bambini taggati non hanno la liberatoria foto. Rimuovili dai tag oppure pubblica per ognuno una foto singola (visibile solo ai suoi genitori).',
                     nomi: senza.map((s) => s.nome),
                     ids: senza.map((s) => s.id),
                 },
@@ -499,7 +499,7 @@ export async function PATCH(request: Request) {
             if (senza.length > 0) {
                 return NextResponse.json(
                     {
-                        error: 'Consenso privacy mancante: questi bambini non possono essere taggati nelle foto.',
+                        error: 'Foto di gruppo non pubblicabile: alcuni bambini taggati non hanno la liberatoria foto. Rimuovili dai tag oppure pubblica per ognuno una foto singola (visibile solo ai suoi genitori).',
                         nomi: senza.map((s) => s.nome),
                         ids: senza.map((s) => s.id),
                     },

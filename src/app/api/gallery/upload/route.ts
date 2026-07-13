@@ -57,10 +57,14 @@ export async function POST(request: Request) {
         const filePath = `uploads/${userId}/${uniqueFileName}`;
 
         const fileBuffer = await file.arrayBuffer();
+        // Il tipo del File elaborato può portare un suffisso codec (es.
+        // `video/webm;codecs=vp9`) che non combacia con la allow-list MIME del
+        // bucket 'gallery': si normalizza al solo tipo base prima dell'upload.
+        const contentType = (file.type || 'application/octet-stream').split(';')[0].trim();
         const { error } = await supabase.storage
             .from('gallery')
             .upload(filePath, Buffer.from(fileBuffer), {
-                contentType: file.type,
+                contentType,
                 upsert: true
             });
 

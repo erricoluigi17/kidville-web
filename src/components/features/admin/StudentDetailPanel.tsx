@@ -37,6 +37,9 @@ interface Student {
     fiscal_code?: string | null;
     bes?: boolean;
     note_bes?: string | null;
+    // Liberatoria foto/video (galleria): senza consenso il bambino compare solo
+    // in foto individuali visibili ai suoi genitori (regola "foto privata").
+    consenso_privacy?: boolean | null;
     emails?: string[];
     phone_numbers?: string[];
     student_parents?: {
@@ -475,6 +478,22 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                                 className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green resize-none"
                             />
                         )}
+
+                        {/* Liberatoria foto/video (galleria) */}
+                        <div className="flex items-center gap-3 mt-3 pt-3 border-t border-kidville-line">
+                            <label className="flex items-center gap-2 cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    checked={!!form.consenso_privacy}
+                                    onChange={e => updateForm('consenso_privacy', e.target.checked)}
+                                    className="w-4 h-4 rounded border-kidville-muted text-kidville-green focus:ring-kidville-green"
+                                />
+                                <span className="font-maven font-semibold text-sm text-kidville-green">Liberatoria foto/video firmata</span>
+                            </label>
+                        </div>
+                        <p className="font-maven text-[11px] text-kidville-muted mt-1">
+                            Senza liberatoria il bambino può comparire solo in foto individuali, visibili esclusivamente ai suoi genitori.
+                        </p>
                     </section>
 
                     {/* Dati Economici (modulo Pagamenti) */}

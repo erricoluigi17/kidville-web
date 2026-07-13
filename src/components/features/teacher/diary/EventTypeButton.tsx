@@ -17,20 +17,20 @@ export function EventTypeButton({ type, disabled = false, onClick }: EventTypeBu
             onClick={() => onClick(type)}
             disabled={disabled}
             className={`
-                flex flex-col items-center justify-center gap-2
+                flex flex-col items-center justify-center gap-1.5
                 w-full aspect-square rounded-2xl border-2
                 font-maven font-medium text-sm
                 transition-all duration-150
                 ${config.color} ${config.accentColor}
                 ${disabled
                     ? 'opacity-40 cursor-not-allowed'
-                    : 'hover:scale-105 hover:shadow-md active:scale-95 cursor-pointer'
+                    : 'hover:scale-[1.03] hover:shadow-md active:scale-95 cursor-pointer'
                 }
             `}
             aria-label={`Registra ${config.label}`}
         >
             <span className="text-3xl leading-none">{config.emoji}</span>
-            <span className="font-barlow font-semibold text-xs uppercase tracking-wide">
+            <span className="font-barlow font-semibold text-[10px] leading-tight px-1 text-center uppercase tracking-wide">
                 {config.label}
             </span>
         </button>

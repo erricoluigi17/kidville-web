@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Plus, Minus, Moon, Sun } from 'lucide-react';
 import { DiaryEventType } from '@/lib/offline/db';
@@ -370,24 +370,33 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
 
     const cfg = selectedEvent ? EVENT_CONFIG[selectedEvent] : null;
 
+    // Tessera selezionata: la scorro in vista quando cambia (mobile a 6-7
+    // tessere può iniziare con quella scelta fuori dallo schermo).
+    const selectedTileRef = useRef<HTMLDivElement | null>(null);
+    useEffect(() => {
+        selectedTileRef.current?.scrollIntoView({ behavior: 'smooth', inline: 'nearest', block: 'nearest' });
+    }, [selectedEvent]);
+
     return (
         <>
-            {/* ── Griglia eventi (6 routine) ── */}
+            {/* ── Riga eventi scorrevole (6-7 routine) ── */}
             <div className="mt-4 w-full rounded-3xl border border-kidville-line bg-white p-4 shadow-sm">
                 <p className="font-barlow font-bold text-kidville-green uppercase text-xs tracking-wide mb-3">Cosa vuoi registrare?</p>
-                <div className="grid grid-cols-3 gap-2">
-                    {eventTypes.map(type => (
-                        <div
-                            key={type}
-                            className={`rounded-xl transition-all duration-200 ${
-                                selectedEvent === type
-                                    ? 'ring-2 ring-kidville-green ring-offset-2 scale-105 shadow-md'
-                                    : ''
-                            }`}
-                        >
-                            <EventTypeButton type={type} disabled={false} onClick={handleEventSelect} />
-                        </div>
-                    ))}
+                <div className="-mx-4 px-4 pt-1 pb-1.5 flex gap-2 overflow-x-auto snap-x [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+                    {eventTypes.map(type => {
+                        const selected = selectedEvent === type;
+                        return (
+                            <div
+                                key={type}
+                                ref={selected ? selectedTileRef : null}
+                                className={`w-[92px] flex-shrink-0 snap-start rounded-2xl transition-all duration-200 ${
+                                    selected ? 'ring-2 ring-inset ring-kidville-green shadow-md' : ''
+                                }`}
+                            >
+                                <EventTypeButton type={type} disabled={false} onClick={handleEventSelect} />
+                            </div>
+                        );
+                    })}
                 </div>
             </div>
 

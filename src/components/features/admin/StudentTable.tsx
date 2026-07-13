@@ -149,7 +149,8 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                                     genitori/staff hanno 6 celle (lo staff senza checkbox). */}
                                 <tr className="bg-kidville-cream/20">
                                     <td colSpan={currentTypeFilter === 'child' ? 7 : 6} className="px-4 py-2 font-maven font-bold text-kidville-green">
-                                        Sezione: {section} <span className="text-xs font-normal text-kidville-muted">({sectionStudents.length} {currentTypeFilter === 'staff' ? 'Personale' : 'alunni'})</span>
+                                        {/* Staff: niente "Sezione:" (il personale non è raggruppato per classe) e conteggio in "membri". */}
+                                        {currentTypeFilter === 'staff' ? 'Personale' : `Sezione: ${section}`} <span className="text-xs font-normal text-kidville-muted">({sectionStudents.length} {currentTypeFilter === 'staff' ? (sectionStudents.length === 1 ? 'membro' : 'membri') : 'alunni'})</span>
                                     </td>
                                 </tr>
                                 {sectionStudents.map(student => {

@@ -339,7 +339,9 @@ function AdminStudentsInner() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-kidville-muted" size={18} />
           <input
             type="text"
-            placeholder="Cerca per nome, cognome o codice fiscale..."
+            // Lo staff non ha codice fiscale in anagrafica: placeholder coerente
+            // (il filtro resta lo stesso, cerca su nome/cognome).
+            placeholder={viewType === 'staff' ? 'Cerca per nome o cognome...' : 'Cerca per nome, cognome o codice fiscale...'}
             value={searchTerm}
             onChange={e => setSearchTerm(e.target.value)}
             className="w-full pl-10 pr-4 py-2.5 border-2 border-kidville-line rounded-xl font-maven text-sm focus:outline-none focus:border-kidville-green transition-colors"

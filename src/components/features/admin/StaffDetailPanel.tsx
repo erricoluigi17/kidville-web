@@ -46,7 +46,16 @@ export function StaffDetailPanel({ staffId, onClose }: Props) {
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch('/api/admin/staff', { headers: userId ? { 'x-user-id': userId } : undefined });
+      // fetch(...).catch(() => null): un reject di rete non deve né restare
+      // unhandled né finire in un not-found fuorviante ("Membro non trovato").
+      // NB: convenzione del repo — niente blocco catch attorno all'await in una
+      // fetch chiamata da useEffect (react-hooks/set-state-in-effect): try/finally.
+      const res = await fetch('/api/admin/staff', { headers: userId ? { 'x-user-id': userId } : undefined }).catch(() => null);
+      if (!res) {
+        setErrore('Errore di rete: impossibile caricare la scheda staff.');
+        setMember(null);
+        return;
+      }
       const j = await res.json().catch(() => null);
       // Mai un vuoto muto: se il fetch non riesce, si mostra il motivo.
       if (!res.ok || !j?.success) {
@@ -142,8 +151,8 @@ export function StaffDetailPanel({ staffId, onClose }: Props) {
   if (!member) {
     return (
       <div className="rounded-card bg-white p-10 text-center shadow-sm">
-        <h2 className="font-barlow text-lg font-bold uppercase text-kidville-green">Membro non trovato</h2>
-        <p className="mt-1 font-maven text-sm text-kidville-muted">Questo utente non è nell&apos;elenco del personale o non appartiene ai tuoi plessi.</p>
+        <h2 className="font-barlow text-lg font-bold uppercase text-kidville-green">Membro dello staff non trovato</h2>
+        <p className="mt-1 font-maven text-sm text-kidville-muted">Questo utente non è nell&apos;elenco del personale.</p>
       </div>
     );
   }

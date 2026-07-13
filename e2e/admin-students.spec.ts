@@ -1,9 +1,11 @@
 import { test, expect } from '@playwright/test';
 import { STORAGE, EMAILS } from './fixtures';
 
-// Anagrafica generale (/admin/students). NB: la pagina interroga la scuola
-// demo hardcoded, quindi le asserzioni sono sul funzionamento (tab, ricerca,
-// stati vuoti), non su righe E2E.
+// Anagrafica generale (/admin/students). NB: per alunni/genitori la pagina
+// interroga la scuola demo hardcoded, quindi quelle asserzioni sono sul
+// funzionamento (tab, ricerca, stati vuoti), non su righe E2E. La tab Staff
+// invece elenca il personale reale da `utenti`: lì si asserisce la docente
+// E2E seminata (EMAILS.docente, vedi scripts/seed-e2e.mjs).
 test.use({ storageState: STORAGE.admin });
 
 test('anagrafica: lista, ricerca e tab funzionano', async ({ page }) => {

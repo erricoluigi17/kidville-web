@@ -900,11 +900,14 @@ pushato/mergeato al momento della scrittura.
 TEST — **"TEST Infanzia"** (school_type infanzia) e **"TEST 1A"** (primaria) — ognuna con 10 alunni,
 2 insegnanti e 10 genitori con login (password comune `KidvilleTest.2026!`, hash verificato). Email:
 `test.inf.docente{1,2}` / `test.inf.genitore{1..10}` / `test.pri.*` `@kidville.test`. Dati fittizi
-ripulibili (etichetta TEST).
+ripulibili (etichetta TEST). In più (dal collaudo del 2026-07-13): **`test.segreteria@kidville.test`**
+(ruolo `segreteria`, stessa password) per verificare i flussi di sportello (anagrafica Staff, mensa,
+report cucina).
 
-**Nota di regressione nota (non risolta):** in `parents` la colonna `citizenship` conserva in realtà il
-*ruolo* (`mother`/`father`/`educator`…) come workaround load-bearing per il filtro Staff e il pannello
-di dettaglio; la cittadinanza reale digitata viene sovrascritta. Non toccato per non rompere
+**Nota di regressione nota (aggiornata 2026-07-13):** in `parents` la colonna `citizenship` conserva in
+realtà il *ruolo* (`mother`/`father`/`educator`…) come workaround storico; la cittadinanza reale digitata
+viene sovrascritta. La tab Staff dell'anagrafica **non dipende più** da questo workaround (ora legge da
+`utenti`), ma il valore viene ancora scritto da `seed-full` e letto da `tasks`. Non toccato per non rompere
 `students/page.tsx`. Da bonificare separatamente con un campo ruolo dedicato.
 
 ---

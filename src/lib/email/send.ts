@@ -8,11 +8,13 @@ import { hashCorrelabile } from '@/lib/logging/redact'
  * Usa Resend se `RESEND_API_KEY` è configurato, altrimenti degrada a un esito negativo
  * PARLANTE. Mittente di default sovrascrivibile con `OTP_FROM_EMAIL`.
  *
- * ⚠️ DELIVERABILITY: finché su Resend non è verificato il dominio kidville.it,
- * il mittente resta `onboarding@resend.dev` (sandbox) e Resend CONSEGNA SOLO
- * all'indirizzo del titolare dell'account — ogni altro destinatario è rifiutato
- * con 403. Dopo la verifica del dominio impostare in produzione
- * `OTP_FROM_EMAIL="Kidville <noreply@kidville.it>"`.
+ * ⚠️ DELIVERABILITY: il dominio di invio verificato su Resend è il SOTTODOMINIO
+ * `mail.kidville.it` (verificato il 2026-07-13; account erricoluigi17@gmail.com; region
+ * eu-west-1) — NON il dominio radice `kidville.it`. In produzione va impostata
+ * `OTP_FROM_EMAIL="Kidville <noreply@mail.kidville.it>"`: il mittente DEVE stare su
+ * `@mail.kidville.it`, altrimenti Resend rifiuta con 403. Se la var manca si degrada al
+ * mittente sandbox `onboarding@resend.dev`, che Resend CONSEGNA SOLO all'indirizzo del
+ * titolare dell'account — ogni altro destinatario è rifiutato con 403.
  *
  * ─────────────────────────────────────────────────────────────────────────────────
  * QUESTO FILE È LA SCENA DEL DELITTO. Per mesi nessuna email di credenziali è arrivata a

@@ -58,6 +58,17 @@
 
 ---
 
+## 🗓️ Changelog — Resend: il dominio `mail.kidville.it` verificato, l'email credenziali esce dalla sandbox 2026-07-13 (branch `fix/resend-from-mail-kidville`)
+
+**Il seguito del guasto che il logging aveva portato a galla.** L'osservabilità aveva svelato il *perché* le credenziali non arrivavano (`403 the domain is not verified`); l'agenzia ha poi messo i record DNS. Ma il dominio su Resend è rimasto in stato **"Not Started" per 6 giorni**: i record c'erano ed erano propagati, semplicemente **nessuno aveva mai premuto "Verify"** nel pannello. Era quello, l'ultimo tassello.
+
+- **Il dominio verificato è il SOTTODOMINIO `mail.kidville.it`, non il radice `kidville.it`** — come invece davano per scontato il codice e questo PRD (§S6bis e §Changelog 2026-07-06). Conseguenza operativa non negoziabile: **il mittente DEVE stare su `@mail.kidville.it`**; un `from` su `@kidville.it` è rifiutato con 403 anche a dominio verificato.
+- **Diagnosi via DNS pubblico** (la chiave API di prod è send-only, non legge lo stato dei domini): la tripletta Resend è presente e propagata su Cloudflare e Google — DKIM `resend._domainkey.mail`, Return-Path MX `send.mail` → `feedback-smtp.eu-west-1.amazonses.com`, SPF `send.mail` → `include:amazonses.com`. Region **EU (Irlanda, `eu-west-1`)**.
+- **Nessun disallineamento di account**: l'account Resend della `RESEND_API_KEY` di produzione è quello personale dell'amministratore (in sandbox), e `mail.kidville.it` è su *quello stesso* account — non su un account dell'agenzia. Identificato **senza login**, leggendo l'email dell'owner che Resend cita nel 403 di un invio-esca in sandbox.
+- **Verifica completata**: premuto "Verify" → `DNS verified` → `Domain verified`. Ri-test di invio reale da `noreply@mail.kidville.it` → **HTTP 200** verso due caselle di prova dell'amministratore (le stesse davano 403 pochi minuti prima). La sandbox è superata.
+- **Codice/config**: corretto il commento fuorviante di `src/lib/email/send.ts` (era `kidville.it`, ora `mail.kidville.it`, con data e vincolo del sottodominio); `.env.local` scommentato con `OTP_FROM_EMAIL=Kidville <noreply@mail.kidville.it>`.
+- **Residuo operativo — necessario perché la PRODUZIONE ne benefici**: impostare `OTP_FROM_EMAIL="Kidville <noreply@mail.kidville.it>"` tra le env di **Vercel (Production)** e fare **redeploy**. Su Vercel la variabile **non esisteva affatto** (verificato con `vercel env ls`): finché non c'è + redeploy, la produzione resta sul fallback sandbox `onboarding@resend.dev` e le credenziali NON raggiungono i genitori reali. Nessun altro codice da toccare: `send.ts` legge già `process.env.OTP_FROM_EMAIL`.
+
 ## 🗓️ Changelog — Delegati al ritiro: via la sonda a una tabella morta, e la lista vuota smette di mentire 2026-07-13 (branch `fix/delegati-tabella-morta`)
 
 **È il primo guasto trovato dal logging strutturato, poche ore dopo il suo rilascio** — e nessuno lo avrebbe mai visto altrimenti, perché la route *funzionava*.

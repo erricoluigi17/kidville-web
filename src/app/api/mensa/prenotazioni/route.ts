@@ -10,6 +10,12 @@ import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid, zDataYMD } from '@/lib/validation/common'
 import { genitoreHasFiglio } from '@/lib/anagrafiche/legami'
 
+// Ruoli che possono FORZARE prenotazione/disdetta della mensa anche fuori orario
+// (telefonate out-of-hours dei genitori dopo il cutoff), con saldo che può andare
+// in negativo. La Segreteria è inclusa perché gestisce lo sportello (PRD §3:
+// Segreteria↔Admin); dirigenza/FEA restano su liste esplicite altrove.
+const STAFF_FORZA = ['admin', 'coordinator', 'segreteria']
+
 const getQuerySchema = z.object({
   alunno_id: zUuid,
   // default dinamico (oggi) calcolato nell'handler
@@ -58,7 +64,7 @@ export async function GET(request: Request) {
     const alunnoId = q.data.alunno_id
 
     const supabase = await createAdminClient()
-    const isStaff = user.role === 'admin' || user.role === 'coordinator'
+    const isStaff = STAFF_FORZA.includes(user.role)
     if (!isStaff && !(await genitoreDiAlunno(supabase, user.id, alunnoId))) {
       return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
     }
@@ -96,7 +102,9 @@ export async function GET(request: Request) {
 // POST /api/mensa/prenotazioni
 // Body: { userId, alunno_id, date: string|string[], origine? }
 //   genitore: origine='genitore', blocco se saldo <= 0; rispetta cutoff/giorni attivi.
-//   staff: origine='segreteria', può forzare (saldo va negativo); rispetta solo giorni attivi.
+//   staff (admin/coordinator/segreteria): origine='segreteria', può forzare le richieste
+//     arrivate fuori orario (telefonata del genitore dopo il cutoff) — salta cutoff e blocco
+//     saldo, che può andare in negativo; rispetta solo i giorni attivi.
 export async function POST(request: Request) {
   try {
     const auth = await requireUser(request)
@@ -108,7 +116,7 @@ export async function POST(request: Request) {
     const dates: string[] = Array.isArray(b.data.date) ? b.data.date : [b.data.date]
 
     const supabase = await createAdminClient()
-    const isStaff = user.role === 'admin' || user.role === 'coordinator'
+    const isStaff = STAFF_FORZA.includes(user.role)
     const origine = isStaff ? 'segreteria' : 'genitore'
     if (!isStaff && !(await genitoreDiAlunno(supabase, user.id, alunnoId))) {
       return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
@@ -198,7 +206,8 @@ export async function POST(request: Request) {
 }
 
 // DELETE /api/mensa/prenotazioni?userId=&alunno_id=&data=
-//   disdici: riaccredita il ticket se entro cutoff (genitore) o sempre (staff, entro cutoff giorni futuri).
+//   disdici: riaccredita il ticket. Il genitore solo entro cutoff; lo staff può forzare
+//   anche fuori orario / su date passate (telefonata out-of-hours per disdire).
 export async function DELETE(request: Request) {
   try {
     const auth = await requireUser(request)
@@ -209,7 +218,7 @@ export async function DELETE(request: Request) {
     const { alunno_id: alunnoId, data } = q.data
 
     const supabase = await createAdminClient()
-    const isStaff = user.role === 'admin' || user.role === 'coordinator'
+    const isStaff = STAFF_FORZA.includes(user.role)
     if (!isStaff && !(await genitoreDiAlunno(supabase, user.id, alunnoId))) {
       return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
     }
@@ -219,7 +228,10 @@ export async function DELETE(request: Request) {
     const scuolaId = al.scuola_id as string
     const config = await loadMensaConfig(supabase, scuolaId)
 
-    if (!entroCutoff(data, config.cutoffOra)) {
+    // Lo staff (STAFF_FORZA) può disdire anche fuori orario / su date passate:
+    // rettifica con riaccredito del ticket, simmetrica al POST (dove lo staff può
+    // prenotare date passate). Il genitore resta vincolato al cutoff.
+    if (!isStaff && !entroCutoff(data, config.cutoffOra)) {
       return NextResponse.json({ error: 'Oltre l\'orario limite: disdetta non più possibile' }, { status: 400 })
     }
 

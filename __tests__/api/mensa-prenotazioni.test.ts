@@ -1,0 +1,224 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+
+// T4 — la Segreteria può FORZARE prenotazione/disdetta dei pasti fuori orario
+// (telefonate out-of-hours), con saldo che può andare in negativo. Qui si prova
+// l'intera catena ticket a livello di route: saldo (ticket_mensa) ↔ prenotazione
+// (mensa_prenotazioni) ↔ movimento di ledger (mensa_ticket_movimenti).
+
+const ALUNNO = 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1'
+const GENITORE = 'b2b2b2b2-b2b2-b2b2-b2b2-b2b2b2b2b2b2'
+const SEGRETERIA = 'c3c3c3c3-c3c3-c3c3-c3c3-c3c3c3c3c3c3'
+
+const h = vi.hoisted(() => ({
+  requireUser: vi.fn(),
+  entroCutoff: vi.fn(),
+  genitoreHasFiglio: vi.fn(),
+  alunno: null as Record<string, unknown> | null,
+  saldo: 5,
+  existingPren: null as Record<string, unknown> | null,
+  prenotazioniList: [] as Record<string, unknown>[],
+  menu: { attivo: true, chiuso: false } as Record<string, unknown>,
+  // catture delle scritture per verificare la catena
+  saldoWrites: [] as number[],
+  prenUpserts: [] as Record<string, unknown>[],
+  prenUpdates: [] as Record<string, unknown>[],
+  ledger: [] as Record<string, unknown>[],
+}))
+
+vi.mock('@/lib/auth/require-staff', () => ({ requireUser: h.requireUser }))
+vi.mock('@/lib/mensa/server', () => ({
+  loadMensaConfig: async () => ({ cutoffOra: '09:30', giorniAttivi: [1, 2, 3, 4, 5], settimaneRotazione: 4, sogliaSaldoBasso: 5 }),
+  loadResolveOptions: async () => ({}),
+  resolveMenuConfigId: async () => null,
+  entroCutoff: h.entroCutoff,
+}))
+vi.mock('@/lib/mensa/resolveMenu', () => ({ resolveMenuGiorno: () => h.menu }))
+vi.mock('@/lib/mensa/notify', () => ({ notificaSaldoBasso: async () => {} }))
+vi.mock('@/lib/mensa/allergie-check', () => ({ controllaAllergie: async () => {} }))
+vi.mock('@/lib/anagrafiche/legami', () => ({ genitoreHasFiglio: h.genitoreHasFiglio }))
+vi.mock('@/lib/supabase/server-client', () => ({
+  createAdminClient: async () => ({
+    from: (table: string) => {
+      const b: Record<string, unknown> = {}
+      const chain = () => b
+      b.select = chain; b.eq = chain; b.gte = chain; b.lte = chain
+      // .order() è terminale nel route (GET: lista prenotazioni del range)
+      b.order = async () => ({ data: h.prenotazioniList, error: null })
+      b.maybeSingle = async () => {
+        if (table === 'ticket_mensa') return { data: { saldo_ticket: h.saldo }, error: null }
+        if (table === 'alunni') return { data: h.alunno, error: null }
+        if (table === 'mensa_prenotazioni') return { data: h.existingPren, error: null }
+        return { data: null, error: null }
+      }
+      b.upsert = (row: Record<string, unknown>) => {
+        if (table === 'ticket_mensa') { h.saldoWrites.push(Number(row.saldo_ticket)); return Promise.resolve({ error: null }) }
+        if (table === 'mensa_prenotazioni') {
+          h.prenUpserts.push(row)
+          return { select: () => ({ single: async () => ({ data: { id: 'pr-1' }, error: null }) }) }
+        }
+        return Promise.resolve({ error: null })
+      }
+      b.insert = async (row: Record<string, unknown>) => {
+        if (table === 'mensa_ticket_movimenti') h.ledger.push(row)
+        return { error: null }
+      }
+      b.update = (row: Record<string, unknown>) => {
+        if (table === 'mensa_prenotazioni') h.prenUpdates.push(row)
+        return { eq: async () => ({ error: null }) }
+      }
+      return b
+    },
+  }),
+}))
+
+import { GET, POST, DELETE } from '@/app/api/mensa/prenotazioni/route'
+
+const getReq = (qs: string) => new Request(`http://localhost/api/mensa/prenotazioni?${qs}`)
+const postReq = (body: unknown) =>
+  new Request('http://localhost/api/mensa/prenotazioni', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+  })
+const delReq = (qs: string) => new Request(`http://localhost/api/mensa/prenotazioni?${qs}`, { method: 'DELETE' })
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  h.saldo = 5
+  h.existingPren = null
+  h.prenotazioniList = []
+  h.menu = { attivo: true, chiuso: false }
+  h.alunno = { id: ALUNNO, scuola_id: 'sc-1', nome: 'Mia', cognome: 'Rossi', classe_sezione: '1A', section_id: null, allergies: null, allergeni: null }
+  h.saldoWrites = []; h.prenUpserts = []; h.prenUpdates = []; h.ledger = []
+  h.requireUser.mockResolvedValue({ user: { id: GENITORE, role: 'genitore' } })
+  h.entroCutoff.mockReturnValue(true)
+  h.genitoreHasFiglio.mockResolvedValue(true)
+})
+
+describe('POST /api/mensa/prenotazioni', () => {
+  it('genitore prenota con saldo 5 → 201: scala a 4, prenotazione+ledger coerenti', async () => {
+    h.saldo = 5
+    const res = await POST(postReq({ alunno_id: ALUNNO, date: '2026-07-20' }))
+    expect(res.status).toBe(201)
+    const j = await res.json()
+    expect(j.data.esiti[0]).toEqual({ data: '2026-07-20', ok: true })
+    expect(j.data.saldo).toBe(4)
+    // saldo sceso di 1
+    expect(h.saldoWrites).toEqual([4])
+    // prenotazione: stato/origine/ticket
+    expect(h.prenUpserts[0].stato).toBe('prenotato')
+    expect(h.prenUpserts[0].origine).toBe('genitore')
+    expect(h.prenUpserts[0].ticket_scalato).toBe(1)
+    // ledger: consumo -1 con saldo_dopo 4
+    expect(h.ledger[0]).toMatchObject({ tipo: 'consumo', delta: -1, saldo_dopo: 4, origine: 'genitore' })
+  })
+
+  it('genitore con saldo 0 → esito bloccato "Saldo ticket esaurito", nessuna scrittura', async () => {
+    h.saldo = 0
+    const res = await POST(postReq({ alunno_id: ALUNNO, date: '2026-07-20' }))
+    expect(res.status).toBe(201)
+    const j = await res.json()
+    expect(j.data.esiti[0].ok).toBe(false)
+    expect(j.data.esiti[0].motivo).toBe('Saldo ticket esaurito')
+    expect(j.data.saldo).toBe(0)
+    expect(h.saldoWrites).toHaveLength(0)
+    expect(h.prenUpserts).toHaveLength(0)
+    expect(h.ledger).toHaveLength(0)
+  })
+
+  it('genitore oltre cutoff → esito bloccato "Oltre l\'orario limite (cutoff)", nessuna scrittura', async () => {
+    h.entroCutoff.mockReturnValue(false)
+    const res = await POST(postReq({ alunno_id: ALUNNO, date: '2026-07-20' }))
+    expect(res.status).toBe(201)
+    const j = await res.json()
+    expect(j.data.esiti[0].ok).toBe(false)
+    expect(j.data.esiti[0].motivo).toBe("Oltre l'orario limite (cutoff)")
+    expect(h.saldoWrites).toHaveLength(0)
+    expect(h.prenUpserts).toHaveLength(0)
+    expect(h.ledger).toHaveLength(0)
+  })
+
+  it('genitore NON legato all\'alunno → 403', async () => {
+    h.genitoreHasFiglio.mockResolvedValue(false)
+    const res = await POST(postReq({ alunno_id: ALUNNO, date: '2026-07-20' }))
+    expect(res.status).toBe(403)
+  })
+
+  it('SEGRETERIA oltre cutoff con saldo 0 → 201: forza (saldo va a −1), origine=segreteria, nessun errore trapelato', async () => {
+    // Caso chiave: prima della modifica la Segreteria è esclusa da isStaff → 403/blocco.
+    h.requireUser.mockResolvedValue({ user: { id: SEGRETERIA, role: 'segreteria' } })
+    h.entroCutoff.mockReturnValue(false) // oltre l'orario limite
+    h.genitoreHasFiglio.mockResolvedValue(false) // la Segreteria NON è genitore dell'alunno
+    h.saldo = 0
+    const res = await POST(postReq({ alunno_id: ALUNNO, date: '2026-07-20' }))
+    expect(res.status).toBe(201)
+    const j = await res.json()
+    // nessun errore di cutoff/saldo trapelato: tutti gli esiti ok
+    expect(j.data.esiti.every((e: { ok: boolean }) => e.ok)).toBe(true)
+    expect(j.data.esiti[0].motivo).toBeUndefined()
+    // saldo può andare negativo
+    expect(j.data.saldo).toBe(-1)
+    expect(h.saldoWrites).toEqual([-1])
+    expect(h.prenUpserts[0].origine).toBe('segreteria')
+    expect(h.prenUpserts[0].stato).toBe('prenotato')
+    expect(h.prenUpserts[0].ticket_scalato).toBe(1)
+    expect(h.ledger[0]).toMatchObject({ tipo: 'consumo', delta: -1, saldo_dopo: -1, origine: 'segreteria' })
+  })
+})
+
+describe('DELETE /api/mensa/prenotazioni', () => {
+  it('genitore entro cutoff → 200: riaccredita (+1), stato disdetto, ledger disdetta', async () => {
+    h.existingPren = { id: 'pr-1', stato: 'prenotato', ticket_scalato: 1 }
+    h.saldo = 4
+    const res = await DELETE(delReq(`alunno_id=${ALUNNO}&data=2026-07-20`))
+    expect(res.status).toBe(200)
+    const j = await res.json()
+    expect(j.data.saldo).toBe(5)
+    expect(h.saldoWrites).toEqual([5])
+    expect(h.prenUpdates[0].stato).toBe('disdetto')
+    expect(h.ledger[0]).toMatchObject({ tipo: 'disdetta', delta: 1, saldo_dopo: 5, origine: 'disdetta' })
+  })
+
+  it('genitore oltre cutoff → 400, nessun riaccredito', async () => {
+    h.entroCutoff.mockReturnValue(false)
+    h.existingPren = { id: 'pr-1', stato: 'prenotato', ticket_scalato: 1 }
+    const res = await DELETE(delReq(`alunno_id=${ALUNNO}&data=2026-07-20`))
+    expect(res.status).toBe(400)
+    const j = await res.json()
+    expect(j.error).toBe('Oltre l\'orario limite: disdetta non più possibile')
+    expect(h.saldoWrites).toHaveLength(0)
+    expect(h.prenUpdates).toHaveLength(0)
+    expect(h.ledger).toHaveLength(0)
+  })
+
+  it('SEGRETERIA oltre cutoff → 200: rettifica con riaccredito (bypass cutoff, simmetrico al POST)', async () => {
+    h.requireUser.mockResolvedValue({ user: { id: SEGRETERIA, role: 'segreteria' } })
+    h.entroCutoff.mockReturnValue(false) // oltre l'orario limite
+    h.genitoreHasFiglio.mockResolvedValue(false)
+    h.existingPren = { id: 'pr-1', stato: 'prenotato', ticket_scalato: 1 }
+    h.saldo = -1
+    const res = await DELETE(delReq(`alunno_id=${ALUNNO}&data=2026-07-20`))
+    expect(res.status).toBe(200)
+    const j = await res.json()
+    expect(j.data.saldo).toBe(0)
+    expect(h.saldoWrites).toEqual([0])
+    expect(h.prenUpdates[0].stato).toBe('disdetto')
+    expect(h.ledger[0]).toMatchObject({ tipo: 'disdetta', delta: 1, saldo_dopo: 0, origine: 'disdetta' })
+  })
+})
+
+describe('GET /api/mensa/prenotazioni', () => {
+  it('SEGRETERIA senza legame genitore → 200 con saldo (anche negativo) e prenotazioni', async () => {
+    // Con isStaff senza segreteria la GET rispondeva 403 → saldo non mostrato in
+    // PrenotazioneSegreteria. La modifica ripristina la lettura.
+    h.requireUser.mockResolvedValue({ user: { id: SEGRETERIA, role: 'segreteria' } })
+    h.genitoreHasFiglio.mockResolvedValue(false)
+    h.saldo = -2
+    h.prenotazioniList = [{ data: '2026-07-20', stato: 'prenotato', origine: 'segreteria' }]
+    const res = await GET(getReq(`alunno_id=${ALUNNO}&from=2026-07-20&to=2026-07-20`))
+    expect(res.status).toBe(200)
+    const j = await res.json()
+    expect(j.success).toBe(true)
+    expect(j.data.saldo).toBe(-2)
+    expect(j.data.prenotazioni).toHaveLength(1)
+    expect(j.data.prenotazioni[0].origine).toBe('segreteria')
+  })
+})

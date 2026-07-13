@@ -67,10 +67,11 @@ beforeEach(() => {
   ]
   h.inserted = null
   h.updated = null
-  // PATCH: media esistente dell'educatore (uploaded_by === userId → autorizzato),
-  // e l'utente è admin per by-passare la logica di intersezione classi.
+  // PATCH: l'identità è quella del gate ('ed1') e il media è suo → autorizzato
+  // dal ramo educator-proprietario (uploaded_by === identità del gate). Il
+  // body `userId` è tollerato per retro-compatibilità ma ignorato.
   h.media = { id: 'm1', uploaded_by: 'ed1', tag_students: ['a'], is_broadcast: false, scuola_id: 'sc-1' }
-  h.utente = { ruolo: 'admin', scuola_id: 'sc-1' }
+  h.utente = { ruolo: 'educator', scuola_id: 'sc-1' }
 })
 
 describe('POST /api/gallery — Privacy Lock', () => {
@@ -96,7 +97,9 @@ describe('POST /api/gallery — Privacy Lock', () => {
     expect(h.inserted).toMatchObject({ tag_students: ['a'] })
   })
 
-  it('broadcast istituzionale bypassa il consenso → 201', async () => {
+  it('broadcast istituzionale (Direzione) bypassa il consenso → 201', async () => {
+    // Il broadcast è riservato alla Direzione: qui il gate risolve un admin.
+    h.requireDocente.mockResolvedValue({ user: { id: 'ad1', role: 'admin', scuola_id: 'sc-1' } })
     const res = await POST(postReq({ file_url: 'u', tag_students: ['a', 'b'], is_broadcast: true }))
     expect(res.status).toBe(201)
   })
@@ -120,6 +123,20 @@ describe('PATCH /api/gallery — Privacy Lock su modifica tag', () => {
     const j = await res.json()
     expect(j.error).toBe(MSG_GRUPPO)
     expect(j.nomi).toContain('Bea Verdi')
+    expect(j.ids).toContain('b')
+    expect(h.updated).toBeNull()
+  })
+
+  it('422 togliendo il broadcast se i tag EFFETTIVI (dal DB, body senza tag_students) sono un gruppo non conforme', async () => {
+    // Solo la Direzione può cambiare il broadcast: gate admin. I tag effettivi
+    // vengono letti dal media esistente, non dal body.
+    h.requireDocente.mockResolvedValue({ user: { id: 'ed1', role: 'admin', scuola_id: 'sc-1' } })
+    h.utente = { ruolo: 'admin', scuola_id: 'sc-1' }
+    h.media = { id: 'm1', uploaded_by: 'ed1', tag_students: ['a', 'b'], is_broadcast: true, scuola_id: 'sc-1' }
+    const res = await PATCH(patchReq({ id: MEDIA_ID, userId: USER_ID, is_broadcast: false }))
+    expect(res.status).toBe(422)
+    const j = await res.json()
+    expect(j.error).toBe(MSG_GRUPPO)
     expect(j.ids).toContain('b')
     expect(h.updated).toBeNull()
   })

@@ -345,9 +345,10 @@ function ParentDiaryContent() {
             setCheckIn(ci?.orario_entrata ?? null);
 
             // Carica foto reali associate a questo alunno per il giorno selezionato
+            // (GET gated: identità anche via header, oltre alla sessione)
             let photosUrl = `/api/gallery?studentId=${alunnoId}&date=${dk}`;
             if (parentId) photosUrl += `&parentId=${parentId}`;
-            const photosRes = await fetch(photosUrl).catch(() => null);
+            const photosRes = await fetch(photosUrl, parentId ? { headers: { 'x-user-id': parentId } } : undefined).catch(() => null);
             if (photosRes?.ok) {
                 const photosData = await photosRes.json();
                 setPhotos(photosData.media ?? []);

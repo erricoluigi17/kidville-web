@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createClient, createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
+import { requireParentOfStudent } from '@/lib/auth/require-parent';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { alunniSenzaConsenso } from '@/lib/gallery/privacy';
@@ -43,7 +44,9 @@ const deleteQuerySchema = z.object({
 
 const patchBodySchema = z.object({
     id: zUuid,
-    userId: zUuid,
+    // Retro-compatibilità: i client storici lo mandano ancora, ma l'identità
+    // viene SOLO dal gate (il valore del body è ignorato, anti-spoof).
+    userId: zUuid.optional(),
     tag_students: z.array(z.string()).nullish(),
     is_broadcast: z.boolean().nullish(),
     target_classes: z.array(z.string()).nullish(),
@@ -61,6 +64,24 @@ export async function GET(request: Request) {
         const { studentId, classe, date } = q.data;
         const limit = Math.min(Math.max(parseInt(q.data.limit ?? '30') || 30, 1), 100);
         const offset = Math.max(parseInt(q.data.offset ?? '0') || 0, 0);
+
+        // Gate identità: mai più lettura anonima. Con studentId il gate verifica
+        // anche il legame genitore↔alunno (401 anonimo / 403 figlio altrui;
+        // staff/docente passa); senza studentId (lista/classe) la lettura è
+        // riservata a staff/docente.
+        const auth = studentId
+            ? await requireParentOfStudent(request, studentId)
+            : await requireDocente(request);
+        if (auth.response) return auth.response;
+
+        // Genitore: il parentId storico in query deve coincidere con l'identità
+        // reale del gate (anti-IDOR sul parametro; il legame è già verificato).
+        if (auth.user.role === 'genitore' && q.data.parentId && q.data.parentId !== auth.user.id) {
+            return NextResponse.json(
+                { error: 'Non sei autorizzato a visualizzare i media di questo studente' },
+                { status: 403 }
+            );
+        }
 
         const supabase = await createAdminClient();
 
@@ -171,6 +192,16 @@ export async function POST(request: Request) {
 
         // L'uploader è l'utente del gate (no spoofing del campo uploaded_by).
         const uploaded_by = auth.user.id;
+
+        // Broadcast = comunicazione istituzionale: riservata alla Direzione
+        // (admin/coordinatore). La UI lo nasconde già agli educatori; qui lo
+        // impone anche il server.
+        if (is_broadcast === true && !['admin', 'coordinator'].includes(auth.user.role)) {
+            return NextResponse.json(
+                { error: 'Solo la Direzione (admin o coordinatore) può pubblicare in broadcast.' },
+                { status: 403 }
+            );
+        }
 
         const supabase = await createAdminClient();
 
@@ -387,12 +418,20 @@ export async function DELETE(request: Request) {
 }
 
 // PATCH /api/gallery
-// Body: { id, userId, tag_students, is_broadcast, target_classes, caption }
+// Body: { id, tag_students, is_broadcast, target_classes, caption }
+// (il campo `userId` nel body è tollerato per retro-compatibilità ma ignorato)
 export async function PATCH(request: Request) {
     try {
+        const auth = await requireDocente(request);
+        if (auth.response) return auth.response;
+
         const b = await parseBody(request, patchBodySchema);
         if ('response' in b) return b.response;
-        const { id, userId, tag_students, is_broadcast, target_classes, caption } = b.data;
+        const { id, tag_students, is_broadcast, target_classes, caption } = b.data;
+
+        // Identità dal gate (sessione o header), MAI dal body: un userId
+        // arbitrario nel body non può più impersonare un altro utente.
+        const userId = auth.user.id;
 
         const supabase = await createAdminClient();
 
@@ -486,6 +525,19 @@ export async function PATCH(request: Request) {
         if (!authorized) {
             return NextResponse.json(
                 { error: 'Non sei autorizzato a modificare questo media' },
+                { status: 403 }
+            );
+        }
+
+        // Broadcast è operazione di Direzione (admin/coordinatore): un
+        // non-direzione non può né impostare/mantenere broadcast=true né
+        // cambiare il flag su un media esistente.
+        const isDirezione = ['admin', 'coordinator'].includes(auth.user.role);
+        const broadcastEffettivo = (is_broadcast !== undefined ? is_broadcast : media.is_broadcast) === true;
+        const cambiaBroadcast = is_broadcast !== undefined && (is_broadcast === true) !== (media.is_broadcast === true);
+        if (!isDirezione && (broadcastEffettivo || cambiaBroadcast)) {
+            return NextResponse.json(
+                { error: 'Solo la Direzione (admin o coordinatore) può gestire i media in broadcast.' },
                 { status: 403 }
             );
         }

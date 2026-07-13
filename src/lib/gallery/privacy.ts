@@ -1,8 +1,9 @@
 // P4/DL-041 — Privacy Lock (Galleria): regola "foto privata".
 // Un bambino può essere taggato DA SOLO in una foto anche SENZA liberatoria:
-// una foto con un unico tag è visibile esclusivamente ai genitori di quel
-// bambino (single tag = visibilità parents-only), quindi non c'è esposizione
-// verso terzi e il consenso non serve. Le foto di GRUPPO (≥2 taggati)
+// una foto con un unico tag è mostrata solo ai genitori di quel bambino
+// (single tag = visibilità parents-only); l'esposizione è limitata dai filtri
+// applicativi esistenti (gate + visibilità) — il bucket storage resta pubblico:
+// hardening con signed-URL in un follow-up. Le foto di GRUPPO (≥2 taggati)
 // richiedono invece la liberatoria foto (consenso_privacy === true) per OGNI
 // bambino taggato. Le foto broadcast (comunicazioni istituzionali) bypassano
 // il tagging e quindi il consenso.

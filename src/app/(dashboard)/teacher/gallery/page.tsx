@@ -48,10 +48,13 @@ function TeacherGalleryContent() {
     const [availableSections, setAvailableSections] = useState<string[]>([]);
 
     const loadMedia = useCallback(async () => {
-        if (!sezione) return;
+        // La GET galleria è gated: serve l'identità (sessione o header).
+        if (!sezione || !teacherId) return;
         try {
             // Seleziona media per la sezione del docente
-            const res = await fetch(`/api/gallery?classe=${sezione}`).catch(() => null);
+            const res = await fetch(`/api/gallery?classe=${sezione}`, {
+                headers: { 'x-user-id': teacherId },
+            }).catch(() => null);
             if (res?.ok) {
                 const data = await res.json().catch(() => null);
                 setMedia(data?.media ?? []);
@@ -59,7 +62,7 @@ function TeacherGalleryContent() {
         } finally {
             setLoading(false);
         }
-    }, [sezione]);
+    }, [sezione, teacherId]);
 
     const loadStudents = useCallback(async () => {
         if (!sezione) return;

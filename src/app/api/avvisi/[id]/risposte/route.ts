@@ -5,6 +5,8 @@ import { requireDocente } from '@/lib/auth/require-staff';
 import { notificaEvento } from '@/lib/notifiche/triggers';
 import { parseBody, parseData } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore, logEvento } from '@/lib/logging/logger';
 
 interface RouteParams {
     params: Promise<{ id: string }>;
@@ -18,7 +20,7 @@ const postBodySchema = z.object({
 
 // GET /api/avvisi/[id]/risposte
 // Lista risposte per un avviso specifico (dashboard monitoraggio = staff). Gatato.
-export async function GET(request: Request, { params }: RouteParams) {
+export const GET = withRoute('avvisi/[id]/risposte:GET', async (request: Request, { params }: RouteParams) => {
     try {
         const auth = await requireDocente(request);
         if (auth.response) return auth.response;
@@ -42,7 +44,7 @@ export async function GET(request: Request, { params }: RouteParams) {
             .eq('avviso_id', avvisoId);
 
         if (error) {
-            console.error('Errore GET risposte:', error);
+            logErrore({ operazione: 'avvisi/[id]/risposte:GET', stato: 500, evento: 'db' }, error);
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
 
@@ -71,15 +73,15 @@ export async function GET(request: Request, { params }: RouteParams) {
 
         return NextResponse.json(enriched);
     } catch (error) {
-        console.error('Errore API GET risposte:', error);
+        logErrore({ operazione: 'avvisi/[id]/risposte:GET', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
     }
-}
+});
 
 // POST /api/avvisi/[id]/risposte
 // Body: { parent_id, student_id, risposta? }
 // Registra presa visione o adesione
-export async function POST(request: Request, { params }: RouteParams) {
+export const POST = withRoute('avvisi/[id]/risposte:POST', async (request: Request, { params }: RouteParams) => {
     try {
         const rawParams = await params;
         const pId = parseData(zUuid, rawParams.id);
@@ -127,7 +129,7 @@ export async function POST(request: Request, { params }: RouteParams) {
             .single();
 
         if (error) {
-            console.error('Errore POST risposte:', error);
+            logErrore({ operazione: 'avvisi/[id]/risposte:POST', stato: 500, evento: 'db' }, error);
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
 
@@ -166,12 +168,19 @@ export async function POST(request: Request, { params }: RouteParams) {
                 }
             }
         } catch (e) {
-            console.error('Notifica risposta avviso fallita (non bloccante):', e);
+            // `error` benché la risposta del genitore sia registrata: l'autore dell'avviso non
+            // saprà mai che è arrivata una presa visione o un'adesione. La riga di risposta c'è,
+            // il suo annuncio no — ed è proprio il conteggio delle adesioni che chi ha pubblicato
+            // l'avviso sta aspettando.
+            logEvento('notifica', 'error', {
+                operazione: 'avvisi/[id]/risposte:POST',
+                esito: 'notifica-autore-non-accodata',
+            }, e);
         }
 
         return NextResponse.json(data);
     } catch (error) {
-        console.error('Errore API POST risposte:', error);
+        logErrore({ operazione: 'avvisi/[id]/risposte:POST', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
     }
-}
+});

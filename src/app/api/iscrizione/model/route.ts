@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { parseQuery } from '@/lib/validation/http';
+import { withRoute } from '@/lib/logging/with-route';
+import { logEvento } from '@/lib/logging/logger';
 import {
   ensureStandardEnrollmentModel,
   ENROLLMENT_DEFAULT_SCHEMA,
@@ -14,7 +16,7 @@ import {
 // stato creato, lo crea (idempotente) e ritorna il set base.
 const getQuerySchema = z.object({}); // nessun parametro in ingresso
 
-export async function GET(request: Request) {
+export const GET = withRoute('iscrizione/model:GET', async (request: Request) => {
   const q = parseQuery(request, getQuerySchema);
   if ('response' in q) return q.response;
   try {
@@ -26,7 +28,11 @@ export async function GET(request: Request) {
       .eq('id', STANDARD_ENROLLMENT_MODEL_ID)
       .maybeSingle();
     return NextResponse.json({ schema: data?.schema ?? ENROLLMENT_DEFAULT_SCHEMA });
-  } catch {
+  } catch (err) {
+    // Errore DAVVERO ignorabile (AGENTS regola 6): il wizard riceve comunque uno
+    // schema valido — quello di default — e la risposta resta 200. Non è un guasto,
+    // ma nemmeno silenzio: `info` perché il degrado va visto, non subìto.
+    logEvento('forms', 'info', { operazione: 'iscrizione/model:GET', esito: 'fallback_schema_default' }, err);
     return NextResponse.json({ schema: ENROLLMENT_DEFAULT_SCHEMA });
   }
-}
+});

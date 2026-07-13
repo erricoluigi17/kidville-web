@@ -6,6 +6,8 @@ import { consensiMancanti, CONSENSI_RICHIESTI } from '@/lib/onboarding/consensi'
 import { notificaEvento, nomeUtente } from '@/lib/notifiche/triggers'
 import { staffScuola, scuolaUnicaReale } from '@/lib/notifiche/destinatari'
 import { parseBody } from '@/lib/validation/http'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const postBodySchema = z.object({
@@ -24,7 +26,7 @@ const postBodySchema = z.object({
 // accettazione consensi GDPR obbligatori + (opzionale) impostazione password
 // Supabase Auth. Marca `parents.onboarded_at`. Prerequisito ingegneristico di
 // S13 (sigillo identità): dà al genitore una sessione reale.
-export async function POST(request: Request) {
+export const POST = withRoute('parent/onboarding:POST', async (request: Request) => {
   const auth = await requireUser(request)
   if (auth.response) return auth.response
 
@@ -74,12 +76,16 @@ export async function POST(request: Request) {
         bufferMin: 60,
       })
     } catch (e) {
-      console.error('Notifica onboarding fallita (non bloccante):', e)
+      logEvento('notifica', 'error', {
+        operazione: 'parent/onboarding:POST',
+        tipo: 'onboarding_completato',
+        esito: 'notifica_non_inviata',
+      }, e)
     }
 
     return NextResponse.json({ success: true, onboarded: true })
   } catch (err) {
-    console.error('Errore POST /api/parent/onboarding:', err)
+    logErrore({ operazione: 'parent/onboarding:POST', stato: 500 }, err)
     return NextResponse.json({ error: 'Errore interno' }, { status: 500 })
   }
-}
+})

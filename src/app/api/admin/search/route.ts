@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { scuoleDiUtente } from '@/lib/auth/scope'
 import { parseQuery } from '@/lib/validation/http'
+import { withRoute } from '@/lib/logging/with-route'
 
 /**
  * GET /api/admin/search?q=  — ricerca globale del cockpit (M7.1).
@@ -56,7 +57,7 @@ function sanitizeTerm(q: string): string {
   return q.replace(/[%_,()]/g, ' ').replace(/\s+/g, ' ').trim()
 }
 
-export async function GET(request: Request) {
+export const GET = withRoute('admin/search:GET', async (request: Request) => {
   const auth = await requireStaff(request)
   if (auth.response) return auth.response
 
@@ -132,4 +133,4 @@ export async function GET(request: Request) {
   }
 
   return NextResponse.json({ success: true, data })
-}
+})

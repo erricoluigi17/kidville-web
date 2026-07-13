@@ -3,6 +3,8 @@ import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireParentOfStudent } from '@/lib/auth/require-parent'
 import { parseQuery } from '@/lib/validation/http'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // studentId lasco (niente zUuid): un valore non-GUID oggi degrada a 404 dalla
@@ -14,7 +16,7 @@ const getQuerySchema = z.object({
 // GET /api/parent/primaria/orario?studentId=&userId=
 // Orario settimanale (campanelle + griglia) della sezione del figlio, in SOLA
 // LETTURA per la famiglia. Ricalca la lettura docente (/api/primaria/orario).
-export async function GET(request: NextRequest) {
+export const GET = withRoute('parent/primaria/orario:GET', async (request: NextRequest) => {
   try {
     const q = parseQuery(request, getQuerySchema)
     if ('response' in q) return q.response
@@ -44,7 +46,8 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ success: true, data: { campanelle: campanelle ?? [], orario: orario ?? [] } })
   } catch (err) {
+    logErrore({ operazione: 'parent/primaria/orario:GET', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

@@ -5,6 +5,8 @@ import { getRequestUserId } from '@/lib/auth/require-staff'
 import { areaForRole } from '@/lib/auth/active-role'
 import type { Profilo } from '@/lib/auth/profili'
 import { parseQuery } from '@/lib/validation/http'
+import { withRoute } from '@/lib/logging/with-route'
+import { logEvento } from '@/lib/logging/logger'
 
 // GET /api/me — profilo dell'utente corrente (gated, service-role server-side).
 // Sostituisce le letture anon dirette di `utenti` (gallery docente, modulistica
@@ -25,7 +27,7 @@ const SECRETS = ['password_segreta', 'password', 'auth_user_id']
 
 const getQuerySchema = z.object({}) // nessun parametro in ingresso
 
-export async function GET(request: Request) {
+export const GET = withRoute('me:GET', async (request: Request) => {
   // 1) Sessione reale (stessa semantica di resolveIdentity: header ignorato se
   //    esiste una sessione). try/catch: cookies() lancia fuori da un contesto
   //    di richiesta o nei unit test senza mock.
@@ -34,7 +36,15 @@ export async function GET(request: Request) {
     const sessionClient = await createClient()
     const { data } = await sessionClient.auth.getUser()
     authUid = data?.user?.id ?? null
-  } catch {
+  } catch (err) {
+    // Errore IGNORABILE, e per questo si logga a `info` invece di tacere (AGENTS regola 6:
+    // un catch che non logga è un bug; se un errore è davvero ignorabile, lo si logga
+    // spiegando perché). Qui `cookies()` lancia solo fuori da un contesto di richiesta —
+    // negli unit test senza mock — e il ramo giusto è proprio "nessuna sessione": si prosegue
+    // con l'identità dall'header. Se un giorno questa riga comparisse in PRODUZIONE, però,
+    // vorrebbe dire che la lettura della sessione è rotta per tutti, e senza il log
+    // l'unico sintomo sarebbe un'app che rimanda al login senza motivo apparente.
+    logEvento('auth', 'info', { operazione: 'me:GET', esito: 'sessione-non-leggibile' }, err)
     authUid = null
   }
 
@@ -70,7 +80,12 @@ export async function GET(request: Request) {
     if (!headerId) {
       return NextResponse.json({ error: 'Non autenticato: userId mancante' }, { status: 401 })
     }
-    console.warn('[auth][header-fallback] identità da header/query (nessuna sessione) path=/api/me')
+    // `warn`, quindi in tabella: è il percorso legacy in cui l'identità arriva da un HEADER
+    // invece che da una sessione firmata. Non è un guasto — la route funziona e risponde 200 —
+    // ma è l'unico modo per CONTARE quanto ancora si usa e per accorgersi se comparisse in
+    // produzione, dove sarebbe un problema di sicurezza, non una nota a piè di pagina.
+    // Il path non serve come campo: `operazione` lo dice già, ed è la chiave con cui si cerca.
+    logEvento('auth', 'warn', { operazione: 'me:GET', esito: 'header-fallback' })
 
     const { data: staff } = await supabase.from('utenti').select('*').eq('id', headerId).maybeSingle()
     data = staff as Record<string, unknown> | null
@@ -99,4 +114,4 @@ export async function GET(request: Request) {
   }
 
   return NextResponse.json({ ...safe, role, profili })
-}
+})

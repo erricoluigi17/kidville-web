@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { sealDangerous } from '@/lib/security/seal';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { parseQuery } from '@/lib/validation/http';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore } from '@/lib/logging/logger';
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({}); // nessun parametro in ingresso
@@ -12,7 +14,7 @@ const getQuerySchema = z.object({}); // nessun parametro in ingresso
  * Endpoint temporaneo per creare le tabelle del registro primaria nel DB Supabase.
  * Da eseguire UNA SOLA VOLTA. Idempotente (usa IF NOT EXISTS).
  */
-export async function GET(request: Request) {
+export const GET = withRoute('admin/setup-registro:GET', async (request: Request) => {
     const sealed = await sealDangerous(request);
     if (sealed) return sealed;
     const q = parseQuery(request, getQuerySchema);
@@ -151,7 +153,7 @@ export async function GET(request: Request) {
         });
 
     } catch (error) {
-        console.error('Errore setup registro:', error);
+        logErrore({ operazione: 'admin/setup-registro:GET', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error', details: String(error) }, { status: 500 });
     }
-}
+});

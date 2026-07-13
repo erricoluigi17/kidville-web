@@ -7,6 +7,8 @@ import { logScrittura } from '@/lib/audit/scrittura'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { sincronizzaTestata } from '@/lib/merch/stati'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // POST /api/admin/merch/cambio-taglia — cambia la taglia di una riga: crea una
 // NUOVA riga (nuova taglia, stessa quantità, prezzo 0 = nessun addebito
@@ -23,7 +25,7 @@ const bodySchema = z.object({
   reso_a_stock: z.boolean().optional(),
 })
 
-export async function POST(request: Request) {
+export const POST = withRoute('admin/merch/cambio-taglia:POST', async (request: Request) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -123,7 +125,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ success: true, data: { nuova_riga_id: ins.data.id, reso: resoApplicato, annullata_originale: !consegnato } }, { status: 201 })
   } catch (err) {
-    console.error('Errore API POST merch/cambio-taglia:', err)
+    logErrore({ operazione: 'admin/merch/cambio-taglia:POST', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

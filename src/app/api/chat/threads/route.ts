@@ -4,6 +4,8 @@ import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireUser } from '@/lib/auth/require-staff';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore } from '@/lib/logging/logger';
 
 // Gap auth chiuso in M9: `?userId=` legacy accettato dallo schema ma IGNORATO,
 // l'identità è quella del gate (pattern M4 "parent_id legacy strippato").
@@ -19,7 +21,7 @@ const postBodySchema = z.object({
 
 // GET /api/chat/threads
 // Lista thread per l'utente autenticato (insegnante o genitore)
-export async function GET(request: Request) {
+export const GET = withRoute('chat/threads:GET', async (request: Request) => {
     const auth = await requireUser(request);
     if (auth.response) return auth.response;
 
@@ -38,7 +40,7 @@ export async function GET(request: Request) {
             .order('last_message_at', { ascending: false });
 
         if (error) {
-            console.error('Errore GET chat_threads:', error);
+            logErrore({ operazione: 'chat/threads:GET', stato: 500, evento: 'db' }, error);
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
 
@@ -94,14 +96,14 @@ export async function GET(request: Request) {
 
         return NextResponse.json(enrichedThreads);
     } catch (error) {
-        console.error('Errore API GET threads:', error);
+        logErrore({ operazione: 'chat/threads:GET', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
     }
-}
+});
 
 // POST /api/chat/threads
 // Body: { teacher_id, parent_id, student_id }
-export async function POST(request: Request) {
+export const POST = withRoute('chat/threads:POST', async (request: Request) => {
     const auth = await requireUser(request);
     if (auth.response) return auth.response;
 
@@ -142,13 +144,13 @@ export async function POST(request: Request) {
             .single();
 
         if (error) {
-            console.error('Errore POST chat_threads:', error);
+            logErrore({ operazione: 'chat/threads:POST', stato: 500, evento: 'db' }, error);
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
 
         return NextResponse.json(data, { status: 201 });
     } catch (error) {
-        console.error('Errore API POST threads:', error);
+        logErrore({ operazione: 'chat/threads:POST', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
     }
-}
+});

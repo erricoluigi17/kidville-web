@@ -3,12 +3,14 @@ import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { parseData } from '@/lib/validation/http';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore } from '@/lib/logging/logger';
 
 const postFormSchema = z.object({
     file: z.instanceof(File, { error: 'Nessun file fornito' }),
 });
 
-export async function POST(request: Request) {
+export const POST = withRoute('avvisi/upload:POST', async (request: Request) => {
     try {
         const auth = await requireDocente(request);
         if (auth.response) return auth.response;
@@ -32,7 +34,7 @@ export async function POST(request: Request) {
             });
 
         if (error) {
-            console.error('Errore caricamento storage:', error);
+            logErrore({ operazione: 'avvisi/upload:POST', stato: 500, evento: 'storage' }, error);
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
 
@@ -43,7 +45,7 @@ export async function POST(request: Request) {
 
         return NextResponse.json({ fileUrl: publicUrlData.publicUrl });
     } catch (error) {
-        console.error('Errore API upload:', error);
+        logErrore({ operazione: 'avvisi/upload:POST', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
     }
-}
+});

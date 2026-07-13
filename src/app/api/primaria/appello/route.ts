@@ -8,6 +8,8 @@ import { notificaTitolariScrittura } from '@/lib/primaria/notifiche'
 import { notificaEvento } from '@/lib/notifiche/triggers'
 import { parseBody, parseData, parseQuery } from '@/lib/validation/http'
 import { zDataYMD, zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 const STATI = ['presente', 'assente', 'ritardo', 'uscita_anticipata'] as const
 
@@ -35,7 +37,7 @@ const recordsSchema = z.array(recordSchema)
 
 // GET /api/primaria/appello?sectionId=&data=&userId=
 // Alunni della classe + stato presenza del giorno.
-export async function GET(request: NextRequest) {
+export const GET = withRoute('primaria/appello:GET', async (request: NextRequest) => {
   try {
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
@@ -74,15 +76,16 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ success: true, data: data_ })
   } catch (err) {
+    logErrore({ operazione: 'primaria/appello:GET', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})
 
 // POST /api/primaria/appello?userId=
 //   singolo: { sectionId, alunnoId, data, stato, noteAppello? }
 //   bulk:    { sectionId, data, records: [{ alunnoId, stato, noteAppello? }] }
-export async function POST(request: NextRequest) {
+export const POST = withRoute('primaria/appello:POST', async (request: NextRequest) => {
   try {
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
@@ -201,12 +204,19 @@ export async function POST(request: NextRequest) {
         }
       }
     } catch (e) {
-      console.error('Notifica assenza appello fallita (non bloccante):', e)
+      // L'appello è salvato, ma l'avviso di assenza non comunicata non partirà:
+      // il genitore non saprà che il figlio risulta assente. Scrittura persa.
+      logEvento('notifica', 'error', {
+        operazione: 'primaria/appello:POST',
+        tipo: 'assenza_non_comunicata',
+        esito: 'notifica_non_inviata',
+      }, e)
     }
 
     return NextResponse.json({ success: true, data: saved ?? [] })
   } catch (err) {
+    logErrore({ operazione: 'primaria/appello:POST', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

@@ -6,6 +6,8 @@ import { requireUser } from '@/lib/auth/require-staff'
 import { periodoValido } from '@/lib/certificati/stato'
 import { parseData, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 const BUCKET = 'certificati-medici'
 
@@ -24,7 +26,7 @@ const getQuerySchema = z.object({}) // nessun parametro in ingresso
 
 // POST /api/parent/medical-certificates — caricamento self-service (DL-027).
 // multipart: file, student_id, data_inizio, data_fine, note. → stato 'in_validazione'.
-export async function POST(request: Request) {
+export const POST = withRoute('parent/medical-certificates:POST', async (request: Request) => {
   try {
     const auth = await requireUser(request)
     if (auth.response) return auth.response
@@ -81,14 +83,14 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ success: true, data }, { status: 201 })
   } catch (err) {
-    console.error('Errore POST medical-certificates:', err)
+    logErrore({ operazione: 'parent/medical-certificates:POST', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})
 
 // GET /api/parent/medical-certificates — elenco certificati dei propri figli.
 // Non espone il file_path grezzo (dato sanitario); solo il nome file + stato.
-export async function GET(request: Request) {
+export const GET = withRoute('parent/medical-certificates:GET', async (request: Request) => {
   try {
     const auth = await requireUser(request)
     if (auth.response) return auth.response
@@ -119,7 +121,7 @@ export async function GET(request: Request) {
     }))
     return NextResponse.json({ success: true, data: out })
   } catch (err) {
-    console.error('Errore GET medical-certificates:', err)
+    logErrore({ operazione: 'parent/medical-certificates:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

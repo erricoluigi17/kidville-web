@@ -9,6 +9,8 @@ import { sidiTransmit } from '@/lib/sidi/client'
 import { loadSyncState, persistFaseStato } from '@/lib/sidi/sync-store'
 import { puoInviarePiattaformaUnica } from '@/lib/sidi/sequenza'
 import { resolveScuolaScrittura } from '@/lib/auth/scope'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const postQuerySchema = z.object({}) // nessun parametro in ingresso (il body non viene letto; userId è consumato dal gate)
@@ -19,48 +21,49 @@ const one = <T>(v: T | T[] | null): T | null => (Array.isArray(v) ? v[0] ?? null
 
 // POST /api/admin/sidi/piattaforma-unica?userId=  — Flusso associazioni Genitori-Alunni.
 // Solo legami VALIDATI dalla Segreteria. Sequenza: dopo frequentanti `inviato`. GATED.
-export async function POST(request: NextRequest) {
-  const auth = await requireStaff(request, ['admin', 'coordinator'])
-  if (auth.response) return auth.response
-  const q = parseQuery(request, postQuerySchema)
-  if ('response' in q) return q.response
-  try {
-    const supabase = await createAdminClient()
-    const sw = await resolveScuolaScrittura(request, supabase, auth.user)
-    if (sw.response || !sw.scuolaId) return sw.response ?? NextResponse.json({ error: 'Specificare la sede (scuola_id) per questa operazione' }, { status: 400 })
-    const scuolaId = sw.scuolaId
+export const POST = withRoute('admin/sidi/piattaforma-unica:POST', async (request: NextRequest) => {
+    const auth = await requireStaff(request, ['admin', 'coordinator'])
+    if (auth.response) return auth.response
+    const q = parseQuery(request, postQuerySchema)
+    if ('response' in q) return q.response
+    try {
+      const supabase = await createAdminClient()
+      const sw = await resolveScuolaScrittura(request, supabase, auth.user)
+      if (sw.response || !sw.scuolaId) return sw.response ?? NextResponse.json({ error: 'Specificare la sede (scuola_id) per questa operazione' }, { status: 400 })
+      const scuolaId = sw.scuolaId
 
-    const state = await loadSyncState(supabase, scuolaId)
-    if (!puoInviarePiattaformaUnica(state.frequentanti_stato)) {
-      return NextResponse.json(
-        { error: 'Flusso frequentanti non ancora inviato: le associazioni vanno trasmesse dopo i frequentanti', stato: state.frequentanti_stato },
-        { status: 409 }
-      )
+      const state = await loadSyncState(supabase, scuolaId)
+      if (!puoInviarePiattaformaUnica(state.frequentanti_stato)) {
+        return NextResponse.json(
+          { error: 'Flusso frequentanti non ancora inviato: le associazioni vanno trasmesse dopo i frequentanti', stato: state.frequentanti_stato },
+          { status: 409 }
+        )
+      }
+
+      const { data: rows } = await supabase
+        .from('student_parents')
+        .select('relation_type, validato_sidi, student:alunni(codice_fiscale), parent:parents(fiscal_code)')
+        .eq('validato_sidi', true)
+      const { data: settings } = await supabase.from('admin_settings').select('sidi_config').eq('scuola_id', scuolaId).maybeSingle()
+
+      const legami = ((rows ?? []) as { relation_type: string; student: NestedCf; parent: NestedPf }[]).map((r) => ({
+        student_cf: one(r.student)?.codice_fiscale ?? null,
+        parent_cf: one(r.parent)?.fiscal_code ?? null,
+        relation_type: r.relation_type,
+        validato: true,
+      }))
+      const flusso = buildGenitoriAlunni({ legami })
+      const xml = serializeGenitoriAlunni(flusso)
+
+      const result = await sidiTransmit((settings?.sidi_config as Record<string, unknown>) ?? {}, 'piattaforma_unica', xml)
+      const stato = result.ok ? 'inviato' : 'errore'
+      await persistFaseStato(supabase, scuolaId, 'piattaforma_unica', stato, result)
+
+      if (!result.ok) return NextResponse.json({ ...result, stato }, { status: result.httpStatus })
+      return NextResponse.json({ success: true, stato, associazioni: flusso.associazioni.length })
+    } catch (err) {
+      logErrore({ operazione: 'admin/sidi/piattaforma-unica:POST', stato: 500 }, err)
+      const msg = err instanceof Error ? err.message : 'Errore interno'
+      return NextResponse.json({ error: msg }, { status: 500 })
     }
-
-    const { data: rows } = await supabase
-      .from('student_parents')
-      .select('relation_type, validato_sidi, student:alunni(codice_fiscale), parent:parents(fiscal_code)')
-      .eq('validato_sidi', true)
-    const { data: settings } = await supabase.from('admin_settings').select('sidi_config').eq('scuola_id', scuolaId).maybeSingle()
-
-    const legami = ((rows ?? []) as { relation_type: string; student: NestedCf; parent: NestedPf }[]).map((r) => ({
-      student_cf: one(r.student)?.codice_fiscale ?? null,
-      parent_cf: one(r.parent)?.fiscal_code ?? null,
-      relation_type: r.relation_type,
-      validato: true,
-    }))
-    const flusso = buildGenitoriAlunni({ legami })
-    const xml = serializeGenitoriAlunni(flusso)
-
-    const result = await sidiTransmit((settings?.sidi_config as Record<string, unknown>) ?? {}, 'piattaforma_unica', xml)
-    const stato = result.ok ? 'inviato' : 'errore'
-    await persistFaseStato(supabase, scuolaId, 'piattaforma_unica', stato, result)
-
-    if (!result.ok) return NextResponse.json({ ...result, stato }, { status: result.httpStatus })
-    return NextResponse.json({ success: true, stato, associazioni: flusso.associazioni.length })
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Errore interno'
-    return NextResponse.json({ error: msg }, { status: 500 })
-  }
-}
+})

@@ -5,6 +5,8 @@ import { resolveIdentity } from '@/lib/auth/require-staff'
 import { puoAccedereFascicolo } from '@/lib/primaria/fascicolo-rbac'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({
@@ -14,7 +16,7 @@ const getQuerySchema = z.object({
 // GET /api/primaria/fascicolo/pagelle?alunnoId=&userId=
 // Elenco pagelle pubblicate per un alunno, raggruppate per anno scolastico.
 // Richiede accesso al fascicolo (docente contitolare o dirigenza).
-export async function GET(request: NextRequest) {
+export const GET = withRoute('primaria/fascicolo/pagelle:GET', async (request: NextRequest) => {
   try {
     const { userId } = await resolveIdentity(request)
     if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
@@ -70,7 +72,8 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ success: true, data })
   } catch (err) {
+    logErrore({ operazione: 'primaria/fascicolo/pagelle:GET', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

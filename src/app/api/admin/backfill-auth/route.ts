@@ -5,6 +5,8 @@ import { sealDangerous } from '@/lib/security/seal';
 import { requireEnv } from '@/lib/security/require-env';
 import { backfillParentsAuth } from '@/lib/auth/backfill';
 import { parseQuery } from '@/lib/validation/http';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore } from '@/lib/logging/logger';
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const postQuerySchema = z.object({
@@ -31,7 +33,7 @@ const postQuerySchema = z.object({
  * Lo staff NON necessita backfill (`utenti.id` è già FK → `auth.users`); per
  * impostare/azzerare una password staff usare "Rigenera credenziali" (S11).
  */
-export async function POST(request: Request) {
+export const POST = withRoute('admin/backfill-auth:POST', async (request: Request) => {
   const sealed = await sealDangerous(request);
   if (sealed) return sealed;
 
@@ -51,9 +53,10 @@ export async function POST(request: Request) {
     const report = await backfillParentsAuth(admin as never, { dryRun });
     return NextResponse.json(report);
   } catch (e) {
+    logErrore({ operazione: 'admin/backfill-auth:POST', stato: 500 }, e);
     return NextResponse.json(
       { error: e instanceof Error ? e.message : String(e) },
       { status: 500 }
     );
   }
-}
+});

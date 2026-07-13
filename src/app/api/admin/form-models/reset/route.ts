@@ -4,6 +4,8 @@ import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireStaff } from '@/lib/auth/require-staff';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody } from '@/lib/validation/http';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore } from '@/lib/logging/logger';
 import {
   ensureStandardEnrollmentModel,
   ENROLLMENT_DEFAULT_SCHEMA,
@@ -15,7 +17,7 @@ import {
 // standard; gate staff + audit.
 const bodySchema = z.object({ id: z.string().min(1) });
 
-export async function POST(request: Request) {
+export const POST = withRoute('admin/form-models/reset:POST', async (request: Request) => {
   const auth = await requireStaff(request);
   if (auth.response) return auth.response;
   const b = await parseBody(request, bodySchema);
@@ -51,9 +53,10 @@ export async function POST(request: Request) {
     });
     return NextResponse.json({ success: true });
   } catch (err) {
+    logErrore({ operazione: 'admin/form-models/reset:POST', stato: 500 }, err);
     return NextResponse.json(
       { error: err instanceof Error ? err.message : 'Errore interno' },
       { status: 500 },
     );
   }
-}
+});

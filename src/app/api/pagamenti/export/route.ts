@@ -10,6 +10,8 @@ import { logScrittura } from '@/lib/audit/scrittura'
 import { oggiFiscaleISO } from '@/lib/format/fiscal-date'
 import { calcolaAttestazione, type VoceAttestazione } from '@/lib/pagamenti/attestazione'
 import { resolveParentRegistry, type ParentRegistry } from '@/lib/pagamenti/intestatari'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input ─────────────────────────────────────────────
 const zUuidQueryOpzionale = z.preprocess((v) => (v === '' ? undefined : v), zUuid.optional())
@@ -45,7 +47,7 @@ interface RigaPagamento {
 }
 
 // GET /api/pagamenti/export?tipo=scadenzario — XLSX per la segreteria/commercialista
-export async function GET(request: NextRequest) {
+export const GET = withRoute('pagamenti/export:GET', async (request: NextRequest) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -87,7 +89,7 @@ export async function GET(request: NextRequest) {
 
     const { data, error } = await query
     if (error) {
-      console.error('Errore export pagamenti:', error)
+      logErrore({ operazione: 'pagamenti/export:GET', stato: 500, evento: 'db' }, error)
       return NextResponse.json({ error: 'Errore nel recupero dei pagamenti' }, { status: 500 })
     }
 
@@ -125,10 +127,10 @@ export async function GET(request: NextRequest) {
       },
     })
   } catch (err) {
-    console.error('Errore API export pagamenti:', err)
+    logErrore({ operazione: 'pagamenti/export:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})
 
 interface AlunnoAde {
   id: string
@@ -164,7 +166,8 @@ async function exportAde(
     .select('*')
     .in('scuola_id', sediAttive)
   if (errAlunni) {
-    console.error('Errore export AdE (alunni):', errAlunni)
+    // `exportAde` è un ramo della stessa route: `operazione` resta quella di `withRoute`.
+    logErrore({ operazione: 'pagamenti/export:GET', stato: 500, evento: 'db' }, errAlunni)
     return NextResponse.json({ error: 'Errore nel recupero degli alunni' }, { status: 500 })
   }
 
@@ -175,7 +178,7 @@ async function exportAde(
     .lte('data_incasso', `${anno}-12-31`)
     .in('pagamenti.scuola_id', sediAttive)
   if (errIncassi) {
-    console.error('Errore export AdE (incassi):', errIncassi)
+    logErrore({ operazione: 'pagamenti/export:GET', stato: 500, evento: 'db' }, errIncassi)
     return NextResponse.json({ error: 'Errore nel recupero degli incassi' }, { status: 500 })
   }
 

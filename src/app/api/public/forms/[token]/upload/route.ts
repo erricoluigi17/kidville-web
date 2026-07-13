@@ -3,6 +3,8 @@ import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { rateLimit, clientIp } from '@/lib/security/rate-limit'
 import { parseData } from '@/lib/validation/http'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // Upload allegato ANONIMO per un modello pubblicato (DL-030). Token-scoped, service-role.
 
@@ -22,10 +24,10 @@ const ALLOWED_MIME = new Set([
   'application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'image/heic',
 ])
 
-export async function POST(
+export const POST = withRoute('public/forms/[token]/upload:POST', async (
   request: Request,
   { params }: { params: Promise<{ token: string }> }
-) {
+) => {
   const rl = rateLimit(`public-upload:${clientIp(request)}`, { limit: 30, windowMs: 10 * 60 * 1000 })
   if (!rl.ok) {
     return NextResponse.json(
@@ -88,9 +90,10 @@ export async function POST(
     }
     return NextResponse.json({ path })
   } catch (err) {
+    logErrore({ operazione: 'public/forms/[token]/upload:POST', stato: 500 }, err)
     return NextResponse.json(
       { error: err instanceof Error ? err.message : 'Errore interno' },
       { status: 500 }
     )
   }
-}
+})

@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireUser } from '@/lib/auth/require-staff';
 import { parseQuery } from '@/lib/validation/http';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore } from '@/lib/logging/logger';
 
 // ─── Schemi di validazione input (M3/M4) ─────────────────────────────────────
 // L'identità viene dal gate (requireUser: sessione, o header legacy finché
@@ -10,7 +12,7 @@ import { parseQuery } from '@/lib/validation/http';
 // nessun fallback demo (M4).
 const getQuerySchema = z.object({});
 
-export async function GET(request: NextRequest) {
+export const GET = withRoute('parent/forms:GET', async (request: NextRequest) => {
   try {
     const auth = await requireUser(request);
     if (auth.response) return auth.response;
@@ -110,8 +112,8 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(result);
   } catch (err) {
-    console.error('Errore GET /api/parent/forms:', err);
+    logErrore({ operazione: 'parent/forms:GET', stato: 500 }, err);
     const message = err instanceof Error && err.message ? err.message : 'Errore interno';
     return NextResponse.json({ error: message }, { status: 500 });
   }
-}
+})

@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { parseQuery } from '@/lib/validation/http';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore } from '@/lib/logging/logger';
 
 export interface MonthlyAttendanceRecord {
     student_id: string;
@@ -34,7 +36,7 @@ const getQuerySchema = z.object({
     sezione: z.string().default(''),
 });
 
-export async function GET(request: NextRequest) {
+export const GET = withRoute('attendance/monthly:GET', async (request: NextRequest) => {
     try {
         const auth = await requireDocente(request);
         if (auth.response) return auth.response;
@@ -60,7 +62,9 @@ export async function GET(request: NextRequest) {
             .eq('classe_sezione', sezione);
 
         if (alunniError) {
-            console.error('[/api/attendance/monthly] Errore alunni:', JSON.stringify(alunniError));
+            // L'oggetto errore si PASSA, non si riassume: `JSON.stringify` su un Error nativo
+            // restituisce `{}` — è il bug che questo modulo esiste per togliere di mezzo.
+            logErrore({ operazione: 'attendance/monthly:GET', stato: 500, evento: 'db' }, alunniError);
             return NextResponse.json(
                 { error: 'Errore recupero alunni.', details: alunniError.message },
                 { status: 500 }
@@ -85,7 +89,7 @@ export async function GET(request: NextRequest) {
             .order('data', { ascending: true });
 
         if (presenzeError) {
-            console.error('[/api/attendance/monthly] Errore presenze:', JSON.stringify(presenzeError));
+            logErrore({ operazione: 'attendance/monthly:GET', stato: 500, evento: 'db' }, presenzeError);
             return NextResponse.json(
                 { error: 'Errore recupero presenze.', details: presenzeError.message },
                 { status: 500 }
@@ -113,7 +117,7 @@ export async function GET(request: NextRequest) {
         });
 
     } catch (err) {
-        console.error('[/api/attendance/monthly] Unexpected:', err);
+        logErrore({ operazione: 'attendance/monthly:GET', stato: 500 }, err);
         return NextResponse.json({ error: 'Errore interno del server.' }, { status: 500 });
     }
-}
+});

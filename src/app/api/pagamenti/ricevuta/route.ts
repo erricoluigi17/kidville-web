@@ -7,6 +7,8 @@ import { zUuid } from '@/lib/validation/common'
 import { emettiORecuperaRicevuta, type PagamentoPerRicevuta } from '@/lib/pagamenti/ricevute'
 import { buildRicevutaPdf } from '@/lib/pagamenti/pdf'
 import { datiStruttura, isTracciabile } from '@/lib/pagamenti/fiscale'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 const getQuerySchema = z.object({
   pagamento_id: zUuid,
@@ -22,7 +24,7 @@ const periodoIt = (p?: string | null) =>
 // la detrazione) e dati struttura (utile per il Bonus Nido INPS). Dove il
 // registro non esiste (DB e2e CI) degrada al PDF di cortesia senza numero.
 // Accesso: staff oppure genitore del bambino. Solo pagamenti SALDATI.
-export async function GET(request: Request) {
+export const GET = withRoute('pagamenti/ricevuta:GET', async (request: Request) => {
   try {
     const auth = await requireUser(request)
     if (auth.response) return auth.response
@@ -93,7 +95,7 @@ export async function GET(request: Request) {
       },
     })
   } catch (err) {
-    console.error('Errore API GET ricevuta:', err)
+    logErrore({ operazione: 'pagamenti/ricevuta:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

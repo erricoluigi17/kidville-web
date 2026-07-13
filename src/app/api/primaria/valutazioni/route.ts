@@ -11,6 +11,8 @@ import { obiettiviDisponibili } from '@/lib/primaria/obiettivi'
 import { enqueueNotifichePerAlunni, notificaTitolariScrittura } from '@/lib/primaria/notifiche'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zDataYMD, zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // Queste valutazioni includono l'annotazione numerica privata del docente: l'endpoint
 // è RISERVATO al personale docente/segreteria. Il genitore (role 'genitore') è escluso
@@ -61,7 +63,7 @@ const postBodySchema = z
   })
 
 // GET /api/primaria/valutazioni?alunnoId=&materiaId=&userId=
-export async function GET(request: NextRequest) {
+export const GET = withRoute('primaria/valutazioni:GET', async (request: NextRequest) => {
   try {
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
@@ -92,16 +94,17 @@ export async function GET(request: NextRequest) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json({ success: true, data: data ?? [] })
   } catch (err) {
+    logErrore({ operazione: 'primaria/valutazioni:GET', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})
 
 // POST /api/primaria/valutazioni?userId=
 // body: { alunnoId, sectionId, materiaId, tipoProva, modalita,
 //         dims:{autonomia,continuita,tipologia,risorse}, giudizioSintetico,
 //         giudizioTesto?, obiettiviIds[], data? }
-export async function POST(request: NextRequest) {
+export const POST = withRoute('primaria/valutazioni:POST', async (request: NextRequest) => {
   try {
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
@@ -223,7 +226,15 @@ export async function POST(request: NextRequest) {
     if (obiettiviCollegati.length > 0) {
       const link = obiettiviCollegati.map((oid) => ({ valutazione_id: val.id, obiettivo_id: oid }))
       const { error: linkErr } = await supabase.from('valutazione_obiettivi').insert(link)
-      if (linkErr) console.error('valutazione_obiettivi insert:', linkErr.message)
+      // La valutazione è salvata, ma il collegamento agli obiettivi (DL-015) è perduto:
+      // righe che nessuno riscriverà. `error`, anche se la risposta è 200.
+      if (linkErr) {
+        logEvento('db', 'error', {
+          operazione: 'primaria/valutazioni:POST',
+          esito: 'valutazione_obiettivi_non_collegati',
+          n: link.length,
+        }, linkErr)
+      }
     }
 
     await logScrittura(supabase, {
@@ -258,7 +269,8 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true, data: val }, { status: 201 })
   } catch (err) {
+    logErrore({ operazione: 'primaria/valutazioni:POST', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

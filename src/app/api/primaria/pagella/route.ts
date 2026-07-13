@@ -6,6 +6,8 @@ import { assertAlunnoInScope, assertAlunniInSezione } from '@/lib/auth/scope'
 import { generaPagella } from '@/lib/primaria/pagella-store'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 const getQuerySchema = z.object({
   scrutinioId: zUuid,
@@ -16,7 +18,7 @@ const getQuerySchema = z.object({
 
 // GET /api/primaria/pagella?scrutinioId=&alunnoId=&userId=[&persist=1]
 // Genera (e opzionalmente archivia) il PDF della pagella e lo restituisce.
-export async function GET(request: NextRequest) {
+export const GET = withRoute('primaria/pagella:GET', async (request: NextRequest) => {
   try {
     const { userId } = await resolveIdentity(request)
     if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
@@ -65,7 +67,8 @@ export async function GET(request: NextRequest) {
       },
     })
   } catch (err) {
+    logErrore({ operazione: 'primaria/pagella:GET', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

@@ -8,6 +8,8 @@ import { sendEmailDetailed, credentialsEmailBody } from '@/lib/email/send'
 import { notificaEvento } from '@/lib/notifiche/triggers'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 import { z } from 'zod'
 import type { EnrollmentSubmissionData, EnrollmentAdult, EnrollmentChild } from '@/types/database.types'
 
@@ -26,7 +28,7 @@ const patchBodySchema = z.object({
 })
 
 // GET: lista invii, oppure ?doc=<path> per ottenere una signed URL del documento.
-export async function GET(request: NextRequest) {
+export const GET = withRoute('admin/iscrizioni:GET', async (request: NextRequest) => {
   const auth = await requireStaff(request)
   if (auth.response) return auth.response
   try {
@@ -51,14 +53,15 @@ export async function GET(request: NextRequest) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json(data)
   } catch (err) {
+    logErrore({ operazione: 'admin/iscrizioni:GET', stato: 500 }, err)
     return NextResponse.json({ error: err instanceof Error ? err.message : 'Errore interno' }, { status: 500 })
   }
-}
+})
 
 // PATCH: rifiuto o import nelle anagrafiche.
 // Body import: { id, action:'import', assignments: { [childIndex]: classe }, referenteIndex }
 // Body reject: { id, action:'reject' }
-export async function PATCH(request: NextRequest) {
+export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextRequest) => {
   const auth = await requireStaff(request)
   if (auth.response) return auth.response
   try {
@@ -105,7 +108,14 @@ export async function PATCH(request: NextRequest) {
           })
         }
       } catch (e) {
-        console.error('Notifica esito iscrizione fallita (non bloccante):', e)
+        // `error`, non `warn`, benché la richiesta risponda 200: la notifica non è stata
+        // accodata, quindi il genitore non saprà MAI che la domanda è stata rifiutata.
+        // È una scrittura persa in silenzio, e va contata.
+        logEvento('notifica', 'error', {
+          operazione: 'admin/iscrizioni:PATCH',
+          esito: 'notifica-rifiuto-non-inviata',
+          tipo: 'iscrizione_esito',
+        }, e)
       }
 
       return NextResponse.json(data)
@@ -404,7 +414,13 @@ export async function PATCH(request: NextRequest) {
         })
       }
     } catch (e) {
-      console.error('Notifica esito iscrizione fallita (non bloccante):', e)
+      // Come sopra: l'import è andato a buon fine (200), ma il referente non riceverà
+      // l'avviso di accoglimento. Notifica mai inviata = dato perduto → `error`.
+      logEvento('notifica', 'error', {
+        operazione: 'admin/iscrizioni:PATCH',
+        esito: 'notifica-accoglimento-non-inviata',
+        tipo: 'iscrizione_esito',
+      }, e)
     }
 
     return NextResponse.json({
@@ -416,7 +432,7 @@ export async function PATCH(request: NextRequest) {
       warnings,
     })
   } catch (err) {
-    console.error('Errore PATCH /api/admin/iscrizioni:', err)
+    logErrore({ operazione: 'admin/iscrizioni:PATCH', stato: 500 }, err)
     return NextResponse.json({ error: err instanceof Error ? err.message : 'Errore interno' }, { status: 500 })
   }
-}
+})

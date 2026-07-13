@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { parseQuery } from '@/lib/validation/http';
 import { zUuid, zDataYMD } from '@/lib/validation/common';
+import { withRoute } from '@/lib/logging/with-route';
 
 const getQuerySchema = z.object({
     alunno_id: zUuid,
@@ -14,7 +15,7 @@ const getQuerySchema = z.object({
 // "Entrata" del Diario 0-6 (DL-040): orario di check-in letto dal modulo Presenze
 // (read-only, niente evento eventi_diario duplicato). Service-role + lettura
 // scoped per alunno/data. (Scoping di proprietà → S13, come il resto del Diario.)
-export async function GET(request: NextRequest) {
+export const GET = withRoute('diary/checkin:GET', async (request: NextRequest) => {
     const q = parseQuery(request, getQuerySchema);
     if ('response' in q) return q.response;
     const alunnoId = q.data.alunno_id;
@@ -36,4 +37,4 @@ export async function GET(request: NextRequest) {
         orario_entrata: presente ? (data?.orario_entrata ?? null) : null,
         stato: data?.stato ?? null,
     });
-}
+});

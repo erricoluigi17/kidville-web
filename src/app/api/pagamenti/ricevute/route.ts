@@ -4,6 +4,8 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { parseQuery } from '@/lib/validation/http'
 import { resolveScuoleAttive } from '@/lib/auth/scope'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 const getQuerySchema = z.object({
   anno: z.coerce.number().int().min(2000).max(2100).optional(),
@@ -14,7 +16,7 @@ const SCHEMA_MANCANTE = new Set(['42P01', '42703', 'PGRST204', 'PGRST205'])
 
 // GET /api/pagamenti/ricevute?anno=&userId= — registro ricevute emesse (staff).
 // Include le annullate (numero bruciato + motivo): il registro resta coerente.
-export async function GET(request: NextRequest) {
+export const GET = withRoute('pagamenti/ricevute:GET', async (request: NextRequest) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -40,12 +42,12 @@ export async function GET(request: NextRequest) {
       if (SCHEMA_MANCANTE.has(error.code ?? '')) {
         return NextResponse.json({ success: true, data: [], disponibile: false })
       }
-      console.error('Errore registro ricevute:', error)
+      logErrore({ operazione: 'pagamenti/ricevute:GET', stato: 500, evento: 'db' }, error)
       return NextResponse.json({ error: 'Errore nel recupero del registro ricevute' }, { status: 500 })
     }
     return NextResponse.json({ success: true, data: data || [] })
   } catch (err) {
-    console.error('Errore API GET ricevute:', err)
+    logErrore({ operazione: 'pagamenti/ricevute:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

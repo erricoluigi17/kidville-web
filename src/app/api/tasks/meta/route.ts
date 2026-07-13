@@ -4,13 +4,15 @@ import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { scuoleDiUtente } from '@/lib/auth/scope';
 import { parseQuery } from '@/lib/validation/http';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore, logEvento } from '@/lib/logging/logger';
 
 export const dynamic = 'force-dynamic';
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({}); // nessun parametro in ingresso
 
-export async function GET(request: Request) {
+export const GET = withRoute('tasks/meta:GET', async (request: Request) => {
     try {
         const auth = await requireDocente(request);
         if (auth.response) return auth.response;
@@ -40,7 +42,14 @@ export async function GET(request: Request) {
                 return { id: u.id, first_name: first, last_name: last, role: roleStr };
             });
         } else if (utentiErr) {
-            console.error('Errore recupero staff da utenti:', utentiErr);
+            // `error` benché la risposta sia 200: la route degrada a `staff: []`, cioè il
+            // selettore degli assegnatari si apre VUOTO e sembra una scuola senza personale.
+            // Un elenco vuoto per un guasto è indistinguibile da un elenco vuoto per davvero:
+            // questa riga è l'unica cosa che li separa.
+            logEvento('db', 'error', {
+                operazione: 'tasks/meta:GET',
+                esito: 'staff-non-letto',
+            }, utentiErr);
         }
 
         // Recupera tutti gli alunni attivi
@@ -55,7 +64,13 @@ export async function GET(request: Request) {
         if (!studErr && studentsData) {
             students = studentsData;
         } else {
-            console.error('Errore recupero alunni metadata:', studErr);
+            // Come sopra: senza alunni il selettore resta vuoto e la 200 mente. `studErr ??
+            // undefined` perché questo ramo scatta anche con `studentsData` nullo e NESSUN errore:
+            // passare `null` al logger produrrebbe un messaggio «null», che non descrive niente.
+            logEvento('db', 'error', {
+                operazione: 'tasks/meta:GET',
+                esito: 'alunni-non-letti',
+            }, studErr ?? undefined);
         }
 
         // Recupera tutte le sezioni
@@ -78,7 +93,7 @@ export async function GET(request: Request) {
 
         return NextResponse.json({ staff, students, classes });
     } catch (error) {
-        console.error('Errore API GET /api/tasks/meta:', error);
+        logErrore({ operazione: 'tasks/meta:GET', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
     }
-}
+});

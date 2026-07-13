@@ -5,6 +5,8 @@ import { rateLimit, clientIp } from '@/lib/security/rate-limit'
 import { notificaEvento } from '@/lib/notifiche/triggers'
 import { staffScuola } from '@/lib/notifiche/destinatari'
 import { parseBody } from '@/lib/validation/http'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 import type { EnrollmentSubmissionData } from '@/types/database.types'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
@@ -31,7 +33,7 @@ const postBodySchema = z.object({
 })
 
 // POST: il genitore invia l'iscrizione dal form pubblico (service-role).
-export async function POST(request: NextRequest) {
+export const POST = withRoute('iscrizione:POST', async (request: NextRequest) => {
   try {
     // Rotta pubblica → rate-limit anti-abuso (5 invii / 10 min per IP).
     const rl = rateLimit(`iscrizione:${clientIp(request)}`, { limit: 5, windowMs: 10 * 60 * 1000 })
@@ -98,12 +100,19 @@ export async function POST(request: NextRequest) {
         bufferMin: 0,
       })
     } catch (e) {
-      console.error('Notifica iscrizione ricevuta fallita (non bloccante):', e)
+      // `error` benché la domanda sia registrata (201): la segreteria non viene avvisata, e una
+      // pre-iscrizione che nessuno sa di aver ricevuto è una famiglia che resta senza risposta.
+      // La riga c'è, il suo annuncio è perso: scrittura persa, non dettaglio saltato.
+      logEvento('notifica', 'error', {
+        operazione: 'iscrizione:POST',
+        esito: 'notifica-segreteria-non-accodata',
+      }, e)
     }
 
     return NextResponse.json({ id: row.id }, { status: 201 })
   } catch (err) {
+    logErrore({ operazione: 'iscrizione:POST', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg || 'Errore interno' }, { status: 500 })
   }
-}
+})

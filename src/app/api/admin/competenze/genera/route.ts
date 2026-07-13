@@ -4,6 +4,8 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { generaCertificato } from '@/lib/competenze/certificato-store'
 import { parseBody } from '@/lib/validation/http'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // Id permissivi (niente zUuid: nei test/dati seed circolano id non-UUID).
@@ -18,7 +20,7 @@ const postBodySchema = z.object({
 // Genera e FIRMA (FEA applicativa dirigente) il Certificato delle Competenze.
 // Riservato alla DIRIGENZA (esclusa la Segreteria), come la chiusura/pubblicazione
 // scrutinio. body: { certificatoId } (singolo) | { sectionId } (intera classe quinta).
-export async function POST(request: NextRequest) {
+export const POST = withRoute('admin/competenze/genera:POST', async (request: NextRequest) => {
   try {
     const auth = await requireStaff(request, ['admin', 'coordinator'])
     if (auth.response) return auth.response
@@ -52,7 +54,8 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ error: 'certificatoId o sectionId obbligatorio' }, { status: 400 })
   } catch (err) {
+    logErrore({ operazione: 'admin/competenze/genera:POST', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

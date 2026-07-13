@@ -6,6 +6,8 @@ import { requireParentOfStudent } from '@/lib/auth/require-parent';
 import { scuoleDiUtente } from '@/lib/auth/scope';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore } from '@/lib/logging/logger';
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 /** '' nei query param equivale ad assente (i check truthy pre-esistenti restano invariati). */
@@ -38,7 +40,7 @@ function tabellaMancante(error: { code?: string; message?: string } | null): boo
 //   ?classe_sezione=<s> → richieste per tutta la sezione (insegnante)
 //   ?stato=pending      → filtra per stato (opzionale)
 // ============================================================
-export async function GET(request: NextRequest) {
+export const GET = withRoute('locker/requests:GET', async (request: NextRequest) => {
     try {
         const q = parseQuery(request, getQuerySchema);
         if ('response' in q) return q.response;
@@ -114,16 +116,16 @@ export async function GET(request: NextRequest) {
             { status: 400 }
         );
     } catch (err) {
-        console.error('Errore GET /api/locker/requests:', err);
+        logErrore({ operazione: 'locker/requests:GET', stato: 500 }, err);
         return NextResponse.json({ error: 'Errore interno del server' }, { status: 500 });
     }
-}
+});
 
 // ============================================================
 // PATCH /api/locker/requests — Genitore "Preso in carico"
 // Body: { id, stato: 'acknowledged' | 'fulfilled' }
 // ============================================================
-export async function PATCH(request: NextRequest) {
+export const PATCH = withRoute('locker/requests:PATCH', async (request: NextRequest) => {
     try {
         const b = await parseBody(request, patchBodySchema);
         if ('response' in b) return b.response;
@@ -149,7 +151,7 @@ export async function PATCH(request: NextRequest) {
         }
         return NextResponse.json(data);
     } catch (err) {
-        console.error('Errore PATCH /api/locker/requests:', err);
+        logErrore({ operazione: 'locker/requests:PATCH', stato: 500 }, err);
         return NextResponse.json({ error: 'Errore interno del server' }, { status: 500 });
     }
-}
+});

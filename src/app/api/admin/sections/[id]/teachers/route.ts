@@ -6,6 +6,8 @@ import { logScrittura } from '@/lib/audit/scrittura';
 import { docentiDiSezione } from '@/lib/sezioni/docenti';
 import { parseBody, parseData } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore } from '@/lib/logging/logger';
 
 // ============================================================
 // Insegnanti di riferimento di una sezione — gate Direzione.
@@ -26,7 +28,7 @@ async function resolveSectionId(context: { params: Promise<{ id: string }> }) {
   return parseData(zUuid, rawId);
 }
 
-export async function GET(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+export const GET = withRoute('admin/sections/[id]/teachers:GET', async (request: NextRequest, context: { params: Promise<{ id: string }> }) => {
   const auth = await requireStaff(request, [...DIREZIONE]);
   if (auth.response) return auth.response;
   const idP = await resolveSectionId(context);
@@ -63,12 +65,12 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
 
     return NextResponse.json({ success: true, assigned, available });
   } catch (err) {
-    console.error('Errore GET /api/admin/sections/[id]/teachers:', err);
+    logErrore({ operazione: 'admin/sections/[id]/teachers:GET', stato: 500 }, err);
     return NextResponse.json({ error: 'Errore interno del server' }, { status: 500 });
   }
-}
+});
 
-export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+export const POST = withRoute('admin/sections/[id]/teachers:POST', async (request: NextRequest, context: { params: Promise<{ id: string }> }) => {
   const auth = await requireStaff(request, [...DIREZIONE]);
   if (auth.response) return auth.response;
   const idP = await resolveSectionId(context);
@@ -95,12 +97,12 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     });
     return NextResponse.json({ success: true });
   } catch (err) {
-    console.error('Errore POST /api/admin/sections/[id]/teachers:', err);
+    logErrore({ operazione: 'admin/sections/[id]/teachers:POST', stato: 500 }, err);
     return NextResponse.json({ error: 'Errore interno del server' }, { status: 500 });
   }
-}
+});
 
-export async function DELETE(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+export const DELETE = withRoute('admin/sections/[id]/teachers:DELETE', async (request: NextRequest, context: { params: Promise<{ id: string }> }) => {
   const auth = await requireStaff(request, [...DIREZIONE]);
   if (auth.response) return auth.response;
   const idP = await resolveSectionId(context);
@@ -129,7 +131,7 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
     });
     return NextResponse.json({ success: true });
   } catch (err) {
-    console.error('Errore DELETE /api/admin/sections/[id]/teachers:', err);
+    logErrore({ operazione: 'admin/sections/[id]/teachers:DELETE', stato: 500 }, err);
     return NextResponse.json({ error: 'Errore interno del server' }, { status: 500 });
   }
-}
+});

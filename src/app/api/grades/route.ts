@@ -10,6 +10,8 @@ import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore } from '@/lib/logging/logger';
 
 // '' è ammesso per retro-compatibilità: ?alunnoId= (vuoto) equivale ad assente (nessun filtro).
 const getQuerySchema = z.object({
@@ -33,7 +35,7 @@ const postBodySchema = z
 
 // GET /api/grades?alunnoId=xxx&materia=Italiano
 // Recupera i voti di un alunno (opzionalmente filtrati per materia)
-export async function GET(request: Request) {
+export const GET = withRoute('grades:GET', async (request: Request) => {
     try {
         const auth = await requireDocente(request);
         if (auth.response) return auth.response;
@@ -69,19 +71,19 @@ export async function GET(request: Request) {
         const { data, error } = await query;
 
         if (error) {
-            console.error('Errore GET valutazioni:', error);
+            logErrore({ operazione: 'grades:GET', stato: 500, evento: 'db' }, error);
             return NextResponse.json({ error: 'Errore nel recupero delle valutazioni' }, { status: 500 });
         }
 
         return NextResponse.json({ success: true, data });
 
     } catch (error) {
-        console.error('Errore API GET Grades:', error);
+        logErrore({ operazione: 'grades:GET', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
     }
-}
+});
 
-export async function POST(request: Request) {
+export const POST = withRoute('grades:POST', async (request: Request) => {
     try {
         const auth = await requireDocente(request);
         if (auth.response) return auth.response;
@@ -113,14 +115,14 @@ export async function POST(request: Request) {
             .single();
 
         if (dbError) {
-            console.error('Errore inserimento voto:', dbError);
+            logErrore({ operazione: 'grades:POST', stato: 500, evento: 'db' }, dbError);
             return NextResponse.json({ error: 'Errore nel salvataggio della valutazione' }, { status: 500 });
         }
 
         return NextResponse.json({ success: true, data });
 
     } catch (error) {
-        console.error('Errore API Grades:', error);
+        logErrore({ operazione: 'grades:POST', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
     }
-}
+});

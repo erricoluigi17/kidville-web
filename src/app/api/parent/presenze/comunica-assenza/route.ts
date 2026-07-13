@@ -6,6 +6,8 @@ import { notificaEvento } from '@/lib/notifiche/triggers'
 import { docentiDiSezione } from '@/lib/sezioni/docenti'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // `data` resta stringa permissiva (oggi il DB accetta anche formati non YYYY-MM-DD);
@@ -20,7 +22,7 @@ const postBodySchema = z.object({
 // body: { studentId, data, motivo? }
 // Il genitore comunica IN ANTICIPO un'assenza (anche per date future). Crea/aggiorna
 // la riga presenza come 'assente' già giustificata. Solo primaria.
-export async function POST(request: NextRequest) {
+export const POST = withRoute('parent/presenze/comunica-assenza:POST', async (request: NextRequest) => {
   try {
     const b = await parseBody(request, postBodySchema)
     if ('response' in b) return b.response
@@ -89,12 +91,17 @@ export async function POST(request: NextRequest) {
         bufferMin: 0,
       })
     } catch (e) {
-      console.error('Notifica assenza comunicata fallita (non bloccante):', e)
+      logEvento('notifica', 'error', {
+        operazione: 'parent/presenze/comunica-assenza:POST',
+        tipo: 'assenza_comunicata',
+        esito: 'notifica_non_inviata',
+      }, e)
     }
 
     return NextResponse.json({ success: true, data: row }, { status: 201 })
   } catch (err) {
+    logErrore({ operazione: 'parent/presenze/comunica-assenza:POST', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

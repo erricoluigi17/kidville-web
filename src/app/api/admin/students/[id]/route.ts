@@ -4,13 +4,15 @@ import { requireEnv } from '@/lib/security/require-env';
 import { requireStaff } from '@/lib/auth/require-staff';
 import { parseData } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore } from '@/lib/logging/logger';
 
 // GET /api/admin/students/[id]
 // Restituisce il singolo alunno + i suoi genitori + i fratelli (alunni che condividono almeno un genitore)
-export async function GET(
+export const GET = withRoute('admin/students/[id]:GET', async (
     request: NextRequest,
     context: { params: Promise<{ id: string }> }
-) {
+) => {
     try {
         // Fascicolo completo dell'alunno (PII + genitori + CF + fratelli): riservato
         // allo staff. Gap del test 360° (esposizione anonima) chiuso qui.
@@ -103,7 +105,7 @@ export async function GET(
         return NextResponse.json({ ...student, siblings });
 
     } catch (err) {
-        console.error('Errore GET /api/admin/students/[id]:', err);
+        logErrore({ operazione: 'admin/students/[id]:GET', stato: 500 }, err);
         return NextResponse.json({ error: 'Errore interno del server' }, { status: 500 });
     }
-}
+});

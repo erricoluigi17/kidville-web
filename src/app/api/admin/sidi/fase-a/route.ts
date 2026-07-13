@@ -8,6 +8,8 @@ import { buildFaseAReconcile } from '@/lib/sidi/payload'
 import { serializeFaseA } from '@/lib/sidi/serializer'
 import { sidiTransmit } from '@/lib/sidi/client'
 import { persistFaseStato } from '@/lib/sidi/sync-store'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // scuola_id opzionale: la sede su cui operare (preferita per resolveScuolaScrittura).
@@ -16,38 +18,39 @@ const postQuerySchema = z.object({ scuola_id: z.string().optional() })
 // POST /api/admin/sidi/fase-a?userId=  — Allineamento strutturale (Fase A).
 // Build neutro (sezioni + tempo scuola) → serialize → trasmissione GATED.
 // Riservato alla dirigenza. Egress reale subordinato all'accreditamento (503).
-export async function POST(request: NextRequest) {
-  const auth = await requireStaff(request, ['admin', 'coordinator'])
-  if (auth.response) return auth.response
-  const q = parseQuery(request, postQuerySchema)
-  if ('response' in q) return q.response
-  try {
-    const supabase = await createAdminClient()
-    // Export per singola scuola: risolvo l'unica sede dallo scope dell'admin.
-    const sw = await resolveScuolaScrittura(request, supabase, auth.user, q.data.scuola_id ?? undefined)
-    if (sw.response) return sw.response
-    const scuolaId = sw.scuolaId!
+export const POST = withRoute('admin/sidi/fase-a:POST', async (request: NextRequest) => {
+    const auth = await requireStaff(request, ['admin', 'coordinator'])
+    if (auth.response) return auth.response
+    const q = parseQuery(request, postQuerySchema)
+    if ('response' in q) return q.response
+    try {
+      const supabase = await createAdminClient()
+      // Export per singola scuola: risolvo l'unica sede dallo scope dell'admin.
+      const sw = await resolveScuolaScrittura(request, supabase, auth.user, q.data.scuola_id ?? undefined)
+      if (sw.response) return sw.response
+      const scuolaId = sw.scuolaId!
 
-    const { data: scuola } = await supabase.from('schools').select('id, nome').eq('id', scuolaId).maybeSingle()
-    const { data: sezioni } = await supabase.from('sections').select('id, name, school_type').eq('scuola_id', scuolaId)
-    const { data: tempo } = await supabase.from('tempo_scuola').select('section_id, modello, giorni_settimana, attivo')
-    const { data: settings } = await supabase.from('admin_settings').select('sidi_config').eq('scuola_id', scuolaId).maybeSingle()
+      const { data: scuola } = await supabase.from('schools').select('id, nome').eq('id', scuolaId).maybeSingle()
+      const { data: sezioni } = await supabase.from('sections').select('id, name, school_type').eq('scuola_id', scuolaId)
+      const { data: tempo } = await supabase.from('tempo_scuola').select('section_id, modello, giorni_settimana, attivo')
+      const { data: settings } = await supabase.from('admin_settings').select('sidi_config').eq('scuola_id', scuolaId).maybeSingle()
 
-    const flusso = buildFaseAReconcile({
-      sedi: scuola ? [{ id: scuola.id, nome: scuola.nome }] : [],
-      sezioni: (sezioni ?? []) as { id: string; name: string; school_type: string }[],
-      tempoScuola: (tempo ?? []) as { section_id: string; modello: number; giorni_settimana: number; attivo: boolean }[],
-    })
-    const xml = serializeFaseA(flusso)
+      const flusso = buildFaseAReconcile({
+        sedi: scuola ? [{ id: scuola.id, nome: scuola.nome }] : [],
+        sezioni: (sezioni ?? []) as { id: string; name: string; school_type: string }[],
+        tempoScuola: (tempo ?? []) as { section_id: string; modello: number; giorni_settimana: number; attivo: boolean }[],
+      })
+      const xml = serializeFaseA(flusso)
 
-    const result = await sidiTransmit((settings?.sidi_config as Record<string, unknown>) ?? {}, 'fase_a', xml)
-    const stato = result.ok ? 'inviato' : 'errore'
-    await persistFaseStato(supabase, scuolaId, 'fase_a', stato, result)
+      const result = await sidiTransmit((settings?.sidi_config as Record<string, unknown>) ?? {}, 'fase_a', xml)
+      const stato = result.ok ? 'inviato' : 'errore'
+      await persistFaseStato(supabase, scuolaId, 'fase_a', stato, result)
 
-    if (!result.ok) return NextResponse.json({ ...result, stato }, { status: result.httpStatus })
-    return NextResponse.json({ success: true, stato, sezioni: flusso.sezioni.length })
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Errore interno'
-    return NextResponse.json({ error: msg }, { status: 500 })
-  }
-}
+      if (!result.ok) return NextResponse.json({ ...result, stato }, { status: result.httpStatus })
+      return NextResponse.json({ success: true, stato, sezioni: flusso.sezioni.length })
+    } catch (err) {
+      logErrore({ operazione: 'admin/sidi/fase-a:POST', stato: 500 }, err)
+      const msg = err instanceof Error ? err.message : 'Errore interno'
+      return NextResponse.json({ error: msg }, { status: 500 })
+    }
+})

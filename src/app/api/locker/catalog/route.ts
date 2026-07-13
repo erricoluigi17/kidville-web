@@ -6,6 +6,8 @@ import { scuoleDiUtente } from '@/lib/auth/scope';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore } from '@/lib/logging/logger';
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({
@@ -25,7 +27,7 @@ const postBodySchema = z.object({
 // GET /api/locker/catalog — Lista catalogo materiali per sede
 // Query: ?scuola_id=<id>
 // ============================================================
-export async function GET(request: NextRequest) {
+export const GET = withRoute('locker/catalog:GET', async (request: NextRequest) => {
     try {
         const auth = await requireUser(request);
         if (auth.response) return auth.response;
@@ -54,16 +56,16 @@ export async function GET(request: NextRequest) {
 
         return NextResponse.json(data);
     } catch (err) {
-        console.error('Errore GET /api/locker/catalog:', err);
+        logErrore({ operazione: 'locker/catalog:GET', stato: 500 }, err);
         return NextResponse.json({ error: 'Errore interno del server' }, { status: 500 });
     }
-}
+});
 
 // ============================================================
 // POST /api/locker/catalog — Aggiunge materiale al catalogo
 // Body: { scuola_id, nome, icona?, unita?, soglia_gialla?, soglia_rossa? }
 // ============================================================
-export async function POST(request: NextRequest) {
+export const POST = withRoute('locker/catalog:POST', async (request: NextRequest) => {
     try {
         const auth = await requireDocente(request);
         if (auth.response) return auth.response;
@@ -105,7 +107,7 @@ export async function POST(request: NextRequest) {
 
         return NextResponse.json(data, { status: 201 });
     } catch (err) {
-        console.error('Errore POST /api/locker/catalog:', err);
+        logErrore({ operazione: 'locker/catalog:POST', stato: 500 }, err);
         return NextResponse.json({ error: 'Errore interno del server' }, { status: 500 });
     }
-}
+});

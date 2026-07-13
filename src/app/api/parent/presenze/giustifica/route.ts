@@ -11,6 +11,8 @@ import { notificaEvento } from '@/lib/notifiche/triggers'
 import { docentiDiSezione } from '@/lib/sezioni/docenti'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // `data` resta stringa permissiva (oggi il DB accetta anche formati non YYYY-MM-DD);
@@ -30,7 +32,7 @@ const postBodySchema = z.object({
 // body: { studentId, data, motivo, code, expiry, ticket }
 // Il genitore giustifica un'assenza/ritardo/uscita del figlio. Solo primaria.
 // Protetta da conferma OTP email (FES): richiedi prima l'OTP via /giustifica/otp.
-export async function POST(request: NextRequest) {
+export const POST = withRoute('parent/presenze/giustifica:POST', async (request: NextRequest) => {
   try {
     const b = await parseBody(request, postBodySchema)
     if ('response' in b) return b.response
@@ -159,12 +161,18 @@ export async function POST(request: NextRequest) {
         entitaId: (updated as { id?: string })?.id ?? null,
       })
     } catch (e) {
-      console.error('Notifica giustifica fallita (non bloccante):', e)
+      // La giustifica è registrata, ma il docente non la vedrà arrivare: notifica persa.
+      logEvento('notifica', 'error', {
+        operazione: 'parent/presenze/giustifica:POST',
+        tipo: 'giustifica_ricevuta',
+        esito: 'notifica_non_inviata',
+      }, e)
     }
 
     return NextResponse.json({ success: true, data: updated })
   } catch (err) {
+    logErrore({ operazione: 'parent/presenze/giustifica:POST', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

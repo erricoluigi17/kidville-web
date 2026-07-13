@@ -6,6 +6,7 @@ import type { FormSchemaConfig, FormSubmissionStatus } from '@/types/database.ty
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { withRoute } from '@/lib/logging/with-route'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({
@@ -18,7 +19,7 @@ const STATUS_LABELS: Record<FormSubmissionStatus, string> = {
   completed: 'Completato',
 }
 
-export async function GET(request: NextRequest) {
+export const GET = withRoute('forms/export/pdf:GET', async (request: NextRequest) => {
   // Gap auth segnalato in M3, chiuso in M9: il PDF contiene i dati della
   // compilazione (PII) — riservato allo staff di gestione.
   const auth = await requireStaff(request)
@@ -189,4 +190,4 @@ export async function GET(request: NextRequest) {
       'Cache-Control': 'no-store',
     },
   })
-}
+})

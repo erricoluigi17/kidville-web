@@ -3,11 +3,12 @@ import { z } from 'zod';
 import { sealDangerous } from '@/lib/security/seal';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { parseQuery } from '@/lib/validation/http';
+import { withRoute } from '@/lib/logging/with-route';
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({}); // nessun parametro in ingresso
 
-export async function GET(request: Request) {
+export const GET = withRoute('admin/check-schema:GET', async (request: Request) => {
   const sealed = await sealDangerous(request);
   if (sealed) return sealed;
   const q = parseQuery(request, getQuerySchema);
@@ -31,4 +32,4 @@ export async function GET(request: Request) {
     })),
     staffError: error?.message
   });
-}
+});

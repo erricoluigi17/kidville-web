@@ -9,6 +9,8 @@ import { zUuid } from '@/lib/validation/common'
 import { sincronizzaTestata } from '@/lib/merch/stati'
 import { caricaGiacenze, disponibileDi } from '@/lib/merch/giacenze'
 import { notificaMerchArrivato } from '@/lib/merch/notify'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // POST /api/admin/merch/evadi-magazzino — evade una riga da_ordinare dallo STOCK:
 // da_ordinare → arrivato con origine='magazzino'. Scala subito la disponibilità
@@ -18,7 +20,7 @@ const SCHEMA_MANCANTE = new Set(['42P01', '42703', 'PGRST200', 'PGRST204', 'PGRS
 const bodySchema = z.object({ riga_id: zUuid })
 const uno = <T>(v: T | T[] | null | undefined): T | null => (Array.isArray(v) ? (v[0] ?? null) : (v ?? null))
 
-export async function POST(request: Request) {
+export const POST = withRoute('admin/merch/evadi-magazzino:POST', async (request: Request) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -105,7 +107,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ success: true, data: { riga_id, disponibile_residuo: disp - riga.quantita } })
   } catch (err) {
-    console.error('Errore API POST merch/evadi-magazzino:', err)
+    logErrore({ operazione: 'admin/merch/evadi-magazzino:POST', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

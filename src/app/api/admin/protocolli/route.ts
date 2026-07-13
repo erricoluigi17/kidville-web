@@ -25,6 +25,8 @@ import {
   scaricaProtocolloBytes,
   zStagingPath,
 } from '@/lib/protocolli/server'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // Registro protocolli (spec docs/superpowers/specs/2026-07-12-registro-protocolli-design.md).
 // Gate: SOLO admin + segreteria (decisione utente); DELETE solo admin, senza
@@ -58,124 +60,124 @@ const getQuerySchema = z.object({
   ...zPaginazione.shape,
 })
 
-export async function GET(request: NextRequest) {
-  try {
-    const auth = await requireStaff(request, GATE)
-    if (auth.response) return auth.response
-    const q = parseQuery(request, getQuerySchema)
-    if ('response' in q) return q.response
+export const GET = withRoute('admin/protocolli:GET', async (request: NextRequest) => {
+    try {
+      const auth = await requireStaff(request, GATE)
+      if (auth.response) return auth.response
+      const q = parseQuery(request, getQuerySchema)
+      if ('response' in q) return q.response
 
-    const supabase = await createAdminClient()
-    const sedi = await resolveScuoleAttive(request, supabase, auth.user)
-    if (sedi.length === 0) {
-      return NextResponse.json({ success: true, data: [], stats: STATS_VUOTE })
-    }
+      const supabase = await createAdminClient()
+      const sedi = await resolveScuoleAttive(request, supabase, auth.user)
+      if (sedi.length === 0) {
+        return NextResponse.json({ success: true, data: [], stats: STATS_VUOTE })
+      }
 
-    // Dettaglio singolo (scheda): registrazione + collegamenti nei due sensi.
-    if (q.data.id) {
-      const { data, error } = await supabase
-        .from('protocolli')
-        .select(SELECT_LISTA)
-        .eq('id', q.data.id)
-        .in('scuola_id', sedi)
-        .maybeSingle()
-      if (error) {
-        if (SCHEMA_MANCANTE.has(error.code ?? '')) {
-          return NextResponse.json({ success: true, data: null, nonMigrato: true })
+      // Dettaglio singolo (scheda): registrazione + collegamenti nei due sensi.
+      if (q.data.id) {
+        const { data, error } = await supabase
+          .from('protocolli')
+          .select(SELECT_LISTA)
+          .eq('id', q.data.id)
+          .in('scuola_id', sedi)
+          .maybeSingle()
+        if (error) {
+          if (SCHEMA_MANCANTE.has(error.code ?? '')) {
+            return NextResponse.json({ success: true, data: null, nonMigrato: true })
+          }
+          return NextResponse.json({ error: error.message }, { status: 500 })
         }
-        return NextResponse.json({ error: error.message }, { status: 500 })
-      }
-      if (!data) {
-        return NextResponse.json({ error: 'Registrazione non trovata' }, { status: 404 })
-      }
-      const record = data as Record<string, unknown>
-      const RIF = 'id, anno, numero, tipo, oggetto'
-      let collegato: unknown = null
-      if (record.collegato_a_id) {
-        const r = await supabase
+        if (!data) {
+          return NextResponse.json({ error: 'Registrazione non trovata' }, { status: 404 })
+        }
+        const record = data as Record<string, unknown>
+        const RIF = 'id, anno, numero, tipo, oggetto'
+        let collegato: unknown = null
+        if (record.collegato_a_id) {
+          const r = await supabase
+            .from('protocolli')
+            .select(RIF)
+            .eq('id', record.collegato_a_id as string)
+            .maybeSingle()
+          collegato = r.data ?? null
+        }
+        const risposte = await supabase
           .from('protocolli')
           .select(RIF)
-          .eq('id', record.collegato_a_id as string)
-          .maybeSingle()
-        collegato = r.data ?? null
+          .eq('collegato_a_id', record.id as string)
+          .order('numero', { ascending: true })
+        return NextResponse.json({
+          success: true,
+          data: { ...record, collegato, risposte: risposte.data ?? [] },
+        })
       }
-      const risposte = await supabase
+
+      const anno = q.data.anno ?? annoFiscale()
+      let query = supabase
         .from('protocolli')
-        .select(RIF)
-        .eq('collegato_a_id', record.id as string)
-        .order('numero', { ascending: true })
-      return NextResponse.json({
-        success: true,
-        data: { ...record, collegato, risposte: risposte.data ?? [] },
-      })
-    }
-
-    const anno = q.data.anno ?? annoFiscale()
-    let query = supabase
-      .from('protocolli')
-      .select(SELECT_LISTA)
-      .in('scuola_id', sedi)
-      .eq('anno', anno)
-      .order('numero', { ascending: false })
-      .range(q.data.offset, q.data.offset + q.data.limit - 1)
-    if (q.data.tipo) query = query.eq('tipo', q.data.tipo)
-    if (q.data.categoria_id) query = query.eq('categoria_id', q.data.categoria_id)
-    // Confini giornata in UTC: approssimazione accettata (±2h su registrazioni notturne).
-    if (q.data.da) query = query.gte('data_registrazione', `${q.data.da}T00:00:00`)
-    if (q.data.a) query = query.lte('data_registrazione', `${q.data.a}T23:59:59.999`)
-    if (q.data.q) {
-      // Niente virgole/parentesi/percento nel filtro .or() (sintassi PostgREST).
-      const testo = q.data.q.replace(/[,()%]/g, ' ').trim()
-      if (testo) {
-        const like = `%${testo}%`
-        const condizioni = [
-          `oggetto.ilike.${like}`,
-          `mittente.ilike.${like}`,
-          `destinatario.ilike.${like}`,
-        ]
-        if (/^\d+$/.test(testo)) condizioni.push(`numero.eq.${Number(testo)}`)
-        query = query.or(condizioni.join(','))
-      }
-    }
-
-    const { data, error } = await query
-    if (error) {
-      // DB E2E CI mai migrato: la pagina deve rendere l'empty-state, mai 500.
-      if (SCHEMA_MANCANTE.has(error.code ?? '')) {
-        return NextResponse.json({ success: true, data: [], stats: STATS_VUOTE, nonMigrato: true })
-      }
-      return NextResponse.json({ error: error.message }, { status: 500 })
-    }
-
-    // Contatori dell'anno (solo in prima pagina: alimentano le StatCard).
-    let stats: typeof STATS_VUOTE | undefined
-    if (q.data.offset === 0) {
-      const { data: righe, error: eStats } = await supabase
-        .from('protocolli')
-        .select('tipo, numero, annullata_at')
+        .select(SELECT_LISTA)
         .in('scuola_id', sedi)
         .eq('anno', anno)
         .order('numero', { ascending: false })
-        .limit(10000)
-      if (!eStats && Array.isArray(righe)) {
-        const r = righe as { tipo: string; numero: number; annullata_at: string | null }[]
-        stats = {
-          totale: r.length,
-          ingresso: r.filter((x) => x.tipo === 'ingresso').length,
-          uscita: r.filter((x) => x.tipo === 'uscita').length,
-          interno: r.filter((x) => x.tipo === 'interno').length,
-          annullate: r.filter((x) => x.annullata_at != null).length,
-          ultimoNumero: r[0]?.numero ?? 0,
+        .range(q.data.offset, q.data.offset + q.data.limit - 1)
+      if (q.data.tipo) query = query.eq('tipo', q.data.tipo)
+      if (q.data.categoria_id) query = query.eq('categoria_id', q.data.categoria_id)
+      // Confini giornata in UTC: approssimazione accettata (±2h su registrazioni notturne).
+      if (q.data.da) query = query.gte('data_registrazione', `${q.data.da}T00:00:00`)
+      if (q.data.a) query = query.lte('data_registrazione', `${q.data.a}T23:59:59.999`)
+      if (q.data.q) {
+        // Niente virgole/parentesi/percento nel filtro .or() (sintassi PostgREST).
+        const testo = q.data.q.replace(/[,()%]/g, ' ').trim()
+        if (testo) {
+          const like = `%${testo}%`
+          const condizioni = [
+            `oggetto.ilike.${like}`,
+            `mittente.ilike.${like}`,
+            `destinatario.ilike.${like}`,
+          ]
+          if (/^\d+$/.test(testo)) condizioni.push(`numero.eq.${Number(testo)}`)
+          query = query.or(condizioni.join(','))
         }
       }
-    }
 
-    return NextResponse.json({ success: true, data: data ?? [], stats, anno })
-  } catch (err) {
-    console.error('Errore API GET protocolli:', err)
-    return rispostaErroreProtocollo(err)
-  }
-}
+      const { data, error } = await query
+      if (error) {
+        // DB E2E CI mai migrato: la pagina deve rendere l'empty-state, mai 500.
+        if (SCHEMA_MANCANTE.has(error.code ?? '')) {
+          return NextResponse.json({ success: true, data: [], stats: STATS_VUOTE, nonMigrato: true })
+        }
+        return NextResponse.json({ error: error.message }, { status: 500 })
+      }
+
+      // Contatori dell'anno (solo in prima pagina: alimentano le StatCard).
+      let stats: typeof STATS_VUOTE | undefined
+      if (q.data.offset === 0) {
+        const { data: righe, error: eStats } = await supabase
+          .from('protocolli')
+          .select('tipo, numero, annullata_at')
+          .in('scuola_id', sedi)
+          .eq('anno', anno)
+          .order('numero', { ascending: false })
+          .limit(10000)
+        if (!eStats && Array.isArray(righe)) {
+          const r = righe as { tipo: string; numero: number; annullata_at: string | null }[]
+          stats = {
+            totale: r.length,
+            ingresso: r.filter((x) => x.tipo === 'ingresso').length,
+            uscita: r.filter((x) => x.tipo === 'uscita').length,
+            interno: r.filter((x) => x.tipo === 'interno').length,
+            annullate: r.filter((x) => x.annullata_at != null).length,
+            ultimoNumero: r[0]?.numero ?? 0,
+          }
+        }
+      }
+
+      return NextResponse.json({ success: true, data: data ?? [], stats, anno })
+    } catch (err) {
+      logErrore({ operazione: 'admin/protocolli:GET', stato: 500 }, err)
+      return rispostaErroreProtocollo(err)
+    }
+})
 
 // ─── POST: registrazione di protocollo ────────────────────────────────────────
 const postBodySchema = z
@@ -232,104 +234,104 @@ const postBodySchema = z
     }
   })
 
-export async function POST(request: NextRequest) {
-  try {
-    const auth = await requireStaff(request, GATE)
-    if (auth.response) return auth.response
-    const b = await parseBody(request, postBodySchema)
-    if ('response' in b) return b.response
-    const body = b.data
+export const POST = withRoute('admin/protocolli:POST', async (request: NextRequest) => {
+    try {
+      const auth = await requireStaff(request, GATE)
+      if (auth.response) return auth.response
+      const b = await parseBody(request, postBodySchema)
+      if ('response' in b) return b.response
+      const body = b.data
 
-    const supabase = await createAdminClient()
-    const sw = await resolveScuolaScrittura(request, supabase, auth.user, body.scuola_id)
-    if (sw.response) return sw.response
-    if (!sw.scuolaId) {
-      return NextResponse.json({ error: 'Sede non risolta' }, { status: 400 })
-    }
-    const scuolaId = sw.scuolaId
-
-    const bytesOriginale = await scaricaProtocolloBytes(supabase, body.stagingPath)
-    if (bytesOriginale.byteLength > PROTOCOLLO_MAX_BYTES) {
-      return NextResponse.json(
-        { error: `File troppo grande (max ${PROTOCOLLO_MAX_MB} MB)` },
-        { status: 400 }
-      )
-    }
-
-    // La conversione avviene SEMPRE server-side (mai fidarsi di un PDF "già
-    // convertito" dal client): PDF → verifica magic bytes; immagine → wrap A4.
-    let pdfDaTimbrare: Uint8Array
-    if (body.mime === 'application/pdf') {
-      if (!pareUnPdf(bytesOriginale)) {
-        return NextResponse.json({ error: 'Il file non è un PDF valido' }, { status: 400 })
+      const supabase = await createAdminClient()
+      const sw = await resolveScuolaScrittura(request, supabase, auth.user, body.scuola_id)
+      if (sw.response) return sw.response
+      if (!sw.scuolaId) {
+        return NextResponse.json({ error: 'Sede non risolta' }, { status: 400 })
       }
-      pdfDaTimbrare = bytesOriginale
-    } else {
-      pdfDaTimbrare = await immagineInPdf(bytesOriginale, body.mime)
-    }
+      const scuolaId = sw.scuolaId
 
-    const allegati: AllegatoInput[] = []
-    for (const a of body.allegati) {
-      const bytes = await scaricaProtocolloBytes(supabase, a.stagingPath)
-      if (bytes.byteLength > PROTOCOLLO_MAX_BYTES) {
+      const bytesOriginale = await scaricaProtocolloBytes(supabase, body.stagingPath)
+      if (bytesOriginale.byteLength > PROTOCOLLO_MAX_BYTES) {
         return NextResponse.json(
-          { error: `Allegato "${a.nome}" troppo grande (max ${PROTOCOLLO_MAX_MB} MB)` },
+          { error: `File troppo grande (max ${PROTOCOLLO_MAX_MB} MB)` },
           { status: 400 }
         )
       }
-      allegati.push({ bytes, nome: a.nome, mime: a.mime })
-    }
 
-    const denominazione = await denominazioneScuola(supabase, scuolaId)
-    const esito = await registraProtocollo(supabase, {
-      scuolaId,
-      denominazione,
-      tipo: body.tipo,
-      oggetto: body.oggetto,
-      mittente: body.mittente ?? null,
-      destinatario: body.destinatario ?? null,
-      mezzo: body.mezzo ?? null,
-      rifProtMittente: body.rifProtMittente ?? null,
-      rifDataMittente: body.rifDataMittente ?? null,
-      categoriaId: body.categoriaId ?? null,
-      collegatoAId: body.collegatoAId ?? null,
-      noteInterne: body.noteInterne ?? null,
-      emergenza: body.emergenza ?? false,
-      emergenzaDichiarataIl: body.emergenzaDichiarataIl ?? null,
-      allegatiDescrizione: body.allegatiDescrizione ?? null,
-      createdBy: auth.user.id,
-      originale: { bytes: bytesOriginale, nomeFile: body.nomeFile, mime: body.mime },
-      pdfDaTimbrare,
-      allegati,
-    })
+      // La conversione avviene SEMPRE server-side (mai fidarsi di un PDF "già
+      // convertito" dal client): PDF → verifica magic bytes; immagine → wrap A4.
+      let pdfDaTimbrare: Uint8Array
+      if (body.mime === 'application/pdf') {
+        if (!pareUnPdf(bytesOriginale)) {
+          return NextResponse.json({ error: 'Il file non è un PDF valido' }, { status: 400 })
+        }
+        pdfDaTimbrare = bytesOriginale
+      } else {
+        pdfDaTimbrare = await immagineInPdf(bytesOriginale, body.mime)
+      }
 
-    await eliminaStagingBestEffort(supabase, [
-      body.stagingPath,
-      ...body.allegati.map((a) => a.stagingPath),
-    ])
+      const allegati: AllegatoInput[] = []
+      for (const a of body.allegati) {
+        const bytes = await scaricaProtocolloBytes(supabase, a.stagingPath)
+        if (bytes.byteLength > PROTOCOLLO_MAX_BYTES) {
+          return NextResponse.json(
+            { error: `Allegato "${a.nome}" troppo grande (max ${PROTOCOLLO_MAX_MB} MB)` },
+            { status: 400 }
+          )
+        }
+        allegati.push({ bytes, nome: a.nome, mime: a.mime })
+      }
 
-    const nomeDownload = `Prot-${String(esito.numero).padStart(7, '0')}-${esito.anno}.pdf`
-    const downloadTimbrato = await firmaDownload(supabase, esito.pathTimbrato, nomeDownload).catch(
-      () => null
-    )
+      const denominazione = await denominazioneScuola(supabase, scuolaId)
+      const esito = await registraProtocollo(supabase, {
+        scuolaId,
+        denominazione,
+        tipo: body.tipo,
+        oggetto: body.oggetto,
+        mittente: body.mittente ?? null,
+        destinatario: body.destinatario ?? null,
+        mezzo: body.mezzo ?? null,
+        rifProtMittente: body.rifProtMittente ?? null,
+        rifDataMittente: body.rifDataMittente ?? null,
+        categoriaId: body.categoriaId ?? null,
+        collegatoAId: body.collegatoAId ?? null,
+        noteInterne: body.noteInterne ?? null,
+        emergenza: body.emergenza ?? false,
+        emergenzaDichiarataIl: body.emergenzaDichiarataIl ?? null,
+        allegatiDescrizione: body.allegatiDescrizione ?? null,
+        createdBy: auth.user.id,
+        originale: { bytes: bytesOriginale, nomeFile: body.nomeFile, mime: body.mime },
+        pdfDaTimbrare,
+        allegati,
+      })
 
-    return NextResponse.json(
-      {
-        success: true,
-        data: {
-          record: esito.record,
-          numeroFormattato: esito.numeroFormattato,
-          impronta: esito.impronta,
-          downloadTimbrato,
+      await eliminaStagingBestEffort(supabase, [
+        body.stagingPath,
+        ...body.allegati.map((a) => a.stagingPath),
+      ])
+
+      const nomeDownload = `Prot-${String(esito.numero).padStart(7, '0')}-${esito.anno}.pdf`
+      const downloadTimbrato = await firmaDownload(supabase, esito.pathTimbrato, nomeDownload).catch(
+        () => null
+      )
+
+      return NextResponse.json(
+        {
+          success: true,
+          data: {
+            record: esito.record,
+            numeroFormattato: esito.numeroFormattato,
+            impronta: esito.impronta,
+            downloadTimbrato,
+          },
         },
-      },
-      { status: 201 }
-    )
-  } catch (err) {
-    console.error('Errore API POST protocolli:', err)
-    return rispostaErroreProtocollo(err)
-  }
-}
+        { status: 201 }
+      )
+    } catch (err) {
+      logErrore({ operazione: 'admin/protocolli:POST', stato: 500 }, err)
+      return rispostaErroreProtocollo(err)
+    }
+})
 
 // ─── PATCH: campi mutabili (note/categoria/collegamento) o annullamento ───────
 const patchBodySchema = z
@@ -351,113 +353,113 @@ const patchBodySchema = z
     }
   })
 
-export async function PATCH(request: NextRequest) {
-  try {
-    const auth = await requireStaff(request, GATE)
-    if (auth.response) return auth.response
-    const b = await parseBody(request, patchBodySchema)
-    if ('response' in b) return b.response
-    const body = b.data
+export const PATCH = withRoute('admin/protocolli:PATCH', async (request: NextRequest) => {
+    try {
+      const auth = await requireStaff(request, GATE)
+      if (auth.response) return auth.response
+      const b = await parseBody(request, patchBodySchema)
+      if ('response' in b) return b.response
+      const body = b.data
 
-    const supabase = await createAdminClient()
-    const sedi = await resolveScuoleAttive(request, supabase, auth.user)
-    const { data: record, error } = await supabase
-      .from('protocolli')
-      .select('id, annullata_at')
-      .eq('id', body.id)
-      .in('scuola_id', sedi)
-      .maybeSingle()
-    if (error) return rispostaErroreProtocollo(error)
-    if (!record) {
-      return NextResponse.json({ error: 'Registrazione non trovata' }, { status: 404 })
-    }
-
-    if (body.azione === 'annulla') {
-      if ((record as { annullata_at: string | null }).annullata_at) {
-        return NextResponse.json(
-          { error: 'Registrazione già annullata (annullamento definitivo)' },
-          { status: 409 }
-        )
-      }
-      const { data, error: eAnnullo } = await supabase
+      const supabase = await createAdminClient()
+      const sedi = await resolveScuoleAttive(request, supabase, auth.user)
+      const { data: record, error } = await supabase
         .from('protocolli')
-        .update({
-          annullata_at: new Date().toISOString(),
-          annullata_da: auth.user.id,
-          annullo_motivo: (body.motivo ?? '').trim(),
-        })
+        .select('id, annullata_at')
+        .eq('id', body.id)
+        .in('scuola_id', sedi)
+        .maybeSingle()
+      if (error) return rispostaErroreProtocollo(error)
+      if (!record) {
+        return NextResponse.json({ error: 'Registrazione non trovata' }, { status: 404 })
+      }
+
+      if (body.azione === 'annulla') {
+        if ((record as { annullata_at: string | null }).annullata_at) {
+          return NextResponse.json(
+            { error: 'Registrazione già annullata (annullamento definitivo)' },
+            { status: 409 }
+          )
+        }
+        const { data, error: eAnnullo } = await supabase
+          .from('protocolli')
+          .update({
+            annullata_at: new Date().toISOString(),
+            annullata_da: auth.user.id,
+            annullo_motivo: (body.motivo ?? '').trim(),
+          })
+          .eq('id', body.id)
+          .select()
+          .single()
+        if (eAnnullo) return rispostaErroreProtocollo(eAnnullo)
+        return NextResponse.json({ success: true, data })
+      }
+
+      const patch: Record<string, unknown> = {}
+      if (body.noteInterne !== undefined) patch.note_interne = body.noteInterne
+      if (body.categoriaId !== undefined) patch.categoria_id = body.categoriaId
+      if (body.collegatoAId !== undefined) patch.collegato_a_id = body.collegatoAId
+      if (Object.keys(patch).length === 0) {
+        return NextResponse.json({ error: 'Nessun campo da aggiornare' }, { status: 400 })
+      }
+      const { data, error: eUpdate } = await supabase
+        .from('protocolli')
+        .update(patch)
         .eq('id', body.id)
         .select()
         .single()
-      if (eAnnullo) return rispostaErroreProtocollo(eAnnullo)
+      if (eUpdate) return rispostaErroreProtocollo(eUpdate)
       return NextResponse.json({ success: true, data })
+    } catch (err) {
+      logErrore({ operazione: 'admin/protocolli:PATCH', stato: 500 }, err)
+      return rispostaErroreProtocollo(err)
     }
-
-    const patch: Record<string, unknown> = {}
-    if (body.noteInterne !== undefined) patch.note_interne = body.noteInterne
-    if (body.categoriaId !== undefined) patch.categoria_id = body.categoriaId
-    if (body.collegatoAId !== undefined) patch.collegato_a_id = body.collegatoAId
-    if (Object.keys(patch).length === 0) {
-      return NextResponse.json({ error: 'Nessun campo da aggiornare' }, { status: 400 })
-    }
-    const { data, error: eUpdate } = await supabase
-      .from('protocolli')
-      .update(patch)
-      .eq('id', body.id)
-      .select()
-      .single()
-    if (eUpdate) return rispostaErroreProtocollo(eUpdate)
-    return NextResponse.json({ success: true, data })
-  } catch (err) {
-    console.error('Errore API PATCH protocolli:', err)
-    return rispostaErroreProtocollo(err)
-  }
-}
+})
 
 // ─── DELETE: eliminazione totale, SOLO admin, nessuna traccia (decisioni #2/#6)
 const deleteQuerySchema = z.object({ id: zUuid })
 
-export async function DELETE(request: NextRequest) {
-  try {
-    const auth = await requireStaff(request, ['admin'])
-    if (auth.response) return auth.response
-    const q = parseQuery(request, deleteQuerySchema)
-    if ('response' in q) return q.response
+export const DELETE = withRoute('admin/protocolli:DELETE', async (request: NextRequest) => {
+    try {
+      const auth = await requireStaff(request, ['admin'])
+      if (auth.response) return auth.response
+      const q = parseQuery(request, deleteQuerySchema)
+      if ('response' in q) return q.response
 
-    const supabase = await createAdminClient()
-    const sedi = await resolveScuoleAttive(request, supabase, auth.user)
-    const { data: record, error } = await supabase
-      .from('protocolli')
-      .select('id, scuola_id')
-      .eq('id', q.data.id)
-      .in('scuola_id', sedi)
-      .maybeSingle()
-    if (error) return rispostaErroreProtocollo(error)
-    if (!record) {
-      return NextResponse.json({ error: 'Registrazione non trovata' }, { status: 404 })
+      const supabase = await createAdminClient()
+      const sedi = await resolveScuoleAttive(request, supabase, auth.user)
+      const { data: record, error } = await supabase
+        .from('protocolli')
+        .select('id, scuola_id')
+        .eq('id', q.data.id)
+        .in('scuola_id', sedi)
+        .maybeSingle()
+      if (error) return rispostaErroreProtocollo(error)
+      if (!record) {
+        return NextResponse.json({ error: 'Registrazione non trovata' }, { status: 404 })
+      }
+
+      // Unico percorso di DELETE ammesso dal trigger WORM (GUC transaction-locale).
+      const { data: paths, error: eElimina } = await supabase.rpc('protocollo_elimina', {
+        p_id: q.data.id,
+      })
+      if (eElimina) return rispostaErroreProtocollo(eElimina)
+
+      const daRimuovere = Array.isArray(paths) ? (paths as string[]).filter(Boolean) : []
+      if (daRimuovere.length > 0) {
+        await supabase.storage
+          .from(PROTOCOLLO_BUCKET)
+          .remove(daRimuovere)
+          .then(
+            () => undefined,
+            () => undefined
+          )
+      }
+
+      // Decisione #6: nessun logScrittura, nessuna traccia tecnica.
+      return NextResponse.json({ success: true })
+    } catch (err) {
+      logErrore({ operazione: 'admin/protocolli:DELETE', stato: 500 }, err)
+      return rispostaErroreProtocollo(err)
     }
-
-    // Unico percorso di DELETE ammesso dal trigger WORM (GUC transaction-locale).
-    const { data: paths, error: eElimina } = await supabase.rpc('protocollo_elimina', {
-      p_id: q.data.id,
-    })
-    if (eElimina) return rispostaErroreProtocollo(eElimina)
-
-    const daRimuovere = Array.isArray(paths) ? (paths as string[]).filter(Boolean) : []
-    if (daRimuovere.length > 0) {
-      await supabase.storage
-        .from(PROTOCOLLO_BUCKET)
-        .remove(daRimuovere)
-        .then(
-          () => undefined,
-          () => undefined
-        )
-    }
-
-    // Decisione #6: nessun logScrittura, nessuna traccia tecnica.
-    return NextResponse.json({ success: true })
-  } catch (err) {
-    console.error('Errore API DELETE protocolli:', err)
-    return rispostaErroreProtocollo(err)
-  }
-}
+})

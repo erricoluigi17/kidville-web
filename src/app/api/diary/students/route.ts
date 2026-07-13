@@ -5,6 +5,8 @@ import { requireDocente } from '@/lib/auth/require-staff';
 import { scuoleDiUtente } from '@/lib/auth/scope';
 import { parseQuery } from '@/lib/validation/http';
 import { zUuid, zDataYMD } from '@/lib/validation/common';
+import { withRoute } from '@/lib/logging/with-route';
+import { logEvento } from '@/lib/logging/logger';
 
 // Singolo alunno per id.
 const getByIdQuerySchema = z.object({
@@ -25,7 +27,7 @@ const getBySezioneQuerySchema = z.object({
 // GET /api/diary/students?sezione=<classe>&onlyPresent=true   → solo presenti oggi
 // GET /api/diary/students?classeSezione=3A&onlyPresent=true&date=2026-05-17
 // GET /api/diary/students?id=uuid                             → singolo alunno
-export async function GET(request: NextRequest) {
+export const GET = withRoute('diary/students:GET', async (request: NextRequest) => {
     const supabase = await createAdminClient();
     const params = request.nextUrl.searchParams;
 
@@ -143,7 +145,15 @@ export async function GET(request: NextRequest) {
             .in('stato', ['presente', 'ritardo', 'uscita_anticipata']);
 
         if (prezError) {
-            console.error('[/api/diary/students] Errore presenze:', prezError.message);
+            // `error` benché la risposta sia 200: il filtro `onlyPresent` NON viene applicato e la
+            // lista torna con TUTTI gli alunni della classe. Il chiamante ha chiesto «solo i
+            // presenti» e riceve anche gli assenti, senza saperlo — una risposta sbagliata è
+            // peggio di un errore. L'errore si passa intero (non `.message`): code, details e hint
+            // di PostgREST sono ciò che dice perché.
+            logEvento('db', 'error', {
+                operazione: 'diary/students:GET',
+                esito: 'presenze-non-lette-filtro-non-applicato',
+            }, prezError);
             return NextResponse.json(enrichedAlunni);
         }
 
@@ -152,4 +162,4 @@ export async function GET(request: NextRequest) {
     }
 
     return NextResponse.json(enrichedAlunni);
-}
+});

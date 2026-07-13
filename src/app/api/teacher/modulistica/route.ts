@@ -4,6 +4,8 @@ import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseData, parseQuery } from '@/lib/validation/http';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore } from '@/lib/logging/logger';
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // GET: entrambi i filtri sono obbligatori (il vecchio check manuale rifiutava
@@ -26,7 +28,7 @@ const ALLOWED_MIME = new Set([
 ]);
 
 // GET: Semaforo autorizzazioni per una classe e un modulo
-export async function GET(request: NextRequest) {
+export const GET = withRoute('teacher/modulistica:GET', async (request: NextRequest) => {
   try {
     // Gap auth segnalato in M3, chiuso in M9: stesso gate del POST (il
     // semaforo espone nomi alunni e stato firme della classe).
@@ -74,17 +76,17 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(semaforo);
   } catch (err) {
-    console.error('Errore GET /api/teacher/modulistica:', err);
+    logErrore({ operazione: 'teacher/modulistica:GET', stato: 500 }, err);
     return NextResponse.json(
       { error: err instanceof Error ? err.message : 'Errore interno' },
       { status: 500 }
     );
   }
-}
+});
 
 // POST: Proxy Upload cartaceo (DL-032) — lo staff carica la SCANSIONE del modulo
 // firmato a penna consegnato a scuola. Upload reale + gate + evidenza strutturata.
-export async function POST(request: Request) {
+export const POST = withRoute('teacher/modulistica:POST', async (request: Request) => {
   const auth = await requireDocente(request);
   if (auth.response) return auth.response;
   const staff = auth.user;
@@ -180,10 +182,10 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ success: true, id: data?.id, path }, { status: 201 });
   } catch (err) {
-    console.error('Errore POST /api/teacher/modulistica:', err);
+    logErrore({ operazione: 'teacher/modulistica:POST', stato: 500 }, err);
     return NextResponse.json(
       { error: err instanceof Error ? err.message : 'Errore interno' },
       { status: 500 }
     );
   }
-}
+});

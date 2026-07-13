@@ -13,6 +13,8 @@ import { firmaCompleta, prossimoSlot } from '@/lib/fea/firma-congiunta'
 import { logFeaEvent } from '@/lib/fea/audit'
 import { assertGenitoreNonSospeso } from '@/lib/pagamenti/sospensione'
 import { estraiConsensi, consensiObbligatoriMancanti } from '@/lib/forms/consensi'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 import type { FormSchemaConfig, FormSubmissionData } from '@/types/database.types'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
@@ -55,7 +57,7 @@ async function deliverOtp(email: string, code: string): Promise<boolean> {
 }
 
 // ── POST: crea la submission (pending_signature) e invia l'OTP ──
-export async function POST(request: Request) {
+export const POST = withRoute('forms/send-otp:POST', async (request: Request) => {
   try {
     // Invio OTP è abusabile (spam email) → rate-limit per IP (8 / 10 min).
     const rl = rateLimit(`send-otp:${clientIp(request)}`, { limit: 8, windowMs: 10 * 60 * 1000 })
@@ -160,7 +162,7 @@ export async function POST(request: Request) {
       .single()
 
     if (insertErr || !submission) {
-      console.error('Errore creazione submission:', insertErr)
+      logErrore({ operazione: 'forms/send-otp:POST', stato: 500, evento: 'db' }, insertErr)
       return NextResponse.json(
         { error: insertErr?.message ?? 'Creazione submission fallita' },
         { status: 500 }
@@ -188,7 +190,7 @@ export async function POST(request: Request) {
       .eq('id', submission.id)
 
     if (updErr) {
-      console.error('Errore salvataggio otp_secret:', updErr)
+      logErrore({ operazione: 'forms/send-otp:POST', stato: 500, evento: 'db' }, updErr)
       return NextResponse.json({ error: updErr.message }, { status: 500 })
     }
 
@@ -202,13 +204,13 @@ export async function POST(request: Request) {
       ...(process.env.NODE_ENV !== 'production' ? { devCode: code } : {}),
     })
   } catch (err) {
-    console.error('Errore POST send-otp:', err)
+    logErrore({ operazione: 'forms/send-otp:POST', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})
 
 // ── PATCH: verifica l'OTP e finalizza la firma (completed + signed_at) ──
-export async function PATCH(request: Request) {
+export const PATCH = withRoute('forms/send-otp:PATCH', async (request: Request) => {
   try {
     const b = await parseBody(request, patchBodySchema)
     if ('response' in b) return b.response
@@ -282,7 +284,7 @@ export async function PATCH(request: Request) {
       .eq('id', submissionId)
 
     if (updErr) {
-      console.error('Errore finalizzazione firma:', updErr)
+      logErrore({ operazione: 'forms/send-otp:PATCH', stato: 500, evento: 'db' }, updErr)
       return NextResponse.json({ error: updErr.message }, { status: 500 })
     }
 
@@ -316,7 +318,7 @@ export async function PATCH(request: Request) {
       requiredSigners,
     })
   } catch (err) {
-    console.error('Errore PATCH send-otp:', err)
+    logErrore({ operazione: 'forms/send-otp:PATCH', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

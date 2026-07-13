@@ -6,6 +6,8 @@ import { assertSezioneInScope } from '@/lib/auth/scope'
 import { notificaEvento } from '@/lib/notifiche/triggers'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const postBodySchema = z.object({
@@ -15,7 +17,7 @@ const postBodySchema = z.object({
 // POST /api/primaria/presenze/giust-vista?userId=
 // body: { presenzaId }
 // Il docente registra la presa visione della giustifica del genitore.
-export async function POST(request: NextRequest) {
+export const POST = withRoute('primaria/presenze/giust-vista:POST', async (request: NextRequest) => {
   try {
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
@@ -69,12 +71,17 @@ export async function POST(request: NextRequest) {
         })
       }
     } catch (e) {
-      console.error('Notifica giustifica vista fallita (non bloccante):', e)
+      logEvento('notifica', 'error', {
+        operazione: 'primaria/presenze/giust-vista:POST',
+        tipo: 'giustifica_vista',
+        esito: 'notifica_non_inviata',
+      }, e)
     }
 
     return NextResponse.json({ success: true, data: updated })
   } catch (err) {
+    logErrore({ operazione: 'primaria/presenze/giust-vista:POST', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

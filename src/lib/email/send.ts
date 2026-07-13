@@ -1,15 +1,36 @@
+import { externalFetch } from '@/lib/logging/external'
+import { logEvento } from '@/lib/logging/logger'
+import { hashCorrelabile } from '@/lib/logging/redact'
+
 /**
  * Util email condiviso.
  *
- * Usa Resend se `RESEND_API_KEY` è configurato, altrimenti fa fallback su log
- * server-side (modalità dev/senza provider) e ritorna esito negativo.
- * Mittente di default sovrascrivibile con `OTP_FROM_EMAIL`.
+ * Usa Resend se `RESEND_API_KEY` è configurato, altrimenti degrada a un esito negativo
+ * PARLANTE. Mittente di default sovrascrivibile con `OTP_FROM_EMAIL`.
  *
  * ⚠️ DELIVERABILITY: finché su Resend non è verificato il dominio kidville.it,
  * il mittente resta `onboarding@resend.dev` (sandbox) e Resend CONSEGNA SOLO
  * all'indirizzo del titolare dell'account — ogni altro destinatario è rifiutato
  * con 403. Dopo la verifica del dominio impostare in produzione
  * `OTP_FROM_EMAIL="Kidville <noreply@kidville.it>"`.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────────
+ * QUESTO FILE È LA SCENA DEL DELITTO. Per mesi nessuna email di credenziali è arrivata a
+ * un genitore: Resend rispondeva 403 «the kidville.it domain is not verified», nessun test
+ * era rosso e nessuno se n'è accorto. Le tre regole che escono da lì, e che qui valgono:
+ *
+ *  1. il CORPO del rifiuto non si butta via → la chiamata passa da `externalFetch`, che lo
+ *     legge, lo logga nella colonna `app_log.messaggio` e lo propaga nell'esito;
+ *  2. il SUCCESSO si logga → `evento: 'email'` è in `EVENTI_PERSISTITI`, quindi la riga di
+ *     `externalFetch` finisce in tabella anche quando l'invio riesce. È il battito: con i
+ *     soli errori, «nessun log» non distingue «tutte partite» da «non è mai partito niente»,
+ *     ed è ESATTAMENTE l'ambiguità che ha tenuto nascosto il guasto;
+ *  3. configurazione mancante = livello `error`, mai `info`. Una `RESEND_API_KEY` assente in
+ *     produzione è un incidente muto: zero email, zero errori, zero sospetti.
+ *
+ * E il destinatario non compare MAI in chiaro nei log: solo `hashCorrelabile` (che senza
+ * `LOG_HASH_SALT` è fail-closed e non produce nulla di leggibile).
+ * ─────────────────────────────────────────────────────────────────────────────────
  */
 
 export interface SendEmailParams {
@@ -34,11 +55,22 @@ const DEFAULT_FROM = 'Kidville <onboarding@resend.dev>'
 export async function sendEmailDetailed({ to, subject, text }: SendEmailParams): Promise<SendEmailResult> {
   const apiKey = process.env.RESEND_API_KEY
   if (!apiKey) {
-    console.log(`[EMAIL] (provider non configurato) → ${to}\n  Oggetto: ${subject}\n  ${text.replace(/\n/g, '\n  ')}`)
+    // `error`, non `info`: senza chiave NESSUNA email parte, e in produzione è un incidente.
+    // Il vecchio `console.log` stampava anche `text` in chiaro — cioè, sulle credenziali,
+    // «Password temporanea: …» dritta nei Runtime Logs. Quella stampa è morta qui.
+    logEvento('config', 'error', {
+      operazione: 'sendEmail',
+      // `msg` non è in lista bianca (nel jsonb resta redatto), ma `testoEvento()` lo promuove
+      // alla colonna `app_log.messaggio`, che è in chiaro e sanificata: è lì che si legge.
+      msg: 'RESEND_API_KEY assente: nessuna email può partire da questo ambiente',
+    })
     return { ok: false, error: 'provider email non configurato (RESEND_API_KEY assente)' }
   }
-  try {
-    const res = await fetch('https://api.resend.com/emails', {
+
+  const esito = await externalFetch(
+    'resend',
+    'https://api.resend.com/emails',
+    {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -50,28 +82,50 @@ export async function sendEmailDetailed({ to, subject, text }: SendEmailParams):
         subject,
         text,
       }),
-    })
-    if (!res.ok) {
-      let dettaglio = ''
-      try {
-        const raw = await res.text()
-        try {
-          dettaglio = (JSON.parse(raw) as { message?: string }).message ?? raw
-        } catch {
-          dettaglio = raw
-        }
-      } catch {
-        /* corpo illeggibile: resta il solo status */
-      }
-      const errore = `rifiutato dal provider email (${res.status})${dettaglio ? `: ${dettaglio}` : ''}`
-      console.error(`[EMAIL] Invio fallito per ${to} — ${errore}`)
-      return { ok: false, error: errore }
+    },
+    {
+      // Il battito (successo E rifiuto) lo emette `externalFetch`: una riga sola, con il corpo
+      // del provider nella colonna `messaggio`. Non se ne aggiunge una seconda qui.
+      evento: 'email',
+      campi: {
+        operazione: 'sendEmail',
+        // Hash, mai l'indirizzo. `destinatario` NON è in lista bianca, quindi in `app_log`
+        // resta `[redatto:str/9]`: l'hash si legge solo su Vercel. È il prezzo accettato —
+        // l'alternativa sarebbe allargare la lista bianca di `redact` a un campo che porta
+        // identità, e quella lista difende dati di minori (AGENTS, regola 8).
+        destinatario: hashCorrelabile(to),
+      },
     }
-    return { ok: true, error: null }
-  } catch (err) {
-    console.error('[EMAIL] Invio email fallito:', err)
-    return { ok: false, error: 'errore di rete verso il provider email' }
+  )
+
+  if (esito.ok) return { ok: true, error: null }
+
+  // `stato: 0` = una risposta non c'è stata affatto (rete giù, DNS, TLS).
+  if (esito.stato === 0) {
+    return { ok: false, error: `errore di rete verso il provider email: ${esito.corpo}` }
   }
+
+  // Il motivo del rifiuto arriva fino a chi ha chiesto l'invio (audit, avviso in UI): un 403
+  // che dice solo «403» è ciò che ha nascosto il guasto per mesi.
+  const dettaglio = messaggioDelProvider(esito.corpo)
+  return {
+    ok: false,
+    error: `rifiutato dal provider email (${esito.stato})${dettaglio ? `: ${dettaglio}` : ''}`,
+  }
+}
+
+/** Resend impacchetta il motivo in `{ message }`; se non è JSON, il corpo grezzo va benissimo. */
+function messaggioDelProvider(corpo: string): string {
+  try {
+    const v: unknown = JSON.parse(corpo)
+    if (v !== null && typeof v === 'object') {
+      const m = (v as { message?: unknown }).message
+      if (typeof m === 'string' && m !== '') return m
+    }
+  } catch {
+    // Non era JSON: è già il testo del provider.
+  }
+  return corpo
 }
 
 /** Invia un'email. Ritorna true se consegnata al provider, false in fallback/errore. */

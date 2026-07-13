@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { parseData } from '@/lib/validation/http'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // Il file si valida come presenza/istanza; dimensione e contenuto restano
@@ -14,7 +16,7 @@ const postFormSchema = z.object({
 
 // POST multipart: carica un documento nel bucket form_attachments (service-role).
 // Usato dal form pubblico di iscrizione (utente non autenticato).
-export async function POST(request: NextRequest) {
+export const POST = withRoute('iscrizione/upload:POST', async (request: NextRequest) => {
   try {
     const form = await request.formData()
     const parsed = parseData(postFormSchema, {
@@ -50,7 +52,8 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ path })
   } catch (err) {
+    logErrore({ operazione: 'iscrizione/upload:POST', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg || 'Errore interno' }, { status: 500 })
   }
-}
+})

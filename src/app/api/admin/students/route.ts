@@ -9,6 +9,8 @@ import { linkOrCreateParent } from '@/lib/anagrafiche/parents';
 import { riallineaScadenzeRetteFuture } from '@/lib/pagamenti/scadenze';
 import { notificaEvento } from '@/lib/notifiche/triggers';
 import { staffScuola } from '@/lib/notifiche/destinatari';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore } from '@/lib/logging/logger';
 
 // ============================================================
 // Anagrafica alunni — gated Segreteria+Direzione (DL-036) + audit
@@ -114,7 +116,7 @@ const deleteBodySchema = z.object({
 // ============================================================
 // POST /api/admin/students — Creazione nuovo alunno
 // ============================================================
-export async function POST(request: NextRequest) {
+export const POST = withRoute('admin/students:POST', async (request: NextRequest) => {
     const auth = await requireStaff(request);
     if (auth.response) return auth.response;
 
@@ -218,15 +220,15 @@ export async function POST(request: NextRequest) {
 
         return NextResponse.json({ ...data, parents: parentsResults }, { status: 201 });
     } catch (err) {
-        console.error('Errore POST /api/admin/students:', err);
+        logErrore({ operazione: 'admin/students:POST', stato: 500 }, err);
         return NextResponse.json({ error: err instanceof Error ? err.message : 'Errore interno del server' }, { status: 500 });
     }
-}
+});
 
 // ============================================================
 // GET /api/admin/students — Lista alunni con filtri
 // ============================================================
-export async function GET(request: NextRequest) {
+export const GET = withRoute('admin/students:GET', async (request: NextRequest) => {
     const auth = await requireStaff(request);
     if (auth.response) return auth.response;
 
@@ -280,15 +282,15 @@ export async function GET(request: NextRequest) {
 
         return NextResponse.json(data);
     } catch (err) {
-        console.error('Errore GET /api/admin/students:', err);
+        logErrore({ operazione: 'admin/students:GET', stato: 500 }, err);
         return NextResponse.json({ error: 'Errore interno del server' }, { status: 500 });
     }
-}
+});
 
 // ============================================================
 // PATCH /api/admin/students — Bulk assign o aggiornamento singolo
 // ============================================================
-export async function PATCH(request: NextRequest) {
+export const PATCH = withRoute('admin/students:PATCH', async (request: NextRequest) => {
     const auth = await requireStaff(request);
     if (auth.response) return auth.response;
 
@@ -422,26 +424,29 @@ export async function PATCH(request: NextRequest) {
                         });
                     }
                 } catch (e) {
-                    console.error('Notifica allergie aggiornate fallita (non bloccante):', e);
+                    // Non bloccante: l'alunno è già aggiornato. Ma l'errore NON si perde —
+                    // è la notifica di sicurezza mensa che non è partita.
+                    logErrore({ operazione: 'admin/students:PATCH', evento: 'push' }, e);
                 }
 
                 return NextResponse.json(data);
             } catch (err) {
+                logErrore({ operazione: 'admin/students:PATCH', stato: 500 }, err);
                 return NextResponse.json({ error: err instanceof Error ? err.message : 'Errore durante il salvataggio alunno' }, { status: 500 });
             }
         }
 
         return NextResponse.json({ error: 'Specificare id o ids[]' }, { status: 400 });
     } catch (err) {
-        console.error('Errore PATCH /api/admin/students:', err);
+        logErrore({ operazione: 'admin/students:PATCH', stato: 500 }, err);
         return NextResponse.json({ error: err instanceof Error ? err.message : 'Errore interno del server' }, { status: 500 });
     }
-}
+});
 
 // ============================================================
 // DELETE /api/admin/students — Hard Delete GDPR
 // ============================================================
-export async function DELETE(request: NextRequest) {
+export const DELETE = withRoute('admin/students:DELETE', async (request: NextRequest) => {
     const auth = await requireStaff(request);
     if (auth.response) return auth.response;
 
@@ -492,7 +497,7 @@ export async function DELETE(request: NextRequest) {
 
         return NextResponse.json({ success: true, message: 'Alunno eliminato definitivamente (GDPR)' });
     } catch (err) {
-        console.error('Errore DELETE /api/admin/students:', err);
+        logErrore({ operazione: 'admin/students:DELETE', stato: 500 }, err);
         return NextResponse.json({ error: 'Errore interno del server' }, { status: 500 });
     }
-}
+});

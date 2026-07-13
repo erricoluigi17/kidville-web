@@ -8,6 +8,8 @@ import { notificaEvento } from '@/lib/notifiche/triggers'
 import { staffScuola, scuolaUnicaReale } from '@/lib/notifiche/destinatari'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 import type { FormSchemaConfig, FormSubmissionData } from '@/types/database.types'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
@@ -24,7 +26,7 @@ const postBodySchema = z.object({
 // la RLS di `form_submissions` richiede sessione Supabase Auth). Service-role +
 // scoping app, coerente con `send-otp`. Registra lo snapshot consensi (DL-029).
 
-export async function POST(request: Request) {
+export const POST = withRoute('forms/submit:POST', async (request: Request) => {
   const rl = rateLimit(`forms-submit:${clientIp(request)}`, { limit: 20, windowMs: 10 * 60 * 1000 })
   if (!rl.ok) {
     return NextResponse.json(
@@ -108,14 +110,21 @@ export async function POST(request: Request) {
         debounce: true,
       })
     } catch (e) {
-      console.error('Notifica modulo compilato fallita (non bloccante):', e)
+      // `error` benché il modulo sia registrato (201): la segreteria non viene avvisata, quindi
+      // una compilazione arrivata resta lì finché qualcuno non apre la modulistica per caso.
+      // La riga c'è, il suo annuncio no: scrittura persa, non dettaglio saltato.
+      logEvento('notifica', 'error', {
+        operazione: 'forms/submit:POST',
+        esito: 'notifica-segreteria-non-accodata',
+      }, e)
     }
 
     return NextResponse.json({ id: submission.id }, { status: 201 })
   } catch (err) {
+    logErrore({ operazione: 'forms/submit:POST', stato: 500 }, err)
     return NextResponse.json(
       { error: err instanceof Error ? err.message : 'Errore interno' },
       { status: 500 }
     )
   }
-}
+})

@@ -6,6 +6,8 @@ import { assertAlunnoInScope } from '@/lib/auth/scope'
 import { notificaEvento } from '@/lib/notifiche/triggers'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 const getQuerySchema = z.object({
   alunno_id: zUuid,
@@ -22,7 +24,7 @@ const postBodySchema = z.object({
 
 // GET /api/pagamenti/ticket?alunno_id=&userId=
 //   staff -> saldo di qualsiasi alunno; genitore -> solo dei propri figli
-export async function GET(request: Request) {
+export const GET = withRoute('pagamenti/ticket:GET', async (request: Request) => {
   try {
     const auth = await requireUser(request)
     if (auth.response) return auth.response
@@ -44,15 +46,15 @@ export async function GET(request: Request) {
       .from('ticket_mensa').select('alunno_id, saldo_ticket, ultimo_carico').eq('alunno_id', alunnoId).maybeSingle()
     return NextResponse.json({ success: true, data: data ?? { alunno_id: alunnoId, saldo_ticket: 0, ultimo_carico: null } })
   } catch (err) {
-    console.error('Errore API GET ticket:', err)
+    logErrore({ operazione: 'pagamenti/ticket:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})
 
 // POST /api/pagamenti/ticket  (staff) — ricarica ticket mensa
 // Body: { userId, alunno_id, pezzi, costo, metodo? }  (scuola_id derivato dall'alunno)
 // Un'unica azione: incrementa saldo_ticket E crea un pagamento Mensa già saldato.
-export async function POST(request: Request) {
+export const POST = withRoute('pagamenti/ticket:POST', async (request: Request) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -112,7 +114,16 @@ export async function POST(request: Request) {
       alunno_id, scuola_id: scuolaId, tipo: 'ricarica', delta: Number(pezzi),
       saldo_dopo: nuovoSaldo, pagamento_id: pag.id, origine: 'segreteria', creato_da: user.id,
     })
-    if (mErr) console.error('ticket: movimento ledger non registrato:', mErr.message)
+    // Il saldo resta autoritativo e la richiesta risponde 201, ma la riga di ledger è
+    // persa per sempre: lo storico dei movimenti non tornerà più col saldo. `error`.
+    if (mErr) {
+      logEvento('db', 'error', {
+        operazione: 'pagamenti/ticket:POST',
+        esito: 'movimento_ledger_non_registrato',
+        pezzi: Number(pezzi),
+        saldo_dopo: nuovoSaldo,
+      }, mErr)
+    }
 
     // Conferma al genitore: ricarica registrata (best-effort).
     try {
@@ -127,12 +138,16 @@ export async function POST(request: Request) {
         entitaId: alunno_id,
       })
     } catch (e) {
-      console.error('Notifica ricarica ticket fallita (non bloccante):', e)
+      logEvento('notifica', 'error', {
+        operazione: 'pagamenti/ticket:POST',
+        tipo: 'mensa_ricarica',
+        esito: 'notifica_non_inviata',
+      }, e)
     }
 
     return NextResponse.json({ success: true, data: { saldo_ticket: nuovoSaldo, pagamento_id: pag.id } }, { status: 201 })
   } catch (err) {
-    console.error('Errore API POST ticket:', err)
+    logErrore({ operazione: 'pagamenti/ticket:POST', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

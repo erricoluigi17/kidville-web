@@ -5,6 +5,8 @@ import { requireStaff, requireDocente } from '@/lib/auth/require-staff'
 import { resolveScuolaScrittura } from '@/lib/auth/scope'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ============================================================
 // Config globale primaria (admin_settings): matrice funzioni, scadenze
@@ -33,7 +35,7 @@ const patchBodySchema = z.object({
 })
 
 // GET /api/admin/primaria/impostazioni?scuolaId=
-export async function GET(request: NextRequest) {
+export const GET = withRoute('admin/primaria/impostazioni:GET', async (request: NextRequest) => {
   try {
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
@@ -54,13 +56,14 @@ export async function GET(request: NextRequest) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json({ success: true, data: data ?? {} })
   } catch (err) {
+    logErrore({ operazione: 'admin/primaria/impostazioni:GET', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})
 
 // PATCH /api/admin/primaria/impostazioni?userId=  body: { scuolaId, ...campi }
-export async function PATCH(request: NextRequest) {
+export const PATCH = withRoute('admin/primaria/impostazioni:PATCH', async (request: NextRequest) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -85,7 +88,8 @@ export async function PATCH(request: NextRequest) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json({ success: true, data })
   } catch (err) {
+    logErrore({ operazione: 'admin/primaria/impostazioni:PATCH', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

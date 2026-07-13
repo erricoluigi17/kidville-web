@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireStaff } from '@/lib/auth/require-staff';
 import { parseQuery } from '@/lib/validation/http';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore } from '@/lib/logging/logger';
 
 // Nessun parametro in ingresso: schema vuoto (rispetta il lock zod-coverage admin).
 const getQuerySchema = z.object({});
@@ -10,7 +12,7 @@ const getQuerySchema = z.object({});
 // GET /api/admin/chat/contacts
 // Elenco genitori (utenti con login) con un figlio, per avviare una chat
 // segreteria↔genitore. Il figlio serve come student_id del thread. Solo staff.
-export async function GET(request: NextRequest) {
+export const GET = withRoute('admin/chat/contacts:GET', async (request: NextRequest) => {
   const auth = await requireStaff(request);
   if (auth.response) return auth.response;
   const q = parseQuery(request, getQuerySchema);
@@ -55,7 +57,8 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ success: true, data: contatti });
   } catch (err) {
+    logErrore({ operazione: 'admin/chat/contacts:GET', stato: 500 }, err);
     const msg = err instanceof Error ? err.message : 'Errore interno';
     return NextResponse.json({ error: msg }, { status: 500 });
   }
-}
+});

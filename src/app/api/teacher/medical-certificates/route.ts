@@ -6,6 +6,8 @@ import { assertAlunnoInScope, assertClasseNomeInScope } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { periodoValido } from '@/lib/certificati/stato'
 import { parseBody, parseQuery } from '@/lib/validation/http'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // Filtri opzionali senza vincoli aggiuntivi: `stato` oggi è passato com'è alla
@@ -30,7 +32,7 @@ const patchBodySchema = z.object({
 
 // GET /api/teacher/medical-certificates — elenco certificati per la Segreteria.
 // Filtri opzionali: ?stato=in_validazione | ?class_name=
-export async function GET(request: Request) {
+export const GET = withRoute('teacher/medical-certificates:GET', async (request: Request) => {
   try {
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
@@ -68,14 +70,14 @@ export async function GET(request: Request) {
     })
     return NextResponse.json({ success: true, data: rows })
   } catch (err) {
-    console.error('Errore GET teacher/medical-certificates:', err)
+    logErrore({ operazione: 'teacher/medical-certificates:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})
 
 // PATCH /api/teacher/medical-certificates — validazione Segreteria (DL-027).
 // Body: { id, esito: 'validato'|'rifiutato', data_inizio?, data_fine?, nota_validazione? }
-export async function PATCH(request: Request) {
+export const PATCH = withRoute('teacher/medical-certificates:PATCH', async (request: Request) => {
   try {
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
@@ -124,7 +126,7 @@ export async function PATCH(request: Request) {
 
     return NextResponse.json({ success: true, data: { id, stato: body.esito } })
   } catch (err) {
-    console.error('Errore PATCH teacher/medical-certificates:', err)
+    logErrore({ operazione: 'teacher/medical-certificates:PATCH', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

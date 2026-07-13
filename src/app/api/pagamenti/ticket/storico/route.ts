@@ -5,13 +5,15 @@ import { requireStaff } from '@/lib/auth/require-staff'
 import { assertAlunnoInScope } from '@/lib/auth/scope'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 const getQuerySchema = z.object({ alunno_id: zUuid })
 
 // GET /api/pagamenti/ticket/storico?userId=&alunno_id=
 //   staff (incl. segreteria): storico movimenti ticket (ledger) + saldo corrente.
 //   Le ricariche embeddano il pagamento (descrizione/importo/stato/metodo).
-export async function GET(request: Request) {
+export const GET = withRoute('pagamenti/ticket/storico:GET', async (request: Request) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -46,7 +48,7 @@ export async function GET(request: Request) {
       },
     })
   } catch (err) {
-    console.error('Errore API GET ticket/storico:', err)
+    logErrore({ operazione: 'pagamenti/ticket/storico:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

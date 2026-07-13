@@ -5,6 +5,8 @@ import { requireStaff, requireUser } from '@/lib/auth/require-staff'
 import { resolveScuoleAttive, resolveScuolaScrittura } from '@/lib/auth/scope'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 const getQuerySchema = z.object({
   scuola_id: zUuid,
@@ -29,7 +31,7 @@ const deleteQuerySchema = z.object({
 })
 
 // GET /api/mensa/menu-config?scuola_id=  — tutti i menu della scuola
-export async function GET(request: NextRequest) {
+export const GET = withRoute('mensa/menu-config:GET', async (request: NextRequest) => {
   try {
     const auth = await requireUser(request)
     if (auth.response) return auth.response
@@ -49,13 +51,13 @@ export async function GET(request: NextRequest) {
     if (error) throw error
     return NextResponse.json({ success: true, data: data ?? [] })
   } catch (err) {
-    console.error('GET /api/mensa/menu-config:', err)
+    logErrore({ operazione: 'mensa/menu-config:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})
 
 // POST /api/mensa/menu-config  { scuola_id, nome, ordine? }
-export async function POST(request: NextRequest) {
+export const POST = withRoute('mensa/menu-config:POST', async (request: NextRequest) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -75,13 +77,13 @@ export async function POST(request: NextRequest) {
     if (error) throw error
     return NextResponse.json({ success: true, data }, { status: 201 })
   } catch (err) {
-    console.error('POST /api/mensa/menu-config:', err)
+    logErrore({ operazione: 'mensa/menu-config:POST', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})
 
 // PATCH /api/mensa/menu-config  { id, nome?, ordine? }
-export async function PATCH(request: Request) {
+export const PATCH = withRoute('mensa/menu-config:PATCH', async (request: Request) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -103,13 +105,13 @@ export async function PATCH(request: Request) {
     if (error) throw error
     return NextResponse.json({ success: true, data })
   } catch (err) {
-    console.error('PATCH /api/mensa/menu-config:', err)
+    logErrore({ operazione: 'mensa/menu-config:PATCH', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})
 
 // DELETE /api/mensa/menu-config?id=
-export async function DELETE(request: Request) {
+export const DELETE = withRoute('mensa/menu-config:DELETE', async (request: Request) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -131,7 +133,7 @@ export async function DELETE(request: Request) {
     if (error) throw error
     return NextResponse.json({ success: true })
   } catch (err) {
-    console.error('DELETE /api/mensa/menu-config:', err)
+    logErrore({ operazione: 'mensa/menu-config:DELETE', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

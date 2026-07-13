@@ -58,6 +58,35 @@
 
 ---
 
+## 🗓️ Changelog — Logging strutturato pervasivo: l'app smette di fallire in silenzio 2026-07-13 (branch `feat/logging-strutturato`)
+
+**Perché.** Per mesi nessuna email di credenziali è arrivata a destinazione: il provider rispondeva `403` e il codice registrava il numero `403`, senza il corpo della risposta che diceva *perché* (`the domain is not verified`). Nessun test era rosso, nessuno se n'è accorto. Un codice che fallisce in silenzio è un codice rotto anche quando i test passano: questo lavoro rende osservabile ogni superficie che può fallire.
+
+**Architettura** — `src/lib/logging/`, zero dipendenze esterne, due canali con vita e forma diverse:
+- **Vercel Runtime Logs** (ritenzione 1 giorno): una riga `marker + logfmt` per richiesta (`KV_OK` / `KV_ERR` / `KV_WARN` / `KV_EVT`). Il marker è un token alfanumerico perché su Vercel la ricerca è full-text ed è l'unica àncora che sopravvive alla tokenizzazione.
+- **Tabella `app_log`** (migrazione `20260713090000`, ritenzione 30 giorni, RLS deny-all + solo `service_role`, purge a lotti via pg_cron): la memoria lunga, interrogabile in SQL. Deduplica su `(fingerprint, giorno)` — il giorno sta nella *chiave*, non nell'impronta: `occorrenze` conta l'oggi, `group by fingerprint` ricostruisce la storia («è nuovo o va avanti da una settimana?»).
+
+**Copertura, ottenuta da pochi colli di bottiglia**: `withRoute()` su **tutte le 239 route**; `fetch` strumentato su tutti i client Supabase (rende visibili le scritture il cui `catch` non scattava mai — PostgREST non lancia, ritorna `{ error }`); `parseBody`/`parseQuery` depositano il payload **già redatto** nel contesto; i gate depositano l'identità; `AsyncLocalStorage` correla tutto con un `requestId` che nasce nel middleware; `src/instrumentation.ts` è la rete di sicurezza per ciò che le route non vedono (render, Server Action, middleware); `src/lib/logging/client.ts` + `POST /api/logs` coprono browser e WebView nativa; le due error boundary loggano da sé (**obbligatorio**: con una boundary esplicita Next smette di chiamare `reportError()`, quindi `window.onerror` vedrebbe *meno* errori di prima — i due meccanismi non si sommano, si sottraggono).
+
+**Nessun dato personale nei log.** La redazione (`redact.ts`) è a **lista bianca**: passano in chiaro solo uuid, numeri, booleani, date e le chiavi esplicitamente permesse (metadati di dominio: `tipo`, `esito`, `operazione`, `provider`…). Nomi, email e codici fiscali diventano un hash correlabile (fail-closed senza `LOG_HASH_SALT`: mai un hash debole). Testo libero, diagnosi, allergie, valutazioni, firme, OTP e password sono redatti. In più: i **path sono credenziali** in questo repo (`/m/<token>`, `?userId=`, `?email=`) e vengono ridotti a pattern ovunque compaiano — compreso l'header dello stack, che in V8 *è* il messaggio; e `sanificaMessaggio` maschera email e codici fiscali incorporati nel testo degli errori Postgres (`Key (email)=(…)`), che scavalcherebbero la redazione dal basso.
+
+**Guasti silenziosi trovati e chiusi mentre si costruiva l'osservabilità** (nessuno di questi faceva fallire un test):
+- **Le notifiche potevano sparire senza lasciare traccia**: `enqueueNotifiche` faceva `await supabase.from('notifiche').insert(...)` dentro un `try/catch` senza controllare il valore di ritorno. PostgREST non lancia: quando l'insert falliva non succedeva *niente* — nessuna eccezione, nessun log, nessuna notifica. Un genitore non avrebbe saputo della nota del figlio, del rifiuto della domanda, della mensa sospesa. Il log è ora sulla sorgente, con un test che sul codice precedente muore.
+- **La revoca della notifica di assenza** non controllava l'errore: un genitore che aveva già comunicato l'assenza poteva ricevere lo stesso l'avviso di assenza non giustificata.
+- **~40 `catch` non loggavano nulla** (29 in `admin/primaria`, i cinque `apply-*-migration`, `seed-full`, `backfill-auth`, e l'unico `catch {}` vuoto del repo, in `admin/wipe`).
+- **49 rami `if (error)` di PostgREST che rispondono 500** non erano coperti da nessun log, proprio perché il `catch` attorno non scatta mai.
+- **FCM** leggeva il corpo dell'errore e lo buttava (`fcm_http_400`); il `catch` finale di `sendNativePush` inghiottiva l'eccezione (una chiave PEM malformata dava zero push, zero log e un cron che si dichiarava a posto).
+- **`getModuleConfig`** restituiva `{}` sia per «questa scuola non ha impostazioni» sia per «non si è potuto leggere»: il fail-open dei toggle notifiche si appoggiava su quel silenzio.
+- **I 5 cron** ora battono all'avvio e alla chiusura (si sorveglia l'*assenza*: chiamati da pg_net in fire-and-forget, se non partono non arriva niente e quindi non si logga niente) — ma il battito, da solo, avrebbe **mentito**: le `SELECT` non controllavano l'errore, quindi su query fallita il codice cadeva nel ramo «zero elementi» e avrebbe scritto `esito=ok, inviate=0`. Tutte le 14 query dei 5 file ora controllano `{ error }`, escono con 500 e non emettono il battito di successo.
+
+**Igiene**: `no-console` è `error` su `src/` (eccezioni: il logger stesso, il middleware e l'instrumentation, che girano dove il logger non è caricabile); i 108 `console.*` legacy di componenti e pagine sono in baseline di soppressioni (`eslint-suppressions.json`): non se ne aggiungono altri.
+
+**Lock in CI** — `__tests__/architecture/logging-coverage.test.ts`: ogni export HTTP è avvolto, ogni `catch` logga, e il **nome** passato a `withRoute` corrisponde alla posizione reale del file (un nome copiaincollato non rompe niente e non si vede: produce una colonna `operazione` che *mente*, ed è peggio di una colonna che manca, perché ci si crede).
+
+**Collaudo live** (dev, solo dinieghi e letture): cron con secret errato → `401` + `KV_ERR evt=cron esito=secret-errato`; `POST` anonimo sullo stesso cron → `401` e **nessun** falso allarme; `/api/me` senza sessione → `401` con `x-request-id` in risposta che correla con la riga di log; `POST /api/logs` → `{ok:true, ricevuti:1}`. Zero password, zero email, zero token nelle righe emesse. Gate: **eslint 0 · tsc 0 · vitest 1637 · build ok**.
+
+**Aperto (operativo, prima del rilascio)**: applicare la migrazione `20260713090000_app_log.sql` in produzione (finché non c'è, il circuit breaker si apre su `PGRST202` e i log restano solo su Vercel — comportamento voluto, ma va chiuso) e impostare `LOG_HASH_SALT` su Vercel (`openssl rand -hex 32`, tutti gli ambienti): senza, ogni identità esce come `[redatto]` e la correlazione è persa.
+
 ## 🗓️ Changelog — Identità genitore completa alla creazione + invio credenziali auto-riparante (S6bis) 2026-07-12 (branch `fix/identita-genitore`)
 
 - **Problema segnalato**: creando un'anagrafica genitore e provando a inviare le credenziali, la Segreteria riceveva `409 "Genitore senza account auth: eseguire prima il backfill (S6)"` — un vicolo cieco: la route del backfill in produzione risponde 404 by design (`sealDangerous`), e comunque NON creava la riga `utenti`, indispensabile (senza, il login riesce ma ogni route dati risponde 401 "Utente non trovato" perché `loadAppUser` legge solo `utenti`).

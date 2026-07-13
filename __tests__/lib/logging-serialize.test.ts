@@ -259,6 +259,82 @@ describe('descriviErrore — lo stack: frame intatti, ma sotto controllo', () =>
     });
 });
 
+/*
+ * ════════════════════════════════════════════════════════════════════════════
+ * LO STACK NON È LA PORTA DI SERVIZIO DELLE CREDENZIALI.
+ *
+ * Il buco: `messaggio` e `route` passavano da una riduzione dei path, lo STACK no — né nel
+ * client (`logClient` fa solo `tronca`) né sul server (`preparaStack` sanificava l'header con
+ * `sanificaMessaggio`, che maschera email, codici fiscali e vincoli Postgres, ma NON i path).
+ * E l'header dello stack di V8 È IL MESSAGGIO: `new Error('Errore caricando
+ * https://app.kidville.it/m/<token>')` — un banale errore di rete del browser — versava in
+ * `app_log.stack` il token del modulo pubblico, che in questo repo è una CAPABILITY: apre il
+ * modulo di preiscrizione di un MINORE. Trenta giorni di ritenzione, interrogabile in SQL.
+ *
+ * `preparaStack` è il collo di bottiglia da cui passa OGNI stack del sistema — server E client
+ * (`/api/logs` fa passare da `descriviErrore` anche gli stack che arrivano dal browser).
+ * ════════════════════════════════════════════════════════════════════════════
+ */
+describe('descriviErrore — il PATH nello stack è una credenziale, e non esce', () => {
+    /** Un token opaco: 16+ caratteri con cifre. È la forma vera di una capability del repo. */
+    const TOKEN = 'tok_live_9f8e7d6c5b4a3210';
+
+    it('riduce il path nell\'HEADER (che è il messaggio, ed è dove finisce il token)', () => {
+        // La forma ESATTA con cui arriva da `/api/logs`: il client manda `message` + `stack`.
+        const d = descriviErrore({
+            message: 'boom',
+            stack: `Error: Errore caricando https://app.kidville.it/m/${TOKEN}\n`
+                + '    at f (/src/app/m/page.tsx:12:5)',
+        });
+
+        expect(d.stack).not.toContain(TOKEN);
+        expect(JSON.stringify(d)).not.toContain(TOKEN);
+        // Ridotto a PATTERN, non cancellato: lo stack deve ancora dire dove stava succedendo.
+        expect(d.stack).toContain('https://app.kidville.it/m/[tok]');
+    });
+
+    it('vale anche per un Error VERO, dove l\'header lo costruisce V8 dal messaggio', () => {
+        const e = new Error(`Errore caricando https://app.kidville.it/m/${TOKEN}`);
+        const d = descriviErrore(e);
+
+        expect(d.stack).not.toContain(TOKEN);
+        expect(d.stack).toContain('/m/[tok]');
+        // I frame veri (questo file, vitest) sono ancora lì: la riduzione tocca solo l'header.
+        expect(d.stack).toMatch(/\n\s+at /);
+    });
+
+    it('NON tocca i frame: un chunk hashato resta intero, o lo stack non serve a niente', () => {
+        // `layout-1a2b3c4d5e6f7a8b.js` è un segmento da ≥16 caratteri CON cifre: l'euristica del
+        // segmento opaco lo ridurrebbe a `[tok]`, cancellando la POSIZIONE dell'errore — cioè
+        // l'unica cosa per cui uno stack esiste. Header sì, frame mai.
+        const frame = '    at r (/_next/static/chunks/app/parent/layout-1a2b3c4d5e6f7a8b.js:1:2)';
+        const e = new Error('x');
+        e.stack = `Error: x\n${frame}`;
+
+        expect(descriviErrore(e).stack).toBe(`Error: x\n${frame}`);
+    });
+
+    it('una DATA nell\'header non viene scambiata per un path (il log resta leggibile)', () => {
+        // Se la riduzione mangiasse `12/03/2026` produrrebbe `12/[n]/[n]`: uno stack mutilato
+        // in cambio di zero privacy.
+        const e = new Error('x');
+        e.stack = 'Error: iscrizione scaduta il 12/03/2026\n    at f (/src/a.ts:1:1)';
+        expect(descriviErrore(e).stack).toContain('iscrizione scaduta il 12/03/2026');
+    });
+
+    it('email e path insieme: le due difese non si annullano a vicenda', () => {
+        const e = new Error('x');
+        e.stack = `Error: invio a mario.rossi@example.com fallito su /m/${TOKEN}\n`
+            + '    at f (/src/a.ts:1:1)';
+        const stack = String(descriviErrore(e).stack);
+
+        expect(stack).not.toContain('mario.rossi@example.com');
+        expect(stack).not.toContain(TOKEN);
+        expect(stack).toContain('[email]');
+        expect(stack).toContain('/m/[tok]');
+    });
+});
+
 describe('descriviErrore — un campo rotto non azzera la riga di log', () => {
     it('un getter `stack` che lancia non fa perdere il messaggio', () => {
         const e = new Error('salvataggio fallito');

@@ -340,3 +340,92 @@ describe('redact — lista bianca', () => {
         expect(hashCorrelabile('x')).toMatch(/^#[0-9a-f]{8}$/);
     });
 });
+
+/**
+ * IL `digest` DI NEXT: l'unica deroga alla lista bianca, e l'unico filo fra l'utente e il log.
+ *
+ * `error.tsx` lo mostra come «il codice da dare alla segreteria» ed è l'unico appiglio che un
+ * genitore ha quando telefona. `instrumentation.ts` lo mette in `campi.digest`, sulla riga che
+ * porta lo STACK VERO. Finché `digest` non era in lista bianca, quella riga in tabella diceva
+ * `[redatto:str/10]`: il codice dettato al telefono non trovava NESSUNA riga in SQL, e lo stack
+ * — che c'era — restava irraggiungibile.
+ *
+ * La deroga però si stringe sul VALORE, e i test qui sotto sono lì apposta: `redact()` gira anche
+ * sul BODY GREZZO di ogni richiesta (`parseBody` → `impostaPayload('body', raw)` PRIMA di zod), e
+ * la sola chiave in lista bianca avrebbe aperto un canale di testo libero verso `app_log` a
+ * chiunque sappia spedire `{"digest": "..."}`.
+ */
+describe('redact — il digest passa, ma solo se è un digest', () => {
+    it('il digest di Next esce IN CHIARO: senza, il codice dell\'utente non trova nessuna riga', () => {
+        // Le due forme che Next produce davvero: il digest numerico dei Server Component
+        // (`stringHash`) e un hash esadecimale.
+        const out = redact({
+            operazione: '/parent/pagamenti',
+            digest: '2043430104',
+        }) as Record<string, unknown>;
+        expect(out.digest).toBe('2043430104');
+
+        const esa = redact({ digest: 'a3f9c1e7b20d4488' }) as Record<string, unknown>;
+        expect(esa.digest).toBe('a3f9c1e7b20d4488');
+    });
+
+    it('ma è la FORMA a decidere: sotto `digest`, il testo libero resta redatto', () => {
+        // Il vettore vero: `{"digest": "<qualunque cosa>"}` nel body di una POST finisce in
+        // `app_log.contesto.payload.body` passando da `redact()`. Con la sola chiave in lista
+        // bianca sarebbe un canale di testo libero — in chiaro, in tabella, per 30 giorni.
+        const out = redact({
+            digest: 'il bambino ha avuto una crisi in mensa',
+        }) as Record<string, unknown>;
+        expect(out.digest).toBe('[redatto:str/38]');
+        expect(JSON.stringify(out)).not.toContain('crisi');
+    });
+
+    it('e nulla di sensibile entra insieme al digest: email, CF e path restano fuori', () => {
+        // Ogni caso sotto la chiave `digest` VERA: è l'unica che apre, quindi è l'unica su cui
+        // il guardiano del valore vale qualcosa. (Con `digest2`/`digest3` il test si assolverebbe
+        // da solo: quelle chiavi non sono in lista bianca e sarebbero redatte comunque.)
+        const email = redact({ digest: 'mario.rossi@example.com' }) as Record<string, unknown>;
+        expect(email.digest).toBe('[redatto:str/23]');
+        expect(JSON.stringify(email)).not.toContain('mario.rossi');
+
+        const cf = redact({ digest: 'RSSMRA80A01H501U' }) as Record<string, unknown>;
+        expect(cf.digest).toBe('[redatto:str/16]');
+        expect(JSON.stringify(cf)).not.toContain('RSSMRA80A01H501U');
+
+        // Il digest di CONTROLLO di Next non è un hash: è una stringa con dentro un PATH. E in
+        // questo repo il path È una credenziale (`/m/[token]` è una capability). Una lista
+        // bianca sulla sola chiave avrebbe versato nei log proprio ciò che `redigiPath` toglie.
+        const redirect = redact({
+            digest: 'NEXT_REDIRECT;replace;/m/tok_live_9f8e7d6c5b4a3210;307;',
+        }) as Record<string, unknown>;
+        const json = JSON.stringify(redirect);
+        expect(json).not.toContain('tok_live');
+        expect(json).not.toContain('NEXT_REDIRECT');
+    });
+
+    it('un valore troppo lungo per essere un digest non lo è: redatto', () => {
+        // 64 caratteri sono uno sha256 in esadecimale. Oltre, non è un digest: è qualcos'altro,
+        // e la lista bianca non deve indovinare cosa.
+        const out = redact({ digest: 'a'.repeat(65) }) as Record<string, unknown>;
+        expect(out.digest).toBe('[redatto:str/65]');
+    });
+
+    it('la deroga vale per la chiave `digest`, non per gli esadecimali del mondo', () => {
+        // Un valore esadecimale sotto un'ALTRA chiave resta chiuso: la chiave apre, il valore
+        // conferma — non il contrario. Altrimenti basterebbe un dato che "sembra" un hash.
+        const out = redact({ note: 'deadbeef', codice: 'abc123' }) as Record<string, unknown>;
+        expect(out.note).toBe('[redatto:str/8]');
+        expect(out.codice).toBe('[redatto:str/6]');
+    });
+
+    it('il digest NON scavalca i segreti: una chiave segreta resta segreta', () => {
+        // `eSegreta` gira PRIMA: se un domani nascesse un `digest_password` o un `token_digest`,
+        // la radice segreta vince e il valore sparisce comunque.
+        const out = redact({
+            digest_password: 'aaaaaaaa',
+            token_digest: 'deadbeef',
+        }) as Record<string, unknown>;
+        expect(out.digest_password).toBe('[redatto]');
+        expect(out.token_digest).toBe('[redatto]');
+    });
+});

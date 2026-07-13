@@ -1,4 +1,15 @@
 import { createHash } from 'node:crypto';
+import { redigiPath } from './path';
+
+/**
+ * `redigiPath` resta esportata DA QUI, anche se ora vive in `./path`: è la firma che il resto
+ * del repo importa (`context.ts`, `app-log.ts`, `external.ts`, `supabase-fetch.ts`, i test), e
+ * un modulo di logging non è il posto dove si rompono trenta call-site per un refactor. Il
+ * codice però sta in un file SENZA IMPORT, perché la stessa euristica serve al middleware
+ * (Edge), all'instrumentation e al browser — tre runtime che `node:crypto` non ce l'hanno.
+ * Vedi la testata di `path.ts`.
+ */
+export { redigiPath };
 
 /**
  * Redazione a LISTA BIANCA.
@@ -14,6 +25,10 @@ import { createHash } from 'node:crypto';
  * - STRINGHE: chiuse per default. Escono in chiaro solo se la chiave è in `IN_CHIARO`
  *   (metadati di dominio: dicono cosa succedeva, non a chi) o se il valore è
  *   auto-descrittivo (uuid, timestamp ISO puro).
+ *   Unica deroga: `digest` (il codice d'errore che Next mostra all'utente) esce in chiaro
+ *   SOLO se anche il valore ha la forma di un digest — la chiave apre, il valore conferma.
+ *   Vedi `CHIAVI_DIGEST`: senza quel campo la correlazione utente↔log è rotta; con la chiave
+ *   sola sarebbe un canale di testo libero verso la tabella.
  * - NUMERI, BOOLEANI, DATE: passano, perché da soli non identificano nessuno e sono
  *   ciò che rende un log leggibile (conteggi, flag, istanti).
  *   ⚠️ MA un numero può essere un DATO: `voto_numerico: 7`, `media: 4.5` sono la
@@ -80,6 +95,52 @@ const IN_CHIARO = insieme(
     'error_code', 'evento', 'entita_tipo',
 );
 
+/**
+ * IL `digest` DI NEXT — l'unica deroga alla lista bianca, e vale la pena scrivere perché.
+ *
+ * IL PROBLEMA. `error.tsx` e `global-error.tsx` mostrano il digest all'utente come «il codice da
+ * dare alla segreteria»: è l'unico numero che un genitore ha in mano quando telefona. Dall'altra
+ * parte, `instrumentation.ts` (`onRequestError`) è l'unico punto che vede lo STACK VERO di un
+ * errore di render — e lo passa in `campi.digest`, che finisce in `app_log.contesto`. Ma
+ * `digest` non era in lista bianca: in tabella usciva come `[redatto:str/10]`. Risultato: il
+ * genitore detta un codice che in SQL non trova NESSUNA riga, e la riga con lo stack — che c'è,
+ * ed è a un `where` di distanza — resta irraggiungibile. Non è un campo comodo che manca: è la
+ * correlazione utente↔log che è rotta in due.
+ *
+ * PERCHÉ NON VIOLA LA REGOLA 8 («non allargare la lista bianca perché sarebbe comodo»). Il
+ * digest di Next è un HASH generato dal FRAMEWORK a partire da messaggio e stack dell'errore:
+ * non è un dato personale, non è invertibile, non lo scrive nessun utente. Non è un dato che si
+ * vuole vedere: è la CHIAVE con cui si ritrova la riga che il dato ce l'ha già.
+ *
+ * PERCHÉ LA CHIAVE DA SOLA NON BASTA (ed è qui che la deroga si stringe). `redact()` non gira
+ * solo sui campi che scriviamo noi: gira sul BODY GREZZO di ogni richiesta — `parseBody` fa
+ * `impostaPayload('body', raw)` PRIMA della validazione zod, apposta per poter diagnosticare i
+ * 400. Mettere `digest` in `IN_CHIARO` e basta significherebbe quindi aprire un canale di TESTO
+ * LIBERO (fino a 120 caratteri, in chiaro, in tabella) a chiunque possa fare una POST: basta
+ * spedire `{"digest": "<quello che ti pare>"}`. La lista bianca resterebbe "a lista bianca" solo
+ * di nome.
+ *
+ * Perciò: LA CHIAVE APRE, IL VALORE CONFERMA. Passa in chiaro solo ciò che ha la FORMA di un
+ * digest — un token opaco esadecimale. Tutto il resto sotto quella chiave resta redatto
+ * esattamente come oggi (fail-closed: si perde la correlazione, non si guadagna una falla).
+ * Cosa NON passa, e sono i casi che contano:
+ *  · testo libero, nomi, note, diagnosi (hanno spazi, accenti, lettere fuori dall'esadecimale);
+ *  · un'email (la `@` non è esadecimale) e un codice fiscale (`RSSMRA…`: R, S, M non lo sono);
+ *  · i digest di CONTROLLO di Next, che non sono hash ma stringhe con dentro un PATH —
+ *    `NEXT_REDIRECT;replace;/m/<token>;307;`. In questo repo il path è una CREDENZIALE
+ *    (`/m/[token]` è una capability): è il caso in cui una lista bianca ingenua avrebbe versato
+ *    nei log proprio ciò che `redigiPath` esiste per togliere. Il `;` non è esadecimale: redatto.
+ */
+const CHIAVI_DIGEST = insieme('digest');
+
+/**
+ * La forma di un digest: solo esadecimale. Copre le due che Next produce davvero — il digest
+ * numerico degli errori di Server Component (`stringHash` → «2043430104») e gli hash esadecimali
+ * — e NON copre nient'altro che possa essere un dato. Il tetto a 64 caratteri è quello di uno
+ * sha256 in esadecimale: oltre, non è un digest, è qualcos'altro.
+ */
+const DIGEST_PLAUSIBILE = /^[0-9a-f]{4,64}$/i;
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
@@ -89,14 +150,10 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
  */
 const DATA_ISO = /^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2})?(\.\d+)?(Z|[+-]\d{2}:?\d{2})?)?$/;
 
-const SOLE_CIFRE = /^\d+$/;
-const CONTIENE_CIFRA = /\d/;
-
 const PROFONDITA_MAX = 5;
 const ELEMENTI_MAX = 20;
 const CHIAVI_MAX = 40;
 const STRINGA_IN_CHIARO_MAX = 120;
-const SEGMENTO_OPACO_MIN = 16;
 const STACK_RIGHE_MAX = 5;
 
 function eSegreta(chiaveNorm: string): boolean {
@@ -123,30 +180,6 @@ export function hashCorrelabile(valore: unknown): string {
     if (!salt) return '[redatto]';
     if (typeof valore !== 'string' && typeof valore !== 'number') return '[redatto]';
     return '#' + createHash('sha256').update(salt + String(valore)).digest('hex').slice(0, 8);
-}
-
-/**
- * Riduce un path al suo PATTERN: via la query string, e ogni segmento che possa essere
- * un identificativo o una credenziale diventa un segnaposto.
- *
- * L'euristica del segmento opaco è "lungo E con almeno una cifra", non solo "lungo":
- * il repo ha 19 segmenti di route ≥ 16 caratteri (`medical-certificates`,
- * `giustifiche-didattiche`, …) e collassarli tutti in `[tok]` toglierebbe al log la sua
- * unica funzione — sapere quale route è stata colpita. Il token pubblico è un
- * `randomUUID()`, quindi è già coperto dal ramo `[id]`.
- */
-export function redigiPath(v: string): string {
-    const senzaQuery = v.split('?')[0].split('#')[0];
-    return senzaQuery
-        .split('/')
-        .map((seg) => {
-            if (seg === '') return seg;
-            if (UUID.test(seg)) return '[id]';
-            if (seg.length >= SEGMENTO_OPACO_MIN && CONTIENE_CIFRA.test(seg)) return '[tok]';
-            if (SOLE_CIFRE.test(seg)) return '[n]';
-            return seg;
-        })
-        .join('/');
 }
 
 function redigiStringa(v: string): string {
@@ -197,6 +230,11 @@ function redactValore(chiave: string | null, v: unknown, prof: number, visti: Se
         if (k !== null) {
             if (CHIAVI_PATH.has(k)) return tronca(redigiPath(v));
             if (IN_CHIARO.has(k)) return tronca(v);
+            // LA CHIAVE APRE, IL VALORE CONFERMA (vedi `CHIAVI_DIGEST`): niente `tronca`, perché
+            // un digest o ci sta intero — e allora si può cercare — o non serve a niente. Se la
+            // forma non torna si cade sotto, e la stringa esce redatta come qualunque altra:
+            // la deroga non ha un ramo "quasi in chiaro".
+            if (CHIAVI_DIGEST.has(k) && DIGEST_PLAUSIBILE.test(v)) return v;
         }
         if (stringaAutoDescrittiva(v)) return v;
         return redigiStringa(v);

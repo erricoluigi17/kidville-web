@@ -1,9 +1,18 @@
+import { redigiPathNelTesto } from './path';
+
 /**
  * Serializzazione difensiva per il logger.
  *
  * Regola d'oro: NIENTE qui dentro può lanciare. Un throw nel logger trasforma
  * una risposta 200 in un 500 su TUTTE le route. Meglio un log incompleto che
  * un'app rotta dall'osservabilità.
+ *
+ * ⚠️ L'UNICO IMPORT AMMESSO È `./path`, e solo perché `path.ts` a sua volta non importa NULLA.
+ * Questo modulo entra nel bundle dell'EDGE (`instrumentation.ts` lo importa staticamente, e Next
+ * lo compila anche per il middleware): un import di `node:*` — `./redact`, che apre con
+ * `node:crypto`, per dirne uno — non farebbe cadere un log, farebbe cadere la BUILD, e cadrebbe
+ * sul middleware, cioè su ogni richiesta. Chi aggiunge un import qui verifichi prima la testata
+ * di `path.ts`.
  */
 
 const DIMENSIONE_MAX = 3_500; // Vercel tronca le righe lunghe: sotto la soglia
@@ -159,6 +168,29 @@ const FRAME = /^\s*at\s/;
  * funzione, non contengono dati personali, e sanificarli renderebbe il logger inutile
  * proprio nel momento in cui serve.
  *
+ * ─────────────────────────────────────────────────────────────────────────────────
+ * L'HEADER PASSA ANCHE DA `redigiPathNelTesto`, E QUESTO È IL COLLO DI BOTTIGLIA.
+ *
+ * `sanificaMessaggio` maschera email, codici fiscali e vincoli Postgres — NON i path. Ma in
+ * questo repo IL PATH È UNA CREDENZIALE: il token del modulo pubblico è un SEGMENTO di path
+ * (`/m/<token>`), non un query param, ed è una capability riusabile che apre il modulo di
+ * preiscrizione di un MINORE. E l'header dello stack È il messaggio: un
+ * `new Error('Errore caricando https://app.kidville.it/m/<token>')` — cioè un banalissimo
+ * errore di rete del browser — versava quel token in `app_log.stack`, dove vive 30 giorni e si
+ * interroga in SQL.
+ *
+ * La riduzione va QUI e non nei chiamanti perché questo è l'UNICO punto da cui passa OGNI stack
+ * del sistema: quelli del server (`logErrore`/`logEvento` → `descriviErrore`) e quelli del
+ * CLIENT (`/api/logs` fa passare da `descriviErrore` anche lo stack che arriva dal browser).
+ * `messaggio` e `route` la loro riduzione ce l'avevano già; lo stack era l'unico campo scoperto,
+ * ed era anche l'unico che nessuna difesa a valle avrebbe ripreso.
+ *
+ * SOLO L'HEADER, MAI I FRAME, e non è prudenza: un frame è
+ * `at f (/_next/static/chunks/layout-1a2b3c4d5e6f.js:1:2)`, e l'euristica del segmento opaco
+ * (≥16 caratteri con una cifra) lo ridurrebbe a `[tok]` — cancellando la posizione dell'errore,
+ * cioè l'unica cosa per cui uno stack esiste. I frame non contengono dati personali; l'header sì.
+ * ─────────────────────────────────────────────────────────────────────────────────
+ *
  * Si contano i FRAME, non le righe: un messaggio Postgres occupa 2+ righe di header, e a
  * contare righe si mangerebbe il budget dei frame. E c'è un cap in caratteri, perché
  * `new Error('x'.repeat(20_000))` produce uno stack da 20 KB in un modulo che esiste per
@@ -172,7 +204,12 @@ function preparaStack(stack: string): string {
         ? []
         : righe.slice(primoFrame).filter((r) => FRAME.test(r)).slice(0, FRAME_MAX);
 
-    const header = sanificaMessaggio(testa.join('\n'));
+    // `sanificaMessaggio` PRIMA (tronca a 500: ciò che taglia è buttato, non esposto), la
+    // riduzione dei path DOPO, sul testo che sopravvive. Le due sono indipendenti — nessuna
+    // maschera introdotta dall'una assomiglia a un path per l'altra — e `redigiPathNelTesto` è
+    // fail-CLOSED: se non riesce a ridurre, restituisce `[testo-illeggibile]` invece di lasciar
+    // passare un header di cui non può garantire che sia privo di credenziali.
+    const header = redigiPathNelTesto(sanificaMessaggio(testa.join('\n')));
     return tronca([header, ...frame].join('\n'), STACK_MAX);
 }
 

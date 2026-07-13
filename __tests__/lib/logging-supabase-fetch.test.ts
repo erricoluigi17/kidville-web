@@ -39,6 +39,16 @@ describe('analizzaBersaglio — dall\'URL si ricava cosa stiamo facendo', () => 
             .toBe('object/chat/[id]/[tok]');
     });
 
+    it('anche un codice fiscale in OMOCODIA PIENA (16 caratteri, zero cifre) viene mascherato', () => {
+        // `redigiPath` collassa i segmenti "lunghi E con almeno una cifra": questo non ne ha
+        // nessuna (l'Agenzia delle Entrate sostituisce le cifre con lettere quando due codici
+        // collidono) e gli passa in mezzo. A chiuderlo è la seconda passata, `sanificaMessaggio`
+        // — che serve perché in tabella `operazione` è in lista bianca ed esce IN CHIARO.
+        const b = analizzaBersaglio('https://x.supabase.co/storage/v1/object/fascicoli/RSSMRALMTLLASLMS/pagella.pdf');
+        expect(b.nome).toBe('object/fascicoli/[cf]/pagella.pdf');
+        expect(b.nome).not.toContain('RSSMRA');
+    });
+
     it('anche gli endpoint auth con un id nel path sono ridotti a pattern', () => {
         expect(analizzaBersaglio('https://x.supabase.co/auth/v1/admin/users/11111111-2222-3333-4444-555555555555').nome)
             .toBe('admin/users/[id]');
@@ -112,6 +122,28 @@ describe('creaFetchStrumentato', () => {
         const f = creaFetchStrumentato(async () => res);
         await expect(f('https://x.supabase.co/rest/v1/alunni')).resolves.toBe(res);
     });
+
+    it('del corpo d\'errore si leggono al massimo 64 KB, anche SENZA content-length', async () => {
+        // Il caso che un controllo su `content-length` non ferma: risposta chunked, header
+        // assente → `Number(null)` è 0, `0 > 64_000` è falso, e si bufferizzerebbero 5 MB.
+        const PEZZO = 64 * 1024;   // 64 KB per pezzo
+        const PEZZI = 80;          // 5 MB in tutto
+        let emessi = 0;
+        const flusso = new ReadableStream<Uint8Array>({
+            pull(controller) {
+                if (emessi >= PEZZI) { controller.close(); return; }
+                emessi++;
+                controller.enqueue(new Uint8Array(PEZZO).fill(0x61)); // 'a'
+            },
+        });
+        const res = new Response(flusso, { status: 500 });
+
+        const f = creaFetchStrumentato(async () => res);
+        await f('https://x.supabase.co/rest/v1/alunni', { method: 'POST' });
+
+        // Letti 1-2 pezzi (il taglio cade dentro il secondo), non ottanta.
+        expect(emessi).toBeLessThanOrEqual(3);
+    });
 });
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -174,9 +206,9 @@ describe('fetch strumentato — emissione reale', () => {
 
     /* ── L'INVARIANTE ────────────────────────────────────────────────────── */
 
-    it('INVARIANTE: ogni risposta PostgREST !ok produce una riga di livello ERROR', async () => {
+    it('INVARIANTE: ogni 4xx applicativo di PostgREST è un error PERSISTITO', async () => {
         const { creaFetchStrumentato: crea, appLog } = await caricaRumoroso();
-        for (const stato of [400, 401, 403, 404, 406, 409, 422, 500, 503]) {
+        for (const stato of [400, 401, 403, 404, 409, 422]) {
             err.mockClear();
             appLog.mockClear();
             const f = crea(async () => risposta(`{"code":"C${stato}","message":"boom"}`, stato));
@@ -184,9 +216,76 @@ describe('fetch strumentato — emissione reale', () => {
 
             const righe: string[] = err.mock.calls.map((c: unknown[]) => String(c[0]));
             expect(righe.some((r) => r.startsWith('KV_ERR ')), `stato ${stato}`).toBe(true);
-            expect(appLog).toHaveBeenCalledTimes(1);
+            expect(appLog, `stato ${stato}`).toHaveBeenCalledTimes(1);
             expect(appLog.mock.calls[0][0].livello, `stato ${stato}`).toBe('error');
         }
+    });
+
+    it('un 5xx di PostgREST è error su console ma NON in tabella: il DB è giù, non gli si scrive addosso', async () => {
+        const { creaFetchStrumentato: crea, appLog } = await caricaRumoroso();
+        for (const stato of [500, 502, 503]) {
+            err.mockClear();
+            appLog.mockClear();
+            const f = crea(async () => risposta('{"message":"gateway"}', stato));
+            // POST: postgrest non ritenta le scritture, quindi questo è già il tentativo finale.
+            await f('https://x.supabase.co/rest/v1/alunni', { method: 'POST' });
+
+            const righe: string[] = err.mock.calls.map((c: unknown[]) => String(c[0]));
+            expect(righe.some((r) => r.startsWith('KV_ERR ')), `stato ${stato}`).toBe(true);
+            expect(appLog, `stato ${stato}`).not.toHaveBeenCalled();
+        }
+    });
+
+    it('un 5xx di STORAGE o AUTH invece persiste: sono servizi diversi, il DB sta bene', async () => {
+        const { creaFetchStrumentato: crea, appLog } = await caricaRumoroso();
+
+        await crea(async () => risposta('{"message":"x"}', 500))('https://x.supabase.co/storage/v1/object/b/k');
+        expect(appLog.mock.calls[0][0].livello).toBe('error');
+
+        appLog.mockClear();
+        await crea(async () => risposta('{}', 500))('https://x.supabase.co/auth/v1/token', { method: 'POST' });
+        expect(appLog.mock.calls[0][0].livello).toBe('error');
+    });
+
+    it('un 3xx NON è un guasto (res.ok è falso anche per un 304)', async () => {
+        const { creaFetchStrumentato: crea, appLog } = await caricaRumoroso();
+        const f = crea(async () => new Response(null, { status: 304 }));
+        await f('https://x.supabase.co/rest/v1/alunni');
+        expect(err).not.toHaveBeenCalled();
+        expect(appLog).not.toHaveBeenCalled();
+        expect(String(log.mock.calls[0][0])).toContain('KV_EVT');
+    });
+
+    it('406 PGRST116 a ZERO righe è info: `.single()` su una riga che non c\'è non è un guasto del DB', async () => {
+        const { creaFetchStrumentato: crea, appLog } = await caricaRumoroso();
+        // È il caso di require-staff.ts:132 — `.single()` su `utenti`, con `if (error) return null`.
+        // Un utente cancellato dalla route GDPR ma con il cookie ancora vivo lo produce a OGNI
+        // richiesta API: a livello error sarebbe una riga in tabella per ogni richiesta.
+        const f = crea(async () => risposta(JSON.stringify({
+            code: 'PGRST116',
+            details: 'The result contains 0 rows',
+            hint: null,
+            message: 'JSON object requested, multiple (or no) rows returned',
+        }), 406));
+        await f('https://x.supabase.co/rest/v1/utenti?id=eq.123');
+
+        expect(err).not.toHaveBeenCalled();
+        expect(appLog).not.toHaveBeenCalled();
+        expect(String(log.mock.calls[0][0])).toContain('KV_EVT');
+        expect(String(log.mock.calls[0][0])).toContain('code=PGRST116');
+    });
+
+    it('406 PGRST116 con PIÙ righe resta error: un duplicato dove ci si aspetta unicità è un bug', async () => {
+        const { creaFetchStrumentato: crea, appLog } = await caricaRumoroso();
+        const f = crea(async () => risposta(JSON.stringify({
+            code: 'PGRST116',
+            details: 'The result contains 2 rows',
+            message: 'JSON object requested, multiple (or no) rows returned',
+        }), 406));
+        await f('https://x.supabase.co/rest/v1/utenti');
+
+        expect(String(err.mock.calls[0][0])).toContain('KV_ERR');
+        expect(appLog.mock.calls[0][0].livello).toBe('error');
     });
 
     it('la riga porta i campi diagnostici: code PostgREST, stato HTTP, metodo, durata, tabella', async () => {
@@ -292,6 +391,40 @@ describe('fetch strumentato — emissione reale', () => {
         expect(scritto(log, err)).not.toContain('invalid_grant');
     });
 
+    it('PROVA: password e JWT dentro un corpo d\'errore auth non escono da NESSUN canale', async () => {
+        const { creaFetchStrumentato: crea, appLog } = await caricaRumoroso();
+
+        const PASSWORD = 'Kidville.Segreta.2026!';
+        const JWT = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1MSJ9.FIRMA-DEL-TOKEN';
+        // Il caso peggiore: GoTrue rimanda indietro ciò che gli è arrivato. È esattamente
+        // l'ipotesi su cui NON vogliamo scommettere.
+        const corpoOstile = JSON.stringify({
+            code: 'invalid_credentials',
+            msg: `Invalid login credentials for mario.rossi@example.com (password: ${PASSWORD})`,
+            error_description: `refresh_token ${JWT} non valido`,
+            access_token: JWT,
+        });
+
+        const f = crea(async () => risposta(corpoOstile, 400));
+        await f('https://x.supabase.co/auth/v1/token?grant_type=password', {
+            method: 'POST',
+            // …e la password è anche nella RICHIESTA: nessun ramo del modulo la legge.
+            body: JSON.stringify({ email: 'mario.rossi@example.com', password: PASSWORD }),
+        });
+
+        const canali = [scritto(log, err), JSON.stringify(appLog.mock.calls)];
+        for (const canale of canali) {
+            expect(canale).not.toContain(PASSWORD);
+            expect(canale).not.toContain(JWT);
+            expect(canale).not.toContain('eyJ');           // nessun frammento di JWT
+            expect(canale).not.toContain('mario.rossi');
+            expect(canale).not.toMatch(/[\w.%+-]+@[\w.-]+\.[a-z]{2,}/i);
+        }
+        // Resta ciò che serve davvero: che qualcuno ha sbagliato le credenziali.
+        expect(scritto(log)).toContain('evt=auth');
+        expect(scritto(log)).toContain('stato=400');
+    });
+
     it('AUTH: un 4xx è la risposta NORMALE a una credenziale sbagliata → info, non finisce in tabella', async () => {
         const { creaFetchStrumentato: crea, appLog } = await caricaRumoroso();
         const f = crea(async () => risposta('{"error":"invalid_grant"}', 400));
@@ -338,16 +471,44 @@ describe('fetch strumentato — emissione reale', () => {
 
     /* ── Retry di postgrest-js ───────────────────────────────────────────── */
 
-    it('il RETRY di postgrest-js è distinguibile: X-Retry-Count finisce sulla riga', async () => {
+    it('i tentativi INTERMEDI del retry di postgrest NON si emettono: solo l\'ultimo', async () => {
+        const { creaFetchStrumentato: crea, appLog } = await caricaRumoroso();
+        const f = crea(async () => risposta('{"message":"schema cache not loaded"}', 503));
+
+        // postgrest-js ritenta GET su 503/520: tentativi 0, 1, 2 saranno seguiti da un altro colpo.
+        for (const t of [undefined, '1', '2']) {
+            const headers = t === undefined ? undefined : new Headers({ 'X-Retry-Count': t });
+            await f('https://x.supabase.co/rest/v1/alunni', { method: 'GET', headers });
+        }
+        expect(err).not.toHaveBeenCalled();
+        expect(log).not.toHaveBeenCalled();
+
+        // Il tentativo 3 è l'ultimo (DEFAULT_MAX_RETRIES = 3): quello si emette, e porta con sé
+        // il conteggio, quindi non si perde nulla dicendo che ce ne sono stati altri.
+        await f('https://x.supabase.co/rest/v1/alunni', {
+            method: 'GET', headers: new Headers({ 'X-Retry-Count': '3' }),
+        });
+        expect(String(err.mock.calls[0][0])).toContain('tentativo=3');
+        expect(appLog).not.toHaveBeenCalled(); // 5xx sul DB: non si persiste
+    });
+
+    it('la soppressione dei tentativi vale SOLO dove il retry esiste davvero (postgrest)', async () => {
         const { creaFetchStrumentato: crea } = await caricaRumoroso();
-        const f = crea(async () => risposta('{"message":"schema cache"}', 503));
-        // postgrest-js ritenta GET/HEAD su 503/520: 3 tentativi = 3 chiamate HTTP per 1 query.
-        await f('https://x.supabase.co/rest/v1/alunni', { headers: new Headers({ 'X-Retry-Count': '2' }) });
-        expect(String(err.mock.calls[0][0])).toContain('tentativo=2');
+
+        // Storage e auth NON hanno retry: sopprimere lì vorrebbe dire PERDERE il log.
+        await crea(async () => risposta('{"message":"x"}', 503))('https://x.supabase.co/storage/v1/object/b/k');
+        expect(String(err.mock.calls[0][0])).toContain('KV_ERR');
+
+        // E nemmeno su una scrittura: postgrest ritenta solo GET/HEAD/OPTIONS.
+        err.mockClear();
+        await crea(async () => risposta('{"message":"x"}', 503))(
+            'https://x.supabase.co/rest/v1/alunni', { method: 'POST' });
+        expect(String(err.mock.calls[0][0])).toContain('KV_ERR');
     });
 
     it('X-Retry-Count si legge anche da header passati come oggetto o come coppie', async () => {
         const { creaFetchStrumentato: crea } = await caricaRumoroso();
+        // 500 non è uno stato ritentabile (lo sono solo 503/520): la riga esce comunque.
         const f = crea(async () => risposta('{}', 500));
         await f('https://x.supabase.co/rest/v1/alunni', { headers: { 'x-retry-count': '1' } });
         expect(String(err.mock.calls[0][0])).toContain('tentativo=1');
@@ -357,15 +518,52 @@ describe('fetch strumentato — emissione reale', () => {
         expect(String(err.mock.calls[0][0])).toContain('tentativo=3');
     });
 
+    /* ── PROVA I1: l'amplificazione su un DB in affanno ──────────────────── */
+
+    it('PROVA: un 503 sul client VERO non moltiplica le richieste verso un DB già a terra', async () => {
+        const { createAdminClient, createLogClient, appLog } = await caricaRumoroso();
+
+        let httpQuery = 0;
+        let httpLog = 0;
+        const spia = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+            if (String(input).includes('app_log')) httpLog++; else httpQuery++;
+            return risposta('{"message":"schema cache not loaded"}', 503);
+        });
+
+        // Task 8 simulato: ogni riga persistita è una INSERT su `app_log` — cioè ALTRE
+        // richieste allo stesso database che sta rispondendo 503.
+        appLog.mockImplementation(async () => {
+            const logDb = await createLogClient();
+            await logDb.from('app_log').insert([{ livello: 'error' }]);
+        });
+
+        const supabase = await createAdminClient();
+        await supabase.from('alunni').select('id');
+        await new Promise((r) => setTimeout(r, 50)); // le scritture di log sono fire-and-forget
+
+        const righeKV: string[] = err.mock.calls
+            .map((c: unknown[]) => String(c[0]))
+            .filter((s: string) => s.startsWith('KV_'));
+
+        // I 4 colpi HTTP della query li fa postgrest-js da sé: non li controlliamo, e non è
+        // compito nostro. Ciò che controlliamo è quanto ci mettiamo NOI sopra: zero.
+        expect(httpQuery).toBe(4);
+        expect(httpLog).toBe(0);
+        expect(spia.mock.calls.length).toBe(4);
+        expect(righeKV.length).toBe(1);          // una riga, non quattro
+        expect(appLog).not.toHaveBeenCalled();   // nessuna scrittura verso il DB a terra
+    }, 30_000);
+
     /* ── Errori di rete ──────────────────────────────────────────────────── */
 
-    it('un errore di rete è un error, e viene RILANCIATO tale e quale', async () => {
+    it('un errore di rete è un error, viene RILANCIATO tale e quale, e NON si persiste', async () => {
         const { creaFetchStrumentato: crea, appLog } = await caricaRumoroso();
         const boom = new TypeError('fetch failed');
         const f = crea(async () => { throw boom; });
-        await expect(f('https://x.supabase.co/rest/v1/alunni')).rejects.toBe(boom);
-        expect(appLog.mock.calls[0][0].livello).toBe('error');
+        await expect(f('https://x.supabase.co/rest/v1/alunni', { method: 'POST' })).rejects.toBe(boom);
         expect(String(err.mock.calls[0][0])).toContain('KV_ERR');
+        // Se l'host Supabase non si raggiunge, non si raggiunge nemmeno per scriverci il log.
+        expect(appLog).not.toHaveBeenCalled();
     });
 
     it('un AbortError è info: è il chiamante che ha annullato, non il DB che ha fallito', async () => {
@@ -406,23 +604,53 @@ describe('fetch strumentato — emissione reale', () => {
  * 4. Regressione di libreria.
  * ──────────────────────────────────────────────────────────────────────────── */
 
+/**
+ * ⚠️ Asserire «`globalThis.fetch` è stato chiamato con `/rest/v1/utenti`» NON prova nulla: lo
+ * farebbe anche un client SENZA nessuna strumentazione, perché il fetch di supabase-js è pur
+ * sempre quello globale. Un test così passa con zero strumentazione — è tautologico, e il suo
+ * nome prometterebbe una garanzia che non consegna.
+ *
+ * L'unica prova valida è un EFFETTO che solo il nostro wrapper può produrre: la riga di log. Se
+ * `@supabase/ssr` un domani sovrascrivesse `global.fetch` invece di preservarlo (oggi fa
+ * `{ ...options?.global, headers: {…} }`), la chiamata partirebbe lo stesso — e questo test
+ * morirebbe. Che è il punto.
+ */
 describe('regressione: @supabase/ssr deve PRESERVARE global.fetch', () => {
-    beforeEach(() => vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', 'chiave-finta-di-test'));
-    afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
+    let err: ReturnType<typeof vi.spyOn>;
 
-    it('il fetch custom viene davvero invocato dal client', async () => {
-        const { createAdminClient } = await import('@/lib/supabase/server-client');
-        const spia = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-            new Response('[]', { status: 200, headers: { 'content-type': 'application/json' } })
-        );
-        const supabase = await createAdminClient();
-        await supabase.from('utenti').select('id').limit(1);
-        expect(spia).toHaveBeenCalled();
-        const chiamata = String(spia.mock.calls[0][0]);
-        expect(chiamata).toContain('/rest/v1/utenti');
-        spia.mockRestore();
+    beforeEach(() => {
+        vi.stubEnv('VITEST', '');
+        vi.stubEnv('KV_LOG_LEVEL', '');
+        vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', 'chiave-finta-di-test');
+        vi.spyOn(console, 'log').mockImplementation(() => {});
+        err = vi.spyOn(console, 'error').mockImplementation(() => {});
     });
 
+    afterEach(() => {
+        vi.doUnmock('@/lib/logging/app-log');
+        vi.unstubAllEnvs();
+        vi.restoreAllMocks();
+        vi.resetModules();
+    });
+
+    it('è PROPRIO il wrapper a essere invocato: senza, la riga di log non esisterebbe', async () => {
+        const { createAdminClient, appLog } = await caricaRumoroso();
+        const spia = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+            risposta('{"code":"42501","message":"permission denied for table utenti"}', 403)
+        );
+
+        const supabase = await createAdminClient();
+        await supabase.from('utenti').select('id').limit(1);
+
+        // (a) la chiamata è partita, e punta alla tabella giusta…
+        expect(spia).toHaveBeenCalled();
+        expect(String(spia.mock.calls[0][0])).toContain('/rest/v1/utenti');
+        // (b) …ed è passata dal NOSTRO fetch: solo lui produce questa riga e questa scrittura.
+        //     Sono le due asserzioni che muoiono se `global.fetch` viene perso.
+        expect(String(err.mock.calls[0][0])).toContain('KV_ERR');
+        expect(String(err.mock.calls[0][0])).toContain('rt=utenti');
+        expect(appLog.mock.calls[0][0].codice).toBe('42501');
+    });
 });
 
 /* ────────────────────────────────────────────────────────────────────────────

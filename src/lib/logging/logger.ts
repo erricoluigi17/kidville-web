@@ -345,19 +345,34 @@ export function logErrore(
  * Il LIVELLO non passa MAI da `redact()`: in questo dominio `livello` è la valutazione delle
  * competenze (D.M. 14/2024, A-D) ed è fra i segreti; redigere l'involucro renderebbe ciechi
  * i log. `redact()` tocca solo ciò che viene dal mondo esterno.
+ *
+ * `opzioni.persisti: false` — EMETTI MA NON PERSISTERE.
+ *
+ * Serve a un caso solo, ma è un caso che senza questa valvola fa danni: un errore il cui
+ * bersaglio è IL CANALE DI PERSISTENZA STESSO. Se PostgREST risponde 503, o se l'host non si
+ * raggiunge, la riga di log andrebbe scritta… su quello stesso database. Non ha senso scrivere
+ * su un DB rotto per dire che il DB è rotto: la scrittura fallirà comunque, e nel frattempo si
+ * aggiunge carico a un database che è già in affanno — proprio quando non può assorbirlo.
+ *
+ * Il livello resta `error`: la riga esce su Vercel (console), che è dove si guarda un DB giù.
+ * Si rinuncia solo alla riga in tabella, che non si sarebbe potuta scrivere.
+ *
+ * Il default è invariato (si persiste secondo `vaPersistito`): la valvola va aperta a mano,
+ * e chi la apre deve poter dire perché.
  */
 export function logEvento(
     evento: string,
     livello: Livello,
     campi: Record<string, Valore>,
     err?: unknown,
+    opzioni?: { persisti?: boolean },
 ): void {
     try {
         const d = err !== undefined ? descriviErrore(err) : undefined;
         const c = contesto();
         const codice = d?.codice ?? d?.causa?.codice;
 
-        persisti({
+        if (opzioni?.persisti !== false) persisti({
             livello,
             evento,
             messaggio: d ? d.messaggio : testoEvento(evento, campi),

@@ -245,6 +245,25 @@ describe('logger — emissione reale (guardia SILENZIOSO disattivata)', () => {
         expect(warn).not.toHaveBeenCalled();
     });
 
+    it('logEvento { persisti: false }: emette su console ma NON scrive in tabella', async () => {
+        const { logEvento: ev, appLog } = await caricaRumoroso();
+
+        // Il caso per cui la valvola esiste: l'errore riguarda il canale di persistenza stesso
+        // (PostgREST a 503). Non ha senso scrivere su un DB rotto per dire che il DB è rotto.
+        ev('db', 'error', { operazione: 'alunni', stato: 503 }, new Error('schema cache'),
+            { persisti: false });
+
+        expect(err.mock.calls[0][0]).toContain('KV_ERR evt=db');
+        expect(appLog).not.toHaveBeenCalled();
+
+        // Il default è invariato: senza opzioni si persiste come sempre.
+        err.mockClear();
+        ev('db', 'error', { operazione: 'alunni', stato: 409 }, new Error('duplicato'));
+        expect(err.mock.calls[0][0]).toContain('KV_ERR evt=db');
+        expect(appLog).toHaveBeenCalledTimes(1);
+        expect(appLog.mock.calls[0][0].livello).toBe('error');
+    });
+
     it('l\'Error nativo esce SOLO per livello error: un info/warn non deve inquinare il flusso errori', async () => {
         const { logEvento: ev } = await caricaRumoroso();
 

@@ -3,6 +3,8 @@ import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
 import { parseQuery } from '@/lib/validation/http'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // `gruppo` e `alunno_ids` (CSV di id, split nel codice) sono entrambi opzionali
@@ -19,7 +21,7 @@ const getQuerySchema = z.object({
 // GET /api/teacher/uscite?userId=&alunno_ids=a,b,c  (oppure &gruppo=)
 //   Semaforo gite/uscite per l'insegnante. Ritorna SOLO { alunno_id, autorizzato, quota_ok }.
 //   MAI dati economici (nessun importo). Accesso: educator/coordinator/admin (NO genitore).
-export async function GET(request: Request) {
+export const GET = withRoute('teacher/uscite:GET', async (request: Request) => {
   try {
     const auth = await requireUser(request)
     if (auth.response) return auth.response
@@ -85,7 +87,7 @@ export async function GET(request: Request) {
 
     return NextResponse.json({ success: true, data })
   } catch (err) {
-    console.error('Errore API GET teacher/uscite:', err)
+    logErrore({ operazione: 'teacher/uscite:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

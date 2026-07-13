@@ -7,6 +7,8 @@ import { logScrittura } from '@/lib/audit/scrittura'
 import { RUOLI_VALIDI } from '@/lib/auth/ruoli'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 const DIREZIONE = ['admin', 'coordinator'] as const
 // Lettura estesa alla Segreteria (T3): l'elenco del personale è consultabile anche
@@ -30,7 +32,7 @@ const patchBodySchema = z.object({
 
 // GET /api/admin/staff — elenco personale (esclude i genitori). Lettura estesa
 // alla Segreteria; le scritture (PATCH) restano riservate alla Direzione.
-export async function GET(request: Request) {
+export const GET = withRoute('admin/staff:GET', async (request: Request) => {
   try {
     const auth = await requireStaff(request, [...LETTURA])
     if (auth.response) return auth.response
@@ -59,14 +61,14 @@ export async function GET(request: Request) {
       assegnazioni: asseg ?? [],
     })
   } catch (err) {
-    console.error('Errore GET admin/staff:', err)
+    logErrore({ operazione: 'admin/staff:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})
 
 // PATCH /api/admin/staff — gestione RBAC (DL-028). Solo Direzione.
 // Body: { id, ruolo?, scuola_id?, gradi?, section_ids? }
-export async function PATCH(request: Request) {
+export const PATCH = withRoute('admin/staff:PATCH', async (request: Request) => {
   try {
     const auth = await requireStaff(request, [...DIREZIONE])
     if (auth.response) return auth.response
@@ -124,7 +126,7 @@ export async function PATCH(request: Request) {
 
     return NextResponse.json({ success: true, data: { id } })
   } catch (err) {
-    console.error('Errore PATCH admin/staff:', err)
+    logErrore({ operazione: 'admin/staff:PATCH', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

@@ -8,6 +8,8 @@ import { notificaTitolariScrittura, enqueueDiarioGenitori } from '@/lib/primaria
 import { getModuleConfig } from '@/lib/settings/module-config';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid, zDataYMD } from '@/lib/validation/common';
+import { withRoute } from '@/lib/logging/with-route';
+import { logEvento } from '@/lib/logging/logger';
 
 // Modalità genitore: default from = 14 giorni fa, to = oggi (dinamici, calcolati nel codice).
 const getParentQuerySchema = z.object({
@@ -49,7 +51,7 @@ const postBodySchema = z.union([z.array(entrySchema), entrySchema]);
 // i propri figli) è rinviato all'onboarding/sigillo S13 — finché l'identità è via
 // header (spoofabile) il gate non aggiunge sicurezza reale e romperebbe l'accesso
 // demo; la lettura passa comunque via service-role (anon = default-deny).
-export async function GET(request: NextRequest) {
+export const GET = withRoute('diary/entries:GET', async (request: NextRequest) => {
     const admin = await createAdminClient();
     const params = request.nextUrl.searchParams;
 
@@ -134,11 +136,11 @@ export async function GET(request: NextRequest) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
     return NextResponse.json(data);
-}
+});
 
 // POST /api/diary/entries — salva (upsert) eventi diario
 // Per ogni alunno+tipo_evento: se già esiste oggi → UPDATE, altrimenti → INSERT
-export async function POST(request: NextRequest) {
+export const POST = withRoute('diary/entries:POST', async (request: NextRequest) => {
     const auth = await requireDocente(request);
     if (auth.response) return auth.response;
 
@@ -248,7 +250,15 @@ export async function POST(request: NextRequest) {
                     }
                 }
             } catch (e) {
-                console.warn('[diary/entries] scalo pannolino saltato:', (e as Error).message);
+                // Lo scalo del pannolino è un effetto collaterale: se salta, il diario è comunque
+                // salvato e la richiesta non deve fallire. Ma «saltato» va detto — è una scorta che
+                // non viene scalata, cioè un armadietto che a fine mese non torna, e senza questa
+                // riga la discrepanza sarebbe inspiegabile. `warn` e non `error`: il dato principale
+                // è salvo. Va in tabella (vaPersistito persiste i warn), che è dove la si conta.
+                logEvento('diary', 'warn', {
+                    operazione: 'diary/entries:POST',
+                    esito: 'scalo-pannolino-saltato',
+                }, e);
             }
         }
     }
@@ -278,4 +288,4 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.json(results);
-}
+});

@@ -6,6 +6,8 @@ import { parseBody, parseData } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { resolveScuoleAttive } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 const patchBodySchema = z.object({
   azione: z.enum(['conferma', 'ignora', 'riapri']),
@@ -25,7 +27,7 @@ interface Movimento {
 // PATCH /api/pagamenti/riconciliazione/[id] — conferma/ignora/riapri (staff).
 // La CONFERMA crea l'incasso (metodo bonifico, data = data operazione): lo
 // stato del pagamento lo ricalcola il trigger. Mai conferme automatiche.
-export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
+export const PATCH = withRoute('pagamenti/riconciliazione/[id]:PATCH', async (request: Request, context: { params: Promise<{ id: string }> }) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -132,7 +134,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
 
     return NextResponse.json({ success: true, data: { incasso_id: (incasso as { id: string }).id } })
   } catch (err) {
-    console.error('Errore API PATCH riconciliazione:', err)
+    logErrore({ operazione: 'pagamenti/riconciliazione/[id]:PATCH', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

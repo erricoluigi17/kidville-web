@@ -5,6 +5,8 @@ import { requireStaff } from '@/lib/auth/require-staff';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { resolveScuoleAttive } from '@/lib/auth/scope';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore, logEvento } from '@/lib/logging/logger';
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({}); // nessun parametro in ingresso
@@ -35,7 +37,7 @@ const patchBodySchema = z.object({
 });
 
 // GET: Recupera tutte le pre-iscrizioni (Sala d'attesa)
-export async function GET(request: NextRequest) {
+export const GET = withRoute('admin/pre-inscriptions:GET', async (request: NextRequest) => {
   try {
     // Gap auth segnalato in M3, chiuso in M9: la sala d'attesa (PII dei
     // richiedenti) è dello staff. Il POST resta PUBBLICO: è la sottomissione
@@ -59,12 +61,13 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(data);
   } catch (err) {
+    logErrore({ operazione: 'admin/pre-inscriptions:GET', stato: 500 }, err);
     return NextResponse.json({ error: err instanceof Error ? err.message : 'Errore interno' }, { status: 500 });
   }
-}
+});
 
 // POST: Sottomissione da parte del genitore (Portale Onboarding Pubblico)
-export async function POST(request: NextRequest) {
+export const POST = withRoute('admin/pre-inscriptions:POST', async (request: NextRequest) => {
   try {
     const b = await parseBody(request, postBodySchema);
     if ('response' in b) return b.response;
@@ -115,12 +118,13 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(data, { status: 201 });
   } catch (err) {
+    logErrore({ operazione: 'admin/pre-inscriptions:POST', stato: 500 }, err);
     return NextResponse.json({ error: err instanceof Error ? err.message : 'Errore interno' }, { status: 500 });
   }
-}
+});
 
 // PATCH: Approvazione (Sala d'attesa) o Rifiuto
-export async function PATCH(request: NextRequest) {
+export const PATCH = withRoute('admin/pre-inscriptions:PATCH', async (request: NextRequest) => {
   try {
     const auth = await requireStaff(request);
     if (auth.response) return auth.response;
@@ -211,11 +215,17 @@ export async function PATCH(request: NextRequest) {
         .upsert(utentiRecord);
 
       if (utentiErr) {
-        console.error('Errore inserimento utenti:', utentiErr.message);
+        // La richiesta prosegue e risponde 200 con le credenziali, ma la riga `utenti`
+        // NON è stata scritta: l'account auth esiste e non risolve nulla. Scrittura
+        // persa in silenzio → `error`. L'errore si passa intero (non `.message`):
+        // code/details/hint di PostgREST sono ciò che dice PERCHÉ.
+        logEvento('db', 'error', {
+          operazione: 'admin/pre-inscriptions:PATCH',
+          esito: 'utenti-non-inserito',
+        }, utentiErr);
       }
 
-      // Inserisci in adults (schema esteso) se la tabella esiste. 
-      // Useremo rpc exec_sql_kidville o directly try-catch
+      // Mirror best-effort su `adults` (schema esteso), se la tabella esiste ancora.
       try {
         const adultsRecord = {
           id: userId,
@@ -227,9 +237,32 @@ export async function PATCH(request: NextRequest) {
           phones: pre.parent_phone ? [pre.parent_phone] : [],
           role: 'parent'
         };
-        await supabase.from('adults').upsert(adultsRecord);
-      } catch {
-        console.log('Tabella adults non presente o non interrogabile direttamente, skippo...');
+
+        // Il valore di ritorno si CONTROLLA: PostgREST non lancia, e affidare il log al solo
+        // `catch` — com'era — significava non vedere mai niente. Se `adults` non esiste più
+        // (42P01) l'errore deve comparire da qualche parte: fosse solo per poter cancellare
+        // questo mirror con la certezza che non serve più a nessuno.
+        const { error: adultsErr } = await supabase.from('adults').upsert(adultsRecord);
+
+        if (adultsErr) {
+          // `info` — l'unico ramo di questo file in cui l'errore è DAVVERO ignorabile, e la
+          // regola 6 chiede di dire perché: `adults` è una tabella legacy che nello schema live
+          // non esiste più (il dato canonico è in `utenti`/`parents`, scritto qui sopra). Non si
+          // perde niente che non sia già altrove — perciò `info`, non `error`. L'errore va
+          // comunque intero come 4° argomento: senza il `code` non si distingue "tabella
+          // assente" (previsto) da "scrittura negata" (che previsto non è).
+          logEvento('db', 'info', {
+            operazione: 'admin/pre-inscriptions:PATCH',
+            esito: 'mirror-adults-saltato',
+          }, adultsErr);
+        }
+      } catch (e) {
+        // Il `try` resta a garantire che un guasto di trasporto sul mirror LEGACY non faccia
+        // fallire un'iscrizione già andata a buon fine. Stesso livello, stessa ragione.
+        logEvento('db', 'info', {
+          operazione: 'admin/pre-inscriptions:PATCH',
+          esito: 'mirror-adults-saltato',
+        }, e);
       }
 
       // 3. Inserisci tutti i bambini
@@ -254,7 +287,14 @@ export async function PATCH(request: NextRequest) {
           .single();
 
         if (childErr) {
-          console.error('Errore inserimento alunno:', childErr.message);
+          // Il bambino NON è stato iscritto, ma la route risponde 200 `success: true`:
+          // senza questa riga l'alunno mancante non lo scopre nessuno. Scrittura persa
+          // → `error`, e con il conteggio per capire quale figlio dell'invio è caduto.
+          logEvento('db', 'error', {
+            operazione: 'admin/pre-inscriptions:PATCH',
+            esito: 'alunno-non-inserito',
+            figli_totali: childrenList.length,
+          }, childErr);
           continue;
         }
 
@@ -271,7 +311,13 @@ export async function PATCH(request: NextRequest) {
             .insert(legameRecord);
           
           if (legameErr) {
-            console.error('Errore inserimento legame:', legameErr.message);
+            // Alunno creato ma NON collegato al genitore: il figlio esiste e il genitore
+            // non lo vedrà mai. Scrittura persa, risposta 200 → `error`.
+            logEvento('db', 'error', {
+              operazione: 'admin/pre-inscriptions:PATCH',
+              esito: 'legame-non-inserito',
+              alunno_id: newChild.id,
+            }, legameErr);
           }
         }
       }
@@ -303,7 +349,7 @@ export async function PATCH(request: NextRequest) {
 
     return NextResponse.json({ error: 'Stato non valido' }, { status: 400 });
   } catch (err) {
-    console.error('Errore PATCH /api/admin/pre-inscriptions:', err);
+    logErrore({ operazione: 'admin/pre-inscriptions:PATCH', stato: 500 }, err);
     return NextResponse.json({ error: err instanceof Error ? err.message : 'Errore interno' }, { status: 500 });
   }
-}
+});

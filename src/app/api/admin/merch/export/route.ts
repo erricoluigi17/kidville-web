@@ -6,6 +6,8 @@ import { requireStaff } from '@/lib/auth/require-staff'
 import { scuoleDiUtente } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { parseQuery } from '@/lib/validation/http'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // GET /api/admin/merch/export — XLSX flat delle righe Merchandise (una riga per
 // riga d'ordine) per segreteria/magazzino. Degrada a foglio vuoto su DB non migrato.
@@ -45,7 +47,7 @@ function xlsxResponse(wb: XLSX.WorkBook, filename: string) {
   })
 }
 
-export async function GET(request: Request) {
+export const GET = withRoute('admin/merch/export:GET', async (request: Request) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -114,7 +116,7 @@ export async function GET(request: Request) {
     XLSX.utils.book_append_sheet(wb, ws, 'Merchandise')
     return xlsxResponse(wb, `merchandise-${oggi}.xlsx`)
   } catch (err) {
-    console.error('Errore API GET merch/export:', err)
+    logErrore({ operazione: 'admin/merch/export:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

@@ -12,6 +12,8 @@ import {
 } from '@/lib/primaria/oreAssenza'
 import { parseQuery } from '@/lib/validation/http'
 import { zDataYMD, zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 const getQuerySchema = z.object({
   sectionId: zUuid,
@@ -27,7 +29,7 @@ const getQuerySchema = z.object({
 // GET /api/primaria/ore-assenza?sectionId=&from=&to=&alunnoId=&userId=&includiMaterie=true
 // Monte ore di assenza (assenze intere + ritardi + permessi) per alunno.
 // Con includiMaterie=true aggiunge il breakdown per materia.
-export async function GET(request: NextRequest) {
+export const GET = withRoute('primaria/ore-assenza:GET', async (request: NextRequest) => {
   try {
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
@@ -115,7 +117,8 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ success: true, data, giornata })
   } catch (err) {
+    logErrore({ operazione: 'primaria/ore-assenza:GET', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

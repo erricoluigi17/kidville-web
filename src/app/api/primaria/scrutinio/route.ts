@@ -8,6 +8,8 @@ import { titolareDiMateria } from '@/lib/audit/valutatore'
 import { notificaTitolariScrittura } from '@/lib/primaria/notifiche'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // periodoId assente o '' → lista periodi configurati (come oggi: '' è falsy).
@@ -48,7 +50,7 @@ const patchBodySchema = z.object({
 // Apre (o recupera) lo scrutinio della classe per il periodo. Ritorna alunni,
 // materie della sezione, le materie del docente (modificabili), i giudizi
 // proposti, il comportamento e la scala dei 6 giudizi ufficiali.
-export async function GET(request: NextRequest) {
+export const GET = withRoute('primaria/scrutinio:GET', async (request: NextRequest) => {
   try {
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
@@ -150,15 +152,16 @@ export async function GET(request: NextRequest) {
       },
     })
   } catch (err) {
+    logErrore({ operazione: 'primaria/scrutinio:GET', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})
 
 // POST /api/primaria/scrutinio?userId=
 // Proposta giudizi sintetici del docente per le proprie discipline.
 // body: { scrutinioId, giudizi: [{ alunnoId, materiaId, giudizioSintetico }] }
-export async function POST(request: NextRequest) {
+export const POST = withRoute('primaria/scrutinio:POST', async (request: NextRequest) => {
   try {
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
@@ -270,15 +273,16 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true, data: data ?? [] })
   } catch (err) {
+    logErrore({ operazione: 'primaria/scrutinio:POST', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})
 
 // PATCH /api/primaria/scrutinio?userId=
 // Comportamento + giudizio globale per alunno.
 // body: { scrutinioId, comportamento: [{ alunnoId, giudizioTesto?, scalaValore?, giudizioGlobale? }] }
-export async function PATCH(request: NextRequest) {
+export const PATCH = withRoute('primaria/scrutinio:PATCH', async (request: NextRequest) => {
   try {
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
@@ -335,7 +339,8 @@ export async function PATCH(request: NextRequest) {
 
     return NextResponse.json({ success: true, data: data ?? [] })
   } catch (err) {
+    logErrore({ operazione: 'primaria/scrutinio:PATCH', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

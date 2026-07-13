@@ -4,6 +4,8 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { CERTIFICATI_BUCKET } from '@/lib/competenze/certificato-store'
 import { parseQuery } from '@/lib/validation/http'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // certificatoId permissivo (stringa non vuota, niente zUuid): oggi nessun
@@ -14,7 +16,7 @@ const getQuerySchema = z.object({
 
 // GET /api/admin/competenze/download?certificatoId=&userId=
 // URL firmato del PDF del certificato (lato staff/dirigenza).
-export async function GET(request: NextRequest) {
+export const GET = withRoute('admin/competenze/download:GET', async (request: NextRequest) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -34,7 +36,8 @@ export async function GET(request: NextRequest) {
     if (!signed?.signedUrl) return NextResponse.json({ error: 'URL non disponibile' }, { status: 500 })
     return NextResponse.json({ success: true, url: signed.signedUrl })
   } catch (err) {
+    logErrore({ operazione: 'admin/competenze/download:GET', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

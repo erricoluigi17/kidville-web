@@ -9,6 +9,8 @@ import { isOltreScadenza } from '@/lib/primaria/timelock'
 import { enqueueNotifichePerAlunni, notificaTitolariScrittura } from '@/lib/primaria/notifiche'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zDataYMD, zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 const getQuerySchema = z.object({
   sectionId: zUuid,
@@ -45,7 +47,7 @@ function giornoSettimana(dataIso: string): number {
 // GET /api/primaria/registro?sectionId=&data=&userId=
 // Restituisce la griglia del giorno: campanelle (con orario pre-compilato) +
 // righe di registro firmate (con firme, contenuti propri e destinatari).
-export async function GET(request: NextRequest) {
+export const GET = withRoute('primaria/registro:GET', async (request: NextRequest) => {
   try {
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
@@ -107,14 +109,15 @@ export async function GET(request: NextRequest) {
       data: { giorno, campanelle: campanelle ?? [], orarioCelle: orarioConNomi, righe: righeConNomi },
     })
   } catch (err) {
+    logErrore({ operazione: 'primaria/registro:GET', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})
 
 // POST /api/primaria/registro?userId=
 // Firma/salva una lezione. Gestisce cofirma e firma indipendente (destinatari).
-export async function POST(request: NextRequest) {
+export const POST = withRoute('primaria/registro:POST', async (request: NextRequest) => {
   try {
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
@@ -308,7 +311,8 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true, data: { registro: registroRow, firma: firmaRow } })
   } catch (err) {
+    logErrore({ operazione: 'primaria/registro:POST', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

@@ -4,6 +4,8 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 const getQuerySchema = z.object({
   alunno_id: zUuid,
@@ -20,7 +22,7 @@ interface LegameTutoreRow {
 // GET /api/pagamenti/tutori?userId=&alunno_id=  (staff)
 // Tutori (account `utenti`) collegati all'alunno via legame_genitori_alunni,
 // con percentuale_pagamento — base per le quote split dei genitori separati.
-export async function GET(request: Request) {
+export const GET = withRoute('pagamenti/tutori:GET', async (request: Request) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -66,7 +68,7 @@ export async function GET(request: Request) {
     const tutori = base.map((t) => ({ ...t, has_fiscal_code: conCF.has(t.adult_id) }))
     return NextResponse.json({ success: true, data: tutori })
   } catch (err) {
-    console.error('Errore API GET tutori:', err)
+    logErrore({ operazione: 'pagamenti/tutori:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

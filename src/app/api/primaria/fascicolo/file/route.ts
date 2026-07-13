@@ -5,6 +5,8 @@ import { resolveIdentity } from '@/lib/auth/require-staff'
 import { puoAccedereFascicolo, logAccessoFascicolo } from '@/lib/primaria/fascicolo-rbac'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 const BUCKET = 'sensitive_documents'
 const SIGNED_TTL = 60 // secondi
@@ -17,7 +19,7 @@ const getQuerySchema = z.object({
 
 // GET /api/primaria/fascicolo/file?documentoId=&userId=
 // Restituisce un signed URL a tempo per il download del documento (RBAC + audit).
-export async function GET(request: NextRequest) {
+export const GET = withRoute('primaria/fascicolo/file:GET', async (request: NextRequest) => {
   try {
     const { userId } = await resolveIdentity(request)
     if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
@@ -47,7 +49,8 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ success: true, data: { url: signed.signedUrl, fileName: doc.file_name } })
   } catch (err) {
+    logErrore({ operazione: 'primaria/fascicolo/file:GET', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

@@ -6,6 +6,8 @@ import { assertSezioneInScope } from '@/lib/auth/scope'
 import { enqueueNotifichePerAlunni } from '@/lib/primaria/notifiche'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const postBodySchema = z.object({
@@ -18,7 +20,7 @@ const postBodySchema = z.object({
 // CHIUSO. La generazione dei PDF è separata (vedi /pagella/batch): si può
 // generare/anteprima senza pubblicare. Riservata alla dirigenza.
 // body: { scrutinioId, pubblicato: boolean }
-export async function POST(request: NextRequest) {
+export const POST = withRoute('primaria/scrutinio/pubblica:POST', async (request: NextRequest) => {
   try {
     const auth = await requireStaff(request, ['admin', 'coordinator'])
     if (auth.response) return auth.response
@@ -74,7 +76,8 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true, data: updated })
   } catch (err) {
+    logErrore({ operazione: 'primaria/scrutinio/pubblica:POST', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

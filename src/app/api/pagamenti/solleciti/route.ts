@@ -6,6 +6,8 @@ import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { resolveScuoleAttive } from '@/lib/auth/scope'
 import { sollecitaPagamenti } from '@/lib/pagamenti/solleciti-invio'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 const zUuidQueryOpzionale = z.preprocess((v) => (v === '' ? undefined : v), zUuid.optional())
 
@@ -22,7 +24,7 @@ const postBodySchema = z.object({
 const SCHEMA_MANCANTE = new Set(['42P01', '42703', 'PGRST204', 'PGRST205'])
 
 // GET /api/pagamenti/solleciti?pagamento_id= — storico invii (staff).
-export async function GET(request: NextRequest) {
+export const GET = withRoute('pagamenti/solleciti:GET', async (request: NextRequest) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -47,14 +49,14 @@ export async function GET(request: NextRequest) {
     }
     return NextResponse.json({ success: true, data: data || [] })
   } catch (err) {
-    console.error('Errore API GET solleciti:', err)
+    logErrore({ operazione: 'pagamenti/solleciti:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})
 
 // POST /api/pagamenti/solleciti — invio manuale (staff). Con `anteprima: true`
 // rende i testi SENZA inviare: la conferma esplicita è un secondo POST.
-export async function POST(request: Request) {
+export const POST = withRoute('pagamenti/solleciti:POST', async (request: Request) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -73,7 +75,7 @@ export async function POST(request: Request) {
     })
     return NextResponse.json({ success: true, data: esiti })
   } catch (err) {
-    console.error('Errore API POST solleciti:', err)
+    logErrore({ operazione: 'pagamenti/solleciti:POST', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

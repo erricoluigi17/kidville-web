@@ -8,6 +8,8 @@ import { resolveScuolaScrittura, scuoleDiUtente } from '@/lib/auth/scope'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zDataYMD, zUuid } from '@/lib/validation/common'
 import { genitoreHasFiglio } from '@/lib/anagrafiche/legami'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // '' è ammesso per retro-compatibilità sui param opzionali: ?scuola_id= (vuoto)
@@ -65,7 +67,7 @@ const deleteQuerySchema = z.object({
 //   Se menu_config_id è passato, usa direttamente quel menu.
 //   Se nessuno dei due è passato, usa il menu legacy (menu_config_id IS NULL).
 //   Con ?raw=1 ritorna le tabelle grezze per l'editor admin → richiede staff.
-export async function GET(request: NextRequest) {
+export const GET = withRoute('mensa/menu:GET', async (request: NextRequest) => {
   try {
     const supabase = await createAdminClient()
     const { searchParams } = new URL(request.url)
@@ -161,16 +163,16 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ success: true, data: giorni, meta: { menuNome } })
   } catch (err) {
-    console.error('Errore API GET mensa/menu:', err)
+    logErrore({ operazione: 'mensa/menu:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})
 
 // PUT /api/mensa/menu  (staff) — upsert rotazione e/o override.
 // Body: { userId, scuola_id?, menu_config_id?,
 //         rotazione?: [{settimana, giorno_settimana, portate, note}],
 //         override?: [{data, chiuso, portate, note}] }
-export async function PUT(request: NextRequest) {
+export const PUT = withRoute('mensa/menu:PUT', async (request: NextRequest) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -220,13 +222,13 @@ export async function PUT(request: NextRequest) {
 
     return NextResponse.json({ success: true })
   } catch (err) {
-    console.error('Errore API PUT mensa/menu:', err)
+    logErrore({ operazione: 'mensa/menu:PUT', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})
 
 // DELETE /api/mensa/menu?userId=&override_id=  (staff) — rimuove un override.
-export async function DELETE(request: Request) {
+export const DELETE = withRoute('mensa/menu:DELETE', async (request: Request) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -237,7 +239,7 @@ export async function DELETE(request: Request) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json({ success: true })
   } catch (err) {
-    console.error('Errore API DELETE mensa/menu:', err)
+    logErrore({ operazione: 'mensa/menu:DELETE', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

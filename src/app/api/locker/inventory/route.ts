@@ -7,6 +7,8 @@ import { assertAlunnoInScope, scuoleDiUtente } from '@/lib/auth/scope';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zAnnoMese, zDataYMD, zUuid } from '@/lib/validation/common';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore } from '@/lib/logging/logger';
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 /** '' nei query param equivale ad assente (i check truthy pre-esistenti restano invariati). */
@@ -52,7 +54,7 @@ function getMonthRange(ym: string) {
  *   mode=stock       → ritorna stock aggregato (somma carichi - consumi)
  *   mode=carico      → solo record portato=true (consegne genitore)
  */
-export async function GET(request: NextRequest) {
+export const GET = withRoute('locker/inventory:GET', async (request: NextRequest) => {
     try {
         const q = parseQuery(request, getQuerySchema);
         if ('response' in q) return q.response;
@@ -171,10 +173,10 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({ error: 'Missing params' }, { status: 400 });
     } catch (err) {
         const msg = err instanceof Error ? err.message : 'Errore interno';
-        console.error('GET /api/locker/inventory:', msg);
+        logErrore({ operazione: 'locker/inventory:GET', stato: 500 }, err);
         return NextResponse.json({ error: msg }, { status: 500 });
     }
-}
+});
 
 /**
  * POST /api/locker/inventory  → CARICO (genitore porta materiale)
@@ -182,7 +184,7 @@ export async function GET(request: NextRequest) {
  * Strategia: cerca record per (alunno_id, materiale, date); se esiste aggiorna, altrimenti inserisce.
  * Nessun onConflict → non dipende da UNIQUE constraint.
  */
-export async function POST(request: NextRequest) {
+export const POST = withRoute('locker/inventory:POST', async (request: NextRequest) => {
     try {
         const b = await parseBody(request, postBodySchema);
         if ('response' in b) return b.response;
@@ -235,17 +237,17 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ success: true, data: result });
     } catch (err) {
         const msg = err instanceof Error ? err.message : 'Errore interno';
-        console.error('POST /api/locker/inventory:', msg);
+        logErrore({ operazione: 'locker/inventory:POST', stato: 500 }, err);
         return NextResponse.json({ error: msg }, { status: 500 });
     }
-}
+});
 
 /**
  * PATCH /api/locker/inventory → CONSUMO (insegnante usa materiale)
  * Body: { alunno_id, materiale, quantita_usata }
  * Inserisce un record portato=false che riduce lo stock.
  */
-export async function PATCH(request: NextRequest) {
+export const PATCH = withRoute('locker/inventory:PATCH', async (request: NextRequest) => {
     try {
         // CONSUMO = azione docente/staff: gate ruolo + scope + audit.
         const auth = await requireDocente(request);
@@ -287,7 +289,7 @@ export async function PATCH(request: NextRequest) {
         return NextResponse.json({ success: true, data });
     } catch (err) {
         const msg = err instanceof Error ? err.message : 'Errore interno';
-        console.error('PATCH /api/locker/inventory:', msg);
+        logErrore({ operazione: 'locker/inventory:PATCH', stato: 500 }, err);
         return NextResponse.json({ error: msg }, { status: 500 });
     }
-}
+});

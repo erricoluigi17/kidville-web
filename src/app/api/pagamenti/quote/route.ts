@@ -4,6 +4,8 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const upsertBodySchema = z.object({
@@ -65,21 +67,21 @@ async function upsertQuote(request: Request) {
   return NextResponse.json({ success: true, data: created }, { status: 200 })
 }
 
-export async function POST(request: Request) {
+export const POST = withRoute('pagamenti/quote:POST', async (request: Request) => {
   try { return await upsertQuote(request) } catch (err) {
-    console.error('Errore API POST quote:', err)
+    logErrore({ operazione: 'pagamenti/quote:POST', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
-export async function PATCH(request: Request) {
+})
+export const PATCH = withRoute('pagamenti/quote:PATCH', async (request: Request) => {
   try { return await upsertQuote(request) } catch (err) {
-    console.error('Errore API PATCH quote:', err)
+    logErrore({ operazione: 'pagamenti/quote:PATCH', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})
 
 // GET /api/pagamenti/quote?pagamento_id=&userId=  (staff) — quote di un pagamento
-export async function GET(request: Request) {
+export const GET = withRoute('pagamenti/quote:GET', async (request: Request) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -95,7 +97,7 @@ export async function GET(request: Request) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json({ success: true, data })
   } catch (err) {
-    console.error('Errore API GET quote:', err)
+    logErrore({ operazione: 'pagamenti/quote:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

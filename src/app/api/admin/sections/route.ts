@@ -6,6 +6,8 @@ import { resolveScuoleAttive, resolveScuolaScrittura } from '@/lib/auth/scope';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore } from '@/lib/logging/logger';
 
 // ============================================================
 // Anagrafica sezioni/classi — gated Segreteria+Direzione (DL-036) + audit (DL-037).
@@ -37,7 +39,7 @@ const patchBodySchema = z.object({
 // ============================================================
 // GET /api/admin/sections — Lista sezioni
 // ============================================================
-export async function GET(request: NextRequest) {
+export const GET = withRoute('admin/sections:GET', async (request: NextRequest) => {
     const auth = await requireStaff(request);
     if (auth.response) return auth.response;
 
@@ -60,18 +62,18 @@ export async function GET(request: NextRequest) {
 
         return NextResponse.json(data || []);
     } catch (err) {
-        console.error('Errore GET /api/admin/sections:', err);
+        logErrore({ operazione: 'admin/sections:GET', stato: 500 }, err);
         return NextResponse.json(
             { error: (err instanceof Error && err.message) || 'Errore interno' },
             { status: 500 }
         );
     }
-}
+});
 
 // ============================================================
 // POST /api/admin/sections — Crea nuova sezione
 // ============================================================
-export async function POST(request: NextRequest) {
+export const POST = withRoute('admin/sections:POST', async (request: NextRequest) => {
     const auth = await requireStaff(request);
     if (auth.response) return auth.response;
 
@@ -110,18 +112,18 @@ export async function POST(request: NextRequest) {
 
         return NextResponse.json(data, { status: 201 });
     } catch (err) {
-        console.error('Errore POST /api/admin/sections:', err);
+        logErrore({ operazione: 'admin/sections:POST', stato: 500 }, err);
         return NextResponse.json(
             { error: (err instanceof Error && err.message) || 'Errore interno' },
             { status: 500 }
         );
     }
-}
+});
 
 // ============================================================
 // PATCH /api/admin/sections — Aggiorna sezione
 // ============================================================
-export async function PATCH(request: NextRequest) {
+export const PATCH = withRoute('admin/sections:PATCH', async (request: NextRequest) => {
     const auth = await requireStaff(request);
     if (auth.response) return auth.response;
 
@@ -155,10 +157,10 @@ export async function PATCH(request: NextRequest) {
 
         return NextResponse.json(data);
     } catch (err) {
-        console.error('Errore PATCH /api/admin/sections:', err);
+        logErrore({ operazione: 'admin/sections:PATCH', stato: 500 }, err);
         return NextResponse.json(
             { error: (err instanceof Error && err.message) || 'Errore interno' },
             { status: 500 }
         );
     }
-}
+});

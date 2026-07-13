@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { sealDangerous } from '@/lib/security/seal';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { parseQuery } from '@/lib/validation/http';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore } from '@/lib/logging/logger';
 
 const querySchema = z.object({}); // nessun parametro in ingresso
 
@@ -117,7 +119,7 @@ async function runMigration() {
   return { success: true };
 }
 
-export async function POST(request: Request) {
+export const POST = withRoute('admin/apply-fase4-migration:POST', async (request: Request) => {
   const sealed = await sealDangerous(request);
   if (sealed) return sealed;
   const q = parseQuery(request, querySchema);
@@ -126,11 +128,12 @@ export async function POST(request: Request) {
     const result = await runMigration();
     return NextResponse.json(result);
   } catch (error) {
+    logErrore({ operazione: 'admin/apply-fase4-migration:POST', stato: 500 }, error);
     return NextResponse.json({ error: 'Internal Server Error', details: String(error) }, { status: 500 });
   }
-}
+});
 
-export async function GET(request: Request) {
+export const GET = withRoute('admin/apply-fase4-migration:GET', async (request: Request) => {
   const sealed = await sealDangerous(request);
   if (sealed) return sealed;
   const q = parseQuery(request, querySchema);
@@ -139,6 +142,7 @@ export async function GET(request: Request) {
     const result = await runMigration();
     return NextResponse.json(result);
   } catch (error) {
+    logErrore({ operazione: 'admin/apply-fase4-migration:GET', stato: 500 }, error);
     return NextResponse.json({ error: 'Internal Server Error', details: String(error) }, { status: 500 });
   }
-}
+});

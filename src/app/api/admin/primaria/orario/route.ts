@@ -4,6 +4,8 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ============================================================
 // Orario: tempo scuola (27/29/40h) → campanelle → griglia settimanale.
@@ -115,7 +117,7 @@ function generaCampanelle(modello: number, giorni: number): CampanellaGen[] {
 }
 
 // GET /api/admin/primaria/orario?sectionId=
-export async function GET(request: NextRequest) {
+export const GET = withRoute('admin/primaria/orario:GET', async (request: NextRequest) => {
   try {
     const q = parseQuery(request, getQuerySchema)
     if ('response' in q) return q.response
@@ -136,13 +138,14 @@ export async function GET(request: NextRequest) {
       data: { tempoScuola: tempoScuola ?? null, campanelle: campanelle ?? [], orario: orario ?? [] },
     })
   } catch (err) {
+    logErrore({ operazione: 'admin/primaria/orario:GET', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})
 
 // POST /api/admin/primaria/orario?action=set-tempo|genera-campanelle|set-cell
-export async function POST(request: NextRequest) {
+export const POST = withRoute('admin/primaria/orario:POST', async (request: NextRequest) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -269,10 +272,11 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ error: 'action non riconosciuta' }, { status: 400 })
   } catch (err) {
+    logErrore({ operazione: 'admin/primaria/orario:POST', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})
 
 async function rigeneraCampanelle(
   supabase: Awaited<ReturnType<typeof createAdminClient>>,

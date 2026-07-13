@@ -7,6 +7,8 @@ import { logScrittura } from '@/lib/audit/scrittura';
 import { notificaTitolariScrittura } from '@/lib/primaria/notifiche';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid, zDataYMD } from '@/lib/validation/common';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore } from '@/lib/logging/logger';
 
 const postBodySchema = z.object({
     alunno_id: zUuid,
@@ -32,7 +34,7 @@ const getAlunnoQuerySchema = z.object({
 // ============================================================
 // POST /api/diary — Salva un evento diario (azione docente/staff)
 // ============================================================
-export async function POST(request: NextRequest) {
+export const POST = withRoute('diary:POST', async (request: NextRequest) => {
     try {
         const auth = await requireDocente(request);
         if (auth.response) return auth.response;
@@ -65,7 +67,7 @@ export async function POST(request: NextRequest) {
             .single();
 
         if (error) {
-            console.error('Errore inserimento diario:', error);
+            logErrore({ operazione: 'diary:POST', stato: 500, evento: 'db' }, error);
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
 
@@ -81,10 +83,10 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ success: true, data }, { status: 201 });
 
     } catch (err) {
-        console.error('Errore POST /api/diary:', err);
+        logErrore({ operazione: 'diary:POST', stato: 500 }, err);
         return NextResponse.json({ error: 'Errore interno del server' }, { status: 500 });
     }
-}
+});
 
 // ============================================================
 // GET /api/diary — Legge gli eventi
@@ -92,7 +94,7 @@ export async function POST(request: NextRequest) {
 //   ?classe_id=<id>&date=YYYY-MM-DD  → per insegnante (eventi della classe oggi)
 //   ?alunno_id=<id>                  → per genitore (ultimi 14 giorni del figlio)
 // ============================================================
-export async function GET(request: NextRequest) {
+export const GET = withRoute('diary:GET', async (request: NextRequest) => {
     try {
         const { searchParams } = new URL(request.url);
 
@@ -145,7 +147,7 @@ export async function GET(request: NextRequest) {
         }
 
     } catch (err) {
-        console.error('Errore GET /api/diary:', err);
+        logErrore({ operazione: 'diary:GET', stato: 500 }, err);
         return NextResponse.json({ error: 'Errore interno del server' }, { status: 500 });
     }
-}
+});

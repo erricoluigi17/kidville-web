@@ -5,6 +5,8 @@ import { requireStaff, requireUser } from '@/lib/auth/require-staff'
 import { resolveScuoleAttive, resolveScuolaScrittura } from '@/lib/auth/scope'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zDataYMD, zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({
@@ -33,7 +35,7 @@ const deleteQuerySchema = z.object({
 
 // GET /api/mensa/class-assignments?scuola_id=
 // Ritorna tutte le assegnazioni (incluse quelle future), ordinate per classe + data.
-export async function GET(request: NextRequest) {
+export const GET = withRoute('mensa/class-assignments:GET', async (request: NextRequest) => {
   try {
     const auth = await requireUser(request)
     if (auth.response) return auth.response
@@ -54,13 +56,13 @@ export async function GET(request: NextRequest) {
     if (error) throw error
     return NextResponse.json({ success: true, data: data ?? [] })
   } catch (err) {
-    console.error('GET /api/mensa/class-assignments:', err)
+    logErrore({ operazione: 'mensa/class-assignments:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})
 
 // POST /api/mensa/class-assignments  { scuola_id, classe, menu_config_id, attivo_dal }
-export async function POST(request: NextRequest) {
+export const POST = withRoute('mensa/class-assignments:POST', async (request: NextRequest) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -79,14 +81,14 @@ export async function POST(request: NextRequest) {
     if (error) throw error
     return NextResponse.json({ success: true, data }, { status: 201 })
   } catch (err) {
-    console.error('POST /api/mensa/class-assignments:', err)
+    logErrore({ operazione: 'mensa/class-assignments:POST', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})
 
 // PUT /api/mensa/class-assignments  { scuola_id, menu_config_id, classi: string[], attivo_dal? }
 // Rimpiazza tutte le sezioni assegnate a quel menu con l'elenco fornito (multi-select).
-export async function PUT(request: NextRequest) {
+export const PUT = withRoute('mensa/class-assignments:PUT', async (request: NextRequest) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -114,13 +116,13 @@ export async function PUT(request: NextRequest) {
     }
     return NextResponse.json({ success: true, count: uniche.length })
   } catch (err) {
-    console.error('PUT /api/mensa/class-assignments:', err)
+    logErrore({ operazione: 'mensa/class-assignments:PUT', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})
 
 // DELETE /api/mensa/class-assignments?id=
-export async function DELETE(request: Request) {
+export const DELETE = withRoute('mensa/class-assignments:DELETE', async (request: Request) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -132,7 +134,7 @@ export async function DELETE(request: Request) {
     if (error) throw error
     return NextResponse.json({ success: true })
   } catch (err) {
-    console.error('DELETE /api/mensa/class-assignments:', err)
+    logErrore({ operazione: 'mensa/class-assignments:DELETE', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

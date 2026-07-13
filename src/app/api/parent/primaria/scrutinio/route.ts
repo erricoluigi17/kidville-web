@@ -3,6 +3,8 @@ import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireParentOfStudent } from '@/lib/auth/require-parent'
 import { parseQuery } from '@/lib/validation/http'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // Id laschi (non zUuid): il comportamento attuale accetta qualsiasi stringa non
 // vuota (il lookup su `scrutini` fa da gate con 404; uno studentId inesistente
@@ -17,7 +19,7 @@ const getQuerySchema = z.object({
 // comportamento + giudizio globale. Disponibile solo se lo scrutinio è
 // pubblicato E il genitore ha firmato la ricezione (OTP). Altrimenti
 // { firmato: false } (la UI mostra il flusso di firma).
-export async function GET(request: NextRequest) {
+export const GET = withRoute('parent/primaria/scrutinio:GET', async (request: NextRequest) => {
   try {
     const q = parseQuery(request, getQuerySchema)
     if ('response' in q) return q.response
@@ -74,7 +76,8 @@ export async function GET(request: NextRequest) {
       },
     })
   } catch (err) {
+    logErrore({ operazione: 'parent/primaria/scrutinio:GET', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { scuoleDiUtente } from '@/lib/auth/scope'
 import { parseQuery } from '@/lib/validation/http'
+import { withRoute } from '@/lib/logging/with-route'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({}) // nessun parametro in ingresso
@@ -15,7 +16,7 @@ const getQuerySchema = z.object({}) // nessun parametro in ingresso
 // quelli su cui `resolveScuoleAttive`/`resolveScuolaScrittura` filtrano
 // (schools.id), così la selezione nel cookie `sedi_attive` scopa davvero i dati.
 // Distinto da /api/admin/schools, che è il CRUD del registry `scuole` (Direzione).
-export async function GET(request: NextRequest) {
+export const GET = withRoute('admin/sedi:GET', async (request: NextRequest) => {
   const auth = await requireStaff(request)
   if (auth.response) return auth.response
 
@@ -34,4 +35,4 @@ export async function GET(request: NextRequest) {
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
   return NextResponse.json({ success: true, data: data ?? [] })
-}
+})

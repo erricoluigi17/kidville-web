@@ -8,6 +8,8 @@ import { resolveMenuGiorno } from '@/lib/mensa/resolveMenu'
 import { allergeniAlunno, conflittiAllergie, type ConflittoAllergia } from '@/lib/mensa/allergeni'
 import { parseQuery } from '@/lib/validation/http'
 import { zDataYMD } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 const getQuerySchema = z.object({
   // default dinamico (oggi) calcolato nell'handler
@@ -39,7 +41,7 @@ interface AlunnoReport {
 //   col menu del giorno.
 //   - admin/coordinator/cuoca: tutte le classi (filtro sezione opzionale)
 //   - educator: SOLO la propria sezione (parametro `sezione` obbligatorio)
-export async function GET(request: NextRequest) {
+export const GET = withRoute('mensa/report:GET', async (request: NextRequest) => {
   try {
     const auth = await requireKitchenRead(request)
     if (auth.response) return auth.response
@@ -119,7 +121,7 @@ export async function GET(request: NextRequest) {
       data: { data, totale: rows.length, perClasse, allergie },
     })
   } catch (err) {
-    console.error('Errore API GET mensa/report:', err)
+    logErrore({ operazione: 'mensa/report:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

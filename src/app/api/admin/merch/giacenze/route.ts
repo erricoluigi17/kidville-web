@@ -7,6 +7,8 @@ import { logScrittura } from '@/lib/audit/scrittura'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { caricaGiacenze } from '@/lib/merch/giacenze'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // GET  /api/admin/merch/giacenze — matrice giacenze automatiche + storico rettifiche.
 // POST /api/admin/merch/giacenze — rettifica di magazzino (carico/reso/scarico/…).
@@ -23,7 +25,7 @@ const postBodySchema = z.object({
   nota: z.string().trim().max(300).nullish(),
 })
 
-export async function GET(request: Request) {
+export const GET = withRoute('admin/merch/giacenze:GET', async (request: Request) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -46,12 +48,12 @@ export async function GET(request: Request) {
 
     return NextResponse.json({ success: true, data: { matrice, storico } })
   } catch (err) {
-    console.error('Errore API GET merch/giacenze:', err)
+    logErrore({ operazione: 'admin/merch/giacenze:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})
 
-export async function POST(request: Request) {
+export const POST = withRoute('admin/merch/giacenze:POST', async (request: Request) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -98,7 +100,7 @@ export async function POST(request: Request) {
     })
     return NextResponse.json({ success: true, data }, { status: 201 })
   } catch (err) {
-    console.error('Errore API POST merch/giacenze:', err)
+    logErrore({ operazione: 'admin/merch/giacenze:POST', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

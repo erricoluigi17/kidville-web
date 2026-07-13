@@ -6,6 +6,8 @@ import { assertSezioneInScope } from '@/lib/auth/scope'
 import { obiettiviDisponibili } from '@/lib/primaria/obiettivi'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ─── Schema di validazione input (M3) ────────────────────────────────────────
 // '' su sectionId equivale ad assente (nessun filtro livello, nessun check 403).
@@ -17,7 +19,7 @@ const getQuerySchema = z.object({
 // GET /api/primaria/obiettivi?materiaId=&sectionId=&userId=
 // Obiettivi disponibili per la materia (e livello dedotto dalla classe), usati
 // dal docente nella valutazione in itinere. Restituisce anche la scala giudizi.
-export async function GET(request: NextRequest) {
+export const GET = withRoute('primaria/obiettivi:GET', async (request: NextRequest) => {
   try {
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
@@ -64,7 +66,8 @@ export async function GET(request: NextRequest) {
       },
     })
   } catch (err) {
+    logErrore({ operazione: 'primaria/obiettivi:GET', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

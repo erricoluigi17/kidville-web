@@ -5,6 +5,8 @@ import { requireDocente, requireStaff } from '@/lib/auth/require-staff'
 import { resolveScuolaScrittura } from '@/lib/auth/scope'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ============================================================
 // Giudizio descrittivo di scrutinio per voto.
@@ -32,7 +34,7 @@ const postBodySchema = z.object({
 
 // GET /api/admin/primaria/scrutinio-giudizio?scuolaId=&livello=&periodoId=
 // Ritorna le righe (materia_codice × etichetta_voto → testo) per livello+periodo.
-export async function GET(request: NextRequest) {
+export const GET = withRoute('admin/primaria/scrutinio-giudizio:GET', async (request: NextRequest) => {
   try {
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
@@ -55,15 +57,16 @@ export async function GET(request: NextRequest) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json({ success: true, data: data ?? [] })
   } catch (err) {
+    logErrore({ operazione: 'admin/primaria/scrutinio-giudizio:GET', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})
 
 // POST /api/admin/primaria/scrutinio-giudizio
 //   body: { scuolaId, livello, materiaCodice, periodoId, etichettaVoto, testo }
 // testo vuoto/null → rimuove la riga.
-export async function POST(request: NextRequest) {
+export const POST = withRoute('admin/primaria/scrutinio-giudizio:POST', async (request: NextRequest) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -109,7 +112,8 @@ export async function POST(request: NextRequest) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json({ success: true, data }, { status: 201 })
   } catch (err) {
+    logErrore({ operazione: 'admin/primaria/scrutinio-giudizio:POST', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

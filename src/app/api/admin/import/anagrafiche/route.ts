@@ -6,6 +6,8 @@ import { resolveScuolaScrittura } from '@/lib/auth/scope';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody } from '@/lib/validation/http';
 import { parseFamilyRow } from '@/lib/import/template';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore } from '@/lib/logging/logger';
 
 // POST /api/admin/import/anagrafiche
 // Body: { rows: [{ <intestazione italiana>: valore, ... }], scuola_id? }
@@ -16,7 +18,7 @@ const bodySchema = z.object({
   scuola_id: z.string().optional(),
 });
 
-export async function POST(request: NextRequest) {
+export const POST = withRoute('admin/import/anagrafiche:POST', async (request: NextRequest) => {
   const auth = await requireStaff(request);
   if (auth.response) return auth.response;
 
@@ -140,7 +142,8 @@ export async function POST(request: NextRequest) {
       errori,
     });
   } catch (err) {
+    logErrore({ operazione: 'admin/import/anagrafiche:POST', stato: 500 }, err);
     const msg = err instanceof Error ? err.message : 'Errore interno';
     return NextResponse.json({ error: msg }, { status: 500 });
   }
-}
+});

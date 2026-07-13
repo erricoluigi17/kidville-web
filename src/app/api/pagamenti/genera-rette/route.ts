@@ -6,6 +6,8 @@ import { parseData, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { resolveScuoleAttive } from '@/lib/auth/scope'
 import { notificaEvento } from '@/lib/notifiche/triggers'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // `anno` e `periodo` NON sono vincolati nel formato: storicamente un valore
 // malformato ricade sull'anteprima/generazione mensile del mese corrente
@@ -57,7 +59,7 @@ function iscrittoEntro(a: { data_iscrizione?: string | null }, periodo: string):
 // GET /api/pagamenti/genera-rette?userId=&periodo=YYYY-MM | &anno=YYYY [&scuola_id=]  (staff)
 // Preview: alunni candidati alla generazione retta per il mese (periodo) o per l'intero
 // anno scolastico (anno = anno di inizio, set->giu).
-export async function GET(request: Request) {
+export const GET = withRoute('pagamenti/genera-rette:GET', async (request: Request) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -165,15 +167,15 @@ export async function GET(request: Request) {
       data: { periodo, candidati, gia_generati: giaFatti.size, retta_default: rettaDefault, totale_previsto: totale },
     })
   } catch (err) {
-    console.error('Errore API GET genera-rette:', err)
+    logErrore({ operazione: 'pagamenti/genera-rette:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})
 
 // POST /api/pagamenti/genera-rette  (staff) — conferma generazione
 // Body: { userId, periodo?: 'YYYY-MM' }  -> singolo mese
 //   oppure { userId, anno: 2026 }        -> intero anno scolastico (set->giu)
-export async function POST(request: Request) {
+export const POST = withRoute('pagamenti/genera-rette:POST', async (request: Request) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -192,7 +194,7 @@ export async function POST(request: Request) {
       const annoInizio = parseInt(String(body.anno), 10)
       const { data, error } = await supabase.rpc('genera_rette_anno', { p_anno_inizio: annoInizio })
       if (error) {
-        console.error('Errore genera_rette_anno:', error)
+        logErrore({ operazione: 'pagamenti/genera-rette:POST', stato: 500, evento: 'db' }, error)
         return NextResponse.json({ error: error.message }, { status: 500 })
       }
       await supabase.from('registro_modifiche').insert({
@@ -210,7 +212,7 @@ export async function POST(request: Request) {
     const periodo = firstOfMonth(body.periodo)
     const { data, error } = await supabase.rpc('genera_rette_mensili', { p_periodo: periodo })
     if (error) {
-      console.error('Errore genera_rette_mensili:', error)
+      logErrore({ operazione: 'pagamenti/genera-rette:POST', stato: 500, evento: 'db' }, error)
       return NextResponse.json({ error: error.message }, { status: 500 })
     }
 
@@ -252,13 +254,20 @@ export async function POST(request: Request) {
           })
         }
       } catch (e) {
-        console.error('Notifica rette generate fallita (non bloccante):', e)
+        // Le rette SONO state generate, ma nessun genitore lo saprà: notifica persa.
+        logEvento('notifica', 'error', {
+          operazione: 'pagamenti/genera-rette:POST',
+          tipo: 'pagamento_emesso',
+          esito: 'notifica_non_inviata',
+          periodo,
+          generati: Number(data),
+        }, e)
       }
     }
 
     return NextResponse.json({ success: true, data: { periodo, generati: data } })
   } catch (err) {
-    console.error('Errore API POST genera-rette:', err)
+    logErrore({ operazione: 'pagamenti/genera-rette:POST', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

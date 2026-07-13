@@ -8,6 +8,8 @@ import { notificaEvento } from '@/lib/notifiche/triggers';
 import { staffScuola, scuolaUnicaReale } from '@/lib/notifiche/destinatari';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore, logEvento } from '@/lib/logging/logger';
 
 // ─── Schemi di validazione input (M3/M4) ─────────────────────────────────────
 // L'identità viene dal gate (requireUser): il `parent_id` legacy in query/body
@@ -33,7 +35,7 @@ const postBodySchema = z.object({
 const getQuerySchema = z.object({});
 
 // POST: Sottoscrive e firma un modulo
-export async function POST(request: NextRequest) {
+export const POST = withRoute('parent/submissions:POST', async (request: NextRequest) => {
   try {
     const auth = await requireUser(request);
     if (auth.response) return auth.response;
@@ -86,19 +88,24 @@ export async function POST(request: NextRequest) {
         debounce: true,
       });
     } catch (e) {
-      console.error('Notifica modulo firmato fallita (non bloccante):', e);
+      // Il modulo è acquisito, ma la segreteria non saprà che è arrivato: notifica persa.
+      logEvento('notifica', 'error', {
+        operazione: 'parent/submissions:POST',
+        tipo: 'modulo_compilato',
+        esito: 'notifica_non_inviata',
+      }, e);
     }
 
     return NextResponse.json(result.submission, { status: 201 });
   } catch (err) {
-    console.error('Errore POST /api/parent/submissions:', err);
+    logErrore({ operazione: 'parent/submissions:POST', stato: 500 }, err);
     const message = err instanceof Error && err.message ? err.message : 'Errore interno';
     return NextResponse.json({ error: message }, { status: 500 });
   }
-}
+})
 
 // GET: Recupera tutte le sottomissioni per l'archivio genitore
-export async function GET(request: NextRequest) {
+export const GET = withRoute('parent/submissions:GET', async (request: NextRequest) => {
   try {
     const auth = await requireUser(request);
     if (auth.response) return auth.response;
@@ -145,7 +152,8 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(enriched);
   } catch (err) {
+    logErrore({ operazione: 'parent/submissions:GET', stato: 500 }, err);
     const message = err instanceof Error && err.message ? err.message : 'Errore interno';
     return NextResponse.json({ error: message }, { status: 500 });
   }
-}
+})

@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/server-client';
 import { sealDangerous } from '@/lib/security/seal';
 import { parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
+import { withRoute } from '@/lib/logging/with-route';
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({
@@ -11,7 +12,7 @@ const getQuerySchema = z.object({
   userId: zUuid,
 });
 
-export async function GET(request: Request) {
+export const GET = withRoute('admin/debug-mensa-auth:GET', async (request: Request) => {
   const sealed = await sealDangerous(request);
   if (sealed) return sealed;
 
@@ -40,4 +41,4 @@ export async function GET(request: Request) {
     alunni_disponibili: alunni ?? [],
     ticket_mensa: tickets ?? [],
   });
-}
+});

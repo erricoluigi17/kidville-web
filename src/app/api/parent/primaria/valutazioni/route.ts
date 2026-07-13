@@ -3,6 +3,8 @@ import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireParentOfStudent } from '@/lib/auth/require-parent'
 import { parseQuery } from '@/lib/validation/http'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // studentId lasco (niente zUuid): un valore non-GUID oggi degrada a 404 dalla
@@ -18,7 +20,7 @@ const getQuerySchema = z.object({
 // al genitore — O.M. 3/2025, PRD §4 (#1/#3) e §4.5.
 // Visibilità A TEMPO: il genitore vede una valutazione solo trascorso il buffer
 // (notif_buffer_valutazioni_min, default 10') dalla creazione (PRD §4.5).
-export async function GET(request: NextRequest) {
+export const GET = withRoute('parent/primaria/valutazioni:GET', async (request: NextRequest) => {
   try {
     const q = parseQuery(request, getQuerySchema)
     if ('response' in q) return q.response
@@ -84,7 +86,8 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ success: true, data })
   } catch (err) {
+    logErrore({ operazione: 'parent/primaria/valutazioni:GET', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

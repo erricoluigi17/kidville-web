@@ -58,6 +58,10 @@ const GRUPPI_COPERTI: string[] = [
     'admin',
     // M6 (agenda condivisa — zod dal giorno 1)
     'agenda',
+    // Logging (2026-07-13): l'ingestion dei log del client è l'unica porta che accetta
+    // scritture su `app_log` da chiunque. Valida con zod dal giorno 1, e questo lock è ciò
+    // che impedisce che qualcuno la "semplifichi" domani.
+    'logs',
 ];
 
 const API_ROOT = path.join(process.cwd(), 'src', 'app', 'api');

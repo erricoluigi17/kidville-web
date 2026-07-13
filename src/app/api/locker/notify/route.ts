@@ -7,6 +7,8 @@ import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { enqueueNotifiche } from '@/lib/push/enqueue'
 import { docentiDiSezione } from '@/lib/sezioni/docenti'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // Ruoli di plesso avvisati oltre ai docenti della sezione (come panic-alert).
 const STAFF_LOCKER = new Set(['segreteria', 'admin', 'coordinator'])
@@ -19,7 +21,7 @@ const postBodySchema = z.object({
 // POST /api/locker/notify — "Avvisa" dell'armadietto genitore (M5.3): il
 // genitore segnala scorte in esaurimento; destinatari = staff della scuola +
 // docenti della sezione, via enqueueNotifiche tipo `locker_scorte`.
-export async function POST(request: Request) {
+export const POST = withRoute('locker/notify:POST', async (request: Request) => {
   const auth = await requireUser(request)
   if (auth.response) return auth.response
   const { user } = auth
@@ -87,7 +89,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ success: true, destinatari: destinatari.size })
   } catch (err) {
-    console.error('Errore POST /api/locker/notify:', err)
+    logErrore({ operazione: 'locker/notify:POST', stato: 500 }, err)
     return NextResponse.json({ error: 'Errore interno' }, { status: 500 })
   }
-}
+})

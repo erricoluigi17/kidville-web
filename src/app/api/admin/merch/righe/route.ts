@@ -7,6 +7,8 @@ import { logScrittura } from '@/lib/audit/scrittura'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { puoTransire, sincronizzaTestata, STATI_RIGA, type StatoRiga } from '@/lib/merch/stati'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // PATCH /api/admin/merch/righe — transizione manuale di una singola riga (fallback
 // alle azioni dedicate: check-in/consegna/evasione). Enforce la macchina a stati.
@@ -18,7 +20,7 @@ const bodySchema = z.object({
 })
 const uno = <T>(v: T | T[] | null | undefined): T | null => (Array.isArray(v) ? (v[0] ?? null) : (v ?? null))
 
-export async function PATCH(request: Request) {
+export const PATCH = withRoute('admin/merch/righe:PATCH', async (request: Request) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -71,7 +73,7 @@ export async function PATCH(request: Request) {
     })
     return NextResponse.json({ success: true, data: { riga_id, stato } })
   } catch (err) {
-    console.error('Errore API PATCH merch/righe:', err)
+    logErrore({ operazione: 'admin/merch/righe:PATCH', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

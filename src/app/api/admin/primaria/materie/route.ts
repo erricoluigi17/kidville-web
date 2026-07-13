@@ -4,6 +4,8 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { parseBody, parseData, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ============================================================
 // Materie (discipline) per sezione — catalogo editabile derivato dal preset.
@@ -50,7 +52,7 @@ const deleteQuerySchema = z.object({
 })
 
 // GET /api/admin/primaria/materie?sectionId=
-export async function GET(request: NextRequest) {
+export const GET = withRoute('admin/primaria/materie:GET', async (request: NextRequest) => {
   const q = parseQuery(request, getQuerySchema)
   if ('response' in q) return q.response
   const { sectionId } = q.data
@@ -65,15 +67,16 @@ export async function GET(request: NextRequest) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json({ success: true, data: data ?? [] })
   } catch (err) {
+    logErrore({ operazione: 'admin/primaria/materie:GET', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})
 
 // POST /api/admin/primaria/materie
 //   body normale: { sectionId, nome, codice, e_civica?, turno_mensa?, ordine? }
 //   apply-preset:  ?action=apply-preset  body: { sectionId, livello }
-export async function POST(request: NextRequest) {
+export const POST = withRoute('admin/primaria/materie:POST', async (request: NextRequest) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -146,13 +149,14 @@ export async function POST(request: NextRequest) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json({ success: true, data }, { status: 201 })
   } catch (err) {
+    logErrore({ operazione: 'admin/primaria/materie:POST', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})
 
 // PATCH /api/admin/primaria/materie  body: { id, ...updates }
-export async function PATCH(request: NextRequest) {
+export const PATCH = withRoute('admin/primaria/materie:PATCH', async (request: NextRequest) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -174,13 +178,14 @@ export async function PATCH(request: NextRequest) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json({ success: true, data })
   } catch (err) {
+    logErrore({ operazione: 'admin/primaria/materie:PATCH', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})
 
 // DELETE /api/admin/primaria/materie?id=
-export async function DELETE(request: NextRequest) {
+export const DELETE = withRoute('admin/primaria/materie:DELETE', async (request: NextRequest) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -194,7 +199,8 @@ export async function DELETE(request: NextRequest) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json({ success: true })
   } catch (err) {
+    logErrore({ operazione: 'admin/primaria/materie:DELETE', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

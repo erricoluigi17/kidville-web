@@ -4,6 +4,8 @@ import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireUser } from '@/lib/auth/require-staff';
 import { parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore } from '@/lib/logging/logger';
 
 // Gap auth chiuso in M9: il legacy `?userId=` in query resta ACCETTATO dallo
 // schema per compatibilità coi client ma viene IGNORATO — l'identità è quella
@@ -16,7 +18,7 @@ const getQuerySchema = z.object({
 // Restituisce i contatti disponibili per iniziare una nuova chat
 // - Se l'utente è maestra: restituisce i genitori dei suoi studenti
 // - Se l'utente è genitore: restituisce le maestre della sezione dei suoi figli
-export async function GET(request: Request) {
+export const GET = withRoute('chat/contacts:GET', async (request: Request) => {
     const auth = await requireUser(request);
     if (auth.response) return auth.response;
 
@@ -222,7 +224,7 @@ export async function GET(request: Request) {
 
         return NextResponse.json({ contacts: available, existing_count: (existingThreads ?? []).length });
     } catch (error) {
-        console.error('Errore API GET contacts:', error);
+        logErrore({ operazione: 'chat/contacts:GET', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
     }
-}
+});

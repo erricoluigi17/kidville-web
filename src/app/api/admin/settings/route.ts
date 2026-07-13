@@ -5,6 +5,8 @@ import { requireStaff } from '@/lib/auth/require-staff'
 import { resolveScuolaScrittura } from '@/lib/auth/scope'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 /**
@@ -56,133 +58,133 @@ const patchBodySchema = z.object({
 })
 
 // GET /api/admin/settings?userId=&scuola_id=  (staff) — impostazioni della scuola
-export async function GET(request: NextRequest) {
-  try {
-    const auth = await requireStaff(request)
-    if (auth.response) return auth.response
+export const GET = withRoute('admin/settings:GET', async (request: NextRequest) => {
+    try {
+      const auth = await requireStaff(request)
+      if (auth.response) return auth.response
 
-    const q = parseQuery(request, getQuerySchema)
-    if ('response' in q) return q.response
+      const q = parseQuery(request, getQuerySchema)
+      if ('response' in q) return q.response
 
-    const supabase = await createAdminClient()
-    const sw = await resolveScuolaScrittura(
-      request,
-      supabase,
-      auth.user,
-      (q.data.scuola_id as string | undefined) ?? undefined,
-    )
-    if (sw.response) return sw.response
-    const scuolaId = sw.scuolaId as string
+      const supabase = await createAdminClient()
+      const sw = await resolveScuolaScrittura(
+        request,
+        supabase,
+        auth.user,
+        (q.data.scuola_id as string | undefined) ?? undefined,
+      )
+      if (sw.response) return sw.response
+      const scuolaId = sw.scuolaId as string
 
-    const { data, error } = await supabase
-      .from('admin_settings')
-      .select('*')
-      .eq('scuola_id', scuolaId)
-      .maybeSingle()
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+      const { data, error } = await supabase
+        .from('admin_settings')
+        .select('*')
+        .eq('scuola_id', scuolaId)
+        .maybeSingle()
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-    // default se non esiste ancora
-    const settings = data ?? {
-      scuola_id: scuolaId,
-      retta_default_importo: 150,
-      retta_giorno_scadenza: 5,
-      retta_giorno_visibilita: 25,
-      retta_auto_enabled: true,
-      insoluto_tolleranza_giorni: 7,
-      ticket_pacchetti: [],
-      fattura_causale_template: '{descrizione} - {alunno}',
-      aruba_config: {},
-      mensa_cutoff_ora: '09:30',
-      mensa_giorni_attivi: [1, 2, 3, 4, 5],
-      mensa_settimane_rotazione: 4,
-      mensa_soglia_saldo_basso: 5,
+      // default se non esiste ancora
+      const settings = data ?? {
+        scuola_id: scuolaId,
+        retta_default_importo: 150,
+        retta_giorno_scadenza: 5,
+        retta_giorno_visibilita: 25,
+        retta_auto_enabled: true,
+        insoluto_tolleranza_giorni: 7,
+        ticket_pacchetti: [],
+        fattura_causale_template: '{descrizione} - {alunno}',
+        aruba_config: {},
+        mensa_cutoff_ora: '09:30',
+        mensa_giorni_attivi: [1, 2, 3, 4, 5],
+        mensa_settimane_rotazione: 4,
+        mensa_soglia_saldo_basso: 5,
+      }
+      return NextResponse.json({ success: true, data: settings })
+    } catch (err) {
+      logErrore({ operazione: 'admin/settings:GET', stato: 500 }, err)
+      return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
     }
-    return NextResponse.json({ success: true, data: settings })
-  } catch (err) {
-    console.error('Errore API GET settings:', err)
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
-  }
-}
+})
 
 // PATCH /api/admin/settings  (staff) — upsert impostazioni
 // Body: { userId, scuola_id?, retta_default_importo?, retta_giorno_scadenza?,
 //         retta_auto_enabled?, insoluto_tolleranza_giorni?, ticket_pacchetti? }
 // NB: aruba_config si gestisce dalla route dedicata /api/admin/settings/aruba
-export async function PATCH(request: NextRequest) {
-  try {
-    const auth = await requireStaff(request)
-    if (auth.response) return auth.response
+export const PATCH = withRoute('admin/settings:PATCH', async (request: NextRequest) => {
+    try {
+      const auth = await requireStaff(request)
+      if (auth.response) return auth.response
 
-    const b = await parseBody(request, patchBodySchema)
-    if ('response' in b) return b.response
-    const body = b.data as Record<string, unknown>
+      const b = await parseBody(request, patchBodySchema)
+      if ('response' in b) return b.response
+      const body = b.data as Record<string, unknown>
 
-    const supabase = await createAdminClient()
-    const sw = await resolveScuolaScrittura(
-      request,
-      supabase,
-      auth.user,
-      (body.scuola_id as string | undefined) ?? undefined,
-    )
-    if (sw.response) return sw.response
-    const scuolaId = sw.scuolaId as string
+      const supabase = await createAdminClient()
+      const sw = await resolveScuolaScrittura(
+        request,
+        supabase,
+        auth.user,
+        (body.scuola_id as string | undefined) ?? undefined,
+      )
+      if (sw.response) return sw.response
+      const scuolaId = sw.scuolaId as string
 
-    // Chiavi JSONB salvate in shallow-merge con l'esistente, così pannelli
-    // diversi possono salvare indipendentemente senza sovrascriversi.
-    const mergedKeys = [
-      'funzioni_matrice',
-      'diario_config',
-      'presenze_config',
-      'note_config',
-      'avvisi_config',
-      'chat_config',
-      'galleria_config',
-      'armadietto_config',
-      'modulistica_config',
-      'segreteria_config',
-      'fiscale_config',
-      'solleciti_config',
-      'notifiche_config',
-    ]
-    const updates: Record<string, unknown> = { scuola_id: scuolaId }
-    for (const f of ALLOWED_FIELDS) if (body[f] !== undefined) updates[f] = body[f]
+      // Chiavi JSONB salvate in shallow-merge con l'esistente, così pannelli
+      // diversi possono salvare indipendentemente senza sovrascriversi.
+      const mergedKeys = [
+        'funzioni_matrice',
+        'diario_config',
+        'presenze_config',
+        'note_config',
+        'avvisi_config',
+        'chat_config',
+        'galleria_config',
+        'armadietto_config',
+        'modulistica_config',
+        'segreteria_config',
+        'fiscale_config',
+        'solleciti_config',
+        'notifiche_config',
+      ]
+      const updates: Record<string, unknown> = { scuola_id: scuolaId }
+      for (const f of ALLOWED_FIELDS) if (body[f] !== undefined) updates[f] = body[f]
 
-    const incomingMerged = mergedKeys.filter((k) => updates[k] !== undefined)
-    if (incomingMerged.length > 0) {
-      const { data: existing } = await supabase
-        .from('admin_settings')
-        .select(incomingMerged.join(','))
-        .eq('scuola_id', scuolaId)
-        .maybeSingle()
-      const existingRow = (existing ?? {}) as Record<string, unknown>
-      for (const k of incomingMerged) {
-        const prev = (existingRow[k] ?? {}) as Record<string, unknown>
-        const next = updates[k] as Record<string, unknown>
-        if (k === 'funzioni_matrice') {
-          // merge per-grado: {primaria: {...prev, ...next}, ...}
-          const merged: Record<string, unknown> = { ...prev }
-          for (const grado of Object.keys(next)) {
-            merged[grado] = {
-              ...((prev[grado] as Record<string, unknown>) ?? {}),
-              ...((next[grado] as Record<string, unknown>) ?? {}),
+      const incomingMerged = mergedKeys.filter((k) => updates[k] !== undefined)
+      if (incomingMerged.length > 0) {
+        const { data: existing } = await supabase
+          .from('admin_settings')
+          .select(incomingMerged.join(','))
+          .eq('scuola_id', scuolaId)
+          .maybeSingle()
+        const existingRow = (existing ?? {}) as Record<string, unknown>
+        for (const k of incomingMerged) {
+          const prev = (existingRow[k] ?? {}) as Record<string, unknown>
+          const next = updates[k] as Record<string, unknown>
+          if (k === 'funzioni_matrice') {
+            // merge per-grado: {primaria: {...prev, ...next}, ...}
+            const merged: Record<string, unknown> = { ...prev }
+            for (const grado of Object.keys(next)) {
+              merged[grado] = {
+                ...((prev[grado] as Record<string, unknown>) ?? {}),
+                ...((next[grado] as Record<string, unknown>) ?? {}),
+              }
             }
+            updates[k] = merged
+          } else {
+            updates[k] = { ...prev, ...next }
           }
-          updates[k] = merged
-        } else {
-          updates[k] = { ...prev, ...next }
         }
       }
-    }
-    const { data, error } = await supabase
-      .from('admin_settings')
-      .upsert(updates, { onConflict: 'scuola_id' })
-      .select()
-      .single()
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+      const { data, error } = await supabase
+        .from('admin_settings')
+        .upsert(updates, { onConflict: 'scuola_id' })
+        .select()
+        .single()
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-    return NextResponse.json({ success: true, data })
-  } catch (err) {
-    console.error('Errore API PATCH settings:', err)
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
-  }
-}
+      return NextResponse.json({ success: true, data })
+    } catch (err) {
+      logErrore({ operazione: 'admin/settings:PATCH', stato: 500 }, err)
+      return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
+    }
+})

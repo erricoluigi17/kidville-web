@@ -8,6 +8,8 @@ import { logScrittura } from '@/lib/audit/scrittura'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { derivaStatoTestata } from '@/lib/merch/stati'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // Ordini Merchandise lato staff (Fase B) — creazione SOLO segreteria (il genitore
 // vede l'addebito in /parent/pagamenti). Prezzi/snapshot SERVER-SIDE; parent_id
@@ -58,7 +60,7 @@ function ordiniSelect(righeCols: string): string {
 
 // GET /api/admin/merch/ordini — ordini dei plessi (alunno + righe + pagamento).
 // Filtri: stato (testata), stato_riga (≥1 riga in quello stato), q (nome alunno).
-export async function GET(request: Request) {
+export const GET = withRoute('admin/merch/ordini:GET', async (request: Request) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -100,13 +102,13 @@ export async function GET(request: Request) {
     }
     return NextResponse.json({ success: true, data })
   } catch (err) {
-    console.error('Errore API GET merch/ordini:', err)
+    logErrore({ operazione: 'admin/merch/ordini:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})
 
 // POST /api/admin/merch/ordini — la segreteria crea un ordine per un alunno.
-export async function POST(request: Request) {
+export const POST = withRoute('admin/merch/ordini:POST', async (request: Request) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -253,13 +255,13 @@ export async function POST(request: Request) {
       { status: 201 }
     )
   } catch (err) {
-    console.error('Errore API POST merch/ordini:', err)
+    logErrore({ operazione: 'admin/merch/ordini:POST', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})
 
 // PATCH /api/admin/merch/ordini — avanza lo stato della testata (legacy fallback)
-export async function PATCH(request: Request) {
+export const PATCH = withRoute('admin/merch/ordini:PATCH', async (request: Request) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -301,7 +303,7 @@ export async function PATCH(request: Request) {
     })
     return NextResponse.json({ success: true, data })
   } catch (err) {
-    console.error('Errore API PATCH merch/ordini:', err)
+    logErrore({ operazione: 'admin/merch/ordini:PATCH', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

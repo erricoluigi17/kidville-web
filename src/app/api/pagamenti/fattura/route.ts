@@ -6,6 +6,8 @@ import { emettiFatturaPagamento } from '@/lib/aruba/emissione'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { jsPDF } from 'jspdf'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // causale: il comportamento pre-esistente accetta qualsiasi tipo e la usa solo
 // se è una stringa non vuota → unknown().optional(), il typeof resta nell'handler.
@@ -56,7 +58,7 @@ async function anteprimaPdf(opts: {
 
 // POST /api/pagamenti/fattura  (staff) — "Invia Fattura" → emissione REALE Aruba/SDI.
 // Body: { userId, pagamento_id, causale? }. Richiede pagamento saldato.
-export async function POST(request: Request) {
+export const POST = withRoute('pagamenti/fattura:POST', async (request: Request) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -84,16 +86,16 @@ export async function POST(request: Request) {
       data: { fattura_stato: esito.fatturaStato, numero: esito.numero, fattura_id: esito.uploadFileName },
     })
   } catch (err) {
-    console.error('Errore API POST fattura:', err)
+    logErrore({ operazione: 'pagamenti/fattura:POST', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})
 
 // GET /api/pagamenti/fattura?pagamento_id=&userId=  — scarica la copia di cortesia.
 // Accesso: staff oppure genitore del bambino. Preferisce il PDF reale di Aruba
 // (storage `fatture`), con fallback a un'anteprima generata finché lo SDI non
 // ha restituito il documento.
-export async function GET(request: Request) {
+export const GET = withRoute('pagamenti/fattura:GET', async (request: Request) => {
   try {
     const auth = await requireUser(request)
     if (auth.response) return auth.response
@@ -137,7 +139,20 @@ export async function GET(request: Request) {
       if (!fatt) return NextResponse.json({ error: 'Fattura non trovata' }, { status: 404 })
       if (fatt.pdf_path) {
         try {
-          const { data: file } = await supabase.storage.from('fatture').download(fatt.pdf_path)
+          // `supabase-storage-js` NON lancia: `download` ritorna `{ data, error }`. L'`error`
+          // era SCARTATO dalla destrutturazione, quindi il catch qui sotto non scattava mai:
+          // l'utente si ritrovava in mano la copia di cortesia al posto della fattura ufficiale
+          // Aruba — un documento diverso da quello che ha chiesto — e nei log non restava nulla.
+          const { data: file, error: scaricaErr } = await supabase.storage.from('fatture').download(fatt.pdf_path)
+          if (scaricaErr) {
+            // `warn`: il risultato è salvo (l'anteprima parte qui sotto), ma è DEGRADATO —
+            // e se il bucket è rotto lo si scopre solo da questa riga.
+            logEvento('storage', 'warn', {
+              operazione: 'pagamenti/fattura:GET',
+              bucket: 'fatture',
+              esito: 'pdf_non_recuperabile_uso_anteprima',
+            }, scaricaErr)
+          }
           if (file) {
             const buf = Buffer.from(await file.arrayBuffer())
             return new NextResponse(buf, {
@@ -149,7 +164,13 @@ export async function GET(request: Request) {
             })
           }
         } catch (e) {
-          console.warn('PDF Aruba non recuperabile, uso anteprima:', e)
+          // Resta a coprire ciò che può lanciare davvero: `arrayBuffer()` su un Blob corrotto,
+          // o un guasto di trasporto. Stesso livello, stessa ragione: risultato salvo, degradato.
+          logEvento('storage', 'warn', {
+            operazione: 'pagamenti/fattura:GET',
+            bucket: 'fatture',
+            esito: 'pdf_non_recuperabile_uso_anteprima',
+          }, e)
         }
       }
       const intest = (fatt.intestatario ?? {}) as { nome?: string; cognome?: string }
@@ -172,7 +193,16 @@ export async function GET(request: Request) {
     // PDF reale di Aruba (copia di cortesia) se già recuperato dallo SDI
     if (pag.fattura_pdf_path) {
       try {
-        const { data: file } = await supabase.storage.from('fatture').download(pag.fattura_pdf_path)
+        // Identico al percorso per-fattura qui sopra: l'`error` del download si controlla, non
+        // si scarta. Chi chiede la fattura e riceve la copia di cortesia deve lasciare traccia.
+        const { data: file, error: scaricaErr } = await supabase.storage.from('fatture').download(pag.fattura_pdf_path)
+        if (scaricaErr) {
+          logEvento('storage', 'warn', {
+            operazione: 'pagamenti/fattura:GET',
+            bucket: 'fatture',
+            esito: 'pdf_non_recuperabile_uso_anteprima',
+          }, scaricaErr)
+        }
         if (file) {
           const buf = Buffer.from(await file.arrayBuffer())
           return new NextResponse(buf, {
@@ -184,7 +214,11 @@ export async function GET(request: Request) {
           })
         }
       } catch (e) {
-        console.warn('PDF Aruba non recuperabile, uso anteprima:', e)
+        logEvento('storage', 'warn', {
+          operazione: 'pagamenti/fattura:GET',
+          bucket: 'fatture',
+          esito: 'pdf_non_recuperabile_uso_anteprima',
+        }, e)
       }
     }
 
@@ -198,7 +232,7 @@ export async function GET(request: Request) {
       importo: Number(pag.importo),
     })
   } catch (err) {
-    console.error('Errore API GET fattura:', err)
+    logErrore({ operazione: 'pagamenti/fattura:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

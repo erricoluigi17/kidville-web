@@ -6,6 +6,8 @@ import { scuoleDiUtente } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // Anagrafica fornitori Merchandise (Fase B, step B3) — CRUD riservato allo staff.
 // Service-role + scoping per plesso + audit. GET degrada a lista vuota dove la
@@ -45,7 +47,7 @@ const deleteQuerySchema = z.object({ id: zUuid })
 const trimOrNull = (v: string | null | undefined) => (v == null ? null : v.trim() || null)
 
 // GET /api/admin/merch/fornitori — anagrafica dei plessi dell'utente
-export async function GET(request: Request) {
+export const GET = withRoute('admin/merch/fornitori:GET', async (request: Request) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -68,13 +70,13 @@ export async function GET(request: Request) {
     }
     return NextResponse.json({ success: true, data: data ?? [] })
   } catch (err) {
-    console.error('Errore API GET merch/fornitori:', err)
+    logErrore({ operazione: 'admin/merch/fornitori:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})
 
 // POST /api/admin/merch/fornitori — crea un fornitore
-export async function POST(request: Request) {
+export const POST = withRoute('admin/merch/fornitori:POST', async (request: Request) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -113,13 +115,13 @@ export async function POST(request: Request) {
     })
     return NextResponse.json({ success: true, data }, { status: 201 })
   } catch (err) {
-    console.error('Errore API POST merch/fornitori:', err)
+    logErrore({ operazione: 'admin/merch/fornitori:POST', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})
 
 // PATCH /api/admin/merch/fornitori — aggiorna un fornitore
-export async function PATCH(request: Request) {
+export const PATCH = withRoute('admin/merch/fornitori:PATCH', async (request: Request) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -160,14 +162,14 @@ export async function PATCH(request: Request) {
     })
     return NextResponse.json({ success: true, data })
   } catch (err) {
-    console.error('Errore API PATCH merch/fornitori:', err)
+    logErrore({ operazione: 'admin/merch/fornitori:PATCH', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})
 
 // DELETE /api/admin/merch/fornitori?id= — rimuove un fornitore (articoli/PO che
 // lo referenziano → fornitore_id SET NULL; il fornitore_nome snapshot dei PO resta).
-export async function DELETE(request: Request) {
+export const DELETE = withRoute('admin/merch/fornitori:DELETE', async (request: Request) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -195,7 +197,7 @@ export async function DELETE(request: Request) {
     })
     return NextResponse.json({ success: true })
   } catch (err) {
-    console.error('Errore API DELETE merch/fornitori:', err)
+    logErrore({ operazione: 'admin/merch/fornitori:DELETE', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

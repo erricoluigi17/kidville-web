@@ -24,12 +24,69 @@ Regole operative obbligatorie:
    secondari** (locali e remoti): il branch appena rilasciato e ogni altro branch di lavoro residuo.
    `main` deve restare l'unico branch. Alla prossima modifica si riparte dal punto 1 con un nuovo branch.
 
+4. **Ogni modifica porta con sé i propri log.** Vale per una nuova funzionalità, una nuova route,
+   un nuovo trigger, un fix, una migrazione. Il logging **non è un extra**: è parte della
+   definizione di "fatto", esattamente come i test e il PRD. Vedi la sezione **Logging obbligatorio**.
+
+## Logging obbligatorio (osservabilità)
+
+**Un codice che fallisce in silenzio è un codice rotto**, anche quando i test passano. In questo
+progetto è già successo: per mesi nessuna email di credenziali è arrivata a destinazione perché il
+provider rispondeva `403` e il codice registrava soltanto il numero `403`, senza il corpo della
+risposta che diceva *perché*. Nessun test era rosso. Nessuno se n'è accorto.
+
+Le regole qui sotto esistono per impedire che si ripeta. **Non sono negoziabili.**
+
+1. **Mai `console.*` diretto in `src/`.** Si usa `@/lib/logging/logger`
+   (`logOk`, `logErrore`, `logEvento`). La regola ESLint `no-console` la impone; le eccezioni sono
+   solo `src/lib/logging/**`, `src/instrumentation.ts` e `src/middleware.ts` (Edge runtime).
+
+2. **Ogni nuova route API nasce avvolta in `withRoute`:**
+   `export const GET = withRoute('gruppo/route:GET', async (request) => { … })`.
+   Il lock `__tests__/architecture/logging-coverage.test.ts` lo verifica e **fallisce** se un export
+   HTTP resta nudo. Il wrapper è solo osservabilità: gate (`requireStaff`/`requireDocente`) e
+   validazione `zod` restano nel corpo della route.
+
+3. **Il corpo dell'errore di un provider esterno non si butta MAI via.** Ogni chiamata a un
+   servizio di terze parti (email, FCM, web-push, Aruba/SDI, SIDI) passa da `externalFetch()`.
+   **Loggare uno status senza il corpo è il bug**, non un dettaglio: `403` non dice nulla,
+   `403 "the domain is not verified"` dice tutto.
+
+4. **Configurazione mancante = livello `error`, mai `info`.** Una variabile d'ambiente critica
+   assente in produzione è un incidente, non una nota a piè di pagina.
+
+5. **Gli eventi critici loggano anche il SUCCESSO** (email, push, cron, fattura, pagamento).
+   Con i soli errori, *"nessun log" non distingue "tutto ok" da "non è mai partito niente"* — ed è
+   esattamente l'ambiguità che ha nascosto il guasto delle email.
+
+6. **Un `catch` che non logga è un bug.** `.catch(() => {})` e `catch { /* ignora */ }` sono vietati:
+   se un errore è davvero ignorabile, lo si logga a livello `info` spiegando perché.
+
+7. **PostgREST non lancia: ritorna `{ error }`.** Un `try/catch` attorno a `await supabase.from(…)`
+   **non scatta mai**. Va sempre controllato il valore di ritorno. (Il `fetch` strumentato sui client
+   Supabase logga comunque ogni `!res.ok`, ma il codice applicativo deve gestire l'errore, non solo
+   lasciarlo registrare.)
+
+8. **Mai dati personali nei log.** La redazione (`@/lib/logging/redact`) è a **lista bianca**: passano
+   in chiaro solo uuid, numeri, booleani, date e le chiavi esplicitamente permesse. Nomi, email,
+   codici fiscali → hash correlabile. Testo libero, diagnosi, allergie, voti, firme, OTP, password →
+   redatti. Se aggiungi un campo nuovo, **non** aggiungerlo alla lista bianca "perché sarebbe comodo
+   vederlo": sono dati di minori.
+
+9. **Il logger non deve mai rompere l'app.** Fail-open: qualunque eccezione dentro il logging va
+   inghiottita. Un bug dell'osservabilità non può diventare un bug del prodotto.
+
+Riferimenti: `docs/superpowers/specs/2026-07-12-logging-strutturato-design.md` (design) e
+`docs/superpowers/plans/2026-07-12-logging-strutturato.md` (implementazione).
+
 ## Gate di verifica (prima di considerare "fatto" / prima del merge)
 Devono essere tutti verdi:
-- `npx eslint . --max-warnings 0` → 0 errori
-- `npx vitest run` → tutti verdi
+- `npx eslint . --max-warnings 0` → 0 errori (include `no-console` su `src/`)
+- `npx vitest run` → tutti verdi (include i lock `zod-coverage` e `logging-coverage`)
 - `npm run build` → build ok
 - E2E Playwright → verde (gira in CI su push)
+- **Log presenti** sul codice toccato: se hai aggiunto una route, un'integrazione esterna o un
+  percorso d'errore e non hai aggiunto un log, **l'intervento non è finito**.
 
 ## Note
 - `utenti.role` è una colonna **generata** da `ruolo`: non scriverla mai.

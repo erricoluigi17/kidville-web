@@ -1,6 +1,23 @@
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from './public-config'
+import { creaFetchStrumentato } from '../logging/supabase-fetch'
+
+/**
+ * Un solo punto di intercettazione per TUTTO ciò che parte verso Supabase: REST, RPC, Storage,
+ * Auth. Vede il 4xx HTTP anche quando il codice applicativo ignora l'`{ error }` che PostgREST
+ * gli restituisce — che nel repo succede in 73 scritture fire-and-forget. Vedi
+ * `src/lib/logging/supabase-fetch.ts` per l'invariante e la politica dei livelli.
+ *
+ * Istanziato UNA VOLTA a livello di modulo: non tiene stato per richiesta (il contesto viaggia
+ * su AsyncLocalStorage), e il `fetch` globale lo risolve a ogni chiamata, non qui.
+ *
+ * Va su TUTTI i factory, non solo sull'admin: `createClient()` è quello che usa
+ * `resolveIdentity()` in `src/lib/auth/require-staff.ts`, cioè il GATE DI AUTENTICAZIONE.
+ * Strumentare solo l'admin significherebbe non vedere mai le query che rompono i login.
+ * L'unica eccezione è `createLogClient` — vedi in fondo.
+ */
+const fetchStrumentato = creaFetchStrumentato()
 
 export async function createClient() {
   const cookieStore = await cookies()
@@ -9,6 +26,7 @@ export async function createClient() {
     SUPABASE_URL,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
     {
+      global: { fetch: fetchStrumentato },
       cookies: {
         getAll() {
           return cookieStore.getAll()
@@ -47,6 +65,7 @@ export async function createSessionClient() {
     SUPABASE_URL,
     SUPABASE_ANON_KEY,
     {
+      global: { fetch: fetchStrumentato },
       cookies: {
         getAll() {
           return cookieStore.getAll()
@@ -89,6 +108,32 @@ export async function createParentReadClient() {
  * Da usare SOLO lato server e per operazioni critiche che devono bypassare RLS
  */
 export async function createAdminClient() {
+  return createServerClient(
+    SUPABASE_URL,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    {
+      global: { fetch: fetchStrumentato },
+      cookies: {
+        getAll() { return [] },
+        setAll() { },
+      },
+    }
+  )
+}
+
+/**
+ * Client dedicato alla scrittura dei LOG. È l'unico SENZA fetch strumentato: se lo avesse, un
+ * errore di scrittura su `app_log` genererebbe un log di errore che tenta di scrivere su
+ * `app_log` → ricorsione infinita.
+ *
+ * È la PRIMA difesa, e quella strutturale: il fetch non passa proprio da qui. La seconda è la
+ * guardia `inLogger()` dentro il fetch strumentato, che copre il caso in cui qualcuno usasse un
+ * client normale dentro il logger. Due difese perché una sola, qui, vuol dire OOM in produzione.
+ *
+ * Nessun cookie: la scrittura dei log avviene anche fuori da una richiesta (cron, boot,
+ * `waitUntil`), dove `cookies()` non esiste e lancerebbe.
+ */
+export async function createLogClient() {
   return createServerClient(
     SUPABASE_URL,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,

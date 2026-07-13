@@ -10,6 +10,8 @@ import { datiStruttura, type ArubaFiscalConfig, type FiscaleConfig } from '@/lib
 import { resolveParentRegistry } from '@/lib/pagamenti/intestatari'
 import { buildAttestazionePdf } from '@/lib/pagamenti/pdf'
 import { getModuleConfig } from '@/lib/settings/module-config'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 const getQuerySchema = z.object({
   alunno_id: zUuid,
@@ -20,7 +22,7 @@ const getQuerySchema = z.object({
 // annuale dei pagamenti (per il 730): criterio di cassa sull'anno solare,
 // totale versato vs totale TRACCIABILE detraibile (contanti e categorie
 // divise/materiale esclusi). Accesso: staff oppure genitore del bambino.
-export async function GET(request: Request) {
+export const GET = withRoute('pagamenti/attestazione:GET', async (request: Request) => {
   try {
     const auth = await requireUser(request)
     if (auth.response) return auth.response
@@ -115,7 +117,7 @@ export async function GET(request: Request) {
       },
     })
   } catch (err) {
-    console.error('Errore API GET attestazione:', err)
+    logErrore({ operazione: 'pagamenti/attestazione:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

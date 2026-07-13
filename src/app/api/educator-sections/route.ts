@@ -5,6 +5,8 @@ import { requireDocente } from '@/lib/auth/require-staff';
 import { nomiSezioniDiUtente } from '@/lib/sezioni/docenti';
 import { parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore } from '@/lib/logging/logger';
 
 // Uuid opzionale da query string: stringa vuota trattata come assente
 // (preserva il check truthy `requestedId ?` pre-esistente su `?userId=`).
@@ -77,7 +79,7 @@ async function getEducatorSectionNames(
 // Returns the section names that the authenticated educator is assigned to.
 // `?userId=` (sezioni di un ALTRO utente) è onorato solo per admin/coordinator;
 // per tutti gli altri l'identità è quella della sessione.
-export async function GET(request: Request) {
+export const GET = withRoute('educator-sections:GET', async (request: Request) => {
     try {
         const auth = await requireDocente(request);
         if (auth.response) return auth.response;
@@ -144,7 +146,9 @@ export async function GET(request: Request) {
         });
 
     } catch (error) {
-        console.error('Errore GET /api/educator-sections:', error);
+        // Niente `stato`: qui la route degrada a una 200 con lista vuota, non a un 500.
+        // Dichiarare `stato: 500` sarebbe una riga che mente sull'esito della richiesta.
+        logErrore({ operazione: 'educator-sections:GET' }, error);
         return NextResponse.json({ sectionNames: [], role: 'educator' });
     }
-}
+})

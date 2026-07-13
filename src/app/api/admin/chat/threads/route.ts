@@ -4,6 +4,8 @@ import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireStaff } from '@/lib/auth/require-staff';
 import { parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore } from '@/lib/logging/logger';
 
 // GET /api/admin/chat/threads?teacher_id=&parent_id=&classe=
 // Vista di supervisione (sola lettura) di TUTTE le conversazioni genitore↔insegnante,
@@ -21,7 +23,7 @@ function dedupById(items: (Named | null)[]): Named[] {
   return [...map.values()];
 }
 
-export async function GET(request: NextRequest) {
+export const GET = withRoute('admin/chat/threads:GET', async (request: NextRequest) => {
   const auth = await requireStaff(request);
   if (auth.response) return auth.response;
   const q = parseQuery(request, getQuerySchema);
@@ -72,7 +74,8 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ success: true, data: enriched, filtri });
   } catch (err) {
+    logErrore({ operazione: 'admin/chat/threads:GET', stato: 500 }, err);
     const msg = err instanceof Error ? err.message : 'Errore interno';
     return NextResponse.json({ error: msg }, { status: 500 });
   }
-}
+});

@@ -10,6 +10,8 @@ import { parseBody } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { buildCredentialsPdf } from '@/lib/pdf/credentials-pdf';
 import { enqueueNotifiche } from '@/lib/push/enqueue';
+import { withRoute } from '@/lib/logging/with-route';
+import { logEvento } from '@/lib/logging/logger';
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // targetId è sempre un UUID: parents.id (PK uuid) oppure utenti.id (= auth.users id).
@@ -36,7 +38,7 @@ const postBodySchema = z.object({
  * conoscere procedure tecniche (il vecchio 409 "eseguire il backfill S6" era un
  * vicolo cieco: quella route in produzione risponde 404 by design).
  */
-export async function POST(request: Request) {
+export const POST = withRoute('admin/regenerate-credentials:POST', async (request: Request) => {
   const auth = await requireStaff(request);
   if (auth.response) return auth.response;
 
@@ -172,7 +174,14 @@ export async function POST(request: Request) {
     });
     pdfPronto = true;
   } catch (e) {
-    console.warn('[regenerate-credentials] PDF/notifica saltati (non bloccante):', (e as Error).message);
+    // Il PDF e la notifica sono un effetto collaterale: la password è GIÀ stata cambiata e la
+    // richiesta non deve fallire. Ma «saltati» va detto — la Segreteria si aspetta un PDF che
+    // non troverà, e senza questa riga l'assenza sarebbe inspiegabile. `warn` e non `error`:
+    // l'operazione principale è riuscita. Va in tabella (vaPersistito persiste i warn).
+    logEvento('credenziali', 'warn', {
+      operazione: 'admin/regenerate-credentials:POST',
+      esito: 'pdf-notifica-saltati',
+    }, e);
   }
 
   await logScrittura(admin as never, {
@@ -199,4 +208,4 @@ export async function POST(request: Request) {
     // In dev (nessun provider email) restituiamo le credenziali per la consegna manuale.
     ...(process.env.NODE_ENV !== 'production' ? { devCredentials: { email, password } } : {}),
   });
-}
+});

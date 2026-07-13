@@ -4,6 +4,8 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
 import { rateLimit, clientIp } from '@/lib/security/rate-limit'
 import { parseData } from '@/lib/validation/http'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // Upload allegato chat (M5.5): bucket privato `chat-allegati`, scritture solo
 // via service-role (come le altre route chat — nessuna policy storage).
@@ -43,7 +45,7 @@ const EXT_MIME: Record<string, string> = {
   gif: 'image/gif',
 }
 
-export async function POST(request: Request) {
+export const POST = withRoute('chat/upload:POST', async (request: Request) => {
   // Autenticazione (qualsiasi ruolo): impedisce upload anonimi sul bucket privato.
   const auth = await requireUser(request)
   if (auth.response) return auth.response
@@ -104,9 +106,10 @@ export async function POST(request: Request) {
       name: file.name,
     })
   } catch (err) {
+    logErrore({ operazione: 'chat/upload:POST', stato: 500 }, err)
     return NextResponse.json(
       { error: err instanceof Error ? err.message : 'Errore interno' },
       { status: 500 }
     )
   }
-}
+})

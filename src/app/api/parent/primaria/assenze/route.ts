@@ -3,6 +3,8 @@ import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireParentOfStudent } from '@/lib/auth/require-parent'
 import { parseQuery } from '@/lib/validation/http'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // studentId lasco (niente zUuid): un valore non-GUID oggi produce lista vuota
@@ -16,7 +18,7 @@ const getQuerySchema = z.object({
 
 // GET /api/parent/primaria/assenze?studentId=&userId=&limit=30
 // Cronologia presenze (assenze, ritardi, uscite anticipate) del figlio.
-export async function GET(request: NextRequest) {
+export const GET = withRoute('parent/primaria/assenze:GET', async (request: NextRequest) => {
   try {
     const q = parseQuery(request, getQuerySchema)
     if ('response' in q) return q.response
@@ -37,7 +39,8 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ success: true, data: presenze ?? [] })
   } catch (err) {
+    logErrore({ operazione: 'parent/primaria/assenze:GET', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

@@ -5,6 +5,8 @@ import { requireDocente } from '@/lib/auth/require-staff'
 import { assertSezioneInScope } from '@/lib/auth/scope'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // righe[] resta volutamente permissivo (z.unknown()): l'handler risolve e
@@ -20,7 +22,7 @@ const postBodySchema = z.object({
 // Le righe parse-ate lato client possono identificare alunno e materia per id
 // oppure per nome/cognome / nome materia. Valida i giudizi contro la scala.
 // body: { scrutinioId, righe: [{ alunnoId?, alunno?, materiaId?, materia?, giudizioSintetico }] }
-export async function POST(request: NextRequest) {
+export const POST = withRoute('primaria/scrutinio/import:POST', async (request: NextRequest) => {
   try {
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
@@ -107,7 +109,8 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true, importate, errori })
   } catch (err) {
+    logErrore({ operazione: 'primaria/scrutinio/import:POST', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

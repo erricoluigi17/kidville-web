@@ -5,6 +5,8 @@ import { requireStaff } from '@/lib/auth/require-staff'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { resolveScuolaScrittura } from '@/lib/auth/scope'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 /**
@@ -44,65 +46,65 @@ function sanitizeAruba(cfg: Record<string, unknown> | null) {
 }
 
 // GET /api/admin/settings/aruba?userId=&scuola_id=  (staff) — config Aruba (mascherata)
-export async function GET(request: NextRequest) {
-  try {
-    const auth = await requireStaff(request)
-    if (auth.response) return auth.response
+export const GET = withRoute('admin/settings/aruba:GET', async (request: NextRequest) => {
+    try {
+      const auth = await requireStaff(request)
+      if (auth.response) return auth.response
 
-    const q = parseQuery(request, getQuerySchema)
-    if ('response' in q) return q.response
+      const q = parseQuery(request, getQuerySchema)
+      if ('response' in q) return q.response
 
-    const supabase = await createAdminClient()
-    const sw = await resolveScuolaScrittura(request, supabase, auth.user, q.data.scuola_id ?? undefined)
-    if (sw.response) return sw.response
-    const scuolaId = sw.scuolaId
+      const supabase = await createAdminClient()
+      const sw = await resolveScuolaScrittura(request, supabase, auth.user, q.data.scuola_id ?? undefined)
+      if (sw.response) return sw.response
+      const scuolaId = sw.scuolaId
 
-    const { data } = await supabase.from('admin_settings').select('aruba_config').eq('scuola_id', scuolaId).maybeSingle()
-    return NextResponse.json({ success: true, data: sanitizeAruba((data?.aruba_config as Record<string, unknown>) ?? null) })
-  } catch (err) {
-    console.error('Errore API GET aruba:', err)
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
-  }
-}
+      const { data } = await supabase.from('admin_settings').select('aruba_config').eq('scuola_id', scuolaId).maybeSingle()
+      return NextResponse.json({ success: true, data: sanitizeAruba((data?.aruba_config as Record<string, unknown>) ?? null) })
+    } catch (err) {
+      logErrore({ operazione: 'admin/settings/aruba:GET', stato: 500 }, err)
+      return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
+    }
+})
 
 // PATCH /api/admin/settings/aruba  (staff) — aggiorna config Aruba
 // Body: { userId, scuola_id?, username?, password_ref?, fiscal?, iva?, abilitato?, ambiente? }
 // NB: la password reale non viene mai salvata in chiaro; si memorizza solo un
 // riferimento (env/vault). Mai esposta ai parent (admin_settings senza RLS parent).
-export async function PATCH(request: NextRequest) {
-  try {
-    const auth = await requireStaff(request)
-    if (auth.response) return auth.response
+export const PATCH = withRoute('admin/settings/aruba:PATCH', async (request: NextRequest) => {
+    try {
+      const auth = await requireStaff(request)
+      if (auth.response) return auth.response
 
-    const b = await parseBody(request, patchBodySchema)
-    if ('response' in b) return b.response
-    const body = b.data
+      const b = await parseBody(request, patchBodySchema)
+      if ('response' in b) return b.response
+      const body = b.data
 
-    const supabase = await createAdminClient()
-    const sw = await resolveScuolaScrittura(request, supabase, auth.user, body.scuola_id ?? undefined)
-    if (sw.response) return sw.response
-    const scuolaId = sw.scuolaId
+      const supabase = await createAdminClient()
+      const sw = await resolveScuolaScrittura(request, supabase, auth.user, body.scuola_id ?? undefined)
+      if (sw.response) return sw.response
+      const scuolaId = sw.scuolaId
 
-    const { data: cur } = await supabase.from('admin_settings').select('aruba_config').eq('scuola_id', scuolaId).maybeSingle()
-    const existing = (cur?.aruba_config as Record<string, unknown>) ?? {}
+      const { data: cur } = await supabase.from('admin_settings').select('aruba_config').eq('scuola_id', scuolaId).maybeSingle()
+      const existing = (cur?.aruba_config as Record<string, unknown>) ?? {}
 
-    const next: Record<string, unknown> = { ...existing }
-    if (body.username !== undefined) next.username = body.username
-    // accetta solo un riferimento, mai una password in chiaro
-    if (body.password_ref !== undefined && body.password_ref !== '••••••') next.password_ref = body.password_ref
-    if (body.fiscal !== undefined) next.fiscal = body.fiscal
-    if (body.iva !== undefined) next.iva = body.iva
-    if (body.abilitato !== undefined) next.abilitato = body.abilitato
-    if (body.ambiente !== undefined) next.ambiente = body.ambiente
+      const next: Record<string, unknown> = { ...existing }
+      if (body.username !== undefined) next.username = body.username
+      // accetta solo un riferimento, mai una password in chiaro
+      if (body.password_ref !== undefined && body.password_ref !== '••••••') next.password_ref = body.password_ref
+      if (body.fiscal !== undefined) next.fiscal = body.fiscal
+      if (body.iva !== undefined) next.iva = body.iva
+      if (body.abilitato !== undefined) next.abilitato = body.abilitato
+      if (body.ambiente !== undefined) next.ambiente = body.ambiente
 
-    const { error } = await supabase
-      .from('admin_settings')
-      .upsert({ scuola_id: scuolaId, aruba_config: next }, { onConflict: 'scuola_id' })
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+      const { error } = await supabase
+        .from('admin_settings')
+        .upsert({ scuola_id: scuolaId, aruba_config: next }, { onConflict: 'scuola_id' })
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-    return NextResponse.json({ success: true, data: sanitizeAruba(next) })
-  } catch (err) {
-    console.error('Errore API PATCH aruba:', err)
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
-  }
-}
+      return NextResponse.json({ success: true, data: sanitizeAruba(next) })
+    } catch (err) {
+      logErrore({ operazione: 'admin/settings/aruba:PATCH', stato: 500 }, err)
+      return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
+    }
+})

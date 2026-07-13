@@ -5,6 +5,8 @@ import { requireDocente } from '@/lib/auth/require-staff';
 import { enqueueNotifichePerAlunni } from '@/lib/primaria/notifiche';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore } from '@/lib/logging/logger';
 
 // '' è ammesso per retro-compatibilità: ?alunnoId= (vuoto) equivale ad assente (nessun filtro).
 const getQuerySchema = z.object({
@@ -20,7 +22,7 @@ const postBodySchema = z.object({
 
 // GET /api/notes?alunnoId=xxx
 // Recupera le note disciplinari di un alunno
-export async function GET(request: Request) {
+export const GET = withRoute('notes:GET', async (request: Request) => {
     try {
         const auth = await requireDocente(request);
         if (auth.response) return auth.response;
@@ -54,21 +56,21 @@ export async function GET(request: Request) {
         const { data, error } = await query;
 
         if (error) {
-            console.error('Errore GET note_disciplinari:', error);
+            logErrore({ operazione: 'notes:GET', stato: 500, evento: 'db' }, error);
             return NextResponse.json({ error: 'Errore nel recupero delle note', details: error.message }, { status: 500 });
         }
 
         return NextResponse.json({ success: true, data });
 
     } catch (error) {
-        console.error('Errore API GET Note:', error);
+        logErrore({ operazione: 'notes:GET', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
     }
-}
+});
 
 // POST /api/notes
 // Body: { alunnoIds: string[], categoria, testo, richiedeFirma }
-export async function POST(request: Request) {
+export const POST = withRoute('notes:POST', async (request: Request) => {
     try {
         const auth = await requireDocente(request);
         if (auth.response) return auth.response;
@@ -108,7 +110,7 @@ export async function POST(request: Request) {
             `);
 
         if (dbError) {
-            console.error('Errore INSERT note_disciplinari:', dbError);
+            logErrore({ operazione: 'notes:POST', stato: 500, evento: 'db' }, dbError);
             return NextResponse.json({ error: 'Errore nel salvataggio della nota', details: dbError.message }, { status: 500 });
         }
 
@@ -128,7 +130,7 @@ export async function POST(request: Request) {
         return NextResponse.json({ success: true, data, count: data?.length ?? 0 });
 
     } catch (error) {
-        console.error('Errore API POST Note:', error);
+        logErrore({ operazione: 'notes:POST', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
     }
-}
+});

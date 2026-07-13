@@ -3,6 +3,8 @@ import { z } from 'zod'
 import { sealDangerous } from '@/lib/security/seal'
 import { requireEnv } from '@/lib/security/require-env'
 import { parseQuery } from '@/lib/validation/http'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 const querySchema = z.object({}) // nessun parametro in ingresso
 
@@ -221,7 +223,7 @@ async function runMigrationDirect() {
   return { success: errors.length === 0 && schemaVerified, steps, errors, schemaVerified, schemaError }
 }
 
-export async function POST(request: Request) {
+export const POST = withRoute('admin/apply-enrollment-migration:POST', async (request: Request) => {
   const sealed = await sealDangerous(request)
   if (sealed) return sealed
   const missingEnv = requireEnv('NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY')
@@ -231,11 +233,12 @@ export async function POST(request: Request) {
   try {
     return NextResponse.json(await runMigration())
   } catch (error) {
+    logErrore({ operazione: 'admin/apply-enrollment-migration:POST', stato: 500 }, error)
     return NextResponse.json({ error: 'Internal Server Error', details: String(error) }, { status: 500 })
   }
-}
+})
 
-export async function GET(request: Request) {
+export const GET = withRoute('admin/apply-enrollment-migration:GET', async (request: Request) => {
   const sealed = await sealDangerous(request)
   if (sealed) return sealed
   const missingEnv = requireEnv('NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY')
@@ -245,6 +248,7 @@ export async function GET(request: Request) {
   try {
     return NextResponse.json(await runMigration())
   } catch (error) {
+    logErrore({ operazione: 'admin/apply-enrollment-migration:GET', stato: 500 }, error)
     return NextResponse.json({ error: 'Internal Server Error', details: String(error) }, { status: 500 })
   }
-}
+})

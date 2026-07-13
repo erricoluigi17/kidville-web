@@ -4,6 +4,8 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
 import { scuoleDiUtente } from '@/lib/auth/scope'
 import { parseQuery } from '@/lib/validation/http'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // `userId` in query è consumato dal gate identità (requireDocente), non dall'handler.
@@ -13,7 +15,7 @@ const getQuerySchema = z.object({}) // nessun parametro in ingresso
 // Elenco delle sezioni di scuola primaria del PROPRIO plesso (o plessi, per la
 // Direzione), usato per la "firma in un'altra classe" (supplenza). Gate ruolo +
 // isolamento per tenant: niente sezioni di altri plessi.
-export async function GET(request: NextRequest) {
+export const GET = withRoute('primaria/sezioni:GET', async (request: NextRequest) => {
   try {
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
@@ -35,7 +37,8 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ success: true, data: data ?? [] })
   } catch (err) {
+    logErrore({ operazione: 'primaria/sezioni:GET', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

@@ -7,6 +7,8 @@ import { nomiSezioniDiUtente } from '@/lib/sezioni/docenti';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { notificaEvento } from '@/lib/notifiche/triggers';
 import { parseBody, parseQuery } from '@/lib/validation/http';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore, logEvento } from '@/lib/logging/logger';
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // Gli id (userId, studentId, author_id, assignees) restano stringhe libere:
@@ -256,7 +258,7 @@ async function enrichTask(
 }
 
 // ─── GET /api/tasks ───────────────────────────────────────────────────────────
-export async function GET(request: Request) {
+export const GET = withRoute('tasks:GET', async (request: Request) => {
     try {
         // tasks = compiti INTERNI staff: gate ruolo + isolamento per plesso. Nessun flusso genitore.
         const auth = await requireDocente(request);
@@ -325,7 +327,7 @@ export async function GET(request: Request) {
             .order('created_at', { ascending: false });
 
         if (rowsErr) {
-            console.error('Errore GET task:', rowsErr);
+            logErrore({ operazione: 'tasks:GET', stato: 500, evento: 'db' }, rowsErr);
             return NextResponse.json({ error: rowsErr.message }, { status: 500 });
         }
 
@@ -397,13 +399,13 @@ export async function GET(request: Request) {
 
         return NextResponse.json(enriched);
     } catch (error) {
-        console.error('Errore API GET /api/tasks:', error);
+        logErrore({ operazione: 'tasks:GET', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
     }
-}
+});
 
 // ─── POST /api/tasks ──────────────────────────────────────────────────────────
-export async function POST(request: Request) {
+export const POST = withRoute('tasks:POST', async (request: Request) => {
     try {
         const auth = await requireDocente(request);
         if (auth.response) return auth.response;
@@ -461,7 +463,7 @@ export async function POST(request: Request) {
             .single();
 
         if (error) {
-            console.error('Errore creazione task:', error);
+            logErrore({ operazione: 'tasks:POST', stato: 500, evento: 'db' }, error);
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
 
@@ -487,12 +489,19 @@ export async function POST(request: Request) {
                 });
             }
         } catch (e) {
-            console.error('Notifica task assegnato fallita (non bloccante):', e);
+            // `error` benché l'incarico sia creato (201): gli assegnatari non vengono avvisati,
+            // quindi il task esiste ma nessuno sa di doverlo fare. La scrittura principale è
+            // salva, la notifica è persa.
+            logEvento('notifica', 'error', {
+                operazione: 'tasks:POST',
+                esito: 'notifica-assegnatari-non-accodata',
+                tipo: 'task_assegnato',
+            }, e);
         }
 
         return NextResponse.json(decodeRow(data as Record<string, unknown>), { status: 201 });
     } catch (error) {
-        console.error('Errore API POST /api/tasks:', error);
+        logErrore({ operazione: 'tasks:POST', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
     }
-}
+});

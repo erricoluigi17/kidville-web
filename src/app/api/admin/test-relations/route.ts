@@ -4,11 +4,12 @@ import { sealDangerous } from '@/lib/security/seal';
 import { requireEnv } from '@/lib/security/require-env';
 import { createClient } from '@supabase/supabase-js';
 import { parseQuery } from '@/lib/validation/http';
+import { withRoute } from '@/lib/logging/with-route';
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({}); // nessun parametro in ingresso (id di test hardcoded)
 
-export async function GET(request: Request) {
+export const GET = withRoute('admin/test-relations:GET', async (request: Request) => {
     const sealed = await sealDangerous(request);
     if (sealed) return sealed;
     const q = parseQuery(request, getQuerySchema);
@@ -28,4 +29,4 @@ export async function GET(request: Request) {
         )
     `).eq('id', '553309b3-22db-4ddc-98fb-d1dbfdd841ba');
     return NextResponse.json({ data, error });
-}
+});

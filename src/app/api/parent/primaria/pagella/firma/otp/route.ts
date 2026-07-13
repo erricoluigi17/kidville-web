@@ -6,13 +6,15 @@ import { sendOtp } from '@/lib/auth/otp-ticket'
 import { logFeaEvent } from '@/lib/fea/audit'
 import { extractRequestMeta } from '@/lib/fea/signature-log'
 import { parseQuery } from '@/lib/validation/http'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // nessun parametro in ingresso (userId è consumato dal gate auth, il body non viene letto)
 const querySchema = z.object({})
 
 // POST /api/parent/primaria/pagella/firma/otp?userId=
 // Invia un OTP via email al genitore per firmare la ricezione della pagella.
-export async function POST(request: NextRequest) {
+export const POST = withRoute('parent/primaria/pagella/firma/otp:POST', async (request: NextRequest) => {
   try {
     const userId = getRequestUserId(request)
     if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
@@ -32,7 +34,8 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true, data: res })
   } catch (err) {
+    logErrore({ operazione: 'parent/primaria/pagella/firma/otp:POST', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

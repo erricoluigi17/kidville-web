@@ -7,6 +7,8 @@ import { zUuid } from '@/lib/validation/common'
 import { resolveScuoleAttive } from '@/lib/auth/scope'
 import { annullaRicevutaAttiva } from '@/lib/pagamenti/ricevute'
 import { notificaEvento } from '@/lib/notifiche/triggers'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // PATCH: merge parziale sui soli campi ammessi; i valori restano senza vincoli
@@ -50,7 +52,7 @@ const SELECT = `
 `
 
 // GET /api/pagamenti/[id]?userId=yyy — dettaglio + incassi + quote (+ rate se padre)
-export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
+export const GET = withRoute('pagamenti/[id]:GET', async (request: Request, context: { params: Promise<{ id: string }> }) => {
   try {
     const auth = await requireUser(request)
     if (auth.response) return auth.response
@@ -137,13 +139,13 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
 
     return NextResponse.json({ success: true, data: { ...pag, incassi: incassi || [], quote: quote || [], rate } })
   } catch (err) {
-    console.error('Errore API GET pagamento dettaglio:', err)
+    logErrore({ operazione: 'pagamenti/[id]:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})
 
 // PATCH /api/pagamenti/[id]  (staff) — modifica campi editabili
-export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
+export const PATCH = withRoute('pagamenti/[id]:PATCH', async (request: Request, context: { params: Promise<{ id: string }> }) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -205,18 +207,22 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         })
       }
     } catch (e) {
-      console.error('Notifica pagamento saldato fallita (non bloccante):', e)
+      logEvento('notifica', 'error', {
+        operazione: 'pagamenti/[id]:PATCH',
+        tipo: 'pagamento_registrato',
+        esito: 'notifica_non_inviata',
+      }, e)
     }
 
     return NextResponse.json({ success: true, data })
   } catch (err) {
-    console.error('Errore API PATCH pagamento:', err)
+    logErrore({ operazione: 'pagamenti/[id]:PATCH', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})
 
 // DELETE /api/pagamenti/[id]  (staff)
-export async function DELETE(request: Request, context: { params: Promise<{ id: string }> }) {
+export const DELETE = withRoute('pagamenti/[id]:DELETE', async (request: Request, context: { params: Promise<{ id: string }> }) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -255,7 +261,7 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
 
     return NextResponse.json({ success: true })
   } catch (err) {
-    console.error('Errore API DELETE pagamento:', err)
+    logErrore({ operazione: 'pagamenti/[id]:DELETE', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

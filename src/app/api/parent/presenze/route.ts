@@ -9,6 +9,8 @@ import {
   type PresenzaInput,
   type StatoPresenza,
 } from '@/lib/primaria/oreAssenza'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ── Vista genitore (read-only) delle presenze del figlio. ────────────────────
 // A differenza di `parent/primaria/assenze` (cronologia delle sole assenze),
@@ -27,7 +29,7 @@ const getQuerySchema = z.object({
   studentId: z.string({ error: 'studentId obbligatorio' }).min(1, 'studentId obbligatorio'),
 })
 
-export async function GET(request: NextRequest) {
+export const GET = withRoute('parent/presenze:GET', async (request: NextRequest) => {
   try {
     const q = parseQuery(request, getQuerySchema)
     if ('response' in q) return q.response
@@ -119,7 +121,8 @@ export async function GET(request: NextRequest) {
       },
     })
   } catch (err) {
+    logErrore({ operazione: 'parent/presenze:GET', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

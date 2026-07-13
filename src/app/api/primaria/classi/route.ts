@@ -6,6 +6,8 @@ import { scuoleDiUtente } from '@/lib/auth/scope'
 import { loadGradoContext } from '@/lib/auth/require-grado'
 import { sezioniDiUtentePerGrado, type SezioneInfo } from '@/lib/sezioni/docenti'
 import { parseQuery } from '@/lib/validation/http'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // `userId` in query è consumato dal gate identità (requireDocente), non dall'handler.
@@ -15,7 +17,7 @@ const getQuerySchema = z.object({}) // nessun parametro in ingresso
 // Classi di scuola primaria visibili all'utente (hub "Le mie classi").
 //  - educator: solo le sezioni assegnate (deve avere grado 'primaria').
 //  - admin/coordinator/segreteria: TUTTE le classi primaria dei propri plessi.
-export async function GET(request: NextRequest) {
+export const GET = withRoute('primaria/classi:GET', async (request: NextRequest) => {
   try {
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
@@ -60,7 +62,8 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ success: true, data })
   } catch (err) {
+    logErrore({ operazione: 'primaria/classi:GET', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

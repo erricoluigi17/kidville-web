@@ -8,6 +8,8 @@ import { risolviValutatore } from '@/lib/audit/valutatore'
 import { enqueueNotifichePerAlunni, notificaTitolariScrittura } from '@/lib/primaria/notifiche'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 const CATEGORIE = ['disciplinare', 'didattica', 'compiti_non_svolti'] as const
 
@@ -31,7 +33,7 @@ const postBodySchema = z.object({
 })
 
 // GET /api/primaria/note?sectionId=&userId=  (vista docente: ultime note della classe)
-export async function GET(request: NextRequest) {
+export const GET = withRoute('primaria/note:GET', async (request: NextRequest) => {
   try {
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
@@ -51,14 +53,15 @@ export async function GET(request: NextRequest) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json({ success: true, data: data ?? [] })
   } catch (err) {
+    logErrore({ operazione: 'primaria/note:GET', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})
 
 // POST /api/primaria/note?userId=
 // body: { sectionId, alunnoIds[], categoria, testo, richiedeFirma?, oscurataAdAltri? }
-export async function POST(request: NextRequest) {
+export const POST = withRoute('primaria/note:POST', async (request: NextRequest) => {
   try {
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
@@ -122,7 +125,8 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true, data: data ?? [] }, { status: 201 })
   } catch (err) {
+    logErrore({ operazione: 'primaria/note:POST', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

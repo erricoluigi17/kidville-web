@@ -6,6 +6,8 @@ import { resolveScuolaScrittura } from '@/lib/auth/scope'
 import { parseBody, parseData, parseQuery } from '@/lib/validation/http'
 import { parseSidiZip } from '@/lib/sidi/zip-parser'
 import { applySidiBatch } from '@/lib/sidi/import-apply'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({}) // nessun parametro in ingresso (userId è consumato dal gate)
@@ -24,88 +26,91 @@ const patchBodySchema = z.object({
 })
 
 // GET /api/admin/sidi/import?userId=  — batch di import recenti.
-export async function GET(request: NextRequest) {
-  const auth = await requireStaff(request)
-  if (auth.response) return auth.response
-  const q = parseQuery(request, getQuerySchema)
-  if ('response' in q) return q.response
-  try {
-    const supabase = await createAdminClient()
-    const { data } = await supabase
-      .from('sidi_import_batches')
-      .select('id, filename, stato, totale_record, matched, creati, created_at, applied_at')
-      .order('created_at', { ascending: false })
-      .limit(20)
-    return NextResponse.json({ success: true, data: data ?? [] })
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Errore interno'
-    return NextResponse.json({ error: msg }, { status: 500 })
-  }
-}
+export const GET = withRoute('admin/sidi/import:GET', async (request: NextRequest) => {
+    const auth = await requireStaff(request)
+    if (auth.response) return auth.response
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
+    try {
+      const supabase = await createAdminClient()
+      const { data } = await supabase
+        .from('sidi_import_batches')
+        .select('id, filename, stato, totale_record, matched, creati, created_at, applied_at')
+        .order('created_at', { ascending: false })
+        .limit(20)
+      return NextResponse.json({ success: true, data: data ?? [] })
+    } catch (err) {
+      logErrore({ operazione: 'admin/sidi/import:GET', stato: 500 }, err)
+      const msg = err instanceof Error ? err.message : 'Errore interno'
+      return NextResponse.json({ error: msg }, { status: 500 })
+    }
+})
 
 // POST /api/admin/sidi/import?userId=  — upload del .zip SIDI (NON rinominato),
 // parse + staging (stato 'parsed'). Ritorna l'anteprima (totale + warnings).
-export async function POST(request: NextRequest) {
-  const auth = await requireStaff(request)
-  if (auth.response) return auth.response
-  try {
-    const form = await request.formData()
-    const f = parseData(postFormSchema, { file: form.get('file') })
-    if ('response' in f) return f.response
-    const { file } = f.data
+export const POST = withRoute('admin/sidi/import:POST', async (request: NextRequest) => {
+    const auth = await requireStaff(request)
+    if (auth.response) return auth.response
+    try {
+      const form = await request.formData()
+      const f = parseData(postFormSchema, { file: form.get('file') })
+      if ('response' in f) return f.response
+      const { file } = f.data
 
-    const buf = Buffer.from(await file.arrayBuffer())
-    const parsed = await parseSidiZip(buf)
-    const filename = file.name ?? 'sidi.zip'
+      const buf = Buffer.from(await file.arrayBuffer())
+      const parsed = await parseSidiZip(buf)
+      const filename = file.name ?? 'sidi.zip'
 
-    const supabase = await createAdminClient()
-    // Import SIDI per singola scuola: risolvi l'unica sede di scrittura dallo scope dell'admin.
-    const sw = await resolveScuolaScrittura(request, supabase, auth.user)
-    if (sw.response) return sw.response
-    const scuolaId = sw.scuolaId
+      const supabase = await createAdminClient()
+      // Import SIDI per singola scuola: risolvi l'unica sede di scrittura dallo scope dell'admin.
+      const sw = await resolveScuolaScrittura(request, supabase, auth.user)
+      if (sw.response) return sw.response
+      const scuolaId = sw.scuolaId
 
-    const { data: batch, error } = await supabase
-      .from('sidi_import_batches')
-      .insert({
-        scuola_id: scuolaId,
-        filename,
-        stato: 'parsed',
-        totale_record: parsed.records.length,
-        parsed_payload: parsed.records,
+      const { data: batch, error } = await supabase
+        .from('sidi_import_batches')
+        .insert({
+          scuola_id: scuolaId,
+          filename,
+          stato: 'parsed',
+          totale_record: parsed.records.length,
+          parsed_payload: parsed.records,
+          warnings: parsed.warnings,
+          caricato_da: auth.user.id,
+        })
+        .select('id')
+        .single()
+      if (error || !batch) return NextResponse.json({ error: error?.message ?? 'Staging fallito' }, { status: 500 })
+
+      return NextResponse.json({
+        success: true,
+        batchId: batch.id,
+        totale: parsed.records.length,
         warnings: parsed.warnings,
-        caricato_da: auth.user.id,
       })
-      .select('id')
-      .single()
-    if (error || !batch) return NextResponse.json({ error: error?.message ?? 'Staging fallito' }, { status: 500 })
-
-    return NextResponse.json({
-      success: true,
-      batchId: batch.id,
-      totale: parsed.records.length,
-      warnings: parsed.warnings,
-    })
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Errore interno'
-    return NextResponse.json({ error: msg }, { status: 500 })
-  }
-}
+    } catch (err) {
+      logErrore({ operazione: 'admin/sidi/import:POST', stato: 500 }, err)
+      const msg = err instanceof Error ? err.message : 'Errore interno'
+      return NextResponse.json({ error: msg }, { status: 500 })
+    }
+})
 
 // PATCH /api/admin/sidi/import?userId=  — applica un batch alle anagrafiche.
 // Riservato alla DIRIGENZA (mutazione anagrafica di massa). body: { batchId }
-export async function PATCH(request: NextRequest) {
-  const auth = await requireStaff(request, ['admin', 'coordinator'])
-  if (auth.response) return auth.response
-  try {
-    const b = await parseBody(request, patchBodySchema)
-    if ('response' in b) return b.response
+export const PATCH = withRoute('admin/sidi/import:PATCH', async (request: NextRequest) => {
+    const auth = await requireStaff(request, ['admin', 'coordinator'])
+    if (auth.response) return auth.response
+    try {
+      const b = await parseBody(request, patchBodySchema)
+      if ('response' in b) return b.response
 
-    const supabase = await createAdminClient()
-    const res = await applySidiBatch(supabase, b.data.batchId, auth.user)
-    if (res.error) return NextResponse.json({ error: res.error }, { status: res.status ?? 500 })
-    return NextResponse.json({ success: true, ...res })
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Errore interno'
-    return NextResponse.json({ error: msg }, { status: 500 })
-  }
-}
+      const supabase = await createAdminClient()
+      const res = await applySidiBatch(supabase, b.data.batchId, auth.user)
+      if (res.error) return NextResponse.json({ error: res.error }, { status: res.status ?? 500 })
+      return NextResponse.json({ success: true, ...res })
+    } catch (err) {
+      logErrore({ operazione: 'admin/sidi/import:PATCH', stato: 500 }, err)
+      const msg = err instanceof Error ? err.message : 'Errore interno'
+      return NextResponse.json({ error: msg }, { status: 500 })
+    }
+})

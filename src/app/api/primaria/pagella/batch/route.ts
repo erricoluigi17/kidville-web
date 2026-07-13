@@ -6,6 +6,8 @@ import { assertSezioneInScope } from '@/lib/auth/scope'
 import { generaPagella } from '@/lib/primaria/pagella-store'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 const postBodySchema = z.object({
   scrutinioId: zUuid,
@@ -15,7 +17,7 @@ const postBodySchema = z.object({
 // Genera e archivia in batch un PDF per OGNI alunno dello scrutinio (chiuso).
 // La generazione è indipendente dalla pubblicazione ai genitori. Riservata alla
 // dirigenza. body: { scrutinioId }
-export async function POST(request: NextRequest) {
+export const POST = withRoute('primaria/pagella/batch:POST', async (request: NextRequest) => {
   try {
     const auth = await requireStaff(request, ['admin', 'coordinator'])
     if (auth.response) return auth.response
@@ -51,7 +53,8 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true, generate, totale: alunniIds.length, errori })
   } catch (err) {
+    logErrore({ operazione: 'primaria/pagella/batch:POST', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

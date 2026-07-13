@@ -6,6 +6,8 @@ import { assertAlunnoInScope } from '@/lib/auth/scope'
 import { mediaGiudizi, type ScalaVoce } from '@/lib/primaria/media'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({
@@ -22,7 +24,7 @@ const getQuerySchema = z.object({
 // accessibile al genitore (O.M. 3/2025, PRD §4 #3 e §4.5). Senza un gate di ruolo
 // un genitore — che possiede un userId valido — potrebbe leggerla chiamando
 // direttamente questa route con l'id del proprio figlio.
-export async function GET(request: NextRequest) {
+export const GET = withRoute('primaria/prospetto:GET', async (request: NextRequest) => {
   try {
     // Gate di ruolo: solo docenti/segreteria/staff. Il genitore (role 'genitore')
     // è escluso, così la media numerica non gli è mai accessibile via API (vedi nota sopra).
@@ -117,7 +119,8 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ success: true, data: Array.from(perObiettivo.values()), media: mediaMateria })
   } catch (err) {
+    logErrore({ operazione: 'primaria/prospetto:GET', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

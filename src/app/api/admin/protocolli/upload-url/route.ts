@@ -13,6 +13,8 @@ import {
   pathStaging,
 } from '@/lib/protocolli/store'
 import { rispostaErroreProtocollo } from '@/lib/protocolli/server'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // URL firmato di upload DIRETTO client→storage (staging): aggira il limite di
 // body (~4,5 MB) di Vercel per file fino a 25 MB (decisione #7). Il client fa
@@ -29,43 +31,43 @@ const postBodySchema = z.object({
   scopo: z.enum(['principale', 'allegato']).default('principale'),
 })
 
-export async function POST(request: NextRequest) {
-  try {
-    const auth = await requireStaff(request, ['admin', 'segreteria'])
-    if (auth.response) return auth.response
+export const POST = withRoute('admin/protocolli/upload-url:POST', async (request: NextRequest) => {
+    try {
+      const auth = await requireStaff(request, ['admin', 'segreteria'])
+      if (auth.response) return auth.response
 
-    const rl = rateLimit(`protocolli-upload:${clientIp(request)}`, {
-      limit: 30,
-      windowMs: 10 * 60 * 1000,
-    })
-    if (!rl.ok) {
-      return NextResponse.json(
-        { error: 'Troppi caricamenti. Riprova tra qualche minuto.' },
-        { status: 429, headers: { 'Retry-After': String(Math.ceil(rl.retryAfterMs / 1000)) } }
-      )
+      const rl = rateLimit(`protocolli-upload:${clientIp(request)}`, {
+        limit: 30,
+        windowMs: 10 * 60 * 1000,
+      })
+      if (!rl.ok) {
+        return NextResponse.json(
+          { error: 'Troppi caricamenti. Riprova tra qualche minuto.' },
+          { status: 429, headers: { 'Retry-After': String(Math.ceil(rl.retryAfterMs / 1000)) } }
+        )
+      }
+
+      const b = await parseBody(request, postBodySchema)
+      if ('response' in b) return b.response
+
+      const supabase = await createAdminClient()
+      await ensureBucket(supabase)
+
+      const path = pathStaging(b.data.nome)
+      const { data, error } = await supabase.storage.from(PROTOCOLLO_BUCKET).createSignedUploadUrl(path)
+      if (error || !data?.signedUrl || !data.token) {
+        return NextResponse.json(
+          { error: `Preparazione upload non riuscita: ${error?.message ?? 'URL mancante'}` },
+          { status: 500 }
+        )
+      }
+
+      return NextResponse.json({
+        success: true,
+        data: { path, token: data.token, signedUrl: data.signedUrl },
+      })
+    } catch (err) {
+      logErrore({ operazione: 'admin/protocolli/upload-url:POST', stato: 500 }, err)
+      return rispostaErroreProtocollo(err)
     }
-
-    const b = await parseBody(request, postBodySchema)
-    if ('response' in b) return b.response
-
-    const supabase = await createAdminClient()
-    await ensureBucket(supabase)
-
-    const path = pathStaging(b.data.nome)
-    const { data, error } = await supabase.storage.from(PROTOCOLLO_BUCKET).createSignedUploadUrl(path)
-    if (error || !data?.signedUrl || !data.token) {
-      return NextResponse.json(
-        { error: `Preparazione upload non riuscita: ${error?.message ?? 'URL mancante'}` },
-        { status: 500 }
-      )
-    }
-
-    return NextResponse.json({
-      success: true,
-      data: { path, token: data.token, signedUrl: data.signedUrl },
-    })
-  } catch (err) {
-    console.error('Errore API POST protocolli/upload-url:', err)
-    return rispostaErroreProtocollo(err)
-  }
-}
+})

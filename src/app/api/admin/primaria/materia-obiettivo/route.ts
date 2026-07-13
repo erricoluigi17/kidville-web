@@ -4,6 +4,8 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ============================================================
 // Obiettivo associato a una materia di una classe (sezione).
@@ -27,7 +29,7 @@ const postBodySchema = z.object({
 
 // GET /api/admin/primaria/materia-obiettivo?sectionId=
 // Ritorna la mappa materia_id → obiettivo_id per la sezione.
-export async function GET(request: NextRequest) {
+export const GET = withRoute('admin/primaria/materia-obiettivo:GET', async (request: NextRequest) => {
   const q = parseQuery(request, getQuerySchema)
   if ('response' in q) return q.response
   const { sectionId } = q.data
@@ -40,15 +42,16 @@ export async function GET(request: NextRequest) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json({ success: true, data: data ?? [] })
   } catch (err) {
+    logErrore({ operazione: 'admin/primaria/materia-obiettivo:GET', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})
 
 // POST /api/admin/primaria/materia-obiettivo
 //   body: { sectionId, materiaId, obiettivoId | null }
 // obiettivoId null/"" → rimuove l'associazione.
-export async function POST(request: NextRequest) {
+export const POST = withRoute('admin/primaria/materia-obiettivo:POST', async (request: NextRequest) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -77,7 +80,8 @@ export async function POST(request: NextRequest) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json({ success: true, data }, { status: 201 })
   } catch (err) {
+    logErrore({ operazione: 'admin/primaria/materia-obiettivo:POST', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

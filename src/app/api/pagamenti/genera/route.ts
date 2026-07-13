@@ -6,6 +6,8 @@ import { resolveScuoleAttive } from '@/lib/auth/scope'
 import { notificaEvento } from '@/lib/notifiche/triggers'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // Genera pagamenti una tantum per una categoria, su una classe o un elenco di alunni.
 // Riusa il filtro alunni di genera-rette e la logica di creazione di pagamenti/rate.
@@ -44,7 +46,7 @@ const postBodySchema = z.object({
 // GET /api/pagamenti/genera?userId=&categoria_id=&classe_sezione=&gruppo=  (staff)
 //   Preview: alunni candidati (iscritti con sezione), esclusi quelli che hanno
 //   già un pagamento con lo stesso `gruppo`.
-export async function GET(request: NextRequest) {
+export const GET = withRoute('pagamenti/genera:GET', async (request: NextRequest) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -89,16 +91,16 @@ export async function GET(request: NextRequest) {
       data: { candidati, gia_generati: giaFatti.size },
     })
   } catch (err) {
-    console.error('Errore API GET genera:', err)
+    logErrore({ operazione: 'pagamenti/genera:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})
 
 // POST /api/pagamenti/genera  (staff) — conferma generazione
 // Body: { userId, categoria_id?, descrizione, importo, scadenza,
 //         alunno_ids?: string[], classe_sezione?, obbligatorio?, gruppo?,
 //         rate?: [{importo, scadenza}]  // se presente → piano rateale per alunno }
-export async function POST(request: Request) {
+export const POST = withRoute('pagamenti/genera:POST', async (request: Request) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -189,7 +191,7 @@ export async function POST(request: Request) {
       }))
       const { data: created, error } = await supabase.from('pagamenti').insert(records).select('id')
       if (error) {
-        console.error('Errore POST genera:', error)
+        logErrore({ operazione: 'pagamenti/genera:POST', stato: 500, evento: 'db' }, error)
         return NextResponse.json({ error: 'Errore nella generazione', details: error.message }, { status: 500 })
       }
       generati = created?.length ?? 0
@@ -220,7 +222,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ success: true, data: { generati } }, { status: 201 })
   } catch (err) {
-    console.error('Errore API POST genera:', err)
+    logErrore({ operazione: 'pagamenti/genera:POST', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

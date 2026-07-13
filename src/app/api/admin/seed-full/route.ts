@@ -4,6 +4,8 @@ import { createClient } from '@supabase/supabase-js';
 import { sealDangerous } from '@/lib/security/seal';
 import { requireEnv } from '@/lib/security/require-env';
 import { parseQuery } from '@/lib/validation/http';
+import { withRoute } from '@/lib/logging/with-route';
+import { logErrore } from '@/lib/logging/logger';
 
 const querySchema = z.object({}); // nessun parametro in ingresso
 
@@ -45,7 +47,7 @@ function generateCF(cognome: string, nome: string, gender: string, data: string,
 const PROVINCE = ['RM', 'MI', 'NA', 'TO', 'FI', 'BO', 'GE', 'PA', 'BA', 'CT'];
 const CITTA = ['Roma', 'Milano', 'Napoli', 'Torino', 'Firenze', 'Bologna', 'Genova', 'Palermo', 'Bari', 'Catania'];
 
-export async function POST(request: Request) {
+export const POST = withRoute('admin/seed-full:POST', async (request: Request) => {
     const sealed = await sealDangerous(request);
     if (sealed) return sealed;
     const missingEnv = requireEnv('NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY');
@@ -227,10 +229,11 @@ export async function POST(request: Request) {
         });
 
     } catch (err) {
+        logErrore({ operazione: 'admin/seed-full:POST', stato: 500 }, err);
         return NextResponse.json({
             success: false,
             error: err instanceof Error ? err.message : String(err),
             ...results
         }, { status: 500 });
     }
-}
+});

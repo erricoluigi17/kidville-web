@@ -4,6 +4,8 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { scuoleDiUtente } from '@/lib/auth/scope'
 import { parseQuery } from '@/lib/validation/http'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 const getQuerySchema = z.object({}) // nessun parametro: aggrega tutto il "da ordinare" dei plessi
 
@@ -30,7 +32,7 @@ interface TagliaAgg { taglia: string; quantita: number; righe_ids: string[] }
 interface ArticoloAgg { articolo_id: string | null; nome: string; taglie: TagliaAgg[]; quantita: number }
 interface GruppoAgg { fornitore: { id: string; nome: string } | null; quantita: number; articoli: ArticoloAgg[] }
 
-export async function GET(request: Request) {
+export const GET = withRoute('admin/merch/da-ordinare:GET', async (request: Request) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -105,7 +107,7 @@ export async function GET(request: Request) {
 
     return NextResponse.json({ success: true, data: { gruppi: out } })
   } catch (err) {
-    console.error('Errore API GET merch/da-ordinare:', err)
+    logErrore({ operazione: 'admin/merch/da-ordinare:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

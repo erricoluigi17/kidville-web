@@ -5,6 +5,8 @@ import { requireStaff } from '@/lib/auth/require-staff'
 import { resolveScuoleAttive } from '@/lib/auth/scope'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // scuola_id è advisory: lo scoping reale viene da resolveScuoleAttive (cookie/plessi).
 const getQuerySchema = z.object({ scuola_id: zUuid.optional() })
@@ -12,7 +14,7 @@ const getQuerySchema = z.object({ scuola_id: zUuid.optional() })
 // GET /api/pagamenti/ticket/morosi?userId=&scuola_id=
 //   staff (incl. segreteria): alunni con saldo ticket NEGATIVO nelle sedi attive.
 //   ticket_mensa non ha scuola_id → join !inner su alunni per lo scoping (no leak).
-export async function GET(request: NextRequest) {
+export const GET = withRoute('pagamenti/ticket/morosi:GET', async (request: NextRequest) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
@@ -48,7 +50,7 @@ export async function GET(request: NextRequest) {
     })
     return NextResponse.json({ success: true, data: rows })
   } catch (err) {
-    console.error('Errore API GET ticket/morosi:', err)
+    logErrore({ operazione: 'pagamenti/ticket/morosi:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

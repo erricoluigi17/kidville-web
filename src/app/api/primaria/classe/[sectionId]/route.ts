@@ -6,6 +6,8 @@ import { loadGradoContext } from '@/lib/auth/require-grado'
 import { materieDiDocenteInSezione } from '@/lib/sezioni/docenti'
 import { parseData } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // `sectionId` (param dinamico) è usato come UUID nelle query (sections.id,
@@ -14,10 +16,10 @@ import { zUuid } from '@/lib/validation/common'
 
 // GET /api/primaria/classe/[sectionId]?userId=
 // Bundle di contesto classe: dati sezione, alunni, materie.
-export async function GET(
+export const GET = withRoute('primaria/classe/[sectionId]:GET', async (
   request: NextRequest,
   { params }: { params: Promise<{ sectionId: string }> }
-) {
+) => {
   try {
     const { sectionId: rawSectionId } = await params
 
@@ -81,7 +83,8 @@ export async function GET(
       data: { section, alunni: alunni ?? [], materie },
     })
   } catch (err) {
+    logErrore({ operazione: 'primaria/classe/[sectionId]:GET', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

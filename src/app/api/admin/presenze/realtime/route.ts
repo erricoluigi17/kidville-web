@@ -5,6 +5,7 @@ import { requireStaff } from '@/lib/auth/require-staff'
 import { scuoleDiUtente } from '@/lib/auth/scope'
 import { parseQuery } from '@/lib/validation/http'
 import { aggregaPresenze, TOTALE_VUOTO } from '@/lib/presenze/aggregate'
+import { withRoute } from '@/lib/logging/with-route'
 
 /**
  * GET /api/admin/presenze/realtime — aggregato presenze di OGGI per il
@@ -17,7 +18,7 @@ import { aggregaPresenze, TOTALE_VUOTO } from '@/lib/presenze/aggregate'
 
 const getQuerySchema = z.object({}) // nessun parametro in ingresso
 
-export async function GET(request: Request) {
+export const GET = withRoute('admin/presenze/realtime:GET', async (request: Request) => {
   const auth = await requireStaff(request)
   if (auth.response) return auth.response
 
@@ -58,4 +59,4 @@ export async function GET(request: Request) {
   )
 
   return NextResponse.json({ success: true, data })
-}
+})

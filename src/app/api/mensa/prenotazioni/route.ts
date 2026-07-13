@@ -9,6 +9,8 @@ import { controllaAllergie } from '@/lib/mensa/allergie-check'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid, zDataYMD } from '@/lib/validation/common'
 import { genitoreHasFiglio } from '@/lib/anagrafiche/legami'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // Ruoli che possono FORZARE prenotazione/disdetta della mensa anche fuori orario
 // (telefonate out-of-hours dei genitori dopo il cutoff), con saldo che può andare
@@ -54,7 +56,7 @@ async function setSaldo(supabase: Awaited<ReturnType<typeof createAdminClient>>,
 // GET /api/mensa/prenotazioni?userId=&alunno_id=&from=&to=
 //   genitore -> solo propri figli; staff -> qualsiasi alunno.
 //   Ritorna { saldo, prenotazioni: [{data, stato, origine}] }.
-export async function GET(request: Request) {
+export const GET = withRoute('mensa/prenotazioni:GET', async (request: Request) => {
   try {
     const auth = await requireUser(request)
     if (auth.response) return auth.response
@@ -94,10 +96,10 @@ export async function GET(request: Request) {
 
     return NextResponse.json({ success: true, data: { saldo, prenotazioni: pren ?? [], cutoffOra } })
   } catch (err) {
-    console.error('Errore API GET mensa/prenotazioni:', err)
+    logErrore({ operazione: 'mensa/prenotazioni:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})
 
 // POST /api/mensa/prenotazioni
 // Body: { userId, alunno_id, date: string|string[], origine? }
@@ -105,7 +107,7 @@ export async function GET(request: Request) {
 //   staff (admin/coordinator/segreteria): origine='segreteria', può forzare le richieste
 //     arrivate fuori orario (telefonata del genitore dopo il cutoff) — salta cutoff e blocco
 //     saldo, che può andare in negativo; rispetta solo i giorni attivi.
-export async function POST(request: Request) {
+export const POST = withRoute('mensa/prenotazioni:POST', async (request: Request) => {
   try {
     const auth = await requireUser(request)
     if (auth.response) return auth.response
@@ -173,7 +175,17 @@ export async function POST(request: Request) {
         alunno_id: alunnoId, scuola_id: scuolaId, tipo: 'consumo', delta: -1,
         saldo_dopo: saldo, prenotazione_id: pren?.id, origine, data, creato_da: user.id,
       })
-      if (mErr) console.error('prenotazioni: movimento consumo non registrato:', mErr.message)
+      if (mErr) {
+        // `error` benché la prenotazione sia riuscita: il ticket È STATO SCALATO dal saldo ma il
+        // movimento non è finito nel ledger. È esattamente una scrittura persa — il saldo e il
+        // libro mastro divergono, e a fine mese i conti non torneranno senza che nulla, da
+        // nessuna parte, dica perché.
+        logEvento('db', 'error', {
+          operazione: 'mensa/prenotazioni:POST',
+          esito: 'movimento-consumo-non-registrato',
+          tipo: 'consumo',
+        }, mErr)
+      }
       esiti.push({ data, ok: true })
     }
 
@@ -200,15 +212,15 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ success: true, data: { saldo, esiti } }, { status: 201 })
   } catch (err) {
-    console.error('Errore API POST mensa/prenotazioni:', err)
+    logErrore({ operazione: 'mensa/prenotazioni:POST', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})
 
 // DELETE /api/mensa/prenotazioni?userId=&alunno_id=&data=
 //   disdici: riaccredita il ticket. Il genitore solo entro cutoff; lo staff può forzare
 //   anche fuori orario / su date passate (telefonata out-of-hours per disdire).
-export async function DELETE(request: Request) {
+export const DELETE = withRoute('mensa/prenotazioni:DELETE', async (request: Request) => {
   try {
     const auth = await requireUser(request)
     if (auth.response) return auth.response
@@ -253,11 +265,19 @@ export async function DELETE(request: Request) {
       alunno_id: alunnoId, scuola_id: scuolaId, tipo: 'disdetta', delta: Number(existing.ticket_scalato ?? 1),
       saldo_dopo: saldo, prenotazione_id: existing.id, origine: 'disdetta', data, creato_da: user.id,
     })
-    if (mErr) console.error('prenotazioni: movimento disdetta non registrato:', mErr.message)
+    if (mErr) {
+      // Come sopra: il ticket è stato RIACCREDITATO ma il movimento non è nel ledger. Saldo e
+      // libro mastro divergono in silenzio → `error`, anche se la disdetta è andata a buon fine.
+      logEvento('db', 'error', {
+        operazione: 'mensa/prenotazioni:DELETE',
+        esito: 'movimento-disdetta-non-registrato',
+        tipo: 'disdetta',
+      }, mErr)
+    }
 
     return NextResponse.json({ success: true, data: { saldo } })
   } catch (err) {
-    console.error('Errore API DELETE mensa/prenotazioni:', err)
+    logErrore({ operazione: 'mensa/prenotazioni:DELETE', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
-}
+})

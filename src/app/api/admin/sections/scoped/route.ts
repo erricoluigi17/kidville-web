@@ -5,6 +5,8 @@ import { requireDocente } from '@/lib/auth/require-staff'
 import { scuoleDiUtente } from '@/lib/auth/scope'
 import { sezioniDiUtente } from '@/lib/sezioni/docenti'
 import { parseQuery } from '@/lib/validation/http'
+import { withRoute } from '@/lib/logging/with-route'
+import { logErrore } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // `grado`: csv di school_type ammessi (es. 'nido,infanzia'); assente = tutti.
@@ -26,7 +28,7 @@ const getQuerySchema = z.object({
 //  - educator: solo le sezioni assegnate (utenti_sezioni), nel proprio plesso;
 //  - segreteria/coordinator: tutte le sezioni del proprio plesso;
 //  - admin: tutti i plessi (utenti_scuole). Mai cross-tenant.
-export async function GET(request: NextRequest) {
+export const GET = withRoute('admin/sections/scoped:GET', async (request: NextRequest) => {
   try {
     const auth = await requireDocente(request)
     if (auth.response) return auth.response
@@ -74,7 +76,8 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ success: true, data })
   } catch (err) {
+    logErrore({ operazione: 'admin/sections/scoped:GET', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
-}
+})

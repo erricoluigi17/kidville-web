@@ -124,6 +124,27 @@ describe('POST /api/mensa/prenotazioni', () => {
     expect(h.ledger).toHaveLength(0)
   })
 
+  it('genitore con saldo 2 e TRE date (array come dalla UI) → 2 prenotate, terza bloccata a saldo esaurito', async () => {
+    h.saldo = 2
+    const res = await POST(postReq({ alunno_id: ALUNNO, date: ['2026-07-20', '2026-07-21', '2026-07-22'] }))
+    expect(res.status).toBe(201)
+    const j = await res.json()
+    expect(j.data.saldo).toBe(0)
+    expect(j.data.esiti).toHaveLength(3)
+    expect(j.data.esiti[0]).toEqual({ data: '2026-07-20', ok: true })
+    expect(j.data.esiti[1]).toEqual({ data: '2026-07-21', ok: true })
+    expect(j.data.esiti[2]).toEqual({ data: '2026-07-22', ok: false, motivo: 'Saldo ticket esaurito' })
+    // saldo scalato in sequenza 2 → 1 → 0; mai sotto zero per il genitore
+    expect(h.saldoWrites).toEqual([1, 0])
+    // solo 2 prenotazioni scritte (la terza data non tocca il DB)
+    expect(h.prenUpserts).toHaveLength(2)
+    expect(h.prenUpserts.map(p => p.data)).toEqual(['2026-07-20', '2026-07-21'])
+    // 2 righe di ledger con saldo_dopo progressivo
+    expect(h.ledger).toHaveLength(2)
+    expect(h.ledger.map(m => m.saldo_dopo)).toEqual([1, 0])
+    expect(h.ledger.every(m => m.tipo === 'consumo' && m.delta === -1)).toBe(true)
+  })
+
   it('genitore oltre cutoff → esito bloccato "Oltre l\'orario limite (cutoff)", nessuna scrittura', async () => {
     h.entroCutoff.mockReturnValue(false)
     const res = await POST(postReq({ alunno_id: ALUNNO, date: '2026-07-20' }))

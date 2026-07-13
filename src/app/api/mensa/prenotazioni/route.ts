@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { requireUser } from '@/lib/auth/require-staff'
+import { requireUser, type AppRole } from '@/lib/auth/require-staff'
 import { loadMensaConfig, loadResolveOptions, resolveMenuConfigId, entroCutoff } from '@/lib/mensa/server'
 import { resolveMenuGiorno } from '@/lib/mensa/resolveMenu'
 import { notificaSaldoBasso } from '@/lib/mensa/notify'
@@ -14,7 +14,7 @@ import { genitoreHasFiglio } from '@/lib/anagrafiche/legami'
 // (telefonate out-of-hours dei genitori dopo il cutoff), con saldo che può andare
 // in negativo. La Segreteria è inclusa perché gestisce lo sportello (PRD §3:
 // Segreteria↔Admin); dirigenza/FEA restano su liste esplicite altrove.
-const STAFF_FORZA = ['admin', 'coordinator', 'segreteria']
+const STAFF_FORZA: readonly AppRole[] = ['admin', 'coordinator', 'segreteria']
 
 const getQuerySchema = z.object({
   alunno_id: zUuid,
@@ -140,7 +140,7 @@ export async function POST(request: Request) {
       if (!menu.attivo || menu.chiuso) {
         esiti.push({ data, ok: false, motivo: 'Giorno non attivo o mensa chiusa' }); continue
       }
-      // cutoff: il genitore deve rispettarlo; la segreteria può forzare i giorni passati? no -> sì futuri/oggi
+      // cutoff: solo il genitore lo rispetta; lo staff lo salta (anche date passate)
       if (!isStaff && !entroCutoff(data, config.cutoffOra)) {
         esiti.push({ data, ok: false, motivo: 'Oltre l\'orario limite (cutoff)' }); continue
       }

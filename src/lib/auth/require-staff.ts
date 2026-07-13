@@ -201,13 +201,15 @@ export async function requireStaff(
 
 /**
  * Garantisce accesso in SOLA LETTURA al modulo cucina (menu/report mensa).
- * Ammessi: admin, coordinator, cuoca (tutte le classi) e educator (che però
- * deve restare scoped alla propria sezione, da applicare in query).
- * Le SCRITTURE restano riservate a `requireStaff` (admin/coordinator).
+ * Ammessi: admin, coordinator, segreteria, cuoca (tutte le classi) e educator
+ * (che però deve restare scoped alla propria sezione, da applicare in query).
+ * La segreteria è inclusa perché gestisce lo sportello (PRD §3: segreteria≈admin):
+ * dopo un inserimento pasto fuori orario deve poter verificare il report cucina.
+ * Le SCRITTURE restano riservate a `requireStaff`.
  */
 export async function requireKitchenRead(
   request: Request,
-  allowed: AppRole[] = ['admin', 'coordinator', 'cuoca', 'educator']
+  allowed: AppRole[] = ['admin', 'coordinator', 'segreteria', 'cuoca', 'educator']
 ): Promise<AuthResult> {
   const { userId } = await resolveIdentity(request)
   if (!userId) {

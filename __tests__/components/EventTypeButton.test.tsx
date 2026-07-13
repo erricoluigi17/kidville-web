@@ -35,4 +35,21 @@ describe('EventTypeButton', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Registra Nanna' }));
     expect(handleClick).toHaveBeenCalledWith('nanna_inizio');
   });
+
+  it('selezionato: aria-pressed="true" annuncia lo stato agli screen reader', () => {
+    render(<EventTypeButton type="merenda" selected onClick={vi.fn()} />);
+    expect(screen.getByRole('button', { name: 'Registra Merenda' })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('non selezionato (default): aria-pressed="false"', () => {
+    render(<EventTypeButton type="merenda" onClick={vi.fn()} />);
+    expect(screen.getByRole('button', { name: 'Registra Merenda' })).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('disabilitato: non chiama onClick al click', () => {
+    const handleClick = vi.fn();
+    render(<EventTypeButton type="merenda" disabled onClick={handleClick} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Registra Merenda' }));
+    expect(handleClick).not.toHaveBeenCalled();
+  });
 });

@@ -371,10 +371,13 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
     const cfg = selectedEvent ? EVENT_CONFIG[selectedEvent] : null;
 
     // Tessera selezionata: la scorro in vista quando cambia (mobile a 6-7
-    // tessere può iniziare con quella scelta fuori dallo schermo).
+    // tessere può iniziare con quella scelta fuori dallo schermo). Niente
+    // behavior esplicito: decide scroll-smooth via CSS, così la guardia
+    // reduced-motion di globals.css (scroll-behavior: auto !important) vince.
+    // La chiamata opzionale sul metodo copre jsdom, che non lo implementa.
     const selectedTileRef = useRef<HTMLDivElement | null>(null);
     useEffect(() => {
-        selectedTileRef.current?.scrollIntoView({ behavior: 'smooth', inline: 'nearest', block: 'nearest' });
+        selectedTileRef.current?.scrollIntoView?.({ inline: 'nearest', block: 'nearest' });
     }, [selectedEvent]);
 
     return (
@@ -382,7 +385,7 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
             {/* ── Riga eventi scorrevole (6-7 routine) ── */}
             <div className="mt-4 w-full rounded-3xl border border-kidville-line bg-white p-4 shadow-sm">
                 <p className="font-barlow font-bold text-kidville-green uppercase text-xs tracking-wide mb-3">Cosa vuoi registrare?</p>
-                <div className="-mx-4 px-4 pt-1 pb-1.5 flex gap-2 overflow-x-auto snap-x [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+                <div className="-mx-4 px-4 pt-1 pb-1.5 flex gap-2 overflow-x-auto snap-x scroll-smooth scroll-pl-4 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
                     {eventTypes.map(type => {
                         const selected = selectedEvent === type;
                         return (
@@ -390,10 +393,10 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
                                 key={type}
                                 ref={selected ? selectedTileRef : null}
                                 className={`w-[92px] flex-shrink-0 snap-start rounded-2xl transition-all duration-200 ${
-                                    selected ? 'ring-2 ring-inset ring-kidville-green shadow-md' : ''
+                                    selected ? 'shadow-md' : ''
                                 }`}
                             >
-                                <EventTypeButton type={type} disabled={false} onClick={handleEventSelect} />
+                                <EventTypeButton type={type} disabled={false} selected={selected} onClick={handleEventSelect} />
                             </div>
                         );
                     })}

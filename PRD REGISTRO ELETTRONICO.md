@@ -58,6 +58,14 @@
 
 ---
 
+## 🗓️ Changelog — Delegati al ritiro: via la sonda a una tabella morta, e la lista vuota smette di mentire 2026-07-13 (branch `fix/delegati-tabella-morta`)
+
+**È il primo guasto trovato dal logging strutturato, poche ore dopo il suo rilascio** — e nessuno lo avrebbe mai visto altrimenti, perché la route *funzionava*.
+
+- **Il rumore**: `GET /api/attendance/delegates` interrogava prima la tabella `delegati` (schema originale) e ripiegava su `delegates`. Ma `delegati` **non esiste più** (DB ripulito il 2026-07-04): PostgREST rispondeva 404, il codice ripiegava in silenzio, e l'utente non si accorgeva di nulla. Con il `fetch` strumentato, però, quel 404 scriveva una riga `livello=error` in `app_log` a **ogni chiamata** — rumore ricorrente proprio nel canale che serve a trovare i guasti veri. Sonda rimossa (era anche un round-trip in più a ogni appello, per una tabella che non tornerà).
+- **La bugia**: l'errore della query su `delegates` veniva **scartato** dalla destrutturazione (PostgREST non lancia: ritorna `{ error }`), e la route rispondeva `[]` — cioè «nessun delegato» quando in realtà la lettura si era rotta. L'elenco vuoto **resta** (al ritiro è la direzione sicura: nessuno autorizzato, si chiama il genitore), ma ora la differenza fra «non ci sono delegati» e «non si è potuto leggere» esiste, ed è nei log.
+- **Test**: nuovo `__tests__/api/attendance-delegates.test.ts` (3 casi: la tabella morta non viene più interrogata; il formato per il frontend è invariato; un errore di lettura si logga con l'errore VERO, non un riassunto). Verificato per mutazione: sul codice precedente diventa rosso. Gate: **eslint 0 · tsc 0 · vitest 1640 · build ok**.
+
 ## 🗓️ Changelog — Logging strutturato pervasivo: l'app smette di fallire in silenzio 2026-07-13 (branch `feat/logging-strutturato`)
 
 **Perché.** Per mesi nessuna email di credenziali è arrivata a destinazione: il provider rispondeva `403` e il codice registrava il numero `403`, senza il corpo della risposta che diceva *perché* (`the domain is not verified`). Nessun test era rosso, nessuno se n'è accorto. Un codice che fallisce in silenzio è un codice rotto anche quando i test passano: questo lavoro rende osservabile ogni superficie che può fallire.

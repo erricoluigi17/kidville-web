@@ -89,7 +89,7 @@ export const GET = withRoute('pagamenti/export:GET', async (request: NextRequest
 
     const { data, error } = await query
     if (error) {
-      console.error('Errore export pagamenti:', error)
+      logErrore({ operazione: 'pagamenti/export:GET', stato: 500, evento: 'db' }, error)
       return NextResponse.json({ error: 'Errore nel recupero dei pagamenti' }, { status: 500 })
     }
 
@@ -166,7 +166,8 @@ async function exportAde(
     .select('*')
     .in('scuola_id', sediAttive)
   if (errAlunni) {
-    console.error('Errore export AdE (alunni):', errAlunni)
+    // `exportAde` è un ramo della stessa route: `operazione` resta quella di `withRoute`.
+    logErrore({ operazione: 'pagamenti/export:GET', stato: 500, evento: 'db' }, errAlunni)
     return NextResponse.json({ error: 'Errore nel recupero degli alunni' }, { status: 500 })
   }
 
@@ -177,7 +178,7 @@ async function exportAde(
     .lte('data_incasso', `${anno}-12-31`)
     .in('pagamenti.scuola_id', sediAttive)
   if (errIncassi) {
-    console.error('Errore export AdE (incassi):', errIncassi)
+    logErrore({ operazione: 'pagamenti/export:GET', stato: 500, evento: 'db' }, errIncassi)
     return NextResponse.json({ error: 'Errore nel recupero degli incassi' }, { status: 500 })
   }
 

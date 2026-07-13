@@ -6,7 +6,7 @@ import { notificaEvento, nomeUtente } from '@/lib/notifiche/triggers';
 import { parseBody } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
-import { logErrore } from '@/lib/logging/logger';
+import { logErrore, logEvento } from '@/lib/logging/logger';
 
 const postBodySchema = z.object({
     notaId: zUuid,
@@ -64,7 +64,7 @@ export const POST = withRoute('notes/sign:POST', async (request: Request) => {
             .eq('richiede_firma', true);
 
         if (dbError) {
-            console.error('Errore firma nota:', dbError);
+            logErrore({ operazione: 'notes/sign:POST', stato: 500, evento: 'db' }, dbError);
             return NextResponse.json({ error: 'Errore durante la firma', details: dbError.message }, { status: 500 });
         }
 
@@ -95,7 +95,13 @@ export const POST = withRoute('notes/sign:POST', async (request: Request) => {
                 });
             }
         } catch (e) {
-            console.error('Notifica firma nota fallita (non bloccante):', e);
+            // `error` benché la firma sia registrata: il docente che ha scritto la nota non saprà
+            // mai che il genitore l'ha firmata, e continuerà a sollecitare una firma che c'è già.
+            // La firma è salva, il suo annuncio è perso.
+            logEvento('notifica', 'error', {
+                operazione: 'notes/sign:POST',
+                esito: 'notifica-docente-non-accodata',
+            }, e);
         }
 
         return NextResponse.json({ success: true, message: 'Nota firmata con successo', ip });

@@ -36,7 +36,7 @@ export const PATCH = withRoute('chat/messages/read:PATCH', async (request: Reque
             .is('read_at', null);
 
         if (error) {
-            console.error('Errore PATCH chat_messages/read:', error);
+            logErrore({ operazione: 'chat/messages/read:PATCH', stato: 500, evento: 'db' }, error);
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
 

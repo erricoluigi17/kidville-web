@@ -106,7 +106,9 @@ export const GET = withRoute('pagamenti:GET', async (request: NextRequest) => {
 
     const { data, error } = await query
     if (error) {
-      console.error('Errore GET pagamenti:', error)
+      // PostgREST non lancia: il catch qui sotto non scatterebbe mai. La riga di errore
+      // (con lo stack e la marca anti-doppione per `withRoute`) va emessa qui.
+      logErrore({ operazione: 'pagamenti:GET', stato: 500, evento: 'db' }, error)
       return NextResponse.json({ error: 'Errore nel recupero dei pagamenti', details: error.message }, { status: 500 })
     }
 
@@ -192,7 +194,7 @@ export const POST = withRoute('pagamenti:POST', async (request: Request) => {
 
     const { data, error } = await supabase.from('pagamenti').insert(record).select(SELECT).single()
     if (error) {
-      console.error('Errore POST pagamenti:', error)
+      logErrore({ operazione: 'pagamenti:POST', stato: 500, evento: 'db' }, error)
       return NextResponse.json({ error: 'Errore nella creazione del pagamento', details: error.message }, { status: 500 })
     }
 

@@ -62,7 +62,9 @@ export const GET = withRoute('attendance/monthly:GET', async (request: NextReque
             .eq('classe_sezione', sezione);
 
         if (alunniError) {
-            console.error('[/api/attendance/monthly] Errore alunni:', JSON.stringify(alunniError));
+            // L'oggetto errore si PASSA, non si riassume: `JSON.stringify` su un Error nativo
+            // restituisce `{}` — è il bug che questo modulo esiste per togliere di mezzo.
+            logErrore({ operazione: 'attendance/monthly:GET', stato: 500, evento: 'db' }, alunniError);
             return NextResponse.json(
                 { error: 'Errore recupero alunni.', details: alunniError.message },
                 { status: 500 }
@@ -87,7 +89,7 @@ export const GET = withRoute('attendance/monthly:GET', async (request: NextReque
             .order('data', { ascending: true });
 
         if (presenzeError) {
-            console.error('[/api/attendance/monthly] Errore presenze:', JSON.stringify(presenzeError));
+            logErrore({ operazione: 'attendance/monthly:GET', stato: 500, evento: 'db' }, presenzeError);
             return NextResponse.json(
                 { error: 'Errore recupero presenze.', details: presenzeError.message },
                 { status: 500 }

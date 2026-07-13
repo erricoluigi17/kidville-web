@@ -9,7 +9,7 @@ import { rateLimit } from '@/lib/security/rate-limit'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid, zDataYMD } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 // Agenda condivisa (M6, piano-app-100): eventi/uscite/scadenze/riunioni di
@@ -278,7 +278,16 @@ export const POST = withRoute('agenda:POST', async (request: Request) => {
           scuolaId,
         })
       } catch (e) {
-        console.error('Notifiche agenda fallite (non bloccante):', e)
+        // `error` e non `warn` benché la richiesta risponda 201: qui non è «saltato un
+        // dettaglio», è una SCRITTURA PERSA — le notifiche non sono mai finite in coda, quindi
+        // dei genitori non sapranno mai dell'uscita o della riunione. L'evento è salvo, il suo
+        // annuncio no: senza questa riga la differenza sarebbe invisibile (l'evento c'è, in
+        // agenda si vede, e nessuno collega il silenzio a un guasto).
+        logEvento('notifica', 'error', {
+          operazione: 'agenda:POST',
+          esito: 'notifiche-genitori-non-accodate',
+          tipo: body.tipo,
+        }, e)
       }
     }
 

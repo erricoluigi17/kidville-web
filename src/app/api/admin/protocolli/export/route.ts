@@ -18,7 +18,7 @@ import {
 } from '@/lib/protocolli/segnatura'
 import { denominazioneScuola, rispostaErroreProtocollo } from '@/lib/protocolli/server'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // Export del registro (decisioni #13/#14): XLSX per elaborazioni + PDF
 // impaginato per stampa/verifiche, sui filtri attivi (il "registro giornaliero"
@@ -119,7 +119,17 @@ export const GET = withRoute('admin/protocolli/export:GET', async (request: Next
         }
         righe = (data as unknown as RigaExport[]) ?? []
         if (righe.length === 5000) {
-          console.warn('Export protocolli: raggiunto il limite di 5000 righe, risultato troncato')
+          // Soglia, non guasto: l'export esce (200) ma TRONCATO — chi lo scarica crede di
+          // avere il registro intero. `warn`, con i contatori, perché va contato nel tempo:
+          // quando ricorre, il limite va alzato o l'export paginato.
+          logEvento('protocolli', 'warn', {
+            operazione: 'admin/protocolli/export:GET',
+            esito: 'export-troncato-al-limite',
+            righe: righe.length,
+            limite: 5000,
+            anno,
+            formato: q.data.formato,
+          })
         }
       }
 

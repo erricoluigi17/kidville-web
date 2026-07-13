@@ -67,7 +67,7 @@ export const POST = withRoute('diary:POST', async (request: NextRequest) => {
             .single();
 
         if (error) {
-            console.error('Errore inserimento diario:', error);
+            logErrore({ operazione: 'diary:POST', stato: 500, evento: 'db' }, error);
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
 

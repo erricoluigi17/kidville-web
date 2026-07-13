@@ -40,7 +40,7 @@ export const GET = withRoute('chat/threads:GET', async (request: Request) => {
             .order('last_message_at', { ascending: false });
 
         if (error) {
-            console.error('Errore GET chat_threads:', error);
+            logErrore({ operazione: 'chat/threads:GET', stato: 500, evento: 'db' }, error);
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
 
@@ -144,7 +144,7 @@ export const POST = withRoute('chat/threads:POST', async (request: Request) => {
             .single();
 
         if (error) {
-            console.error('Errore POST chat_threads:', error);
+            logErrore({ operazione: 'chat/threads:POST', stato: 500, evento: 'db' }, error);
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
 

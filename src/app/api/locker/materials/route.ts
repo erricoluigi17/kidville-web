@@ -7,7 +7,7 @@ import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
-import { logErrore } from '@/lib/logging/logger';
+import { logErrore, logEvento } from '@/lib/logging/logger';
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 /** '' equivale ad assente (i check truthy pre-esistenti restano invariati). */
@@ -63,8 +63,16 @@ export const GET = withRoute('locker/materials:GET', async (request: NextRequest
         const { data, error } = await q;
 
         if (error) {
-            // Tabella non ancora creata → ritorna i default
-            console.warn('locker_config non trovata, uso default:', error.message);
+            // Tabella non ancora creata → ritorna i default.
+            // `warn` e non `error`: il fallback è PREVISTO (l'ambiente senza `locker_config` è
+            // uno stato legittimo) e il risultato è salvo — il chiamante riceve i materiali di
+            // default, che è ciò che deve ricevere. Resta un warn, però, e non un info: se la
+            // tabella c'è ed è la QUERY a fallire, questa riga è l'unico indizio che l'armadietto
+            // sta mostrando i default al posto della configurazione reale della classe.
+            logEvento('db', 'warn', {
+                operazione: 'locker/materials:GET',
+                esito: 'locker-config-non-letta-uso-default',
+            }, error);
             return NextResponse.json(MATERIALI_DEFAULT);
         }
 

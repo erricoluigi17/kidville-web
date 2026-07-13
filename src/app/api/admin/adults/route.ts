@@ -134,7 +134,11 @@ export const POST = withRoute('admin/adults:POST', async (request: NextRequest) 
             .single();
 
         if (utentiError) {
-            console.error('Error creating utenti record:', utentiError);
+            // Ramo che FALLISCE la richiesta (500): `logErrore`, non `logEvento`. Porta
+            // l'errore PostgREST intero (code/details/hint) e marca l'errore come già
+            // registrato, così `withRoute` non aggiunge una seconda riga più povera.
+            // NB: l'utente auth è già stato invitato — resta senza riga `utenti`.
+            logErrore({ operazione: 'admin/adults:POST', stato: 500, evento: 'db' }, utentiError);
             return NextResponse.json({ error: utentiError.message }, { status: 500 });
         }
 

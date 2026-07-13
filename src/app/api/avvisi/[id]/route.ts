@@ -59,7 +59,7 @@ export const GET = withRoute('avvisi/[id]:GET', async (request: Request, { param
             .maybeSingle();
 
         if (error) {
-            console.error('Errore get avviso:', error);
+            logErrore({ operazione: 'avvisi/[id]:GET', stato: 500, evento: 'db' }, error);
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
         if (!data) {
@@ -122,7 +122,7 @@ export const PUT = withRoute('avvisi/[id]:PUT', async (request: Request, { param
             .single();
 
         if (error) {
-            console.error('Errore update avviso:', error);
+            logErrore({ operazione: 'avvisi/[id]:PUT', stato: 500, evento: 'db' }, error);
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
 
@@ -156,7 +156,7 @@ export const DELETE = withRoute('avvisi/[id]:DELETE', async (request: Request, {
             .eq('id', id);
 
         if (error) {
-            console.error('Errore delete avviso:', error);
+            logErrore({ operazione: 'avvisi/[id]:DELETE', stato: 500, evento: 'db' }, error);
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
 

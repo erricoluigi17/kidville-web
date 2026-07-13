@@ -10,7 +10,7 @@ import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid, zDataYMD } from '@/lib/validation/common'
 import { genitoreHasFiglio } from '@/lib/anagrafiche/legami'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 const getQuerySchema = z.object({
   alunno_id: zUuid,
@@ -167,7 +167,17 @@ export const POST = withRoute('mensa/prenotazioni:POST', async (request: Request
         alunno_id: alunnoId, scuola_id: scuolaId, tipo: 'consumo', delta: -1,
         saldo_dopo: saldo, prenotazione_id: pren?.id, origine, data, creato_da: user.id,
       })
-      if (mErr) console.error('prenotazioni: movimento consumo non registrato:', mErr.message)
+      if (mErr) {
+        // `error` benché la prenotazione sia riuscita: il ticket È STATO SCALATO dal saldo ma il
+        // movimento non è finito nel ledger. È esattamente una scrittura persa — il saldo e il
+        // libro mastro divergono, e a fine mese i conti non torneranno senza che nulla, da
+        // nessuna parte, dica perché.
+        logEvento('db', 'error', {
+          operazione: 'mensa/prenotazioni:POST',
+          esito: 'movimento-consumo-non-registrato',
+          tipo: 'consumo',
+        }, mErr)
+      }
       esiti.push({ data, ok: true })
     }
 
@@ -243,7 +253,15 @@ export const DELETE = withRoute('mensa/prenotazioni:DELETE', async (request: Req
       alunno_id: alunnoId, scuola_id: scuolaId, tipo: 'disdetta', delta: Number(existing.ticket_scalato ?? 1),
       saldo_dopo: saldo, prenotazione_id: existing.id, origine: 'disdetta', data, creato_da: user.id,
     })
-    if (mErr) console.error('prenotazioni: movimento disdetta non registrato:', mErr.message)
+    if (mErr) {
+      // Come sopra: il ticket è stato RIACCREDITATO ma il movimento non è nel ledger. Saldo e
+      // libro mastro divergono in silenzio → `error`, anche se la disdetta è andata a buon fine.
+      logEvento('db', 'error', {
+        operazione: 'mensa/prenotazioni:DELETE',
+        esito: 'movimento-disdetta-non-registrato',
+        tipo: 'disdetta',
+      }, mErr)
+    }
 
     return NextResponse.json({ success: true, data: { saldo } })
   } catch (err) {

@@ -8,7 +8,7 @@ import { alunniSenzaConsenso } from '@/lib/gallery/privacy';
 import { notificaEvento } from '@/lib/notifiche/triggers';
 import { genitoriDiAlunni, genitoriDiClassi, genitoriDiScuola } from '@/lib/notifiche/destinatari';
 import { withRoute } from '@/lib/logging/with-route';
-import { logErrore } from '@/lib/logging/logger';
+import { logErrore, logEvento } from '@/lib/logging/logger';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -121,7 +121,7 @@ export const GET = withRoute('gallery:GET', async (request: Request) => {
         const { data: pageMedia, count, error } = await query.range(offset, offset + limit - 1);
 
         if (error) {
-            console.error('Errore GET gallery:', error);
+            logErrore({ operazione: 'gallery:GET', stato: 500, evento: 'db' }, error);
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
 
@@ -205,7 +205,7 @@ export const POST = withRoute('gallery:POST', async (request: Request) => {
             .single();
 
         if (error) {
-            console.error('Errore POST gallery:', error);
+            logErrore({ operazione: 'gallery:POST', stato: 500, evento: 'db' }, error);
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
 
@@ -234,7 +234,13 @@ export const POST = withRoute('gallery:POST', async (request: Request) => {
                 debounce: true,
             });
         } catch (e) {
-            console.error('Notifica galleria fallita (non bloccante):', e);
+            // `error` benché il media sia pubblicato (201): la notifica non è mai stata accodata,
+            // quindi i genitori non sapranno delle foto nuove. Il contenuto è salvo, il suo
+            // annuncio è perso — e nessuno se ne accorgerebbe senza questa riga.
+            logEvento('notifica', 'error', {
+                operazione: 'gallery:POST',
+                esito: 'notifica-genitori-non-accodata',
+            }, e);
         }
 
         return NextResponse.json(data, { status: 201 });
@@ -377,7 +383,7 @@ export const DELETE = withRoute('gallery:DELETE', async (request: Request) => {
             .eq('id', id);
 
         if (deleteErr) {
-            console.error('Errore DELETE gallery:', deleteErr);
+            logErrore({ operazione: 'gallery:DELETE', stato: 500, evento: 'db' }, deleteErr);
             return NextResponse.json({ error: deleteErr.message }, { status: 500 });
         }
 
@@ -524,7 +530,7 @@ export const PATCH = withRoute('gallery:PATCH', async (request: Request) => {
             .single();
 
         if (updateErr) {
-            console.error('Errore PATCH gallery:', updateErr);
+            logErrore({ operazione: 'gallery:PATCH', stato: 500, evento: 'db' }, updateErr);
             return NextResponse.json({ error: updateErr.message }, { status: 500 });
         }
 

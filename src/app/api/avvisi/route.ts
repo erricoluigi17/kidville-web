@@ -10,7 +10,7 @@ import { genitoriDiClassi, genitoriDiScuola } from '@/lib/notifiche/destinatari'
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
-import { logErrore } from '@/lib/logging/logger';
+import { logErrore, logEvento } from '@/lib/logging/logger';
 
 // Uuid opzionale da query string: stringa vuota trattata come assente
 // (preserva i check truthy `if (parentId)` / `if (studentId)` pre-esistenti).
@@ -77,7 +77,7 @@ export const GET = withRoute('avvisi:GET', async (request: Request) => {
             res = await buildQuery(baseCols);
         }
         if (res.error) {
-            console.error('Errore GET avvisi:', res.error);
+            logErrore({ operazione: 'avvisi:GET', stato: 500, evento: 'db' }, res.error);
             return NextResponse.json({ error: res.error.message }, { status: 500 });
         }
         const avvisi = (res.data ?? []) as unknown as Array<{
@@ -232,7 +232,7 @@ export const POST = withRoute('avvisi:POST', async (request: Request) => {
         const { data, error } = insRes;
 
         if (error) {
-            console.error('Errore POST avvisi:', error);
+            logErrore({ operazione: 'avvisi:POST', stato: 500, evento: 'db' }, error);
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
 
@@ -272,7 +272,14 @@ export const POST = withRoute('avvisi:POST', async (request: Request) => {
                 debounce: true,
             });
         } catch (e) {
-            console.error('Notifica avviso fallita (non bloccante):', e);
+            // `error` benché l'avviso sia pubblicato (201): la notifica non è mai stata accodata,
+            // quindi le famiglie non sapranno dell'avviso — e se era un consenso o un modulo
+            // firmabile, la segreteria aspetterà risposte che nessuno sa di dover dare. L'avviso
+            // c'è, il suo recapito no: è una scrittura persa, non un dettaglio saltato.
+            logEvento('notifica', 'error', {
+                operazione: 'avvisi:POST',
+                esito: 'notifica-genitori-non-accodata',
+            }, e);
         }
 
         return NextResponse.json(data, { status: 201 });

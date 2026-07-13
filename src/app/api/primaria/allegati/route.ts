@@ -8,7 +8,7 @@ import { zUuid } from '@/lib/validation/common'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { AppUser } from '@/lib/auth/require-staff'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 const getQuerySchema = z.object({
   registroId: zUuid,
@@ -106,7 +106,14 @@ export const POST = withRoute('primaria/allegati:POST', async (request: NextRequ
       }
       if (!buckets?.some((b) => b.name === BUCKET)) await supabase.storage.createBucket(BUCKET, opts)
     } catch (e) {
-      console.error('bucket allegati:', e)
+      // Passo idempotente di garanzia: se il bucket c'è già, l'upload qui sotto riesce
+      // lo stesso e nulla è perduto. Se davvero manca, è l'upload a fallire con il suo
+      // 500. Qui non si è ancora rotto niente: `warn`.
+      logEvento('storage', 'warn', {
+        operazione: 'primaria/allegati:POST',
+        bucket: BUCKET,
+        esito: 'bucket_non_verificato',
+      }, e)
     }
 
     const ext = file.name.split('.').pop() || ''

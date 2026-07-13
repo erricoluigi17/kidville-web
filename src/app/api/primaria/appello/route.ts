@@ -9,7 +9,7 @@ import { notificaEvento } from '@/lib/notifiche/triggers'
 import { parseBody, parseData, parseQuery } from '@/lib/validation/http'
 import { zDataYMD, zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 const STATI = ['presente', 'assente', 'ritardo', 'uscita_anticipata'] as const
 
@@ -204,7 +204,13 @@ export const POST = withRoute('primaria/appello:POST', async (request: NextReque
         }
       }
     } catch (e) {
-      console.error('Notifica assenza appello fallita (non bloccante):', e)
+      // L'appello è salvato, ma l'avviso di assenza non comunicata non partirà:
+      // il genitore non saprà che il figlio risulta assente. Scrittura persa.
+      logEvento('notifica', 'error', {
+        operazione: 'primaria/appello:POST',
+        tipo: 'assenza_non_comunicata',
+        esito: 'notifica_non_inviata',
+      }, e)
     }
 
     return NextResponse.json({ success: true, data: saved ?? [] })

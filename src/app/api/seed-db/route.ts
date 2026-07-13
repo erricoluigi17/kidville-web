@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/server-client';
 import { sealDangerous } from '@/lib/security/seal';
 import { parseQuery } from '@/lib/validation/http';
 import { withRoute } from '@/lib/logging/with-route';
+import { logErrore, logEvento } from '@/lib/logging/logger';
 
 const getQuerySchema = z.object({}); // nessun parametro in ingresso
 const postQuerySchema = z.object({}); // nessun parametro in ingresso (il body non viene letto)
@@ -13,7 +14,7 @@ export const GET = withRoute('seed-db:GET', async (request: Request) => {
     if (sealed) return sealed;
     const q = parseQuery(request, getQuerySchema);
     if ('response' in q) return q.response;
-    return seed();
+    return seed('seed-db:GET');
 });
 
 export const POST = withRoute('seed-db:POST', async (request: Request) => {
@@ -21,10 +22,13 @@ export const POST = withRoute('seed-db:POST', async (request: Request) => {
     if (sealed) return sealed;
     const q = parseQuery(request, postQuerySchema);
     if ('response' in q) return q.response;
-    return seed();
+    return seed('seed-db:POST');
 });
 
-async function seed() {
+// `operazione` viaggia come parametro perché il corpo del seed è condiviso dai due export:
+// cablarne uno solo farebbe attribuire alla GET i log della POST, e `operazione` è proprio la
+// chiave con cui si chiede «cos'è successo su questa route».
+async function seed(operazione: string) {
     const supabase = await createAdminClient();
 
     // 1. Get or create school
@@ -63,7 +67,10 @@ async function seed() {
 
         const { error: studentErr } = await supabase.from('alunni').upsert(student);
         if (studentErr) {
-            console.error(`Error inserting student ${i}:`, studentErr);
+            // `logErrore` non accetta campi liberi (solo operazione/stato/evento/ms): l'iterazione
+            // non finisce sulla riga, ma non serve — è il seed a fermarsi qui, e l'errore
+            // PostgREST arriva intero (messaggio, code, details, hint).
+            logErrore({ operazione, stato: 500, evento: 'db' }, studentErr);
             return NextResponse.json({ error: `student ${i}: ${studentErr.message}` }, { status: 500 });
         }
 
@@ -94,7 +101,16 @@ async function seed() {
 
         const { error: parentErr } = await supabase.from('parents').upsert([mother, father]);
         if (parentErr) {
-            console.warn(`Error inserting parents for student ${i} (Expected if auth.users is empty):`, parentErr.message);
+            // `warn` e non `error`: qui il fallimento è ATTESO per costruzione — `parents` ha una
+            // FK su `auth.users` e in un ambiente senza utenti auth l'upsert non può che fallire.
+            // Il seed prosegue e gli alunni restano validi (il risultato è salvo). Va detto lo
+            // stesso, però: senza questa riga, un seed "riuscito" con zero genitori collegati
+            // sarebbe inspiegabile.
+            logEvento('db', 'warn', {
+                operazione,
+                esito: 'genitori-non-inseriti',
+                indice: i,
+            }, parentErr);
             // Non blocchiamo il seed degli alunni se i genitori falliscono per via di auth
         } else {
             // 3. Collegamenti (solo se i genitori sono stati creati)
@@ -117,7 +133,13 @@ async function seed() {
 
         const { error: delegateErr } = await supabase.from('delegates').upsert(delegate);
         if (delegateErr) {
-            console.warn(`Error inserting delegate for student ${i}:`, delegateErr.message);
+            // Stessa logica del ramo genitori: il seed prosegue, l'alunno resta valido, ma la riga
+            // saltata va detta (un delegato mancante altrimenti sembrerebbe un dato mai previsto).
+            logEvento('db', 'warn', {
+                operazione,
+                esito: 'delegato-non-inserito',
+                indice: i,
+            }, delegateErr);
         }
 
         results.push(student.nome + ' ' + student.cognome);

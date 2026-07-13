@@ -6,7 +6,7 @@ import { notificaEvento } from '@/lib/notifiche/triggers';
 import { parseBody, parseData } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
-import { logErrore } from '@/lib/logging/logger';
+import { logErrore, logEvento } from '@/lib/logging/logger';
 
 interface RouteParams {
     params: Promise<{ id: string }>;
@@ -44,7 +44,7 @@ export const GET = withRoute('avvisi/[id]/risposte:GET', async (request: Request
             .eq('avviso_id', avvisoId);
 
         if (error) {
-            console.error('Errore GET risposte:', error);
+            logErrore({ operazione: 'avvisi/[id]/risposte:GET', stato: 500, evento: 'db' }, error);
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
 
@@ -129,7 +129,7 @@ export const POST = withRoute('avvisi/[id]/risposte:POST', async (request: Reque
             .single();
 
         if (error) {
-            console.error('Errore POST risposte:', error);
+            logErrore({ operazione: 'avvisi/[id]/risposte:POST', stato: 500, evento: 'db' }, error);
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
 
@@ -168,7 +168,14 @@ export const POST = withRoute('avvisi/[id]/risposte:POST', async (request: Reque
                 }
             }
         } catch (e) {
-            console.error('Notifica risposta avviso fallita (non bloccante):', e);
+            // `error` benché la risposta del genitore sia registrata: l'autore dell'avviso non
+            // saprà mai che è arrivata una presa visione o un'adesione. La riga di risposta c'è,
+            // il suo annuncio no — ed è proprio il conteggio delle adesioni che chi ha pubblicato
+            // l'avviso sta aspettando.
+            logEvento('notifica', 'error', {
+                operazione: 'avvisi/[id]/risposte:POST',
+                esito: 'notifica-autore-non-accodata',
+            }, e);
         }
 
         return NextResponse.json(data);

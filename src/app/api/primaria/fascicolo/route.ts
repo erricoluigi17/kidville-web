@@ -8,7 +8,7 @@ import { notificaTitolariScrittura } from '@/lib/primaria/notifiche'
 import { parseData, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 const BUCKET = 'sensitive_documents'
 const MAX_SIZE = 15 * 1024 * 1024 // 15MB
@@ -104,7 +104,14 @@ export const POST = withRoute('primaria/fascicolo:POST', async (request: NextReq
       if (!buckets?.some((b) => b.name === BUCKET)) {
         await supabase.storage.createBucket(BUCKET, { public: false, allowedMimeTypes: ALLOWED, fileSizeLimit: MAX_SIZE })
       }
-    } catch (e) { console.error('bucket fascicolo:', e) }
+    } catch (e) {
+      // Come in `primaria/allegati`: garanzia idempotente, l'upload ha il suo errore.
+      logEvento('storage', 'warn', {
+        operazione: 'primaria/fascicolo:POST',
+        bucket: BUCKET,
+        esito: 'bucket_non_verificato',
+      }, e)
+    }
 
     const ext = file.name.split('.').pop() || ''
     const path = `${alunnoId}/${Date.now()}-${Math.random().toString(36).slice(2, 9)}.${ext}`

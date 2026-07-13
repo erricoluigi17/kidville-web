@@ -42,7 +42,7 @@ export const GET = withRoute('pagamenti/ricevute:GET', async (request: NextReque
       if (SCHEMA_MANCANTE.has(error.code ?? '')) {
         return NextResponse.json({ success: true, data: [], disponibile: false })
       }
-      console.error('Errore registro ricevute:', error)
+      logErrore({ operazione: 'pagamenti/ricevute:GET', stato: 500, evento: 'db' }, error)
       return NextResponse.json({ error: 'Errore nel recupero del registro ricevute' }, { status: 500 })
     }
     return NextResponse.json({ success: true, data: data || [] })

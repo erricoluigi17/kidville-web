@@ -9,7 +9,7 @@ import { staffScuola, scuolaUnicaReale } from '@/lib/notifiche/destinatari'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 import type { FormSchemaConfig, FormSubmissionData } from '@/types/database.types'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
@@ -110,7 +110,13 @@ export const POST = withRoute('forms/submit:POST', async (request: Request) => {
         debounce: true,
       })
     } catch (e) {
-      console.error('Notifica modulo compilato fallita (non bloccante):', e)
+      // `error` benché il modulo sia registrato (201): la segreteria non viene avvisata, quindi
+      // una compilazione arrivata resta lì finché qualcuno non apre la modulistica per caso.
+      // La riga c'è, il suo annuncio no: scrittura persa, non dettaglio saltato.
+      logEvento('notifica', 'error', {
+        operazione: 'forms/submit:POST',
+        esito: 'notifica-segreteria-non-accodata',
+      }, e)
     }
 
     return NextResponse.json({ id: submission.id }, { status: 201 })

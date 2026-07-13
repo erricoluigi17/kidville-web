@@ -9,7 +9,7 @@ import { logFeaEvent } from '@/lib/fea/audit'
 import { notificaEvento, nomeUtente } from '@/lib/notifiche/triggers'
 import { parseBody } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // `userId` in query è consumato dal gate identità (getRequestUserId), non dall'handler.
@@ -141,7 +141,13 @@ export const POST = withRoute('parent/primaria/note/firma:POST', async (request:
         })
       }
     } catch (e) {
-      console.error('Notifica firma nota fallita (non bloccante):', e)
+      // La firma è registrata (ed è quella che fa fede), ma il docente non ne sarà
+      // avvisato: la notifica non verrà riaccodata da nessuno.
+      logEvento('notifica', 'error', {
+        operazione: 'parent/primaria/note/firma:POST',
+        tipo: 'firma_ricevuta',
+        esito: 'notifica_non_inviata',
+      }, e)
     }
 
     return NextResponse.json({ success: true, data })

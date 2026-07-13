@@ -8,7 +8,7 @@ import { notificaEvento } from '@/lib/notifiche/triggers'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // Comportamento storico preservato: `sospeso` conta solo se strettamente === true,
 // `motivo` è usato solo se stringa — qualunque altro valore è tollerato (→ false/null).
@@ -76,7 +76,15 @@ export const POST = withRoute('admin/pagamenti/sospensione:POST', async (request
         bufferMin: 0,
       })
     } catch (e) {
-      console.error('Notifica sospensione fallita (non bloccante):', e)
+      // La sospensione è stata APPLICATA (200), ma l'avviso formale al genitore non è
+      // partito: il servizio si interrompe senza che nessuno l'abbia comunicato. È il
+      // caso peggiore di scrittura persa — `error`, non `warn`.
+      logEvento('notifica', 'error', {
+        operazione: 'admin/pagamenti/sospensione:POST',
+        esito: 'notifica-sospensione-non-inviata',
+        tipo: 'sospensione_morosita',
+        stato: sospeso ? 'sospeso' : 'riattivato',
+      }, e)
     }
 
     return NextResponse.json({ success: true, data: { alunno_id: alunnoId, sospeso } })

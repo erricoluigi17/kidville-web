@@ -238,7 +238,7 @@ export const PUT = withRoute('tasks/[id]:PUT', async (
             .single();
 
         if (error) {
-            console.error('Errore aggiornamento task:', error);
+            logErrore({ operazione: 'tasks/[id]:PUT', stato: 500, evento: 'db' }, error);
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
 
@@ -294,7 +294,7 @@ export const DELETE = withRoute('tasks/[id]:DELETE', async (
             .eq('id', id);
 
         if (error) {
-            console.error('Errore eliminazione task:', error);
+            logErrore({ operazione: 'tasks/[id]:DELETE', stato: 500, evento: 'db' }, error);
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
 

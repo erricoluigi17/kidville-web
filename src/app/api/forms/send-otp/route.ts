@@ -162,7 +162,7 @@ export const POST = withRoute('forms/send-otp:POST', async (request: Request) =>
       .single()
 
     if (insertErr || !submission) {
-      console.error('Errore creazione submission:', insertErr)
+      logErrore({ operazione: 'forms/send-otp:POST', stato: 500, evento: 'db' }, insertErr)
       return NextResponse.json(
         { error: insertErr?.message ?? 'Creazione submission fallita' },
         { status: 500 }
@@ -190,7 +190,7 @@ export const POST = withRoute('forms/send-otp:POST', async (request: Request) =>
       .eq('id', submission.id)
 
     if (updErr) {
-      console.error('Errore salvataggio otp_secret:', updErr)
+      logErrore({ operazione: 'forms/send-otp:POST', stato: 500, evento: 'db' }, updErr)
       return NextResponse.json({ error: updErr.message }, { status: 500 })
     }
 
@@ -284,7 +284,7 @@ export const PATCH = withRoute('forms/send-otp:PATCH', async (request: Request) 
       .eq('id', submissionId)
 
     if (updErr) {
-      console.error('Errore finalizzazione firma:', updErr)
+      logErrore({ operazione: 'forms/send-otp:PATCH', stato: 500, evento: 'db' }, updErr)
       return NextResponse.json({ error: updErr.message }, { status: 500 })
     }
 

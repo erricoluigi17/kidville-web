@@ -80,7 +80,12 @@ export const GET = withRoute('me:GET', async (request: Request) => {
     if (!headerId) {
       return NextResponse.json({ error: 'Non autenticato: userId mancante' }, { status: 401 })
     }
-    console.warn('[auth][header-fallback] identità da header/query (nessuna sessione) path=/api/me')
+    // `warn`, quindi in tabella: è il percorso legacy in cui l'identità arriva da un HEADER
+    // invece che da una sessione firmata. Non è un guasto — la route funziona e risponde 200 —
+    // ma è l'unico modo per CONTARE quanto ancora si usa e per accorgersi se comparisse in
+    // produzione, dove sarebbe un problema di sicurezza, non una nota a piè di pagina.
+    // Il path non serve come campo: `operazione` lo dice già, ed è la chiave con cui si cerca.
+    logEvento('auth', 'warn', { operazione: 'me:GET', esito: 'header-fallback' })
 
     const { data: staff } = await supabase.from('utenti').select('*').eq('id', headerId).maybeSingle()
     data = staff as Record<string, unknown> | null

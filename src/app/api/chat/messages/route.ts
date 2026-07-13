@@ -6,7 +6,7 @@ import { controparteThread } from '@/lib/notifiche/destinatari';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid, zPaginazione } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
-import { logErrore } from '@/lib/logging/logger';
+import { logErrore, logEvento } from '@/lib/logging/logger';
 
 // markRead='' è ammesso per retro-compatibilità: equivale ad assente (nessun mark-read).
 const getQuerySchema = z.object({
@@ -75,7 +75,7 @@ export const GET = withRoute('chat/messages:GET', async (request: Request) => {
             .range(offset, offset + limit - 1);
 
         if (error) {
-            console.error('Errore GET chat_messages:', error);
+            logErrore({ operazione: 'chat/messages:GET', stato: 500, evento: 'db' }, error);
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
 
@@ -110,7 +110,7 @@ export const POST = withRoute('chat/messages:POST', async (request: Request) => 
             .single();
 
         if (error) {
-            console.error('Errore POST chat_messages:', error);
+            logErrore({ operazione: 'chat/messages:POST', stato: 500, evento: 'db' }, error);
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
 
@@ -144,7 +144,14 @@ export const POST = withRoute('chat/messages:POST', async (request: Request) => 
                 });
             }
         } catch (e) {
-            console.error('Notifica chat fallita (non bloccante):', e);
+            // `error` benché il messaggio sia salvato (201): la controparte non riceve la spinta,
+            // quindi il messaggio resta lì finché non apre la chat per caso. In una chat
+            // scuola↔famiglia il recapito È la funzione: una notifica mai accodata è un messaggio
+            // di fatto non consegnato.
+            logEvento('notifica', 'error', {
+                operazione: 'chat/messages:POST',
+                esito: 'notifica-controparte-non-accodata',
+            }, e);
         }
 
         return NextResponse.json(data, { status: 201 });

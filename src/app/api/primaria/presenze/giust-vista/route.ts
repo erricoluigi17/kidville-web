@@ -7,7 +7,7 @@ import { notificaEvento } from '@/lib/notifiche/triggers'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const postBodySchema = z.object({
@@ -71,7 +71,11 @@ export const POST = withRoute('primaria/presenze/giust-vista:POST', async (reque
         })
       }
     } catch (e) {
-      console.error('Notifica giustifica vista fallita (non bloccante):', e)
+      logEvento('notifica', 'error', {
+        operazione: 'primaria/presenze/giust-vista:POST',
+        tipo: 'giustifica_vista',
+        esito: 'notifica_non_inviata',
+      }, e)
     }
 
     return NextResponse.json({ success: true, data: updated })

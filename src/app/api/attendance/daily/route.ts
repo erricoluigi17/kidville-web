@@ -6,7 +6,7 @@ import { notificaEvento } from '@/lib/notifiche/triggers';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zDataYMD, zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
-import { logErrore } from '@/lib/logging/logger';
+import { logErrore, logEvento } from '@/lib/logging/logger';
 
 /**
  * GET /api/attendance/daily?data=YYYY-MM-DD&sezione=<classe>
@@ -70,7 +70,15 @@ export const GET = withRoute('attendance/daily:GET', async (request: NextRequest
             .limit(500);
 
         if (error) {
-            console.error('[GET /api/attendance/daily]', JSON.stringify(error));
+            // `error` benché la risposta sia 200: il fallback a `[]` è esattamente il guasto
+            // silenzioso che questo modulo esiste per impedire — l'appello si apre VUOTO e
+            // sembra una classe senza presenze registrate, non un database che non risponde.
+            // (Il vecchio `JSON.stringify(error)` per giunta restituiva `{}` su un Error nativo:
+            // ora l'oggetto si passa intero e arrivano code, details e hint di PostgREST.)
+            logEvento('db', 'error', {
+                operazione: 'attendance/daily:GET',
+                esito: 'presenze-non-lette',
+            }, error);
             // Fallback: ritorna array vuoto invece di 500, per non bloccare la UI
             return NextResponse.json([]);
         }
@@ -132,7 +140,7 @@ export const POST = withRoute('attendance/daily:POST', async (request: NextReque
             .single();
 
         if (error) {
-            console.error('[POST /api/attendance/daily]', JSON.stringify(error));
+            logErrore({ operazione: 'attendance/daily:POST', stato: 500, evento: 'db' }, error);
             return NextResponse.json(
                 { error: 'Errore salvataggio presenza.', details: error.message },
                 { status: 500 }
@@ -158,15 +166,44 @@ export const POST = withRoute('attendance/daily:POST', async (request: NextReque
                     debounce: true,
                 });
             } else if (stato !== 'assente' && prima?.stato === 'assente') {
-                await supabase
+                // REVOCA: l'appello è stato corretto entro il buffer di 10' e la notifica
+                // pending va tolta dalla coda prima che il cron la spedisca.
+                //
+                // PostgREST non lancia: la `delete` RITORNA `{ error }`. Scartarlo (com'era)
+                // rendeva il catch qui sotto codice morto proprio sul ramo che pretendeva di
+                // coprire — e il fallimento della revoca è il caso peggiore dei due: il genitore
+                // riceve "tuo figlio è stato segnato assente" per un'assenza che la maestra ha
+                // già corretto. Non una notifica mancata: una notifica FALSA.
+                const { error: revocaErr } = await supabase
                     .from('notifiche')
                     .delete()
                     .eq('tipo', 'assenza_non_comunicata')
                     .eq('entita_id', alunno_id)
                     .is('push_inviata_il', null);
+
+                if (revocaErr) {
+                    // `error` benché la risposta sia 200: la riga resta in coda e la push
+                    // partirà. Il dato è sbagliato e nessuno può più fermarlo.
+                    logEvento('notifica', 'error', {
+                        operazione: 'attendance/daily:POST',
+                        esito: 'revoca-assenza-fallita',
+                        tipo: 'assenza_non_comunicata',
+                        stato,
+                    }, revocaErr);
+                }
             }
         } catch (e) {
-            console.error('Notifica assenza 0-6 fallita (non bloccante):', e);
+            // Rete di sicurezza, non il presidio principale: i due rami qui sopra non lanciano
+            // (`notificaEvento` è best-effort per contratto e logga per conto suo; la `delete`
+            // ritorna `{ error }`, controllato lì dove nasce). Resta a coprire ciò che può
+            // ancora esplodere davvero — un guasto di trasporto — e resta a livello `error`,
+            // perché se salta il ramo il genitore non viene avvisato che il figlio non è
+            // arrivato a scuola: dato perso, in silenzio, dietro un 200.
+            logEvento('notifica', 'error', {
+                operazione: 'attendance/daily:POST',
+                esito: 'assenza-non-notificata',
+                stato,
+            }, e);
         }
 
         return NextResponse.json(result, { status: 200 });

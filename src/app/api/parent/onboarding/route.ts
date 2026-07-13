@@ -7,7 +7,7 @@ import { notificaEvento, nomeUtente } from '@/lib/notifiche/triggers'
 import { staffScuola, scuolaUnicaReale } from '@/lib/notifiche/destinatari'
 import { parseBody } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const postBodySchema = z.object({
@@ -76,7 +76,11 @@ export const POST = withRoute('parent/onboarding:POST', async (request: Request)
         bufferMin: 60,
       })
     } catch (e) {
-      console.error('Notifica onboarding fallita (non bloccante):', e)
+      logEvento('notifica', 'error', {
+        operazione: 'parent/onboarding:POST',
+        tipo: 'onboarding_completato',
+        esito: 'notifica_non_inviata',
+      }, e)
     }
 
     return NextResponse.json({ success: true, onboarded: true })

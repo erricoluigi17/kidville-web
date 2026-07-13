@@ -7,7 +7,7 @@ import { zUuid } from '@/lib/validation/common'
 import { resolveScuoleAttive } from '@/lib/auth/scope'
 import { notificaEvento } from '@/lib/notifiche/triggers'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // `anno` e `periodo` NON sono vincolati nel formato: storicamente un valore
 // malformato ricade sull'anteprima/generazione mensile del mese corrente
@@ -194,7 +194,7 @@ export const POST = withRoute('pagamenti/genera-rette:POST', async (request: Req
       const annoInizio = parseInt(String(body.anno), 10)
       const { data, error } = await supabase.rpc('genera_rette_anno', { p_anno_inizio: annoInizio })
       if (error) {
-        console.error('Errore genera_rette_anno:', error)
+        logErrore({ operazione: 'pagamenti/genera-rette:POST', stato: 500, evento: 'db' }, error)
         return NextResponse.json({ error: error.message }, { status: 500 })
       }
       await supabase.from('registro_modifiche').insert({
@@ -212,7 +212,7 @@ export const POST = withRoute('pagamenti/genera-rette:POST', async (request: Req
     const periodo = firstOfMonth(body.periodo)
     const { data, error } = await supabase.rpc('genera_rette_mensili', { p_periodo: periodo })
     if (error) {
-      console.error('Errore genera_rette_mensili:', error)
+      logErrore({ operazione: 'pagamenti/genera-rette:POST', stato: 500, evento: 'db' }, error)
       return NextResponse.json({ error: error.message }, { status: 500 })
     }
 
@@ -254,7 +254,14 @@ export const POST = withRoute('pagamenti/genera-rette:POST', async (request: Req
           })
         }
       } catch (e) {
-        console.error('Notifica rette generate fallita (non bloccante):', e)
+        // Le rette SONO state generate, ma nessun genitore lo saprà: notifica persa.
+        logEvento('notifica', 'error', {
+          operazione: 'pagamenti/genera-rette:POST',
+          tipo: 'pagamento_emesso',
+          esito: 'notifica_non_inviata',
+          periodo,
+          generati: Number(data),
+        }, e)
       }
     }
 

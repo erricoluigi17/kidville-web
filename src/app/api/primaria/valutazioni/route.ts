@@ -12,7 +12,7 @@ import { enqueueNotifichePerAlunni, notificaTitolariScrittura } from '@/lib/prim
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zDataYMD, zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // Queste valutazioni includono l'annotazione numerica privata del docente: l'endpoint
 // è RISERVATO al personale docente/segreteria. Il genitore (role 'genitore') è escluso
@@ -226,7 +226,15 @@ export const POST = withRoute('primaria/valutazioni:POST', async (request: NextR
     if (obiettiviCollegati.length > 0) {
       const link = obiettiviCollegati.map((oid) => ({ valutazione_id: val.id, obiettivo_id: oid }))
       const { error: linkErr } = await supabase.from('valutazione_obiettivi').insert(link)
-      if (linkErr) console.error('valutazione_obiettivi insert:', linkErr.message)
+      // La valutazione è salvata, ma il collegamento agli obiettivi (DL-015) è perduto:
+      // righe che nessuno riscriverà. `error`, anche se la risposta è 200.
+      if (linkErr) {
+        logEvento('db', 'error', {
+          operazione: 'primaria/valutazioni:POST',
+          esito: 'valutazione_obiettivi_non_collegati',
+          n: link.length,
+        }, linkErr)
+      }
     }
 
     await logScrittura(supabase, {

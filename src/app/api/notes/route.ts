@@ -56,7 +56,7 @@ export const GET = withRoute('notes:GET', async (request: Request) => {
         const { data, error } = await query;
 
         if (error) {
-            console.error('Errore GET note_disciplinari:', error);
+            logErrore({ operazione: 'notes:GET', stato: 500, evento: 'db' }, error);
             return NextResponse.json({ error: 'Errore nel recupero delle note', details: error.message }, { status: 500 });
         }
 
@@ -110,7 +110,7 @@ export const POST = withRoute('notes:POST', async (request: Request) => {
             `);
 
         if (dbError) {
-            console.error('Errore INSERT note_disciplinari:', dbError);
+            logErrore({ operazione: 'notes:POST', stato: 500, evento: 'db' }, dbError);
             return NextResponse.json({ error: 'Errore nel salvataggio della nota', details: dbError.message }, { status: 500 });
         }
 

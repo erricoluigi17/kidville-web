@@ -10,7 +10,7 @@ import { notificaEvento, nomeUtente } from '@/lib/notifiche/triggers'
 import { docentiDiSezione } from '@/lib/sezioni/docenti'
 import { parseBody } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // Id laschi (non zUuid): il comportamento attuale accetta qualsiasi stringa non
 // vuota (il lookup su `scrutini` fa da gate con 404). I campi OTP restano
@@ -119,7 +119,11 @@ export const POST = withRoute('parent/primaria/pagella/firma:POST', async (reque
         })
       }
     } catch (e) {
-      console.error('Notifica firma pagella fallita (non bloccante):', e)
+      logEvento('notifica', 'error', {
+        operazione: 'parent/primaria/pagella/firma:POST',
+        tipo: 'firma_ricevuta',
+        esito: 'notifica_non_inviata',
+      }, e)
     }
 
     return NextResponse.json({ success: true, data })

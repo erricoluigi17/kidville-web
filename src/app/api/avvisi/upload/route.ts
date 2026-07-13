@@ -34,7 +34,7 @@ export const POST = withRoute('avvisi/upload:POST', async (request: Request) => 
             });
 
         if (error) {
-            console.error('Errore caricamento storage:', error);
+            logErrore({ operazione: 'avvisi/upload:POST', stato: 500, evento: 'storage' }, error);
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
 

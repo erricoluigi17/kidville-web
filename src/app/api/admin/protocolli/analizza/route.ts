@@ -20,7 +20,7 @@ import {
   zStagingPath,
 } from '@/lib/protocolli/server'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // Analisi del file in staging PRIMA della registrazione (decisioni #8 e #17):
 // impronta SHA-256, avviso duplicato NON bloccante, campi suggeriti dalle
@@ -82,7 +82,13 @@ export const POST = withRoute('admin/protocolli/analizza:POST', async (request: 
             oggetto: d.oggetto,
           }
         } else if (error && !SCHEMA_MANCANTE.has(error.code ?? '')) {
-          console.error('Controllo duplicati protocollo non riuscito:', error.message)
+          // `warn`: è una LETTURA fallita, non una scrittura persa. Il risultato è salvo
+          // (impronta e suggerimenti escono comunque, 200) e l'avviso di duplicato è per
+          // decisione #17 informativo e mai bloccante — salta solo quello.
+          logEvento('db', 'warn', {
+            operazione: 'admin/protocolli/analizza:POST',
+            esito: 'controllo-duplicati-saltato',
+          }, error)
         }
       }
 

@@ -4,7 +4,7 @@ import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { parseData } from '@/lib/validation/http';
 import { withRoute } from '@/lib/logging/with-route';
-import { logErrore } from '@/lib/logging/logger';
+import { logErrore, logEvento } from '@/lib/logging/logger';
 
 const postFormSchema = z.object({
     file: z.instanceof(File, { error: 'Nessun file fornito' }),
@@ -27,7 +27,22 @@ export const POST = withRoute('gallery/upload:POST', async (request: Request) =>
         // Assicurati che il bucket "gallery" esista e abbia il limite a 200MB
         try {
             const { data: buckets, error: listError } = await supabase.storage.listBuckets();
-            if (!listError) {
+            if (listError) {
+                // IL RAMO REALISTICO, ed era MUTO: `listBuckets` non lancia — ritorna
+                // `{ error }` — quindi il catch qui sotto non scattava e questa guardia saltava
+                // in silenzio l'intero blocco che ASSICURA il bucket. Il log stava nel posto
+                // sbagliato: sull'eccezione che non arriva, invece che sull'errore che arriva.
+                //
+                // `warn` e non `error`: il blocco è idempotente e in esercizio il bucket esiste
+                // già, quindi non aver potuto verificarlo quasi sempre non toglie nulla e
+                // l'upload sotto riesce lo stesso (il risultato è salvo). Se invece il bucket
+                // manca davvero, è l'upload a fallire — con il suo `error` e il suo 500.
+                logEvento('storage', 'warn', {
+                    operazione: 'gallery/upload:POST',
+                    esito: 'bucket-non-verificato',
+                    bucket: 'gallery',
+                }, listError);
+            } else {
                 const exists = buckets?.some(b => b.name === 'gallery');
                 if (!exists) {
                     await supabase.storage.createBucket('gallery', {
@@ -50,7 +65,14 @@ export const POST = withRoute('gallery/upload:POST', async (request: Request) =>
                 }
             }
         } catch (bucketErr) {
-            console.error('Errore durante la verifica/creazione/aggiornamento del bucket:', bucketErr);
+            // Resta a coprire il guasto di TRASPORTO (il fetch che esplode prima di arrivare
+            // allo Storage). Stesso livello e stessa ragione della guardia qui sopra: il blocco
+            // è idempotente, il risultato dell'upload è salvo.
+            logEvento('storage', 'warn', {
+                operazione: 'gallery/upload:POST',
+                esito: 'bucket-non-verificato',
+                bucket: 'gallery',
+            }, bucketErr);
         }
         
         // Genera nome file unico
@@ -67,7 +89,7 @@ export const POST = withRoute('gallery/upload:POST', async (request: Request) =>
             });
 
         if (error) {
-            console.error('Errore caricamento storage:', error);
+            logErrore({ operazione: 'gallery/upload:POST', stato: 500, evento: 'storage' }, error);
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
 

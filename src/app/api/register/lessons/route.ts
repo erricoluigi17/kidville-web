@@ -8,7 +8,7 @@ import { assertClasseNomeInScope, scuoleDiUtente } from '@/lib/auth/scope';
 import { notificaEvento } from '@/lib/notifiche/triggers';
 import { genitoriDiClassi } from '@/lib/notifiche/destinatari';
 import { withRoute } from '@/lib/logging/with-route';
-import { logErrore } from '@/lib/logging/logger';
+import { logErrore, logEvento } from '@/lib/logging/logger';
 
 const getQuerySchema = z.object({
     classeSezione: z.string().min(1),
@@ -63,7 +63,7 @@ export const GET = withRoute('register/lessons:GET', async (request: Request) =>
             .order('ora_lezione', { ascending: true });
 
         if (error) {
-            console.error('Errore GET registro_orario:', error);
+            logErrore({ operazione: 'register/lessons:GET', stato: 500, evento: 'db' }, error);
             return NextResponse.json({ error: 'Errore nel recupero delle lezioni', details: error.message }, { status: 500 });
         }
 
@@ -133,7 +133,7 @@ export const POST = withRoute('register/lessons:POST', async (request: Request) 
             .single();
 
         if (registroError) {
-            console.error('Errore UPSERT registro_orario:', registroError);
+            logErrore({ operazione: 'register/lessons:POST', stato: 500, evento: 'db' }, registroError);
             return NextResponse.json({ error: 'Errore nel salvataggio della lezione', details: registroError.message }, { status: 500 });
         }
 
@@ -149,8 +149,15 @@ export const POST = withRoute('register/lessons:POST', async (request: Request) 
             });
 
         if (firmaError) {
-            console.error('Errore INSERT firma_docente:', firmaError);
-            // Non blocchiamo il flusso: il registro è già salvato
+            // Non blocchiamo il flusso: il registro è già salvato — ma il livello è `error`, non
+            // `warn`. La FIRMA del docente sulla lezione non è un accessorio: è il dato che
+            // certifica chi ha tenuto quell'ora, e la sua assenza si scopre a mesi di distanza,
+            // quando il registro va chiuso e una lezione risulta non firmata da nessuno. La
+            // richiesta risponde 200, ma una scrittura è andata perduta in silenzio.
+            logEvento('db', 'error', {
+                operazione: 'register/lessons:POST',
+                esito: 'firma-docente-non-registrata',
+            }, firmaError);
         }
 
         // Notifica ai genitori della classe (best-effort) SOLO se ci sono
@@ -174,7 +181,14 @@ export const POST = withRoute('register/lessons:POST', async (request: Request) 
                     debounce: true,
                 });
             } catch (e) {
-                console.error('Notifica compiti fallita (non bloccante):', e);
+                // `error` benché la lezione sia salvata: i compiti sono sul registro ma le
+                // famiglie non ricevono l'avviso — cioè il bambino "non aveva compiti". La
+                // scrittura principale è salva, l'annuncio è perso.
+                logEvento('notifica', 'error', {
+                    operazione: 'register/lessons:POST',
+                    esito: 'notifica-compiti-non-accodata',
+                    tipo: 'compiti',
+                }, e);
             }
         }
 

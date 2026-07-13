@@ -7,7 +7,7 @@ import { docentiDiSezione } from '@/lib/sezioni/docenti'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // `data` resta stringa permissiva (oggi il DB accetta anche formati non YYYY-MM-DD);
@@ -85,7 +85,11 @@ export const POST = withRoute('parent/giustifiche-didattiche:POST', async (reque
         entitaId: (inserted as { id?: string })?.id ?? null,
       })
     } catch (e) {
-      console.error('Notifica giustifica didattica fallita (non bloccante):', e)
+      logEvento('notifica', 'error', {
+        operazione: 'parent/giustifiche-didattiche:POST',
+        tipo: 'giustifica_ricevuta',
+        esito: 'notifica_non_inviata',
+      }, e)
     }
 
     return NextResponse.json({ success: true, data: inserted }, { status: 201 })

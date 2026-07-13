@@ -9,7 +9,7 @@ import { staffScuola, scuolaUnicaReale } from '@/lib/notifiche/destinatari';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
-import { logErrore } from '@/lib/logging/logger';
+import { logErrore, logEvento } from '@/lib/logging/logger';
 
 // ─── Schemi di validazione input (M3/M4) ─────────────────────────────────────
 // L'identità viene dal gate (requireUser): il `parent_id` legacy in query/body
@@ -88,7 +88,12 @@ export const POST = withRoute('parent/submissions:POST', async (request: NextReq
         debounce: true,
       });
     } catch (e) {
-      console.error('Notifica modulo firmato fallita (non bloccante):', e);
+      // Il modulo è acquisito, ma la segreteria non saprà che è arrivato: notifica persa.
+      logEvento('notifica', 'error', {
+        operazione: 'parent/submissions:POST',
+        tipo: 'modulo_compilato',
+        esito: 'notifica_non_inviata',
+      }, e);
     }
 
     return NextResponse.json(result.submission, { status: 201 });

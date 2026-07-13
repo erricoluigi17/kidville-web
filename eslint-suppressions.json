@@ -1,0 +1,232 @@
+{
+  "src/app/(dashboard)/admin/avvisi/page.tsx": {
+    "no-console": {
+      "count": 2
+    }
+  },
+  "src/app/(dashboard)/admin/forms/builder/page.tsx": {
+    "no-console": {
+      "count": 2
+    }
+  },
+  "src/app/(dashboard)/admin/students/page.tsx": {
+    "no-console": {
+      "count": 2
+    }
+  },
+  "src/app/(dashboard)/parent/avvisi/page.tsx": {
+    "no-console": {
+      "count": 3
+    }
+  },
+  "src/app/(dashboard)/parent/chat/page.tsx": {
+    "no-console": {
+      "count": 4
+    }
+  },
+  "src/app/(dashboard)/parent/locker/page.tsx": {
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/app/(dashboard)/teacher/attendance/page.tsx": {
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/app/(dashboard)/teacher/avvisi/page.tsx": {
+    "no-console": {
+      "count": 2
+    }
+  },
+  "src/app/(dashboard)/teacher/chat/page.tsx": {
+    "no-console": {
+      "count": 4
+    }
+  },
+  "src/app/(dashboard)/teacher/gallery/page.tsx": {
+    "no-console": {
+      "count": 5
+    }
+  },
+  "src/components/features/admin/ImportExportClient.tsx": {
+    "no-console": {
+      "count": 2
+    }
+  },
+  "src/components/features/admin/ParentDetailPanel.tsx": {
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/components/features/admin/ScrollableAdultForm.tsx": {
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/components/features/admin/ScrollableStudentForm.tsx": {
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/components/features/admin/SectionsView.tsx": {
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/components/features/admin/StudentRegistryForm.tsx": {
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/components/features/admin/iscrizioni/ModuliRicevuti.tsx": {
+    "no-console": {
+      "count": 2
+    }
+  },
+  "src/components/features/avvisi/AvvisoDetailsContent.tsx": {
+    "no-console": {
+      "count": 2
+    }
+  },
+  "src/components/features/avvisi/AvvisoForm.tsx": {
+    "no-console": {
+      "count": 2
+    }
+  },
+  "src/components/features/chat/useChatRealtime.ts": {
+    "no-console": {
+      "count": 2
+    }
+  },
+  "src/components/features/forms/FieldRenderer.tsx": {
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/components/features/gallery/MediaGrid.tsx": {
+    "no-console": {
+      "count": 6
+    }
+  },
+  "src/components/features/parent/forms/WizardContainer.tsx": {
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/components/features/parent/pagamenti/PushOptIn.tsx": {
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/components/features/public/EnrollmentWizard.tsx": {
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/components/features/teacher/diary/DiaryEventEditor.tsx": {
+    "no-console": {
+      "count": 2
+    }
+  },
+  "src/components/features/teacher/tasks/TaskEditModal.tsx": {
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/components/features/teacher/tasks/TaskForm.tsx": {
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/components/features/teacher/tasks/useTasks.ts": {
+    "no-console": {
+      "count": 3
+    }
+  },
+  "src/lib/anagrafiche/parents.ts": {
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/lib/aruba/emissione.ts": {
+    "no-console": {
+      "count": 2
+    }
+  },
+  "src/lib/audit/scrittura.ts": {
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/lib/auth/profili.ts": {
+    "no-console": {
+      "count": 2
+    }
+  },
+  "src/lib/competenze/certificato-store.ts": {
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/lib/fea/audit.ts": {
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/lib/forms/persist-submission.ts": {
+    "no-console": {
+      "count": 2
+    }
+  },
+  "src/lib/media/processing.ts": {
+    "no-console": {
+      "count": 3
+    }
+  },
+  "src/lib/mensa/notify.ts": {
+    "no-console": {
+      "count": 2
+    }
+  },
+  "src/lib/merch/notify.ts": {
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/lib/offline/syncEngine.ts": {
+    "no-console": {
+      "count": 25
+    }
+  },
+  "src/lib/primaria/fascicolo-rbac.ts": {
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/lib/primaria/notifiche.ts": {
+    "no-console": {
+      "count": 2
+    }
+  },
+  "src/lib/primaria/pagella-store.ts": {
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/lib/sidi/client.ts": {
+    "no-console": {
+      "count": 2
+    }
+  },
+  "src/lib/translate/claude.ts": {
+    "no-console": {
+      "count": 1
+    }
+  },
+  "src/lib/utils/fiscalCodeApi.ts": {
+    "no-console": {
+      "count": 2
+    }
+  }
+}

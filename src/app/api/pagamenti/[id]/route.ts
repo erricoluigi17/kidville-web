@@ -8,7 +8,7 @@ import { resolveScuoleAttive } from '@/lib/auth/scope'
 import { annullaRicevutaAttiva } from '@/lib/pagamenti/ricevute'
 import { notificaEvento } from '@/lib/notifiche/triggers'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // PATCH: merge parziale sui soli campi ammessi; i valori restano senza vincoli
@@ -207,7 +207,11 @@ export const PATCH = withRoute('pagamenti/[id]:PATCH', async (request: Request, 
         })
       }
     } catch (e) {
-      console.error('Notifica pagamento saldato fallita (non bloccante):', e)
+      logEvento('notifica', 'error', {
+        operazione: 'pagamenti/[id]:PATCH',
+        tipo: 'pagamento_registrato',
+        esito: 'notifica_non_inviata',
+      }, e)
     }
 
     return NextResponse.json({ success: true, data })

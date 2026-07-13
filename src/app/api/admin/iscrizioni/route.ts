@@ -9,7 +9,7 @@ import { notificaEvento } from '@/lib/notifiche/triggers'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 import { z } from 'zod'
 import type { EnrollmentSubmissionData, EnrollmentAdult, EnrollmentChild } from '@/types/database.types'
 
@@ -108,7 +108,14 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
           })
         }
       } catch (e) {
-        console.error('Notifica esito iscrizione fallita (non bloccante):', e)
+        // `error`, non `warn`, benché la richiesta risponda 200: la notifica non è stata
+        // accodata, quindi il genitore non saprà MAI che la domanda è stata rifiutata.
+        // È una scrittura persa in silenzio, e va contata.
+        logEvento('notifica', 'error', {
+          operazione: 'admin/iscrizioni:PATCH',
+          esito: 'notifica-rifiuto-non-inviata',
+          tipo: 'iscrizione_esito',
+        }, e)
       }
 
       return NextResponse.json(data)
@@ -407,7 +414,13 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
         })
       }
     } catch (e) {
-      console.error('Notifica esito iscrizione fallita (non bloccante):', e)
+      // Come sopra: l'import è andato a buon fine (200), ma il referente non riceverà
+      // l'avviso di accoglimento. Notifica mai inviata = dato perduto → `error`.
+      logEvento('notifica', 'error', {
+        operazione: 'admin/iscrizioni:PATCH',
+        esito: 'notifica-accoglimento-non-inviata',
+        tipo: 'iscrizione_esito',
+      }, e)
     }
 
     return NextResponse.json({

@@ -191,7 +191,7 @@ export const POST = withRoute('pagamenti/genera:POST', async (request: Request) 
       }))
       const { data: created, error } = await supabase.from('pagamenti').insert(records).select('id')
       if (error) {
-        console.error('Errore POST genera:', error)
+        logErrore({ operazione: 'pagamenti/genera:POST', stato: 500, evento: 'db' }, error)
         return NextResponse.json({ error: 'Errore nella generazione', details: error.message }, { status: 500 })
       }
       generati = created?.length ?? 0

@@ -71,7 +71,7 @@ export const GET = withRoute('grades:GET', async (request: Request) => {
         const { data, error } = await query;
 
         if (error) {
-            console.error('Errore GET valutazioni:', error);
+            logErrore({ operazione: 'grades:GET', stato: 500, evento: 'db' }, error);
             return NextResponse.json({ error: 'Errore nel recupero delle valutazioni' }, { status: 500 });
         }
 
@@ -115,7 +115,7 @@ export const POST = withRoute('grades:POST', async (request: Request) => {
             .single();
 
         if (dbError) {
-            console.error('Errore inserimento voto:', dbError);
+            logErrore({ operazione: 'grades:POST', stato: 500, evento: 'db' }, dbError);
             return NextResponse.json({ error: 'Errore nel salvataggio della valutazione' }, { status: 500 });
         }
 

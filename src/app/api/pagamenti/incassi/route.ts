@@ -7,7 +7,7 @@ import { notificaEvento } from '@/lib/notifiche/triggers'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 const getQuerySchema = z.object({
   pagamento_id: zUuid,
@@ -99,7 +99,7 @@ export const POST = withRoute('pagamenti/incassi:POST', async (request: Request)
       .single()
 
     if (error) {
-      console.error('Errore POST incasso:', error)
+      logErrore({ operazione: 'pagamenti/incassi:POST', stato: 500, evento: 'db' }, error)
       return NextResponse.json({ error: 'Errore nella registrazione', details: error.message }, { status: 500 })
     }
 
@@ -143,7 +143,13 @@ export const POST = withRoute('pagamenti/incassi:POST', async (request: Request)
         })
       }
     } catch (e) {
-      console.error('Notifica incasso fallita (non bloccante):', e)
+      // La richiesta risponde 201, ma la conferma al genitore NON è mai stata accodata:
+      // è una scrittura persa, e senza riavvii. Perciò `error`, non `warn`.
+      logEvento('notifica', 'error', {
+        operazione: 'pagamenti/incassi:POST',
+        tipo: 'pagamento_registrato',
+        esito: 'notifica_non_inviata',
+      }, e)
     }
 
     return NextResponse.json({ success: true, data: { incasso, pagamento: aggiornato, spills } }, { status: 201 })

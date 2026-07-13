@@ -175,11 +175,23 @@ describe('POST /api/admin/regenerate-credentials (DL-005)', () => {
   });
 
   it('staff: usa utenti.id come auth id (nessuna riparazione identità)', async () => {
+    // Le credenziali staff sono operazione di Direzione (T3): caller = admin.
+    h.requireStaff.mockResolvedValue({ user: { id: 'dir-1', role: 'admin', scuola_id: 's1' } });
     h.adminRow = { data: { id: 'e1e1e1e1-e1e1-4e1e-8e1e-e1e1e1e1e1e1', email: 'staff@x.it', nome: 'Anna' }, error: null };
     const res = await POST(req({ targetKind: 'staff', targetId: 'e1e1e1e1-e1e1-4e1e-8e1e-e1e1e1e1e1e1' }));
     expect(res.status).toBe(200);
     expect(h.updates[0].id).toBe('e1e1e1e1-e1e1-4e1e-8e1e-e1e1e1e1e1e1');
     expect(h.sendEmail).toHaveBeenCalledWith(expect.objectContaining({ to: 'staff@x.it' }));
     expect(h.ensureIdentity).not.toHaveBeenCalled();
+  });
+
+  it('staff + Segreteria → 403 (rigenerazione credenziali staff riservata alla Direzione, T3)', async () => {
+    // Caller di default = segreteria (beforeEach): può resettare i genitori, non lo staff.
+    const res = await POST(req({ targetKind: 'staff', targetId: 'e1e1e1e1-e1e1-4e1e-8e1e-e1e1e1e1e1e1' }));
+    const data = await res.json();
+    expect(res.status).toBe(403);
+    expect(data.error).toMatch(/Direzione/);
+    expect(h.updates).toHaveLength(0);
+    expect(h.sendEmail).not.toHaveBeenCalled();
   });
 });

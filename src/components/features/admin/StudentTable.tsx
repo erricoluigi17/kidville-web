@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import { ArrowUpDown, AlertTriangle } from 'lucide-react';
+import { labelRuolo } from '@/lib/auth/ruoli';
 
 interface Student {
     id: string;
@@ -19,6 +20,9 @@ interface Student {
     note_bes?: string | null;
     emails?: string[];
     phone_numbers?: string[];
+    ruolo?: string; // per staff (utenti)
+    sede_nome?: string; // per staff (nome plesso)
+    classi_count?: number; // per staff (n. classi assegnate)
 }
 
 interface Props {
@@ -100,14 +104,17 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                 <table className="w-full">
                     <thead className="bg-kidville-cream/50 border-b border-kidville-line">
                         <tr>
-                            <th className="px-3 py-3 w-10">
-                                <input
-                                    type="checkbox"
-                                    checked={allSelected}
-                                    onChange={onToggleSelectAll}
-                                    className="w-4 h-4 rounded border-kidville-muted text-kidville-green focus:ring-kidville-green cursor-pointer"
-                                />
-                            </th>
+                            {/* Staff: nessuna selezione massiva (le azioni sono per-singolo). */}
+                            {currentTypeFilter !== 'staff' && (
+                                <th className="px-3 py-3 w-10">
+                                    <input
+                                        type="checkbox"
+                                        checked={allSelected}
+                                        onChange={onToggleSelectAll}
+                                        className="w-4 h-4 rounded border-kidville-muted text-kidville-green focus:ring-kidville-green cursor-pointer"
+                                    />
+                                </th>
+                            )}
                             {renderSortHeader('cognome', 'Cognome')}
                             {renderSortHeader('nome', 'Nome')}
                             {currentTypeFilter === 'child' ? (
@@ -118,6 +125,13 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                                     <th className="px-3 py-3 text-left">
                                         <span className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide">Info</span>
                                     </th>
+                                </>
+                            ) : currentTypeFilter === 'staff' ? (
+                                <>
+                                    <th className="px-3 py-3 text-left"><span className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide">Email</span></th>
+                                    <th className="px-3 py-3 text-left"><span className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide">Ruolo</span></th>
+                                    <th className="px-3 py-3 text-left"><span className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide">Sede</span></th>
+                                    <th className="px-3 py-3 text-left"><span className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide">Classi</span></th>
                                 </>
                             ) : (
                                 <>
@@ -131,10 +145,11 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                     <tbody className="divide-y divide-kidville-cream">
                         {Object.entries(groupedStudents).map(([section, sectionStudents]) => (
                             <React.Fragment key={section}>
-                                {/* Group By Header */}
+                                {/* Group By Header — colSpan calcolato: child ha checkbox + 6 colonne = 7;
+                                    genitori/staff hanno 6 celle (lo staff senza checkbox). */}
                                 <tr className="bg-kidville-cream/20">
-                                    <td colSpan={7} className="px-4 py-2 font-maven font-bold text-kidville-green">
-                                        Sezione: {section} <span className="text-xs font-normal text-kidville-muted">({sectionStudents.length} alunni)</span>
+                                    <td colSpan={currentTypeFilter === 'child' ? 7 : 6} className="px-4 py-2 font-maven font-bold text-kidville-green">
+                                        Sezione: {section} <span className="text-xs font-normal text-kidville-muted">({sectionStudents.length} {currentTypeFilter === 'staff' ? 'Personale' : 'alunni'})</span>
                                     </td>
                                 </tr>
                                 {sectionStudents.map(student => {
@@ -150,14 +165,16 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                                             }`}
                                             onClick={() => onStudentClick(student)}
                                         >
-                                            <td className="px-3 py-3" onClick={e => e.stopPropagation()}>
-                                                <input
-                                                    type="checkbox"
-                                                    checked={isSelected}
-                                                    onChange={() => onToggleSelect(student.id)}
-                                                    className="w-4 h-4 rounded border-kidville-muted text-kidville-green focus:ring-kidville-green cursor-pointer"
-                                                />
-                                            </td>
+                                            {currentTypeFilter !== 'staff' && (
+                                                <td className="px-3 py-3" onClick={e => e.stopPropagation()}>
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={isSelected}
+                                                        onChange={() => onToggleSelect(student.id)}
+                                                        className="w-4 h-4 rounded border-kidville-muted text-kidville-green focus:ring-kidville-green cursor-pointer"
+                                                    />
+                                                </td>
+                                            )}
                                             <td className="px-3 py-3 font-maven font-bold text-sm text-kidville-green">
                                                 {student.cognome || student.last_name}
                                             </td>
@@ -197,6 +214,23 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                                                         </div>
                                                     </td>
                                                 </>
+                                            ) : currentTypeFilter === 'staff' ? (
+                                                <>
+                                                    <td className="px-3 py-3 font-maven text-sm text-kidville-muted">
+                                                        {student.emails && student.emails.length > 0 ? student.emails[0] : '—'}
+                                                    </td>
+                                                    <td className="px-3 py-3">
+                                                        <span className="font-maven text-xs font-bold px-2.5 py-1 rounded-full bg-kidville-cream text-kidville-green">
+                                                            {labelRuolo(student.ruolo || '')}
+                                                        </span>
+                                                    </td>
+                                                    <td className="px-3 py-3 font-maven text-sm text-kidville-muted">
+                                                        {student.sede_nome || '—'}
+                                                    </td>
+                                                    <td className="px-3 py-3 font-maven text-sm text-kidville-green font-semibold">
+                                                        {student.classi_count ?? 0}
+                                                    </td>
+                                                </>
                                             ) : (
                                                 <>
                                                     <td className="px-3 py-3 font-maven text-sm text-kidville-muted">
@@ -221,7 +255,9 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
 
             {students.length === 0 && (
                 <div className="text-center py-12">
-                    <p className="font-maven text-kidville-muted">Nessun alunno trovato</p>
+                    <p className="font-maven text-kidville-muted">
+                        {currentTypeFilter === 'staff' ? 'Nessun membro dello staff trovato' : 'Nessun alunno trovato'}
+                    </p>
                 </div>
             )}
         </div>

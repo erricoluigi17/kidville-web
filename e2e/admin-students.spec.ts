@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { STORAGE } from './fixtures';
+import { STORAGE, EMAILS } from './fixtures';
 
 // Anagrafica generale (/admin/students). NB: la pagina interroga la scuola
 // demo hardcoded, quindi le asserzioni sono sul funzionamento (tab, ricerca,
@@ -29,4 +29,7 @@ test('anagrafica: lista, ricerca e tab funzionano', async ({ page }) => {
   await expect(page.getByText('Girasoli').first()).toBeVisible();
   await page.getByRole('button', { name: 'Staff' }).click();
   await expect(page.getByRole('heading', { name: 'Anagrafica Generale' })).toBeVisible();
+  // La tab Staff ora elenca il personale reale da `utenti` (non più il workaround
+  // su parents.citizenship): l'educatrice seminata in E2E compare con la sua email.
+  await expect(page.getByText(EMAILS.docente).first()).toBeVisible({ timeout: 20_000 });
 });

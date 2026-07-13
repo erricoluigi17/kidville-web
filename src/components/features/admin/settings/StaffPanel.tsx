@@ -15,6 +15,7 @@ export function StaffPanel({ userId }: { userId: string }) {
   const [sections, setSections] = useState<Section[]>([]);
   const [asseg, setAsseg] = useState<{ utente_id: string; section_id: string }[]>([]);
   const [loading, setLoading] = useState(true);
+  const [errore, setErrore] = useState<string | null>(null);
   const [editId, setEditId] = useState<string | null>(null);
   const [draft, setDraft] = useState<{ ruolo: string; scuola_id: string; section_ids: string[] }>({ ruolo: '', scuola_id: '', section_ids: [] });
   const [saving, setSaving] = useState(false);
@@ -25,10 +26,15 @@ export function StaffPanel({ userId }: { userId: string }) {
     // (react-hooks set-state-in-effect); refetch senza spinner, accettato.
     try {
       const res = await fetch('/api/admin/staff', { headers: { 'x-user-id': userId } });
-      const j = await res.json();
-      if (j.success) {
-        setStaff(j.data); setSchools(j.schools ?? []); setSections(j.sections ?? []); setAsseg(j.assegnazioni ?? []);
+      const j = await res.json().catch(() => null);
+      // Mai una lista eternamente vuota che nasconde un errore: se il fetch non
+      // riesce, si mostra il motivo (T3).
+      if (!res.ok || !j?.success) {
+        setErrore(j?.error || 'Errore di caricamento dello staff');
+        return;
       }
+      setErrore(null);
+      setStaff(j.data); setSchools(j.schools ?? []); setSections(j.sections ?? []); setAsseg(j.assegnazioni ?? []);
     } finally { setLoading(false); }
   }, [userId]);
 
@@ -80,6 +86,8 @@ export function StaffPanel({ userId }: { userId: string }) {
   };
 
   if (loading) return <div className="flex items-center gap-2 text-kidville-muted p-6"><Loader2 className="animate-spin" size={16} /> Caricamento staff…</div>;
+
+  if (errore) return <div className="rounded-xl border border-kidville-error/30 bg-kidville-error-soft p-4 font-maven text-sm text-kidville-error">{errore}</div>;
 
   return (
     <div className="space-y-3">

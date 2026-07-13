@@ -45,9 +45,18 @@ describe('/api/admin/staff', () => {
     h.requireStaff.mockResolvedValue({ user: { id: 'd1d1d1d1-d1d1-4d1d-8d1d-d1d1d1d1d1d1', role: 'admin', scuola_id: 's1' } })
   })
 
-  it('GET è gated alla Direzione (admin/coordinator)', async () => {
+  it('GET è gated in lettura anche alla Segreteria (admin/coordinator/segreteria)', async () => {
     await GET(new Request('http://localhost/api/admin/staff'))
-    expect(h.requireStaff).toHaveBeenCalledWith(expect.anything(), ['admin', 'coordinator'])
+    expect(h.requireStaff).toHaveBeenCalledWith(expect.anything(), ['admin', 'coordinator', 'segreteria'])
+  })
+
+  it('GET risponde 200 alla Segreteria (lettura estesa)', async () => {
+    h.requireStaff.mockResolvedValue({ user: { id: 'e5e5e5e5-e5e5-4e5e-8e5e-e5e5e5e5e5e5', role: 'segreteria', scuola_id: 's1' } })
+    const res = await GET(new Request('http://localhost/api/admin/staff'))
+    expect(res.status).toBe(200)
+    const data = await res.json()
+    expect(data.success).toBe(true)
+    expect(Array.isArray(data.data)).toBe(true)
   })
 
   it('PATCH gated: blocca se requireStaff nega', async () => {

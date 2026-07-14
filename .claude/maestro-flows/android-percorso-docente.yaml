@@ -1,0 +1,64 @@
+# =============================================================================
+# Kidville · ANDROID — percorso utente reale del DOCENTE
+#   login → dashboard → appello (presenze) → bacheca (comunicazioni)
+#
+# Prerequisiti: vedi .claude/maestro-flows/README.md
+#
+# Esecuzione:
+#   maestro test -e KV_EMAIL="$MAESTRO_KV_EMAIL_DOCENTE" \
+#                -e KV_PASSWORD="$MAESTRO_KV_PASSWORD" \
+#                .claude/maestro-flows/android-percorso-docente.yaml
+# =============================================================================
+appId: it.kidville.app
+name: Kidville · Android — percorso docente
+tags:
+  - android
+  - docente
+env:
+  KV_EMAIL: ${MAESTRO_KV_EMAIL_DOCENTE}
+  KV_PASSWORD: ${MAESTRO_KV_PASSWORD}
+---
+- launchApp:
+    clearState: true
+
+# ── 1. LOGIN ─────────────────────────────────────────────────────────────────
+- extendedWaitUntil:
+    visible: "Accedi al tuo account Kidville"
+    timeout: 60000
+- tapOn:
+    below: "Email"
+- inputText: ${KV_EMAIL}
+- hideKeyboard
+- tapOn:
+    below: "Password"
+- inputText: ${KV_PASSWORD}
+- hideKeyboard
+- tapOn: "Accedi"
+
+# ── 2. DASHBOARD ─────────────────────────────────────────────────────────────
+# Bottom nav docente: Dashboard · <2ª tab> · Messaggi · Foto · Menu.
+# Sulla home c'è la card "Appello" (occhiello "Presenze").
+- extendedWaitUntil:
+    visible: "Appello"
+    timeout: 60000
+- assertVisible: "Menu"
+- takeScreenshot: /tmp/kv-android-docente-1-dashboard
+
+# ── 3. PRESENZE (appello) ────────────────────────────────────────────────────
+- tapOn: "Appello"
+- extendedWaitUntil:
+    visible: "Appello"
+    timeout: 45000
+- takeScreenshot: /tmp/kv-android-docente-2-appello
+
+# ── 4. COMUNICAZIONI (bacheca) ───────────────────────────────────────────────
+# "Bacheca" vive nel foglio Menu, gruppo "Vita scolastica".
+- tapOn: "Menu"
+- extendedWaitUntil:
+    visible: "Bacheca"
+    timeout: 20000
+- tapOn: "Bacheca"
+- extendedWaitUntil:
+    visible: "Circolari e avvisi alle famiglie"
+    timeout: 45000
+- takeScreenshot: /tmp/kv-android-docente-3-bacheca

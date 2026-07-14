@@ -1,0 +1,83 @@
+# =============================================================================
+# Kidville · iOS — percorso utente reale del GENITORE
+#   login → dashboard → presenze → comunicazioni
+#
+# Prerequisiti (vedi .claude/maestro-flows/README.md):
+#   - simulatore iOS avviato (xcrun simctl boot …)
+#   - dev server sull'host, porta 3000
+#   - App.app buildata con CAP_SERVER_URL="http://localhost:3000" e installata
+#   - credenziali negli env MAESTRO_KV_EMAIL_GENITORE / MAESTRO_KV_PASSWORD
+#
+# Esecuzione:
+#   maestro test -e KV_EMAIL="$MAESTRO_KV_EMAIL_GENITORE" \
+#                -e KV_PASSWORD="$MAESTRO_KV_PASSWORD" \
+#                .claude/maestro-flows/ios-percorso-genitore.yaml
+#
+# Differenze rispetto ad Android: dal simulatore l'host è `localhost` (non
+# 10.0.2.2) e non c'è tasto Indietro hardware → si naviga con la bottom nav.
+# =============================================================================
+appId: it.kidville.app
+name: Kidville · iOS — percorso genitore
+tags:
+  - ios
+  - genitore
+env:
+  KV_EMAIL: ${MAESTRO_KV_EMAIL_GENITORE}
+  KV_PASSWORD: ${MAESTRO_KV_PASSWORD}
+---
+- launchApp:
+    clearState: true
+
+# ── 1. LOGIN ─────────────────────────────────────────────────────────────────
+- extendedWaitUntil:
+    visible: "Accedi al tuo account Kidville"
+    timeout: 60000
+- assertVisible: "Benvenuto/a!"
+- takeScreenshot: /tmp/kv-ios-genitore-0-login
+
+- tapOn:
+    below: "Email"
+- inputText: ${KV_EMAIL}
+- hideKeyboard
+
+- tapOn:
+    below: "Password"
+- inputText: ${KV_PASSWORD}
+- hideKeyboard
+
+- tapOn: "Accedi"
+
+# ── 2. DASHBOARD ─────────────────────────────────────────────────────────────
+- extendedWaitUntil:
+    visible: "Avvisi"
+    timeout: 60000
+- assertVisible: "Home"
+- assertVisible: "Menu"
+- takeScreenshot: /tmp/kv-ios-genitore-1-dashboard
+
+# ── 3. PRESENZE ──────────────────────────────────────────────────────────────
+- tapOn: "Menu"
+- extendedWaitUntil:
+    visible: "Presenze"
+    timeout: 20000
+- tapOn: "Presenze"
+- extendedWaitUntil:
+    visible: "Segnala assenza"
+    timeout: 45000
+- takeScreenshot: /tmp/kv-ios-genitore-2-presenze
+
+# ── 4. COMUNICAZIONI ─────────────────────────────────────────────────────────
+- tapOn: "Avvisi"
+- extendedWaitUntil:
+    visible: "Avvisi"
+    timeout: 45000
+- takeScreenshot: /tmp/kv-ios-genitore-3-avvisi
+
+# ── 5. RITORNO ALLA HOME ─────────────────────────────────────────────────────
+# Su iOS non c'è back hardware: si torna con la bottom nav. Serve anche a
+# verificare che la nav resti agganciata sopra l'home indicator (safe-area).
+- tapOn: "Home"
+- extendedWaitUntil:
+    visible: "Menu"
+    timeout: 20000
+- takeScreenshot: /tmp/kv-ios-genitore-4-home

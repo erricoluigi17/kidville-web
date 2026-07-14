@@ -1,0 +1,61 @@
+# =============================================================================
+# Kidville · iOS — percorso utente reale del DOCENTE
+#   login → dashboard → appello (presenze) → bacheca (comunicazioni)
+#
+# Prerequisiti: vedi .claude/maestro-flows/README.md
+#
+# Esecuzione:
+#   maestro test -e KV_EMAIL="$MAESTRO_KV_EMAIL_DOCENTE" \
+#                -e KV_PASSWORD="$MAESTRO_KV_PASSWORD" \
+#                .claude/maestro-flows/ios-percorso-docente.yaml
+# =============================================================================
+appId: it.kidville.app
+name: Kidville · iOS — percorso docente
+tags:
+  - ios
+  - docente
+env:
+  KV_EMAIL: ${MAESTRO_KV_EMAIL_DOCENTE}
+  KV_PASSWORD: ${MAESTRO_KV_PASSWORD}
+---
+- launchApp:
+    clearState: true
+
+# ── 1. LOGIN ─────────────────────────────────────────────────────────────────
+- extendedWaitUntil:
+    visible: "Accedi al tuo account Kidville"
+    timeout: 60000
+- tapOn:
+    below: "Email"
+- inputText: ${KV_EMAIL}
+- hideKeyboard
+- tapOn:
+    below: "Password"
+- inputText: ${KV_PASSWORD}
+- hideKeyboard
+- tapOn: "Accedi"
+
+# ── 2. DASHBOARD ─────────────────────────────────────────────────────────────
+- extendedWaitUntil:
+    visible: "Appello"
+    timeout: 60000
+- assertVisible: "Menu"
+- takeScreenshot: /tmp/kv-ios-docente-1-dashboard
+
+# ── 3. PRESENZE (appello) ────────────────────────────────────────────────────
+- tapOn: "Appello"
+- extendedWaitUntil:
+    visible: "Appello"
+    timeout: 45000
+- takeScreenshot: /tmp/kv-ios-docente-2-appello
+
+# ── 4. COMUNICAZIONI (bacheca) ───────────────────────────────────────────────
+- tapOn: "Menu"
+- extendedWaitUntil:
+    visible: "Bacheca"
+    timeout: 20000
+- tapOn: "Bacheca"
+- extendedWaitUntil:
+    visible: "Circolari e avvisi alle famiglie"
+    timeout: 45000
+- takeScreenshot: /tmp/kv-ios-docente-3-bacheca

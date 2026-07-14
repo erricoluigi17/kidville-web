@@ -1,0 +1,86 @@
+# =============================================================================
+# Kidville · ANDROID — percorso utente reale del GENITORE
+#   login → dashboard → presenze → comunicazioni
+#
+# Prerequisiti (vedi .claude/maestro-flows/README.md):
+#   - emulatore Android avviato
+#   - dev server sull'host, porta 3000
+#   - APK buildato con CAP_SERVER_URL="http://10.0.2.2:3000" e installato
+#   - credenziali negli env MAESTRO_KV_EMAIL_GENITORE / MAESTRO_KV_PASSWORD
+#
+# Esecuzione:
+#   maestro test -e KV_EMAIL="$MAESTRO_KV_EMAIL_GENITORE" \
+#                -e KV_PASSWORD="$MAESTRO_KV_PASSWORD" \
+#                .claude/maestro-flows/android-percorso-genitore.yaml
+#
+# NB: l'app è una WebView Capacitor che carica l'app web da server.url. I tempi
+# di attesa sono generosi di proposito: la prima pagina passa dalla rete.
+# =============================================================================
+appId: it.kidville.app
+name: Kidville · Android — percorso genitore
+tags:
+  - android
+  - genitore
+env:
+  KV_EMAIL: ${MAESTRO_KV_EMAIL_GENITORE}
+  KV_PASSWORD: ${MAESTRO_KV_PASSWORD}
+---
+- launchApp:
+    clearState: true
+
+# ── 1. LOGIN ─────────────────────────────────────────────────────────────────
+# La card di login: titolo "Benvenuto/a!", campi Email e Password, CTA "Accedi".
+- extendedWaitUntil:
+    visible: "Accedi al tuo account Kidville"
+    timeout: 60000
+- assertVisible: "Benvenuto/a!"
+- takeScreenshot: /tmp/kv-android-genitore-0-login
+
+- tapOn:
+    below: "Email"
+- inputText: ${KV_EMAIL}
+- hideKeyboard
+
+- tapOn:
+    below: "Password"
+- inputText: ${KV_PASSWORD}
+- hideKeyboard
+
+- tapOn: "Accedi"
+
+# ── 2. DASHBOARD ─────────────────────────────────────────────────────────────
+# Bottom nav del genitore: Home · Diario (o Scuola) · Avvisi · Chat · Menu.
+- extendedWaitUntil:
+    visible: "Avvisi"
+    timeout: 60000
+- assertVisible: "Home"
+- assertVisible: "Menu"
+- takeScreenshot: /tmp/kv-android-genitore-1-dashboard
+
+# ── 3. PRESENZE ──────────────────────────────────────────────────────────────
+# "Presenze" vive nel foglio Menu, gruppo "La giornata".
+- tapOn: "Menu"
+- extendedWaitUntil:
+    visible: "Presenze"
+    timeout: 20000
+- tapOn: "Presenze"
+- extendedWaitUntil:
+    visible: "Segnala assenza"
+    timeout: 45000
+- takeScreenshot: /tmp/kv-android-genitore-2-presenze
+
+# ── 4. COMUNICAZIONI ─────────────────────────────────────────────────────────
+# Tab "Avvisi" della bottom nav → pagina Avvisi (circolari e adesioni).
+- tapOn: "Avvisi"
+- extendedWaitUntil:
+    visible: "Avvisi"
+    timeout: 45000
+- takeScreenshot: /tmp/kv-android-genitore-3-avvisi
+
+# ── 5. TASTO INDIETRO DI ANDROID ─────────────────────────────────────────────
+# Deve tornare indietro DENTRO l'app, non chiuderla al primo tap.
+- back
+- extendedWaitUntil:
+    visible: "Home"
+    timeout: 20000
+- takeScreenshot: /tmp/kv-android-genitore-4-back

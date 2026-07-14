@@ -1,0 +1,181 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+
+  "permissions": {
+    "defaultMode": "acceptEdits",
+
+    "allow": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Write",
+      "Edit",
+      "TodoWrite",
+      "Task",
+      "Workflow",
+
+      "Agent(scrittore-di-piani)",
+      "Agent(esecutore-opus)",
+      "Agent(tester-opus-backend)",
+      "Agent(tester-opus-frontend)",
+      "Agent(tester-opus-design)",
+      "Agent(tester-opus-debug)",
+      "Agent(tester-opus-mobile-android)",
+      "Agent(tester-opus-mobile-ios)",
+      "Agent(tester-opus-log)",
+      "Agent(tester-opus-sicurezza)",
+      "Agent(tester-opus-privacy)",
+      "Agent(tester-opus-localizzazione)",
+      "Agent(tester-opus-accessibilita)",
+      "Agent(Explore)",
+      "Agent(general-purpose)",
+
+      "Bash(npm run:*)",
+      "Bash(npm ci)",
+      "Bash(npm ci:*)",
+      "Bash(npm install:*)",
+      "Bash(npm exec:*)",
+      "Bash(npm ls:*)",
+      "Bash(npx:*)",
+      "Bash(node:*)",
+      "Bash(tsx:*)",
+
+      "Bash(git:*)",
+      "Bash(gh:*)",
+
+      "Bash(vercel:*)",
+      "Bash(supabase:*)",
+      "Bash(psql:*)",
+
+      "Bash(maestro:*)",
+      "Bash(~/.maestro/bin/maestro:*)",
+      "Bash(adb:*)",
+      "Bash(emulator:*)",
+      "Bash(avdmanager:*)",
+      "Bash(sdkmanager:*)",
+      "Bash(./gradlew:*)",
+      "Bash(gradle:*)",
+      "Bash(xcrun:*)",
+      "Bash(xcodebuild:*)",
+      "Bash(pod:*)",
+      "Bash(open:*)",
+      "Bash(java:*)",
+
+      "Bash(cd:*)",
+      "Bash(ls:*)",
+      "Bash(pwd)",
+      "Bash(mkdir:*)",
+      "Bash(cp:*)",
+      "Bash(mv:*)",
+      "Bash(rm:*)",
+      "Bash(chmod:*)",
+      "Bash(touch:*)",
+      "Bash(cat:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(echo:*)",
+      "Bash(printf:*)",
+      "Bash(find:*)",
+      "Bash(grep:*)",
+      "Bash(rg:*)",
+      "Bash(sed:*)",
+      "Bash(awk:*)",
+      "Bash(jq:*)",
+      "Bash(sort:*)",
+      "Bash(uniq:*)",
+      "Bash(wc:*)",
+      "Bash(diff:*)",
+      "Bash(which:*)",
+      "Bash(command:*)",
+      "Bash(env)",
+      "Bash(export:*)",
+      "Bash(date:*)",
+      "Bash(sleep:*)",
+      "Bash(lsof:*)",
+      "Bash(pkill:*)",
+      "Bash(kill:*)",
+      "Bash(curl:*)",
+      "Bash(true)",
+
+      "mcp__supabase__list_tables",
+      "mcp__supabase__list_migrations",
+      "mcp__supabase__list_extensions",
+      "mcp__supabase__apply_migration",
+      "mcp__supabase__execute_sql",
+      "mcp__supabase__get_advisors",
+      "mcp__supabase__get_logs",
+      "mcp__supabase__get_project_url",
+      "mcp__supabase__get_publishable_keys",
+      "mcp__supabase__generate_typescript_types",
+      "mcp__supabase__search_docs",
+
+      "mcp__claude-in-chrome__*",
+      "mcp__ide__getDiagnostics",
+
+      "mcp__claude_ai_Vercel__list_deployments",
+      "mcp__claude_ai_Vercel__get_deployment",
+      "mcp__claude_ai_Vercel__get_deployment_build_logs",
+      "mcp__claude_ai_Vercel__get_runtime_logs",
+      "mcp__claude_ai_Vercel__get_runtime_errors",
+      "mcp__claude_ai_Vercel__get_project",
+      "mcp__claude_ai_Vercel__list_projects",
+
+      "WebSearch",
+      "WebFetch(domain:docs.claude.com)",
+      "WebFetch(domain:code.claude.com)",
+      "WebFetch(domain:supabase.com)",
+      "WebFetch(domain:nextjs.org)",
+      "WebFetch(domain:vercel.com)",
+      "WebFetch(domain:maestro.mobile.dev)",
+      "WebFetch(domain:docs.maestro.dev)",
+      "WebFetch(domain:developer.mozilla.org)",
+      "WebFetch(domain:www.w3.org)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:capacitorjs.com)"
+    ],
+
+    "deny": [
+      "Read(.env.local)",
+      "Read(.env)",
+      "Read(.env.*.local)",
+
+      "Bash(npm run e2e:*)",
+      "Bash(npx playwright test:*)",
+      "Bash(node scripts/seed-e2e.mjs:*)",
+
+      "Bash(supabase db reset:*)",
+      "Bash(npx supabase db reset:*)",
+
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+
+      "Bash(sudo:*)",
+
+      "Bash(rm -rf /)",
+      "Bash(rm -rf ~)",
+      "Bash(rm -rf ~/*)",
+      "Bash(rm -rf $HOME:*)",
+      "Bash(rm -rf /Users:*)",
+      "Bash(rm -rf /System:*)",
+      "Bash(rm -rf /Applications:*)",
+      "Bash(rm -rf /Library:*)",
+      "Bash(rm -rf /usr:*)",
+      "Bash(rm -rf /etc:*)",
+      "Bash(rm -rf /var:*)"
+    ]
+  },
+
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/verify_gate.sh\"",
+            "timeout": 1800
+          }
+        ]
+      }
+    ]
+  }
+}

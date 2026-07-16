@@ -10,8 +10,64 @@ import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { normalizzaProvincia } from '@/lib/anagrafiche/province'
 import { z } from 'zod'
 import type { EnrollmentSubmissionData, EnrollmentAdult, EnrollmentChild } from '@/types/database.types'
+
+// Esito bloccante dell'import: impedisce di marcare l'invio 'approved' (a differenza
+// dei `warnings`, non bloccanti). `dove` = "Adulto N"/"Bambino N", `messaggio` = testo it.
+interface ImportError {
+  dove: string
+  messaggio: string
+}
+
+// Normalizza una provincia (residence/birth) alla sigla ufficiale. Rete di sicurezza per
+// gli invii già in coda con la provincia PER ESTESO ("Caserta" → "CE"): senza, l'INSERT su
+// parents/alunni (residence_province/birth_province varchar(2)) esplode con Postgres 22001.
+//   - assente (null/undefined/'') → { ok, value:null }: la provincia è facoltativa.
+//   - riconoscibile (sigla o nome per esteso) → { ok, value:<sigla> }.
+//   - non riconoscibile → { ok:false, messaggio }: MAI troncare a caso (art. province.ts).
+function normalizzaCampoProvincia(
+  raw: unknown,
+  etichetta: 'di residenza' | 'di nascita',
+): { ok: true; value: string | null } | { ok: false; messaggio: string } {
+  if (raw === null || raw === undefined || (typeof raw === 'string' && raw.trim() === '')) {
+    return { ok: true, value: null }
+  }
+  const sigla = normalizzaProvincia(raw)
+  if (sigla) return { ok: true, value: sigla }
+  return { ok: false, messaggio: `Provincia ${etichetta} non valida: usare la sigla, es. NA` }
+}
+
+// Traduce un errore PostgREST/Postgres in un messaggio italiano per l'operatore, deducendo
+// il campo dal messaggio quando possibile. Il messaggio (che può contenere valori: es. il
+// dettaglio di una unique-violation) va SOLO nella risposta HTTP allo staff, MAI in `app_log`
+// (dove si logga codice+campo). Ritorna anche `codice`/`campo` per il logging strutturato.
+function descriviErroreDb(
+  err: { code?: string; message?: string } | null,
+): { messaggio: string; campo: string | null; codice: string | null } {
+  const codice = err?.code ?? null
+  const rawMsg = err?.message ?? 'errore sconosciuto'
+  // INSERT nudo: 'column "X"'; PostgREST: "Could not find the 'X' column".
+  const m = /column "?([a-z_]+)"?|'([a-z_]+)' column/i.exec(rawMsg)
+  const campo = m?.[1] ?? m?.[2] ?? null
+  if (codice === '22001') {
+    return {
+      messaggio: campo
+        ? `Valore troppo lungo per il campo "${campo}": verificare i dati e riprovare.`
+        : 'Un valore supera la lunghezza massima del database (controllare le province: usare la sigla, es. NA).',
+      campo,
+      codice,
+    }
+  }
+  if (codice === '23505') {
+    return { messaggio: `Record già presente in anagrafica${campo ? ` (campo "${campo}")` : ''}.`, campo, codice }
+  }
+  if (codice === '23502') {
+    return { messaggio: `Manca un dato obbligatorio${campo ? `: "${campo}"` : ''}.`, campo, codice }
+  }
+  return { messaggio: `Creazione non riuscita: ${rawMsg}`, campo, codice }
+}
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({
@@ -151,7 +207,49 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
       }
     }
 
+    // Bloccanti (impediscono l'approvazione) vs warnings (non bloccanti).
+    const errors: ImportError[] = []
     const warnings: string[] = []
+
+    // ─── PRE-FLIGHT province: valida TUTTI i record PRIMA di qualsiasi scrittura ───
+    // Così una provincia per esteso non riconoscibile non lascia mai anagrafiche a metà:
+    // niente insert parziali, l'invio resta 'pending' e l'operatore corregge e riprova.
+    // Le sigle normalizzate vengono riusate negli INSERT sotto (una sola normalizzazione).
+    const adultProv: { residence: string | null; birth: string | null }[] = []
+    for (let ai = 0; ai < adults.length; ai++) {
+      const a = adults[ai] as EnrollmentAdult
+      const res = normalizzaCampoProvincia(a.residence_province, 'di residenza')
+      const bir = normalizzaCampoProvincia(a.birth_province, 'di nascita')
+      if (!res.ok) {
+        errors.push({ dove: `Adulto ${ai + 1}`, messaggio: res.messaggio })
+        logEvento('db', 'error', { operazione: 'admin/iscrizioni:PATCH', esito: 'provincia-non-valida', entita: 'adulto', indice: ai + 1, campo: 'residence_province' })
+      }
+      if (!bir.ok) {
+        errors.push({ dove: `Adulto ${ai + 1}`, messaggio: bir.messaggio })
+        logEvento('db', 'error', { operazione: 'admin/iscrizioni:PATCH', esito: 'provincia-non-valida', entita: 'adulto', indice: ai + 1, campo: 'birth_province' })
+      }
+      adultProv.push({ residence: res.ok ? res.value : null, birth: bir.ok ? bir.value : null })
+    }
+    const childProv: { residence: string | null; birth: string | null }[] = []
+    for (let ci = 0; ci < children.length; ci++) {
+      const c = children[ci] as EnrollmentChild
+      const res = normalizzaCampoProvincia(c.residence_province, 'di residenza')
+      const bir = normalizzaCampoProvincia(c.birth_province, 'di nascita')
+      if (!res.ok) {
+        errors.push({ dove: `Bambino ${ci + 1}`, messaggio: res.messaggio })
+        logEvento('db', 'error', { operazione: 'admin/iscrizioni:PATCH', esito: 'provincia-non-valida', entita: 'bambino', indice: ci + 1, campo: 'residence_province' })
+      }
+      if (!bir.ok) {
+        errors.push({ dove: `Bambino ${ci + 1}`, messaggio: bir.messaggio })
+        logEvento('db', 'error', { operazione: 'admin/iscrizioni:PATCH', esito: 'provincia-non-valida', entita: 'bambino', indice: ci + 1, campo: 'birth_province' })
+      }
+      childProv.push({ residence: res.ok ? res.value : null, birth: bir.ok ? bir.value : null })
+    }
+    if (errors.length > 0) {
+      logEvento('db', 'error', { operazione: 'admin/iscrizioni:PATCH', esito: 'import-bloccato-preflight', bloccanti: errors.length })
+      return NextResponse.json({ success: false, errors, warnings }, { status: 200 })
+    }
+
     let credentials: { email: string; password: string } | null = null
     let credentialsEmailSent = false
     let referenteUserId: string | null = null
@@ -186,13 +284,13 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
           fiscal_code: a.fiscal_code ?? null,
           birth_date: a.birth_date || null,
           birth_city: a.birth_place ?? null,
-          birth_province: a.birth_province ?? null,
           birth_nation: a.birth_nation ?? null,
           citizenship: a.citizenship ?? null,
           residence_address: a.address ?? null,
           residence_street_number: a.residence_street_number ?? null,
           residence_city: a.residence_city ?? null,
-          residence_province: a.residence_province ? String(a.residence_province).toUpperCase() : null,
+          residence_province: adultProv[ai].residence,
+          birth_province: adultProv[ai].birth,
           zip_code: a.zip_code ?? null,
           emails: a.email ? [a.email] : [],
           phone_numbers: a.phone ? [a.phone] : [],
@@ -219,7 +317,11 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
         }
         const { data: newParent, error: pErr } = pRes
         if (pErr || !newParent) {
-          warnings.push(`Adulto ${ai + 1}: ${pErr?.message ?? 'creazione fallita'}`)
+          // Fallimento BLOCCANTE: senza referente/adulto in anagrafica l'import non è
+          // completo. Niente più degrado a `warning` con 'approved' fasullo (il bug 22001).
+          const d = descriviErroreDb(pErr)
+          errors.push({ dove: `Adulto ${ai + 1}`, messaggio: d.messaggio })
+          logEvento('db', 'error', { operazione: 'admin/iscrizioni:PATCH', esito: 'insert-adulto-fallito', entita: 'adulto', indice: ai + 1, campo: d.campo, codice: d.codice })
           continue
         }
         parentId = newParent.id
@@ -301,6 +403,39 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
         }
       }
 
+      // Dedup SOFT per gli alunni SENZA codice fiscale (nome+cognome+data_nascita+scuola).
+      // Serve al RE-IMPORT dopo un fallimento parziale: senza CF non c'è chiave forte, e un
+      // secondo import ricreerebbe lo stesso bambino. Guardia stretta — attiva SOLO con tutti
+      // e tre i campi identificativi presenti — per non fondere per errore due bambini omonimi
+      // privi di data di nascita. `limit(1)` protegge `maybeSingle` da eventuali duplicati già
+      // in tabella. Se la colonna non esistesse nel DB E2E (42703) l'errore è ignorato e si
+      // procede all'insert (comportamento invariato: al più un doppione in E2E, mai in prod).
+      if (!studentId && !c.codice_fiscale && c.nome && c.cognome && c.data_nascita) {
+        const { data: soft, error: softErr } = await supabase
+          .from('alunni')
+          .select('id')
+          .eq('scuola_id', scuolaId)
+          .eq('nome', c.nome)
+          .eq('cognome', c.cognome)
+          .eq('data_nascita', c.data_nascita)
+          .limit(1)
+          .maybeSingle()
+        if (softErr) {
+          logEvento('db', 'info', { operazione: 'admin/iscrizioni:PATCH', esito: 'dedup-soft-non-disponibile', entita: 'bambino', indice: ci + 1, codice: (softErr as { code?: string }).code ?? null })
+        } else if (soft) {
+          studentId = soft.id
+          await supabase.from('alunni').update({ classe_sezione: classe }).eq('id', studentId)
+          await logScrittura(supabase, {
+            attore: auth.user,
+            entitaTipo: 'alunni',
+            entitaId: studentId,
+            azione: 'update',
+            scuolaId,
+            valoreDopo: { classe_sezione: classe },
+          })
+        }
+      }
+
       if (!studentId) {
         const childRecord: Record<string, unknown> = {
           scuola_id: scuolaId,
@@ -310,13 +445,13 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
           gender: c.gender ?? null,
           codice_fiscale: c.codice_fiscale ?? null,
           birth_city: c.birth_city ?? null,
-          birth_province: c.birth_province ?? null,
+          birth_province: childProv[ci].birth,
           birth_nation: c.birth_nation ?? null,
           citizenship: c.citizenship ?? null,
           residence_address: c.residence_address ?? null,
           residence_street_number: c.residence_street_number ?? null,
           residence_city: c.residence_city ?? null,
-          residence_province: c.residence_province ? String(c.residence_province).toUpperCase() : null,
+          residence_province: childProv[ci].residence,
           zip_code: c.zip_code ?? null,
           allergies: c.allergies ?? null,
           note_mediche: c.note_mediche ?? null,
@@ -338,7 +473,10 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
         }
         const { data: newChild, error: cErr } = cRes
         if (cErr || !newChild) {
-          warnings.push(`Bambino ${ci + 1}: ${cErr?.message ?? 'creazione fallita'}`)
+          // Fallimento BLOCCANTE: un figlio non creato = iscrizione incompleta.
+          const d = descriviErroreDb(cErr)
+          errors.push({ dove: `Bambino ${ci + 1}`, messaggio: d.messaggio })
+          logEvento('db', 'error', { operazione: 'admin/iscrizioni:PATCH', esito: 'insert-bambino-fallito', entita: 'bambino', indice: ci + 1, campo: d.campo, codice: d.codice })
           continue
         }
         studentId = newChild.id
@@ -375,7 +513,32 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
       }
     }
 
-    // 4. Aggiorna l'invio
+    // 4. Esito. Se durante gli INSERT c'è stato ALMENO un errore bloccante (referente o un
+    // figlio non creati), l'invio NON passa ad 'approved': resta 'pending', così l'operatore
+    // vede il problema e riprova (il re-import è deduplicato per CF e, senza CF, dalla dedup
+    // soft sopra). È il cuore del fix del bug 22001: prima si marcava 'approved' comunque e la
+    // UI diceva "Importata" mentre in anagrafica non c'era nulla.
+    if (errors.length > 0) {
+      logEvento('db', 'error', {
+        operazione: 'admin/iscrizioni:PATCH',
+        esito: 'import-incompleto',
+        bloccanti: errors.length,
+        creati: createdStudents.length,
+        agganciati: parentLinks.length,
+      })
+      return NextResponse.json(
+        {
+          success: false,
+          errors,
+          warnings,
+          created_students: createdStudents,
+          linked_parents: parentLinks.length,
+        },
+        { status: 200 },
+      )
+    }
+
+    // 5. Import completo → aggiorna l'invio a 'approved'.
     const { error: updErr } = await supabase
       .from('enrollment_submissions')
       .update({

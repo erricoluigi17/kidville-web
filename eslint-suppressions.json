@@ -79,11 +79,6 @@
       "count": 1
     }
   },
-  "src/components/features/admin/iscrizioni/ModuliRicevuti.tsx": {
-    "no-console": {
-      "count": 2
-    }
-  },
   "src/components/features/avvisi/AvvisoDetailsContent.tsx": {
     "no-console": {
       "count": 2
@@ -94,27 +89,12 @@
       "count": 2
     }
   },
-  "src/components/features/forms/FieldRenderer.tsx": {
-    "no-console": {
-      "count": 1
-    }
-  },
   "src/components/features/gallery/MediaGrid.tsx": {
     "no-console": {
       "count": 6
     }
   },
-  "src/components/features/parent/forms/WizardContainer.tsx": {
-    "no-console": {
-      "count": 1
-    }
-  },
   "src/components/features/parent/pagamenti/PushOptIn.tsx": {
-    "no-console": {
-      "count": 1
-    }
-  },
-  "src/components/features/public/EnrollmentWizard.tsx": {
     "no-console": {
       "count": 1
     }

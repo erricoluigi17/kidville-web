@@ -10,7 +10,10 @@ import {
 import { StepRenderer } from './StepRenderer'
 import { OtpSignatureModal } from './OtpSignatureModal'
 import { campoVisibile, pulisciNascosti, type FormValues } from '@/lib/forms/conditional'
-import type { FormSchemaConfig, FormSubmissionData } from '@/types/database.types'
+import { validateField, isProvinceField } from '@/lib/forms/validate-fields'
+import { normalizzaProvincia } from '@/lib/anagrafiche/province'
+import { logClient } from '@/lib/logging/client'
+import type { FormField, FormSchemaConfig, FormSubmissionData } from '@/types/database.types'
 
 interface Props {
   modelId: string
@@ -61,8 +64,36 @@ export function WizardContainer({
     control,
     trigger,
     getValues,
+    setValue,
+    setFocus,
+    setError,
     formState: { errors },
   } = useForm<FieldValues>({ mode: 'onTouched' })
+
+  /**
+   * Mappa gli errori per-campo restituiti dal server (400 `{ campi: { id: msg } }`)
+   * sulla STESSA UI degli errori client (messaggio sotto il campo + aria).
+   * Ritorna true se ha mappato almeno un campo (→ niente alert generico).
+   */
+  function mappaErroriServer(campi: unknown): boolean {
+    if (campi === null || typeof campi !== 'object') return false
+    const chiavi: string[] = []
+    for (const [id, msg] of Object.entries(campi as Record<string, unknown>)) {
+      if (typeof msg === 'string' && msg.length > 0) {
+        setError(id, { type: 'server', message: msg })
+        chiavi.push(id)
+      }
+    }
+    if (chiavi.length === 0) return false
+    // Porta l'utente alla pagina del primo campo in errore (il messaggio è già
+    // in stato RHF: comparirà appena la pagina monta).
+    const idx = pages.findIndex(p => p.fields.some(f => chiavi.includes(f.id)))
+    if (idx >= 0 && idx !== step) {
+      setDirection(idx < step ? -1 : 1)
+      setStep(idx)
+    }
+    return true
+  }
 
   const isLast = step === pages.length - 1
   const progress = pages.length > 0 ? ((step + 1) / pages.length) * 100 : 0
@@ -72,12 +103,29 @@ export function WizardContainer({
     const values = getValues() as FormValues
     // Valida solo i campi non-decorativi e attualmente VISIBILI (DL-024):
     // un campo nascosto, anche se "obbligatorio", non blocca l'avanzamento.
-    const fieldIds = currentPage.fields
+    const visibili: FormField[] = currentPage.fields
       .filter(f => !['section_header', 'paragraph', 'signature'].includes(f.type))
       .filter(f => campoVisibile(f, values))
-      .map(f => f.id)
-    const valid = await trigger(fieldIds)
-    if (!valid) return
+
+    // Provincia: normalizza i nomi riconosciuti in sigla PRIMA di validare, così
+    // "Napoli" passa come "NA" anche senza blur; l'irriconoscibile resta e la
+    // validazione lo blocca (mai indovinare).
+    for (const f of visibili) {
+      if (!isProvinceField(f)) continue
+      const raw = getValues(f.id)
+      if (raw === null || raw === undefined || String(raw).trim() === '') continue
+      const sigla = normalizzaProvincia(raw)
+      if (sigla && sigla !== raw) setValue(f.id, sigla, { shouldValidate: false })
+    }
+
+    const valid = await trigger(visibili.map(f => f.id))
+    if (!valid) {
+      // Focus al primo campo in errore (accessibilità: l'utente arriva subito
+      // dove correggere).
+      const primo = visibili.find(f => validateField(f, getValues(f.id)))
+      if (primo) setFocus(primo.id)
+      return
+    }
 
     if (isLast) {
       await handleSubmit()
@@ -106,7 +154,10 @@ export function WizardContainer({
           body: JSON.stringify({ modelId, userId, data }),
         })
         const json = await res.json()
-        if (!res.ok) throw new Error(json.error ?? 'Invio OTP fallito')
+        if (!res.ok) {
+          if (res.status === 400 && mappaErroriServer(json?.campi)) return
+          throw new Error(json.error ?? 'Invio OTP fallito')
+        }
         setOtp({ submissionId: json.submissionId, devCode: json.devCode })
       } else {
         // Nessuna firma: salva via endpoint server-role (l'insert client-side è
@@ -123,11 +174,21 @@ export function WizardContainer({
           body: JSON.stringify(body),
         })
         const json = await res.json()
-        if (!res.ok) throw new Error(json.error ?? 'Invio fallito')
+        if (!res.ok) {
+          if (res.status === 400 && mappaErroriServer(json?.campi)) return
+          throw new Error(json.error ?? 'Invio fallito')
+        }
         setDone(true)
       }
     } catch (err) {
-      console.error('Errore invio modulo:', err)
+      // Un catch che risponde con un alert deve loggare: `withRoute` è lato
+      // server e non vede questa eccezione. `logClient` redige il path, non lancia.
+      logClient({
+        livello: 'error',
+        evento: 'fetch',
+        messaggio: `invio modulo fallito — ${err instanceof Error ? err.message : 'errore sconosciuto'}`,
+        stack: err instanceof Error ? err.stack : undefined,
+      })
       alert('Si è verificato un errore durante l\'invio. Riprova.')
     } finally {
       setSubmitting(false)

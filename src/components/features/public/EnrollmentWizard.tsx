@@ -12,6 +12,9 @@ import {
   CHILD_FIELDS, ADULT_FIELDS, ENROLLMENT_LIMITS,
 } from '@/lib/forms/enrollment-template'
 import { extractEnrollmentTemplates } from '@/lib/forms/enrollment-default-schema'
+import { validateField, isProvinceField } from '@/lib/forms/validate-fields'
+import { normalizzaProvincia } from '@/lib/anagrafiche/province'
+import { logClient } from '@/lib/logging/client'
 import type { FormField, EnrollmentSubmissionData } from '@/types/database.types'
 
 const UPLOAD_ENDPOINT = '/api/iscrizione/upload'
@@ -63,7 +66,7 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
   }, [])
 
   const {
-    register, control, trigger, getValues,
+    register, control, trigger, getValues, setValue, setFocus, setError,
     formState: { errors },
   } = useForm<FieldValues>({ mode: 'onTouched' })
 
@@ -79,15 +82,72 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
   const isLast = step === steps.length - 1
   const progress = ((step + 1) / steps.length) * 100
 
-  function currentFieldNames(): string[] {
-    if (current.kind === 'child') return nsFields(`children.${current.index}`, childFields).map(f => f.id)
-    if (current.kind === 'adult') return nsFields(`adults.${current.index}`, adultFields).map(f => f.id)
+  // Campi (namespacizzati) dell'istanza corrente. Le pagine bambino/adulto sono
+  // template RIPETIBILI: ogni figlio/adulto ha i propri campi `children.i.*` /
+  // `adults.i.*`, e la validazione va applicata all'istanza mostrata.
+  function currentNsFields(): FormField[] {
+    if (current.kind === 'child') return nsFields(`children.${current.index}`, childFields)
+    if (current.kind === 'adult') return nsFields(`adults.${current.index}`, adultFields)
     return []
   }
 
+  /**
+   * Mappa gli errori per-campo del server (400 `{ campi: { children: { i: { id: msg } }, adults: {…} } }`)
+   * sulla stessa UI degli errori client, e porta l'utente all'istanza in errore.
+   */
+  function mappaErroriServer(campi: unknown): boolean {
+    if (campi === null || typeof campi !== 'object') return false
+    const c = campi as {
+      children?: Record<string, Record<string, string>>
+      adults?: Record<string, Record<string, string>>
+    }
+    let primoStep = -1
+    const applica = (
+      gruppo: 'children' | 'adults',
+      mappa: Record<string, Record<string, string>> | undefined,
+      stepDi: (i: number) => number,
+    ): void => {
+      if (mappa === null || mappa === undefined || typeof mappa !== 'object') return
+      for (const [idxStr, campiRec] of Object.entries(mappa)) {
+        const i = Number(idxStr)
+        if (!Number.isInteger(i) || campiRec === null || typeof campiRec !== 'object') continue
+        for (const [campoId, msg] of Object.entries(campiRec)) {
+          if (typeof msg !== 'string' || msg.length === 0) continue
+          setError(`${gruppo}.${i}.${campoId}`, { type: 'server', message: msg })
+          const s = stepDi(i)
+          if (primoStep === -1 || s < primoStep) primoStep = s
+        }
+      }
+    }
+    applica('children', c.children, i => i)
+    applica('adults', c.adults, i => childCount + i)
+    if (primoStep === -1) return false
+    if (primoStep !== step) {
+      setDirection(primoStep < step ? -1 : 1)
+      setStep(primoStep)
+    }
+    return true
+  }
+
   async function goNext() {
-    const valid = await trigger(currentFieldNames())
-    if (!valid) return
+    const fields = currentNsFields()
+    // Provincia: normalizza i nomi riconosciuti in sigla PRIMA di validare
+    // ("Napoli" → "NA"), così passa anche senza blur; l'irriconoscibile resta e
+    // la validazione lo blocca.
+    for (const f of fields) {
+      if (!isProvinceField(f)) continue
+      const raw = getValues(f.id)
+      if (raw === null || raw === undefined || String(raw).trim() === '') continue
+      const sigla = normalizzaProvincia(raw)
+      if (sigla && sigla !== raw) setValue(f.id, sigla, { shouldValidate: false })
+    }
+
+    const valid = await trigger(fields.map(f => f.id))
+    if (!valid) {
+      const primo = fields.find(f => validateField(f, getValues(f.id)))
+      if (primo) setFocus(primo.id)
+      return
+    }
     if (isLast) {
       await handleSubmit()
     } else {
@@ -115,10 +175,23 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
         body: JSON.stringify({ data, scuola_id: scuolaId ?? undefined }),
       })
       const json = await res.json()
-      if (!res.ok) throw new Error(json.error ?? 'Invio fallito')
+      if (!res.ok) {
+        // Il server riverifica e risponde 400 con gli errori per campo: mappali
+        // sui campi (stessa UI del client) e riporta l'utente all'istanza in errore,
+        // invece di un alert generico.
+        if (res.status === 400 && mappaErroriServer(json?.campi)) return
+        throw new Error(json.error ?? 'Invio fallito')
+      }
       setDone(true)
     } catch (err) {
-      console.error('Errore invio iscrizione:', err)
+      // Un catch che risponde con un alert deve loggare: `withRoute` è lato server
+      // e non vede questa eccezione. `logClient` redige il path e non lancia.
+      logClient({
+        livello: 'error',
+        evento: 'fetch',
+        messaggio: `invio iscrizione fallito — ${err instanceof Error ? err.message : 'errore sconosciuto'}`,
+        stack: err instanceof Error ? err.stack : undefined,
+      })
       alert('Si è verificato un errore durante l\'invio. Controlla i dati e riprova.')
     } finally {
       setSubmitting(false)

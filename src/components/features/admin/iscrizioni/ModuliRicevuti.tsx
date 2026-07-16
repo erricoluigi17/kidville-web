@@ -9,6 +9,17 @@ import { ADULT_ROLE_LABELS } from '@/lib/forms/enrollment-template'
 import type { EnrollmentSubmissionData, EnrollmentChild, EnrollmentAdult } from '@/types/database.types'
 import { StatCard } from '@/components/ui/cockpit'
 import { useSediAttive } from '@/lib/context/sede-context'
+import { logClient } from '@/lib/logging/client'
+
+// Esito dell'import. `success:false` = almeno un errore BLOCCANTE (referente/figlio non
+// creati): l'invio resta tra i "Da importare" e va mostrato il pannello d'errore in evidenza.
+interface ImportResult {
+  success?: boolean
+  credentials?: { email: string; password: string } | null
+  credentialsEmailSent?: boolean
+  warnings?: string[]
+  errors?: { dove: string; messaggio: string }[]
+}
 
 // "Moduli ricevuti": iscrizioni compilate via /iscrizione (enrollment_submissions)
 // con import in anagrafica. Estratto da /admin/iscrizioni (tab "Ricevute").
@@ -32,7 +43,7 @@ export function ModuliRicevuti() {
   const [assignments, setAssignments] = useState<Record<string, string>>({})
   const [referenteIndex, setReferenteIndex] = useState(0)
   const [working, setWorking] = useState(false)
-  const [result, setResult] = useState<{ credentials?: { email: string; password: string } | null; credentialsEmailSent?: boolean; warnings?: string[] } | null>(null)
+  const [result, setResult] = useState<ImportResult | null>(null)
 
   const { reFetchKey } = useSediAttive()
 
@@ -48,7 +59,12 @@ export function ModuliRicevuti() {
       if (Array.isArray(r)) setRows(r)
       if (Array.isArray(s)) setSections(s)
     } catch (e) {
-      console.error(e)
+      logClient({
+        livello: 'error',
+        evento: 'react',
+        messaggio: `Caricamento moduli iscrizione fallito: ${e instanceof Error ? e.message : String(e)}`,
+        route: '/admin/iscrizioni',
+      })
     } finally {
       setLoading(false)
     }
@@ -80,10 +96,24 @@ export function ModuliRicevuti() {
       })
       const json = await res.json()
       if (!res.ok) { alert(json.error ?? 'Import fallito'); return }
-      setResult({ credentials: json.credentials, credentialsEmailSent: json.credentialsEmailSent, warnings: json.warnings })
+      // `success:false` = errori bloccanti: l'invio resta 'pending' (nessun cambio di stato
+      // lato server), quindi resta tra i "Da importare" e i pulsanti Importa/Rifiuta restano
+      // disponibili per riprovare. Il pannello d'errore lo mostra in evidenza.
+      setResult({
+        success: json.success !== false,
+        credentials: json.credentials,
+        credentialsEmailSent: json.credentialsEmailSent,
+        warnings: json.warnings,
+        errors: json.errors,
+      })
       await load(reFetchKey)
     } catch (e) {
-      console.error(e)
+      logClient({
+        livello: 'error',
+        evento: 'react',
+        messaggio: `Import iscrizione fallito: ${e instanceof Error ? e.message : String(e)}`,
+        route: '/admin/iscrizioni',
+      })
       alert('Errore durante l\'import')
     } finally {
       setWorking(false)
@@ -225,7 +255,7 @@ function DetailPanel({
   referenteIndex: number
   setReferenteIndex: (n: number) => void
   working: boolean
-  result: { credentials?: { email: string; password: string } | null; credentialsEmailSent?: boolean; warnings?: string[] } | null
+  result: ImportResult | null
   onImport: () => void
   onReject: () => void
   onViewDoc: (path?: string) => void
@@ -320,8 +350,34 @@ function DetailPanel({
         </div>
       </section>
 
-      {/* Risultato import */}
-      {result && (
+      {/* Esito import — errore bloccante (in evidenza) */}
+      {result && result.success === false && (
+        <div className="rounded-xl border-2 border-kidville-error/40 bg-kidville-error-soft p-4 space-y-2">
+          <p className="text-sm font-bold text-kidville-error-strong flex items-center gap-1.5">
+            <XCircle size={16} /> Import non completato
+          </p>
+          <p className="text-xs text-kidville-error-strong">
+            La richiesta resta tra quelle da importare. Correggi i dati indicati e premi di nuovo
+            «Importa nelle anagrafiche».
+          </p>
+          {result.errors && result.errors.length > 0 && (
+            <ul className="text-xs text-kidville-error-strong list-disc ml-5 space-y-0.5">
+              {result.errors.map((er, i) => (
+                <li key={i}><strong>{er.dove}:</strong> {er.messaggio}</li>
+              ))}
+            </ul>
+          )}
+          {result.warnings && result.warnings.length > 0 && (
+            <div className="text-xs text-kidville-warn-strong mt-1">
+              <p className="flex items-center gap-1 font-semibold"><AlertTriangle size={12} /> Avvisi:</p>
+              <ul className="list-disc ml-5">{result.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Esito import — successo */}
+      {result && result.success !== false && (
         <div className="rounded-xl border border-kidville-success/30 bg-kidville-success-soft p-3 space-y-2">
           <p className="text-sm font-semibold text-kidville-success flex items-center gap-1.5">
             <CheckCircle2 size={16} /> Iscrizione importata
@@ -336,11 +392,11 @@ function DetailPanel({
             <p className="text-xs flex items-center gap-1.5">
               {result.credentialsEmailSent
                 ? <><CheckCircle2 size={12} className="text-kidville-success" /> <span className="text-kidville-success">Credenziali inviate via email al referente.</span></>
-                : <><AlertTriangle size={12} className="text-kidville-warn" /> <span className="text-kidville-warn">Email non inviata: comunicare le credenziali manualmente.</span></>}
+                : <><AlertTriangle size={12} className="text-kidville-warn" /> <span className="text-kidville-warn-strong">Email non inviata: comunicare le credenziali manualmente.</span></>}
             </p>
           )}
           {result.warnings && result.warnings.length > 0 && (
-            <div className="text-xs text-kidville-warn">
+            <div className="text-xs text-kidville-warn-strong">
               <p className="flex items-center gap-1 font-semibold"><AlertTriangle size={12} /> Avvisi:</p>
               <ul className="list-disc ml-5">{result.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
             </div>

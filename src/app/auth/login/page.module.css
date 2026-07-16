@@ -22,12 +22,25 @@
   justify-content: center;
   /* niente lampo grigio al tap su iOS/Android (come nel design) */
   -webkit-tap-highlight-color: transparent;
-  /* Design: .screen ha crema pieno (--kv-cream), senza gradiente. È una crema
-     più neutra di --color-kidville-cream (#FEF1E4, sfondo del resto dell'app):
-     resta page-scoped, con il ribaltamento in Alto Contrasto in coda al file. */
-  background: #faf6ef;
-  /* Il margine orizzontale (18px) lo mette .scene: qui sommerebbe e stringerebbe la card. */
-  padding: 16px 0 calc(16px + env(safe-area-inset-bottom));
+  /* Crema pieno, senza gradiente (design: .screen). Usa il token brand
+     --color-kidville-cream (#FEF1E4), lo STESSO sfondo del resto dell'app e del
+     body: così in shell nativa non compare la "striscia" panna del body sotto la
+     pagina (prima era #faf6ef ≠ #FEF1E4 → due creme). Il ribaltamento in Alto
+     Contrasto (fondo nero) resta in coda al file. */
+  background: var(--color-kidville-cream);
+  /* Il margine orizzontale (18px) lo mette .scene: qui sommerebbe e stringerebbe
+     la card. Il padding-top ingloba la safe-area del notch (in shell nativa il
+     body ha già env(safe-area-inset-top): vedi il margin-top negativo sotto). */
+  padding: calc(16px + env(safe-area-inset-top)) 0 calc(16px + env(safe-area-inset-bottom));
+}
+
+/* Shell nativa: il body porta padding-top: env(safe-area-inset-top) (globals.css)
+   → il documento supererebbe 100dvh e scrollerebbe. Il margin-top negativo
+   annulla quel padding sulla login (pattern speculare a [data-kv-shell] in
+   globals.css); la safe-area rientra nel padding-top di .page qui sopra. Sul web
+   env() = 0: no-op. */
+:global(html.cap-native) .page {
+  margin-top: calc(-1 * env(safe-area-inset-top));
 }
 
 /* ───────── Sfondo decorativo ─────────
@@ -349,7 +362,8 @@
    Sui telefoni normali (≥720px) restano i valori del mockup. */
 @media (max-height: 720px) {
   .page {
-    padding: 12px 0 calc(12px + env(safe-area-inset-bottom));
+    /* Come sopra: il padding-top ingloba la safe-area del notch in shell nativa. */
+    padding: calc(12px + env(safe-area-inset-top)) 0 calc(12px + env(safe-area-inset-bottom));
   }
   .logo {
     width: 168px;

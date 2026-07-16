@@ -26,8 +26,10 @@
   /* ── Stati semantici cockpit (segreteria/admin) ── */
   --color-kidville-warn: #E6720A;
   --color-kidville-warn-soft: #FBEFE2;
+  --color-kidville-warn-strong: #A64F09;  /* testo/attivo su warn-soft: bianco 5,6:1, testo su warn-soft 4,96:1 (appello "Ritardo") */
   --color-kidville-info: #2A6FDB;
   --color-kidville-info-soft: #E9F1FB;
+  --color-kidville-info-strong: #1D4FA8;  /* testo su info-soft 6,7:1 (bottone "Uscita Ant.") */
   --color-kidville-neutral: #8A958F;
   --color-kidville-neutral-soft: #F0F2F1;
 
@@ -77,6 +79,22 @@ body {
 }
 
 /* =============================================================================
+   Zoom automatico iOS al focus di un campo (C1). Safari zooma la pagina quando
+   un input ha font-size < 16px: fastidioso e, in shell nativa, senza modo di
+   tornare indietro. `max(16px, 1em)` alza SOLO i campi sotto soglia, senza mai
+   rimpicciolire quelli già più grandi. Il media query `(hover: none) and
+   (pointer: coarse)` limita la regola ai touch device: su desktop (mouse) il
+   cockpit segreteria resta identico. Regola NON-layered di proposito: fuori da
+   qualunque @layer così vince sulle utility Tailwind senza !important. */
+@media (hover: none) and (pointer: coarse) {
+  input,
+  select,
+  textarea {
+    font-size: max(16px, 1em);
+  }
+}
+
+/* =============================================================================
    Shell nativa Capacitor (M10.5) — safe-area TOP. Si attiva SOLO quando il
    documento ha la classe `.cap-native`, aggiunta esclusivamente dalla shell
    nativa (mai nel browser) insieme a viewport-fit=cover; è il flag che rende
@@ -88,6 +106,15 @@ body {
    ============================================================================= */
 .cap-native body {
   padding-top: env(safe-area-inset-top);
+}
+/* Rimbalzo/overscroll nella shell nativa (C2): con env(safe-area-inset-top) sul
+   body il documento diventa più alto del viewport e scrolla, scoprendo la
+   "striscia" del body (cream) sotto le pagine a fondo diverso (es. login).
+   `overscroll-behavior: none` blocca il bounce. SCOPED a .cap-native (MAI
+   globale: sul web spegnerebbe il pull-to-refresh di Chrome Android). */
+.cap-native,
+.cap-native body {
+  overscroll-behavior: none;
 }
 /* AppBar persistente (teacher/parent): la barra verde deve dipingere SOTTO il
    notch e lo sticky non deve infilarsi sotto il testo della status bar. Il
@@ -151,8 +178,10 @@ body {
   --color-kidville-success-soft: #000000;
   --color-kidville-warn: #FFB300;
   --color-kidville-warn-soft: #1A1A1A;
+  --color-kidville-warn-strong: #FFB300;
   --color-kidville-info: #5AB0FF;
   --color-kidville-info-soft: #000000;
+  --color-kidville-info-strong: #5AB0FF;
   --color-kidville-neutral: #E0E0E0;
   --color-kidville-neutral-soft: #1A1A1A;
   --color-kidville-ink: #FFFFFF;
@@ -245,4 +274,63 @@ body {
 [data-contrast="high"] .kv-tab-giallo .text-kidville-green-dark,
 [data-contrast="high"] .kv-tab-giallo .text-kidville-green-dark\/80 {
   color: #FFFFFF;
+}
+
+/* =============================================================================
+   Alto contrasto — schermate SAFETY-CRITICAL nuove (2026-07-14):
+   appello 0-6 (StudentAttendanceRow, marker .kv-appello-row) e report mensa
+   allergie/alternative (MensaReport, marker .kv-mensa-alt).
+   Le utility colore Tailwind sono INLINE (`@theme inline` incorpora l'hex nella
+   classe), quindi il remap dei token dentro [data-contrast="high"] NON tocca
+   le utility di sfondo e testo kidville: qui si forzano ESPLICITAMENTE le coppie
+   ad altissimo contrasto SOLO su queste due schermate. Le card sono `bg-white`
+   (non tokenizzata → resta chiara anche in HC): perciò l'attivo è un pieno
+   scuro e l'inattivo un bordato chiaro, così stanno su fondo chiaro.
+   NB: l'HC completo su TUTTE le utility Tailwind resta un follow-up SISTEMICO
+   (documentato nel PRD); qui si copre solo l'essenziale di sicurezza.
+   ============================================================================= */
+
+/* Appello — i 3 bottoni di stato (aria-pressed): inattivo bordato scuro su
+   card chiara, attivo pieno nero. Lo stato resta distinto anche a colori
+   ignorati (fill vs bordo + aria-pressed + etichetta testuale). */
+[data-contrast="high"] .kv-appello-row button[aria-pressed] {
+  background-color: #FFFFFF;
+  color: #000000;
+  border-color: #000000;
+}
+[data-contrast="high"] .kv-appello-row button[aria-pressed="true"] {
+  background-color: #000000;
+  color: #FFFFFF;
+  border-color: #000000;
+}
+/* Bottone checkout "Uscita" (giallo): pieno giallo HC, testo nero. */
+[data-contrast="high"] .kv-appello-row .bg-kidville-yellow {
+  background-color: #FFE500;
+  color: #000000;
+  border-color: #000000;
+}
+/* Bottone "Uscita Ant." (info-soft) + badge uscita anticipata (info): bordati chiari. */
+[data-contrast="high"] .kv-appello-row .bg-kidville-info-soft,
+[data-contrast="high"] .kv-appello-row .bg-kidville-info {
+  background-color: #FFFFFF;
+  color: #000000;
+  border-color: #000000;
+}
+
+/* Mensa — righe/badge d'allarme allergeni: nero su fondo chiaro o rosso HC.
+   Le righe `bg-kidville-error-soft` (allergia/conflitto) diventano un box nero
+   con bordo rosso HC e testo bianco (21:1); i badge/chip `bg-kidville-error-strong`
+   diventano rosso HC con testo nero (6,6:1). Informazione di sicurezza per un minore. */
+[data-contrast="high"] .kv-mensa-alt .bg-kidville-error-soft {
+  background-color: #000000;
+  border: 2px solid #FF5252;
+}
+[data-contrast="high"] .kv-mensa-alt .bg-kidville-error-soft .text-kidville-error-strong,
+[data-contrast="high"] .kv-mensa-alt .bg-kidville-error-soft .text-kidville-error,
+[data-contrast="high"] .kv-mensa-alt .bg-kidville-error-soft strong {
+  color: #FFFFFF;
+}
+[data-contrast="high"] .kv-mensa-alt .bg-kidville-error-strong {
+  background-color: #FF5252;
+  color: #000000;
 }

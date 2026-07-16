@@ -57,6 +57,7 @@ next-env.d.ts
 !.claude/agents/
 !.claude/commands/
 !.claude/hooks/
+!.claude/skills/
 !.claude/maestro-flows/
 .claude/settings.local.json
 .claude/.ship-cycle/

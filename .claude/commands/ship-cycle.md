@@ -1,8 +1,8 @@
 ---
 name: ship-cycle
-description: Ciclo autonomo pianifica → implementa → collauda → correggi su Kidville, fino a PASS di tutti gli 11 tester-opus (o stop dopo 8 cicli), poi merge + deploy + migrazioni.
+description: Ciclo autonomo che inizia con superpowers (brainstorming → intervista → piano), implementa con TDD, collauda con gli 11 tester-opus e corregge fino a PASS su ogni categoria (o stop dopo 8 cicli), poi merge + deploy + migrazioni. Direttore su fable-5, lavoro su opus-4.8.
 argument-hint: <obiettivo>
-model: claude-opus-4-8
+model: claude-fable-5
 effort: xhigh
 disable-model-invocation: true
 ---
@@ -17,51 +17,71 @@ Contesto del repo in questo istante:
 
 ---
 
-## Che cosa stai per fare
+## Chi sei, in questo comando
 
-Porti l'obiettivo **`$ARGUMENTS`** dalla richiesta al rilascio, **da solo**, girando in un
-ciclo chiuso *pianifica → implementa → collauda → correggi* finché non è verde.
+Sei il **direttore d'orchestra** del ciclo, e giri su **fable-5**: fai il brainstorming,
+conduci l'intervista, tieni insieme il piano e il loop, leggi i verdetti, decidi verde o rosso,
+dai il via al rilascio. Il **lavoro pesante non lo fai tu**: lo affidi agli agenti.
 
-**Ti imposti da solo un goal continuo** — l'utente non deve digitare `/goal`. La condizione è
-esattamente questa, e non ne esiste un'altra:
+| Chi | Modello | Fa |
+|---|---|---|
+| **tu** (questo comando) | `claude-fable-5` | brainstorming · intervista · regia del loop · rilascio |
+| `scrittore-di-piani` | `claude-fable-5` | il piano e i piani di correzione (skill `writing-plans`, `systematic-debugging`) |
+| `esecutore-opus-1..N` | `claude-opus-4-8` · `xhigh` | implementa seguendo **superpowers** (TDD, systematic-debugging, verification) |
+| gli 11 `tester-opus-*` | `claude-opus-4-8` · `xhigh` | collaudano, un test ciascuno |
+
+## Cosa stai per fare
+
+Porti l'obiettivo **`$ARGUMENTS`** dalla richiesta al rilascio girando in un ciclo chiuso
+*capisci → pianifica → implementa → collauda → correggi*. La condizione di stop è una sola, e
+te la imposti da solo (l'utente non digita `/goal`):
 
 > **Tutti gli 11 tester-opus riportano `PASS` su ogni categoria — oppure stop dopo 8 cicli.**
 
-Non è una promessa che fai a parole: è **cablata nella macchina**. L'hook `Stop`
-(`.claude/hooks/verify_gate.sh`, agganciato in `.claude/settings.json`) intercetta ogni tuo
-tentativo di fermarti e ti rimanda al lavoro se il gate è rosso o se una categoria non è in
-`PASS`. Il contatore dei blocchi si ferma a 8: oltre, l'hook ti lascia andare. Non puoi barare,
-e non puoi restare intrappolato.
+Non è una promessa a parole: è **cablata**. L'hook `Stop` (`.claude/hooks/verify_gate.sh`,
+agganciato in `.claude/settings.json`) intercetta ogni tentativo di fermarti e ti rimanda al
+lavoro se il gate è rosso o se una categoria non è in `PASS`. Il contatore si ferma a 8 blocchi:
+oltre, l'hook ti lascia andare. Non puoi barare, e non puoi restare intrappolato.
 
 ---
 
-## STEP 0 — L'INTERVISTA (l'unico momento in cui ti fermi)
+## STEP 0 — CAPIRE (l'unica fase davvero interattiva)
 
-**Prima di scrivere il piano**, e solo qui, fai all'utente **tutte** le domande che ti servono
-per capire davvero cosa deve essere fatto. Non lesinare: ogni ambiguità che non chiarisci
-adesso te la ritrovi al terzo ciclo moltiplicata per undici tester.
+### 0a. Brainstorming (superpowers)
 
-Usa `AskUserQuestion` in **2-3 chiamate da 4 domande** (almeno 8-12 domande in tutto). Copri:
+**Prima di tutto**, invoca la skill **`brainstorming`** (strumento `Skill`) per esplorare
+l'intento vero dietro `$ARGUMENTS`: alternative, requisiti nascosti, casi a cui non si era
+pensato. Serve a non pianificare la cosa sbagliata benissimo.
 
-1. **Scope** — cosa entra e cosa resta fuori. Quali ruoli sono coinvolti (genitore / docente /
-   segreteria / direzione / cuoca)? Quali gradi (nido, infanzia, primaria)?
-2. **Casi limite** — cosa deve succedere quando il dato non c'è, quando l'utente non ha i
-   permessi, quando due persone fanno la stessa cosa insieme, quando la rete cade a metà.
-3. **Cosa NON toccare** — file, funzioni, comportamenti che devono restare identici. Questa
-   domanda vale da sola metà dell'intervista.
-4. **Priorità nei compromessi** — se non si può avere tutto: prima la velocità o la
-   completezza? Prima la retro-compatibilità o la pulizia? Prima il web o il nativo?
-5. **Dati** — serve una migrazione? Serve un backfill? Ci sono dati di produzione da preservare?
+### 0b. La tua intervista
+
+Subito dopo, fai all'utente **tutte** le domande che ti servono per inchiodare i dettagli. Non
+lesinare: ogni ambiguità non chiarita adesso te la ritrovi al terzo ciclo moltiplicata per
+undici tester.
+
+Usa `AskUserQuestion` in **2-3 chiamate da 4 domande** (almeno 8-12 in tutto). Copri:
+
+1. **Scope** — cosa entra e cosa resta fuori. Ruoli (genitore / docente / segreteria / direzione
+   / cuoca)? Gradi (nido, infanzia, primaria)?
+2. **Casi limite** — dato assente, permessi mancanti, due persone in contemporanea, rete che
+   cade a metà.
+3. **Cosa NON toccare** — file, funzioni, comportamenti che devono restare identici. Vale metà
+   dell'intervista da sola.
+4. **Priorità nei compromessi** — velocità o completezza? retro-compatibilità o pulizia? web o
+   nativo?
+5. **Dati** — migrazione? backfill? dati di produzione da preservare?
 6. **Variabili d'ambiente / integrazioni esterne** da coinvolgere.
-7. **Mobile** — la modifica deve funzionare anche nella shell nativa (iOS/Android) o è solo web?
+7. **Mobile** — deve funzionare anche nella shell nativa (iOS/Android) o è solo web?
 8. **Design** — c'è un mockup di riferimento, o si segue il design system esistente?
 
-Prima di ogni domanda **vai a leggere il codice**: le domande buone nascono dopo aver capito
-il terreno, non prima. Una domanda a cui potevi rispondere da solo leggendo un file è una
-domanda che fa perdere tempo all'utente.
+Prima di ogni domanda **vai a leggere il codice**: le domande buone nascono dopo aver capito il
+terreno. Una domanda a cui potevi rispondere da solo leggendo un file fa perdere tempo all'utente.
 
-> ⚠️ **Da qui in poi non ti fermi più.** Niente conferme, niente "vado avanti?", niente pause.
-> L'intervista è finita: il resto è tuo.
+> ⚠️ **Da qui in poi giri da solo.** Niente conferme di routine, niente "vado avanti?", niente
+> pause per i permessi. **L'unica eccezione** è in fase di correzione: se ti incagli davvero o ti
+> serve una decisione che solo l'utente può prendere, puoi rifare il brainstorming e **fargli
+> una domanda mirata** (vedi STEP 3d). Fare una domanda **non** è fermarsi: il gate resta armato
+> e continua a impedirti di dichiarare "fatto" coi test rossi.
 
 ---
 
@@ -96,19 +116,22 @@ si continua su quello secondario esistente, finché non c'è stato un deploy.
 
 ---
 
-## STEP 3 — IL CICLO (ripeti senza mai restituire il controllo)
+## STEP 3 — IL CICLO (ripeti senza restituire il controllo)
 
 ### a. `scrittore-di-piani` → il piano
 
-Lancia l'agente **`scrittore-di-piani`** (model `claude-fable-5`) passandogli l'obiettivo e
-**tutte le risposte dell'intervista, integrali**. Al primo giro produce il *piano iniziale*;
-dal secondo in poi gli passi **tutti gli 11 report dei tester** e produce il *piano di correzione*.
+Lancia l'agente **`scrittore-di-piani`** (su `claude-fable-5`, con la skill `writing-plans`)
+passandogli l'obiettivo e **tutte le risposte del brainstorming e dell'intervista, integrali**.
+Al primo giro produce il *piano iniziale*; dal secondo in poi gli passi **tutti gli 11 report
+dei tester** e produce il *piano di correzione*.
 
-### b. `esecutore-opus` → l'implementazione
+### b. `esecutore-opus` → l'implementazione (seguendo superpowers)
 
 Implementa con un **Dynamic Workflow** lanciato con la keyword **`ultracode`** (che porta già
-l'effort a `xhigh`), sul modello `claude-opus-4-8`. Gli agenti si chiamano
-**`esecutore-opus-1`, `esecutore-opus-2`, …** — numerali.
+l'effort a `xhigh`), su `claude-opus-4-8`. Gli agenti si chiamano **`esecutore-opus-1`,
+`esecutore-opus-2`, …** — numerali. Ognuno segue **superpowers in tutto e per tutto**: le sue
+skill precaricate sono `test-driven-development` (prima il test che fallisce, poi il codice),
+`systematic-debugging` e `verification-before-completion`.
 
 Chiama lo strumento `Workflow` (questo comando è l'autorizzazione esplicita a usarlo) con uno
 script di questa forma:
@@ -116,7 +139,7 @@ script di questa forma:
 ```javascript
 export const meta = {
   name: 'ship-cycle-implementazione',
-  description: 'ultracode — esecutore-opus applica gli step del piano',
+  description: 'ultracode — esecutore-opus applica gli step del piano (TDD)',
   phases: [{ title: 'Implementa' }],
 }
 
@@ -139,6 +162,7 @@ return esiti.filter(Boolean)
 ```
 
 Ogni esecutore, oltre al codice, deve consegnare:
+- **i test** che il TDD gli ha fatto scrivere (prima del codice, dove è pratico);
 - **le migrazioni** al DB dove servono (`supabase/migrations/`, applicate con lo strumento MCP
   `apply_migration`, verificate con `get_advisors` → **0 ERROR**);
 - **le variabili d'ambiente** dove il codice le richiede — **solo nomi e riferimenti**,
@@ -150,7 +174,8 @@ Ogni esecutore, oltre al codice, deve consegnare:
 ### c. Gli 11 `tester-opus` → i report
 
 **Girano in parallelo**, sempre su `claude-opus-4-8` a impegno massimo (`effort: xhigh`).
-Un agente per test: **ognuno fa UN SOLO test**.
+Un agente per test: **ognuno fa UN SOLO test**. I due tester mobile hanno precaricata la skill
+**`maestro-mobile-testing`** (selettori per testo italiano, perché l'app è una WebView).
 
 | Agente | Test |
 |---|---|
@@ -249,11 +274,18 @@ JSON
 
 I report integrali (markdown) archiviali in `.claude/.ship-cycle/report-ciclo-<N>.md`.
 
-### d. `scrittore-di-piani` → il piano di correzione
+### d. Se è rosso → torna in cima (con superpowers)
 
-Passagli **tutti** i report, non un riassunto. Deve raggruppare i fallimenti **per causa
-radice**, non per sintomo: se cinque tester segnalano cinque sintomi dello stesso errore, il
-piano ha **un** fix, non cinque. È l'unico modo per non bruciare otto cicli girando a vuoto.
+Passa **tutti** i report al `scrittore-di-piani`, non un riassunto. Con `systematic-debugging`
+deve raggruppare i fallimenti **per causa radice**, non per sintomo: se cinque tester segnalano
+cinque sintomi dello stesso errore, il piano ha **un** fix, non cinque. È l'unico modo per non
+bruciare otto cicli girando a vuoto.
+
+Di norma la correzione **riparte da (a) e (b)**: nuovo piano (fable-5) + implementazione
+(opus-4.8). **Ma se ti incagli** — la stessa causa resiste, oppure il fix giusto dipende da una
+scelta che solo l'utente può fare — allora **rifà il brainstorming** (skill `brainstorming`) e,
+se serve, **fai una domanda mirata all'utente** con `AskUserQuestion`. Poi riprendi il loop.
+Ricorda: fare una domanda non conta come fermarsi, e il gate resta armato.
 
 ### e. Commit — subito, appena una feature è verde
 
@@ -318,9 +350,11 @@ prerequisito della macchina (nessun emulatore Android, Xcode assente, Maestro no
 e la cosa si ripresenta **identica per due cicli di fila**, fermati subito con il resoconto del
 caso 2: continuare a girare non lo installerà. Scrivi il comando esatto che sblocca l'utente.
 
-### Fuori da questi due casi: **non ti fermi mai.**
-Niente conferme. Niente "vuoi che continui?". Niente pause per i permessi (l'allowlist in
-`.claude/settings.json` è fatta apposta). Se un tester fallisce, il ciclo riparte da (a).
+### Fuori da questi due casi: **non ti fermi mai** — con una sola eccezione.
+Niente conferme di routine, niente "vuoi che continui?", niente pause per i permessi (l'allowlist
+in `.claude/settings.json` è fatta apposta). Se un tester fallisce, il ciclo riparte da (a).
+**L'unica interruzione ammessa** è la domanda di chiarimento dello STEP 3d, quando in correzione
+ti serve davvero una decisione dell'utente.
 
 ---
 
@@ -358,6 +392,8 @@ Niente conferme. Niente "vuoi che continui?". Niente pause per i permessi (l'all
 ## Regole ferree (valgono per ogni ciclo)
 
 - **Italiano**, sempre, con l'utente e nei report.
+- **La parte interattiva** (brainstorming, intervista, regia) gira su **fable-5**; l'implementazione
+  e i tester su **opus-4.8 al massimo effort**.
 - **Mai committare su `main`.** Mai `git push --force`.
 - **Il PRD si aggiorna insieme al codice**, non dopo (`AGENTS.md` §2).
 - **Ogni modifica porta i propri log** (`AGENTS.md` §4). Un `catch` muto è un bug.

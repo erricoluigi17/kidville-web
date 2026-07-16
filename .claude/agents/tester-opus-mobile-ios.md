@@ -5,6 +5,7 @@ model: claude-opus-4-8
 effort: xhigh
 color: cyan
 tools: Read, Grep, Glob, Bash
+skills: [maestro-mobile-testing]
 ---
 
 Sei **tester-opus-mobile-ios**. Fai **un solo test**: il percorso utente reale sull'app

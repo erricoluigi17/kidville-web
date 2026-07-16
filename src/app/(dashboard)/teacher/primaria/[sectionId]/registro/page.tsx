@@ -255,19 +255,35 @@ function FirmaModal({
   const [argomentoProprio, setArgomentoProprio] = useState('');
   const [compitiPropri, setCompitiPropri] = useState('');
   const [destinatari, setDestinatari] = useState<string[]>([]);
+  // Toggle «Tutta la classe / Alunni selezionati» (P7/B1). Il sostegno è per
+  // definizione individualizzato → per quel tipo l'assegnazione è forzata sugli alunni
+  // selezionati. In supplenza (altra classe) resta di classe: gli alunni della sezione
+  // in cui si firma non sono caricati, quindi la selezione non è disponibile.
+  const [perAlunniSel, setPerAlunniSel] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  const indipendente = tipo === 'sostegno' && destinatari.length > 0;
+  const perAlunni = !altraClasse && (tipo === 'sostegno' ? true : perAlunniSel);
 
   const toggleDest = (id: string) =>
     setDestinatari((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
 
+  // Torna a "tutta la classe": azzera la selezione, così il submit non invia mai
+  // destinatari residui quando l'assegnazione ridiventa di classe.
+  const scegliClasse = () => { setPerAlunniSel(false); setDestinatari([]); };
+  const scegliAlunni = () => setPerAlunniSel(true);
+
   const salva = async () => {
     setSaving(true);
     setError('');
-    // Offline-first: senza rete, accoda la firma base (no destinatari) e chiudi.
-    if (typeof navigator !== 'undefined' && !navigator.onLine && tipo !== 'sostegno') {
+    // Offline-first: senza rete si accoda SOLO la firma di classe (no destinatari): la
+    // selezione degli alunni richiede la connessione (validazione + oscuramento lato server).
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      if (perAlunni) {
+        setSaving(false);
+        setError('La selezione degli alunni richiede la connessione. Scegli «Tutta la classe» oppure riprova quando sei online.');
+        return;
+      }
       await saveLocalRegistro({
         id: crypto.randomUUID(), section_id: sectionId, data, ora_lezione: ordine,
         materia_id: materiaId || null, argomento, compiti, tipo_compresenza: tipo,
@@ -282,8 +298,18 @@ function FirmaModal({
       headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
       body: JSON.stringify({
         sectionId: targetSectionId, data, oraLezione: ordine, materiaId: altraClasse ? null : (materiaId || null),
-        argomento, compiti, dataConsegnaCompiti: dataConsegnaCompiti || null, tipoCompresenza: tipo,
-        argomentoProprio, compitiPropri, destinatariIds: tipo === 'sostegno' && !altraClasse ? destinatari : [],
+        // Argomento/compiti/consegna sono i contenuti CONDIVISI di classe: si inviano SOLO per
+        // l'assegnazione a tutta la classe. In modalità «Alunni selezionati» (perAlunni) i
+        // textarea condivisi non sono nemmeno mostrati e i loro stati restano vuoti: inviarli
+        // sovrascriverebbe con stringhe vuote i contenuti scritti dal titolare sulla riga
+        // condivisa (regressione B1). Coerente con la label «(solo per gli alunni selezionati)».
+        argomento: perAlunni ? undefined : argomento,
+        compiti: perAlunni ? undefined : compiti,
+        dataConsegnaCompiti: perAlunni ? undefined : (dataConsegnaCompiti || null),
+        tipoCompresenza: tipo,
+        argomentoProprio, compitiPropri,
+        // Destinatari inviati quando l'assegnazione è mirata e siamo nella classe corrente.
+        destinatariIds: perAlunni && !altraClasse ? destinatari : [],
       }),
     });
     const d = await r.json();
@@ -333,23 +359,51 @@ function FirmaModal({
             </select>
           </div>
 
-          {!indipendente ? (
+          {/* Destinatari (P7/B1): compiti e argomento per TUTTA LA CLASSE o per ALUNNI
+              SELEZIONATI. Il toggle vale per qualsiasi tipo di firma; per il sostegno è
+              forzato (attività sempre individualizzata) e per questo non compare. In
+              supplenza (altra classe) l'assegnazione resta di classe. */}
+          {!altraClasse && tipo !== 'sostegno' && (
+            <div>
+              <label className="block font-maven text-xs text-kidville-muted">Destinatari</label>
+              <div className="mt-1 inline-flex rounded-pill border border-kidville-line p-0.5" role="group" aria-label="Destinatari dei compiti e dell'argomento">
+                <button
+                  type="button"
+                  onClick={scegliClasse}
+                  aria-pressed={!perAlunni}
+                  className={`font-maven rounded-pill px-3 py-1 text-xs ${!perAlunni ? 'bg-kidville-green text-kidville-yellow' : 'text-kidville-ink'}`}
+                >
+                  Tutta la classe
+                </button>
+                <button
+                  type="button"
+                  onClick={scegliAlunni}
+                  aria-pressed={perAlunni}
+                  className={`font-maven rounded-pill px-3 py-1 text-xs ${perAlunni ? 'bg-kidville-green text-kidville-yellow' : 'text-kidville-ink'}`}
+                >
+                  Alunni selezionati
+                </button>
+              </div>
+            </div>
+          )}
+
+          {!perAlunni ? (
             <>
               <div>
-                <label className="block font-maven text-xs text-kidville-muted">Argomento svolto</label>
+                <label className="block font-maven text-xs text-kidville-muted">Argomento svolto (tutta la classe)</label>
                 <textarea value={argomento} onChange={(e) => setArgomento(e.target.value)} rows={2} className="font-maven w-full rounded-card border border-kidville-line px-3 py-2 text-sm" />
               </div>
               <div>
-                <label className="block font-maven text-xs text-kidville-muted">Compiti</label>
+                <label className="block font-maven text-xs text-kidville-muted">Compiti (tutta la classe)</label>
                 <textarea value={compiti} onChange={(e) => setCompiti(e.target.value)} rows={2} className="font-maven w-full rounded-card border border-kidville-line px-3 py-2 text-sm" />
               </div>
             </>
-          ) : null}
-
-          {tipo === 'sostegno' && (
+          ) : (
             <div className="rounded-card bg-kidville-info-soft p-3">
               <p className="mb-2 font-maven text-xs text-kidville-info">
-                Attività individualizzata: argomento/compiti visibili solo alle famiglie degli alunni selezionati.
+                {tipo === 'sostegno'
+                  ? 'Attività individualizzata: argomento e compiti visibili solo alle famiglie degli alunni selezionati.'
+                  : 'Argomento e compiti visibili solo alle famiglie degli alunni selezionati.'}
               </p>
               <div className="mb-2 max-h-32 overflow-y-auto rounded bg-white p-2">
                 {alunni.map((a) => (
@@ -359,26 +413,28 @@ function FirmaModal({
                   </label>
                 ))}
               </div>
-              <label className="block font-maven text-xs text-kidville-muted">Argomento (per i destinatari)</label>
+              <label className="block font-maven text-xs text-kidville-muted">Argomento (solo per gli alunni selezionati)</label>
               <textarea value={argomentoProprio} onChange={(e) => setArgomentoProprio(e.target.value)} rows={2} className="mb-2 font-maven w-full rounded-card border border-kidville-line px-3 py-2 text-sm" />
-              <label className="block font-maven text-xs text-kidville-muted">Compiti (per i destinatari)</label>
+              <label className="block font-maven text-xs text-kidville-muted">Compiti (solo per gli alunni selezionati)</label>
               <textarea value={compitiPropri} onChange={(e) => setCompitiPropri(e.target.value)} rows={2} className="font-maven w-full rounded-card border border-kidville-line px-3 py-2 text-sm" />
             </div>
           )}
 
-          {/* Data di consegna compiti (facoltativa): salvata su
-              registro_orario.data_consegna_compiti; il genitore la vede nei
-              Compiti. Con questo campo il docente non deve più scriverla nel testo. */}
-          <div>
-            <label className="block font-maven text-xs text-kidville-muted">Consegna compiti (facoltativa)</label>
-            <input
-              type="date"
-              value={dataConsegnaCompiti}
-              min={data}
-              onChange={(e) => setDataConsegnaCompiti(e.target.value)}
-              className="font-maven w-full rounded-pill border border-kidville-line px-3 py-2 text-sm"
-            />
-          </div>
+          {/* Data di consegna compiti (facoltativa): è un campo di CLASSE
+              (registro_orario.data_consegna_compiti) → solo per l'assegnazione a tutta la
+              classe. La consegna per i singoli destinatari (data_consegna_propri) è rinviata. */}
+          {!perAlunni && (
+            <div>
+              <label className="block font-maven text-xs text-kidville-muted">Consegna compiti (facoltativa)</label>
+              <input
+                type="date"
+                value={dataConsegnaCompiti}
+                min={data}
+                onChange={(e) => setDataConsegnaCompiti(e.target.value)}
+                className="font-maven w-full rounded-pill border border-kidville-line px-3 py-2 text-sm"
+              />
+            </div>
+          )}
         </div>
         <div className="flex justify-end gap-2 border-t border-kidville-line p-4">
           <button onClick={onClose} className="font-maven rounded-pill bg-kidville-cream px-4 py-2 text-sm text-kidville-ink">Annulla</button>

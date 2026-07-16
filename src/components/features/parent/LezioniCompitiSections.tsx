@@ -46,7 +46,7 @@ export function LezioniList({ lezioni }: { lezioni: Lezione[] }) {
                       {l.argomento && <span className="text-kidville-muted"> — {l.argomento}</span>}
                     </div>
                     {l.individualizzate.filter((i) => i.argomento).map((i, idx) => (
-                      <p key={idx} className="mt-1 rounded bg-kidville-info-soft px-2 py-1 font-maven text-xs text-kidville-info">Attività: {i.argomento}</p>
+                      <p key={idx} className="mt-1 rounded bg-kidville-info-soft px-2 py-1 font-maven text-xs text-kidville-info">Attività individuale: {i.argomento}</p>
                     ))}
                     {l.allegati.length > 0 && (
                       <div className="mt-1 flex flex-wrap gap-2">
@@ -91,7 +91,7 @@ export function CompitiList({ lezioni }: { lezioni: Lezione[] }) {
                     <div className="font-maven text-xs text-kidville-muted">{l.materia || 'Lezione'}</div>
                     {l.compiti && <p className="mt-1 rounded bg-kidville-yellow/20 px-2 py-1 font-maven text-sm text-kidville-ink">{l.compiti}</p>}
                     {l.individualizzate.filter((i) => i.compiti).map((i, idx) => (
-                      <p key={idx} className="mt-1 rounded bg-kidville-info-soft px-2 py-1 font-maven text-xs text-kidville-info">Compiti: {i.compiti}</p>
+                      <p key={idx} className="mt-1 rounded bg-kidville-info-soft px-2 py-1 font-maven text-xs text-kidville-info">Compiti individuali: {i.compiti}</p>
                     ))}
                     {l.data_consegna_compiti && (
                       // Data di consegna: unico indicatore (chip), formato it-IT.

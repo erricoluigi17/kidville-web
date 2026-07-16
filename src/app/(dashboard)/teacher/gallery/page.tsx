@@ -10,6 +10,8 @@ import { MediaUploader } from '@/components/features/gallery/MediaUploader';
 import { StudentTagger } from '@/components/features/gallery/StudentTagger';
 import { saveLocalGalleryMedia, syncPendingGalleryMedia } from '@/lib/offline/syncEngine';
 import { processImageWithWatermark, validateVideoFile, processVideoWithWatermark } from '@/lib/media/processing';
+import { analizzaContenutoVideo, MESSAGGIO_VIDEO_NON_CONVERTIBILE } from '@/lib/media/codec-sniff';
+import { logClient } from '@/lib/logging/client';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { useOnlineStatus } from '@/lib/hooks/use-online-status';
 
@@ -38,6 +40,9 @@ function TeacherGalleryContent() {
     }[]>([]);
     const [activeFileIndex, setActiveFileIndex] = useState<number>(0);
     const [uploading, setUploading] = useState(false);
+    // Indice del file in conversione video (per lo spinner PER FILE): la conversione dura
+    // ~quanto il video, quindi va segnalata sulla miniatura giusta, non con un solo spinner.
+    const [convertingIndex, setConvertingIndex] = useState<number | null>(null);
     const [userRole, setUserRole] = useState<string>('educator');
     // SSR-safe (niente hydration mismatch né setState-in-effect).
     const isOnline = useOnlineStatus();
@@ -213,26 +218,69 @@ function TeacherGalleryContent() {
         try {
             const offlineMode = !isOnline;
 
-            for (const f of uploadedFiles) {
+            for (let i = 0; i < uploadedFiles.length; i++) {
+                const f = uploadedFiles[i];
                 let processedFile = f.file;
                 const isVideo = f.file.type.startsWith('video/');
                 if (isVideo) {
-                    let videoFile = f.file;
                     const MAX_SIZE = 50 * 1024 * 1024; // 50MB
-                    if (videoFile.size > MAX_SIZE) {
-                        alert(`Il video "${f.file.name}" supera i 50MB (attuale: ${(videoFile.size / (1024 * 1024)).toFixed(1)}MB). Verrà elaborato e compresso automaticamente per ridurne il peso prima del caricamento.`);
-                    }
 
-                    // Applica il watermark e la compressione (se necessaria)
-                    videoFile = await processVideoWithWatermark(videoFile, '/watermark.png', MAX_SIZE);
+                    // Sniff del codec/container sui primi 64KB: da iPhone parte HEVC/.mov, che
+                    // Chrome/Android non decodificano. Se serve, la conversione è OBBLIGATORIA.
+                    const testa = await f.file.slice(0, 65536).arrayBuffer().catch(() => null);
+                    const analisi = testa
+                        ? analizzaContenutoVideo(testa, f.file.type)
+                        : { daConvertire: true, motivo: 'header-illeggibile' };
 
-                    // Validazione video finale
-                    const val = validateVideoFile(videoFile);
-                    if (!val.valid) {
-                        alert(val.error);
-                        continue;
+                    if (analisi.daConvertire) {
+                        // Un video da convertire NON si accoda mai alla coda offline: la conversione
+                        // richiede il dispositivo attivo e il server ne verifica il codec al caricamento.
+                        if (offlineMode) {
+                            alert(`Il video "${f.file.name}" richiede una conversione e non può essere salvato offline. Riprova quando sei di nuovo online.`);
+                            continue;
+                        }
+
+                        setConvertingIndex(i);
+                        let videoFile: File;
+                        try {
+                            videoFile = await processVideoWithWatermark(f.file, '/watermark.png', MAX_SIZE, { obbligatoria: true });
+                        } catch {
+                            // Conversione impossibile su questo dispositivo: messaggio azionabile e
+                            // SKIP del file (gli altri file del batch proseguono). Nessun log con PII.
+                            logClient({ livello: 'warn', evento: 'js', messaggio: 'gallery-video-conversione-fallita', route: '/teacher/gallery', stato: 415 });
+                            alert(MESSAGGIO_VIDEO_NON_CONVERTIBILE);
+                            continue;
+                        } finally {
+                            setConvertingIndex(null);
+                        }
+
+                        const val = validateVideoFile(videoFile);
+                        if (!val.valid) {
+                            alert(val.error);
+                            continue;
+                        }
+                        processedFile = videoFile;
+                    } else {
+                        // Già riproducibile (H.264/webm): watermark + compressione, con fallback
+                        // all'originale ammesso (il codec è già compatibile).
+                        if (f.file.size > MAX_SIZE) {
+                            alert(`Il video "${f.file.name}" supera i 50 MB (attuale: ${(f.file.size / (1024 * 1024)).toLocaleString('it-IT', { maximumFractionDigits: 1 })} MB). Verrà elaborato e compresso automaticamente per ridurne il peso prima del caricamento.`);
+                        }
+                        setConvertingIndex(i);
+                        let videoFile: File;
+                        try {
+                            videoFile = await processVideoWithWatermark(f.file, '/watermark.png', MAX_SIZE);
+                        } finally {
+                            setConvertingIndex(null);
+                        }
+
+                        const val = validateVideoFile(videoFile);
+                        if (!val.valid) {
+                            alert(val.error);
+                            continue;
+                        }
+                        processedFile = videoFile;
                     }
-                    processedFile = videoFile;
                 } else {
                     // Ridimensionamento e Watermarking client-side
                     processedFile = await processImageWithWatermark(f.file, '/watermark.png');
@@ -468,7 +516,15 @@ function TeacherGalleryContent() {
                                     >
                                         {/* eslint-disable-next-line @next/next/no-img-element */}
                                         <img src={f.preview} alt="" className="w-full h-full object-cover" />
-                                        
+
+                                        {/* Spinner PER FILE durante la conversione video */}
+                                        {convertingIndex === i && (
+                                            <div className="absolute inset-0 bg-kidville-green/70 flex flex-col items-center justify-center gap-1" role="status" aria-live="polite">
+                                                <div className="w-5 h-5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                                                <span className="text-white text-[8px] font-bold uppercase tracking-wide">Converto…</span>
+                                            </div>
+                                        )}
+
                                         {/* Badge stato tag */}
                                         <div className="absolute bottom-1 right-1 flex gap-0.5 pointer-events-none select-none">
                                             {f.is_broadcast ? (
@@ -552,7 +608,7 @@ function TeacherGalleryContent() {
                             disabled={uploading || uploadedFiles.some(f => !f.is_broadcast && f.tag_students.length === 0)}
                             className="w-full py-3.5 rounded-2xl bg-kidville-green text-kidville-yellow font-barlow font-black text-lg uppercase tracking-wide hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-kidville-green/20"
                         >
-                            {uploading ? <><div className="w-5 h-5 border-2 border-kidville-yellow/40 border-t-kidville-yellow rounded-full animate-spin" /> Caricamento...</>
+                            {uploading ? <><div className="w-5 h-5 border-2 border-kidville-yellow/40 border-t-kidville-yellow rounded-full animate-spin" /> {convertingIndex !== null ? 'Conversione video…' : 'Caricamento...'}</>
                                 : <><Upload size={16} strokeWidth={1.5} /> Pubblica {uploadedFiles.length} {uploadedFiles.length === 1 ? 'file' : 'file'}</>}
                         </button>
                     </motion.div>

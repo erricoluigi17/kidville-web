@@ -5,6 +5,7 @@ import { requireDocente } from '@/lib/auth/require-staff';
 import { parseData } from '@/lib/validation/http';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
+import { analizzaContenutoVideo, MESSAGGIO_VIDEO_NON_CONVERTIBILE } from '@/lib/media/codec-sniff';
 
 const postFormSchema = z.object({
     file: z.instanceof(File, { error: 'Nessun file fornito' }),
@@ -21,6 +22,30 @@ export const POST = withRoute('gallery/upload:POST', async (request: Request) =>
         const { file } = f.data;
         // Il path è namespaced sull'utente del gate, non su un campo client.
         const userId = auth.user.id;
+
+        // Il tipo del File elaborato può portare un suffisso codec (es.
+        // `video/webm;codecs=vp9`): si normalizza al solo tipo base.
+        const contentType = (file.type || 'application/octet-stream').split(';')[0].trim();
+        const fileBuffer = await file.arrayBuffer();
+
+        // DIFESA IN PROFONDITÀ. Il client converte HEVC/.mov prima di caricare; ma un client
+        // vecchio (o una POST diretta) potrebbe spedire comunque un video non riproducibile da
+        // Chrome/Android. Lo stesso sniff del client, sui primi 64KB, lo RIFIUTA con 415.
+        if (contentType.startsWith('video/')) {
+            const testa = new Uint8Array(fileBuffer.slice(0, 65536));
+            const analisi = analizzaContenutoVideo(testa, contentType);
+            if (analisi.daConvertire) {
+                // MAI il nome del file nei log: può contenere PII. Solo mime, size e motivo.
+                logEvento('gallery', 'warn', {
+                    operazione: 'gallery/upload:POST',
+                    esito: 'video-non-riproducibile',
+                    mime: contentType,
+                    size: file.size,
+                    motivo: analisi.motivo,
+                });
+                return NextResponse.json({ error: MESSAGGIO_VIDEO_NON_CONVERTIBILE }, { status: 415 });
+            }
+        }
 
         const supabase = await createAdminClient();
 
@@ -49,7 +74,9 @@ export const POST = withRoute('gallery/upload:POST', async (request: Request) =>
                         public: true,
                         allowedMimeTypes: [
                             'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp',
-                            'video/mp4', 'video/quicktime', 'video/webm', 'video/x-matroska'
+                            // niente QuickTime (.mov) né Matroska (.mkv): HEVC/.mov si convertono
+                            // (o si rifiutano con 415), il bucket accetta solo formati riproducibili.
+                            'video/mp4', 'video/webm'
                         ],
                         fileSizeLimit: 209715200 // 200MB
                     });
@@ -58,7 +85,9 @@ export const POST = withRoute('gallery/upload:POST', async (request: Request) =>
                         public: true,
                         allowedMimeTypes: [
                             'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp',
-                            'video/mp4', 'video/quicktime', 'video/webm', 'video/x-matroska'
+                            // niente QuickTime (.mov) né Matroska (.mkv): HEVC/.mov si convertono
+                            // (o si rifiutano con 415), il bucket accetta solo formati riproducibili.
+                            'video/mp4', 'video/webm'
                         ],
                         fileSizeLimit: 209715200 // 200MB
                     });
@@ -80,11 +109,6 @@ export const POST = withRoute('gallery/upload:POST', async (request: Request) =>
         const uniqueFileName = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}.${fileExtension}`;
         const filePath = `uploads/${userId}/${uniqueFileName}`;
 
-        const fileBuffer = await file.arrayBuffer();
-        // Il tipo del File elaborato può portare un suffisso codec (es.
-        // `video/webm;codecs=vp9`) che non combacia con la allow-list MIME del
-        // bucket 'gallery': si normalizza al solo tipo base prima dell'upload.
-        const contentType = (file.type || 'application/octet-stream').split(';')[0].trim();
         const { error } = await supabase.storage
             .from('gallery')
             .upload(filePath, Buffer.from(fileBuffer), {

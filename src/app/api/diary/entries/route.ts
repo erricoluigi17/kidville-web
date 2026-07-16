@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
-import { assertAlunnoInScope, scuoleDiUtente } from '@/lib/auth/scope';
+import { assertAlunnoInScope, resolveScuoleAttive } from '@/lib/auth/scope';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { notificaTitolariScrittura, enqueueDiarioGenitori } from '@/lib/primaria/notifiche';
 import { getModuleConfig } from '@/lib/settings/module-config';
@@ -105,7 +105,9 @@ export const GET = withRoute('diary/entries:GET', async (request: NextRequest) =
     // Gate ruolo + isolamento per plesso (nome classe risolto DENTRO i propri plessi).
     const auth = await requireDocente(request);
     if (auth.response) return auth.response;
-    const plessi = await scuoleDiUtente(admin, auth.user);
+    // Rispetta la selezione del SedeSelector (cookie `sedi_attive`), ri-validata
+    // contro le sedi accessibili: filtra il diario sulle sole sedi attive.
+    const plessi = await resolveScuoleAttive(request, admin, auth.user);
     if (plessi.length === 0) return NextResponse.json([]);
 
     const q = parseQuery(request, getTeacherQuerySchema);

@@ -5,6 +5,7 @@ import { requireStaff } from '@/lib/auth/require-staff'
 import { scuoleDiUtente } from '@/lib/auth/scope'
 import { parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
+import { logEvento } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const getQuerySchema = z.object({}) // nessun parametro in ingresso
@@ -34,5 +35,32 @@ export const GET = withRoute('admin/sedi:GET', async (request: NextRequest) => {
     .order('nome', { ascending: true })
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  return NextResponse.json({ success: true, data: data ?? [] })
+  const sedi = data ?? []
+
+  // Escludi le sedi disattivate (soft-delete `scuole.attiva=false`): non devono
+  // comparire nel SedeSelector. FAIL-OPEN: se la lettura del flag fallisce NON
+  // filtriamo (meglio mostrare una sede in più che nasconderle per un errore
+  // transitorio) — ma lo si registra (info: degrade previsto, non un 500).
+  const ids = sedi.map((s) => s.id as string)
+  if (ids.length > 0) {
+    const { data: registry, error: regError } = await supabase
+      .from('scuole')
+      .select('id, attiva')
+      .in('id', ids)
+    if (regError) {
+      logEvento('multi_sede', 'info', { operazione: 'admin/sedi:GET', esito: 'fail-open-attiva' }, regError)
+    } else {
+      const disattivate = new Set(
+        (registry ?? []).filter((r) => r.attiva === false).map((r) => r.id as string),
+      )
+      if (disattivate.size > 0) {
+        return NextResponse.json({
+          success: true,
+          data: sedi.filter((s) => !disattivate.has(s.id as string)),
+        })
+      }
+    }
+  }
+
+  return NextResponse.json({ success: true, data: sedi })
 })

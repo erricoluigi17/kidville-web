@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { UserPlus, Shield, Mail, Phone, Loader2, CheckCircle2, XCircle } from 'lucide-react';
+import { UserPlus, Shield, Mail, Phone, Loader2, CheckCircle2, XCircle, Building2 } from 'lucide-react';
 import { z } from 'zod';
 
 const adultSchema = z.object({
@@ -14,8 +14,13 @@ const adultSchema = z.object({
     gender: z.enum(['M', 'F']).optional().or(z.literal('')),
     birth_date: z.string().optional().or(z.literal('')),
     birth_place: z.string().optional().or(z.literal('')),
-    phone: z.string().optional().or(z.literal(''))
+    phone: z.string().optional().or(z.literal('')),
+    // Multi-sede: la sede di destinazione. L'API adults la valida via
+    // resolveScuolaScrittura (una sola sede per la scrittura).
+    scuola_id: z.string().optional().or(z.literal(''))
 });
+
+interface Sede { id: string; nome: string }
 
 export function AdultRegistryForm() {
     const [formData, setFormData] = useState({
@@ -27,12 +32,31 @@ export function AdultRegistryForm() {
         gender: 'M',
         birth_date: '',
         birth_place: '',
-        phone: ''
+        phone: '',
+        scuola_id: ''
     });
 
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [errors, setErrors] = useState<Record<string, string>>({});
     const [toast, setToast] = useState<{ type: 'success' | 'error', message: string } | null>(null);
+    const [sedi, setSedi] = useState<Sede[]>([]);
+
+    // Sedi accessibili (multi-sede): la select «Sede» compare solo se >1. Con una
+    // sola sede il campo è superfluo — la risolve comunque resolveScuolaScrittura.
+    useEffect(() => {
+        let alive = true;
+        fetch('/api/admin/sedi')
+            .then((r) => (r.ok ? r.json() : null))
+            .then((j) => {
+                if (!alive || !Array.isArray(j?.data)) return;
+                setSedi(j.data as Sede[]);
+                if (j.data.length === 1) {
+                    setFormData((prev) => ({ ...prev, scuola_id: (j.data[0] as Sede).id }));
+                }
+            })
+            .catch(() => { /* best-effort: senza sedi la select non compare */ });
+        return () => { alive = false; };
+    }, []);
 
     const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
         const { name, value } = e.target;
@@ -53,11 +77,13 @@ export function AdultRegistryForm() {
         
         try {
             const parsedData = adultSchema.parse(formData);
-            
+            // scuola_id vuoto → undefined: l'API lo risolve via resolveScuolaScrittura.
+            const body = { ...parsedData, scuola_id: formData.scuola_id || undefined };
+
             const res = await fetch('/api/admin/adults', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(parsedData)
+                body: JSON.stringify(body)
             });
 
             if (!res.ok) {
@@ -67,7 +93,8 @@ export function AdultRegistryForm() {
 
             setToast({ type: 'success', message: 'Adulto salvato e credenziali inviate!' });
             setFormData({
-                first_name: '', last_name: '', role: 'parent', email: '', fiscal_code: '', gender: 'M', birth_date: '', birth_place: '', phone: ''
+                first_name: '', last_name: '', role: 'parent', email: '', fiscal_code: '', gender: 'M', birth_date: '', birth_place: '', phone: '',
+                scuola_id: sedi.length === 1 ? sedi[0].id : ''
             });
 
         } catch (error) {
@@ -135,6 +162,17 @@ export function AdultRegistryForm() {
                     <label className="block text-sm font-bold text-kidville-green/80 mb-1 flex items-center gap-2"><Phone size={14}/> Telefono</label>
                     <input name="phone" value={formData.phone} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-white outline-none focus:ring-2 focus:ring-kidville-green" />
                 </div>
+                {sedi.length > 1 && (
+                    <div className="col-span-2">
+                        <label className="block text-sm font-bold text-kidville-green/80 mb-1 flex items-center gap-2"><Building2 size={14}/> Sede</label>
+                        <select name="scuola_id" value={formData.scuola_id} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-white outline-none focus:ring-2 focus:ring-kidville-green">
+                            <option value="">Seleziona la sede…</option>
+                            {sedi.map((s) => (
+                                <option key={s.id} value={s.id}>{s.nome}</option>
+                            ))}
+                        </select>
+                    </div>
+                )}
             </div>
 
             <div className="mt-8 border-t border-kidville-green/15 pt-6 flex justify-end">

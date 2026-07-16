@@ -1,9 +1,13 @@
-// Vocabolario condiviso della contabilità: stati pagamento (pill) e metodi incasso.
-export const STATI_PAGAMENTO: Record<string, { label: string; cls: string }> = {
-    da_pagare: { label: 'Da pagare', cls: 'bg-kidville-line text-kidville-ink' },
-    parziale: { label: 'Parziale', cls: 'bg-kidville-warn-soft text-kidville-warn' },
-    pagato: { label: 'Pagato', cls: 'bg-kidville-success-soft text-kidville-success' },
-    scaduto: { label: 'Scaduto', cls: 'bg-kidville-error-soft text-kidville-error' },
+// Vocabolario condiviso della contabilità: stati pagamento (chip) e metodi incasso.
+// Il chip di stato si rende con il `<Badge tone={…}>` dell'app: il `tone` mappa
+// lo stato sui toni semantici del Badge (linguaggio unico con genitore/docente).
+import type { BadgeTone } from '@/components/ui/Badge';
+
+export const STATI_PAGAMENTO: Record<string, { label: string; tone: BadgeTone }> = {
+    da_pagare: { label: 'Da pagare', tone: 'neutral' },
+    parziale: { label: 'Parziale', tone: 'warn' },
+    pagato: { label: 'Pagato', tone: 'success' },
+    scaduto: { label: 'Scaduto', tone: 'error' },
 };
 
 export const METODO_LABEL: Record<string, string> = {

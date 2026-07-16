@@ -6,8 +6,7 @@ import { Search, Filter, UserPlus, Users, FileDown, CheckCircle2, GraduationCap,
 import { StudentTable } from '@/components/features/admin/StudentTable';
 import { BulkAssignBar } from '@/components/features/admin/BulkAssignBar';
 import { SectionsView } from '@/components/features/admin/SectionsView';
-import { CockpitPage, PageHeader, Tabs, StatCard } from '@/components/ui/cockpit';
-import { btnClass } from '@/components/ui/Btn';
+import { CockpitPage, HEADER_BTN, PageHeader, Tabs, StatCard } from '@/components/ui/cockpit';
 import { labelRuolo } from '@/lib/auth/ruoli';
 import { useSediAttive } from '@/lib/context/sede-context';
 
@@ -296,6 +295,7 @@ function AdminStudentsInner() {
     <CockpitPage max={1152} className="flex flex-col">
       <PageHeader
         icon={Users}
+        eyebrow="Anagrafica"
         title="Anagrafica Generale"
         subtitle="Gestione studenti, genitori e personale"
         actions={
@@ -308,7 +308,7 @@ function AdminStudentsInner() {
             </button>
             {/* Lo staff non si crea da qui (gestione RBAC dedicata): niente "Nuovo". */}
             {viewType !== 'staff' && (
-              <button onClick={() => (window.location.href = '/admin/students/new')} className={btnClass('primary', 'md')}>
+              <button onClick={() => (window.location.href = '/admin/students/new')} className={HEADER_BTN}>
                 <UserPlus size={18} /> Nuovo {viewType === 'child' ? 'Alunno' : 'Genitore'}
               </button>
             )}
@@ -333,7 +333,7 @@ function AdminStudentsInner() {
 
       {/* Toolbar / Filtri — nascosta per la tab Sezioni */}
       {viewType !== 'sections' && (
-      <div className="bg-white bg-kidville-white rounded-2xl p-4 shadow-sm mb-6 flex flex-col md:flex-row gap-4 items-center">
+      <div className="bg-kidville-white rounded-card p-4 shadow-sm mb-6 flex flex-col md:flex-row gap-4 items-center">
         {/* Search */}
         <div className="relative flex-1 w-full">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-kidville-muted" size={18} />
@@ -344,7 +344,7 @@ function AdminStudentsInner() {
             placeholder={viewType === 'staff' ? 'Cerca per nome o cognome...' : 'Cerca per nome, cognome o codice fiscale...'}
             value={searchTerm}
             onChange={e => setSearchTerm(e.target.value)}
-            className="w-full pl-10 pr-4 py-2.5 border-2 border-kidville-line rounded-xl font-maven text-sm focus:outline-none focus:border-kidville-green transition-colors"
+            className="w-full pl-10 pr-4 py-2.5 border-2 border-kidville-line rounded-input font-maven text-sm transition-colors focus:outline-none focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15"
           />
         </div>
         
@@ -356,7 +356,7 @@ function AdminStudentsInner() {
               <select
                 value={filterClass}
                 onChange={e => setFilterClass(e.target.value)}
-                className="flex-1 md:w-40 border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-ink/70 focus:outline-none focus:border-kidville-green bg-white"
+                className="flex-1 md:w-40 border-2 border-kidville-line rounded-input px-3 py-2 font-maven text-sm text-kidville-ink/70 bg-kidville-white focus:outline-none focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15"
               >
                 <option value="all">Tutte le classi</option>
                 {availableSections.map(s => (
@@ -370,7 +370,7 @@ function AdminStudentsInner() {
             <select
               value={filterStatus}
               onChange={e => setFilterStatus(e.target.value)}
-              className="w-full md:w-40 border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-ink/70 focus:outline-none focus:border-kidville-green bg-white"
+              className="w-full md:w-40 border-2 border-kidville-line rounded-input px-3 py-2 font-maven text-sm text-kidville-ink/70 bg-kidville-white focus:outline-none focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15"
             >
               <option value="all">Tutti gli stati</option>
               <option value="iscritto">Iscritto</option>

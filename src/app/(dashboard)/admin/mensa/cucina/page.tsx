@@ -36,6 +36,7 @@ function CucinaInner() {
   return (
     <CockpitPage max={1152}>
       <PageHeader
+        eyebrow="Operativo"
         icon={ChefHat}
         title="Report Cucina"
         subtitle={`Pasti del giorno, allergie e menù ${sezione ? `· sezione ${sezione} ` : ''}(sola lettura).`}

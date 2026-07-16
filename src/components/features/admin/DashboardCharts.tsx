@@ -12,11 +12,21 @@ import {
   Bar,
   Cell,
 } from 'recharts';
+import {
+  BRAND,
+  CHART_AXIS,
+  CHART_GRID,
+  CHART_PALETTE,
+  CHART_TOOLTIP_BORDER,
+} from '@/lib/ui/chart-colors';
 
-const GREEN = '#006A5F';
-const YELLOW = '#FDC400';
+// Recharts setta `stroke`/`fill` come attributi di presentazione SVG: lì
+// `var(--color-kidville-*)` non è affidabile → si usa il mirror hex documentato
+// di `chart-colors.ts` (unico modulo del cockpit dove gli hex sono ammessi).
+const GREEN = BRAND.green;
+const YELLOW = BRAND.yellow;
 
-const PALETTE = ['#006A5F', '#FDC400', '#43A047', '#2A9D8F', '#E9C46A', '#94d2bd', '#83c5be'];
+const PALETTE = CHART_PALETTE;
 
 const euroFmt = new Intl.NumberFormat('it-IT', {
   style: 'currency',
@@ -55,8 +65,8 @@ export function TrendIncassiChart({ data }: { data: TrendPoint[] }) {
             <stop offset="100%" stopColor={GREEN} stopOpacity={0} />
           </linearGradient>
         </defs>
-        <CartesianGrid strokeDasharray="3 3" stroke="#eef0ee" vertical={false} />
-        <XAxis dataKey="label" tickLine={false} axisLine={false} fontSize={12} stroke="#9ca3af" />
+        <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} vertical={false} />
+        <XAxis dataKey="label" tickLine={false} axisLine={false} fontSize={12} stroke={CHART_AXIS} />
         <YAxis
           domain={[0, top]}
           ticks={ticks}
@@ -64,12 +74,12 @@ export function TrendIncassiChart({ data }: { data: TrendPoint[] }) {
           tickLine={false}
           axisLine={false}
           fontSize={12}
-          stroke="#9ca3af"
+          stroke={CHART_AXIS}
           width={44}
         />
         <Tooltip
           formatter={(v) => [euroFmt.format(Number(v)), 'Incassato']}
-          contentStyle={{ borderRadius: 12, border: '1px solid #eee', fontFamily: 'inherit' }}
+          contentStyle={{ borderRadius: 12, border: `1px solid ${CHART_TOOLTIP_BORDER}`, fontFamily: 'inherit' }}
         />
         <Area
           type="monotone"
@@ -93,13 +103,13 @@ export function StudentiPerClasseChart({ data }: { data: ClassePoint[] }) {
   return (
     <ResponsiveContainer width="100%" height={240}>
       <BarChart data={data} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#eef0ee" vertical={false} />
-        <XAxis dataKey="classe" tickLine={false} axisLine={false} fontSize={11} stroke="#9ca3af" interval={0} angle={data.length > 5 ? -20 : 0} textAnchor={data.length > 5 ? 'end' : 'middle'} height={data.length > 5 ? 48 : 30} />
-        <YAxis allowDecimals={false} tickLine={false} axisLine={false} fontSize={12} stroke="#9ca3af" width={28} />
+        <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} vertical={false} />
+        <XAxis dataKey="classe" tickLine={false} axisLine={false} fontSize={11} stroke={CHART_AXIS} interval={0} angle={data.length > 5 ? -20 : 0} textAnchor={data.length > 5 ? 'end' : 'middle'} height={data.length > 5 ? 48 : 30} />
+        <YAxis allowDecimals={false} tickLine={false} axisLine={false} fontSize={12} stroke={CHART_AXIS} width={28} />
         <Tooltip
           cursor={{ fill: 'rgba(0,106,95,0.05)' }}
           formatter={(v) => [Number(v), 'Alunni']}
-          contentStyle={{ borderRadius: 12, border: '1px solid #eee', fontFamily: 'inherit' }}
+          contentStyle={{ borderRadius: 12, border: `1px solid ${CHART_TOOLTIP_BORDER}`, fontFamily: 'inherit' }}
         />
         <Bar dataKey="count" radius={[8, 8, 0, 0]} isAnimationActive animationDuration={1200} animationEasing="ease-out">
           {data.map((_, i) => (

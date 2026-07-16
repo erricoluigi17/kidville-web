@@ -111,14 +111,14 @@ export function SubmissionDetailSidebar({ submission, onClose, onToggleGestita }
             className="fixed right-0 top-0 bottom-0 z-50 flex flex-col w-full max-w-[460px]"
             style={{
               background: 'rgba(8, 11, 26, 0.97)',
-              borderLeft: '1px solid #EFE7DC',
+              borderLeft: '1px solid var(--color-kidville-line)',
               backdropFilter: 'blur(28px)',
             }}
           >
             {/* Header */}
             <div
               className="flex items-start justify-between px-6 py-5"
-              style={{ borderBottom: '1px solid #EFE7DC' }}
+              style={{ borderBottom: '1px solid var(--color-kidville-line)' }}
             >
               <div className="flex-1 min-w-0 pr-4">
                 <h2 className="text-kidville-green font-semibold text-base leading-snug truncate">
@@ -140,7 +140,7 @@ export function SubmissionDetailSidebar({ submission, onClose, onToggleGestita }
             {/* Meta strip */}
             <div
               className="px-6 py-3 flex flex-wrap items-center gap-2.5"
-              style={{ borderBottom: '1px solid #FFFFFF' }}
+              style={{ borderBottom: '1px solid var(--color-kidville-white)' }}
             >
               <span
                 className={`inline-flex px-2.5 py-0.5 rounded-full text-[11px] font-medium border ${STATUS_MAP[submission.status].cls}`}
@@ -181,8 +181,8 @@ export function SubmissionDetailSidebar({ submission, onClose, onToggleGestita }
                       key={fieldId}
                       className="rounded-xl px-4 py-3"
                       style={{
-                        background: '#EFE7DC',
-                        border: '1px solid #EFE7DC',
+                        background: 'var(--color-kidville-line)',
+                        border: '1px solid var(--color-kidville-line)',
                       }}
                     >
                       <p className="text-[10px] font-bold text-kidville-muted uppercase tracking-widest mb-1.5">
@@ -200,7 +200,7 @@ export function SubmissionDetailSidebar({ submission, onClose, onToggleGestita }
             {/* Footer */}
             <div
               className="px-6 py-4 flex flex-col gap-3"
-              style={{ borderTop: '1px solid #EFE7DC' }}
+              style={{ borderTop: '1px solid var(--color-kidville-line)' }}
             >
               {/* "Segna gestita" (M5.2): PATCH gestita con stato ottimista —
                   la riga viene aggiornata a monte in SubmissionsTable e questa
@@ -251,16 +251,16 @@ export function SubmissionDetailSidebar({ submission, onClose, onToggleGestita }
                 onClick={handleDownloadXLSX}
                 className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium text-kidville-ink transition-all"
                 style={{
-                  background: '#FFFFFF',
-                  border: '1px solid #EFE7DC',
+                  background: 'var(--color-kidville-white)',
+                  border: '1px solid var(--color-kidville-line)',
                 }}
                 onMouseEnter={e => {
                   ;(e.currentTarget as HTMLButtonElement).style.background =
-                    '#EFE7DC'
+                    'var(--color-kidville-line)'
                 }}
                 onMouseLeave={e => {
                   ;(e.currentTarget as HTMLButtonElement).style.background =
-                    '#FFFFFF'
+                    'var(--color-kidville-white)'
                 }}
               >
                 <Download className="w-4 h-4" />

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { BellRing, RefreshCw, Send, X } from 'lucide-react';
 import { SectionTitle } from '@/components/ui/cockpit';
+import { Badge } from '@/components/ui/Badge';
 import { SaveCheck } from '@/components/ui/SaveConfirmation';
 import { STATI_PAGAMENTO } from './stati';
 
@@ -112,7 +113,7 @@ export function SollecitiPanel({ userId, scuolaId }: Props) {
                 sub="Pagamenti aperti oltre scadenza. Seleziona, guarda l'anteprima e conferma: l'email parte solo alla conferma."
                 action={
                     <button onClick={() => { setLoading(true); load(); }}
-                        className="rounded-full border-2 border-kidville-line p-2 text-kidville-muted hover:text-kidville-green">
+                        className="rounded-pill border-[1.5px] border-kidville-line p-2 text-kidville-muted transition-colors hover:border-kidville-green hover:text-kidville-green">
                         <RefreshCw size={14} />
                     </button>
                 } />
@@ -139,7 +140,7 @@ export function SollecitiPanel({ userId, scuolaId }: Props) {
                             const st = STATI_PAGAMENTO[p.stato] ?? STATI_PAGAMENTO.da_pagare;
                             const residuo = Math.max(0, Number(p.importo) - Number(p.importo_pagato || 0));
                             return (
-                                <label key={p.id} className="flex cursor-pointer items-center gap-3 rounded-xl border-2 border-kidville-line bg-kidville-white p-3">
+                                <label key={p.id} className="flex cursor-pointer items-center gap-3 rounded-card border-[1.5px] border-kidville-line bg-kidville-white p-3">
                                     <input type="checkbox" checked={selected.has(p.id)} onChange={() => toggle(p.id)} className="h-4 w-4 shrink-0 rounded text-kidville-green" />
                                     <span className="min-w-0 flex-1">
                                         <span className="block truncate font-maven text-sm font-bold text-kidville-green">
@@ -149,9 +150,9 @@ export function SollecitiPanel({ userId, scuolaId }: Props) {
                                             Scaduto da {giorniRitardo(p)}gg ({dataIt(p.scadenza)}) · ultimo sollecito: {dataIt(p.ultimo_sollecito_il)}
                                         </span>
                                     </span>
-                                    <span className="shrink-0 text-right">
+                                    <span className="flex shrink-0 flex-col items-end gap-0.5 text-right">
                                         <span className="block font-maven text-sm font-bold text-kidville-error">€ {residuo.toFixed(2)}</span>
-                                        <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-bold ${st.cls}`}>{st.label}</span>
+                                        <Badge tone={st.tone}>{st.label}</Badge>
                                     </span>
                                 </label>
                             );
@@ -160,22 +161,22 @@ export function SollecitiPanel({ userId, scuolaId }: Props) {
 
                     <div className="mt-4 flex flex-wrap items-center gap-2">
                         <button onClick={() => chiama(true)} disabled={busy || selected.size === 0}
-                            className="rounded-full bg-kidville-green px-5 py-2.5 font-maven text-sm font-bold text-white disabled:opacity-50">
+                            className="rounded-pill bg-kidville-green px-5 py-2.5 font-maven text-sm font-bold text-kidville-yellow transition-colors hover:bg-kidville-green-dark disabled:opacity-50">
                             {busy && !anteprime ? 'Preparo…' : `Anteprima (${selected.size})`}
                         </button>
                         {anteprime && (
                             <button onClick={() => setAnteprime(null)}
-                                className="inline-flex items-center gap-1 rounded-full border-2 border-kidville-line px-4 py-2 font-maven text-sm font-bold text-kidville-muted hover:bg-kidville-cream">
+                                className="inline-flex items-center gap-1 rounded-pill border-[1.5px] border-kidville-line px-4 py-2 font-maven text-sm font-bold text-kidville-muted transition-colors hover:bg-kidville-cream">
                                 <X size={14} /> Annulla
                             </button>
                         )}
                     </div>
 
                     {anteprime && (
-                        <div className="mt-4 space-y-3 rounded-xl border-2 border-kidville-line bg-kidville-cream/40 p-4">
+                        <div className="mt-4 space-y-3 rounded-card border-[1.5px] border-kidville-line bg-kidville-cream/40 p-4">
                             <p className="font-barlow text-sm font-black uppercase text-kidville-green">Anteprima — nessuna email è ancora partita</p>
                             {anteprime.map((e) => (
-                                <div key={e.pagamento_id} className="rounded-lg bg-kidville-white p-3">
+                                <div key={e.pagamento_id} className="rounded-input bg-kidville-white p-3">
                                     {e.ok ? (
                                         <>
                                             <p className="font-maven text-xs font-bold text-kidville-green">Livello {e.livello} · {e.oggetto}</p>
@@ -187,7 +188,7 @@ export function SollecitiPanel({ userId, scuolaId }: Props) {
                                 </div>
                             ))}
                             <button onClick={() => chiama(false)} disabled={busy || anteprime.every((e) => !e.ok)}
-                                className="inline-flex items-center gap-1.5 rounded-full bg-kidville-green px-5 py-2.5 font-maven text-sm font-bold text-white disabled:opacity-50">
+                                className="inline-flex items-center gap-1.5 rounded-pill bg-kidville-green px-5 py-2.5 font-maven text-sm font-bold text-kidville-yellow transition-colors hover:bg-kidville-green-dark disabled:opacity-50">
                                 <Send size={14} /> {busy ? 'Invio…' : `Conferma e invia (${anteprime.filter((e) => e.ok).length})`}
                             </button>
                         </div>

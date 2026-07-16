@@ -6,6 +6,8 @@ import { motion } from 'framer-motion';
 import { FatturaButton } from './FatturaButton';
 import { RateizzaModal } from './RateizzaModal';
 import { SaveCheck } from '@/components/ui/SaveConfirmation';
+import { cx } from '@/lib/ui/cx';
+import { MODAL_OVERLAY, MODAL_CARD, MODAL_SHADOW, INPUT, SELECT, BTN_PRIMARY, BTN_SECONDARY } from './ui';
 
 interface Alunno { id: string; nome?: string; cognome?: string; classe_sezione?: string | null }
 interface Categoria { id: string; nome: string; slug?: string }
@@ -116,11 +118,12 @@ export function QuickAcquistoModal({ alunno, categoria, userId, scuolaId, onClos
     };
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+        <div className={MODAL_OVERLAY} onClick={onClose}>
             <motion.div
                 initial={{ scale: 0.95, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
-                className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5"
+                className={MODAL_CARD}
+                style={{ boxShadow: MODAL_SHADOW }}
                 onClick={(e) => e.stopPropagation()}
             >
                 <div className="flex items-center justify-between mb-4">
@@ -130,7 +133,7 @@ export function QuickAcquistoModal({ alunno, categoria, userId, scuolaId, onClos
                     <button onClick={onClose} className="text-kidville-muted hover:text-kidville-ink"><X size={20} /></button>
                 </div>
 
-                <div className="bg-kidville-cream/60 rounded-xl p-3 mb-4">
+                <div className="bg-kidville-cream/60 rounded-card p-3 mb-4">
                     <p className="font-maven text-sm text-kidville-green font-bold">
                         {alunno.nome} {alunno.cognome}
                     </p>
@@ -151,8 +154,7 @@ export function QuickAcquistoModal({ alunno, categoria, userId, scuolaId, onClos
                                 <FatturaButton pagamentoId={creato.id} userId={userId} fatturaStato={creato.fattura_stato} descrizione={descrizione} />
                             </div>
                         )}
-                        <button onClick={onDone}
-                            className="mt-2 w-full py-2.5 rounded-full bg-kidville-green font-maven font-bold text-sm text-white hover:opacity-90">
+                        <button onClick={onDone} className={cx(BTN_PRIMARY, 'mt-2 w-full')}>
                             Chiudi
                         </button>
                     </div>
@@ -162,19 +164,19 @@ export function QuickAcquistoModal({ alunno, categoria, userId, scuolaId, onClos
                             <div>
                                 <label className="font-maven text-xs text-kidville-muted mb-1 block">Descrizione</label>
                                 <input type="text" value={descrizione} onChange={(e) => setDescrizione(e.target.value)}
-                                    className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
+                                    className={INPUT} />
                             </div>
                             <div className="grid grid-cols-2 gap-3">
                                 <div>
                                     <label className="font-maven text-xs text-kidville-muted mb-1 block">Importo (€)</label>
                                     <input type="number" min={0} step="0.01" value={importo || ''}
                                         onChange={(e) => { setImporto(e.target.value === '' ? 0 : Number(e.target.value)); setConfermaDup(null); }}
-                                        className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
+                                        className={INPUT} />
                                 </div>
                                 <div>
                                     <label className="font-maven text-xs text-kidville-muted mb-1 block">Data</label>
                                     <input type="date" value={data} onChange={(e) => { setData(e.target.value); setConfermaDup(null); }}
-                                        className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
+                                        className={INPUT} />
                                 </div>
                             </div>
 
@@ -202,21 +204,21 @@ export function QuickAcquistoModal({ alunno, categoria, userId, scuolaId, onClos
                                 <div>
                                     <label className="font-maven text-xs text-kidville-muted mb-1 block">Metodo di pagamento</label>
                                     <select value={metodo} onChange={(e) => setMetodo(e.target.value)}
-                                        className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:border-kidville-green">
+                                        className={SELECT}>
                                         {METODI.map((m) => <option key={m.v} value={m.v}>{m.l}</option>)}
                                     </select>
                                 </div>
                             )}
 
                             {!acconti && giaPagato && metodo === 'contanti' && (
-                                <p className="rounded-xl bg-kidville-warn-soft px-3 py-2 font-maven text-[11px] leading-snug text-kidville-warn">
+                                <p className="rounded-card bg-kidville-warn-soft px-3 py-2 font-maven text-[11px] leading-snug text-kidville-warn">
                                     Contanti: pagamento non tracciabile. La quota non sarà detraibile nel 730 (art. 15 TUIR)
                                     e resterà esclusa dalla comunicazione delle spese scolastiche all&apos;AdE.
                                 </p>
                             )}
 
                             {confermaDup && (
-                                <p className="rounded-xl bg-kidville-warn-soft px-3 py-2 font-maven text-[11px] leading-snug text-kidville-warn">
+                                <p className="rounded-card bg-kidville-warn-soft px-3 py-2 font-maven text-[11px] leading-snug text-kidville-warn">
                                     {confermaDup}
                                 </p>
                             )}
@@ -225,7 +227,7 @@ export function QuickAcquistoModal({ alunno, categoria, userId, scuolaId, onClos
                         </div>
 
                         <div className="flex gap-2 mt-5">
-                            <button onClick={onClose} className="flex-1 py-2.5 rounded-full border-2 border-kidville-line font-maven font-bold text-sm text-kidville-muted hover:bg-kidville-cream">
+                            <button onClick={onClose} className={cx(BTN_SECONDARY, 'flex-1')}>
                                 Annulla
                             </button>
                             {acconti ? (
@@ -234,12 +236,11 @@ export function QuickAcquistoModal({ alunno, categoria, userId, scuolaId, onClos
                                     if (!importo || importo <= 0) { setError('Inserisci un importo maggiore di 0'); return; }
                                     setError(null); setRateizza(true);
                                 }}
-                                    className="flex-1 py-2.5 rounded-full bg-kidville-green font-maven font-bold text-sm text-white hover:opacity-90">
+                                    className={cx(BTN_PRIMARY, 'flex-1')}>
                                     Configura acconti
                                 </button>
                             ) : (
-                                <button onClick={submit} disabled={saving}
-                                    className="flex-1 py-2.5 rounded-full bg-kidville-green font-maven font-bold text-sm text-white hover:opacity-90 disabled:opacity-50">
+                                <button onClick={submit} disabled={saving} className={cx(BTN_PRIMARY, 'flex-1')}>
                                     {saving ? 'Salvataggio…' : confermaDup ? 'Conferma comunque' : 'Registra acquisto'}
                                 </button>
                             )}

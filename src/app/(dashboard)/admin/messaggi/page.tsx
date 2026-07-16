@@ -2,7 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { MessageCircle, Users, Send, Loader2, Eye } from 'lucide-react';
-import { CockpitPage, PageHeader, Tabs } from '@/components/ui/cockpit';
+import { CockpitPage, CockpitSelect, PageHeader, Tabs } from '@/components/ui/cockpit';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 
 interface OversightThread {
@@ -123,7 +123,7 @@ function MessaggiInner() {
 
   return (
     <CockpitPage max={1200}>
-      <PageHeader icon={MessageCircle} title="Messaggi" subtitle="Chat con i genitori e supervisione delle conversazioni genitore↔insegnante." />
+      <PageHeader eyebrow="Comunicazione" icon={MessageCircle} title="Messaggi" subtitle="Chat con i genitori e supervisione delle conversazioni genitore↔insegnante." />
 
       <Tabs
         value={tab}
@@ -196,18 +196,21 @@ function MessaggiInner() {
         <>
           {/* Filtri */}
           <div className="mb-4 flex flex-wrap items-center gap-3">
-            <select value={fTeacher} onChange={e => setFTeacher(e.target.value)} className="font-maven rounded-pill border border-kidville-line bg-white px-3 py-2 text-sm">
-              <option value="">Tutti gli insegnanti</option>
-              {filtri.docenti.map(d => <option key={d.id} value={d.id}>{d.nome}</option>)}
-            </select>
-            <select value={fParent} onChange={e => setFParent(e.target.value)} className="font-maven rounded-pill border border-kidville-line bg-white px-3 py-2 text-sm">
-              <option value="">Tutti i genitori</option>
-              {filtri.genitori.map(g => <option key={g.id} value={g.id}>{g.nome}</option>)}
-            </select>
-            <select value={fClasse} onChange={e => setFClasse(e.target.value)} className="font-maven rounded-pill border border-kidville-line bg-white px-3 py-2 text-sm">
-              <option value="">Tutte le classi</option>
-              {filtri.classi.map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
+            <CockpitSelect
+              value={fTeacher}
+              onChange={setFTeacher}
+              options={[{ value: '', label: 'Tutti gli insegnanti' }, ...filtri.docenti.map(d => ({ value: d.id, label: d.nome }))]}
+            />
+            <CockpitSelect
+              value={fParent}
+              onChange={setFParent}
+              options={[{ value: '', label: 'Tutti i genitori' }, ...filtri.genitori.map(g => ({ value: g.id, label: g.nome }))]}
+            />
+            <CockpitSelect
+              value={fClasse}
+              onChange={setFClasse}
+              options={[{ value: '', label: 'Tutte le classi' }, ...filtri.classi.map(c => ({ value: c, label: c }))]}
+            />
           </div>
 
           <div className="grid gap-4 lg:grid-cols-[360px_1fr]">

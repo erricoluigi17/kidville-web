@@ -149,7 +149,7 @@ export function FamilyRegistryManager() {
                 <motion.div
                     initial={{ opacity: 0, scale: 0.96 }}
                     animate={{ opacity: 1, scale: 1 }}
-                    className="flex flex-col items-center justify-center gap-6 py-16 text-center bg-white border border-kidville-green/15 rounded-3xl shadow-xl"
+                    className="flex flex-col items-center justify-center gap-6 py-16 text-center bg-kidville-white border border-kidville-green/15 rounded-card shadow-xl"
                 >
                     <div className="w-20 h-20 rounded-full bg-kidville-green/20 flex items-center justify-center">
                         <CheckCircle2 size={44} className="text-kidville-green" />
@@ -197,13 +197,13 @@ export function FamilyRegistryManager() {
                     <div className="flex gap-3 mt-2">
                         <Link
                             href="/admin/students"
-                            className="flex items-center gap-2 px-5 py-2.5 bg-kidville-green text-white rounded-xl font-barlow font-bold uppercase text-sm hover:opacity-90 transition-all"
+                            className="flex items-center gap-2 px-5 py-2.5 bg-kidville-green text-kidville-yellow rounded-pill font-barlow font-extrabold uppercase tracking-[0.03em] text-sm transition-transform hover:bg-kidville-green-dark active:scale-95"
                         >
                             Vai alla lista alunni <ArrowRight size={16} />
                         </Link>
                         <button
                             onClick={resetAll}
-                            className="flex items-center gap-2 px-5 py-2.5 bg-kidville-cream border border-kidville-green/15 text-kidville-green rounded-xl font-barlow font-bold uppercase text-sm hover:bg-kidville-green-light transition-all"
+                            className="flex items-center gap-2 px-5 py-2.5 bg-kidville-cream border border-kidville-green/15 text-kidville-green rounded-pill font-barlow font-extrabold uppercase tracking-[0.03em] text-sm transition-transform hover:bg-kidville-green-soft active:scale-95"
                         >
                             <RefreshCw size={16} /> Nuova anagrafica
                         </button>
@@ -220,7 +220,7 @@ export function FamilyRegistryManager() {
                 {toast && (
                     <motion.div
                         initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}
-                        className={`fixed top-6 left-1/2 -translate-x-1/2 z-[120] flex items-center gap-2 px-6 py-3 rounded-full font-bold shadow-lg ${toast.type === 'success' ? 'bg-kidville-green text-white' : 'bg-kidville-error text-white'}`}
+                        className={`fixed top-6 left-1/2 -translate-x-1/2 z-[120] flex items-center gap-2 px-6 py-3 rounded-pill font-bold shadow-lg ${toast.type === 'success' ? 'bg-kidville-green text-kidville-white' : 'bg-kidville-error text-kidville-white'}`}
                     >
                         {toast.type === 'success' ? <CheckCircle2 size={18} /> : <XCircle size={18} />}
                         {toast.message}
@@ -237,7 +237,7 @@ export function FamilyRegistryManager() {
                 <button
                     onClick={handleSaveAll}
                     disabled={saving}
-                    className="flex items-center gap-2 px-6 py-3 rounded-full bg-kidville-green text-white font-barlow font-black uppercase text-sm hover:opacity-90 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex items-center gap-2 px-6 py-3 rounded-pill bg-kidville-green text-kidville-yellow font-barlow font-black uppercase text-sm transition-transform hover:bg-kidville-green-dark active:scale-95 shadow-lg disabled:opacity-50 disabled:pointer-events-none"
                 >
                     {saving ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />}
                     {saving ? 'Salvataggio…' : 'Salva anagrafica'}
@@ -245,17 +245,17 @@ export function FamilyRegistryManager() {
             </div>
 
             {/* Top Tabs */}
-            <div className="flex flex-wrap gap-2 mb-6 p-2 bg-white backdrop-blur-md rounded-2xl border border-kidville-green/15 shadow-sm w-fit">
+            <div className="flex flex-wrap gap-2 mb-6 p-2 bg-kidville-white backdrop-blur-md rounded-card border border-kidville-green/15 shadow-sm w-fit">
                 {tabs.map((tab) => (
                     <button
                         key={tab.id}
                         onClick={() => setActiveTab(tab.id)}
-                        className={`relative px-5 py-3 rounded-xl font-bold text-sm transition-colors flex items-center gap-2 ${activeTab === tab.id ? 'text-white' : 'text-kidville-muted hover:text-kidville-green'}`}
+                        className={`relative px-5 py-3 rounded-pill font-bold text-sm transition-colors flex items-center gap-2 ${activeTab === tab.id ? 'text-kidville-white' : 'text-kidville-muted hover:text-kidville-green'}`}
                     >
                         {activeTab === tab.id && (
                             <motion.div
                                 layoutId="activeFamilyTabIndicator"
-                                className="absolute inset-0 bg-kidville-green rounded-xl shadow-lg"
+                                className="absolute inset-0 bg-kidville-green rounded-pill shadow-lg"
                                 initial={false}
                                 transition={{ type: 'spring', stiffness: 300, damping: 30 }}
                             />
@@ -277,7 +277,7 @@ export function FamilyRegistryManager() {
 
                 <button
                     onClick={addAdultTab}
-                    className="relative px-4 py-3 rounded-xl font-bold text-sm text-kidville-muted hover:text-kidville-green hover:bg-kidville-cream transition-colors flex items-center gap-2 border border-dashed border-kidville-green/30"
+                    className="relative px-4 py-3 rounded-pill font-bold text-sm text-kidville-muted hover:text-kidville-green hover:bg-kidville-cream transition-colors flex items-center gap-2 border border-dashed border-kidville-green/30"
                 >
                     <Plus size={16} /> Aggiungi Componente
                 </button>
@@ -287,7 +287,7 @@ export function FamilyRegistryManager() {
             <div className="relative min-h-[600px]">
                 {tabs.map((tab) => (
                     <div key={tab.id} className={activeTab === tab.id ? 'block' : 'hidden'}>
-                        <div className="bg-white backdrop-blur-2xl border border-kidville-green/15 p-8 rounded-3xl shadow-xl text-kidville-green">
+                        <div className="bg-kidville-white backdrop-blur-2xl border border-kidville-green/15 p-8 rounded-card shadow-xl text-kidville-green">
                             {tab.type === 'student' ? (
                                 <ScrollableStudentForm ref={studentRef} />
                             ) : (

@@ -118,7 +118,8 @@ function AnagraficaDetailInner() {
         return (
             <CockpitPage max={960}>
                 {Back}
-                <div className="rounded-card bg-kidville-white p-10 text-center shadow-sm">
+                <div className="flex flex-col items-center rounded-card bg-kidville-white p-10 text-center shadow-sm">
+                    <div className="mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-kidville-cream text-4xl">🧒</div>
                     <h2 className="font-barlow text-lg font-bold uppercase text-kidville-green">Anagrafica non disponibile</h2>
                     <p className="font-maven mt-1 text-sm text-kidville-muted">L&apos;alunno non esiste o non appartiene ai tuoi plessi.</p>
                 </div>

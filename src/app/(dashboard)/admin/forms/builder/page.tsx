@@ -132,8 +132,8 @@ function AnagraficaPaletteItem({
         isDragging ? 'opacity-40' : 'hover:brightness-125'
       }`}
       style={{
-        borderColor: isDragging ? colors.border : '#EFE7DC',
-        background: isDragging ? colors.bg : '#EFE7DC',
+        borderColor: isDragging ? colors.border : 'var(--color-kidville-line)',
+        background: isDragging ? colors.bg : 'var(--color-kidville-line)',
       }}
       onMouseEnter={e => {
         if (!isDragging) {
@@ -143,8 +143,8 @@ function AnagraficaPaletteItem({
       }}
       onMouseLeave={e => {
         if (!isDragging) {
-          ;(e.currentTarget as HTMLElement).style.borderColor = '#EFE7DC'
-          ;(e.currentTarget as HTMLElement).style.background = '#EFE7DC'
+          ;(e.currentTarget as HTMLElement).style.borderColor = 'var(--color-kidville-line)'
+          ;(e.currentTarget as HTMLElement).style.background = 'var(--color-kidville-line)'
         }
       }}
     >
@@ -467,17 +467,17 @@ function FormBuilderInner() {
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
     >
-      {/* Full-screen dark canvas overriding the cream body */}
+      {/* Canvas del builder a tutta altezza sul crema del corpo pagina */}
       <div
         className="flex flex-col overflow-hidden"
-        style={{ height: '100vh', background: '#FEF1E4', color: '#1F3D38' }}
+        style={{ height: '100vh', background: 'var(--color-kidville-cream)', color: 'var(--color-kidville-ink)' }}
       >
         {/* ── Header ── */}
         <header
           className="flex items-center justify-between px-6 py-3 flex-shrink-0"
           style={{
             background: 'rgba(255,255,255,0.85)',
-            borderBottom: '1px solid #EFE7DC',
+            borderBottom: '1px solid var(--color-kidville-line)',
             backdropFilter: 'blur(16px)',
             zIndex: 30,
           }}
@@ -548,7 +548,7 @@ function FormBuilderInner() {
         {savedModelId && (
           <div
             className="flex items-center gap-3 px-6 py-2.5 flex-shrink-0 flex-wrap"
-            style={{ background: 'rgba(67,160,71,0.06)', borderBottom: '1px solid #EFE7DC' }}
+            style={{ background: 'rgba(67,160,71,0.06)', borderBottom: '1px solid var(--color-kidville-line)' }}
           >
             <span className="flex items-center gap-1.5 text-xs font-semibold text-kidville-success uppercase tracking-wider">
               <Globe className="w-3.5 h-3.5" /> Pubblicazione
@@ -615,8 +615,8 @@ function FormBuilderInner() {
           <aside
             className="w-60 flex-shrink-0 overflow-y-auto"
             style={{
-              background: '#FFFFFF',
-              borderRight: '1px solid #EFE7DC',
+              background: 'var(--color-kidville-white)',
+              borderRight: '1px solid var(--color-kidville-line)',
             }}
           >
             <div className="p-4 space-y-4">
@@ -638,7 +638,7 @@ function FormBuilderInner() {
               </div>
 
               {/* Divisore */}
-              <div style={{ borderTop: '1px solid #EFE7DC' }} />
+              <div style={{ borderTop: '1px solid var(--color-kidville-line)' }} />
 
               {/* Campi anagrafica */}
               <div>

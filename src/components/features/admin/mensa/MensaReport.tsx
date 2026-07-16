@@ -120,13 +120,13 @@ export function MensaReport({ userId, scuolaId, sezione, sezioni, soloLettura = 
         <div>
           <label className="font-maven text-xs text-kidville-muted block mb-1">Data</label>
           <DateField value={data} onChange={setData}
-            className="border-2 border-kidville-line rounded-lg px-3 py-1.5 font-maven text-sm text-kidville-green" />
+            className="min-h-[44px] border-2 border-kidville-line rounded-lg px-3 py-1.5 font-maven text-sm text-kidville-green" />
         </div>
         {!sezione && sezioni && sezioni.length > 0 && (
           <div>
             <label className="font-maven text-xs text-kidville-muted block mb-1">Sezione</label>
             <select value={filtroSezione} onChange={e => setFiltroSezione(e.target.value)}
-              className="border-2 border-kidville-line rounded-lg px-3 py-1.5 font-maven text-sm text-kidville-green bg-white">
+              className="min-h-[44px] border-2 border-kidville-line rounded-lg px-3 py-1.5 font-maven text-sm text-kidville-green bg-white">
               <option value="">Tutte</option>
               {sezioni.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
@@ -186,8 +186,8 @@ export function MensaReport({ userId, scuolaId, sezione, sezioni, soloLettura = 
                       </span>
                       {!soloLettura && (
                         <button onClick={() => elimina(a.alunno_id)} title="Elimina alternativa"
-                          className="shrink-0 text-kidville-error hover:opacity-70">
-                          <Trash2 size={15} />
+                          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-kidville-error hover:opacity-70">
+                          <Trash2 size={16} />
                         </button>
                       )}
                     </li>
@@ -208,7 +208,7 @@ export function MensaReport({ userId, scuolaId, sezione, sezioni, soloLettura = 
                     <label htmlFor="mensa-alt-alunno" className="sr-only">Bambino</label>
                     <select id="mensa-alt-alunno" value={formAlunno} onChange={e => setFormAlunno(e.target.value)}
                       style={{ fontSize: '16px' }}
-                      className="border-2 border-kidville-line rounded-lg px-3 py-1.5 font-maven text-kidville-green bg-white min-w-[180px]">
+                      className="min-h-[44px] border-2 border-kidville-line rounded-lg px-3 py-1.5 font-maven text-kidville-green bg-white min-w-[180px]">
                       <option value="">Scegli il bambino…</option>
                       {tuttiAlunni.map(a => <option key={a.id} value={a.id}>{a.nome} ({a.classe})</option>)}
                     </select>
@@ -216,9 +216,9 @@ export function MensaReport({ userId, scuolaId, sezione, sezioni, soloLettura = 
                     <input id="mensa-alt-nota" type="text" value={formNota} onChange={e => setFormNota(e.target.value)}
                       placeholder="Es. pasto in bianco, senza latticini…"
                       style={{ fontSize: '16px' }}
-                      className="flex-1 min-w-[180px] border-2 border-kidville-line rounded-lg px-3 py-1.5 font-maven text-kidville-ink" />
+                      className="min-h-[44px] flex-1 min-w-[180px] border-2 border-kidville-line rounded-lg px-3 py-1.5 font-maven text-kidville-ink" />
                     <button onClick={registra} disabled={salvando || !formAlunno || !formNota.trim()}
-                      className="inline-flex items-center gap-1.5 rounded-lg bg-kidville-green text-white font-maven text-sm px-3 py-1.5 disabled:opacity-40">
+                      className="inline-flex min-h-[44px] items-center gap-1.5 rounded-lg bg-kidville-green text-white font-maven text-sm px-4 py-1.5 disabled:opacity-40">
                       <Plus size={15} /> {salvando ? 'Salvo…' : 'Registra alternativa'}
                     </button>
                   </div>

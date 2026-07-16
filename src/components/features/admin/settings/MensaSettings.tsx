@@ -148,7 +148,7 @@ export function MensaSettings({ userId, scuolaId }: Props) {
             <div className="flex flex-wrap gap-1.5">
               {GIORNI.map(g => (
                 <button key={g.n} onClick={() => toggleGiorno(g.n)}
-                  className={`px-3 py-1.5 rounded-full font-maven text-xs font-bold border-2 ${giorni.includes(g.n) ? 'bg-kidville-green text-white border-kidville-green' : 'bg-white text-kidville-muted border-kidville-line'}`}>
+                  className={`px-3 py-1.5 rounded-full font-maven text-xs font-bold border-2 ${giorni.includes(g.n) ? 'bg-kidville-green text-kidville-white border-kidville-green' : 'bg-kidville-white text-kidville-muted border-kidville-line'}`}>
                   {g.l}
                 </button>
               ))}
@@ -168,7 +168,7 @@ export function MensaSettings({ userId, scuolaId }: Props) {
             </div>
           </div>
 
-          <button onClick={salva} className="px-4 py-2 rounded-full bg-kidville-green text-white font-maven font-bold text-sm flex items-center gap-1">
+          <button onClick={salva} className="px-4 py-2 rounded-full bg-kidville-green text-kidville-yellow font-maven font-bold text-sm flex items-center gap-1">
             <Save size={15} /> Salva impostazioni
           </button>
           {done && <p className="font-maven text-xs text-kidville-success flex items-center gap-1"><SaveCheck size={14} /> Impostazioni salvate.</p>}
@@ -222,7 +222,7 @@ export function MensaSettings({ userId, scuolaId }: Props) {
               <button
                 onClick={creaMenu}
                 disabled={!newMenuNome.trim() || menuLoading}
-                className="px-3 py-1.5 rounded-lg bg-kidville-green text-white font-maven text-sm font-bold flex items-center gap-1 disabled:opacity-50"
+                className="px-3 py-1.5 rounded-lg bg-kidville-green text-kidville-yellow font-maven text-sm font-bold flex items-center gap-1 disabled:opacity-50"
               >
                 <Plus size={14} /> Aggiungi
               </button>
@@ -284,7 +284,7 @@ export function MensaSettings({ userId, scuolaId }: Props) {
                       <select
                         value={newMenuId}
                         onChange={e => setNewMenuId(e.target.value)}
-                        className="w-full border border-kidville-line rounded-lg px-2 py-1.5 font-maven text-xs text-kidville-green bg-white"
+                        className="w-full border border-kidville-line rounded-lg px-2 py-1.5 font-maven text-xs text-kidville-green bg-kidville-white"
                       >
                         <option value="">Seleziona…</option>
                         {menus.map(m => <option key={m.id} value={m.id}>{m.nome}</option>)}
@@ -302,7 +302,7 @@ export function MensaSettings({ userId, scuolaId }: Props) {
                   <button
                     onClick={aggiungiAssegnazione}
                     disabled={!newClasse.trim() || !newMenuId || !newAttivoDal || menuLoading}
-                    className="px-3 py-1.5 rounded-lg bg-kidville-green text-white font-maven text-xs font-bold flex items-center gap-1 disabled:opacity-50"
+                    className="px-3 py-1.5 rounded-lg bg-kidville-green text-kidville-yellow font-maven text-xs font-bold flex items-center gap-1 disabled:opacity-50"
                   >
                     <Plus size={13} /> Aggiungi assegnazione
                   </button>

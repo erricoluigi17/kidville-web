@@ -80,6 +80,7 @@ function AdminDiaryInner() {
   return (
     <CockpitPage max={1100}>
       <PageHeader
+        eyebrow="Didattica"
         icon={BookOpen}
         title="Diario 0-6"
         subtitle="Presenze del giorno in consultazione (l'appello resta alle maestre) e compilazione/aggiornamento del diario di sezione."

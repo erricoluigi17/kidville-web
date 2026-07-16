@@ -42,6 +42,7 @@ function PrimariaAdminInner() {
   return (
     <CockpitPage max={1100}>
       <PageHeader
+        eyebrow="Didattica"
         icon={GraduationCap}
         title="Scuola Primaria"
         subtitle="Area operativa: registri di classe, orario e registro accessi ai fascicoli. La configurazione (materie, docenti, obiettivi, giudizi, scrutinio) è in Impostazioni → Didattica primaria."

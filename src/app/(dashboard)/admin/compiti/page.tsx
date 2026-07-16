@@ -3,7 +3,7 @@
 import { Suspense } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Plus, ListTodo, CheckSquare, History, CheckCircle, Eye, ClipboardList } from 'lucide-react';
-import { CockpitPage, PageHeader, StatCard, Tabs, type TabOption } from '@/components/ui/cockpit';
+import { CockpitPage, HEADER_BTN, PageHeader, StatCard, Tabs, type TabOption } from '@/components/ui/cockpit';
 import { TaskCard } from '@/components/features/teacher/tasks/TaskCard';
 import { TaskForm } from '@/components/features/teacher/tasks/TaskForm';
 import { TaskEditModal } from '@/components/features/teacher/tasks/TaskEditModal';
@@ -40,13 +40,14 @@ function AdminCompitiInner() {
   return (
     <CockpitPage max={1200}>
       <PageHeader
+        eyebrow="Comunicazione"
         icon={ClipboardList}
         title="Attività"
         subtitle={`Task interni dello staff · ${currentUserName}${userRole === 'admin' ? ' (Direzione)' : userRole === 'coordinator' ? ' (Coordinatore)' : ''}`}
         actions={
           <button
             onClick={() => setShowCreateModal(true)}
-            className="flex items-center gap-2 rounded-pill bg-kidville-green px-4 py-2.5 font-barlow text-sm font-bold uppercase text-kidville-yellow transition-all active:scale-[0.98]"
+            className={HEADER_BTN}
           >
             <Plus size={16} strokeWidth={1.8} /> Nuovo task
           </button>

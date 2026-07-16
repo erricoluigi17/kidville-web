@@ -142,7 +142,7 @@ export function StaffDetailPanel({ staffId, onClose }: Props) {
 
   if (errore) {
     return (
-      <div className="rounded-card bg-white p-6 shadow-sm">
+      <div className="rounded-card bg-kidville-white p-6 shadow-sm">
         <div className="rounded-xl border border-kidville-error/30 bg-kidville-error-soft p-4 font-maven text-sm text-kidville-error">{errore}</div>
       </div>
     );
@@ -150,7 +150,7 @@ export function StaffDetailPanel({ staffId, onClose }: Props) {
 
   if (!member) {
     return (
-      <div className="rounded-card bg-white p-10 text-center shadow-sm">
+      <div className="rounded-card bg-kidville-white p-10 text-center shadow-sm">
         <h2 className="font-barlow text-lg font-bold uppercase text-kidville-green">Membro dello staff non trovato</h2>
         <p className="mt-1 font-maven text-sm text-kidville-muted">Questo utente non è nell&apos;elenco del personale.</p>
       </div>
@@ -166,7 +166,7 @@ export function StaffDetailPanel({ staffId, onClose }: Props) {
   const sezioniPerSede = sections.filter((s) => !draft.scuola_id || s.scuola_id === draft.scuola_id);
 
   return (
-    <div className="flex w-full flex-col rounded-card bg-white shadow-sm">
+    <div className="flex w-full flex-col rounded-card bg-kidville-white shadow-sm">
       {/* Header: avatar iniziali + nome + ruolo */}
       <div className="flex items-center gap-4 border-b border-kidville-line p-5">
         <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-kidville-green/10 font-barlow text-lg font-black text-kidville-green">
@@ -238,7 +238,7 @@ export function StaffDetailPanel({ staffId, onClose }: Props) {
             <h3 className="mb-2 font-barlow text-xs font-bold uppercase tracking-wide text-kidville-green">Gradi</h3>
             <div className="flex flex-wrap gap-1.5">
               {member.gradi.map((g) => (
-                <span key={g} className="rounded-full border border-kidville-line bg-white px-2 py-1 font-maven text-[11px] font-bold capitalize text-kidville-muted">{g}</span>
+                <span key={g} className="rounded-full border border-kidville-line bg-kidville-white px-2 py-1 font-maven text-[11px] font-bold capitalize text-kidville-muted">{g}</span>
               ))}
             </div>
           </section>
@@ -264,7 +264,7 @@ export function StaffDetailPanel({ staffId, onClose }: Props) {
                 const on = draft.section_ids.includes(s.id);
                 return (
                   <button key={s.id} type="button" onClick={() => toggleSezione(s.id)}
-                    className={`rounded-full border px-2 py-1 font-maven text-[11px] font-bold ${on ? 'border-kidville-green bg-kidville-green text-white' : 'border-kidville-line bg-white text-kidville-muted hover:border-kidville-green'}`}>
+                    className={`rounded-full border px-2 py-1 font-maven text-[11px] font-bold ${on ? 'border-kidville-green bg-kidville-green text-kidville-white' : 'border-kidville-line bg-kidville-white text-kidville-muted hover:border-kidville-green'}`}>
                     {s.name}
                   </button>
                 );

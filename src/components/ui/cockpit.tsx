@@ -14,6 +14,8 @@ import type { LucideIcon } from 'lucide-react';
 import { Search, X, ChevronDown, Check } from 'lucide-react';
 import { cx } from '@/lib/ui/cx';
 import { SHADOW_CARD, SHADOW_FLOAT } from '@/components/ui/Card';
+import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
+import { TONE_HEX, TRACK } from '@/lib/ui/chart-colors';
 import { useSediAttive } from '@/lib/context/sede-context';
 
 export type Tone = 'green' | 'info' | 'warn' | 'error' | 'success' | 'neutral' | 'yellow';
@@ -51,26 +53,35 @@ export function IconChip({ icon: Icon, tone = 'green', size = 44, radius = 12, s
   );
 }
 
-/** Header pagina: chip icona + titolo barlow-black + sottotitolo + azioni. */
-export function PageHeader({ icon: Icon, title, subtitle, actions, eyebrow }: { icon?: LucideIcon; title: string; subtitle?: React.ReactNode; actions?: React.ReactNode; eyebrow?: React.ReactNode }) {
+/**
+ * Header pagina del cockpit: ADAPTER su `PageHeaderCard`. Le `actions` NON
+ * vanno nello slot `action` della card (progettato per UNA pill compatta e
+ * dentro il remap `.kv-tab-giallo`): si rendono in una riga wrappabile SOTTO
+ * la card — (a) ripristina il flex-wrap del vecchio header su mobile,
+ * (b) esce dal contesto di remap (niente CTA green-dark-su-verde),
+ * (c) libera lo slot `action` → mascotte su TUTTE le pagine admin (design
+ * scelto). L'<h1> resta il `title` passato, invariato (vincolo e2e).
+ */
+export function PageHeader({ icon, title, subtitle, actions, eyebrow }: { icon?: LucideIcon; title: string; subtitle?: React.ReactNode; actions?: React.ReactNode; eyebrow?: React.ReactNode }) {
   return (
-    <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
-      <div className="flex min-w-0 items-center gap-3.5">
-        {Icon && (
-          <div className="flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-[15px] bg-kidville-green text-kidville-yellow">
-            <Icon size={26} strokeWidth={2.1} />
-          </div>
-        )}
-        <div className="min-w-0">
-          {eyebrow && <div className="font-barlow text-[12px] font-bold uppercase tracking-[0.14em] text-kidville-warn">{eyebrow}</div>}
-          <h1 className="font-barlow text-[34px] font-black uppercase leading-none text-kidville-green">{title}</h1>
-          {subtitle && <p className="mt-1 font-maven text-sm text-kidville-ink/80">{subtitle}</p>}
-        </div>
-      </div>
-      {actions && <div className="flex flex-wrap gap-2.5">{actions}</div>}
+    <div className="mb-6">
+      <PageHeaderCard
+        eyebrow={typeof eyebrow === 'string' ? eyebrow : 'Direzione & Segreteria'}
+        title={title}
+        icon={icon}
+        subtitle={subtitle}
+      />
+      {actions && (
+        <div className="mt-3 flex flex-wrap items-center justify-end gap-2.5">{actions}</div>
+      )}
     </div>
   );
 }
+
+/** CTA primario della riga azioni header (cockpit): bianco su verde = 6,5:1 (AA).
+ *  NON sostituisce Btn/btnClass (condivisi, giallo-su-verde brand): vale SOLO
+ *  per la riga azioni delle pagine admin. */
+export const HEADER_BTN = 'inline-flex items-center justify-center gap-2 rounded-pill bg-kidville-green px-4 py-2.5 font-barlow text-sm font-bold uppercase tracking-[0.03em] text-kidville-white transition-all hover:bg-kidville-green-dark active:scale-[0.98] disabled:opacity-50';
 
 /** Titolo di sezione dentro una card. */
 export function SectionTitle({ icon: Icon, title, sub, action }: { icon?: LucideIcon; title: string; sub?: React.ReactNode; action?: React.ReactNode }) {
@@ -114,10 +125,15 @@ export function StatCard({ icon: Icon, label, value, sub, tone = 'green', accent
 
 export interface TabOption { id: string; label: string; count?: number; icon?: LucideIcon }
 
-/** Tabs sottolineate (DR ui.jsx Tabs). */
+/**
+ * Tabs a PILLOLE (linguaggio dell'app): attiva verde-piena testo bianco,
+ * inattiva bianca con ring `kidville-line`. API invariata `{value,options,
+ * onChange,className}`. Lo stato attivo è esposto in modo accessibile con
+ * `aria-pressed`, e il focus da tastiera è sempre visibile.
+ */
 export function Tabs({ value, options, onChange, className }: { value: string; options: TabOption[]; onChange: (id: string) => void; className?: string }) {
   return (
-    <div className={cx('mb-5 flex flex-wrap gap-1 border-b-[1.5px] border-kidville-line', className)}>
+    <div className={cx('kv-cockpit-tabs mb-5 flex flex-wrap gap-2', className)}>
       {options.map((o) => {
         const on = value === o.id;
         const Icon = o.icon;
@@ -125,17 +141,23 @@ export function Tabs({ value, options, onChange, className }: { value: string; o
           <button
             key={o.id}
             type="button"
+            aria-pressed={on}
             onClick={() => onChange(o.id)}
-            className={cx('relative mr-3 inline-flex items-center gap-1.5 px-1 pb-3 font-barlow text-base font-extrabold uppercase tracking-[0.02em] transition-colors', on ? 'text-kidville-green' : 'text-kidville-neutral hover:text-kidville-green')}
+            className={cx(
+              'inline-flex items-center gap-1.5 rounded-pill px-4 py-2 font-barlow text-sm font-extrabold uppercase tracking-[0.02em] transition-colors',
+              'outline-none focus-visible:ring-2 focus-visible:ring-kidville-green focus-visible:ring-offset-1',
+              on
+                ? 'bg-kidville-green text-kidville-white'
+                : 'bg-kidville-white text-kidville-ink/70 ring-[1.5px] ring-inset ring-kidville-line hover:text-kidville-green hover:ring-kidville-green/50',
+            )}
           >
-            {Icon && <Icon size={17} strokeWidth={2.1} />}
+            {Icon && <Icon size={16} strokeWidth={2.1} />}
             {o.label}
             {o.count != null && (
-              <span className={cx('inline-flex h-[19px] min-w-[19px] items-center justify-center rounded-pill px-1.5 font-barlow text-[11px] font-extrabold', on ? 'bg-kidville-green text-kidville-white' : 'bg-kidville-neutral-soft text-kidville-neutral')}>
+              <span className={cx('inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-pill px-1.5 font-barlow text-[11px] font-extrabold', on ? 'bg-kidville-white/25 text-kidville-white' : 'bg-kidville-neutral-soft text-kidville-neutral')}>
                 {o.count}
               </span>
             )}
-            {on && <span className="absolute inset-x-0 -bottom-[1.5px] h-[3px] rounded-[3px] bg-kidville-green" />}
           </button>
         );
       })}
@@ -154,7 +176,7 @@ export function Toolbar({ search, onSearch, placeholder = 'Cerca…', children }
             value={search ?? ''}
             onChange={(e) => onSearch(e.target.value)}
             placeholder={placeholder}
-            className="h-[42px] w-full rounded-input border-[1.5px] border-kidville-line bg-kidville-white pl-10 pr-3.5 font-maven text-sm text-kidville-ink outline-none focus:border-kidville-green"
+            className="h-[42px] w-full rounded-input border-[1.5px] border-kidville-line bg-kidville-white pl-10 pr-3.5 font-maven text-sm text-kidville-ink outline-none transition-colors focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15"
           />
         </div>
       )}
@@ -169,7 +191,7 @@ export function CockpitSelect({ value, onChange, options, className }: { value: 
     <select
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className={cx('h-[42px] cursor-pointer rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-3 font-maven text-[13.5px] text-kidville-ink outline-none focus:border-kidville-green', className)}
+      className={cx('h-[42px] cursor-pointer rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-3 font-maven text-[13.5px] text-kidville-ink outline-none transition-colors hover:border-kidville-green/50 focus:border-kidville-green focus-visible:ring-2 focus-visible:ring-kidville-green/30', className)}
     >
       {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
     </select>
@@ -191,13 +213,13 @@ export function Donut({ value, max, size = 116, stroke = 12, label, sub, tone = 
   const r = (size - stroke) / 2;
   const c = 2 * Math.PI * r;
   const pct = max > 0 ? Math.min(1, value / max) : 0;
-  const color = colorVar ?? {
-    green: '#006A5F', info: '#2A6FDB', warn: '#E6720A', error: '#E53935', success: '#43A047', neutral: '#8A958F', yellow: '#FDC400',
-  }[tone];
+  // Colori dal mirror dei token (`chart-colors`): gli attributi SVG `stroke`
+  // non risolvono in modo affidabile `var(--color-kidville-*)`.
+  const color = colorVar ?? TONE_HEX[tone];
   return (
     <div className="relative shrink-0" style={{ width: size, height: size }}>
       <svg width={size} height={size} style={{ transform: 'rotate(-90deg)' }}>
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#EEF1EE" strokeWidth={stroke} />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={TRACK} strokeWidth={stroke} />
         <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color} strokeWidth={stroke} strokeLinecap="round" strokeDasharray={c} strokeDashoffset={c * (1 - pct)} />
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center leading-none">
@@ -257,7 +279,7 @@ export function Drawer({ open, onClose, title, subtitle, children, footer, width
               {typeof title === 'string' ? <h2 className="font-barlow text-2xl font-black uppercase leading-none text-kidville-green">{title}</h2> : title}
               {subtitle && <div className="mt-1 font-maven text-[13px] text-kidville-muted">{subtitle}</div>}
             </div>
-            <button type="button" onClick={onClose} aria-label="Chiudi" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-kidville-cream text-kidville-green">
+            <button type="button" onClick={onClose} aria-label="Chiudi" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-kidville-cream text-kidville-green outline-none transition-colors hover:bg-kidville-green-soft focus-visible:ring-2 focus-visible:ring-kidville-green">
               <X size={19} />
             </button>
           </div>

@@ -11,6 +11,7 @@ function SidiInner() {
   return (
     <CockpitPage max={1100}>
       <PageHeader
+        eyebrow="Sistema"
         icon={Network}
         title="Interoperabilità SIDI"
         subtitle="Import nuovi iscritti, allineamento Fase A, invio frequentanti e Piattaforma Unica. La trasmissione reale è subordinata all'accreditamento ministeriale."

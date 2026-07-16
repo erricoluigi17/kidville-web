@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Download, FileSpreadsheet, Receipt, RefreshCw } from 'lucide-react';
-import { SectionTitle } from '@/components/ui/cockpit';
+import { SectionTitle, TABLE_WRAP, TABLE, TH, TD, TROW } from '@/components/ui/cockpit';
 import { Badge } from '@/components/ui/Badge';
+import { cx } from '@/lib/ui/cx';
 
 interface RicevutaRiga {
     id: string;
@@ -66,7 +67,7 @@ export function FiscalePanel({ userId, scuolaId }: Props) {
     }, [userId, scuolaId]);
 
     const anni = [annoCorrente, annoCorrente - 1, annoCorrente - 2];
-    const selCls = 'py-2 px-3 border-2 border-kidville-line rounded-full font-maven text-sm text-kidville-green bg-white focus:outline-none focus:border-kidville-green';
+    const selCls = 'rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-3 py-2 font-maven text-sm text-kidville-ink outline-none transition-colors cursor-pointer hover:border-kidville-green/50 focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15';
 
     return (
         <div className="space-y-8">
@@ -84,7 +85,7 @@ export function FiscalePanel({ userId, scuolaId }: Props) {
                     </select>
                     {attAlunno ? (
                         <a href={`/api/pagamenti/attestazione?alunno_id=${attAlunno}&anno=${attAnno}&userId=${userId}`}
-                            className="inline-flex items-center gap-1.5 rounded-full bg-kidville-green px-4 py-2 font-maven text-sm font-bold text-white hover:opacity-90">
+                            className="inline-flex items-center gap-1.5 rounded-pill bg-kidville-green px-4 py-2 font-maven text-sm font-bold text-kidville-yellow transition-colors hover:bg-kidville-green-dark">
                             <Download size={14} /> Scarica attestazione
                         </a>
                     ) : (
@@ -101,7 +102,7 @@ export function FiscalePanel({ userId, scuolaId }: Props) {
                         {anni.map((a) => <option key={a} value={a}>{a}</option>)}
                     </select>
                     <a href={`/api/pagamenti/export?tipo=ade&anno=${adeAnno}&userId=${userId}&scuola_id=${scuolaId}`}
-                        className="inline-flex items-center gap-1.5 rounded-full border-2 border-kidville-green px-4 py-2 font-maven text-sm font-bold text-kidville-green hover:bg-kidville-green hover:text-white">
+                        className="inline-flex items-center gap-1.5 rounded-pill border-[1.5px] border-kidville-green px-4 py-2 font-maven text-sm font-bold text-kidville-green transition-colors hover:bg-kidville-green hover:text-kidville-yellow">
                         <Download size={14} /> Esporta comunicazione {adeAnno}
                     </a>
                 </div>
@@ -116,7 +117,7 @@ export function FiscalePanel({ userId, scuolaId }: Props) {
                                 {anni.map((a) => <option key={a} value={a}>{a}</option>)}
                             </select>
                             <button onClick={() => { setLoading(true); loadRegistro(); }} aria-label="Aggiorna" title="Aggiorna"
-                                className="rounded-full border-2 border-kidville-line p-2 text-kidville-muted hover:text-kidville-green">
+                                className="rounded-pill border-[1.5px] border-kidville-line p-2 text-kidville-muted transition-colors hover:border-kidville-green hover:text-kidville-green">
                                 <RefreshCw size={14} />
                             </button>
                         </span>
@@ -131,16 +132,16 @@ export function FiscalePanel({ userId, scuolaId }: Props) {
                     <p className="py-6 text-center font-maven text-sm text-kidville-muted">Nessuna ricevuta emessa nel {anno}.</p>
                 ) : (
                     <>
-                        <div className="hidden lg:block overflow-x-auto">
-                            <table className="w-full text-left">
+                        <div className={cx('hidden lg:block', TABLE_WRAP)}>
+                            <table className={TABLE}>
                                 <thead>
-                                    <tr className="font-maven text-xs uppercase text-kidville-muted">
-                                        <th className="py-2 px-2">N.</th>
-                                        <th className="py-2 px-2">Data</th>
-                                        <th className="py-2 px-2">Alunno</th>
-                                        <th className="py-2 px-2 text-right">Importo</th>
-                                        <th className="py-2 px-2">Stato</th>
-                                        <th className="py-2 px-2"></th>
+                                    <tr>
+                                        <th className={TH}>N.</th>
+                                        <th className={TH}>Data</th>
+                                        <th className={TH}>Alunno</th>
+                                        <th className={cx(TH, 'text-right')}>Importo</th>
+                                        <th className={TH}>Stato</th>
+                                        <th className={TH}></th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -173,13 +174,13 @@ function RigaRegistro({ r, userId, mobile }: { r: RicevutaRiga; userId: string; 
     const alunno = `${r.alunni?.nome ?? ''} ${r.alunni?.cognome ?? ''}`.trim() || '—';
     const pdf = !r.annullata_il && (
         <a href={`/api/pagamenti/ricevuta?pagamento_id=${r.pagamento_id}&userId=${userId}`}
-            className="inline-flex items-center gap-1 rounded-full bg-kidville-green/10 px-2 py-1 text-xs font-bold text-kidville-green hover:bg-kidville-green/20">
+            className="inline-flex items-center gap-1 rounded-pill bg-kidville-green-soft px-2 py-1 text-xs font-bold text-kidville-green transition-colors hover:bg-kidville-green/20">
             <Download size={12} /> PDF
         </a>
     );
     if (mobile) {
         return (
-            <div className="rounded-xl border-2 border-kidville-line bg-kidville-white p-3">
+            <div className="rounded-card border-[1.5px] border-kidville-line bg-kidville-white p-3">
                 <div className="flex items-center justify-between gap-2">
                     <p className="font-maven text-sm font-bold text-kidville-green">n. {r.numero}/{r.anno} · {alunno}</p>
                     {pdf}
@@ -192,13 +193,13 @@ function RigaRegistro({ r, userId, mobile }: { r: RicevutaRiga; userId: string; 
         );
     }
     return (
-        <tr className="border-t border-kidville-line font-maven text-sm">
-            <td className="py-2 px-2 font-bold text-kidville-green">{r.numero}/{r.anno}</td>
-            <td className="py-2 px-2 text-kidville-muted">{dataIt(r.creato_il)}</td>
-            <td className="py-2 px-2 text-kidville-ink">{alunno}</td>
-            <td className="py-2 px-2 text-right text-kidville-green">€ {Number(r.importo).toFixed(2)}</td>
-            <td className="py-2 px-2"><ChipsRicevuta r={r} /></td>
-            <td className="py-2 px-2 text-right">{pdf}</td>
+        <tr className={TROW}>
+            <td className={cx(TD, 'font-bold text-kidville-green')}>{r.numero}/{r.anno}</td>
+            <td className={cx(TD, 'text-kidville-muted')}>{dataIt(r.creato_il)}</td>
+            <td className={cx(TD, 'text-kidville-ink')}>{alunno}</td>
+            <td className={cx(TD, 'text-right text-kidville-green')}>€ {Number(r.importo).toFixed(2)}</td>
+            <td className={TD}><ChipsRicevuta r={r} /></td>
+            <td className={cx(TD, 'text-right')}>{pdf}</td>
         </tr>
     );
 }

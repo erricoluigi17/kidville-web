@@ -8,6 +8,7 @@ import Link from 'next/link';
 import { PaymentsDashboard } from '@/components/features/admin/pagamenti/PaymentsDashboard';
 import { ContabilitaNav, VISTE_CONTABILITA, type VistaContabilita } from '@/components/features/admin/pagamenti/ContabilitaNav';
 import { CockpitPage, PageHeader, SectionTitle } from '@/components/ui/cockpit';
+import { Card } from '@/components/ui/Card';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { SedeRequired } from '@/lib/context/sede-context';
 
@@ -44,6 +45,7 @@ function PagamentiInner() {
         <CockpitPage max={1152}>
             <PageHeader
                 icon={Euro}
+                eyebrow="Amministrazione"
                 title="Contabilità"
                 subtitle="Scadenzario, incassi, fatture, solleciti e documenti fiscali."
                 actions={
@@ -58,7 +60,7 @@ function PagamentiInner() {
 
             <SedeRequired cosa="la contabilità">
                 {(scuolaId) => (
-                    <div className="bg-kidville-white rounded-2xl shadow-sm p-4 md:p-6">
+                    <Card className="p-4 md:p-6">
                         {vista === 'scadenzario' && userId && <PaymentsDashboard userId={userId} scuolaId={scuolaId} />}
 
                         {vista === 'genera' && userId && (
@@ -79,7 +81,7 @@ function PagamentiInner() {
                         {vista === 'fiscale' && userId && <FiscalePanel userId={userId} scuolaId={scuolaId} />}
 
                         {vista === 'ticket' && userId && <TicketMensaPanel userId={userId} scuolaId={scuolaId} />}
-                    </div>
+                    </Card>
                 )}
             </SedeRequired>
         </CockpitPage>

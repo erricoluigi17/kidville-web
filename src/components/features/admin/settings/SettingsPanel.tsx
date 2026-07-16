@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Tag, Euro, AlertTriangle, Ticket, FileText, Plus, Trash2, Save, Lock, BellRing } from 'lucide-react';
 import { livelliEffettivi, type LivelloSollecito, type SollecitiConfig } from '@/lib/pagamenti/solleciti';
+import { hdr, card, h3, input, label, btnPrimary } from './ui';
 
 interface Props { userId: string; scuolaId: string }
 
@@ -18,13 +19,6 @@ interface ArubaCfg {
     fiscal: { piva?: string; cf?: string; ragione_sociale?: string; sede?: string; regime?: string };
     iva: { causale: string; aliquota: number; natura?: string }[];
 }
-
-const hdr = (u: string) => ({ 'Content-Type': 'application/json', 'x-user-id': u });
-const card = 'bg-white rounded-2xl shadow-sm p-5 mb-5';
-const h3 = 'font-barlow font-black text-base text-kidville-green uppercase tracking-wide mb-4 flex items-center gap-2';
-const input = 'border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green';
-const label = 'font-maven text-xs text-kidville-muted mb-1 block';
-const btnPrimary = 'px-4 py-2 rounded-full bg-kidville-green text-white font-maven font-bold text-sm hover:opacity-90 disabled:opacity-50 flex items-center gap-1';
 
 export function SettingsPanel({ userId, scuolaId }: Props) {
     return (

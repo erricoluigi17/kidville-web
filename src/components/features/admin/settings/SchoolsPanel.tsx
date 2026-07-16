@@ -85,7 +85,7 @@ export function SchoolsPanel({ userId }: { userId: string }) {
         {scuole.map((s) => {
           const anag = parseAnagraficaSede(s.config);
           return (
-          <div key={s.id} className="bg-white rounded-card border border-kidville-line p-4 space-y-3">
+          <div key={s.id} className="bg-kidville-white rounded-card border border-kidville-line p-4 space-y-3">
             <div className="flex items-center justify-between gap-3">
             {editId === s.id ? (
               <input

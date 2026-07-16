@@ -42,7 +42,7 @@ export function BulkAssignBar({
                         <select
                             value={targetMensa}
                             onChange={e => onTargetMensaChange?.(e.target.value)}
-                            className="w-full bg-white/10 border-2 border-kidville-yellow/30 rounded-xl px-3 py-2 font-maven text-sm text-white appearance-none focus:outline-none focus:border-kidville-yellow cursor-pointer"
+                            className="w-full bg-kidville-white/10 border-2 border-kidville-yellow/30 rounded-input px-3 py-2 font-maven text-sm text-kidville-white appearance-none focus:outline-none focus:border-kidville-yellow cursor-pointer"
                         >
                             <option value="" className="text-kidville-green">Gruppo mensa…</option>
                             {mensaGroups!.map(g => (
@@ -79,7 +79,7 @@ export function BulkAssignBar({
                         <select
                             value={targetClass}
                             onChange={e => onTargetClassChange(e.target.value)}
-                            className="w-full bg-white/10 border-2 border-kidville-yellow/30 rounded-xl px-3 py-2 font-maven text-sm text-white appearance-none focus:outline-none focus:border-kidville-yellow cursor-pointer"
+                            className="w-full bg-kidville-white/10 border-2 border-kidville-yellow/30 rounded-input px-3 py-2 font-maven text-sm text-kidville-white appearance-none focus:outline-none focus:border-kidville-yellow cursor-pointer"
                         >
                             <option value="" className="text-kidville-green">Seleziona classe...</option>
                             {availableClasses.map(c => (

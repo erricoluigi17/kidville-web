@@ -36,7 +36,7 @@ export function FormBuilderCanvas({
       {/* Page tabs */}
       <div
         className="flex items-center gap-1 px-4 pt-3 pb-0 flex-shrink-0 flex-wrap"
-        style={{ borderBottom: '1px solid #EFE7DC' }}
+        style={{ borderBottom: '1px solid var(--color-kidville-line)' }}
       >
         {schema.pages.map((page, idx) => (
           <button

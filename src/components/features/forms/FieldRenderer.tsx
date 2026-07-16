@@ -11,6 +11,9 @@ import {
   Upload, FileCheck2, Loader2, AlertCircle, PenLine, Info,
 } from 'lucide-react'
 import type { FormField } from '@/types/database.types'
+import { validateField, isProvinceField } from '@/lib/forms/validate-fields'
+import { normalizzaProvincia } from '@/lib/anagrafiche/province'
+import { logClient } from '@/lib/logging/client'
 
 export const FIELD_BASE =
   'w-full px-4 py-3 rounded-xl bg-white border border-kidville-green/15 text-kidville-green placeholder-kidville-green/40 ' +
@@ -32,8 +35,27 @@ export function FieldRenderer({
   /** Se valorizzato, gli upload passano da questo endpoint server (multipart) invece del client browser. */
   uploadEndpoint?: string
 }) {
-  const rules = field.required ? { required: 'Campo obbligatorio' } : undefined
+  // Regola unica di validazione: la STESSA `validateField` che rigira il server
+  // (obbligatorietà + pattern/lunghezze/provincia/email/date/select). RHF mostra
+  // sotto il campo il messaggio (in italiano) che ritorna. I blocchi `consent`
+  // mantengono la loro regola dedicata (messaggio migliore).
+  const rules = {
+    validate: (value: unknown) => validateField(field, value) ?? true,
+  }
   const errMsg = (error as { message?: string } | undefined)?.message
+  const errorId = `${field.id}-error`
+  // Accessibilità: input in errore marcato `aria-invalid` e collegato al testo
+  // del messaggio via `aria-describedby` (il messaggio è testo visibile, non
+  // solo colore).
+  const ariaProps: React.AriaAttributes = errMsg
+    ? { 'aria-invalid': true, 'aria-describedby': errorId }
+    : {}
+  // Tipi a controllo SINGOLO: la <label> esterna li etichetta direttamente
+  // (htmlFor ↔ id). radio/checkbox/file hanno un gruppo di controlli o una label
+  // propria annidata → la label esterna resta una didascalia senza htmlFor (per
+  // non puntare a un id inesistente); il gruppo usa già `aria-describedby`.
+  const CONTROLLO_SINGOLO = ['text', 'number', 'email', 'phone', 'date', 'textarea', 'select']
+  const associaLabel = CONTROLLO_SINGOLO.includes(field.type)
 
   // Blocchi non-input
   if (field.type === 'section_header') {
@@ -75,6 +97,7 @@ export function FieldRenderer({
                 checked={rhf.value === true}
                 onChange={e => rhf.onChange(e.target.checked)}
                 className="accent-kidville-green mt-0.5 flex-shrink-0"
+                {...ariaProps}
               />
               <span className="text-sm text-kidville-green/90">
                 <span className="font-medium">
@@ -98,7 +121,7 @@ export function FieldRenderer({
               </span>
             </label>
             {errMsg && (
-              <p className="flex items-center gap-1.5 text-xs text-kidville-error">
+              <p id={errorId} role="alert" className="flex items-center gap-1.5 text-xs text-kidville-error-strong">
                 <AlertCircle className="w-3.5 h-3.5" />
                 {errMsg}
               </p>
@@ -111,36 +134,78 @@ export function FieldRenderer({
 
   return (
     <div className="space-y-2">
-      <label className="flex items-center gap-1.5 text-sm font-medium text-kidville-green/80">
+      <label
+        htmlFor={associaLabel ? field.id : undefined}
+        className="flex items-center gap-1.5 text-sm font-medium text-kidville-green/80"
+      >
         {field.label}
         {field.required && <span className="text-kidville-green">*</span>}
       </label>
 
       {/* Testo / numero / email / telefono */}
       {['text', 'number', 'email', 'phone'].includes(field.type) && (
-        <input
-          type={field.type === 'phone' ? 'tel' : field.type === 'number' ? 'number' : field.type === 'email' ? 'email' : 'text'}
-          placeholder={field.placeholder}
-          className={FIELD_BASE}
-          {...register(field.id, rules)}
-        />
+        isProvinceField(field) ? (
+          // Campo PROVINCIA: digitazione libera (i nomi per esteso devono essere
+          // scrivibili) con auto-MAIUSCOLO; su blur `normalizzaProvincia` riduce
+          // il nome riconosciuto alla sigla ("Napoli" → "NA", "na" → "NA"). Un
+          // valore irriconoscibile NON viene indovinato: resta e la validazione lo
+          // blocca con messaggio chiaro. Il valore che parte è sempre sigla o bloccato.
+          <Controller
+            name={field.id}
+            control={control}
+            defaultValue=""
+            rules={rules}
+            render={({ field: rhf }) => (
+              <input
+                id={field.id}
+                type="text"
+                inputMode="text"
+                autoCapitalize="characters"
+                autoComplete="off"
+                placeholder={field.placeholder}
+                className={FIELD_BASE}
+                name={rhf.name}
+                ref={rhf.ref}
+                value={typeof rhf.value === 'string' ? rhf.value : ''}
+                onChange={e => rhf.onChange(e.target.value.toUpperCase())}
+                onBlur={() => {
+                  const sigla = normalizzaProvincia(rhf.value)
+                  if (sigla && sigla !== rhf.value) rhf.onChange(sigla)
+                  rhf.onBlur()
+                }}
+                {...ariaProps}
+              />
+            )}
+          />
+        ) : (
+          <input
+            id={field.id}
+            type={field.type === 'phone' ? 'tel' : field.type === 'number' ? 'number' : field.type === 'email' ? 'email' : 'text'}
+            placeholder={field.placeholder}
+            className={FIELD_BASE}
+            {...ariaProps}
+            {...register(field.id, rules)}
+          />
+        )
       )}
 
       {field.type === 'date' && (
-        <input type="date" className={`${FIELD_BASE} [color-scheme:light]`} {...register(field.id, rules)} />
+        <input id={field.id} type="date" className={`${FIELD_BASE} [color-scheme:light]`} {...ariaProps} {...register(field.id, rules)} />
       )}
 
       {field.type === 'textarea' && (
         <textarea
+          id={field.id}
           rows={4}
           placeholder={field.placeholder}
           className={`${FIELD_BASE} resize-none`}
+          {...ariaProps}
           {...register(field.id, rules)}
         />
       )}
 
       {field.type === 'select' && (
-        <select className={`${FIELD_BASE} [color-scheme:light]`} defaultValue="" {...register(field.id, rules)}>
+        <select id={field.id} className={`${FIELD_BASE} [color-scheme:light]`} defaultValue="" {...ariaProps} {...register(field.id, rules)}>
           <option value="" disabled className="bg-white text-kidville-green">
             Seleziona…
           </option>
@@ -153,13 +218,13 @@ export function FieldRenderer({
       )}
 
       {field.type === 'radio' && (
-        <div className="space-y-2">
+        <div className="space-y-2" role="radiogroup" aria-describedby={errMsg ? errorId : undefined}>
           {(field.options ?? []).map((opt, i) => (
             <label
               key={i}
               className="flex items-center gap-3 px-4 py-3 rounded-xl bg-kidville-cream border border-kidville-green/15 cursor-pointer hover:border-kidville-green/30 transition-all"
             >
-              <input type="radio" value={opt.value} className="accent-kidville-green" {...register(field.id, rules)} />
+              <input type="radio" value={opt.value} className="accent-kidville-green" {...ariaProps} {...register(field.id, rules)} />
               <span className="text-sm text-kidville-green">{opt.label}</span>
             </label>
           ))}
@@ -175,7 +240,7 @@ export function FieldRenderer({
           render={({ field: rhf }) => {
             const value: string[] = Array.isArray(rhf.value) ? rhf.value : []
             return (
-              <div className="space-y-2">
+              <div className="space-y-2" role="group" aria-describedby={errMsg ? errorId : undefined}>
                 {(field.options ?? []).map((opt, i) => {
                   const checked = value.includes(opt.value)
                   return (
@@ -187,6 +252,7 @@ export function FieldRenderer({
                         type="checkbox"
                         checked={checked}
                         className="accent-kidville-green"
+                        {...ariaProps}
                         onChange={e =>
                           rhf.onChange(
                             e.target.checked
@@ -225,7 +291,7 @@ export function FieldRenderer({
       )}
 
       {errMsg && (
-        <p className="flex items-center gap-1.5 text-xs text-kidville-error">
+        <p id={errorId} role="alert" className="flex items-center gap-1.5 text-xs text-kidville-error-strong">
           <AlertCircle className="w-3.5 h-3.5" />
           {errMsg}
         </p>
@@ -278,7 +344,14 @@ export function FileField({
       const path: string = json.path
       onChange(path)
     } catch (err) {
-      console.error('Upload fallito:', err)
+      // Un catch che non logga è un bug: l'upload fallito è invisibile a chi
+      // non ha in mano il dispositivo. `logClient` redige il path e non lancia.
+      logClient({
+        livello: 'error',
+        evento: 'fetch',
+        messaggio: `upload allegato modulo fallito — ${err instanceof Error ? err.message : 'errore sconosciuto'}`,
+        stack: err instanceof Error ? err.stack : undefined,
+      })
       setUploadError('Caricamento non riuscito. Riprova.')
       onChange('')
     } finally {

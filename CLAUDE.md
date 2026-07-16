@@ -18,17 +18,25 @@ Esempio: `/ship-cycle aggiungi la giustifica dell'assenza con firma OTP del geni
 
 ## Cosa succede
 
-Il comando fa **una sola cosa interattiva**: all'inizio ti fa **molte domande** (scope, casi
-limite, cosa non toccare, priorità nei compromessi). **Dopo che hai risposto non si ferma più**:
-gira in un ciclo chiuso finché non è verde o finché non esaurisce gli 8 cicli.
+Il **direttore d'orchestra è `fable-5`** (il modello del comando): fa il brainstorming, conduce
+l'intervista, tiene insieme il loop e dà il via al rilascio. Il lavoro pesante è su `opus-4.8`
+al massimo effort (implementazione e collaudo).
+
+L'unica fase interattiva è all'inizio: prima la skill **`brainstorming`** di superpowers (esplora
+l'intento), poi **l'intervista** a raffica (scope, casi limite, cosa non toccare, priorità).
+**Dopo, gira da solo** finché non è verde o finché non esaurisce gli 8 cicli — con **una sola
+eccezione**: in fase di correzione, se si incaglia o serve una decisione dell'utente, può rifare
+il brainstorming e fare una domanda mirata (fare una domanda non conta come "fermarsi").
 
 ```
+   0. brainstorming (superpowers) → intervista → si arma il gate
    ┌───────────────────────────────────────────────────────────────┐
-   │  a. scrittore-di-piani   → piano (step, criteri, cosa NON toccare)
-   │  b. esecutore-opus-1..N  → codice + migrazioni + env + logging
-   │     (Dynamic Workflow lanciato con la keyword `ultracode`)
+   │  a. scrittore-di-piani   → piano (writing-plans; step, criteri, cosa NON toccare)
+   │  b. esecutore-opus-1..N  → codice con TDD + migrazioni + env + logging
+   │     (Dynamic Workflow `ultracode`; segue superpowers in tutto)
    │  c. 11 tester-opus       → in parallelo, un test ciascuno, report dettagliati
-   │  d. scrittore-di-piani   → nuovo piano di correzione (per CAUSA RADICE)
+   │  d. scrittore-di-piani   → piano di correzione per CAUSA RADICE
+   │     (se incagliato: rifà il brainstorming e può chiedere all'utente)
    │  e. commit immediato     → appena una feature è verde, senza aspettare il resto
    └──────────────────────────── ↺ ────────────────────────────────┘
 ```
@@ -44,16 +52,18 @@ l'hook non fa nulla — le conversazioni normali non pagano pedaggio.
 
 ## Gli agenti
 
+Il **comando stesso** (il direttore) gira su `claude-fable-5` e usa la skill `brainstorming`.
+
 | Agente | Modello | Ruolo |
 |---|---|---|
-| `scrittore-di-piani` | `claude-fable-5` | Scrive il piano e rielabora i report dei tester in un piano di correzione. Non scrive codice. |
-| `esecutore-opus-1..N` | `claude-opus-4-8` · `xhigh` | Implementa. Con **migrazioni**, **variabili d'ambiente** (solo nomi) e **logging**. |
+| `scrittore-di-piani` | `claude-fable-5` | Scrive il piano e i piani di correzione (skill `writing-plans`, `systematic-debugging`). Non scrive codice. |
+| `esecutore-opus-1..N` | `claude-opus-4-8` · `xhigh` | Implementa seguendo **superpowers** (skill `test-driven-development`, `systematic-debugging`, `verification-before-completion`). Con **migrazioni**, **variabili d'ambiente** (solo nomi) e **logging**. |
 | `tester-opus-backend` | `claude-opus-4-8` · `xhigh` | Route, gate di ruolo, zod, PostgREST, migrazioni |
 | `tester-opus-frontend` | idem | Rendering, hydration, stati, browser vero |
 | `tester-opus-design` | idem | Token Clay Village: `#006A5F` · `#FDC400` · `#FEF1E4` |
 | `tester-opus-debug` | idem | Causa radice, non il sintomo |
-| `tester-opus-mobile-android` | idem | Percorso utente reale via **Maestro** su emulatore |
-| `tester-opus-mobile-ios` | idem | Percorso utente reale via **Maestro** su simulatore |
+| `tester-opus-mobile-android` | idem | Percorso utente reale via **Maestro** su emulatore (skill `maestro-mobile-testing`) |
+| `tester-opus-mobile-ios` | idem | Percorso utente reale via **Maestro** su simulatore (skill `maestro-mobile-testing`) |
 | `tester-opus-log` | idem | Log applicativi, e i warning che i test formali non colgono |
 | `tester-opus-sicurezza` | idem | RLS, permessi Supabase, injection, auth bypass |
 | `tester-opus-privacy` | idem | GDPR, dati di minori: cosa si logga, chi legge, retention |
@@ -71,12 +81,19 @@ verdetto è PASS**.
 .claude/
 ├── settings.json                 allowlist permessi + hook Stop   ← COMMITTATO
 ├── agents/                       13 agenti                        ← COMMITTATO
-├── commands/ship-cycle.md        l'orchestratore                  ← COMMITTATO
+├── commands/ship-cycle.md        l'orchestratore (direttore fable-5) ← COMMITTATO
 ├── hooks/verify_gate.sh          il gate deterministico           ← COMMITTATO
+├── skills/maestro-mobile-testing/  skill Maestro per i tester mobile ← COMMITTATO
 ├── maestro-flows/                4 flow nativi + README           ← COMMITTATO
 ├── settings.local.json           preferenze personali             ← ignorato da git
 └── .ship-cycle/                  stato runtime del ciclo          ← ignorato da git
 ```
+
+Il metodo di **superpowers** (plugin) è agganciato agli agenti col campo `skills:` del loro
+frontmatter: `brainstorming` (il comando), `writing-plans`/`systematic-debugging` (piani),
+`test-driven-development`/`verification-before-completion` (esecutori). La skill
+`maestro-mobile-testing` è **committata nel repo** (adattata da `tovimx/maestro-mobile-testing-skill`
+per la nostra WebView Capacitor), così la pipeline resta identica su ogni macchina.
 
 Stato runtime (`.claude/.ship-cycle/`): `active.json` (gate armato + `session_id` + `max_cicli`),
 `blocchi` (contatore), `report-testers.json` (i verdetti che l'hook legge), `gate.log`.

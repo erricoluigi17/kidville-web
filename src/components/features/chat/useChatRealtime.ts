@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 import { getSupabase } from '@/lib/supabase/browser-client';
+import { logClient } from '@/lib/logging/client';
 import { ChatMessage } from './ChatMessageArea';
 import { ChatThread } from './ChatThreadList';
 
@@ -16,17 +17,20 @@ interface UseChatRealtimeOptions {
     onNewMessage: (msg: ChatMessage) => void;
     /** Callback: aggiorna unread_count e last_message su un thread */
     onThreadUnread: (threadId: string, msg: ChatMessage) => void;
+    /** Callback: un messaggio del thread aperto è cambiato (read_at/delivered_at) → merge per id */
+    onMessageUpdate: (msg: ChatMessage) => void;
 }
 
 /**
  * Hook che gestisce la sottoscrizione Supabase Realtime per la chat.
  *
  * Sottoscrive a tutti i thread dell'utente corrente e:
- * - Se arriva un INSERT su chat_messages per il thread aperto → chiama onNewMessage
- * - Se arriva un INSERT su chat_messages per un thread diverso → chiama onThreadUnread
- *   (incrementa unread_count e aggiorna last_message nella lista)
+ * - INSERT su chat_messages nel thread aperto → onNewMessage (append)
+ * - INSERT su chat_messages in un thread diverso → onThreadUnread (badge + last_message)
+ * - UPDATE su chat_messages nel thread aperto → onMessageUpdate (merge per id: la spunta
+ *   passa da inviato→consegnato→letto in tempo reale, senza aspettare il polling)
  *
- * Gestisce gracefully il caso in cui il Realtime non sia abilitato.
+ * Il polling (15s) resta come fallback quando il Realtime non è abilitato.
  */
 export function useChatRealtime({
     userId,
@@ -34,12 +38,14 @@ export function useChatRealtime({
     threads,
     onNewMessage,
     onThreadUnread,
+    onMessageUpdate,
 }: UseChatRealtimeOptions) {
     // Manteniamo refs aggiornati per le callback così non dobbiamo
     // ri-sottoscrivere ogni volta che cambiano
     const selectedThreadIdRef = useRef(selectedThreadId);
     const onNewMessageRef = useRef(onNewMessage);
     const onThreadUnreadRef = useRef(onThreadUnread);
+    const onMessageUpdateRef = useRef(onMessageUpdate);
     const threadsRef = useRef(threads);
 
     useEffect(() => {
@@ -53,6 +59,10 @@ export function useChatRealtime({
     useEffect(() => {
         onThreadUnreadRef.current = onThreadUnread;
     }, [onThreadUnread]);
+
+    useEffect(() => {
+        onMessageUpdateRef.current = onMessageUpdate;
+    }, [onMessageUpdate]);
 
     useEffect(() => {
         threadsRef.current = threads;
@@ -99,12 +109,36 @@ export function useChatRealtime({
                     }
                 }
             )
-            .subscribe((status: string) => {
-                if (status === 'SUBSCRIBED') {
-                    console.log('[ChatRealtime] Sottoscrizione attiva per userId:', userId);
+            .on(
+                'postgres_changes',
+                {
+                    event: 'UPDATE',
+                    schema: 'public',
+                    table: 'chat_messages',
+                },
+                (payload: { new: Record<string, unknown> }) => {
+                    const msg = payload.new as unknown as ChatMessage;
+
+                    // Solo i nostri thread, e solo quello APERTO: un UPDATE (read_at/delivered_at)
+                    // su un thread in background non cambia nulla di visibile (il badge lo guida
+                    // l'INSERT). Merge per id — mai append: è lo STESSO messaggio, cambiato.
+                    const belongsToUs = threadsRef.current.some(t => t.id === msg.thread_id);
+                    if (!belongsToUs) return;
+                    if (msg.thread_id === selectedThreadIdRef.current) {
+                        onMessageUpdateRef.current(msg);
+                    }
                 }
+            )
+            .subscribe((status: string) => {
+                // Il SUBSCRIBED (successo) non si logga: sarebbe un `info` non persistibile dal
+                // logger client, cioè rumore. Il CHANNEL_ERROR sì: dice che il realtime è caduto
+                // (o non è abilitato) e si sta girando solo sul polling di fallback.
                 if (status === 'CHANNEL_ERROR') {
-                    console.warn('[ChatRealtime] Errore canale — realtime potrebbe non essere abilitato su questo progetto Supabase.');
+                    logClient({
+                        livello: 'warn',
+                        evento: 'react',
+                        messaggio: 'Chat realtime: CHANNEL_ERROR (realtime non abilitato o caduto, fallback sul polling)',
+                    });
                 }
             });
 

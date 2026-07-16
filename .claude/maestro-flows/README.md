@@ -8,8 +8,17 @@ dentro la pipeline `/ship-cycle`.
 |---|---|
 | `android-percorso-genitore.yaml` | login → dashboard → **presenze** → **comunicazioni** → tasto Indietro |
 | `android-percorso-docente.yaml` | login → dashboard → **appello** → **bacheca** |
+| `android-percorso-segreteria.yaml` | login → dashboard (cockpit) → drawer → **Anagrafica** → Indietro → drawer → **Avvisi** → Indietro |
 | `ios-percorso-genitore.yaml` | login → dashboard → **presenze** → **comunicazioni** → ritorno home |
 | `ios-percorso-docente.yaml` | login → dashboard → **appello** → **bacheca** |
+| `ios-percorso-segreteria.yaml` | login → dashboard (cockpit) → drawer → **Anagrafica** → torna → drawer → **Avvisi** → torna |
+
+> **Segreteria/Direzione (cockpit `/admin`).** A differenza di genitore e docente, il cockpit
+> **non ha bottom nav** su mobile: si naviga dal **drawer laterale** (bottone `Apri menu` della
+> topbar). I flow segreteria si ancorano ai testi stabili del cockpit ri-skinnato
+> (`Dashboard Direzione`, `Anagrafica`, `Avvisi`). Nota: nel drawer la voce `Anagrafica` ha lo
+> stesso testo del titolo del suo gruppo → il tap la seleziona con `index: 1` (la voce, non il
+> titolo). Su iOS, mancando il tasto Indietro hardware, il "torna" avviene riaprendo il drawer.
 
 ## La cosa da capire prima di tutto
 
@@ -31,6 +40,7 @@ repository è pubblico.
 ```bash
 export MAESTRO_KV_EMAIL_GENITORE="test.inf.genitore1@kidville.test"
 export MAESTRO_KV_EMAIL_DOCENTE="test.inf.docente1@kidville.test"
+export MAESTRO_KV_EMAIL_SEGRETERIA="test.segreteria@kidville.test"
 export MAESTRO_KV_PASSWORD="<password degli account TEST>"
 ```
 
@@ -96,6 +106,7 @@ maestro test -e KV_EMAIL="$MAESTRO_KV_EMAIL_GENITORE" \
 - **Al login lascia respirare la pagina ~3 s** prima di digitare: l'hydration di Next svuota
   gli input se scrivi troppo presto. Nei flow lo fa `extendedWaitUntil`.
 - **`osascript` è bloccato dal TCC** sul simulatore iOS: usa `xcrun simctl`.
+- **Con un emulatore Android attivo, i flow iOS vanno lanciati SEMPRE con `maestro --device <UDID-iOS>`.** Senza `--device`, Maestro aggancia il primo dispositivo che trova — di solito l'emulatore Android già avviato — e il flow iOS finisce sul device sbagliato (schermata bianca o passi che non matchano). L'UDID del simulatore booted si legge con `xcrun simctl list devices booted`.
 - **La JDK di sistema è la 25**, Gradle 8.14 non la digerisce ("Unsupported class file major
   version 69"): serve la JBR 21 di Android Studio.
 - I selettori sono **testi italiani della UI reale** (`Accedi`, `Menu`, `Presenze`, `Avvisi`,

@@ -5,6 +5,7 @@ import { Check, Landmark, RefreshCw, Upload, X } from 'lucide-react';
 import { SectionTitle } from '@/components/ui/cockpit';
 import { Badge } from '@/components/ui/Badge';
 import { SaveCheck } from '@/components/ui/SaveConfirmation';
+import { cx } from '@/lib/ui/cx';
 
 interface Suggerimento { pagamento_id: string; score: number; motivi: string[]; label?: string | null }
 interface Movimento {
@@ -115,12 +116,12 @@ export function RiconciliazionePanel({ userId, scuolaId }: Props) {
                 sub="Importa l'estratto conto (CSV): i bonifici vengono abbinati agli addebiti aperti, la conferma è sempre tua."
                 action={
                     <button onClick={() => { setLoading(true); load(); }}
-                        className="rounded-full border-2 border-kidville-line p-2 text-kidville-muted hover:text-kidville-green">
+                        className="rounded-pill border-[1.5px] border-kidville-line p-2 text-kidville-muted transition-colors hover:border-kidville-green hover:text-kidville-green">
                         <RefreshCw size={14} />
                     </button>
                 } />
 
-            <label className={`inline-flex cursor-pointer items-center gap-1.5 rounded-full bg-kidville-green px-5 py-2.5 font-maven text-sm font-bold text-white ${busy ? 'opacity-50' : 'hover:opacity-90'}`}>
+            <label className={cx('inline-flex cursor-pointer items-center gap-1.5 rounded-pill bg-kidville-green px-5 py-2.5 font-maven text-sm font-bold text-kidville-yellow transition-colors', busy ? 'opacity-50' : 'hover:bg-kidville-green-dark')}>
                 <Upload size={14} /> {busy ? 'Elaboro…' : 'Importa CSV estratto conto'}
                 <input type="file" accept=".csv,text/csv" className="hidden" disabled={busy}
                     onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(f); e.target.value = ''; }} />
@@ -130,7 +131,7 @@ export function RiconciliazionePanel({ userId, scuolaId }: Props) {
             </p>
 
             {esito && (
-                <p className="mt-3 flex items-center gap-1.5 rounded-xl bg-kidville-success-soft px-3 py-2 font-maven text-sm text-kidville-success">
+                <p className="mt-3 flex items-center gap-1.5 rounded-card bg-kidville-success-soft px-3 py-2 font-maven text-sm text-kidville-success">
                     <SaveCheck size={16} />
                     {esito.nuovi} nuovi movimenti ({esito.suggeriti} con suggerimento) · {esito.duplicati} già visti · {esito.scartate} righe scartate
                 </p>
@@ -152,7 +153,7 @@ export function RiconciliazionePanel({ userId, scuolaId }: Props) {
                     {daLavorare.map((m) => {
                         const best = m.suggerimenti?.[0];
                         return (
-                            <div key={m.id} className="rounded-xl border-2 border-kidville-line bg-kidville-white p-3">
+                            <div key={m.id} className="rounded-card border-[1.5px] border-kidville-line bg-kidville-white p-3">
                                 <div className="flex flex-wrap items-center justify-between gap-2">
                                     <span className="min-w-0">
                                         <span className="block font-maven text-sm font-bold text-kidville-green">
@@ -172,25 +173,25 @@ export function RiconciliazionePanel({ userId, scuolaId }: Props) {
                                         <>
                                             <span className="font-maven text-xs text-kidville-ink">→ {best.label ?? best.pagamento_id}</span>
                                             <button onClick={() => azione(m.id, 'conferma')} disabled={busy}
-                                                className="inline-flex items-center gap-1 rounded-full bg-kidville-green px-3 py-1.5 font-maven text-xs font-bold text-white disabled:opacity-50">
+                                                className="inline-flex items-center gap-1 rounded-pill bg-kidville-green px-3 py-1.5 font-maven text-xs font-bold text-kidville-yellow transition-colors hover:bg-kidville-green-dark disabled:opacity-50">
                                                 <Check size={13} /> Conferma incasso
                                             </button>
                                         </>
                                     ) : (
                                         <>
                                             <select value={manuale[m.id] ?? ''} onChange={(e) => setManuale({ ...manuale, [m.id]: e.target.value })}
-                                                className="min-w-[240px] flex-1 rounded-full border-2 border-kidville-line bg-white px-3 py-1.5 font-maven text-xs text-kidville-green focus:border-kidville-green focus:outline-none">
+                                                className="min-w-[240px] flex-1 rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-3 py-1.5 font-maven text-xs text-kidville-ink outline-none transition-colors cursor-pointer hover:border-kidville-green/50 focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15">
                                                 <option value="">— Scegli il pagamento da abbinare —</option>
                                                 {aperti.map((p) => <option key={p.id} value={p.id}>{labelAperto(p)}</option>)}
                                             </select>
                                             <button onClick={() => azione(m.id, 'conferma', manuale[m.id])} disabled={busy || !manuale[m.id]}
-                                                className="inline-flex items-center gap-1 rounded-full bg-kidville-green px-3 py-1.5 font-maven text-xs font-bold text-white disabled:opacity-50">
+                                                className="inline-flex items-center gap-1 rounded-pill bg-kidville-green px-3 py-1.5 font-maven text-xs font-bold text-kidville-yellow transition-colors hover:bg-kidville-green-dark disabled:opacity-50">
                                                 <Check size={13} /> Conferma
                                             </button>
                                         </>
                                     )}
                                     <button onClick={() => azione(m.id, 'ignora')} disabled={busy}
-                                        className="inline-flex items-center gap-1 rounded-full border-2 border-kidville-line px-3 py-1 font-maven text-xs font-bold text-kidville-muted hover:border-kidville-green hover:text-kidville-green disabled:opacity-50">
+                                        className="inline-flex items-center gap-1 rounded-pill border-[1.5px] border-kidville-line px-3 py-1 font-maven text-xs font-bold text-kidville-muted transition-colors hover:border-kidville-green hover:text-kidville-green disabled:opacity-50">
                                         <X size={13} /> Ignora
                                     </button>
                                 </div>
@@ -205,7 +206,7 @@ export function RiconciliazionePanel({ userId, scuolaId }: Props) {
                     <summary className="cursor-pointer font-maven text-xs font-bold text-kidville-muted">Ignorati ({ignorati.length})</summary>
                     <div className="mt-2 space-y-1">
                         {ignorati.map((m) => (
-                            <div key={m.id} className="flex items-center justify-between rounded-lg bg-kidville-cream/40 px-2.5 py-1.5 font-maven text-xs">
+                            <div key={m.id} className="flex items-center justify-between rounded-input bg-kidville-cream/40 px-2.5 py-1.5 font-maven text-xs">
                                 <span className="min-w-0 truncate text-kidville-muted">€ {Number(m.importo).toFixed(2)} · {dataIt(m.data_operazione)} · {m.causale || '—'}</span>
                                 <button onClick={() => azione(m.id, 'riapri')} disabled={busy}
                                     className="shrink-0 font-bold text-kidville-green hover:underline">Riapri</button>

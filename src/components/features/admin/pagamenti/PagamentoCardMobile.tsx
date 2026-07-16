@@ -3,6 +3,8 @@
 import { ChevronRight } from 'lucide-react';
 import { FatturaChip } from './FatturaChip';
 import { STATI_PAGAMENTO } from './stati';
+import { Badge } from '@/components/ui/Badge';
+import { cx } from '@/lib/ui/cx';
 import type { PagamentoRow } from './RegistraIncassoModal';
 
 interface Props {
@@ -21,18 +23,18 @@ export function PagamentoCardMobile({ pagamento, alunnoLabel, sezioneLabel, sosp
     const saldato = pagamento.stato === 'pagato';
 
     return (
-        <div className={`rounded-xl border-2 border-kidville-line bg-kidville-white p-3 ${pagamento.stato === 'scaduto' ? 'bg-kidville-error-soft/40' : ''}`}>
+        <div className={cx('rounded-card border-[1.5px] border-kidville-line bg-kidville-white p-3', pagamento.stato === 'scaduto' && 'bg-kidville-error-soft/40')}>
             <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                     <p className="truncate font-maven text-sm font-bold text-kidville-green">
                         {alunnoLabel}
                         {sospeso && (
-                            <span className="ml-1 inline-block rounded-full bg-kidville-error-soft px-1.5 py-0.5 align-middle text-[10px] font-bold text-kidville-error">sospeso</span>
+                            <Badge tone="error" className="ml-1 align-middle">sospeso</Badge>
                         )}
                     </p>
                     {sezioneLabel && <p className="font-maven text-xs text-kidville-muted">{sezioneLabel}</p>}
                 </div>
-                <span className={`inline-block shrink-0 rounded-full px-2 py-0.5 text-xs font-bold ${st.cls}`}>{st.label}</span>
+                <Badge tone={st.tone} className="shrink-0">{st.label}</Badge>
             </div>
 
             <p className="mt-1 truncate font-maven text-xs text-kidville-ink">{pagamento.descrizione}</p>
@@ -49,12 +51,12 @@ export function PagamentoCardMobile({ pagamento, alunnoLabel, sezioneLabel, sosp
                 <div className="ml-auto flex items-center gap-2">
                     {!saldato && (
                         <button type="button" onClick={onIncassa}
-                            className="rounded-full bg-kidville-green px-3 py-1.5 font-maven text-xs font-bold text-white hover:opacity-90">
+                            className="rounded-pill bg-kidville-green px-3 py-1.5 font-maven text-xs font-bold text-kidville-yellow transition-colors hover:bg-kidville-green-dark">
                             Incassa
                         </button>
                     )}
                     <button type="button" onClick={onApri}
-                        className="inline-flex items-center gap-0.5 rounded-full border-2 border-kidville-line px-3 py-1 font-maven text-xs font-bold text-kidville-muted hover:border-kidville-green hover:text-kidville-green">
+                        className="inline-flex items-center gap-0.5 rounded-pill border-[1.5px] border-kidville-line px-3 py-1 font-maven text-xs font-bold text-kidville-muted transition-colors hover:border-kidville-green hover:text-kidville-green">
                         Dettagli <ChevronRight size={13} />
                     </button>
                 </div>

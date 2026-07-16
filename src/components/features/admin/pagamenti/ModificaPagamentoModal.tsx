@@ -3,6 +3,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import { X, Pencil, Trash2, Save } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { cx } from '@/lib/ui/cx';
+import { MODAL_OVERLAY, MODAL_CARD, MODAL_SHADOW, INPUT, SELECT, BTN_PRIMARY, BTN_SECONDARY } from './ui';
+
+// Campo inline compatto per la correzione di un incasso già registrato.
+const INLINE_FIELD = 'rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-2 py-1 font-maven text-sm text-kidville-ink outline-none transition-colors focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15';
 
 interface Categoria { id: string; nome: string }
 interface Incasso { id: string; importo: number; data_incasso: string; metodo: string; note?: string | null }
@@ -88,10 +93,11 @@ export function ModificaPagamentoModal({ pagamento, categorie, userId, onClose, 
     };
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+        <div className={MODAL_OVERLAY} onClick={onClose}>
             <motion.div
                 initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
-                className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5 max-h-[90vh] overflow-y-auto"
+                className={cx(MODAL_CARD, 'max-h-[90vh] overflow-y-auto')}
+                style={{ boxShadow: MODAL_SHADOW }}
                 onClick={(e) => e.stopPropagation()}
             >
                 <div className="flex items-center justify-between mb-4">
@@ -109,25 +115,25 @@ export function ModificaPagamentoModal({ pagamento, categorie, userId, onClose, 
                     <div>
                         <label className="font-maven text-xs text-kidville-muted mb-1 block">Descrizione</label>
                         <input type="text" value={descrizione} onChange={(e) => setDescrizione(e.target.value)}
-                            className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
+                            className={INPUT} />
                     </div>
                     <div className="grid grid-cols-2 gap-3">
                         <div>
                             <label className="font-maven text-xs text-kidville-muted mb-1 block">Importo (€)</label>
                             <input type="number" min={0} step="0.01" value={importo || ''}
                                 onChange={(e) => setImporto(e.target.value === '' ? 0 : Number(e.target.value))}
-                                className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
+                                className={INPUT} />
                         </div>
                         <div>
                             <label className="font-maven text-xs text-kidville-muted mb-1 block">Scadenza</label>
                             <input type="date" value={scadenza} onChange={(e) => setScadenza(e.target.value)}
-                                className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
+                                className={INPUT} />
                         </div>
                     </div>
                     <div>
                         <label className="font-maven text-xs text-kidville-muted mb-1 block">Categoria</label>
                         <select value={categoriaId} onChange={(e) => setCategoriaId(e.target.value)}
-                            className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:border-kidville-green">
+                            className={SELECT}>
                             <option value="">—</option>
                             {categorie.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
                         </select>
@@ -148,18 +154,18 @@ export function ModificaPagamentoModal({ pagamento, categorie, userId, onClose, 
                     ) : (
                         <div className="space-y-2">
                             {incassi.map((inc) => (
-                                <div key={inc.id} className="border border-kidville-line rounded-lg p-2">
+                                <div key={inc.id} className="border border-kidville-line rounded-input p-2">
                                     {editId === inc.id ? (
                                         <div className="flex items-center gap-2 flex-wrap">
                                             <input type="number" step="0.01" defaultValue={inc.importo}
                                                 onChange={(e) => setEditDraft((d) => ({ ...d, importo: Number(e.target.value) }))}
-                                                className="w-20 border-2 border-kidville-line rounded-lg px-2 py-1 font-maven text-sm" />
+                                                className={cx(INLINE_FIELD, 'w-20')} />
                                             <input type="date" defaultValue={String(inc.data_incasso).slice(0, 10)}
                                                 onChange={(e) => setEditDraft((d) => ({ ...d, data_incasso: e.target.value }))}
-                                                className="border-2 border-kidville-line rounded-lg px-2 py-1 font-maven text-sm" />
+                                                className={INLINE_FIELD} />
                                             <select defaultValue={inc.metodo}
                                                 onChange={(e) => setEditDraft((d) => ({ ...d, metodo: e.target.value }))}
-                                                className="border-2 border-kidville-line rounded-lg px-2 py-1 font-maven text-sm bg-white">
+                                                className={cx(INLINE_FIELD, 'cursor-pointer')}>
                                                 {METODI.map((m) => <option key={m.v} value={m.v}>{m.l}</option>)}
                                             </select>
                                             <button onClick={() => salvaIncasso(inc.id)} className="text-kidville-green"><Save size={16} /></button>
@@ -183,11 +189,10 @@ export function ModificaPagamentoModal({ pagamento, categorie, userId, onClose, 
                 </div>
 
                 <div className="flex gap-2 mt-5">
-                    <button onClick={onClose} className="flex-1 py-2.5 rounded-full border-2 border-kidville-line font-maven font-bold text-sm text-kidville-muted hover:bg-kidville-cream">
+                    <button onClick={onClose} className={cx(BTN_SECONDARY, 'flex-1')}>
                         Chiudi
                     </button>
-                    <button onClick={salvaDati} disabled={saving}
-                        className="flex-1 py-2.5 rounded-full bg-kidville-green font-maven font-bold text-sm text-white hover:opacity-90 disabled:opacity-50">
+                    <button onClick={salvaDati} disabled={saving} className={cx(BTN_PRIMARY, 'flex-1')}>
                         {saving ? 'Salvataggio…' : 'Salva modifiche'}
                     </button>
                 </div>

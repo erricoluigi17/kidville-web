@@ -3,6 +3,11 @@
 import { useState, useMemo } from 'react';
 import { X, Layers, Plus, Trash2 } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { cx } from '@/lib/ui/cx';
+import { MODAL_OVERLAY, MODAL_CARD, MODAL_SHADOW, INPUT, BTN_PRIMARY, BTN_SECONDARY } from './ui';
+
+// Campo compatto per la riga-rata (importo + scadenza) dentro il piano.
+const RATA_FIELD = 'rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-2 py-1.5 font-maven text-sm text-kidville-ink outline-none transition-colors focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15';
 
 interface Alunno { id: string; nome?: string; cognome?: string; classe_sezione?: string | null }
 interface Rata { importo: number; scadenza: string }
@@ -100,10 +105,11 @@ export function RateizzaModal({
     };
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+        <div className={MODAL_OVERLAY} onClick={onClose}>
             <motion.div
                 initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
-                className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5 max-h-[90vh] overflow-y-auto"
+                className={cx(MODAL_CARD, 'max-h-[90vh] overflow-y-auto')}
+                style={{ boxShadow: MODAL_SHADOW }}
                 onClick={(e) => e.stopPropagation()}
             >
                 <div className="flex items-center justify-between mb-4">
@@ -113,7 +119,7 @@ export function RateizzaModal({
                     <button onClick={onClose} className="text-kidville-muted hover:text-kidville-ink"><X size={20} /></button>
                 </div>
 
-                <div className="bg-kidville-cream/60 rounded-xl p-3 mb-4">
+                <div className="bg-kidville-cream/60 rounded-card p-3 mb-4">
                     <p className="font-maven text-sm text-kidville-green font-bold">{alunno.nome} {alunno.cognome}</p>
                     <p className="font-maven text-xs text-kidville-muted">{alunno.classe_sezione || '—'}</p>
                 </div>
@@ -122,43 +128,43 @@ export function RateizzaModal({
                     <div>
                         <label className="font-maven text-xs text-kidville-muted mb-1 block">Descrizione</label>
                         <input type="text" value={desc} onChange={(e) => setDesc(e.target.value)}
-                            className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
+                            className={INPUT} />
                     </div>
                     <div className="grid grid-cols-3 gap-2">
                         <div>
                             <label className="font-maven text-xs text-kidville-muted mb-1 block">Totale (€)</label>
                             <input type="number" min={0} step="0.01" value={totale || ''}
                                 onChange={(e) => setTotale(e.target.value === '' ? 0 : Number(e.target.value))}
-                                className="w-full border-2 border-kidville-line rounded-xl px-2 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
+                                className={cx(RATA_FIELD, 'w-full')} />
                         </div>
                         <div>
                             <label className="font-maven text-xs text-kidville-muted mb-1 block">N° rate</label>
                             <input type="number" min={2} max={24} value={nRate}
                                 onChange={(e) => setNRate(Math.max(2, Number(e.target.value) || 2))}
-                                className="w-full border-2 border-kidville-line rounded-xl px-2 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
+                                className={cx(RATA_FIELD, 'w-full')} />
                         </div>
                         <div>
                             <label className="font-maven text-xs text-kidville-muted mb-1 block">1ª scadenza</label>
                             <input type="date" value={dataBase} onChange={(e) => setDataBase(e.target.value)}
-                                className="w-full border-2 border-kidville-line rounded-xl px-2 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
+                                className={cx(RATA_FIELD, 'w-full')} />
                         </div>
                     </div>
                     <button onClick={genera}
-                        className="w-full py-2 rounded-full border-2 border-kidville-green text-kidville-green font-maven font-bold text-sm hover:bg-kidville-green/5">
+                        className="w-full rounded-pill border-[1.5px] border-kidville-green px-5 py-2 font-maven text-sm font-bold text-kidville-green transition-colors hover:bg-kidville-green-soft">
                         Genera rate uguali
                     </button>
 
                     {rate && (
-                        <div className="border border-kidville-line rounded-xl p-2 space-y-2">
+                        <div className="border border-kidville-line rounded-card p-2 space-y-2">
                             {rate.map((r, i) => (
                                 <div key={i} className="flex items-center gap-2">
                                     <span className="font-maven text-xs text-kidville-muted w-6">{i + 1}.</span>
                                     <input type="number" min={0} step="0.01" value={r.importo || ''}
                                         onChange={(e) => updateRata(i, { importo: e.target.value === '' ? 0 : Number(e.target.value) })}
-                                        className="w-24 border-2 border-kidville-line rounded-lg px-2 py-1.5 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
+                                        className={cx(RATA_FIELD, 'w-24')} />
                                     <input type="date" value={r.scadenza}
                                         onChange={(e) => updateRata(i, { scadenza: e.target.value })}
-                                        className="flex-1 border-2 border-kidville-line rounded-lg px-2 py-1.5 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
+                                        className={cx(RATA_FIELD, 'flex-1')} />
                                     <button onClick={() => removeRata(i)} disabled={rate.length <= 2}
                                         className="text-kidville-muted hover:text-kidville-error disabled:opacity-30"><Trash2 size={15} /></button>
                                 </div>
@@ -176,11 +182,10 @@ export function RateizzaModal({
                 </div>
 
                 <div className="flex gap-2 mt-5">
-                    <button onClick={onClose} className="flex-1 py-2.5 rounded-full border-2 border-kidville-line font-maven font-bold text-sm text-kidville-muted hover:bg-kidville-cream">
+                    <button onClick={onClose} className={cx(BTN_SECONDARY, 'flex-1')}>
                         Annulla
                     </button>
-                    <button onClick={submit} disabled={saving || !rate || !sommaOk}
-                        className="flex-1 py-2.5 rounded-full bg-kidville-green font-maven font-bold text-sm text-white hover:opacity-90 disabled:opacity-50">
+                    <button onClick={submit} disabled={saving || !rate || !sommaOk} className={cx(BTN_PRIMARY, 'flex-1')}>
                         {saving ? 'Salvataggio…' : 'Crea piano rateale'}
                     </button>
                 </div>

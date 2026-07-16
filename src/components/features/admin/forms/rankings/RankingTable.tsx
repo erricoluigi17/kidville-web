@@ -7,6 +7,7 @@ import {
   Trophy, Medal, ChevronDown, Search, Loader2, Inbox, Info,
   SlidersHorizontal, Gavel, FileDown,
 } from 'lucide-react'
+import { MEDAL } from '@/lib/ui/chart-colors'
 const ESITO_BADGE: Record<string, { label: string; bg: string; color: string }> = {
   ammesso: { label: 'Ammesso', bg: 'rgba(52,211,153,0.14)', color: 'rgb(52,211,153)' },
   lista_attesa: { label: "Lista d'attesa", bg: 'rgba(230,114,10,0.14)', color: 'rgb(251,191,36)' },
@@ -35,10 +36,13 @@ function candidateLabel(data: Record<string, unknown>): string {
   return 'Candidato'
 }
 
+// Podio graduatorie: le tinte oro/argento/bronzo sono "data colors" del ranking
+// (non token di tema) e vivono in `chart-colors.ts` (unica casa degli hex del
+// perimetro admin). Qui si aggancia solo l'icona lucide a ciascuna medaglia.
 const MEDAL_STYLES: Record<number, { icon: typeof Trophy; color: string; glow: string; bg: string }> = {
-  1: { icon: Trophy, color: '#fbbf24', glow: 'rgba(230,114,10,0.35)', bg: 'rgba(230,114,10,0.08)' },
-  2: { icon: Medal, color: '#94a3b8', glow: 'rgba(148,163,184,0.25)', bg: 'rgba(148,163,184,0.06)' },
-  3: { icon: Medal, color: '#d97706', glow: 'rgba(217,119,6,0.25)', bg: 'rgba(217,119,6,0.06)' },
+  1: { icon: Trophy, ...MEDAL.gold },
+  2: { icon: Medal, ...MEDAL.silver },
+  3: { icon: Medal, ...MEDAL.bronze },
 }
 
 /* ── tooltip per manual_adjustments ────────────────────────── */
@@ -73,7 +77,7 @@ function AdjustmentTooltip({ adjustments }: { adjustments: ManualAdjustment[] })
             className="absolute right-0 bottom-full mb-2 z-50 w-64 p-3 rounded-xl space-y-2 pointer-events-auto"
             style={{
               background: 'rgba(15, 18, 36, 0.97)',
-              border: '1px solid #EFE7DC',
+              border: '1px solid var(--color-kidville-line)',
               backdropFilter: 'blur(24px)',
               boxShadow: '0 16px 48px rgba(0,0,0,0.5)',
             }}
@@ -218,8 +222,8 @@ export function RankingTable() {
             key={card.label}
             className="rounded-2xl px-5 py-4"
             style={{
-              background: '#EFE7DC',
-              border: '1px solid #EFE7DC',
+              background: 'var(--color-kidville-line)',
+              border: '1px solid var(--color-kidville-line)',
               backdropFilter: 'blur(12px)',
             }}
           >
@@ -242,11 +246,11 @@ export function RankingTable() {
             placeholder="Cerca candidato…"
             className="w-full pl-9 pr-4 py-2.5 rounded-xl text-kidville-ink placeholder-kidville-muted text-sm focus:outline-none transition-colors"
             style={{
-              background: '#FFFFFF',
-              border: '1px solid #EFE7DC',
+              background: 'var(--color-kidville-white)',
+              border: '1px solid var(--color-kidville-line)',
             }}
             onFocus={e => { e.currentTarget.style.border = '1px solid rgba(0,106,95,0.45)' }}
-            onBlur={e => { e.currentTarget.style.border = '1px solid #EFE7DC' }}
+            onBlur={e => { e.currentTarget.style.border = '1px solid var(--color-kidville-line)' }}
           />
         </div>
 
@@ -257,8 +261,8 @@ export function RankingTable() {
             onChange={e => setFilterFormId(e.target.value)}
             className="appearance-none pl-4 pr-8 py-2.5 rounded-xl text-kidville-muted text-sm focus:outline-none transition-colors cursor-pointer w-full"
             style={{
-              background: '#FFFFFF',
-              border: '1px solid #EFE7DC',
+              background: 'var(--color-kidville-white)',
+              border: '1px solid var(--color-kidville-line)',
             }}
           >
             <option value="">Tutti i moduli</option>
@@ -285,7 +289,7 @@ export function RankingTable() {
               type="number" min={0} value={posti}
               onChange={e => setPosti(Math.max(0, parseInt(e.target.value || '0', 10)))}
               className="block w-20 mt-1 px-2 py-1.5 rounded-lg text-kidville-green text-sm tabular-nums focus:outline-none"
-              style={{ background: '#EFE7DC', border: '1px solid #EFE7DC' }}
+              style={{ background: 'var(--color-kidville-line)', border: '1px solid var(--color-kidville-line)' }}
             />
           </label>
           <label className="text-[11px] text-kidville-muted">
@@ -294,7 +298,7 @@ export function RankingTable() {
               type="number" min={0} value={soglia}
               onChange={e => setSoglia(Math.max(0, parseInt(e.target.value || '0', 10)))}
               className="block w-24 mt-1 px-2 py-1.5 rounded-lg text-kidville-green text-sm tabular-nums focus:outline-none"
-              style={{ background: '#EFE7DC', border: '1px solid #EFE7DC' }}
+              style={{ background: 'var(--color-kidville-line)', border: '1px solid var(--color-kidville-line)' }}
             />
           </label>
           <button
@@ -309,7 +313,7 @@ export function RankingTable() {
           <a
             href={`/api/forms/export/delibera?modelId=${filterFormId}${userId ? `&userId=${userId}` : ''}`}
             className="flex items-center gap-2 px-4 py-2 rounded-xl text-kidville-info text-sm font-semibold transition-all hover:text-kidville-green"
-            style={{ background: '#FFFFFF', border: '1px solid #EFE7DC' }}
+            style={{ background: 'var(--color-kidville-white)', border: '1px solid var(--color-kidville-line)' }}
           >
             <FileDown className="w-4 h-4" /> Esporta PDF
           </a>
@@ -337,15 +341,15 @@ export function RankingTable() {
       ) : (
         <div
           className="rounded-2xl overflow-hidden"
-          style={{ border: '1px solid #EFE7DC' }}
+          style={{ border: '1px solid var(--color-kidville-line)' }}
         >
           {/* Header row */}
           <div
             className="grid items-center"
             style={{
               gridTemplateColumns: '56px 1fr 200px 120px 90px 48px',
-              borderBottom: '1px solid #EFE7DC',
-              background: '#EFE7DC',
+              borderBottom: '1px solid var(--color-kidville-line)',
+              background: 'var(--color-kidville-line)',
             }}
           >
             {['#', 'Candidato', 'Modulo', 'Firma', 'Punti', ''].map(col => (
@@ -382,12 +386,12 @@ export function RankingTable() {
                   className="grid items-center cursor-pointer transition-colors"
                   style={{
                     gridTemplateColumns: '56px 1fr 200px 120px 90px 48px',
-                    borderBottom: '1px solid #EFE7DC',
+                    borderBottom: '1px solid var(--color-kidville-line)',
                     background: medal?.bg ?? 'transparent',
                   }}
                   onMouseEnter={e => {
                     (e.currentTarget as HTMLDivElement).style.background =
-                      medal ? `${medal.bg.replace(')', ', 0.14)')}` : '#EFE7DC'
+                      medal ? `${medal.bg.replace(')', ', 0.14)')}` : 'var(--color-kidville-line)'
                   }}
                   onMouseLeave={e => {
                     (e.currentTarget as HTMLDivElement).style.background = medal?.bg ?? 'transparent'

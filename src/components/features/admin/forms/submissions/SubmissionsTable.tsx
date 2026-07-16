@@ -157,14 +157,14 @@ export function SubmissionsTable() {
             placeholder="Cerca per modello o contenuto…"
             className="w-full pl-9 pr-4 py-2.5 rounded-xl text-kidville-ink placeholder-kidville-muted text-sm focus:outline-none transition-colors"
             style={{
-              background: '#FFFFFF',
-              border: '1px solid #EFE7DC',
+              background: 'var(--color-kidville-white)',
+              border: '1px solid var(--color-kidville-line)',
             }}
             onFocus={e => {
               e.currentTarget.style.border = '1px solid rgba(0,106,95,0.45)'
             }}
             onBlur={e => {
-              e.currentTarget.style.border = '1px solid #EFE7DC'
+              e.currentTarget.style.border = '1px solid var(--color-kidville-line)'
             }}
           />
         </div>
@@ -176,8 +176,8 @@ export function SubmissionsTable() {
             onChange={e => setFilterStatus(e.target.value as FormSubmissionStatus | '')}
             className="appearance-none pl-4 pr-8 py-2.5 rounded-xl text-kidville-muted text-sm focus:outline-none transition-colors cursor-pointer"
             style={{
-              background: '#FFFFFF',
-              border: '1px solid #EFE7DC',
+              background: 'var(--color-kidville-white)',
+              border: '1px solid var(--color-kidville-line)',
             }}
           >
             <option value="">Tutti gli stati</option>
@@ -195,8 +195,8 @@ export function SubmissionsTable() {
             onChange={e => setFilterFormId(e.target.value)}
             className="appearance-none pl-4 pr-8 py-2.5 rounded-xl text-kidville-muted text-sm focus:outline-none transition-colors cursor-pointer w-full"
             style={{
-              background: '#FFFFFF',
-              border: '1px solid #EFE7DC',
+              background: 'var(--color-kidville-white)',
+              border: '1px solid var(--color-kidville-line)',
             }}
           >
             <option value="">Tutti i modelli</option>
@@ -214,8 +214,8 @@ export function SubmissionsTable() {
           onChange={e => setFilterDate(e.target.value)}
           className="px-4 py-2.5 rounded-xl text-kidville-muted text-sm focus:outline-none transition-colors"
           style={{
-            background: '#FFFFFF',
-            border: '1px solid #EFE7DC',
+            background: 'var(--color-kidville-white)',
+            border: '1px solid var(--color-kidville-line)',
             colorScheme: 'dark',
           }}
         />
@@ -226,8 +226,8 @@ export function SubmissionsTable() {
             onClick={handleBulkXLSX}
             className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-kidville-muted text-sm transition-all group ml-auto"
             style={{
-              background: '#FFFFFF',
-              border: '1px solid #EFE7DC',
+              background: 'var(--color-kidville-white)',
+              border: '1px solid var(--color-kidville-line)',
             }}
             onMouseEnter={e => {
               const el = e.currentTarget
@@ -237,8 +237,8 @@ export function SubmissionsTable() {
             }}
             onMouseLeave={e => {
               const el = e.currentTarget
-              el.style.background = '#FFFFFF'
-              el.style.border = '1px solid #EFE7DC'
+              el.style.background = 'var(--color-kidville-white)'
+              el.style.border = '1px solid var(--color-kidville-line)'
               el.style.color = 'rgb(154,166,162)'
             }}
           >
@@ -269,14 +269,14 @@ export function SubmissionsTable() {
       ) : (
         <div
           className="rounded-2xl overflow-hidden"
-          style={{ border: '1px solid #EFE7DC' }}
+          style={{ border: '1px solid var(--color-kidville-line)' }}
         >
           {/* Header row */}
           <div
             className="grid items-center"
             style={{
               gridTemplateColumns: '140px 1fr 160px 110px 90px',
-              borderBottom: '1px solid #EFE7DC',
+              borderBottom: '1px solid var(--color-kidville-line)',
               background: 'rgba(0,106,95,0.04)',
             }}
           >
@@ -298,7 +298,7 @@ export function SubmissionsTable() {
               className="grid items-center cursor-pointer transition-colors"
               style={{
                 gridTemplateColumns: '140px 1fr 160px 110px 90px',
-                borderBottom: '1px solid #EFE7DC',
+                borderBottom: '1px solid var(--color-kidville-line)',
               }}
               onMouseEnter={e => {
                 ;(e.currentTarget as HTMLDivElement).style.background = 'rgba(0,106,95,0.04)'

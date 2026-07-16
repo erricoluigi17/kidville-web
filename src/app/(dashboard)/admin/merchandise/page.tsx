@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import {
   CockpitPage, PageHeader, StatCard, Tabs, Drawer, Toolbar, CockpitSelect,
-  TABLE, TABLE_WRAP, TD, TH, TROW,
+  TABLE, TABLE_WRAP, TD, TH, TROW, TONE,
 } from '@/components/ui/cockpit';
 import { SaveCheck, SaveCelebration } from '@/components/ui/SaveConfirmation';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
@@ -51,12 +51,14 @@ async function jsend(userId: string | null, path: string, method: string, body: 
 
 const CATEGORIE: Categoria[] = ['divisa', 'materiale', 'libri', 'gadget', 'altro'];
 const STATO_RIGA_LABEL: Record<StatoRiga, string> = { da_ordinare: 'Da ordinare', ordinato: 'Ordinato', arrivato: 'Arrivato', consegnato: 'Consegnato', annullato: 'Annullato' };
+// Colori dei chip di stato derivati dal tono cockpit (`TONE`): un'unica sorgente
+// per la pelle dei chip in tutto il cockpit (softBg + testo del tono), niente hex.
 const STATO_RIGA_TONE: Record<StatoRiga, string> = {
-  da_ordinare: 'bg-kidville-line/50 text-kidville-muted',
-  ordinato: 'bg-kidville-info-soft text-kidville-info',
-  arrivato: 'bg-kidville-warn-soft text-kidville-warn',
-  consegnato: 'bg-kidville-green-soft text-kidville-green',
-  annullato: 'bg-kidville-error-soft text-kidville-error',
+  da_ordinare: cx(TONE.neutral.softBg, TONE.neutral.text),
+  ordinato: cx(TONE.info.softBg, TONE.info.text),
+  arrivato: cx(TONE.warn.softBg, TONE.warn.text),
+  consegnato: cx(TONE.green.softBg, TONE.green.text),
+  annullato: cx(TONE.error.softBg, TONE.error.text),
 };
 
 // ============================ Nav ============================
@@ -80,9 +82,10 @@ function MerchNav({ value, onChange }: { value: Vista; onChange: (v: Vista) => v
           {VISTE.map((v) => {
             const Icon = v.icon; const on = value === v.id;
             return (
-              <button key={v.id} type="button" onClick={() => onChange(v.id)}
-                className={cx('inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border-2 px-3.5 py-1.5 font-barlow text-[12.5px] font-extrabold uppercase tracking-[0.03em]',
-                  on ? 'border-kidville-green bg-kidville-green text-kidville-yellow' : 'border-kidville-line bg-kidville-white text-kidville-ink/70')}>
+              <button key={v.id} type="button" aria-pressed={on} onClick={() => onChange(v.id)}
+                className={cx('inline-flex items-center gap-1.5 whitespace-nowrap rounded-pill px-3.5 py-2 font-barlow text-[12.5px] font-extrabold uppercase tracking-[0.03em] transition-colors',
+                  'outline-none focus-visible:ring-2 focus-visible:ring-kidville-green focus-visible:ring-offset-1',
+                  on ? 'bg-kidville-green text-kidville-white' : 'bg-kidville-white text-kidville-ink/70 ring-[1.5px] ring-inset ring-kidville-line hover:text-kidville-green hover:ring-kidville-green/50')}>
                 <Icon size={14} strokeWidth={2.2} /> {v.label}
               </button>
             );
@@ -108,6 +111,16 @@ function Spinner() {
 }
 function StatoBadge({ s }: { s: StatoRiga }) {
   return <span className={cx('rounded-pill px-2 py-0.5 font-maven text-[11px] font-semibold', STATO_RIGA_TONE[s])}>{STATO_RIGA_LABEL[s]}</span>;
+}
+// Stato vuoto nello stile dell'app (cerchio crema + emoji + testo), come le aree
+// genitore/docente. Il testo resta invariato: l'emoji è decorativa.
+function EmptyState({ emoji, children }: { emoji: string; children: React.ReactNode }) {
+  return (
+    <div className="flex flex-col items-center justify-center gap-2.5 py-10 text-center">
+      <div className="flex h-14 w-14 items-center justify-center rounded-full bg-kidville-cream text-2xl">{emoji}</div>
+      <p className="font-maven text-sm text-kidville-muted">{children}</p>
+    </div>
+  );
 }
 
 // ============================ Panello Ordini ============================
@@ -148,7 +161,7 @@ function OrdiniPanel({ userId, ordini, loading, reload }: { userId: string | nul
       </Toolbar>
 
       {loading ? <Spinner /> : filtrati.length === 0 ? (
-        <p className="font-maven text-sm text-kidville-muted">Nessun ordine.</p>
+        <EmptyState emoji="🛍️">Nessun ordine.</EmptyState>
       ) : (
         <div className="space-y-2">
           {filtrati.map((o) => {
@@ -366,7 +379,7 @@ function DaOrdinarePanel({ userId, onChanged }: { userId: string | null; onChang
   };
 
   if (loading) return <div className={CARD}><Spinner /></div>;
-  if (gruppi.length === 0) return <div className={CARD}><p className="font-maven text-sm text-kidville-muted">Nessuna riga da ordinare. 🎉</p></div>;
+  if (gruppi.length === 0) return <div className={CARD}><EmptyState emoji="🎉">Nessuna riga da ordinare.</EmptyState></div>;
 
   return (
     <div className="space-y-4">
@@ -435,7 +448,7 @@ function ArriviPanel({ userId, onChanged }: { userId: string | null; onChanged: 
   };
 
   if (loading) return <div className={CARD}><Spinner /></div>;
-  if (aperti.length === 0) return <div className={CARD}><p className="font-maven text-sm text-kidville-muted">Nessun ordine fornitore aperto.</p></div>;
+  if (aperti.length === 0) return <div className={CARD}><EmptyState emoji="🚚">Nessun ordine fornitore aperto.</EmptyState></div>;
 
   return (
     <div className="space-y-4">
@@ -482,7 +495,7 @@ function ConsegnePanel({ userId, ordini, reload }: { userId: string | null; ordi
     if (res.ok) reload(); else alert(res.error ?? 'Operazione non riuscita');
   };
 
-  if (daConsegnare.length === 0) return <div className={CARD}><p className="font-maven text-sm text-kidville-muted">Niente da consegnare.</p></div>;
+  if (daConsegnare.length === 0) return <div className={CARD}><EmptyState emoji="📦">Niente da consegnare.</EmptyState></div>;
   return (
     <div className="space-y-3">
       {daConsegnare.map(({ o, righe }) => {
@@ -547,7 +560,7 @@ function CatalogoPanel({ userId, articoli, fornitori, reload }: { userId: string
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
       <div className={CARD}>
         <p className="font-barlow mb-3 text-xs font-bold uppercase tracking-wide text-kidville-green">Catalogo articoli</p>
-        {articoli.length === 0 ? <p className="font-maven text-sm text-kidville-muted">Nessun articolo. Aggiungine uno dal pannello a destra.</p> : (
+        {articoli.length === 0 ? <EmptyState emoji="👕">Nessun articolo. Aggiungine uno dal pannello a destra.</EmptyState> : (
           <div className={TABLE_WRAP}>
             <table className={TABLE}>
               <thead><tr><th className={TH}>Articolo</th><th className={TH}>Cat.</th><th className={TH}>Fornitore</th><th className={TH}>Taglie</th><th className={TH}>Prezzo</th><th className={TH}>Stato</th><th className={TH}></th></tr></thead>
@@ -631,7 +644,7 @@ function GiacenzePanel({ userId, articoli }: { userId: string | null; articoli: 
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
       <div className={CARD}>
         <p className="font-barlow mb-3 text-xs font-bold uppercase tracking-wide text-kidville-green">Giacenze (automatiche)</p>
-        {loading ? <Spinner /> : matrice.length === 0 ? <p className="font-maven text-sm text-kidville-muted">Nessuna giacenza. Registra un carico dal pannello a destra.</p> : (
+        {loading ? <Spinner /> : matrice.length === 0 ? <EmptyState emoji="📦">Nessuna giacenza. Registra un carico dal pannello a destra.</EmptyState> : (
           <div className={TABLE_WRAP}>
             <table className={TABLE}>
               <thead><tr><th className={TH}>Articolo</th><th className={TH}>Taglia</th><th className={TH}>Disponibile</th><th className={TH}>In arrivo</th><th className={TH}>Da consegnare</th></tr></thead>
@@ -696,7 +709,7 @@ function FornitoriPanel({ userId, fornitori, reload }: { userId: string | null; 
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
       <div className={CARD}>
         <p className="font-barlow mb-3 text-xs font-bold uppercase tracking-wide text-kidville-green">Fornitori</p>
-        {fornitori.length === 0 ? <p className="font-maven text-sm text-kidville-muted">Nessun fornitore. Aggiungine uno dal pannello a destra.</p> : (
+        {fornitori.length === 0 ? <EmptyState emoji="🏭">Nessun fornitore. Aggiungine uno dal pannello a destra.</EmptyState> : (
           <div className="space-y-2">
             {fornitori.map((f) => (
               <div key={f.id} className="flex items-start justify-between gap-2 rounded-input border border-kidville-line p-3">
@@ -777,7 +790,7 @@ function MerchandiseInner() {
 
   return (
     <CockpitPage max={1280}>
-      <PageHeader icon={ShoppingBag} title="Merchandise" subtitle="Ordini, fornitori, giacenze e consegne di divise e materiale. Gli ordini creano un addebito in Contabilità." />
+      <PageHeader eyebrow="Operativo" icon={ShoppingBag} title="Merchandise" subtitle="Ordini, fornitori, giacenze e consegne di divise e materiale. Gli ordini creano un addebito in Contabilità." />
 
       <div className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard icon={ListChecks} label="Da ordinare" value={loadingOrd ? '…' : kpi.daOrd} tone="neutral" />

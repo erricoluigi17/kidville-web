@@ -26,8 +26,9 @@ export function PagelleScrutinioPanel({ scuolaId, userId }: { scuolaId: string; 
                     <button
                         key={t.id}
                         onClick={() => setTab(t.id)}
-                        className={`font-maven inline-flex items-center gap-2 rounded-pill px-4 py-2 text-sm transition ${
-                            tab === t.id ? 'bg-kidville-green text-kidville-yellow' : 'bg-white text-kidville-ink hover:bg-kidville-green/10'
+                        aria-pressed={tab === t.id}
+                        className={`font-maven inline-flex items-center gap-2 rounded-pill px-4 py-2 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-kidville-green focus-visible:ring-offset-1 ${
+                            tab === t.id ? 'bg-kidville-green text-kidville-yellow' : 'bg-kidville-white text-kidville-ink hover:bg-kidville-green-soft hover:text-kidville-green'
                         }`}
                     >
                         {t.icon}
@@ -36,7 +37,7 @@ export function PagelleScrutinioPanel({ scuolaId, userId }: { scuolaId: string; 
                 ))}
             </nav>
 
-            <div className="rounded-card bg-white p-4 md:p-6 shadow-sm">
+            <div className="rounded-card bg-kidville-white p-4 md:p-6 shadow-sm">
                 {tab === 'periodi' && <ScrutinioPeriodiManager scuolaId={scuolaId} userId={userId} />}
                 {tab === 'giudizi' && <GiudiziManager scuolaId={scuolaId} userId={userId} />}
                 {tab === 'giudizi-scrutinio' && <ScrutinioGiudiziManager scuolaId={scuolaId} userId={userId} />}

@@ -12,6 +12,7 @@ function GdprInner() {
     <CockpitPage max={1100}>
       <PageHeader
         icon={ShieldAlert}
+        eyebrow="Amministrazione"
         title="Privacy & Diritto all'Oblio"
         subtitle="Cancellazione (anonimizzazione) dei dati personali degli alunni non iscritti. Azione riservata alla Direzione."
       />

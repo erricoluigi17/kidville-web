@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Pencil, Layers, Download, Euro } from 'lucide-react';
 import { Drawer } from '@/components/ui/cockpit';
+import { Badge } from '@/components/ui/Badge';
 import { FatturaChip } from './FatturaChip';
 import { FatturaButton } from './FatturaButton';
 import { STATI_PAGAMENTO, METODO_LABEL } from './stati';
@@ -78,7 +79,7 @@ export function PagamentoDrawer({ pagamento, userId, onClose, onIncassa, onModif
                 <div className="flex flex-wrap items-center gap-2">
                     {!saldato && (
                         <button type="button" onClick={onIncassa}
-                            className="inline-flex items-center gap-1.5 rounded-full bg-kidville-green px-4 py-2 font-maven text-sm font-bold text-white hover:opacity-90">
+                            className="inline-flex items-center gap-1.5 rounded-pill bg-kidville-green px-4 py-2 font-maven text-sm font-bold text-kidville-yellow transition-colors hover:bg-kidville-green-dark">
                             <Euro size={15} /> Incassa
                         </button>
                     )}
@@ -86,23 +87,23 @@ export function PagamentoDrawer({ pagamento, userId, onClose, onIncassa, onModif
                         <>
                             <FatturaButton pagamentoId={pagamento.id} userId={userId} fatturaStato={pagamento.fattura_stato} descrizione={pagamento.descrizione} />
                             <a href={`/api/pagamenti/ricevuta?pagamento_id=${pagamento.id}&userId=${userId}`}
-                                className="inline-flex items-center gap-1 rounded-full bg-kidville-green/10 px-3 py-1.5 font-maven text-xs font-bold text-kidville-green hover:bg-kidville-green/20">
+                                className="inline-flex items-center gap-1 rounded-pill bg-kidville-green-soft px-3 py-1.5 font-maven text-xs font-bold text-kidville-green transition-colors hover:bg-kidville-green/20">
                                 <Download size={13} /> Ricevuta
                             </a>
                         </>
                     ) : (
                         <button type="button" disabled title="Disponibile a saldo avvenuto"
-                            className="inline-flex cursor-not-allowed items-center gap-1 rounded-full border-2 border-kidville-line px-3 py-1 font-maven text-xs font-bold text-kidville-muted opacity-60">
+                            className="inline-flex cursor-not-allowed items-center gap-1 rounded-pill border-[1.5px] border-kidville-line px-3 py-1 font-maven text-xs font-bold text-kidville-muted opacity-60">
                             <Download size={13} /> Ricevuta
                         </button>
                     )}
                     <button type="button" onClick={onModifica}
-                        className="inline-flex items-center gap-1 rounded-full border-2 border-kidville-line px-3 py-1 font-maven text-xs font-bold text-kidville-muted hover:border-kidville-green hover:text-kidville-green">
+                        className="inline-flex items-center gap-1 rounded-pill border-[1.5px] border-kidville-line px-3 py-1 font-maven text-xs font-bold text-kidville-muted transition-colors hover:border-kidville-green hover:text-kidville-green">
                         <Pencil size={13} /> Modifica
                     </button>
                     {pagamento.tipo === 'singolo' && !saldato && (
                         <button type="button" onClick={onRateizza}
-                            className="inline-flex items-center gap-1 rounded-full border-2 border-kidville-line px-3 py-1 font-maven text-xs font-bold text-kidville-muted hover:border-kidville-green hover:text-kidville-green">
+                            className="inline-flex items-center gap-1 rounded-pill border-[1.5px] border-kidville-line px-3 py-1 font-maven text-xs font-bold text-kidville-muted transition-colors hover:border-kidville-green hover:text-kidville-green">
                             <Layers size={13} /> Rateizza
                         </button>
                     )}
@@ -110,9 +111,9 @@ export function PagamentoDrawer({ pagamento, userId, onClose, onIncassa, onModif
                 </div>
             }>
             {/* Riepilogo importi + stato */}
-            <div className="mb-4 rounded-xl bg-kidville-cream/60 p-3">
+            <div className="mb-4 rounded-card bg-kidville-cream/60 p-3">
                 <div className="flex items-center justify-between gap-2">
-                    <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-bold ${st.cls}`}>{st.label}</span>
+                    <Badge tone={st.tone}>{st.label}</Badge>
                     <FatturaChip stato={pagamento.stato} fatturaStato={pagamento.fattura_stato} />
                 </div>
                 <div className="mt-2 flex justify-between font-maven text-xs">
@@ -132,7 +133,7 @@ export function PagamentoDrawer({ pagamento, userId, onClose, onIncassa, onModif
                     <h3 className="mb-1.5 font-barlow text-[13px] font-extrabold uppercase text-kidville-neutral">Quote</h3>
                     <div className="space-y-1">
                         {dettaglio.quote.map((q) => (
-                            <div key={q.id} className="flex items-center justify-between rounded-lg bg-kidville-cream/40 px-2.5 py-1.5 font-maven text-xs">
+                            <div key={q.id} className="flex items-center justify-between rounded-input bg-kidville-cream/40 px-2.5 py-1.5 font-maven text-xs">
                                 <span className="text-kidville-ink">{q.etichetta || [q.utenti?.nome, q.utenti?.cognome].filter(Boolean).join(' ') || 'Quota'}</span>
                                 <span className="font-bold text-kidville-green">€ {Number(q.importo).toFixed(2)}</span>
                             </div>
@@ -152,7 +153,7 @@ export function PagamentoDrawer({ pagamento, userId, onClose, onIncassa, onModif
                     {dettaglio.incassi.map((i) => {
                         const storno = Number(i.importo) < 0;
                         return (
-                            <div key={i.id} className={`rounded-lg border px-2.5 py-1.5 ${storno ? 'border-kidville-error-soft bg-kidville-error-soft/40' : 'border-kidville-line bg-kidville-white'}`}>
+                            <div key={i.id} className={`rounded-input border px-2.5 py-1.5 ${storno ? 'border-kidville-error-soft bg-kidville-error-soft/40' : 'border-kidville-line bg-kidville-white'}`}>
                                 <div className="flex items-center justify-between font-maven text-xs">
                                     <span className={`font-bold ${storno ? 'text-kidville-error' : 'text-kidville-green'}`}>
                                         {storno ? 'Storno' : (METODO_LABEL[i.metodo] ?? i.metodo)}
@@ -179,11 +180,11 @@ export function PagamentoDrawer({ pagamento, userId, onClose, onIncassa, onModif
                         {dettaglio.rate.map((r) => {
                             const rst = STATI_PAGAMENTO[r.stato] ?? STATI_PAGAMENTO.da_pagare;
                             return (
-                                <div key={r.id} className="flex items-center justify-between rounded-lg bg-kidville-cream/40 px-2.5 py-1.5 font-maven text-xs">
+                                <div key={r.id} className="flex items-center justify-between rounded-input bg-kidville-cream/40 px-2.5 py-1.5 font-maven text-xs">
                                     <span className="min-w-0 truncate text-kidville-ink">{r.descrizione} · {fmtData(r.scadenza)}</span>
                                     <span className="flex shrink-0 items-center gap-1.5">
                                         <span className="text-kidville-muted">€ {Number(r.importo).toFixed(2)}</span>
-                                        <span className={`inline-block rounded-full px-1.5 py-0.5 text-[10px] font-bold ${rst.cls}`}>{rst.label}</span>
+                                        <Badge tone={rst.tone}>{rst.label}</Badge>
                                     </span>
                                 </div>
                             );

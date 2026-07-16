@@ -98,6 +98,7 @@ function Inner() {
         <div className="min-h-screen bg-kidville-cream/40 p-4 md:p-8">
             <div className="max-w-6xl mx-auto">
                 <PageHeader
+                    eyebrow="Sistema"
                     icon={Settings}
                     title="Impostazioni"
                     subtitle="Configurazione completa della scuola: moduli, didattica, servizi e comunicazione."
@@ -112,8 +113,11 @@ function Inner() {
                                     <button
                                         key={v.id}
                                         onClick={() => vai(v.id)}
-                                        className={`font-maven inline-flex items-center gap-1.5 rounded-pill px-3 py-2 text-sm whitespace-nowrap transition ${
-                                            sezione === v.id ? 'bg-kidville-green text-kidville-yellow' : 'bg-kidville-white text-kidville-ink/70'
+                                        aria-pressed={sezione === v.id}
+                                        className={`font-maven inline-flex items-center gap-1.5 rounded-pill px-3 py-2 text-sm whitespace-nowrap outline-none transition-colors focus-visible:ring-2 focus-visible:ring-kidville-green focus-visible:ring-offset-1 ${
+                                            sezione === v.id
+                                                ? 'bg-kidville-green text-kidville-yellow'
+                                                : 'bg-kidville-white text-kidville-ink/70 ring-[1.5px] ring-inset ring-kidville-line hover:text-kidville-green hover:ring-kidville-green/50'
                                         }`}
                                     >
                                         {v.icon}
@@ -138,10 +142,11 @@ function Inner() {
                                         <button
                                             key={v.id}
                                             onClick={() => vai(v.id)}
-                                            className={`font-maven w-full flex items-center gap-2 rounded-xl px-2.5 py-2 text-sm text-left transition ${
+                                            aria-pressed={sezione === v.id}
+                                            className={`font-maven w-full flex items-center gap-2 rounded-xl px-2.5 py-2 text-sm text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-kidville-green focus-visible:ring-offset-1 ${
                                                 sezione === v.id
                                                     ? 'bg-kidville-green text-kidville-yellow font-bold'
-                                                    : 'text-kidville-ink/70 hover:bg-kidville-green/10'
+                                                    : 'text-kidville-ink/70 hover:bg-kidville-green-soft hover:text-kidville-green'
                                             }`}
                                         >
                                             {v.icon}

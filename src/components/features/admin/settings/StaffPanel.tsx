@@ -108,7 +108,7 @@ export function StaffPanel({ userId }: { userId: string }) {
           const isEditing = editId === u.id;
           const sezioniUtente = sections.filter((s) => !draft.scuola_id || s.scuola_id === draft.scuola_id);
           return (
-            <div key={u.id} className="bg-white border border-kidville-line rounded-xl p-3">
+            <div key={u.id} className="bg-kidville-white border border-kidville-line rounded-xl p-3">
               <div className="flex items-center justify-between gap-2">
                 <div className="min-w-0">
                   <p className="font-maven font-bold text-sm text-kidville-green truncate">{u.cognome} {u.nome}</p>
@@ -163,7 +163,7 @@ export function StaffPanel({ userId }: { userId: string }) {
                         const on = draft.section_ids.includes(s.id);
                         return (
                           <button key={s.id} type="button" onClick={() => toggleSezione(s.id)}
-                            className={`px-2 py-1 rounded-full text-[11px] font-bold border ${on ? 'bg-kidville-green text-white border-kidville-green' : 'bg-white text-kidville-muted border-kidville-line hover:border-kidville-green'}`}>
+                            className={`px-2 py-1 rounded-full text-[11px] font-bold border ${on ? 'bg-kidville-green text-kidville-white border-kidville-green' : 'bg-kidville-white text-kidville-muted border-kidville-line hover:border-kidville-green'}`}>
                             {s.name}
                           </button>
                         );

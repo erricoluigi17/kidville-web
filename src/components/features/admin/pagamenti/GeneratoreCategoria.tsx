@@ -3,6 +3,11 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Layers, RefreshCw } from 'lucide-react';
 import { SaveCheck } from '@/components/ui/SaveConfirmation';
+import { cx } from '@/lib/ui/cx';
+
+const GC_INPUT = 'w-full rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-3 py-2 font-maven text-sm text-kidville-ink outline-none transition-colors focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15';
+const GC_SELECT = `${GC_INPUT} cursor-pointer hover:border-kidville-green/50`;
+const GC_BTN_PRIMARY = 'inline-flex items-center gap-2 rounded-pill bg-kidville-green px-5 py-2.5 font-maven text-sm font-bold text-kidville-yellow transition-colors hover:bg-kidville-green-dark disabled:opacity-50';
 
 interface Categoria { id: string; nome: string; slug: string }
 interface Alunno { id: string; nome?: string; cognome?: string; classe_sezione?: string | null; section_id?: string | null }
@@ -135,14 +140,14 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
                 <div>
                     <label className="font-maven text-xs text-kidville-muted mb-1 block">Categoria</label>
                     <select value={categoriaId} onChange={(e) => applyCategoria(categorie.find((c) => c.id === e.target.value))}
-                        className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:border-kidville-green">
+                        className={GC_SELECT}>
                         {categorie.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
                     </select>
                 </div>
                 <div>
                     <label className="font-maven text-xs text-kidville-muted mb-1 block">Classe (vuoto = tutti gli iscritti)</label>
                     <select value={classe} onChange={(e) => { setClasse(e.target.value); setAnteprima(null); }}
-                        className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:border-kidville-green">
+                        className={GC_SELECT}>
                         <option value="">Tutti ({alunni.length})</option>
                         {classi.map((c) => <option key={c} value={c}>{c}</option>)}
                     </select>
@@ -150,25 +155,25 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
                 <div>
                     <label className="font-maven text-xs text-kidville-muted mb-1 block">Causale / descrizione</label>
                     <input type="text" value={descrizione} onChange={(e) => { setDescrizione(e.target.value); setAnteprima(null); }}
-                        className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
+                        className={GC_INPUT} />
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                     <div>
                         <label className="font-maven text-xs text-kidville-muted mb-1 block">Importo (€)</label>
                         <input type="number" min={0} step="0.01" value={importo || ''}
                             onChange={(e) => { setImporto(e.target.value === '' ? 0 : Number(e.target.value)); setAnteprima(null); }}
-                            className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
+                            className={GC_INPUT} />
                     </div>
                     <div>
                         <label className="font-maven text-xs text-kidville-muted mb-1 block">{acconti ? '1ª scadenza' : 'Scadenza'}</label>
                         <input type="date" value={scadenza} onChange={(e) => { setScadenza(e.target.value); setAnteprima(null); }}
-                            className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
+                            className={GC_INPUT} />
                     </div>
                 </div>
                 <div>
                     <label className="font-maven text-xs text-kidville-muted mb-1 block">Gruppo (evita duplicati)</label>
                     <input type="text" value={gruppo} onChange={(e) => { setGruppo(e.target.value); setAnteprima(null); }}
-                        className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
+                        className={GC_INPUT} />
                 </div>
             </div>
 
@@ -188,14 +193,14 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
                         <span className="font-maven text-xs text-kidville-muted">N° rate</span>
                         <input type="number" min={2} max={24} value={nRate}
                             onChange={(e) => { setNRate(Math.max(2, Number(e.target.value) || 2)); setAnteprima(null); }}
-                            className="w-16 border-2 border-kidville-line rounded-lg px-2 py-1 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
+                            className={cx(GC_INPUT, 'w-16')} />
                         <span className="font-maven text-[11px] text-kidville-muted">mensili, ~€ {importo ? (importo / nRate).toFixed(2) : '0'} cad.</span>
                     </div>
                 )}
             </div>
 
             {anteprima && !done && (
-                <div className="space-y-1 rounded-xl border-2 border-kidville-line bg-kidville-cream/50 p-4">
+                <div className="space-y-1 rounded-card border-[1.5px] border-kidville-line bg-kidville-cream/50 p-4">
                     <p className="font-maven text-sm font-bold text-kidville-green">Anteprima generazione</p>
                     <p className="font-maven text-xs text-kidville-ink">
                         Da generare: {anteprima.candidati.length} pagament{anteprima.candidati.length === 1 ? 'o' : 'i'} da € {importo.toFixed(2)}
@@ -209,26 +214,24 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
             )}
 
             {done && (
-                <div className="bg-kidville-success-soft text-kidville-success rounded-xl p-4 font-maven text-sm flex items-center gap-2">
+                <div className="bg-kidville-success-soft text-kidville-success rounded-card p-4 font-maven text-sm flex items-center gap-2">
                     <SaveCheck size={18} /> {done}
                 </div>
             )}
             {error && <p className="font-maven text-xs text-kidville-error">{error}</p>}
 
             {!anteprima ? (
-                <button onClick={caricaAnteprima} disabled={loading}
-                    className="px-5 py-2.5 rounded-full bg-kidville-green text-white font-maven font-bold text-sm flex items-center gap-2 disabled:opacity-50">
+                <button onClick={caricaAnteprima} disabled={loading} className={GC_BTN_PRIMARY}>
                     {loading ? <RefreshCw size={15} className="animate-spin" /> : <Layers size={15} />}
                     Anteprima ({target.length} alunni)
                 </button>
             ) : (
                 <div className="flex flex-wrap gap-2">
                     <button onClick={() => setAnteprima(null)} disabled={loading}
-                        className="px-5 py-2.5 rounded-full border-2 border-kidville-line text-kidville-muted font-maven font-bold text-sm hover:bg-kidville-cream disabled:opacity-50">
+                        className="inline-flex items-center gap-2 rounded-pill border-[1.5px] border-kidville-line bg-kidville-white px-5 py-2.5 font-maven text-sm font-bold text-kidville-muted transition-colors hover:border-kidville-green hover:text-kidville-green disabled:opacity-50">
                         Modifica
                     </button>
-                    <button onClick={genera} disabled={loading || anteprima.candidati.length === 0}
-                        className="px-5 py-2.5 rounded-full bg-kidville-green text-white font-maven font-bold text-sm flex items-center gap-2 disabled:opacity-50">
+                    <button onClick={genera} disabled={loading || anteprima.candidati.length === 0} className={GC_BTN_PRIMARY}>
                         {loading ? <RefreshCw size={15} className="animate-spin" /> : <Layers size={15} />}
                         Conferma generazione ({anteprima.candidati.length})
                     </button>

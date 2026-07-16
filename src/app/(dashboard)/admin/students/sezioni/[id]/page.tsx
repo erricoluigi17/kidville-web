@@ -156,7 +156,8 @@ export default function SezioneDetailPage() {
                 <Link href={backHref} className="mb-4 inline-flex items-center gap-1.5 font-maven text-sm font-semibold text-kidville-green hover:underline">
                     <ArrowLeft size={15} strokeWidth={2} /> Tutte le sezioni
                 </Link>
-                <div className="rounded-card bg-kidville-white p-10 text-center shadow-sm">
+                <div className="flex flex-col items-center rounded-card bg-kidville-white p-10 text-center shadow-sm">
+                    <div className="mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-kidville-cream text-4xl">🏫</div>
                     <h2 className="font-barlow text-lg font-bold uppercase text-kidville-green">Sezione non disponibile</h2>
                     <p className="font-maven mt-1 text-sm text-kidville-muted">La sezione non esiste o non appartiene ai tuoi plessi.</p>
                 </div>
@@ -239,7 +240,7 @@ export default function SezioneDetailPage() {
                                 value={sezione.school_type}
                                 disabled={isSavingType}
                                 onChange={e => changeSchoolType(e.target.value as SchoolType)}
-                                className="w-full rounded-xl border-2 border-kidville-line bg-white p-2.5 font-maven text-sm focus:border-kidville-green focus:outline-none disabled:opacity-60"
+                                className="w-full rounded-xl border-2 border-kidville-line bg-kidville-white p-2.5 font-maven text-sm focus:border-kidville-green focus:outline-none disabled:opacity-60"
                             >
                                 <option value="nido">Nido</option>
                                 <option value="infanzia">Infanzia</option>
@@ -248,7 +249,7 @@ export default function SezioneDetailPage() {
                         </div>
                         <div>
                             <label className="mb-1 block text-xs font-bold uppercase text-kidville-muted">Sede</label>
-                            <div className="flex items-center gap-2 rounded-xl border-2 border-kidville-line bg-white p-2.5">
+                            <div className="flex items-center gap-2 rounded-xl border-2 border-kidville-line bg-kidville-white p-2.5">
                                 <Building2 size={16} className="text-kidville-muted" />
                                 <span className="font-maven text-sm text-kidville-ink">{sezione.scuolaNome}</span>
                             </div>
@@ -286,7 +287,7 @@ export default function SezioneDetailPage() {
                                 value={newTeacherId}
                                 onChange={e => setNewTeacherId(e.target.value)}
                                 disabled={teacherBusy || teachersLoading || teachers.available.length === 0}
-                                className="flex-1 rounded-xl border-2 border-kidville-line bg-white p-2.5 font-maven text-sm focus:border-kidville-green focus:outline-none disabled:opacity-60"
+                                className="flex-1 rounded-xl border-2 border-kidville-line bg-kidville-white p-2.5 font-maven text-sm focus:border-kidville-green focus:outline-none disabled:opacity-60"
                             >
                                 <option value="">{teachersLoading ? 'Caricamento…' : teachers.available.length === 0 ? 'Nessun docente disponibile' : '— Seleziona insegnante —'}</option>
                                 {teachers.available.map(t => (

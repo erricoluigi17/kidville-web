@@ -11,6 +11,7 @@ function CompetenzeInner() {
   return (
     <CockpitPage max={1100}>
       <PageHeader
+        eyebrow="Didattica"
         icon={Award}
         title="Certificato delle Competenze"
         subtitle="Documento di fine classe quinta primaria (D.M. 14/2024). Flusso: le bozze derivano dallo scrutinio finale → si assegnano i livelli A/B/C/D per competenza → la Direzione genera e firma il certificato → il genitore lo trova in Pagelle. Non è la pagella: usa una scala distinta dai giudizi sintetici."

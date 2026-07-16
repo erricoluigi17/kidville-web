@@ -6,8 +6,7 @@ import {
   FileText, Plus, UserCheck, Settings, Calendar, Users,
   Trash2, Download, CheckCircle, ArrowRight, Upload, Shield, Inbox, Send, Stamp, X
 } from 'lucide-react';
-import { PageHeader } from '@/components/ui/cockpit';
-import { btnClass } from '@/components/ui/Btn';
+import { HEADER_BTN, PageHeader, Tabs } from '@/components/ui/cockpit';
 import { SedeNotice, useSediAttive } from '@/lib/context/sede-context';
 import { ModuliInviabili } from '@/components/features/admin/iscrizioni/ModuliInviabili';
 import { ModuliRicevuti } from '@/components/features/admin/iscrizioni/ModuliRicevuti';
@@ -486,45 +485,30 @@ function ModulisticaInner() {
     <div className="flex-1 flex flex-col p-4 sm:p-6 max-w-6xl mx-auto w-full">
       {/* Header */}
       <PageHeader
+        eyebrow="Amministrazione"
         icon={FileText}
         title="Modulistica & Onboarding"
         subtitle="Gestione moduli di consenso, sala d'attesa pre-iscrizioni e carta intestata."
         actions={
           activeTab === 'moduli-genitori' ? (
-            <button onClick={() => openBuilder('class')} className={btnClass('primary', 'md')}>
+            <button onClick={() => openBuilder('class')} className={HEADER_BTN}>
               <Plus size={18} /> Nuovo Modulo Genitori
             </button>
           ) : undefined
         }
       />
 
-      {/* Tabs */}
-      <div className="flex gap-4 mb-6 border-b border-kidville-line overflow-x-auto">
-        <button
-          className={`pb-3 px-2 font-barlow font-bold uppercase tracking-wide transition-colors flex items-center gap-1.5 whitespace-nowrap ${activeTab === 'inviabili' ? 'text-kidville-green border-b-2 border-kidville-green' : 'text-kidville-muted hover:text-kidville-ink'}`}
-          onClick={() => setActiveTab('inviabili')}
-        >
-          <Send size={16} /> Moduli inviabili
-        </button>
-        <button
-          className={`pb-3 px-2 font-barlow font-bold uppercase tracking-wide transition-colors flex items-center gap-1.5 whitespace-nowrap ${activeTab === 'ricevuti' ? 'text-kidville-green border-b-2 border-kidville-green' : 'text-kidville-muted hover:text-kidville-ink'}`}
-          onClick={() => setActiveTab('ricevuti')}
-        >
-          <Inbox size={16} /> Moduli ricevuti
-        </button>
-        <button
-          className={`pb-3 px-2 font-barlow font-bold uppercase tracking-wide transition-colors flex items-center gap-1.5 whitespace-nowrap ${activeTab === 'moduli-genitori' ? 'text-kidville-green border-b-2 border-kidville-green' : 'text-kidville-muted hover:text-kidville-ink'}`}
-          onClick={() => setActiveTab('moduli-genitori')}
-        >
-          <Users size={16} /> Moduli Genitori
-        </button>
-        <button
-          className={`pb-3 px-2 font-barlow font-bold uppercase tracking-wide transition-colors flex items-center gap-1.5 whitespace-nowrap ${activeTab === 'odt' ? 'text-kidville-green border-b-2 border-kidville-green' : 'text-kidville-muted hover:text-kidville-ink'}`}
-          onClick={() => setActiveTab('odt')}
-        >
-          <Settings size={16} /> Template Certificati ODT
-        </button>
-      </div>
+      {/* Tabs (pillole, linguaggio dell'app) */}
+      <Tabs
+        value={activeTab}
+        onChange={(id) => setActiveTab(id as ModulisticaTab)}
+        options={[
+          { id: 'inviabili', label: 'Moduli inviabili', icon: Send },
+          { id: 'ricevuti', label: 'Moduli ricevuti', icon: Inbox },
+          { id: 'moduli-genitori', label: 'Moduli Genitori', icon: Users },
+          { id: 'odt', label: 'Template Certificati ODT', icon: Settings },
+        ]}
+      />
 
       {/* Moduli inviabili / ricevuti: operano multi-sede (nessuna guardia sede singola). */}
       {activeTab === 'inviabili' ? (

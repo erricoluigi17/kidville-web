@@ -33,10 +33,14 @@ export function ContabilitaNav({ value, onChange }: { value: VistaContabilita; o
                             <button
                                 key={v.id}
                                 type="button"
+                                aria-pressed={on}
                                 onClick={() => onChange(v.id)}
                                 className={cx(
-                                    'inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border-2 px-3.5 py-1.5 font-barlow text-[12.5px] font-extrabold uppercase tracking-[0.03em]',
-                                    on ? 'border-kidville-green bg-kidville-green text-kidville-yellow' : 'border-kidville-line bg-kidville-white text-kidville-ink/70'
+                                    'inline-flex items-center gap-1.5 whitespace-nowrap rounded-pill px-3.5 py-1.5 font-barlow text-[12.5px] font-extrabold uppercase tracking-[0.03em] transition-colors',
+                                    'outline-none focus-visible:ring-2 focus-visible:ring-kidville-green focus-visible:ring-offset-1',
+                                    on
+                                        ? 'bg-kidville-green text-kidville-white'
+                                        : 'bg-kidville-white text-kidville-ink/70 ring-[1.5px] ring-inset ring-kidville-line hover:text-kidville-green hover:ring-kidville-green/50'
                                 )}
                             >
                                 <Icon size={14} strokeWidth={2.2} /> {v.label}

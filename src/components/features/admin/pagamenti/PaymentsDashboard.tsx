@@ -15,7 +15,24 @@ import { STATI_PAGAMENTO as STATI, calcolaTotaliPagamenti } from './stati';
 import { AgendaScadenze } from './AgendaScadenze';
 import { AGING_LABEL, bucketScadenze, isMoroso, type AgingBucketId } from '@/lib/pagamenti/aging';
 import { Badge } from '@/components/ui/Badge';
-import { StatCard } from '@/components/ui/cockpit';
+import { StatCard, TABLE_WRAP, TABLE, TH, TD, TROW } from '@/components/ui/cockpit';
+import { cx } from '@/lib/ui/cx';
+
+// Pelle locale della dashboard contabilità, su token dell'app (allineata a
+// `Btn`/cockpit): pillole verde+giallo per le azioni, filtri come la Toolbar.
+const BTN_PRIMARY_SM = 'inline-flex items-center gap-1 rounded-pill bg-kidville-green px-3 py-1 font-maven text-xs font-bold text-kidville-yellow transition-colors hover:bg-kidville-green-dark disabled:opacity-50';
+const ICON_BTN = 'text-kidville-muted transition-colors hover:text-kidville-green';
+const FILTER_SELECT = 'rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-3 py-2 font-maven text-sm text-kidville-ink outline-none transition-colors cursor-pointer hover:border-kidville-green/50 focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15';
+
+/** Stato vuoto nello stile app: cerchio crema + emoji + testo (come parent/avvisi). */
+function EmptyRiga({ emoji, testo }: { emoji: string; testo: string }) {
+    return (
+        <div className="flex flex-col items-center justify-center gap-2 py-10 text-center">
+            <div className="flex h-14 w-14 items-center justify-center rounded-pill bg-kidville-cream text-2xl">{emoji}</div>
+            <p className="max-w-xs font-maven text-sm text-kidville-muted">{testo}</p>
+        </div>
+    );
+}
 
 interface Categoria { id: string; nome: string; slug: string; colore?: string; icona?: string }
 interface Pagamento extends PagamentoRow {
@@ -207,7 +224,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                     <AlertTriangle size={18} />
                     <span className="flex-1 font-maven text-sm font-bold">{error}</span>
                     <button onClick={() => { setLoading(true); load(); }}
-                        className="rounded-full border border-kidville-error/40 bg-white px-3 py-1 font-maven text-xs font-bold text-kidville-error">
+                        className="rounded-pill border border-kidville-error/40 bg-kidville-white px-3 py-1 font-maven text-xs font-bold text-kidville-error transition-colors hover:bg-kidville-error-soft">
                         Riprova
                     </button>
                 </div>
@@ -252,11 +269,11 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                     <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-kidville-muted" />
                     <input
                         value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cerca alunno o sezione…"
-                        className="w-full pl-9 pr-3 py-2 border-2 border-kidville-line rounded-full font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
+                        className="w-full rounded-input border-[1.5px] border-kidville-line bg-kidville-white pl-9 pr-3 py-2 font-maven text-sm text-kidville-ink outline-none transition-colors focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15"
                     />
                 </div>
                 <select value={fCategoria} onChange={(e) => setFCategoria(e.target.value)}
-                    className="py-2 px-3 border-2 border-kidville-line rounded-full font-maven text-sm text-kidville-green bg-white">
+                    className={FILTER_SELECT}>
                     {categorie.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
                 </select>
 
@@ -264,28 +281,28 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                 {isRettaView && (
                     <>
                         <select value={annoScolastico} onChange={(e) => { const y = Number(e.target.value); setAnnoScolastico(y); setMese(`${y}-09-01`); }}
-                            className="py-2 px-3 border-2 border-kidville-line rounded-full font-maven text-sm text-kidville-green bg-white">
+                            className={FILTER_SELECT}>
                             {[annoScolasticoCorrente - 1, annoScolasticoCorrente, annoScolasticoCorrente + 1].map((y) => (
                                 <option key={y} value={y}>A.S. {y}/{y + 1}</option>
                             ))}
                         </select>
                         <select value={periodi.some((p) => p.periodo === mese) ? mese : periodi[0].periodo}
                             onChange={(e) => setMese(e.target.value)}
-                            className="py-2 px-3 border-2 border-kidville-line rounded-full font-maven text-sm text-kidville-green bg-white">
+                            className={FILTER_SELECT}>
                             {periodi.map((p) => <option key={p.periodo} value={p.periodo}>{p.label}</option>)}
                         </select>
                     </>
                 )}
                 {/* Filtro Morosi: disponibile in tutte le categorie */}
                 <button onClick={() => setOnlyMorosi((v) => !v)}
-                    className={`py-2 px-3 rounded-full font-maven text-sm font-bold flex items-center gap-1 ${onlyMorosi ? 'bg-kidville-error-soft text-kidville-error' : 'border-2 border-kidville-line text-kidville-muted'}`}>
+                    className={cx('inline-flex items-center gap-1 rounded-pill px-3 py-2 font-maven text-sm font-bold transition-colors', onlyMorosi ? 'bg-kidville-error-soft text-kidville-error' : 'border-[1.5px] border-kidville-line bg-kidville-white text-kidville-muted hover:border-kidville-green hover:text-kidville-green')}>
                     <Filter size={14} /> Morosi
                 </button>
-                <button onClick={() => { setLoading(true); load(); }} aria-label="Aggiorna" title="Aggiorna" className="py-2 px-3 rounded-full border-2 border-kidville-line text-kidville-muted hover:text-kidville-green">
+                <button onClick={() => { setLoading(true); load(); }} aria-label="Aggiorna" title="Aggiorna" className="rounded-pill border-[1.5px] border-kidville-line bg-kidville-white px-3 py-2 text-kidville-muted transition-colors hover:border-kidville-green hover:text-kidville-green">
                     <RefreshCw size={14} />
                 </button>
                 <a href={`/api/pagamenti/export?tipo=scadenzario&userId=${userId}&scuola_id=${scuolaId}`} title="Esporta XLSX" aria-label="Esporta XLSX"
-                    className="py-2 px-3 rounded-full border-2 border-kidville-line text-kidville-muted hover:text-kidville-green">
+                    className="rounded-pill border-[1.5px] border-kidville-line bg-kidville-white px-3 py-2 text-kidville-muted transition-colors hover:border-kidville-green hover:text-kidville-green">
                     <Download size={14} />
                 </a>
             </div>
@@ -293,12 +310,11 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
 
             {/* CTA generazione rette mancanti */}
             {isRettaView && !loading && mancantiRette > 0 && (
-                <div className="flex items-center justify-between gap-2 bg-kidville-warn-soft border border-kidville-warn/30 rounded-xl px-3 py-2 mb-3">
+                <div className="flex items-center justify-between gap-2 bg-kidville-warn-soft border border-kidville-warn/30 rounded-card px-3 py-2 mb-3">
                     <span className="font-maven text-xs text-kidville-warn">
                         {mancantiRette} alunni senza retta generata per {periodi.find((p) => p.periodo === mese)?.label}.
                     </span>
-                    <button onClick={generaMese} disabled={generando}
-                        className="px-3 py-1 rounded-full bg-kidville-green text-white text-xs font-bold hover:opacity-90 disabled:opacity-50">
+                    <button onClick={generaMese} disabled={generando} className={BTN_PRIMARY_SM}>
                         {generando ? 'Genero…' : 'Genera mancanti'}
                     </button>
                 </div>
@@ -315,24 +331,24 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                         <span className="font-bold text-kidville-green">{AGING_LABEL[agendaFiltro]}</span> · {agendaItems.length} pagament{agendaItems.length === 1 ? 'o' : 'i'} aperti
                     </p>
                     <button onClick={() => setAgendaFiltro(null)}
-                        className="inline-flex items-center gap-1 rounded-full border-2 border-kidville-line px-2.5 py-1 font-maven text-xs font-bold text-kidville-muted hover:border-kidville-green hover:text-kidville-green">
+                        className="inline-flex items-center gap-1 rounded-pill border-[1.5px] border-kidville-line bg-kidville-white px-2.5 py-1 font-maven text-xs font-bold text-kidville-muted transition-colors hover:border-kidville-green hover:text-kidville-green">
                         <X size={12} /> Chiudi
                     </button>
                 </div>
                 {agendaItems.length === 0 ? (
-                    <p className="font-maven text-sm text-kidville-muted py-8 text-center">Nessun pagamento in questo intervallo.</p>
+                    <EmptyRiga emoji="🗓️" testo="Nessun pagamento in questo intervallo." />
                 ) : (
                     <>
-                    <div className="hidden lg:block overflow-x-auto">
-                        <table className="w-full text-left">
+                    <div className={cx('hidden lg:block', TABLE_WRAP)}>
+                        <table className={TABLE}>
                             <thead>
-                                <tr className="font-maven text-xs text-kidville-muted uppercase">
-                                    <th className="py-2 px-2">Alunno</th>
-                                    <th className="py-2 px-2">Descrizione</th>
-                                    <th className="py-2 px-2">Scadenza</th>
-                                    <th className="py-2 px-2 text-right">Residuo</th>
-                                    <th className="py-2 px-2">Stato</th>
-                                    <th className="py-2 px-2"></th>
+                                <tr>
+                                    <th className={TH}>Alunno</th>
+                                    <th className={TH}>Descrizione</th>
+                                    <th className={TH}>Scadenza</th>
+                                    <th className={cx(TH, 'text-right')}>Residuo</th>
+                                    <th className={TH}>Stato</th>
+                                    <th className={TH}></th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -340,20 +356,19 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                     const st = STATI[p.stato] ?? STATI.da_pagare;
                                     const residuo = Math.max(0, Number(p.importo) - Number(p.importo_pagato || 0));
                                     return (
-                                        <tr key={p.id} className="border-t border-kidville-line font-maven text-sm">
-                                            <td className="py-2 px-2 text-kidville-green font-semibold">{p.alunni?.nome} {p.alunni?.cognome}</td>
-                                            <td className="py-2 px-2 text-kidville-ink">{p.descrizione}</td>
-                                            <td className="py-2 px-2 text-kidville-muted">{p.scadenza ? new Date(p.scadenza).toLocaleDateString('it-IT') : '—'}</td>
-                                            <td className="py-2 px-2 text-right font-bold text-kidville-green">€ {residuo.toFixed(2)}</td>
-                                            <td className="py-2 px-2">
-                                                <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold ${st.cls}`}>{st.label}</span>
+                                        <tr key={p.id} className={TROW}>
+                                            <td className={cx(TD, 'font-semibold text-kidville-green')}>{p.alunni?.nome} {p.alunni?.cognome}</td>
+                                            <td className={cx(TD, 'text-kidville-ink')}>{p.descrizione}</td>
+                                            <td className={cx(TD, 'text-kidville-muted')}>{p.scadenza ? new Date(p.scadenza).toLocaleDateString('it-IT') : '—'}</td>
+                                            <td className={cx(TD, 'text-right font-bold text-kidville-green')}>€ {residuo.toFixed(2)}</td>
+                                            <td className={TD}>
+                                                <Badge tone={st.tone}>{st.label}</Badge>
                                             </td>
-                                            <td className="py-2 px-2 text-right">
+                                            <td className={cx(TD, 'text-right')}>
                                                 <div className="flex items-center justify-end gap-2">
                                                     <button onClick={() => setSelected(p)}
-                                                        className="px-3 py-1 rounded-full bg-kidville-green text-white text-xs font-bold hover:opacity-90">Incassa</button>
-                                                    <button onClick={() => setDrawer(p)} title="Dettagli"
-                                                        className="text-kidville-muted hover:text-kidville-green"><Eye size={15} /></button>
+                                                        className={BTN_PRIMARY_SM}>Incassa</button>
+                                                    <button onClick={() => setDrawer(p)} title="Dettagli" className={ICON_BTN}><Eye size={15} /></button>
                                                 </div>
                                             </td>
                                         </tr>
@@ -379,19 +394,19 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
             ) : isRettaView ? (
                 /* ---- Vista RETTE: tabella su desktop, card-list su mobile ---- */
                 alunniFiltrati.length === 0 ? (
-                <p className="font-maven text-sm text-kidville-muted py-8 text-center">Nessun alunno attivo trovato.</p>
+                <EmptyRiga emoji="🧒" testo="Nessun alunno attivo trovato." />
                 ) : (
                 <>
-                <div className="hidden lg:block overflow-x-auto">
-                    <table className="w-full text-left">
+                <div className={cx('hidden lg:block', TABLE_WRAP)}>
+                    <table className={TABLE}>
                         <thead>
-                            <tr className="font-maven text-xs text-kidville-muted uppercase">
-                                <th className="py-2 px-2">Alunno</th>
-                                <th className="py-2 px-2">Sezione</th>
-                                <th className="py-2 px-2 text-right">Importo</th>
-                                <th className="py-2 px-2 text-right">Pagato</th>
-                                <th className="py-2 px-2">Stato</th>
-                                <th className="py-2 px-2"></th>
+                            <tr>
+                                <th className={TH}>Alunno</th>
+                                <th className={TH}>Sezione</th>
+                                <th className={cx(TH, 'text-right')}>Importo</th>
+                                <th className={cx(TH, 'text-right')}>Pagato</th>
+                                <th className={TH}>Stato</th>
+                                <th className={TH}></th>
                             </tr>
                         </thead>
                         <tbody>
@@ -400,42 +415,40 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                 const st = p ? (STATI[p.stato] ?? STATI.da_pagare) : null;
                                 const moroso = p ? isMoroso(p, oggiStr) : false;
                                 return (
-                                    <tr key={a.id} className={`border-t border-kidville-line font-maven text-sm ${moroso ? 'bg-kidville-error-soft/50' : ''}`}>
-                                        <td className="py-2 px-2 text-kidville-green font-semibold">
+                                    <tr key={a.id} className={cx(TROW, moroso && 'bg-kidville-error-soft/50')}>
+                                        <td className={cx(TD, 'font-semibold text-kidville-green')}>
                                             {a.nome} {a.cognome}
                                             {sospesoByAlunno.get(a.id) && (
-                                                <span className="ml-1 inline-block px-1.5 py-0.5 rounded-full bg-kidville-error-soft text-kidville-error text-[10px] font-bold align-middle">sospeso</span>
+                                                <Badge tone="error" className="ml-1 align-middle">sospeso</Badge>
                                             )}
                                         </td>
-                                        <td className="py-2 px-2 text-kidville-muted">{a.classe_sezione || '—'}</td>
-                                        <td className="py-2 px-2 text-right text-kidville-green">{p ? `€ ${Number(p.importo).toFixed(2)}` : '—'}</td>
-                                        <td className="py-2 px-2 text-right text-kidville-muted">{p ? `€ ${Number(p.importo_pagato).toFixed(2)}` : '—'}</td>
-                                        <td className="py-2 px-2">
+                                        <td className={cx(TD, 'text-kidville-muted')}>{a.classe_sezione || '—'}</td>
+                                        <td className={cx(TD, 'text-right text-kidville-green')}>{p ? `€ ${Number(p.importo).toFixed(2)}` : '—'}</td>
+                                        <td className={cx(TD, 'text-right text-kidville-muted')}>{p ? `€ ${Number(p.importo_pagato).toFixed(2)}` : '—'}</td>
+                                        <td className={TD}>
                                             <span className="inline-flex flex-wrap items-center gap-1">
                                                 {st
-                                                    ? <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold ${st.cls}`}>{st.label}</span>
-                                                    : <span className="inline-block px-2 py-0.5 rounded-full text-xs font-bold bg-kidville-cream text-kidville-muted">Non generata</span>}
+                                                    ? <Badge tone={st.tone}>{st.label}</Badge>
+                                                    : <Badge tone="neutral">Non generata</Badge>}
                                                 {p && moroso && Number(p.importo_pagato) > 0 && (
-                                                    <span className="inline-block px-2 py-0.5 rounded-full text-xs font-bold bg-kidville-warn-soft text-kidville-warn">Acconto € {Number(p.importo_pagato).toFixed(2)}</span>
+                                                    <Badge tone="warn">Acconto € {Number(p.importo_pagato).toFixed(2)}</Badge>
                                                 )}
                                                 {p && <FatturaChip stato={p.stato} fatturaStato={p.fattura_stato} />}
                                             </span>
                                         </td>
-                                        <td className="py-2 px-2 text-right">
+                                        <td className={cx(TD, 'text-right')}>
                                             <div className="flex items-center justify-end gap-2">
                                                 {p && p.stato !== 'pagato' ? (
                                                     <button onClick={() => setSelected(p)}
-                                                        className="px-3 py-1 rounded-full bg-kidville-green text-white text-xs font-bold hover:opacity-90">Incassa</button>
+                                                        className={BTN_PRIMARY_SM}>Incassa</button>
                                                 ) : p ? (
                                                     <FatturaButton pagamentoId={p.id} userId={userId} fatturaStato={p.fattura_stato} descrizione={p.descrizione} />
                                                 ) : null}
                                                 {p && (
-                                                    <button onClick={() => setDrawer(p)} title="Dettagli"
-                                                        className="text-kidville-muted hover:text-kidville-green"><Eye size={15} /></button>
+                                                    <button onClick={() => setDrawer(p)} title="Dettagli" className={ICON_BTN}><Eye size={15} /></button>
                                                 )}
                                                 {p && (
-                                                    <button onClick={() => setEditing(p)} title="Modifica"
-                                                        className="text-kidville-muted hover:text-kidville-green"><Pencil size={15} /></button>
+                                                    <button onClick={() => setEditing(p)} title="Modifica" className={ICON_BTN}><Pencil size={15} /></button>
                                                 )}
                                                 <SospensioneToggle alunnoId={a.id} userId={userId} sospeso={!!sospesoByAlunno.get(a.id)} onChange={load} />
                                             </div>
@@ -451,9 +464,9 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                         const p = rettaByAlunno.get(a.id);
                         if (!p) {
                             return (
-                                <div key={a.id} className="flex items-center justify-between rounded-xl border-2 border-kidville-line bg-kidville-white p-3">
+                                <div key={a.id} className="flex items-center justify-between rounded-card border-[1.5px] border-kidville-line bg-kidville-white p-3">
                                     <p className="font-maven text-sm font-bold text-kidville-green">{a.nome} {a.cognome}</p>
-                                    <span className="inline-block rounded-full bg-kidville-cream px-2 py-0.5 text-xs font-bold text-kidville-muted">Non generata</span>
+                                    <Badge tone="neutral">Non generata</Badge>
                                 </div>
                             );
                         }
@@ -478,7 +491,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                 {/* Aggiungi acquisto: la tabella per-pagamento non elenca gli alunni senza acquisti */}
                 <div className="flex flex-wrap items-center gap-2 mb-3">
                     <select value={nuovoAcqId} onChange={(e) => setNuovoAcqId(e.target.value)}
-                        className="py-2 px-3 border-2 border-kidville-line rounded-full font-maven text-sm text-kidville-green bg-white">
+                        className={FILTER_SELECT}>
                         <option value="">Seleziona alunno…</option>
                         {alunniFiltrati.map((a) => (
                             <option key={a.id} value={a.id}>{a.nome} {a.cognome}{a.classe_sezione ? ` · ${a.classe_sezione}` : ''}</option>
@@ -487,25 +500,25 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                     <button
                         disabled={!nuovoAcqId || !categoriaSel}
                         onClick={() => { const a = alunnoById.get(nuovoAcqId); if (a && categoriaSel) { setQuick({ alunno: a, categoria: categoriaSel }); setNuovoAcqId(''); } }}
-                        className="px-3 py-2 rounded-full bg-kidville-green text-white font-maven text-sm font-bold flex items-center gap-1 disabled:opacity-50">
+                        className="inline-flex items-center gap-1 rounded-pill bg-kidville-green px-3 py-2 font-maven text-sm font-bold text-kidville-yellow transition-colors hover:bg-kidville-green-dark disabled:opacity-50">
                         <Plus size={15} /> Nuovo acquisto
                     </button>
                 </div>
                 {righeCategoria.length === 0 ? (
-                    <p className="font-maven text-sm text-kidville-muted py-8 text-center">Nessun pagamento in questa categoria.</p>
+                    <EmptyRiga emoji="🧾" testo="Nessun pagamento in questa categoria." />
                 ) : (
                 <>
-                <div className="hidden lg:block overflow-x-auto">
-                    <table className="w-full text-left">
+                <div className={cx('hidden lg:block', TABLE_WRAP)}>
+                    <table className={TABLE}>
                         <thead>
-                            <tr className="font-maven text-xs text-kidville-muted uppercase">
-                                <th className="py-2 px-2">Alunno</th>
-                                <th className="py-2 px-2">Descrizione</th>
-                                <th className="py-2 px-2">Scadenza</th>
-                                <th className="py-2 px-2 text-right">Importo</th>
-                                <th className="py-2 px-2 text-right">Acconto</th>
-                                <th className="py-2 px-2">Stato</th>
-                                <th className="py-2 px-2"></th>
+                            <tr>
+                                <th className={TH}>Alunno</th>
+                                <th className={TH}>Descrizione</th>
+                                <th className={TH}>Scadenza</th>
+                                <th className={cx(TH, 'text-right')}>Importo</th>
+                                <th className={cx(TH, 'text-right')}>Acconto</th>
+                                <th className={TH}>Stato</th>
+                                <th className={TH}></th>
                             </tr>
                         </thead>
                         <tbody>
@@ -514,42 +527,39 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                 const moroso = isMoroso(p, oggiStr);
                                 const acconto = Number(p.importo_pagato || 0);
                                 return (
-                                    <tr key={p.id} className={`border-t border-kidville-line font-maven text-sm ${moroso ? 'bg-kidville-error-soft/50' : ''}`}>
-                                        <td className="py-2 px-2 text-kidville-green font-semibold">
+                                    <tr key={p.id} className={cx(TROW, moroso && 'bg-kidville-error-soft/50')}>
+                                        <td className={cx(TD, 'font-semibold text-kidville-green')}>
                                             {p.alunni?.nome} {p.alunni?.cognome}
                                             {sospesoByAlunno.get(p.alunno_id) && (
-                                                <span className="ml-1 inline-block px-1.5 py-0.5 rounded-full bg-kidville-error-soft text-kidville-error text-[10px] font-bold align-middle">sospeso</span>
+                                                <Badge tone="error" className="ml-1 align-middle">sospeso</Badge>
                                             )}
                                         </td>
-                                        <td className="py-2 px-2 text-kidville-ink">{p.descrizione}</td>
-                                        <td className="py-2 px-2 text-kidville-muted">{p.scadenza ? new Date(p.scadenza).toLocaleDateString('it-IT') : '—'}</td>
-                                        <td className="py-2 px-2 text-right text-kidville-green">€ {Number(p.importo).toFixed(2)}</td>
-                                        <td className="py-2 px-2 text-right text-kidville-muted">{acconto > 0 ? `€ ${acconto.toFixed(2)}` : '—'}</td>
-                                        <td className="py-2 px-2">
+                                        <td className={cx(TD, 'text-kidville-ink')}>{p.descrizione}</td>
+                                        <td className={cx(TD, 'text-kidville-muted')}>{p.scadenza ? new Date(p.scadenza).toLocaleDateString('it-IT') : '—'}</td>
+                                        <td className={cx(TD, 'text-right text-kidville-green')}>€ {Number(p.importo).toFixed(2)}</td>
+                                        <td className={cx(TD, 'text-right text-kidville-muted')}>{acconto > 0 ? `€ ${acconto.toFixed(2)}` : '—'}</td>
+                                        <td className={TD}>
                                             <span className="inline-flex flex-wrap items-center gap-1">
-                                                <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-bold ${st.cls}`}>{st.label}</span>
+                                                <Badge tone={st.tone}>{st.label}</Badge>
                                                 {moroso && acconto > 0 && (
-                                                    <span className="inline-block px-2 py-0.5 rounded-full text-xs font-bold bg-kidville-warn-soft text-kidville-warn">Acconto € {acconto.toFixed(2)}</span>
+                                                    <Badge tone="warn">Acconto € {acconto.toFixed(2)}</Badge>
                                                 )}
                                                 <FatturaChip stato={p.stato} fatturaStato={p.fattura_stato} />
                                             </span>
                                         </td>
-                                        <td className="py-2 px-2 text-right">
+                                        <td className={cx(TD, 'text-right')}>
                                             <div className="flex items-center justify-end gap-2">
                                                 {p.stato !== 'pagato' ? (
                                                     <button onClick={() => setSelected(p)}
-                                                        className="px-3 py-1 rounded-full bg-kidville-green text-white text-xs font-bold hover:opacity-90">Incassa</button>
+                                                        className={BTN_PRIMARY_SM}>Incassa</button>
                                                 ) : (
                                                     <FatturaButton pagamentoId={p.id} userId={userId} fatturaStato={p.fattura_stato} descrizione={p.descrizione} />
                                                 )}
                                                 {p.tipo === 'singolo' && p.stato !== 'pagato' && (
-                                                    <button onClick={() => { const a = alunnoById.get(p.alunno_id); if (a) setRateizza({ alunno: a, pagamento: p }); }} title="Dividi in acconti"
-                                                        className="text-kidville-muted hover:text-kidville-green"><Layers size={15} /></button>
+                                                    <button onClick={() => { const a = alunnoById.get(p.alunno_id); if (a) setRateizza({ alunno: a, pagamento: p }); }} title="Dividi in acconti" className={ICON_BTN}><Layers size={15} /></button>
                                                 )}
-                                                <button onClick={() => setDrawer(p)} title="Dettagli"
-                                                    className="text-kidville-muted hover:text-kidville-green"><Eye size={15} /></button>
-                                                <button onClick={() => setEditing(p)} title="Modifica"
-                                                    className="text-kidville-muted hover:text-kidville-green"><Pencil size={15} /></button>
+                                                <button onClick={() => setDrawer(p)} title="Dettagli" className={ICON_BTN}><Eye size={15} /></button>
+                                                <button onClick={() => setEditing(p)} title="Modifica" className={ICON_BTN}><Pencil size={15} /></button>
                                             </div>
                                         </td>
                                     </tr>

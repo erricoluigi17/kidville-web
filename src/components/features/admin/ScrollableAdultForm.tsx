@@ -191,17 +191,17 @@ export const ScrollableAdultForm = forwardRef<AdultFormHandle, { defaultRole?: s
                     <div className="grid grid-cols-2 gap-6">
                         <div>
                             <label className="block text-sm font-bold text-kidville-green/80 mb-1">Nome</label>
-                            <input name="first_name" value={formData.first_name} onChange={handleInputChange} className={`w-full p-3 rounded-xl border bg-white text-kidville-green placeholder-kidville-green/40 outline-none focus:ring-2 focus:ring-kidville-green ${errors.first_name ? 'border-kidville-error shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} />
+                            <input name="first_name" value={formData.first_name} onChange={handleInputChange} className={`w-full p-3 rounded-xl border bg-kidville-white text-kidville-green placeholder-kidville-green/40 outline-none focus:ring-2 focus:ring-kidville-green ${errors.first_name ? 'border-kidville-error shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} />
                             {errors.first_name && <span className="text-xs text-kidville-error font-bold">{errors.first_name}</span>}
                         </div>
                         <div>
                             <label className="block text-sm font-bold text-kidville-green/80 mb-1">Cognome</label>
-                            <input name="last_name" value={formData.last_name} onChange={handleInputChange} className={`w-full p-3 rounded-xl border bg-white text-kidville-green placeholder-kidville-green/40 outline-none focus:ring-2 focus:ring-kidville-green ${errors.last_name ? 'border-kidville-error shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} />
+                            <input name="last_name" value={formData.last_name} onChange={handleInputChange} className={`w-full p-3 rounded-xl border bg-kidville-white text-kidville-green placeholder-kidville-green/40 outline-none focus:ring-2 focus:ring-kidville-green ${errors.last_name ? 'border-kidville-error shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} />
                             {errors.last_name && <span className="text-xs text-kidville-error font-bold">{errors.last_name}</span>}
                         </div>
                         <div>
                             <label className="block text-sm font-bold text-kidville-green/80 mb-1 flex items-center gap-2"><Shield size={14}/> Ruolo Familiare / Operativo</label>
-                            <select name="role" value={formData.role} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-white text-kidville-green outline-none focus:ring-2 focus:ring-kidville-green">
+                            <select name="role" value={formData.role} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-kidville-white text-kidville-green outline-none focus:ring-2 focus:ring-kidville-green">
                                 <option value="mother">Madre</option>
                                 <option value="father">Padre</option>
                                 <option value="delegate">Delegato/a</option>
@@ -211,7 +211,7 @@ export const ScrollableAdultForm = forwardRef<AdultFormHandle, { defaultRole?: s
                         </div>
                         <div>
                             <label className="block text-sm font-bold text-kidville-green/80 mb-1">Sesso</label>
-                            <select name="gender" value={formData.gender} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-white text-kidville-green outline-none focus:ring-2 focus:ring-kidville-green">
+                            <select name="gender" value={formData.gender} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-kidville-white text-kidville-green outline-none focus:ring-2 focus:ring-kidville-green">
                                 <option value="M">Maschio</option>
                                 <option value="F">Femmina</option>
                             </select>
@@ -227,23 +227,23 @@ export const ScrollableAdultForm = forwardRef<AdultFormHandle, { defaultRole?: s
                     <div className="grid grid-cols-2 gap-6">
                         <div>
                             <label className="block text-sm font-bold text-kidville-green/80 mb-1">Data di Nascita</label>
-                            <DateField name="birth_date" value={formData.birth_date} onChange={(iso) => handleInputChange({ target: { name: 'birth_date', value: iso } } as unknown as React.ChangeEvent<HTMLInputElement>)} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none" />
+                            <DateField name="birth_date" value={formData.birth_date} onChange={(iso) => handleInputChange({ target: { name: 'birth_date', value: iso } } as unknown as React.ChangeEvent<HTMLInputElement>)} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-kidville-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none" />
                         </div>
                         <div>
                             <label className="block text-sm font-bold text-kidville-green/80 mb-1">Cittadinanza</label>
-                            <input name="citizenship" value={formData.citizenship} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none" />
+                            <input name="citizenship" value={formData.citizenship} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-kidville-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none" />
                         </div>
                         <div>
                             <label className="block text-sm font-bold text-kidville-green/80 mb-1">Nazione di Nascita</label>
-                            <input name="birth_nation" value={formData.birth_nation} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none" />
+                            <input name="birth_nation" value={formData.birth_nation} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-kidville-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none" />
                         </div>
                         <div>
                             <label className="block text-sm font-bold text-kidville-green/80 mb-1">Comune di Nascita</label>
-                            <input name="birth_place" value={formData.birth_place} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none" />
+                            <input name="birth_place" value={formData.birth_place} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-kidville-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none" />
                         </div>
                         <div>
                             <label className="block text-sm font-bold text-kidville-green/80 mb-1">Prov. Nascita (Sigla)</label>
-                            <input name="birth_province" value={formData.birth_province} onChange={handleInputChange} maxLength={2} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none uppercase" />
+                            <input name="birth_province" value={formData.birth_province} onChange={handleInputChange} maxLength={2} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-kidville-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none uppercase" />
                         </div>
                         <div className="col-span-2">
                             <label className="block text-sm font-bold text-kidville-green/80 mb-1 flex items-center gap-2">
@@ -251,7 +251,7 @@ export const ScrollableAdultForm = forwardRef<AdultFormHandle, { defaultRole?: s
                                 {isCfLoading && <Loader2 size={14} className="animate-spin text-kidville-green" />}
                                 {isCfAutoCalculated && <span className="text-xs text-kidville-green font-normal">Autocalcolato! ✨</span>}
                             </label>
-                            <input name="fiscal_code" value={formData.fiscal_code} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none uppercase bg-white text-kidville-green placeholder-kidville-green/40 transition-colors ${errors.fiscal_code ? 'border-kidville-error shadow-[0_0_10px_rgba(239,68,68,0.3)]' : isCfAutoCalculated ? 'border-kidville-green ring-2 ring-kidville-green/50 bg-kidville-green/5' : 'border-kidville-green/15 focus:ring-2 focus:ring-kidville-green'}`} />
+                            <input name="fiscal_code" value={formData.fiscal_code} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none uppercase bg-kidville-white text-kidville-green placeholder-kidville-green/40 transition-colors ${errors.fiscal_code ? 'border-kidville-error shadow-[0_0_10px_rgba(239,68,68,0.3)]' : isCfAutoCalculated ? 'border-kidville-green ring-2 ring-kidville-green/50 bg-kidville-green/5' : 'border-kidville-green/15 focus:ring-2 focus:ring-kidville-green'}`} />
                             {errors.fiscal_code && <span className="text-xs text-kidville-error font-bold">{errors.fiscal_code}</span>}
                         </div>
                     </div>
@@ -265,23 +265,23 @@ export const ScrollableAdultForm = forwardRef<AdultFormHandle, { defaultRole?: s
                     <div className="grid grid-cols-2 gap-6">
                         <div className="col-span-2">
                             <label className="block text-sm font-bold text-kidville-green/80 mb-1">Indirizzo di Residenza</label>
-                            <input name="address" value={formData.address} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none" placeholder="Via Roma" />
+                            <input name="address" value={formData.address} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-kidville-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none" placeholder="Via Roma" />
                         </div>
                         <div>
                             <label className="block text-sm font-bold text-kidville-green/80 mb-1">Numero Civico</label>
-                            <input name="civico" value={formData.civico} onChange={handleInputChange} maxLength={20} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none" placeholder="123" />
+                            <input name="civico" value={formData.civico} onChange={handleInputChange} maxLength={20} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-kidville-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none" placeholder="123" />
                         </div>
                         <div>
                             <label className="block text-sm font-bold text-kidville-green/80 mb-1">Città di Residenza</label>
-                            <input name="residence_city" value={formData.residence_city} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none" />
+                            <input name="residence_city" value={formData.residence_city} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-kidville-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none" />
                         </div>
                         <div>
                             <label className="block text-sm font-bold text-kidville-green/80 mb-1">Prov. Residenza (Sigla)</label>
-                            <input name="residence_province" value={formData.residence_province} onChange={handleInputChange} maxLength={2} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none uppercase" />
+                            <input name="residence_province" value={formData.residence_province} onChange={handleInputChange} maxLength={2} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-kidville-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none uppercase" />
                         </div>
                         <div>
                             <label className="block text-sm font-bold text-kidville-green/80 mb-1">CAP</label>
-                            <input name="zip_code" value={formData.zip_code} onChange={handleInputChange} maxLength={10} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none" />
+                            <input name="zip_code" value={formData.zip_code} onChange={handleInputChange} maxLength={10} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-kidville-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none" />
                         </div>
                     </div>
                 </section>
@@ -299,7 +299,7 @@ export const ScrollableAdultForm = forwardRef<AdultFormHandle, { defaultRole?: s
                                 <AnimatePresence>
                                     {formData.phones.map((phone, idx) => (
                                         <motion.div key={idx} initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="flex items-center gap-2">
-                                            <input value={phone} onChange={(e) => handleArrayChange(idx, 'phones', e.target.value)} placeholder="+39 333 000 0000" className="flex-1 p-3 rounded-xl border border-kidville-green/15 bg-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none" />
+                                            <input value={phone} onChange={(e) => handleArrayChange(idx, 'phones', e.target.value)} placeholder="+39 333 000 0000" className="flex-1 p-3 rounded-xl border border-kidville-green/15 bg-kidville-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none" />
                                             <button onClick={() => removeArrayItem(idx, 'phones')} className="p-3 bg-kidville-error/10 text-kidville-error rounded-xl hover:bg-kidville-error/20 transition-colors">
                                                 <Trash2 size={18} />
                                             </button>
@@ -320,7 +320,7 @@ export const ScrollableAdultForm = forwardRef<AdultFormHandle, { defaultRole?: s
                                     {formData.emails.map((email, idx) => (
                                         <motion.div key={idx} initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="flex items-center gap-2">
                                             <div className="flex-1 relative">
-                                                <input type="email" value={email} onChange={(e) => handleArrayChange(idx, 'emails', e.target.value)} placeholder="mario.rossi@email.com" className={`w-full p-3 rounded-xl border bg-white text-kidville-green placeholder-kidville-green/40 outline-none focus:ring-2 focus:ring-kidville-green ${errors[`emails.${idx}`] ? 'border-kidville-error shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} />
+                                                <input type="email" value={email} onChange={(e) => handleArrayChange(idx, 'emails', e.target.value)} placeholder="mario.rossi@email.com" className={`w-full p-3 rounded-xl border bg-kidville-white text-kidville-green placeholder-kidville-green/40 outline-none focus:ring-2 focus:ring-kidville-green ${errors[`emails.${idx}`] ? 'border-kidville-error shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} />
                                                 {idx === 0 && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] uppercase font-black tracking-widest text-kidville-green bg-kidville-green/10 px-2 py-1 rounded">Primaria</span>}
                                             </div>
                                             <button onClick={() => removeArrayItem(idx, 'emails')} className="p-3 bg-kidville-error/10 text-kidville-error rounded-xl hover:bg-kidville-error/20 transition-colors">

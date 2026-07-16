@@ -3,6 +3,9 @@
 import { useState, useEffect } from 'react';
 import { FileText, Download, Loader2, X } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { Badge } from '@/components/ui/Badge';
+import { cx } from '@/lib/ui/cx';
+import { MODAL_CARD, MODAL_SHADOW, INPUT, BTN_PRIMARY, BTN_SECONDARY } from './ui';
 
 interface FatturaRow { id: string; quota_label: string | null; intestatario: string }
 
@@ -23,7 +26,7 @@ function EmessaLinks({ pagamentoId, userId }: { pagamentoId: string; userId: str
     if (!fatture || fatture.length <= 1) {
         return (
             <a href={`/api/pagamenti/fattura?pagamento_id=${pagamentoId}&userId=${userId}`}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-kidville-green/10 text-kidville-green text-xs font-bold hover:bg-kidville-green/20">
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-pill bg-kidville-green-soft text-kidville-green text-xs font-bold transition-colors hover:bg-kidville-green/20">
                 <Download size={12} /> Fattura
             </a>
         );
@@ -31,14 +34,14 @@ function EmessaLinks({ pagamentoId, userId }: { pagamentoId: string; userId: str
     return (
         <div className="relative inline-block">
             <button onClick={() => setOpen((o) => !o)}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-kidville-green/10 text-kidville-green text-xs font-bold hover:bg-kidville-green/20">
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-pill bg-kidville-green-soft text-kidville-green text-xs font-bold transition-colors hover:bg-kidville-green/20">
                 <Download size={12} /> Fatture ({fatture.length})
             </button>
             {open && (
-                <div className="absolute right-0 z-20 mt-1 w-56 rounded-xl border border-kidville-line bg-white p-1 shadow-lg">
+                <div className="absolute right-0 z-20 mt-1 w-56 rounded-card border border-kidville-line bg-kidville-white p-1" style={{ boxShadow: MODAL_SHADOW }}>
                     {fatture.map((f) => (
                         <a key={f.id} href={`/api/pagamenti/fattura?pagamento_id=${pagamentoId}&fattura_id=${f.id}&userId=${userId}`}
-                            className="block rounded-lg px-3 py-1.5 font-maven text-xs text-kidville-green hover:bg-kidville-green/10">
+                            className="block rounded-input px-3 py-1.5 font-maven text-xs text-kidville-green hover:bg-kidville-green-soft">
                             Fattura — {f.quota_label || f.intestatario}
                         </a>
                     ))}
@@ -85,25 +88,26 @@ export function FatturaButton({ pagamentoId, userId, fatturaStato, descrizione, 
 
     if (stato === 'in_attesa') {
         return (
-            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-kidville-warn-soft text-kidville-warn text-xs font-bold" title="Trasmessa allo SDI tramite Aruba, in attesa di esito">
+            <Badge tone="warn" title="Trasmessa allo SDI tramite Aruba, in attesa di esito">
                 <Loader2 size={12} className="animate-spin" /> In attesa SDI
-            </span>
+            </Badge>
         );
     }
 
     return (
         <>
             <button onClick={() => { setCausale(descrizione ?? ''); setOpen(true); }}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-full border border-kidville-line text-kidville-muted text-xs font-bold hover:border-kidville-green hover:text-kidville-green">
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-pill border-[1.5px] border-kidville-line text-kidville-muted text-xs font-bold transition-colors hover:border-kidville-green hover:text-kidville-green">
                 <FileText size={12} />
                 {stato === 'scartata' ? 'Riprova fattura' : 'Invia fattura'}
             </button>
 
             {open && (
-                <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4" onClick={() => setOpen(false)}>
+                <div className="fixed inset-0 z-[60] flex items-center justify-center bg-kidville-ink/40 p-4" onClick={() => setOpen(false)}>
                     <motion.div
                         initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
-                        className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5"
+                        className={MODAL_CARD}
+                        style={{ boxShadow: MODAL_SHADOW }}
                         onClick={(e) => e.stopPropagation()}
                     >
                         <div className="flex items-center justify-between mb-4">
@@ -115,13 +119,12 @@ export function FatturaButton({ pagamentoId, userId, fatturaStato, descrizione, 
                         <label className="font-maven text-xs text-kidville-muted mb-1 block">Causale fattura</label>
                         <textarea value={causale} onChange={(e) => setCausale(e.target.value)} rows={3}
                             placeholder="Lascia vuoto per usare il template delle impostazioni"
-                            className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
+                            className={INPUT} />
                         <div className="flex gap-2 mt-4">
-                            <button onClick={() => setOpen(false)} className="flex-1 py-2.5 rounded-full border-2 border-kidville-line font-maven font-bold text-sm text-kidville-muted hover:bg-kidville-cream">
+                            <button onClick={() => setOpen(false)} className={cx(BTN_SECONDARY, 'flex-1')}>
                                 Annulla
                             </button>
-                            <button onClick={emetti} disabled={busy}
-                                className="flex-1 py-2.5 rounded-full bg-kidville-green font-maven font-bold text-sm text-white hover:opacity-90 disabled:opacity-50 inline-flex items-center justify-center gap-1">
+                            <button onClick={emetti} disabled={busy} className={cx(BTN_PRIMARY, 'flex-1')}>
                                 {busy ? <Loader2 size={14} className="animate-spin" /> : null} Emetti
                             </button>
                         </div>

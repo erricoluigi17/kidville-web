@@ -1,0 +1,137 @@
+# =============================================================================
+# Kidville · iOS — percorso utente reale della SEGRETERIA/DIREZIONE (cockpit /admin)
+#   login → dashboard (cockpit) → drawer → Anagrafica → torna → drawer → Avvisi → torna
+#
+# Prerequisiti (vedi .claude/maestro-flows/README.md):
+#   - simulatore iOS avviato (xcrun simctl boot …)
+#   - dev server sull'host, porta 3000
+#   - App.app buildata con CAP_SERVER_URL="http://localhost:3000" e installata
+#   - credenziali negli env MAESTRO_KV_EMAIL_SEGRETERIA / MAESTRO_KV_PASSWORD
+#     L'email dell'account TEST segreteria è `test.segreteria@kidville.test`; la
+#     password è quella comune degli account TEST (PRD / e2e config) — NON qui.
+#
+# Esecuzione:
+#   maestro test -e KV_EMAIL="$MAESTRO_KV_EMAIL_SEGRETERIA" \
+#                -e KV_PASSWORD="$MAESTRO_KV_PASSWORD" \
+#                .claude/maestro-flows/ios-percorso-segreteria.yaml
+#
+# Differenze rispetto ad Android: dal simulatore l'host è `localhost` (non
+# 10.0.2.2), e non c'è tasto Indietro hardware → si torna col drawer laterale.
+# Su WebView iOS `hideKeyboard` fallisce ("Couldn't hide the keyboard"): la
+# tastiera si chiude con un tap sul titolo statico "Benvenuto/a!". La segreteria
+# NON ha bottom nav: naviga dal drawer (topbar "Apri menu"). Selettori ancorati
+# a testi STABILI del cockpit ri-skinnato: "Dashboard Direzione", "Anagrafica",
+# "Avvisi".
+# =============================================================================
+appId: it.kidville.app
+name: Kidville · iOS — percorso segreteria
+tags:
+  - ios
+  - segreteria
+env:
+  KV_EMAIL: ${MAESTRO_KV_EMAIL_SEGRETERIA}
+  KV_PASSWORD: ${MAESTRO_KV_PASSWORD}
+---
+- launchApp:
+    clearState: true
+
+# ── 1. LOGIN ─────────────────────────────────────────────────────────────────
+- extendedWaitUntil:
+    visible: "Accedi al tuo account Kidville"
+    timeout: 60000
+- assertVisible: "Benvenuto/a!"
+- takeScreenshot: /tmp/kv-ios-segreteria-0-login
+
+- tapOn:
+    below: "Email"
+- inputText: ${KV_EMAIL}
+- tapOn: "Benvenuto/a!"    # WebView-safe: chiude la tastiera (no hideKeyboard)
+
+- tapOn:
+    below: "Password"
+- inputText: ${KV_PASSWORD}
+- tapOn: "Benvenuto/a!"
+
+- tapOn: "Accedi"
+
+# Il primo avvio può mostrare il dialog nativo dei permessi notifiche: chiudilo.
+- runFlow:
+    when:
+      visible: "Non consentire"
+    commands:
+      - tapOn: "Non consentire"
+
+# ── 2. DASHBOARD (cockpit Direzione/Segreteria) ──────────────────────────────
+# Lo staff atterra su /admin. Heading stabile (E2E) "Dashboard Direzione".
+# Su mobile la nav è un drawer: la topbar mostra il bottone "Apri menu".
+- extendedWaitUntil:
+    visible: "Dashboard Direzione"
+    timeout: 60000
+- assertVisible:
+    text: "Apri menu"
+- takeScreenshot: /tmp/kv-ios-segreteria-1-dashboard
+
+# ── 3. DRAWER → ANAGRAFICA ───────────────────────────────────────────────────
+- tapOn:
+    text: "Apri menu"
+# Il drawer aperto mostra il brand con sottotitolo (assente nella topbar chiusa).
+- extendedWaitUntil:
+    visible: "Direzione & Segreteria"
+    timeout: 15000
+# "Anagrafica" compare due volte nel drawer: il TITOLO del gruppo (più in alto) e
+# la VOCE di menu cliccabile (subito sotto). index:1 = la voce, non il titolo.
+- tapOn:
+    text: "^Anagrafica$"
+    index: 1
+- extendedWaitUntil:
+    visible: "Anagrafica Generale"
+    timeout: 45000
+- assertVisible: "Gestione studenti, genitori e personale"
+- takeScreenshot: /tmp/kv-ios-segreteria-2-anagrafica
+
+# ── 4. TORNA AL COCKPIT (niente back hardware su iOS: si usa il drawer) ───────
+- tapOn:
+    text: "Apri menu"
+- extendedWaitUntil:
+    visible: "Direzione & Segreteria"
+    timeout: 15000
+- tapOn:
+    text: "^Dashboard$"       # la VOCE "Dashboard", non l'heading "Dashboard Direzione"
+- extendedWaitUntil:
+    visible: "Dashboard Direzione"
+    timeout: 30000
+
+# ── 5. DRAWER → AVVISI ───────────────────────────────────────────────────────
+- tapOn:
+    text: "Apri menu"
+- extendedWaitUntil:
+    visible: "Direzione & Segreteria"
+    timeout: 15000
+# "Avvisi" è nel gruppo "Comunicazione", in fondo alla lista → scorri il drawer.
+- scrollUntilVisible:
+    element:
+      text: "^Avvisi$"
+    direction: DOWN
+    centerElement: true
+    timeout: 10000
+- tapOn:
+    text: "^Avvisi$"
+- extendedWaitUntil:
+    visible: "Nuovo avviso"
+    timeout: 45000
+- assertVisible: "Avvisi pubblicati"
+- takeScreenshot: /tmp/kv-ios-segreteria-3-avvisi
+
+# ── 6. RITORNO AL COCKPIT (drawer → Dashboard) ───────────────────────────────
+# Verifica anche che topbar/drawer restino agganciati sopra la safe-area.
+- tapOn:
+    text: "Apri menu"
+- extendedWaitUntil:
+    visible: "Direzione & Segreteria"
+    timeout: 15000
+- tapOn:
+    text: "^Dashboard$"
+- extendedWaitUntil:
+    visible: "Dashboard Direzione"
+    timeout: 30000
+- takeScreenshot: /tmp/kv-ios-segreteria-4-home

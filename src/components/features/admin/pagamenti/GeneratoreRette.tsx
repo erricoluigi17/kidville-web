@@ -2,6 +2,11 @@
 
 import { useState, useCallback } from 'react';
 import { CalendarClock, RefreshCw, CheckCircle2 } from 'lucide-react';
+import { TABLE_WRAP, TABLE, TH, TD, TROW } from '@/components/ui/cockpit';
+import { cx } from '@/lib/ui/cx';
+
+const GEN_SELECT = 'rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-3 py-2 font-maven text-sm text-kidville-ink outline-none transition-colors cursor-pointer hover:border-kidville-green/50 focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15';
+const GEN_INPUT = 'rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-3 py-2 font-maven text-sm text-kidville-ink outline-none transition-colors focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15';
 
 interface Candidato { id: string; nome: string; cognome: string; classe_sezione?: string; importo_previsto?: number; importo_retta_mensile?: number; genitori_separati?: boolean }
 interface MesePreview { periodo: string; candidati: number; gia_generati: number; importo: number }
@@ -64,10 +69,10 @@ export function GeneratoreRette({ userId, scuolaId }: Props) {
     return (
         <div>
             {/* Switch modalità */}
-            <div className="inline-flex bg-kidville-line rounded-full p-1 mb-5">
+            <div className="inline-flex bg-kidville-line rounded-pill p-1 mb-5">
                 {([['anno', 'Anno scolastico'], ['mese', 'Mese singolo']] as [Mode, string][]).map(([m, l]) => (
                     <button key={m} onClick={() => { setMode(m); reset(); }}
-                        className={`px-4 py-1.5 rounded-full font-maven text-sm font-bold ${mode === m ? 'bg-white text-kidville-green shadow-sm' : 'text-kidville-muted'}`}>
+                        className={cx('px-4 py-1.5 rounded-pill font-maven text-sm font-bold transition-colors', mode === m ? 'bg-kidville-white text-kidville-green shadow-sm' : 'text-kidville-muted')}>
                         {l}
                     </button>
                 ))}
@@ -78,7 +83,7 @@ export function GeneratoreRette({ userId, scuolaId }: Props) {
                     <div>
                         <label className="font-maven text-xs text-kidville-muted mb-1 block">Anno scolastico (set → giu)</label>
                         <select value={anno} onChange={e => { setAnno(Number(e.target.value)); reset(); }}
-                            className="border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:border-kidville-green">
+                            className={GEN_SELECT}>
                             {[annoScolasticoCorrente() - 1, annoScolasticoCorrente(), annoScolasticoCorrente() + 1].map(y => (
                                 <option key={y} value={y}>{y}/{y + 1}</option>
                             ))}
@@ -88,17 +93,17 @@ export function GeneratoreRette({ userId, scuolaId }: Props) {
                     <div>
                         <label className="font-maven text-xs text-kidville-muted mb-1 block">Mese di competenza</label>
                         <input type="month" value={periodo} onChange={e => { setPeriodo(e.target.value); reset(); }}
-                            className="border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green" />
+                            className={GEN_INPUT} />
                     </div>
                 )}
                 <button onClick={loadPreview} disabled={loading}
-                    className="px-4 py-2 rounded-full border-2 border-kidville-green text-kidville-green font-maven font-bold text-sm flex items-center gap-1 disabled:opacity-50">
+                    className="inline-flex items-center gap-1 rounded-pill border-[1.5px] border-kidville-green px-4 py-2 font-maven text-sm font-bold text-kidville-green transition-colors hover:bg-kidville-green-soft disabled:opacity-50">
                     <RefreshCw size={14} /> Anteprima
                 </button>
             </div>
 
             {done !== null && (
-                <div className="bg-kidville-success-soft text-kidville-success rounded-xl p-4 font-maven text-sm flex items-center gap-2">
+                <div className="bg-kidville-success-soft text-kidville-success rounded-card p-4 font-maven text-sm flex items-center gap-2">
                     <CheckCircle2 size={18} /> {done}
                 </div>
             )}
@@ -111,19 +116,19 @@ export function GeneratoreRette({ userId, scuolaId }: Props) {
                         <span className="text-kidville-muted">Retta default: € {Number(previewAnno.retta_default ?? 150).toFixed(2)}</span>
                         <span className="text-kidville-green font-bold">Totale previsto: € {Number(previewAnno.totale_previsto).toFixed(2)}</span>
                     </div>
-                    <div className="max-h-80 overflow-y-auto border border-kidville-line rounded-xl mb-4">
-                        <table className="w-full text-left">
-                            <thead className="sticky top-0 bg-white"><tr className="font-maven text-xs text-kidville-muted uppercase">
-                                <th className="py-2 px-3">Mese</th><th className="py-2 px-3 text-right">Da generare</th>
-                                <th className="py-2 px-3 text-right">Già generati</th><th className="py-2 px-3 text-right">Importo</th>
+                    <div className={cx('max-h-80 overflow-y-auto border border-kidville-line rounded-card mb-4', TABLE_WRAP)}>
+                        <table className={TABLE}>
+                            <thead className="sticky top-0 bg-kidville-white"><tr>
+                                <th className={TH}>Mese</th><th className={cx(TH, 'text-right')}>Da generare</th>
+                                <th className={cx(TH, 'text-right')}>Già generati</th><th className={cx(TH, 'text-right')}>Importo</th>
                             </tr></thead>
                             <tbody>
                                 {previewAnno.mesi.map(m => (
-                                    <tr key={m.periodo} className="border-t border-kidville-line font-maven text-sm">
-                                        <td className="py-2 px-3 text-kidville-green font-semibold">{m.periodo.slice(0, 7)}</td>
-                                        <td className="py-2 px-3 text-right text-kidville-green">{m.candidati}</td>
-                                        <td className="py-2 px-3 text-right text-kidville-muted">{m.gia_generati}</td>
-                                        <td className="py-2 px-3 text-right text-kidville-muted">€ {Number(m.importo).toFixed(2)}</td>
+                                    <tr key={m.periodo} className={TROW}>
+                                        <td className={cx(TD, 'font-semibold text-kidville-green')}>{m.periodo.slice(0, 7)}</td>
+                                        <td className={cx(TD, 'text-right text-kidville-green')}>{m.candidati}</td>
+                                        <td className={cx(TD, 'text-right text-kidville-muted')}>{m.gia_generati}</td>
+                                        <td className={cx(TD, 'text-right text-kidville-muted')}>€ {Number(m.importo).toFixed(2)}</td>
                                     </tr>
                                 ))}
                             </tbody>
@@ -143,19 +148,19 @@ export function GeneratoreRette({ userId, scuolaId }: Props) {
                     {previewMese.candidati.length === 0 ? (
                         <p className="font-maven text-sm text-kidville-muted py-6 text-center">Nessun alunno da generare per questo mese (rette già create).</p>
                     ) : (
-                        <div className="max-h-80 overflow-y-auto border border-kidville-line rounded-xl mb-4">
-                            <table className="w-full text-left">
-                                <thead className="sticky top-0 bg-white"><tr className="font-maven text-xs text-kidville-muted uppercase">
-                                    <th className="py-2 px-3">Alunno</th><th className="py-2 px-3">Classe</th>
-                                    <th className="py-2 px-3 text-right">Retta</th><th className="py-2 px-3">Tipo</th>
+                        <div className={cx('max-h-80 overflow-y-auto border border-kidville-line rounded-card mb-4', TABLE_WRAP)}>
+                            <table className={TABLE}>
+                                <thead className="sticky top-0 bg-kidville-white"><tr>
+                                    <th className={TH}>Alunno</th><th className={TH}>Classe</th>
+                                    <th className={cx(TH, 'text-right')}>Retta</th><th className={TH}>Tipo</th>
                                 </tr></thead>
                                 <tbody>
                                     {previewMese.candidati.map(c => (
-                                        <tr key={c.id} className="border-t border-kidville-line font-maven text-sm">
-                                            <td className="py-2 px-3 text-kidville-green font-semibold">{c.nome} {c.cognome}</td>
-                                            <td className="py-2 px-3 text-kidville-muted">{c.classe_sezione ?? '—'}</td>
-                                            <td className="py-2 px-3 text-right text-kidville-green">€ {Number(c.importo_previsto ?? c.importo_retta_mensile ?? 0).toFixed(2)}</td>
-                                            <td className="py-2 px-3 text-xs">{c.genitori_separati ? <span className="text-kidville-warn">split</span> : 'singolo'}</td>
+                                        <tr key={c.id} className={TROW}>
+                                            <td className={cx(TD, 'font-semibold text-kidville-green')}>{c.nome} {c.cognome}</td>
+                                            <td className={cx(TD, 'text-kidville-muted')}>{c.classe_sezione ?? '—'}</td>
+                                            <td className={cx(TD, 'text-right text-kidville-green')}>€ {Number(c.importo_previsto ?? c.importo_retta_mensile ?? 0).toFixed(2)}</td>
+                                            <td className={cx(TD, 'text-xs')}>{c.genitori_separati ? <span className="text-kidville-warn">split</span> : 'singolo'}</td>
                                         </tr>
                                     ))}
                                 </tbody>
@@ -167,7 +172,7 @@ export function GeneratoreRette({ userId, scuolaId }: Props) {
 
             {hasPreview && totCandidati > 0 && (
                 <button onClick={conferma} disabled={loading}
-                    className="px-5 py-2.5 rounded-full bg-kidville-green text-white font-maven font-bold text-sm flex items-center gap-1 disabled:opacity-50">
+                    className="inline-flex items-center gap-1 rounded-pill bg-kidville-green px-5 py-2.5 font-maven text-sm font-bold text-kidville-yellow transition-colors hover:bg-kidville-green-dark disabled:opacity-50">
                     <CalendarClock size={15} /> Genera {totCandidati} rette
                 </button>
             )}

@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Ticket, Search, Plus, History, AlertTriangle } from 'lucide-react';
 import { SaveCheck } from '@/components/ui/SaveConfirmation';
+import { Badge, type BadgeTone } from '@/components/ui/Badge';
+import { cx } from '@/lib/ui/cx';
 import { STATI_PAGAMENTO as STATI, METODO_LABEL } from './stati';
 
 interface Props { userId: string; scuolaId: string }
@@ -88,7 +90,7 @@ export function TicketMensaPanel({ userId, scuolaId }: Props) {
         <div className="space-y-5">
             {/* Morosità ticket: alunni con saldo negativo (req E) */}
             {morosi.length > 0 && (
-                <div className="rounded-xl border-2 border-kidville-error-soft bg-kidville-error-soft px-4 py-3">
+                <div className="rounded-card border-[1.5px] border-kidville-error-soft bg-kidville-error-soft px-4 py-3">
                     <div className="flex items-center gap-2 text-kidville-error mb-2">
                         <AlertTriangle size={18} />
                         <span className="font-barlow font-bold uppercase text-sm">Morosi ticket · saldo negativo ({morosi.length})</span>
@@ -97,7 +99,7 @@ export function TicketMensaPanel({ userId, scuolaId }: Props) {
                         {morosi.map(m => (
                             <button key={m.alunno_id}
                                 onClick={() => select({ id: m.alunno_id, nome: m.nome, cognome: m.cognome, classe_sezione: m.classe_sezione ?? undefined })}
-                                className="px-3 py-1.5 rounded-lg bg-white border border-kidville-error/30 font-maven text-xs text-kidville-error hover:border-kidville-error">
+                                className="px-3 py-1.5 rounded-input bg-kidville-white border border-kidville-error/30 font-maven text-xs text-kidville-error transition-colors hover:border-kidville-error">
                                 {m.nome} {m.cognome} <b>{m.saldo_ticket}</b>{m.classe_sezione ? <span className="opacity-70"> · {m.classe_sezione}</span> : null}
                             </button>
                         ))}
@@ -109,11 +111,11 @@ export function TicketMensaPanel({ userId, scuolaId }: Props) {
                 <div>
                     <h3 className="font-barlow font-bold text-kidville-green uppercase text-sm mb-3 flex items-center gap-2"><Search size={14} /> Seleziona alunno</h3>
                     <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Cerca…"
-                        className="w-full border-2 border-kidville-line rounded-full px-4 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green mb-2" />
+                        className="w-full rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-4 py-2 font-maven text-sm text-kidville-ink outline-none transition-colors focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15 mb-2" />
                     <div className="space-y-1 max-h-72 overflow-y-auto">
                         {filtered.map(a => (
                             <button key={a.id} onClick={() => select(a)}
-                                className={`w-full text-left px-3 py-2 rounded-xl font-maven text-sm ${sel?.id === a.id ? 'bg-kidville-green text-white' : 'hover:bg-kidville-cream text-kidville-green'}`}>
+                                className={cx('w-full text-left px-3 py-2 rounded-input font-maven text-sm transition-colors', sel?.id === a.id ? 'bg-kidville-green text-kidville-white' : 'text-kidville-green hover:bg-kidville-cream')}>
                                 {a.nome} {a.cognome} <span className="text-xs opacity-70">{a.classe_sezione}</span>
                             </button>
                         ))}
@@ -123,7 +125,7 @@ export function TicketMensaPanel({ userId, scuolaId }: Props) {
                 <div>
                     <h3 className="font-barlow font-bold text-kidville-green uppercase text-sm mb-3 flex items-center gap-2"><Ticket size={14} /> Ricarica</h3>
                     {!sel ? <p className="font-maven text-sm text-kidville-muted">Seleziona un alunno.</p> : (
-                        <div className={`rounded-xl p-4 ${(saldo ?? 0) < 0 ? 'bg-kidville-error-soft/50' : 'bg-kidville-cream/60'}`}>
+                        <div className={cx('rounded-card p-4', (saldo ?? 0) < 0 ? 'bg-kidville-error-soft/50' : 'bg-kidville-cream/60')}>
                             <div className="flex justify-between mb-3">
                                 <span className="font-maven text-sm text-kidville-green font-bold">{sel.nome} {sel.cognome}</span>
                                 <span className="font-maven text-sm text-kidville-muted">Saldo: <b className={(saldo ?? 0) < 0 ? 'text-kidville-error' : 'text-kidville-green'}>{saldo ?? '—'}</b> ticket</span>
@@ -132,7 +134,7 @@ export function TicketMensaPanel({ userId, scuolaId }: Props) {
                                 <div className="flex flex-wrap gap-2 mb-3">
                                     {pacchetti.map((p, i) => (
                                         <button key={i} onClick={() => { setPezzi(p.pezzi); setCosto(p.costo); }}
-                                            className="px-3 py-1 rounded-full border-2 border-kidville-line font-maven text-xs text-kidville-green hover:border-kidville-green">
+                                            className="px-3 py-1 rounded-pill border-[1.5px] border-kidville-line bg-kidville-white font-maven text-xs text-kidville-green transition-colors hover:border-kidville-green">
                                             {p.label} · {p.pezzi}pz · €{p.costo}
                                         </button>
                                     ))}
@@ -140,15 +142,15 @@ export function TicketMensaPanel({ userId, scuolaId }: Props) {
                             )}
                             <div className="grid grid-cols-3 gap-2 mb-3">
                                 <div><label className="font-maven text-xs text-kidville-muted">Pezzi</label>
-                                    <input type="number" value={pezzi} onChange={e => setPezzi(Number(e.target.value))} className="w-full border-2 border-kidville-line rounded-lg px-2 py-1 font-maven text-sm text-kidville-green" /></div>
+                                    <input type="number" value={pezzi} onChange={e => setPezzi(Number(e.target.value))} className="w-full rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-2 py-1 font-maven text-sm text-kidville-ink outline-none transition-colors focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15" /></div>
                                 <div><label className="font-maven text-xs text-kidville-muted">Costo €</label>
-                                    <input type="number" value={costo} onChange={e => setCosto(Number(e.target.value))} className="w-full border-2 border-kidville-line rounded-lg px-2 py-1 font-maven text-sm text-kidville-green" /></div>
+                                    <input type="number" value={costo} onChange={e => setCosto(Number(e.target.value))} className="w-full rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-2 py-1 font-maven text-sm text-kidville-ink outline-none transition-colors focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15" /></div>
                                 <div><label className="font-maven text-xs text-kidville-muted">Metodo</label>
-                                    <select value={metodo} onChange={e => setMetodo(e.target.value)} className="w-full border-2 border-kidville-line rounded-lg px-2 py-1 font-maven text-sm text-kidville-green bg-white">
+                                    <select value={metodo} onChange={e => setMetodo(e.target.value)} className="w-full rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-2 py-1 font-maven text-sm text-kidville-ink outline-none transition-colors cursor-pointer hover:border-kidville-green/50 focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15">
                                         <option value="contanti">Contanti</option><option value="bonifico">Bonifico</option><option value="pos">POS</option>
                                     </select></div>
                             </div>
-                            <button onClick={ricarica} className="w-full py-2.5 rounded-full bg-kidville-green text-white font-maven font-bold text-sm flex items-center justify-center gap-1">
+                            <button onClick={ricarica} className="w-full py-2.5 rounded-pill bg-kidville-green text-kidville-yellow font-maven font-bold text-sm flex items-center justify-center gap-1 transition-colors hover:bg-kidville-green-dark">
                                 <Plus size={15} /> Ricarica (crea pagamento Mensa saldato)
                             </button>
                             {done && <p key={confermaId} className="mt-2 font-maven text-xs text-kidville-success flex items-center gap-1"><SaveCheck size={14} /> {done}</p>}
@@ -185,8 +187,8 @@ export function TicketMensaPanel({ userId, scuolaId }: Props) {
                                                     {met && !gratis && <p className="font-maven text-[10px] text-kidville-muted">{METODO_LABEL[met] ?? met}</p>}
                                                 </div>
                                                 {gratis
-                                                    ? <span className="shrink-0 inline-block px-2 py-0.5 rounded-full text-[10px] font-bold bg-kidville-cream text-kidville-muted">Gratuita</span>
-                                                    : st && <span className={`shrink-0 inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${st.cls}`}>{st.label}</span>}
+                                                    ? <Badge tone="neutral" className="shrink-0">Gratuita</Badge>
+                                                    : st && <Badge tone={st.tone} className="shrink-0">{st.label}</Badge>}
                                             </div>
                                         );
                                     })}
@@ -202,16 +204,15 @@ export function TicketMensaPanel({ userId, scuolaId }: Props) {
                                 <div className="space-y-1 max-h-64 overflow-y-auto">
                                     {altriMovimenti.map(m => {
                                         const isRett = m.tipo === 'rettifica';
-                                        const badgeCls = m.tipo === 'disdetta' ? 'bg-kidville-warn-soft text-kidville-warn'
-                                            : isRett ? 'bg-kidville-cream text-kidville-muted' : 'bg-kidville-line text-kidville-ink';
+                                        const badgeTone: BadgeTone = m.tipo === 'disdetta' ? 'warn' : isRett ? 'read' : 'neutral';
                                         const badgeTxt = m.tipo === 'disdetta' ? `Disdetta +${m.delta}`
                                             : isRett ? `Rettifica ${m.delta >= 0 ? '+' : ''}${m.delta}` : `Consumo ${m.delta}`;
                                         return (
-                                            <div key={m.id} className="flex items-center justify-between gap-2 bg-kidville-cream/40 rounded-lg px-3 py-1.5">
+                                            <div key={m.id} className="flex items-center justify-between gap-2 bg-kidville-cream/40 rounded-input px-3 py-1.5">
                                                 <span className="font-maven text-xs text-kidville-ink truncate">
                                                     {isRett ? (m.note ?? 'Rettifica') : <>{dataIt(m.data)}{m.origine ? <span className="text-kidville-muted"> · {m.origine}</span> : null}</>}
                                                 </span>
-                                                <span className={`shrink-0 inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${badgeCls}`}>{badgeTxt}</span>
+                                                <Badge tone={badgeTone} className="shrink-0">{badgeTxt}</Badge>
                                             </div>
                                         );
                                     })}

@@ -334,3 +334,46 @@ body {
   background-color: #FF5252;
   color: #000000;
 }
+
+/* =============================================================================
+   Alto contrasto — cockpit Direzione/Segreteria (2026-07-16, re-skin shell):
+   nav laterale/drawer (.kv-admin-nav, sidebar + drawer) e topbar mobile
+   (.kv-admin-topbar). Le utility colore Tailwind sono INLINE (`@theme inline`
+   incorpora l'hex nella classe), quindi il remap dei token dentro
+   [data-contrast="high"] NON le tocca: qui si forzano ESPLICITAMENTE le coppie
+   ad alto contrasto SOLO sulle superfici toccate dal re-skin. La sidebar resta
+   chiara (`bg-kidville-white` inlinato → non diventa nera): la voce attiva è un
+   pieno NERO (come le card appello) con icona gialla e testo bianco; l'hover
+   inattivo è bordato nero. Il focus-ring è già coperto in modo globale da
+   `[data-contrast="high"] *:focus-visible`.
+   ============================================================================= */
+[data-contrast="high"] .kv-admin-nav a[aria-current="page"] {
+  color: #FFFFFF;
+}
+[data-contrast="high"] .kv-admin-nav a[aria-current="page"] .bg-kidville-green {
+  background-color: #000000;
+}
+[data-contrast="high"] .kv-admin-nav a:not([aria-current="page"]):hover {
+  box-shadow: inset 0 0 0 2px #000000;
+}
+/* Topbar mobile del cockpit: verde→nera come `.kv-appbar` (il fondo
+   `bg-kidville-white/90` resta chiaro se non forzato). Brand e menu leggibili
+   su nero: wordmark/menu bianchi, badge "K" giallo con lettera nera. */
+[data-contrast="high"] .kv-admin-topbar {
+  background: #000000;
+  box-shadow: inset 0 0 0 1px #8A8A8A;
+}
+[data-contrast="high"] .kv-admin-topbar .text-kidville-green {
+  color: #FFFFFF;
+}
+[data-contrast="high"] .kv-admin-topbar .bg-kidville-green {
+  background-color: #FFE500;
+  color: #000000;
+}
+/* Alto contrasto — pillole Tabs del cockpit (@theme inline → coppie esplicite). */
+[data-contrast="high"] .kv-cockpit-tabs button[aria-pressed="true"] {
+  background: #000000; color: #FFE500; box-shadow: inset 0 0 0 2px #FFE500;
+}
+[data-contrast="high"] .kv-cockpit-tabs button[aria-pressed="false"] {
+  background: #FFFFFF; color: #000000; box-shadow: inset 0 0 0 1px #000000;
+}

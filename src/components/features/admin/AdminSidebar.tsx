@@ -140,14 +140,14 @@ export function AdminSidebar() {
   const NavList = ({ onNavigate }: { onNavigate?: () => void }) => {
     const current = activeHref(pathname);
     return (
-    <nav className="flex flex-col gap-4 px-3 pb-6">
+    <nav className="kv-admin-nav flex flex-col gap-4 px-3 pb-6">
       {NAV_GROUPS.map((group, gi) => {
         const items = group.items.filter(visible);
         if (items.length === 0) return null;
         return (
           <div key={gi} className="flex flex-col gap-1">
             {group.title && (
-              <p className="px-4 pb-1 pt-1 font-maven text-[10px] font-semibold uppercase tracking-wider text-kidville-muted">
+              <p className="px-4 pb-1 pt-1 font-barlow text-[11px] font-bold uppercase tracking-[0.14em] text-kidville-muted">
                 {group.title}
               </p>
             )}
@@ -159,18 +159,25 @@ export function AdminSidebar() {
                   key={item.href}
                   href={withUser(item.href)}
                   onClick={onNavigate}
+                  aria-current={active ? 'page' : undefined}
                   className={`relative flex items-center gap-3 rounded-xl px-4 py-3 font-maven text-sm transition-colors ${
-                    active ? 'text-kidville-green' : 'text-kidville-ink/70 hover:text-kidville-green'
+                    active
+                      ? 'text-white'
+                      : 'text-kidville-ink/70 hover:bg-kidville-green-soft hover:text-kidville-green'
                   }`}
                 >
                   {active && (
                     <motion.span
                       layoutId="admin-nav-active"
-                      className="absolute inset-0 rounded-xl bg-kidville-yellow/30 ring-1 ring-kidville-yellow"
+                      className="absolute inset-0 rounded-xl bg-kidville-green shadow-[0_6px_16px_-8px_rgba(0,84,75,0.55)]"
                       transition={{ type: 'spring', stiffness: 380, damping: 32 }}
                     />
                   )}
-                  <Icon size={20} strokeWidth={2.2} className="relative z-10 shrink-0" />
+                  <Icon
+                    size={20}
+                    strokeWidth={2.2}
+                    className={`relative z-10 shrink-0 ${active ? 'text-kidville-yellow' : ''}`}
+                  />
                   <span className="relative z-10 font-semibold">{item.label}</span>
                 </Link>
               );
@@ -200,9 +207,9 @@ export function AdminSidebar() {
     <>
       {/* Topbar mobile — z sopra agli overlay dei modali (max contenuto z-[100]):
           la cornice persistente non deve mai essere coperta a tutto schermo. */}
-      <div className="lg:hidden sticky top-0 z-[105] flex items-center justify-between bg-kidville-white/90 backdrop-blur border-b border-kidville-line px-4 py-3">
+      <div className="kv-admin-topbar lg:hidden sticky top-0 z-[105] flex items-center justify-between bg-kidville-white/90 backdrop-blur border-b border-kidville-line px-4 py-3">
         <div className="flex items-center gap-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-kidville-green text-kidville-yellow font-barlow font-black">
+          <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-kidville-green text-kidville-yellow font-barlow font-black">
             K
           </div>
           <span className="font-barlow font-black uppercase tracking-wide text-kidville-green">
@@ -212,7 +219,7 @@ export function AdminSidebar() {
         <button
           onClick={() => setMobileOpen(true)}
           aria-label="Apri menu"
-          className="flex h-10 w-10 items-center justify-center rounded-xl border border-kidville-line text-kidville-green"
+          className="flex h-10 w-10 items-center justify-center rounded-xl border border-kidville-line text-kidville-green transition-colors hover:bg-kidville-green-soft active:scale-95"
         >
           <Menu size={20} />
         </button>
@@ -234,14 +241,14 @@ export function AdminSidebar() {
         {mobileOpen && (
           <>
             <motion.div
-              className="lg:hidden fixed inset-0 z-[110] bg-kidville-ink/40 backdrop-blur-sm"
+              className="lg:hidden fixed inset-0 z-[110] bg-kidville-green/30 backdrop-blur-sm"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setMobileOpen(false)}
             />
             <motion.aside
-              className="lg:hidden fixed inset-y-0 left-0 z-[120] w-72 bg-kidville-white shadow-2xl flex flex-col overflow-y-auto"
+              className="lg:hidden fixed inset-y-0 left-0 z-[120] w-72 rounded-r-3xl bg-kidville-white shadow-2xl flex flex-col overflow-y-auto"
               initial={{ x: '-100%' }}
               animate={{ x: 0 }}
               exit={{ x: '-100%' }}
@@ -252,7 +259,7 @@ export function AdminSidebar() {
                 <button
                   onClick={() => setMobileOpen(false)}
                   aria-label="Chiudi menu"
-                  className="mr-4 flex h-9 w-9 items-center justify-center rounded-xl border border-kidville-line text-kidville-neutral"
+                  className="mr-4 flex h-9 w-9 items-center justify-center rounded-full bg-kidville-green-soft text-kidville-green transition-colors hover:bg-kidville-green hover:text-white"
                 >
                   <X size={18} />
                 </button>
@@ -260,7 +267,7 @@ export function AdminSidebar() {
               {NavList({ onNavigate: () => setMobileOpen(false) })}
               <div className="mt-auto border-t border-kidville-line px-3 py-3">
                 <ContrastMenuButton className={CONTRAST_ROW_CLS} />
-          <LogoutMenuButton className={LOGOUT_ROW_CLS} />
+                <LogoutMenuButton className={LOGOUT_ROW_CLS} />
               </div>
             </motion.aside>
           </>

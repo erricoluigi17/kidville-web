@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useMemo, useState } from 'react';
 import { Package, Users, Boxes, Truck, PlusCircle, ChevronLeft, ChevronRight } from 'lucide-react';
 import {
-  CockpitPage, PageHeader, StatCard, CockpitSelect, Tabs,
+  CockpitPage, HEADER_BTN, PageHeader, StatCard, CockpitSelect, Tabs,
   TABLE, TABLE_WRAP, TD, TH, TROW,
 } from '@/components/ui/cockpit';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
@@ -175,6 +175,7 @@ function AdminArmadiettoInner() {
   return (
     <CockpitPage max={1200}>
       <PageHeader
+        eyebrow="Operativo"
         icon={Package}
         title="Armadietto"
         subtitle="Scorte e consegne dei materiali nido/infanzia. Il consumo giornaliero resta alle maestre."
@@ -182,7 +183,7 @@ function AdminArmadiettoInner() {
           <button
             onClick={() => { setPreStudent(''); setShowModal(true); }}
             disabled={!sezione}
-            className="flex items-center gap-2 rounded-pill bg-kidville-green px-4 py-2.5 font-barlow text-sm font-bold uppercase text-kidville-yellow transition-all active:scale-[0.98] disabled:opacity-50"
+            className={HEADER_BTN}
           >
             <PlusCircle size={16} strokeWidth={1.8} /> Registra carico
           </button>
@@ -191,6 +192,7 @@ function AdminArmadiettoInner() {
 
       {scopedLoaded && scuole.length === 0 ? (
         <div className="rounded-card bg-kidville-white p-8 text-center shadow-sm">
+          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-kidville-cream text-3xl">📦</div>
           <p className="font-maven text-sm text-kidville-muted">
             Nessuna sezione nido/infanzia nei tuoi plessi. Se non è quello che ti aspetti,
             verifica che il tuo profilo utente abbia una sede associata (Anagrafica → Staff).

@@ -10,7 +10,7 @@ function SchoolsInner() {
   const { userId } = useSessionIdentity();
   return (
     <CockpitPage max={1100}>
-      <PageHeader icon={Building2} title="Multi-Sede" subtitle="Aggiungi, rinomina o disattiva le sedi. Azione riservata alla Direzione." />
+      <PageHeader eyebrow="Sistema" icon={Building2} title="Multi-Sede" subtitle="Aggiungi, rinomina o disattiva le sedi. Azione riservata alla Direzione." />
       {userId && <SchoolsPanel userId={userId} />}
     </CockpitPage>
   );

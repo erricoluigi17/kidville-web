@@ -147,7 +147,7 @@ export function RankingAdjustModal({ submission, label, onClose, onApplied }: Pr
               className="rounded-2xl overflow-hidden"
               style={{
                 background: 'rgba(8, 11, 26, 0.97)',
-                border: '1px solid #EFE7DC',
+                border: '1px solid var(--color-kidville-line)',
                 backdropFilter: 'blur(28px)',
                 boxShadow: '0 30px 80px rgba(0,0,0,0.55)',
               }}
@@ -155,7 +155,7 @@ export function RankingAdjustModal({ submission, label, onClose, onApplied }: Pr
               {/* Header */}
               <div
                 className="flex items-start justify-between px-6 py-5"
-                style={{ borderBottom: '1px solid #EFE7DC' }}
+                style={{ borderBottom: '1px solid var(--color-kidville-line)' }}
               >
                 <div>
                   <h2 className="text-kidville-green font-semibold text-base">Regola punteggio</h2>
@@ -184,7 +184,7 @@ export function RankingAdjustModal({ submission, label, onClose, onApplied }: Pr
               </div>
               <div
                 className="px-6 py-3 flex items-center justify-between"
-                style={{ borderTop: '1px solid #FFFFFF', borderBottom: '1px solid #FFFFFF' }}
+                style={{ borderTop: '1px solid var(--color-kidville-white)', borderBottom: '1px solid var(--color-kidville-white)' }}
               >
                 <span className="text-kidville-ink text-sm font-medium">Totale attuale</span>
                 <span className="text-kidville-success text-lg font-bold tabular-nums">
@@ -193,7 +193,7 @@ export function RankingAdjustModal({ submission, label, onClose, onApplied }: Pr
               </div>
 
               {/* Esito ammissione (override DL-025) */}
-              <div className="px-6 py-3" style={{ borderBottom: '1px solid #FFFFFF' }}>
+              <div className="px-6 py-3" style={{ borderBottom: '1px solid var(--color-kidville-white)' }}>
                 <label className="block text-[11px] font-bold text-kidville-muted uppercase tracking-widest mb-2">
                   Esito ammissione
                 </label>
@@ -207,9 +207,9 @@ export function RankingAdjustModal({ submission, label, onClose, onApplied }: Pr
                         disabled={esitoSaving}
                         className="flex-1 px-2 py-1.5 rounded-lg text-xs font-semibold transition-all disabled:opacity-50"
                         style={{
-                          background: active ? e.color : '#FFFFFF',
-                          color: active ? '#FEF1E4' : 'rgba(203,213,225,0.9)',
-                          border: `1px solid ${active ? e.color : '#EFE7DC'}`,
+                          background: active ? e.color : 'var(--color-kidville-white)',
+                          color: active ? 'var(--color-kidville-cream)' : 'rgba(203,213,225,0.9)',
+                          border: `1px solid ${active ? e.color : 'var(--color-kidville-line)'}`,
                         }}
                       >
                         {e.label}
@@ -236,7 +236,7 @@ export function RankingAdjustModal({ submission, label, onClose, onApplied }: Pr
               )}
 
               {/* New adjustment form */}
-              <div className="px-6 py-4 space-y-4" style={{ borderTop: '1px solid #EFE7DC' }}>
+              <div className="px-6 py-4 space-y-4" style={{ borderTop: '1px solid var(--color-kidville-line)' }}>
                 <div>
                   <label className="block text-[11px] font-bold text-kidville-muted uppercase tracking-widest mb-2">
                     Bonus / Malus
@@ -245,7 +245,7 @@ export function RankingAdjustModal({ submission, label, onClose, onApplied }: Pr
                     <button
                       onClick={() => setDelta(d => d - 1)}
                       className="p-2 rounded-lg text-kidville-muted transition-all"
-                      style={{ background: '#FFFFFF', border: '1px solid #EFE7DC' }}
+                      style={{ background: 'var(--color-kidville-white)', border: '1px solid var(--color-kidville-line)' }}
                     >
                       <Minus className="w-4 h-4" />
                     </button>
@@ -254,12 +254,12 @@ export function RankingAdjustModal({ submission, label, onClose, onApplied }: Pr
                       value={delta}
                       onChange={e => setDelta(parseInt(e.target.value || '0', 10))}
                       className="flex-1 text-center py-2 rounded-lg text-kidville-green text-lg font-bold tabular-nums focus:outline-none"
-                      style={{ background: '#FFFFFF', border: '1px solid #EFE7DC' }}
+                      style={{ background: 'var(--color-kidville-white)', border: '1px solid var(--color-kidville-line)' }}
                     />
                     <button
                       onClick={() => setDelta(d => d + 1)}
                       className="p-2 rounded-lg text-kidville-muted transition-all"
-                      style={{ background: '#FFFFFF', border: '1px solid #EFE7DC' }}
+                      style={{ background: 'var(--color-kidville-white)', border: '1px solid var(--color-kidville-line)' }}
                     >
                       <Plus className="w-4 h-4" />
                     </button>
@@ -278,7 +278,7 @@ export function RankingAdjustModal({ submission, label, onClose, onApplied }: Pr
                       rows={2}
                       placeholder="Es. Fratello già frequentante"
                       className="w-full pl-9 pr-3 py-2.5 rounded-lg text-kidville-ink placeholder-kidville-muted text-sm resize-none focus:outline-none"
-                      style={{ background: '#FFFFFF', border: '1px solid #EFE7DC' }}
+                      style={{ background: 'var(--color-kidville-white)', border: '1px solid var(--color-kidville-line)' }}
                     />
                   </div>
                 </div>
@@ -289,12 +289,12 @@ export function RankingAdjustModal({ submission, label, onClose, onApplied }: Pr
               {/* Footer */}
               <div
                 className="px-6 py-4 flex gap-3"
-                style={{ borderTop: '1px solid #EFE7DC' }}
+                style={{ borderTop: '1px solid var(--color-kidville-line)' }}
               >
                 <button
                   onClick={handleClose}
                   className="flex-1 px-4 py-2.5 rounded-xl text-kidville-muted text-sm font-medium transition-all"
-                  style={{ background: '#FFFFFF', border: '1px solid #EFE7DC' }}
+                  style={{ background: 'var(--color-kidville-white)', border: '1px solid var(--color-kidville-line)' }}
                 >
                   Annulla
                 </button>

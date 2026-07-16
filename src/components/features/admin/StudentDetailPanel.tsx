@@ -184,8 +184,8 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
 
     const isPage = variant === 'page';
     const shellCls = isPage
-        ? 'flex w-full flex-col rounded-card bg-white shadow-sm'
-        : 'fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col bg-white shadow-2xl';
+        ? 'flex w-full flex-col rounded-card bg-kidville-white shadow-sm'
+        : 'fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col bg-kidville-white shadow-2xl';
     const bodyCls = isPage ? 'p-5 md:p-6 space-y-5' : 'flex-1 overflow-y-auto p-5 space-y-5';
 
     return (
@@ -276,7 +276,7 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                                 <select
                                     value={(form.gender as string) ?? ''}
                                     onChange={e => updateForm('gender', e.target.value)}
-                                    className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:border-kidville-green"
+                                    className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-kidville-white focus:outline-none focus:border-kidville-green"
                                 >
                                     <option value="">—</option>
                                     <option value="M">Maschio</option>
@@ -391,7 +391,7 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                                 <select
                                     value={(form.classe_sezione as string) ?? ''}
                                     onChange={e => updateForm('classe_sezione', e.target.value)}
-                                    className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:border-kidville-green"
+                                    className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-kidville-white focus:outline-none focus:border-kidville-green"
                                 >
                                     <option value="">— Nessuna —</option>
                                     {sections.map(s => (
@@ -404,7 +404,7 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                                 <select
                                     value={(form.stato as string) ?? 'iscritto'}
                                     onChange={e => updateForm('stato', e.target.value)}
-                                    className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:border-kidville-green"
+                                    className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-kidville-white focus:outline-none focus:border-kidville-green"
                                 >
                                     <option value="iscritto">Iscritto</option>
                                     <option value="ritirato">Ritirato</option>
@@ -706,7 +706,7 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                         onClick={handleDelete}
                         className={`w-full h-10 rounded-pill font-barlow font-bold uppercase tracking-wide text-sm transition-all flex items-center justify-center gap-2 ${
                             showDeleteConfirm
-                                ? 'bg-kidville-error text-white hover:bg-kidville-error'
+                                ? 'bg-kidville-error text-kidville-white hover:bg-kidville-error'
                                 : 'bg-kidville-error-soft text-kidville-error border-2 border-kidville-error-soft hover:bg-kidville-error-soft'
                         }`}
                     >

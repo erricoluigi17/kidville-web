@@ -16,7 +16,7 @@ import {
   FileSpreadsheet, Loader2, CheckCircle2, UploadCloud, Siren, Pencil,
 } from 'lucide-react';
 import {
-  CockpitPage, PageHeader, StatCard, Drawer, Toolbar, CockpitSelect,
+  CockpitPage, HEADER_BTN, PageHeader, StatCard, Drawer, Toolbar, CockpitSelect,
   TABLE, TABLE_WRAP, TD, TH, TROW, Toggle,
 } from '@/components/ui/cockpit';
 import { SaveCheck } from '@/components/ui/SaveConfirmation';
@@ -217,6 +217,7 @@ function ProtocolliInner() {
   return (
     <CockpitPage>
       <PageHeader
+        eyebrow="Amministrazione"
         icon={Stamp}
         title="Registro protocolli"
         subtitle="Corrispondenza in arrivo, in partenza e atti interni — numerazione a norma DPR 445/2000"
@@ -231,10 +232,10 @@ function ProtocolliInner() {
             <button type="button" className={BTN_GHOST} onClick={() => setDrawerTitolario(true)}>
               <Settings2 size={14} /> Categorie
             </button>
-            <button type="button" className={cx(BTN_PRIMARY, 'px-3.5 py-2')} onClick={() => setDrawerGenera(true)}>
+            <button type="button" className={cx(HEADER_BTN, 'px-3.5 py-2')} onClick={() => setDrawerGenera(true)}>
               <FileText size={15} /> Genera documento
             </button>
-            <button type="button" className={cx(BTN_PRIMARY, 'px-3.5 py-2')} onClick={() => setDrawerNuovo(true)}>
+            <button type="button" className={cx(HEADER_BTN, 'px-3.5 py-2')} onClick={() => setDrawerNuovo(true)}>
               <Plus size={16} /> Protocolla documento
             </button>
           </>

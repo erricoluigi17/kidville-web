@@ -21,10 +21,13 @@ import {
 import { AnimatedNumber } from '@/components/features/admin/motion/AnimatedNumber';
 import { TiltCard } from '@/components/features/admin/motion/TiltCard';
 import { RevealGroup, RevealItem } from '@/components/features/admin/motion/reveal';
-import { AuroraHeader } from '@/components/features/admin/motion/AuroraHeader';
 import { TrendIncassiChart, StudentiPerClasseChart } from '@/components/features/admin/DashboardCharts';
 import { Donut, Live, SectionTitle } from '@/components/ui/cockpit';
 import { Badge } from '@/components/ui/Badge';
+import { btnClass } from '@/components/ui/Btn';
+import { HeroCard } from '@/components/features/shell/HeroCard';
+import { useClientValue } from '@/lib/hooks/use-client-value';
+import { greetingByHour } from '@/lib/ui/greeting';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import type { PresenzeAggregate } from '@/lib/presenze/aggregate';
 
@@ -148,36 +151,42 @@ function AdminDashboardInner() {
     { href: '/admin/tools', label: 'Strumenti', icon: Wrench },
   ];
 
-  const oggi = new Date().toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' });
+  // Saluto neutro per fascia oraria, calcolato SOLO client-side (hydration-safe,
+  // come le home genitore/docente); la data la mostra la HeroCard internamente.
+  const greeting = useClientValue(greetingByHour, '');
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-6 lg:px-8 lg:py-8">
-      {/* Header aurora */}
-      <AuroraHeader className="p-6 lg:p-8">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <p className="font-maven text-sm text-white/80 capitalize">{oggi}</p>
-            <h1 className="font-barlow font-black uppercase tracking-wide text-3xl lg:text-4xl mt-1">
-              Dashboard Direzione
-            </h1>
-            <p className="font-maven text-white/85 mt-1">Quadro generale della scuola in tempo reale</p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Link
-              href={withUser('/admin/modulistica?tab=ricevuti')}
-              className="inline-flex items-center gap-2 rounded-pill bg-white/15 hover:bg-white/25 px-4 py-2 font-barlow font-black uppercase tracking-wide text-sm transition-colors backdrop-blur"
-            >
-              <ClipboardList size={16} /> Iscrizioni
-            </Link>
-            <Link
-              href={withUser('/admin/pagamenti')}
-              className="inline-flex items-center gap-2 rounded-pill bg-kidville-yellow text-kidville-green px-4 py-2 font-barlow font-black uppercase tracking-wide text-sm hover:opacity-90 transition-opacity"
-            >
-              <Plus size={16} /> Genera rette
-            </Link>
-          </div>
+      {/* Hero gialla come le altre home: saluto + data + mascotte a mezzo busto */}
+      <HeroCard
+        title={`${greeting}${greeting ? '!' : ''}`}
+        loading={greeting === ''}
+        subtitle="Direzione & Segreteria"
+        showDate
+        animate
+      />
+
+      {/* Heading di sezione + azioni rapide. Il testo «Dashboard Direzione» resta
+          VISIBILE (vincolo e2e admin-dashboard.spec.ts) come heading sotto la hero;
+          la eyebrow "Direzione" è un elemento a parte (fuori dall'accessible name). */}
+      <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div className="min-w-0">
+          <p className="font-barlow text-[11px] font-bold uppercase tracking-[0.14em] text-kidville-green">
+            Direzione
+          </p>
+          <h2 className="mt-0.5 font-barlow text-2xl font-black uppercase tracking-wide text-kidville-green lg:text-[28px]">
+            Dashboard Direzione
+          </h2>
         </div>
-      </AuroraHeader>
+        <div className="flex flex-wrap gap-2">
+          <Link href={withUser('/admin/modulistica?tab=ricevuti')} className={btnClass('ghost', 'sm')}>
+            <ClipboardList size={16} /> Iscrizioni
+          </Link>
+          <Link href={withUser('/admin/pagamenti')} className={btnClass('primary', 'sm')}>
+            <Plus size={16} /> Genera rette
+          </Link>
+        </div>
+      </div>
 
       {(error || (ready && !userId)) && (
         <div className="mt-6 rounded-2xl border border-kidville-error/30 bg-kidville-error-soft p-4 font-maven text-sm text-kidville-error">

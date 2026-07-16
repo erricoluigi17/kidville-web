@@ -32,7 +32,7 @@ interface Student {
 export const schoolTypeConfig = {
     nido: { label: 'Nido', icon: Baby, color: 'text-pink-500', bg: 'bg-pink-500/10', border: 'border-pink-500/30' },
     infanzia: { label: 'Infanzia', icon: GraduationCap, color: 'text-kidville-green', bg: 'bg-kidville-green/10', border: 'border-kidville-green/30' },
-    primaria: { label: 'Primaria', icon: BookOpen, color: 'text-kidville-info', bg: 'bg-kidville-info-soft0/10', border: 'border-kidville-info/30' },
+    primaria: { label: 'Primaria', icon: BookOpen, color: 'text-kidville-info', bg: 'bg-kidville-info/10', border: 'border-kidville-info/30' },
 };
 
 export function SectionsView() {
@@ -119,7 +119,7 @@ export function SectionsView() {
                 </div>
                 <button
                     onClick={() => setShowNewForm(!showNewForm)}
-                    className="flex items-center gap-2 px-4 py-2 bg-kidville-green text-white rounded-xl font-barlow font-bold uppercase text-sm hover:opacity-90 transition-all shadow-md"
+                    className="flex items-center gap-2 px-4 py-2 bg-kidville-green text-kidville-yellow rounded-pill font-barlow font-extrabold uppercase tracking-[0.03em] text-sm transition-transform hover:bg-kidville-green-dark active:scale-95 shadow-md"
                 >
                     <Plus size={16} /> Nuova Sezione
                 </button>
@@ -127,7 +127,7 @@ export function SectionsView() {
 
             {/* New Section Form */}
             {showNewForm && (
-                <div className="bg-white rounded-2xl shadow-sm p-6 mb-6 border-2 border-kidville-green/20">
+                <div className="bg-kidville-white rounded-card shadow-sm p-6 mb-6 border-2 border-kidville-green/20">
                     <h3 className="font-barlow font-bold text-kidville-green uppercase mb-4">Crea Nuova Sezione</h3>
                     <div className="flex flex-col md:flex-row gap-4 items-end">
                         <div className="flex-1">
@@ -136,7 +136,7 @@ export function SectionsView() {
                                 value={newSectionName}
                                 onChange={e => setNewSectionName(e.target.value)}
                                 placeholder="Es. Girasoli, Leoni, 1A..."
-                                className="w-full p-3 border-2 border-kidville-line rounded-xl font-maven text-sm focus:outline-none focus:border-kidville-green"
+                                className="w-full p-3 border-2 border-kidville-line rounded-input font-maven text-sm bg-kidville-white focus:outline-none focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15"
                             />
                         </div>
                         <div className="w-48">
@@ -144,7 +144,7 @@ export function SectionsView() {
                             <select
                                 value={newSectionType}
                                 onChange={e => setNewSectionType(e.target.value as 'nido' | 'infanzia' | 'primaria')}
-                                className="w-full p-3 border-2 border-kidville-line rounded-xl font-maven text-sm focus:outline-none focus:border-kidville-green bg-white"
+                                className="w-full p-3 border-2 border-kidville-line rounded-input font-maven text-sm bg-kidville-white focus:outline-none focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15"
                             >
                                 <option value="nido">Nido</option>
                                 <option value="infanzia">Infanzia</option>
@@ -157,7 +157,7 @@ export function SectionsView() {
                                 <select
                                     value={newSectionScuola}
                                     onChange={e => setNewSectionScuola(e.target.value)}
-                                    className="w-full p-3 border-2 border-kidville-line rounded-xl font-maven text-sm focus:outline-none focus:border-kidville-green bg-white"
+                                    className="w-full p-3 border-2 border-kidville-line rounded-input font-maven text-sm bg-kidville-white focus:outline-none focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15"
                                 >
                                     {scuole.map(g => (
                                         <option key={g.scuolaId} value={g.scuolaId}>{g.scuolaNome}</option>
@@ -168,7 +168,7 @@ export function SectionsView() {
                         <button
                             onClick={handleCreateSection}
                             disabled={isCreating || !newSectionName.trim()}
-                            className="px-6 py-3 bg-kidville-green text-white rounded-xl font-bold hover:opacity-90 disabled:opacity-50 flex items-center gap-2"
+                            className="px-6 py-3 bg-kidville-green text-kidville-yellow rounded-pill font-barlow font-extrabold uppercase tracking-[0.03em] transition-transform hover:bg-kidville-green-dark active:scale-95 disabled:opacity-50 disabled:pointer-events-none flex items-center gap-2"
                         >
                             {isCreating ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
                             Crea
@@ -187,7 +187,7 @@ export function SectionsView() {
                         <Link
                             key={section.id}
                             href={`/admin/students/sezioni/${section.id}`}
-                            className="text-left p-5 rounded-2xl border-2 border-kidville-line bg-white transition-all hover:shadow-lg hover:border-kidville-green/30 group"
+                            className="text-left p-5 rounded-card border-2 border-kidville-line bg-kidville-white transition-all hover:shadow-lg hover:border-kidville-green/30 group"
                         >
                             <div className="flex items-start justify-between mb-3">
                                 <div className={`p-2.5 rounded-xl ${config.bg}`}>
@@ -212,9 +212,9 @@ export function SectionsView() {
                 })}
 
                 {sections.length === 0 && (
-                    <div className="col-span-full text-center py-12 bg-white rounded-2xl border-2 border-dashed border-kidville-line">
-                        <LayoutGrid size={40} className="mx-auto text-kidville-muted mb-3" />
-                        <p className="font-maven text-kidville-muted">Nessuna sezione configurata</p>
+                    <div className="col-span-full flex flex-col items-center py-12 text-center bg-kidville-white rounded-card border-2 border-dashed border-kidville-line">
+                        <div className="mb-3 flex h-20 w-20 items-center justify-center rounded-full bg-kidville-cream text-4xl">🗂️</div>
+                        <p className="font-barlow font-bold text-lg text-kidville-green uppercase">Nessuna sezione configurata</p>
                         <p className="font-maven text-sm text-kidville-muted mt-1">Clicca &ldquo;Nuova Sezione&rdquo; per iniziare</p>
                     </div>
                 )}

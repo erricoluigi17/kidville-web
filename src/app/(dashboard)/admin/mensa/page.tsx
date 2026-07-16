@@ -37,6 +37,7 @@ function MensaInner() {
   return (
     <CockpitPage max={1152}>
       <PageHeader
+        eyebrow="Operativo"
         icon={UtensilsCrossed}
         title="Mensa & Cucina"
         subtitle="Menu, report cucina, ticket giornalieri e impostazioni."

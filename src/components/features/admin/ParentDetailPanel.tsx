@@ -139,8 +139,8 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
 
     const isPage = variant === 'page';
     const shellCls = isPage
-        ? 'flex w-full flex-col rounded-card bg-white shadow-sm'
-        : 'fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col bg-white shadow-2xl';
+        ? 'flex w-full flex-col rounded-card bg-kidville-white shadow-sm'
+        : 'fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col bg-kidville-white shadow-2xl';
     const bodyCls = isPage ? 'p-5 md:p-6 space-y-5 custom-scrollbar' : 'flex-1 overflow-y-auto p-5 space-y-5 custom-scrollbar';
 
     return (
@@ -239,7 +239,7 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
                                     <select
                                         value={(form.gender as string) ?? ''}
                                         onChange={e => updateForm('gender', e.target.value)}
-                                        className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:border-kidville-green"
+                                        className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-kidville-white focus:outline-none focus:border-kidville-green"
                                     >
                                         <option value="">—</option>
                                         <option value="M">Maschio</option>
@@ -414,13 +414,13 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
                                                             exit={{ height: 0, opacity: 0 }}
                                                             className="overflow-hidden"
                                                         >
-                                                            <div className="p-4 bg-white/50">
+                                                            <div className="p-4 bg-kidville-white/50">
                                                                 {otherParents.length > 0 ? (
                                                                     <>
                                                                         <h5 className="font-maven text-[10px] text-kidville-muted uppercase tracking-wider mb-2 font-bold">Altri familiari collegati</h5>
                                                                         <div className="space-y-2">
                                                                             {otherParents.map((sp) => (
-                                                                                <div key={sp.parents.id} className="flex items-center gap-3 p-3 bg-white border border-kidville-line rounded-lg shadow-sm">
+                                                                                <div key={sp.parents.id} className="flex items-center gap-3 p-3 bg-kidville-white border border-kidville-line rounded-lg shadow-sm">
                                                                                     <div className="w-8 h-8 rounded-full bg-kidville-info-soft text-kidville-info flex items-center justify-center">
                                                                                         <User size={14} />
                                                                                     </div>
@@ -453,7 +453,7 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
                 )}
 
                 {/* Footer actions */}
-                <div className="flex-shrink-0 p-5 border-t border-kidville-line bg-white space-y-2">
+                <div className="flex-shrink-0 p-5 border-t border-kidville-line bg-kidville-white space-y-2">
                     <button
                         onClick={handleSave}
                         disabled={isSaving}

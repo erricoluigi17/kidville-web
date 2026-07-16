@@ -3,7 +3,7 @@
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Bell, ClipboardList, Eye, Pencil, Plus, Trash2 } from 'lucide-react';
-import { CockpitPage, PageHeader, StatCard, TABLE, TABLE_WRAP, TD, TH, TROW } from '@/components/ui/cockpit';
+import { CockpitPage, HEADER_BTN, PageHeader, StatCard, TABLE, TABLE_WRAP, TD, TH, TROW } from '@/components/ui/cockpit';
 import { Avviso } from '@/components/features/avvisi/AvvisoCard';
 import { AvvisoForm } from '@/components/features/avvisi/AvvisoForm';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
@@ -104,13 +104,14 @@ function AdminAvvisiInner() {
     return (
         <CockpitPage max={1360}>
             <PageHeader
+                eyebrow="Comunicazione"
                 icon={Bell}
                 title="Avvisi"
                 subtitle="Circolari e comunicazioni alle famiglie: pubblicazione, stato lettura e adesioni."
                 actions={
                     <button
                         onClick={() => { setEditingAvviso(null); setShowForm(true); }}
-                        className="flex items-center gap-2 rounded-pill bg-kidville-green px-4 py-2.5 font-barlow text-sm font-bold uppercase text-kidville-yellow transition-all active:scale-[0.98]"
+                        className={HEADER_BTN}
                     >
                         <Plus size={16} strokeWidth={1.8} /> Nuovo avviso
                     </button>

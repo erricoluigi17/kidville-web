@@ -49,7 +49,7 @@ export function AdminTopBar() {
             onKeyDown={(e) => { if (e.key === 'Escape') { setSearchOpen(false); e.currentTarget.blur(); } }}
             placeholder="Cerca alunno, genitore, codice fiscale…"
             aria-label="Ricerca globale"
-            className="h-10 w-full rounded-[11px] border-none bg-kidville-white/[0.14] pl-10 pr-3.5 font-maven text-[13.5px] text-kidville-white outline-none placeholder:text-kidville-white/60"
+            className="h-10 w-full rounded-[11px] border-none bg-kidville-white/[0.14] pl-10 pr-3.5 font-maven text-[13.5px] text-kidville-white transition-colors placeholder:text-kidville-white/60 focus-visible:bg-kidville-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-kidville-yellow/70"
           />
           {searchOpen && (
             <AdminSearchPanel

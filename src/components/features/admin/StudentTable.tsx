@@ -99,7 +99,7 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
     );
 
     return (
-        <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
+        <div className="bg-kidville-white rounded-card shadow-sm overflow-hidden">
             <div className="overflow-x-auto">
                 <table className="w-full">
                     <thead className="bg-kidville-cream/50 border-b border-kidville-line">
@@ -255,9 +255,15 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
             </div>
 
             {students.length === 0 && (
-                <div className="text-center py-12">
-                    <p className="font-maven text-kidville-muted">
+                <div className="flex flex-col items-center justify-center py-16 text-center">
+                    <div className="w-20 h-20 bg-kidville-cream rounded-full flex items-center justify-center mb-4 text-4xl">
+                        {currentTypeFilter === 'staff' ? '🧑‍🏫' : '🧒'}
+                    </div>
+                    <h3 className="font-barlow font-bold text-lg text-kidville-green uppercase mb-1">
                         {currentTypeFilter === 'staff' ? 'Nessun membro dello staff trovato' : 'Nessun alunno trovato'}
+                    </h3>
+                    <p className="font-maven text-sm text-kidville-muted max-w-xs">
+                        Prova a modificare i filtri o la ricerca.
                     </p>
                 </div>
             )}

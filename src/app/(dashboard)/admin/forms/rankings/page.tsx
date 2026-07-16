@@ -8,6 +8,7 @@ export default function RankingsPage() {
   return (
     <CockpitPage max={1152}>
       <PageHeader
+        eyebrow="Amministrazione"
         icon={Trophy}
         title="Graduatorie"
         subtitle="Classifiche con punteggi calcolati automaticamente — clicca su una riga per regolare"

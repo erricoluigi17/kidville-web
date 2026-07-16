@@ -73,7 +73,7 @@ L'area `/admin/**` (il cockpit Direzione & Segreteria, ~28 pagine reali) era l'u
 
 **Log**: nessuno. Intervento puramente presentazionale — nessuna route nuova (quindi nessun `withRoute`), nessun catch, nessun `console.*` in `src/`; il diff non rimuove log esistenti.
 **Test**: nuovi lock/spec di design — `design-tokens-admin` (divieto hex), `settings-sistema-design`, `cockpit-primitives` (adapter header + pillole), `header-cta-admin` (i 6 CTA header su `HEADER_BTN`, niente più giallo-su-verde), `admin-dashboard-hero` (HeroCard + heading «Dashboard Direzione»), `StudentTable-empty`, `pagamenti-contabilita`, `mensa-report-design` — che bloccano l'adapter, le pillole, gli stati vuoti e il divieto di hex.
-**Gate**: eslint **0** · tsc **0** · vitest **1936 / 243 file** verdi (lock design-tokens incluso, ora verde) · build ok · E2E in CI al push. Nessuna variabile d'ambiente nuova, nessuna migrazione.
+**Gate**: eslint **0** · tsc **0** · vitest **1946 / 244 file** verdi (lock design-tokens e header-cta inclusi) · build ok · E2E in CI al push. Nessuna variabile d'ambiente nuova, nessuna migrazione. Collaudo `/ship-cycle`: **11/11 PASS al 2° ciclo**.
 
 ## 🗓️ Changelog — Fix import iscrizioni (provincia per esteso → 22001) e mensa genitore («Sessione non valida») 2026-07-16 (branch `feat/ship-cycle-superpowers`)
 

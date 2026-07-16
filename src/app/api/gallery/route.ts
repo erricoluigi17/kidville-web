@@ -1,8 +1,9 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
 import { z } from 'zod';
-import { createClient, createAdminClient } from '@/lib/supabase/server-client';
+import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { requireParentOfStudent } from '@/lib/auth/require-parent';
+import { resolveScuoleAttive, resolveScuolaScrittura } from '@/lib/auth/scope';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { alunniSenzaConsenso } from '@/lib/gallery/privacy';
@@ -39,8 +40,10 @@ const postBodySchema = z.object({
 
 const deleteQuerySchema = z.object({
     id: zUuid,
-    // Fallback quando non c'è sessione: la sessione, se presente, lo sovrascrive,
-    // quindi resta lasco (un valore non-uuid oggi non blocca la richiesta).
+    // Retro-compatibilità: i client storici lo mandano ancora in query, ma
+    // l'identità viene SOLO dal gate (`requireDocente`). Il valore è tollerato
+    // ma IGNORATO come identità (anti-spoof): un `?userId=` arbitrario non può
+    // più impersonare un admin per cancellare foto di minori.
     userId: z.string().optional(),
 });
 
@@ -107,39 +110,95 @@ export const GET = withRoute('gallery:GET', async (request: Request) => {
             }
         }
 
-        let query = supabase
-            .from('galleria_media_v2')
-            .select('*', { count: 'exact' })
-            .order('created_at', { ascending: false });
-
-        if (date) {
-            query = query
-                .gte('created_at', `${date}T00:00:00.000Z`)
-                .lte('created_at', `${date}T23:59:59.999Z`);
-        }
-
-        // Genitore: media broadcast (qualunque, semantica storica) o con il figlio taggato
-        if (studentId) {
-            query = query.or(`is_broadcast.eq.true,tag_students.cs.{${studentId}}`);
-        }
-
-        // Insegnante: broadcast destinati alla classe o media con alunni della classe taggati
+        // Scope per sede (tenant) — fix D3: la galleria è isolata per plesso.
+        //  - docente (classe): le sedi ATTIVE dell'utente (SedeSelector → cookie,
+        //    ri-validate server-side contro le sedi accessibili; mai cross-tenant).
+        //  - genitore (studentId): la sede del FIGLIO, così vede solo i broadcast e
+        //    i media della sua sede (classi omonime di sedi diverse non collidono).
+        let plessi: string[] = [];
         if (classe) {
-            const { data: students } = await supabase
+            plessi = await resolveScuoleAttive(request as NextRequest, supabase, auth.user);
+        } else if (studentId) {
+            const { data: alunno, error: alErr } = await supabase
+                .from('alunni')
+                .select('scuola_id')
+                .eq('id', studentId)
+                .maybeSingle();
+            if (alErr) {
+                logErrore({ operazione: 'gallery:GET', stato: 500, evento: 'db' }, alErr);
+                return NextResponse.json({ error: alErr.message }, { status: 500 });
+            }
+            const sedeFiglio = (alunno?.scuola_id as string | null | undefined) ?? null;
+            if (sedeFiglio) plessi = [sedeFiglio];
+        }
+
+        // Insegnante: alunni della classe RISTRETTI ai plessi accessibili. Senza
+        // questo scope `.eq('classe_sezione', classe)` prendeva anche gli omonimi
+        // di un'altra sede → tag cross-tenant nella `.or()` dei media (bug D3).
+        let studentIds: string[] = [];
+        if (classe) {
+            let alunniQ = supabase
                 .from('alunni')
                 .select('id')
                 .eq('classe_sezione', classe);
-            const studentIds = (students?.map(s => s.id) ?? []).filter(id => UUID_RE.test(id));
-            const classeSafe = classe.replace(/[(){}",\\]/g, '');
-            const broadcastCond = `and(is_broadcast.eq.true,target_classes.cs.{"${classeSafe}"})`;
-            query = query.or(
-                studentIds.length > 0
-                    ? `${broadcastCond},tag_students.ov.{${studentIds.join(',')}}`
-                    : broadcastCond
-            );
+            if (plessi.length > 0) alunniQ = alunniQ.in('scuola_id', plessi);
+            const { data: students, error: stErr } = await alunniQ;
+            if (stErr) {
+                logErrore({ operazione: 'gallery:GET', stato: 500, evento: 'db' }, stErr);
+                return NextResponse.json({ error: stErr.message }, { status: 500 });
+            }
+            studentIds = (students?.map(s => s.id) ?? []).filter(id => UUID_RE.test(id));
         }
 
-        const { data: pageMedia, count, error } = await query.range(offset, offset + limit - 1);
+        // Builder dei media: `conScuola=false` toglie il SOLO filtro sede per il
+        // degrado sul DB E2E CI non migrato (colonna scuola_id assente → 42703).
+        const buildMedia = (conScuola: boolean) => {
+            let query = supabase
+                .from('galleria_media_v2')
+                .select('*', { count: 'exact' })
+                .order('created_at', { ascending: false });
+
+            if (date) {
+                query = query
+                    .gte('created_at', `${date}T00:00:00.000Z`)
+                    .lte('created_at', `${date}T23:59:59.999Z`);
+            }
+
+            // Isolamento per sede (in AND con i filtri broadcast/tag sotto).
+            if (conScuola && plessi.length > 0) {
+                query = query.in('scuola_id', plessi);
+            }
+
+            // Genitore: media broadcast (semantica storica) o con il figlio taggato.
+            if (studentId) {
+                query = query.or(`is_broadcast.eq.true,tag_students.cs.{${studentId}}`);
+            }
+
+            // Insegnante: broadcast destinati alla classe o media con alunni della classe taggati.
+            if (classe) {
+                const classeSafe = classe.replace(/[(){}",\\]/g, '');
+                const broadcastCond = `and(is_broadcast.eq.true,target_classes.cs.{"${classeSafe}"})`;
+                query = query.or(
+                    studentIds.length > 0
+                        ? `${broadcastCond},tag_students.ov.{${studentIds.join(',')}}`
+                        : broadcastCond
+                );
+            }
+
+            return query.range(offset, offset + limit - 1);
+        };
+
+        let mediaRes = await buildMedia(true);
+        // DB E2E CI non migrato: scuola_id assente → 42703 (o PGRST204). Riprova
+        // senza il filtro sede, così la lettura resta possibile (degrado pulito).
+        if (mediaRes.error && ['PGRST204', '42703'].includes((mediaRes.error as { code?: string }).code ?? '')) {
+            logEvento('galleria', 'info', {
+                operazione: 'gallery:GET',
+                esito: 'degrado-scuola-id-assente',
+            });
+            mediaRes = await buildMedia(false);
+        }
+        const { data: pageMedia, count, error } = mediaRes;
 
         if (error) {
             logErrore({ operazione: 'gallery:GET', stato: 500, evento: 'db' }, error);
@@ -229,19 +288,43 @@ export const POST = withRoute('gallery:POST', async (request: Request) => {
             );
         }
 
-        const { data, error } = await supabase
+        // Sede (tenant) del media = sede di scrittura dell'uploader (rispetta il
+        // SedeSelector per gli admin multi-plesso). Se il resolver è ambiguo o
+        // nega (admin senza sede attiva) NON blocchiamo la pubblicazione: fallback
+        // alla sede primaria dell'utente. Fix D3: senza scuola_id la galleria non
+        // era isolabile per sede.
+        const sw = await resolveScuolaScrittura(request as NextRequest, supabase, auth.user);
+        const scuolaId = sw.scuolaId ?? auth.user.scuola_id ?? null;
+
+        const baseRecord: Record<string, unknown> = {
+            uploaded_by,
+            file_url,
+            file_type: file_type ?? 'foto',
+            caption: caption ?? null,
+            tag_students: tag_students ?? [],
+            is_broadcast: is_broadcast ?? false,
+            target_classes: target_classes ?? null,
+        };
+
+        let insRes = await supabase
             .from('galleria_media_v2')
-            .insert({
-                uploaded_by,
-                file_url,
-                file_type: file_type ?? 'foto',
-                caption: caption ?? null,
-                tag_students: tag_students ?? [],
-                is_broadcast: is_broadcast ?? false,
-                target_classes: target_classes ?? null,
-            })
+            .insert({ ...baseRecord, scuola_id: scuolaId })
             .select()
             .single();
+        // DB E2E CI non migrato: colonna scuola_id assente → PGRST204 (o 42703).
+        // Riprova senza scuola_id così la pubblicazione resta possibile (degrado).
+        if (insRes.error && ['PGRST204', '42703'].includes((insRes.error as { code?: string }).code ?? '')) {
+            logEvento('galleria', 'info', {
+                operazione: 'gallery:POST',
+                esito: 'degrado-scuola-id-assente',
+            });
+            insRes = await supabase
+                .from('galleria_media_v2')
+                .insert(baseRecord)
+                .select()
+                .single();
+        }
+        const { data, error } = insRes;
 
         if (error) {
             logErrore({ operazione: 'gallery:POST', stato: 500, evento: 'db' }, error);
@@ -262,7 +345,8 @@ export const POST = withRoute('gallery:POST', async (request: Request) => {
         // classi target → broadcast a tutta la scuola. Buffer 30' + debounce
         // per uploader: gli upload a raffica collassano in una notifica sola.
         try {
-            const scuolaId = auth.user.scuola_id ?? null;
+            // Riusa la sede risolta sopra (rispetta il SedeSelector), invece di
+            // ricadere sempre sulla sede primaria dell'utente.
             const tagged = (tag_students ?? []) as string[];
             const classi = Array.isArray(target_classes) ? (target_classes as string[]).filter(Boolean) : [];
             const destinatari = tagged.length > 0
@@ -303,26 +387,19 @@ export const POST = withRoute('gallery:POST', async (request: Request) => {
 // Cancella un media con controllo granularizzato dei ruoli
 export const DELETE = withRoute('gallery:DELETE', async (request: Request) => {
     try {
+        // Gate identità: l'utente arriva SOLO dal gate, MAI dal parametro `?userId=`.
+        // Prima, senza sessione, si ricadeva sul param → spoofing admin (cancellazione
+        // di foto di minori). `requireDocente` esclude genitore/cuoca (401 anonimo,
+        // 403 ruolo non ammesso): nessun ruolo genitore ha titolo a cancellare, e la
+        // successiva logica per ruolo/plesso (isAdmin/isCoordinator/isEducator) resta
+        // invariata — cambia solo la FONTE dell'identità.
+        const auth = await requireDocente(request);
+        if (auth.response) return auth.response;
+        const userId = auth.user.id;
+
         const q = parseQuery(request, deleteQuerySchema);
         if ('response' in q) return q.response;
         const id = q.data.id;
-        const paramUserId = q.data.userId;
-
-        // Recupera l'utente dalla sessione se disponibile
-        let userId: string | undefined = paramUserId;
-        try {
-            const sessionClient = await createClient();
-            const { data: { user } } = await sessionClient.auth.getUser();
-            if (user) {
-                userId = user.id;
-            }
-        } catch {
-            userId = paramUserId;
-        }
-
-        if (!userId) {
-            return NextResponse.json({ error: 'Utente non autenticato' }, { status: 401 });
-        }
 
         const supabase = await createAdminClient();
 

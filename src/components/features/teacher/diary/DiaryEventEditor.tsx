@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { X, Plus, Minus, Moon, Sun } from 'lucide-react';
 import { DiaryEventType } from '@/lib/offline/db';
 import { EventTypeButton } from '@/components/features/teacher/diary/EventTypeButton';
-import { EVENT_CONFIG } from '@/components/features/teacher/diary/eventConfig';
+import { EVENT_CONFIG, BATHROOM_TYPES } from '@/components/features/teacher/diary/eventConfig';
 import { MealDetailInline } from '@/components/features/teacher/diary/MealDetailInline';
 import { ActivityDetailInline, ActivityItem } from '@/components/features/teacher/diary/ActivityDetailInline';
 import { UMORE_VALUES, UMORE_CONFIG, umoreFromDettagli, umoreAttivo } from '@/lib/diary/umore';
@@ -30,6 +30,12 @@ function now() {
 
 function todayISO() {
     return new Date().toISOString().split('T')[0];
+}
+
+// Nome leggibile di un tipo bagno (pipì/cacca/vasino) dai valori di BATHROOM_TYPES.
+// Mostrato solo quando le celle sono impilate (mobile), per orientare senza la sola emoji.
+function bathroomLabel(value: string): string {
+    return BATHROOM_TYPES.find(b => b.value === value)?.label ?? value;
 }
 
 function buildInitialState(type: DiaryEventType, students: DiaryStudent[]) {
@@ -537,58 +543,73 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
                                                     {isSaved && <span className="ml-1.5 text-kidville-success">✅</span>}
                                                 </span>
                                             </div>
-                                            {/* Contatori in griglia */}
-                                            <div className="grid grid-cols-3 gap-2">
+                                            {/* Contatori in griglia: impilati su mobile, in riga da sm+ */}
+                                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                                                 {/* Pipì */}
-                                                <div className="flex items-center gap-2 bg-kidville-info-soft/80 backdrop-blur-sm rounded-xl px-3 py-2 border border-kidville-info/20">
-                                                    <span className="text-lg leading-none">💧</span>
-                                                    <button
-                                                        onClick={() => counter(student.id, 'pipi', -1)}
-                                                        className="w-7 h-7 rounded-full bg-white border border-kidville-info/30 text-kidville-info flex items-center justify-center hover:bg-kidville-info-soft transition-colors"
-                                                    >
-                                                        <Minus size={10} strokeWidth={1.5} />
-                                                    </button>
-                                                    <span className="font-barlow font-black text-xl text-kidville-info w-6 text-center">{pipi}</span>
-                                                    <button
-                                                        onClick={() => counter(student.id, 'pipi', 1)}
-                                                        className="w-7 h-7 rounded-full bg-kidville-info text-white flex items-center justify-center hover:opacity-90 transition-colors"
-                                                    >
-                                                        <Plus size={10} strokeWidth={1.5} />
-                                                    </button>
+                                                <div className="flex items-center justify-between gap-2 min-w-0 bg-kidville-info-soft/80 backdrop-blur-sm rounded-xl px-3 py-2 border border-kidville-info/20">
+                                                    <div className="flex items-center gap-1.5 min-w-0">
+                                                        <span className="text-lg leading-none">💧</span>
+                                                        <span className="sm:hidden font-maven font-semibold text-xs text-kidville-info truncate">{bathroomLabel('pipi')}</span>
+                                                    </div>
+                                                    <div className="flex items-center gap-2 flex-shrink-0">
+                                                        <button
+                                                            onClick={() => counter(student.id, 'pipi', -1)}
+                                                            className="w-7 h-7 rounded-full bg-white border border-kidville-info/30 text-kidville-info flex items-center justify-center hover:bg-kidville-info-soft transition-colors"
+                                                        >
+                                                            <Minus size={10} strokeWidth={1.5} />
+                                                        </button>
+                                                        <span className="font-barlow font-black text-xl text-kidville-info w-6 text-center">{pipi}</span>
+                                                        <button
+                                                            onClick={() => counter(student.id, 'pipi', 1)}
+                                                            className="w-7 h-7 rounded-full bg-kidville-info text-white flex items-center justify-center hover:opacity-90 transition-colors"
+                                                        >
+                                                            <Plus size={10} strokeWidth={1.5} />
+                                                        </button>
+                                                    </div>
                                                 </div>
                                                 {/* Cacca */}
-                                                <div className="flex items-center gap-2 bg-kidville-warn-soft/80 backdrop-blur-sm rounded-xl px-3 py-2 border border-kidville-warn/20">
-                                                    <span className="text-lg leading-none">💩</span>
-                                                    <button
-                                                        onClick={() => counter(student.id, 'cacca', -1)}
-                                                        className="w-7 h-7 rounded-full bg-white border border-kidville-warn/30 text-kidville-warn flex items-center justify-center hover:bg-kidville-warn-soft transition-colors"
-                                                    >
-                                                        <Minus size={10} strokeWidth={1.5} />
-                                                    </button>
-                                                    <span className="font-barlow font-black text-xl text-kidville-warn w-6 text-center">{cacca}</span>
-                                                    <button
-                                                        onClick={() => counter(student.id, 'cacca', 1)}
-                                                        className="w-7 h-7 rounded-full bg-kidville-warn text-white flex items-center justify-center hover:opacity-90 transition-colors"
-                                                    >
-                                                        <Plus size={10} strokeWidth={1.5} />
-                                                    </button>
+                                                <div className="flex items-center justify-between gap-2 min-w-0 bg-kidville-warn-soft/80 backdrop-blur-sm rounded-xl px-3 py-2 border border-kidville-warn/20">
+                                                    <div className="flex items-center gap-1.5 min-w-0">
+                                                        <span className="text-lg leading-none">💩</span>
+                                                        <span className="sm:hidden font-maven font-semibold text-xs text-kidville-warn truncate">{bathroomLabel('cacca')}</span>
+                                                    </div>
+                                                    <div className="flex items-center gap-2 flex-shrink-0">
+                                                        <button
+                                                            onClick={() => counter(student.id, 'cacca', -1)}
+                                                            className="w-7 h-7 rounded-full bg-white border border-kidville-warn/30 text-kidville-warn flex items-center justify-center hover:bg-kidville-warn-soft transition-colors"
+                                                        >
+                                                            <Minus size={10} strokeWidth={1.5} />
+                                                        </button>
+                                                        <span className="font-barlow font-black text-xl text-kidville-warn w-6 text-center">{cacca}</span>
+                                                        <button
+                                                            onClick={() => counter(student.id, 'cacca', 1)}
+                                                            className="w-7 h-7 rounded-full bg-kidville-warn text-white flex items-center justify-center hover:opacity-90 transition-colors"
+                                                        >
+                                                            <Plus size={10} strokeWidth={1.5} />
+                                                        </button>
+                                                    </div>
                                                 </div>
                                                 {/* Vasino (potty training) */}
-                                                <div className="flex items-center gap-2 bg-kidville-success-soft/80 backdrop-blur-sm rounded-xl px-3 py-2 border border-kidville-success/20">
-                                                    <span className="text-lg leading-none">🪣</span>
-                                                    <button
-                                                        onClick={() => counter(student.id, 'vasino', -1)}
-                                                        className="w-7 h-7 rounded-full bg-white border border-kidville-success/30 text-kidville-success flex items-center justify-center hover:bg-kidville-success-soft transition-colors"
-                                                    >
-                                                        <Minus size={10} strokeWidth={1.5} />
-                                                    </button>
-                                                    <span className="font-barlow font-black text-xl text-kidville-success w-6 text-center">{vasino}</span>
-                                                    <button
-                                                        onClick={() => counter(student.id, 'vasino', 1)}
-                                                        className="w-7 h-7 rounded-full bg-kidville-success text-white flex items-center justify-center hover:opacity-90 transition-colors"
-                                                    >
-                                                        <Plus size={10} strokeWidth={1.5} />
-                                                    </button>
+                                                <div className="flex items-center justify-between gap-2 min-w-0 bg-kidville-success-soft/80 backdrop-blur-sm rounded-xl px-3 py-2 border border-kidville-success/20">
+                                                    <div className="flex items-center gap-1.5 min-w-0">
+                                                        <span className="text-lg leading-none">🚽</span>
+                                                        <span className="sm:hidden font-maven font-semibold text-xs text-kidville-success truncate">{bathroomLabel('vasino')}</span>
+                                                    </div>
+                                                    <div className="flex items-center gap-2 flex-shrink-0">
+                                                        <button
+                                                            onClick={() => counter(student.id, 'vasino', -1)}
+                                                            className="w-7 h-7 rounded-full bg-white border border-kidville-success/30 text-kidville-success flex items-center justify-center hover:bg-kidville-success-soft transition-colors"
+                                                        >
+                                                            <Minus size={10} strokeWidth={1.5} />
+                                                        </button>
+                                                        <span className="font-barlow font-black text-xl text-kidville-success w-6 text-center">{vasino}</span>
+                                                        <button
+                                                            onClick={() => counter(student.id, 'vasino', 1)}
+                                                            className="w-7 h-7 rounded-full bg-kidville-success text-white flex items-center justify-center hover:opacity-90 transition-colors"
+                                                        >
+                                                            <Plus size={10} strokeWidth={1.5} />
+                                                        </button>
+                                                    </div>
                                                 </div>
                                             </div>
                                         </motion.div>

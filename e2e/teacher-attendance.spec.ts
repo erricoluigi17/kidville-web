@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { IDS, STORAGE } from './fixtures';
 
-// Appello docente (/teacher/attendance, sezione Girasoli): registrazione + persistenza.
+// Appello docente (/teacher/attendance, sezione Girasoli): registrazione + rettifica + persistenza.
 test.use({ storageState: STORAGE.docente });
 
 // La CI E2E gira su `next dev` (playwright.config webServer): la pagina appello è il
@@ -13,7 +13,7 @@ test.use({ storageState: STORAGE.docente });
 const RENDER = 60_000;
 const AZIONE = 20_000;
 
-test('appello: registra presente/assente e persiste al reload', async ({ page }) => {
+test('appello: registra, rettifica assente→presente e persiste al reload', async ({ page }) => {
   test.setTimeout(150_000);
   await page.goto('/teacher/attendance');
 
@@ -21,21 +21,30 @@ test('appello: registra presente/assente e persiste al reload', async ({ page })
   await expect(page.getByText('Aurora')).toBeVisible({ timeout: RENDER });
   await expect(page.getByText('Bruno')).toBeVisible({ timeout: RENDER });
 
-  // Aurora presente: i 3 bottoni lasciano il posto al badge + azioni uscita.
+  // Aurora presente: i 3 bottoni NON spariscono. Il bottone selezionato passa ad
+  // aria-pressed="true" e compaiono le azioni di uscita.
   await page.locator(`#btn-presente-${IDS.A1}`).click();
+  await expect(page.locator(`#btn-presente-${IDS.A1}`)).toHaveAttribute('aria-pressed', 'true', { timeout: AZIONE });
   await expect(page.locator(`#btn-checkout-${IDS.A1}`)).toBeVisible({ timeout: AZIONE });
 
-  // Bruno assente.
+  // Bruno assente: i bottoni restano tutti visibili; assente è attivo, presente non lo è.
   await page.locator(`#btn-assente-${IDS.A2}`).click();
-  await expect(page.locator(`#btn-presente-${IDS.A2}`)).toHaveCount(0, { timeout: AZIONE });
+  await expect(page.locator(`#btn-assente-${IDS.A2}`)).toHaveAttribute('aria-pressed', 'true', { timeout: AZIONE });
+  await expect(page.locator(`#btn-presente-${IDS.A2}`)).toHaveAttribute('aria-pressed', 'false', { timeout: AZIONE });
 
   // Sezione completa: 2/2 registrati.
   await expect(page.getByText('Completo')).toBeVisible({ timeout: AZIONE });
 
-  // Persistenza reale (upsert su presenze): al reload gli stati restano.
+  // Rettifica: Bruno da assente a presente, direttamente sul bottone (nessun reset intermedio).
+  await page.locator(`#btn-presente-${IDS.A2}`).click();
+  await expect(page.locator(`#btn-presente-${IDS.A2}`)).toHaveAttribute('aria-pressed', 'true', { timeout: AZIONE });
+  await expect(page.locator(`#btn-assente-${IDS.A2}`)).toHaveAttribute('aria-pressed', 'false', { timeout: AZIONE });
+  await expect(page.locator(`#btn-checkout-${IDS.A2}`)).toBeVisible({ timeout: AZIONE });
+
+  // Persistenza reale (upsert su presenze): al reload gli stati, rettifica inclusa, restano.
   await page.reload();
-  await expect(page.locator(`#btn-checkout-${IDS.A1}`)).toBeVisible({ timeout: RENDER });
-  await expect(page.locator(`#btn-presente-${IDS.A2}`)).toHaveCount(0, { timeout: AZIONE });
-  await expect(page.getByText('Assente', { exact: true }).first()).toBeVisible({ timeout: AZIONE });
+  await expect(page.locator(`#btn-presente-${IDS.A1}`)).toHaveAttribute('aria-pressed', 'true', { timeout: RENDER });
+  await expect(page.locator(`#btn-checkout-${IDS.A1}`)).toBeVisible({ timeout: AZIONE });
+  await expect(page.locator(`#btn-presente-${IDS.A2}`)).toHaveAttribute('aria-pressed', 'true', { timeout: AZIONE });
   await expect(page.getByText('Completo')).toBeVisible({ timeout: AZIONE });
 });

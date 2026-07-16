@@ -1,0 +1,98 @@
+# =============================================================================
+# Kidville · iOS — percorso utente reale del GENITORE
+#   login → dashboard → presenze → comunicazioni
+#
+# Prerequisiti (vedi .claude/maestro-flows/README.md):
+#   - simulatore iOS avviato (xcrun simctl boot …)
+#   - dev server sull'host, porta 3000
+#   - App.app buildata con CAP_SERVER_URL="http://localhost:3000" e installata
+#   - credenziali negli env MAESTRO_KV_EMAIL_GENITORE / MAESTRO_KV_PASSWORD
+#
+# Esecuzione:
+#   maestro test -e KV_EMAIL="$MAESTRO_KV_EMAIL_GENITORE" \
+#                -e KV_PASSWORD="$MAESTRO_KV_PASSWORD" \
+#                .claude/maestro-flows/ios-percorso-genitore.yaml
+#
+# Differenze rispetto ad Android: dal simulatore l'host è `localhost` (non
+# 10.0.2.2, e localhost non soffre il problema HMR di next dev), e non c'è tasto
+# Indietro hardware → si naviga con la bottom nav. Su WebView iOS `hideKeyboard`
+# fallisce ("Couldn't hide the keyboard"): la tastiera si chiude con un tap sul
+# titolo statico "Benvenuto/a!". Selettori verificati su iPhone 17 Pro (2026-07-16).
+# =============================================================================
+appId: it.kidville.app
+name: Kidville · iOS — percorso genitore
+tags:
+  - ios
+  - genitore
+env:
+  KV_EMAIL: ${MAESTRO_KV_EMAIL_GENITORE}
+  KV_PASSWORD: ${MAESTRO_KV_PASSWORD}
+---
+- launchApp:
+    clearState: true
+
+# ── 1. LOGIN ─────────────────────────────────────────────────────────────────
+- extendedWaitUntil:
+    visible: "Accedi al tuo account Kidville"
+    timeout: 60000
+- assertVisible: "Benvenuto/a!"
+- takeScreenshot: /tmp/kv-ios-genitore-0-login
+
+- tapOn:
+    below: "Email"
+- inputText: ${KV_EMAIL}
+- tapOn: "Benvenuto/a!"    # WebView-safe: chiude la tastiera (no hideKeyboard)
+
+- tapOn:
+    below: "Password"
+- inputText: ${KV_PASSWORD}
+- tapOn: "Benvenuto/a!"
+
+- tapOn: "Accedi"
+
+# Il primo avvio può mostrare il dialog nativo dei permessi notifiche: chiudilo.
+- runFlow:
+    when:
+      visible: "Non consentire"
+    commands:
+      - tapOn: "Non consentire"
+
+# ── 2. DASHBOARD ─────────────────────────────────────────────────────────────
+# La tab Menu ha aria-label "Menu · tutte le sezioni".
+- extendedWaitUntil:
+    visible: "Avvisi"
+    timeout: 60000
+- assertVisible: "Home"
+- assertVisible:
+    text: "Menu · tutte le sezioni"
+- takeScreenshot: /tmp/kv-ios-genitore-1-dashboard
+
+# ── 3. PRESENZE ──────────────────────────────────────────────────────────────
+# "Presenze" nel foglio Menu → selettore sul sottotitolo univoco.
+- tapOn:
+    text: "Menu · tutte le sezioni"
+- extendedWaitUntil:
+    visible: "Assenze e giustifiche"
+    timeout: 20000
+- tapOn: "Assenze e giustifiche"
+- extendedWaitUntil:
+    visible: "Segnala assenza"
+    timeout: 45000
+- takeScreenshot: /tmp/kv-ios-genitore-2-presenze
+
+# ── 4. COMUNICAZIONI ─────────────────────────────────────────────────────────
+- tapOn: "Avvisi"
+- extendedWaitUntil:
+    visible: "Comunicazioni"
+    timeout: 45000
+- takeScreenshot: /tmp/kv-ios-genitore-3-avvisi
+
+# ── 5. RITORNO ALLA HOME ─────────────────────────────────────────────────────
+# Su iOS non c'è back hardware: si torna con la bottom nav. Serve anche a
+# verificare che la nav resti agganciata sopra l'home indicator (safe-area).
+- tapOn: "Home"
+- extendedWaitUntil:
+    visible:
+      text: "Menu · tutte le sezioni"
+    timeout: 20000
+- takeScreenshot: /tmp/kv-ios-genitore-4-home

@@ -101,20 +101,26 @@ export function processImageWithWatermark(file: File, watermarkUrl: string = '/w
 }
 
 /**
- * Convalida la dimensione e il formato dei file video.
+ * Convalida la dimensione e il formato dei file video DOPO l'elaborazione.
  * Limite: 50MB (52.428.800 byte)
- * Formati consentiti: mp4, quicktime (mov), webm
+ * Formati consentiti: mp4, webm (il file elaborato è sempre uno dei due).
+ *
+ * Il container QuickTime (.mov) NON è più ammesso: il .mov di iPhone porta HEVC, che
+ * Chrome/Android non riproducono, e va convertito PRIMA (vedi `analizzaContenutoVideo`). Il tipo si
+ * normalizza al solo container (`video/webm;codecs=vp9` → `video/webm`), perché il file
+ * prodotto da MediaRecorder porta il suffisso codec e altrimenti verrebbe scartato a torto.
  */
 export function validateVideoFile(file: File): { valid: boolean; error?: string } {
     if (!file.type.startsWith('video/')) {
         return { valid: true };
     }
 
-    const ALLOWED_MIME = ['video/mp4', 'video/quicktime', 'video/webm'];
-    if (!ALLOWED_MIME.includes(file.type)) {
+    const tipoBase = file.type.split(';')[0].trim().toLowerCase();
+    const ALLOWED_MIME = ['video/mp4', 'video/webm'];
+    if (!ALLOWED_MIME.includes(tipoBase)) {
         return {
             valid: false,
-            error: `Formato video non supportato (${file.type}). Sono supportati solo file .mp4, .mov e .webm.`
+            error: `Formato video non supportato (${file.type}). Carica un file .mp4 (H.264) o .webm. I video .mov/HEVC (tipici di iPhone) vanno convertiti prima del caricamento.`
         };
     }
 
@@ -130,17 +136,44 @@ export function validateVideoFile(file: File): { valid: boolean; error?: string 
 }
 
 /**
+ * Errore di conversione video: la conversione OBBLIGATORIA (`opzioni.obbligatoria`) non è
+ * riuscita. `puntoDiFallimento` è l'anello della catena che ha ceduto (enum-like, senza PII):
+ * serve a diagnosticare in quale passaggio il dispositivo non ha potuto convertire.
+ */
+export class VideoConversionError extends Error {
+    puntoDiFallimento: string;
+    constructor(puntoDiFallimento: string) {
+        super(`Conversione video non riuscita (${puntoDiFallimento}).`);
+        this.name = 'VideoConversionError';
+        this.puntoDiFallimento = puntoDiFallimento;
+    }
+}
+
+/**
  * Applica il watermark del logo al video e lo comprime se necessario per rientrare nei limiti di peso.
  * Utilizza l'API MediaRecorder, Canvas e Web Audio API per unire video e traccia audio nativamente.
+ *
+ * `opzioni.obbligatoria`: quando true, ogni fallback silenzioso all'originale diventa un
+ * `reject(VideoConversionError)`. Serve ai video HEVC/.mov, che NON sono riproducibili da
+ * Chrome/Android: consegnare l'originale sarebbe consegnare un video rotto in bacheca. Senza
+ * l'opzione il comportamento LEGACY resta identico (fallback all'originale = `resolve(file)`).
  */
 export function processVideoWithWatermark(
-    file: File, 
+    file: File,
     watermarkUrl: string = '/watermark.png',
-    maxSizeBytes: number = 50 * 1024 * 1024
+    maxSizeBytes: number = 50 * 1024 * 1024,
+    opzioni?: { obbligatoria?: boolean }
 ): Promise<File> {
-    return new Promise((resolve) => {
+    return new Promise<File>((resolve, reject) => {
+        // Punto di fallimento: se la conversione è OBBLIGATORIA si rigetta (il video non è
+        // riproducibile, l'originale non va consegnato); altrimenti si torna all'originale.
+        const fallisci = (punto: string) => {
+            if (opzioni?.obbligatoria) reject(new VideoConversionError(punto));
+            else resolve(file);
+        };
+
         if (typeof window === 'undefined' || !window.MediaRecorder) {
-            return resolve(file); // Fallback se non supportato
+            return fallisci('mediarecorder-non-supportato');
         }
 
         // Carica prima il watermark
@@ -159,7 +192,11 @@ export function processVideoWithWatermark(
         function startProcessing(noWatermark: boolean) {
             const video = document.createElement('video');
             video.src = URL.createObjectURL(file);
-            video.muted = true; // Muto per non riprodurre audio nello speaker del client in background
+            // NON si silenzia l'elemento con la proprietà `muted`: farlo svuoterebbe anche la
+            // traccia catturata via `createMediaElementSource` → i video convertiti uscirebbero
+            // SENZA audio (era esattamente questo il bug). L'audio non arriva agli speaker perché
+            // il grafo Web Audio (sotto) instrada l'elemento nella registrazione e NON in
+            // `audioCtx.destination` (niente eco).
             video.playsInline = true;
 
             video.onloadedmetadata = () => {
@@ -167,7 +204,7 @@ export function processVideoWithWatermark(
                 const ctx = canvas.getContext('2d');
                 if (!ctx) {
                     URL.revokeObjectURL(video.src);
-                    return resolve(file);
+                    return fallisci('canvas-2d-non-disponibile');
                 }
 
                 // Cappa le dimensioni massime a 720p per bilanciare qualità e velocità di elaborazione client-side
@@ -213,6 +250,12 @@ export function processVideoWithWatermark(
                     }
                 } catch (audioErr) {
                     console.warn("Impossibile catturare la traccia audio del video:", audioErr);
+                    // Cattura Web Audio fallita: qui NON c'è alcuna traccia da preservare, quindi
+                    // silenziare l'elemento è sicuro. Si azzera il VOLUME (non la proprietà
+                    // `muted`, coerentemente con la scelta qui sopra) così l'elemento non suona
+                    // dagli speaker durante la conversione. Ramo di ripiego raro: nel percorso
+                    // normale la cattura riesce e questo non serve.
+                    video.volume = 0;
                 }
 
                 // Cattura lo stream video del canvas a 25 fps
@@ -226,20 +269,20 @@ export function processVideoWithWatermark(
                 } catch {
                     URL.revokeObjectURL(video.src);
                     if (audioCtx) audioCtx.close().catch(() => {});
-                    return resolve(file);
+                    return fallisci('capture-stream-fallito');
                 }
 
-                // Trova il tipo mime supportato dal browser per la registrazione
-                let mimeType = 'video/webm;codecs=vp9';
-                if (!MediaRecorder.isTypeSupported(mimeType)) {
-                    mimeType = 'video/webm;codecs=vp8';
-                }
-                if (!MediaRecorder.isTypeSupported(mimeType)) {
-                    mimeType = 'video/webm';
-                }
-                if (!MediaRecorder.isTypeSupported(mimeType)) {
-                    mimeType = 'video/mp4';
-                }
+                // Tipo mime supportato per la registrazione. Si ANTEPONE `video/mp4;codecs=avc1`
+                // (H.264, riproducibile ovunque: Chrome ≥126, Safari), con fallback su webm come
+                // prima. Così il file convertito è compatibile col maggior numero di dispositivi.
+                const candidatiMime = [
+                    'video/mp4;codecs=avc1',
+                    'video/webm;codecs=vp9',
+                    'video/webm;codecs=vp8',
+                    'video/webm',
+                    'video/mp4',
+                ];
+                const mimeType = candidatiMime.find((c) => MediaRecorder.isTypeSupported(c)) || 'video/webm';
 
                 let mediaRecorder: MediaRecorder;
                 try {
@@ -253,7 +296,7 @@ export function processVideoWithWatermark(
                     } catch {
                         URL.revokeObjectURL(video.src);
                         if (audioCtx) audioCtx.close().catch(() => {});
-                        return resolve(file);
+                        return fallisci('mediarecorder-init-fallito');
                     }
                 }
 
@@ -282,7 +325,7 @@ export function processVideoWithWatermark(
                 video.play().catch(() => {
                     URL.revokeObjectURL(video.src);
                     if (audioCtx) audioCtx.close().catch(() => {});
-                    resolve(file);
+                    fallisci('play-fallito');
                 });
                 mediaRecorder.start();
 
@@ -318,18 +361,22 @@ export function processVideoWithWatermark(
 
                 video.onerror = () => {
                     if (mediaRecorder.state === 'recording') {
+                        // Già registrato qualcosa: si chiude e `onstop` risolve col convertito.
                         mediaRecorder.stop();
                     } else {
                         URL.revokeObjectURL(video.src);
                         if (audioCtx) audioCtx.close().catch(() => {});
-                        resolve(file);
+                        fallisci('video-errore-durante-conversione');
                     }
                 };
             };
 
+            // Metadati illeggibili: è QUI che casca un HEVC/.mov su Chrome/Android — il decoder
+            // non lo apre e `onloadedmetadata` non scatta mai. Con conversione obbligatoria è il
+            // punto in cui si rigetta (niente originale non riproducibile in bacheca).
             video.onerror = () => {
                 URL.revokeObjectURL(video.src);
-                resolve(file);
+                fallisci('video-metadati-illeggibili');
             };
         }
     });

@@ -10,7 +10,7 @@ import { enqueueNotifichePerAlunni, notificaTitolariScrittura } from '@/lib/prim
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zDataYMD, zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 const getQuerySchema = z.object({
   sectionId: zUuid,
@@ -197,18 +197,38 @@ export const POST = withRoute('primaria/registro:POST', async (request: NextRequ
       }
     }
 
-    const isIndipendente = tipoCompresenza === 'sostegno' && destinatariIds.length > 0
+    // P7/B1 — due condizioni DISTINTE (prima erano fuse in `isIndipendente`):
+    //  · haDestinatari  = l'assegnazione è mirata ad alunni selezionati → si scrivono i
+    //    contenuti "propri" (argomento_proprio/compiti_propri) e si popola
+    //    registro_destinatari. Vale per QUALSIASI tipo firma, non solo il sostegno.
+    //  · sopprimeCondivisi = QUALSIASI assegnazione mirata NON deve toccare i contenuti
+    //    CONDIVISI di classe (argomento/compiti/materia della riga registro_orario). La riga è
+    //    CONDIVISA fra i docenti (upsert onConflict classe_sezione,data,ora_lezione): quando un
+    //    docente non-titolare assegna ai soli alunni selezionati, il client non mostra nemmeno i
+    //    textarea condivisi, che arriverebbero VUOTI — scriverli AZZERAREBBE l'argomento/compiti
+    //    del titolare (REGRESSIONE ciclo-1 B1, qui corretta). Il sostegno resta un caso
+    //    particolare del generale: comportamento invariato, i suoi condivisi non si toccano mai.
+    const haDestinatari = destinatariIds.length > 0
+    const sopprimeCondivisi = haDestinatari
 
-    // UPSERT della riga registro. I contenuti CONDIVISI (argomento/compiti) si
-    // scrivono solo per firma principale/compresenza/cofirma, non per firma indipendente.
-    const sharedFields = isIndipendente
-      ? {}
-      : {
-          materia_id: materiaId ?? null,
-          argomento: argomento || null,
-          compiti: compiti || null,
-          data_consegna_compiti: dataConsegnaCompiti || null,
-        }
+    // UPSERT della riga registro. I contenuti CONDIVISI si scrivono SOLO per l'assegnazione a
+    // TUTTA la classe (nessun destinatario). DIFESA IN PROFONDITÀ: non includiamo MAI nell'upsert
+    // un campo condiviso con valore VUOTO. Sull'UPDATE di una riga già firmata dal titolare,
+    // scrivere argomento:null/compiti:null AZZERA il dato esistente; OMETTERE la chiave lo lascia
+    // intatto (e in INSERT vale comunque il default null della colonna). Così anche un payload
+    // anomalo con condivisi vuoti non può cancellare i contenuti di classe.
+    const sharedFields: {
+      materia_id?: string
+      argomento?: string
+      compiti?: string
+      data_consegna_compiti?: string
+    } = {}
+    if (!sopprimeCondivisi) {
+      if (materiaId) sharedFields.materia_id = materiaId
+      if (argomento) sharedFields.argomento = argomento
+      if (compiti) sharedFields.compiti = compiti
+      if (dataConsegnaCompiti) sharedFields.data_consegna_compiti = dataConsegnaCompiti
+    }
 
     const { data: registroRow, error: regErr } = await supabase
       .from('registro_orario')
@@ -257,8 +277,8 @@ export const POST = withRoute('primaria/registro:POST', async (request: NextRequ
           registro_id: registroRow.id,
           maestra_id: firmaUserId,
           tipo_compresenza: tipoCompresenza,
-          argomento_proprio: isIndipendente ? argomentoProprio || null : null,
-          compiti_propri: isIndipendente ? compitiPropri || null : null,
+          argomento_proprio: haDestinatari ? argomentoProprio || null : null,
+          compiti_propri: haDestinatari ? compitiPropri || null : null,
         },
         { onConflict: 'registro_id,maestra_id' }
       )
@@ -266,37 +286,82 @@ export const POST = withRoute('primaria/registro:POST', async (request: NextRequ
       .single()
     if (firmaErr) return NextResponse.json({ error: firmaErr.message }, { status: 500 })
 
-    // Destinatari (oscuramento): sostituisce quelli della firma.
-    if (isIndipendente && firmaRow) {
-      await supabase.from('registro_destinatari').delete().eq('firma_id', firmaRow.id)
+    // Destinatari (assegnazione mirata): sostituisce quelli della firma. Solo quando
+    // l'assegnazione è mirata ad alunni selezionati (haDestinatari); l'assegnazione di
+    // classe non tocca la tabella. PostgREST non lancia: controlla ogni ritorno.
+    if (haDestinatari && firmaRow) {
+      const { error: delDestErr } = await supabase.from('registro_destinatari').delete().eq('firma_id', firmaRow.id)
+      if (delDestErr) {
+        logErrore({ operazione: 'primaria/registro:POST', evento: 'db', stato: 500 }, delDestErr)
+        return NextResponse.json({ error: delDestErr.message }, { status: 500 })
+      }
       const rows = destinatariIds.map((alunnoId) => ({
         registro_id: registroRow.id,
         firma_id: firmaRow.id,
         alunno_id: alunnoId,
       }))
-      if (rows.length) await supabase.from('registro_destinatari').insert(rows)
+      if (rows.length) {
+        const { error: insDestErr } = await supabase.from('registro_destinatari').insert(rows)
+        if (insDestErr) {
+          logErrore({ operazione: 'primaria/registro:POST', evento: 'db', stato: 500 }, insDestErr)
+          return NextResponse.json({ error: insDestErr.message }, { status: 500 })
+        }
+      }
     }
 
-    // Notifica compiti (buffer). Destinatari: gli alunni indicati (firma
-    // indipendente) oppure tutta la classe. Best-effort.
+    // Notifica compiti (buffer). Due destinatari distinti, SENZA doppioni allo stesso
+    // genitore: gli alunni selezionati ricevono il testo "proprio"; il RESTO della classe
+    // (esclusi i selezionati) riceve il testo condiviso, ma solo se quest'ultimo è stato
+    // scritto (non soppresso). Best-effort: un fallimento non blocca il salvataggio, ma
+    // NON è muto — si logga (uuid, mai i testi dei compiti).
     try {
-      if (compiti || compitiPropri) {
-        let target: string[] = destinatariIds
-        if (!isIndipendente) {
-          const { data: classe } = await supabase.from('alunni').select('id').eq('section_id', sectionId)
-          target = (classe ?? []).map((a) => a.id)
-        }
+      const notificaCompiti = {
+        tipo: 'compiti',
+        titolo: 'Nuovi compiti assegnati',
+        link: '/parent/compiti',
+        entitaTipo: 'registro',
+        entitaId: registroRow.id,
+        scuolaId: section.scuola_id,
+      }
+      // 1) Alunni selezionati → testo proprio.
+      if (haDestinatari && compitiPropri) {
         await enqueueNotifichePerAlunni(supabase, {
-          alunnoIds: target,
-          tipo: 'compiti',
-          titolo: 'Nuovi compiti assegnati',
-          corpo: (compiti || compitiPropri || '').slice(0, 140),
-          link: '/parent/compiti',
-          entitaTipo: 'registro',
-          entitaId: registroRow.id,
+          ...notificaCompiti,
+          alunnoIds: destinatariIds,
+          corpo: compitiPropri.slice(0, 140),
         })
       }
-    } catch { /* non bloccare il salvataggio */ }
+      // 2) Resto della classe → testo condiviso (solo se non soppresso).
+      if (compiti && !sopprimeCondivisi) {
+        const { data: classe, error: classeErr } = await supabase.from('alunni').select('id').eq('section_id', sectionId)
+        if (classeErr) {
+          logEvento('push', 'warn', {
+            operazione: 'primaria/registro:POST',
+            esito: 'notifica_compiti_classe_non_risolta',
+            sezione: sectionId,
+            entita_id: registroRow.id,
+          }, classeErr)
+        } else {
+          const esclusi = new Set(destinatariIds)
+          const target = (classe ?? []).map((a) => a.id).filter((id) => !esclusi.has(id))
+          if (target.length) {
+            await enqueueNotifichePerAlunni(supabase, {
+              ...notificaCompiti,
+              alunnoIds: target,
+              corpo: compiti.slice(0, 140),
+            })
+          }
+        }
+      }
+    } catch (err) {
+      // Il catch NON risponde 500 (best-effort), quindi withRoute non lo vedrebbe: si logga qui.
+      logEvento('push', 'warn', {
+        operazione: 'primaria/registro:POST',
+        esito: 'notifica_compiti_fallita',
+        sezione: sectionId,
+        entita_id: firmaRow?.id ?? registroRow.id,
+      }, err)
+    }
 
     await logScrittura(supabase, {
       attore: auth.user,

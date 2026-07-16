@@ -4,10 +4,12 @@ import { NextResponse } from 'next/server'
 // P4/DL-040 (S9b): il ramo genitore di GET /api/diary/entries legge eventi_diario
 // via SERVICE-ROLE (così le policy permissive anon sono droppate senza rompere la
 // lettura). Lo scoping di proprietà è rinviato a S13 (vedi commento nella route).
-// Il ramo docente resta gated (requireDocente).
+// Il ramo docente resta gated (requireDocente) E ora è scoperto per SEDE ATTIVA:
+// usa resolveScuoleAttive (SedeSelector/cookie), ri-validata server-side.
 
 const h = vi.hoisted(() => ({
   requireDocente: vi.fn(),
+  resolveScuoleAttive: vi.fn(),
   events: [{ id: 'e1', tipo_evento: 'pranzo', orario_inizio: '2026-06-27T12:00:00Z', dettagli: {}, nota_libera: 'buona giornata' }],
 }))
 
@@ -15,7 +17,7 @@ vi.mock('@/lib/auth/require-staff', () => ({
   requireUser: vi.fn(),
   requireDocente: h.requireDocente,
 }))
-vi.mock('@/lib/auth/scope', () => ({ assertAlunnoInScope: async () => null, scuoleDiUtente: async () => ['sc-1'] }))
+vi.mock('@/lib/auth/scope', () => ({ assertAlunnoInScope: async () => null, resolveScuoleAttive: h.resolveScuoleAttive }))
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: vi.fn() }))
 vi.mock('@/lib/primaria/notifiche', () => ({ notificaTitolariScrittura: vi.fn(), enqueueDiarioGenitori: vi.fn() }))
 vi.mock('@/lib/supabase/server-client', () => ({
@@ -36,11 +38,12 @@ vi.mock('@/lib/supabase/server-client', () => ({
 import { GET } from '@/app/api/diary/entries/route'
 
 // url richiesta da parseQuery (M3); alunno_id GUID-shaped per zUuid
-const req = (qs: string) => ({ url: `http://test/api/diary/entries?${qs}`, nextUrl: { searchParams: new URLSearchParams(qs) }, headers: new Headers() }) as never
+const req = (qs: string) => ({ url: `http://test/api/diary/entries?${qs}`, nextUrl: { searchParams: new URLSearchParams(qs) }, headers: new Headers(), cookies: { get: () => undefined } }) as never
 
 beforeEach(() => {
   vi.clearAllMocks()
   h.requireDocente.mockResolvedValue({ user: { id: 'ed1', role: 'educator', scuola_id: 'sc-1' } })
+  h.resolveScuoleAttive.mockResolvedValue(['sc-1'])
 })
 
 describe('GET /api/diary/entries', () => {
@@ -57,5 +60,20 @@ describe('GET /api/diary/entries', () => {
     const res = await GET(req('sezione=Girasoli&date=2026-06-27'))
     expect(res.status).toBe(403)
     expect(h.requireDocente).toHaveBeenCalled()
+  })
+
+  it('ramo docente: filtra per SEDE ATTIVA (resolveScuoleAttive)', async () => {
+    const res = await GET(req('sezione=Girasoli&date=2026-06-27'))
+    expect(res.status).toBe(200)
+    // È resolveScuoleAttive (non scuoleDiUtente) a risolvere i plessi: rispetta il
+    // cookie sedi_attive del SedeSelector.
+    expect(h.resolveScuoleAttive).toHaveBeenCalled()
+  })
+
+  it('ramo docente: nessuna sede attiva → lista vuota', async () => {
+    h.resolveScuoleAttive.mockResolvedValue([])
+    const res = await GET(req('sezione=Girasoli&date=2026-06-27'))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual([])
   })
 })

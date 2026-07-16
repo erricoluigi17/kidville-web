@@ -1,9 +1,10 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { getModuleConfig } from '@/lib/settings/module-config';
 import { requireDocente } from '@/lib/auth/require-staff';
-import { scuoleDiUtente } from '@/lib/auth/scope';
+import { resolveScuoleAttive } from '@/lib/auth/scope';
+import { verificaTargetAvvisoDocente } from '@/lib/avvisi/target-gate';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { notificaEvento } from '@/lib/notifiche/triggers';
 import { genitoriDiClassi, genitoriDiScuola } from '@/lib/notifiche/destinatari';
@@ -41,7 +42,7 @@ const postBodySchema = z.object({
 
 // GET /api/avvisi?scope=globale|classe&classe=xxx&parentId=xxx
 // Lista avvisi con filtri
-export const GET = withRoute('avvisi:GET', async (request: Request) => {
+export const GET = withRoute('avvisi:GET', async (request: NextRequest) => {
     try {
         // Il ramo (staff vs genitore) si decide sul valore grezzo di parentId,
         // così il gate auth resta PRIMA della validazione (come oggi).
@@ -55,7 +56,9 @@ export const GET = withRoute('avvisi:GET', async (request: Request) => {
         if (!parentIdGrezzo) {
             const auth = await requireDocente(request);
             if (auth.response) return auth.response;
-            plessiScope = await scuoleDiUtente(supabase, auth.user);
+            // Sedi ATTIVE (cookie SedeSelector) ∩ sedi accessibili: la GET staff
+            // rispetta la selezione multi-sede, ri-validata server-side.
+            plessiScope = await resolveScuoleAttive(request, supabase, auth.user);
             if (plessiScope.length === 0) return NextResponse.json([]);
         }
 
@@ -203,6 +206,15 @@ export const POST = withRoute('avvisi:POST', async (request: Request) => {
                 { status: 403 }
             );
         }
+
+        // Gate sul TARGET: un educator scrive solo alle proprie classi (mai
+        // globale, mai classi altrui, mai 'classe'+[] che degrada a globale).
+        // Staff/direzione/segreteria non sono limitati.
+        const targetErr = await verificaTargetAvvisoDocente(supabase, auth.user, {
+            scope: target_scope,
+            classi: target_classes,
+        });
+        if (targetErr) return targetErr;
 
         // Insert resiliente alla colonna mancante: su DB E2E CI privo della
         // migrazione 20260708174440 (form_model_id) → PGRST204/42703 → la rimuove

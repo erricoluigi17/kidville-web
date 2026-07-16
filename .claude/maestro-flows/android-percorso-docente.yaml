@@ -1,0 +1,92 @@
+# =============================================================================
+# Kidville · ANDROID — percorso utente reale del DOCENTE
+#   login → dashboard → appello (presenze) → bacheca (comunicazioni) → Indietro
+#
+# Prerequisiti: vedi .claude/maestro-flows/README.md
+#   - server host :3000 via `npx next start` (build di produzione, NON next dev:
+#     l'HMR-websocket non idrata la WebView via il bridge 10.0.2.2)
+#   - APK con CAP_SERVER_URL="http://10.0.2.2:3000"
+#   - env MAESTRO_KV_EMAIL_DOCENTE / MAESTRO_KV_PASSWORD ESPORTATE
+#
+# Esecuzione:
+#   export MAESTRO_KV_EMAIL_DOCENTE=... MAESTRO_KV_PASSWORD=...
+#   maestro test .claude/maestro-flows/android-percorso-docente.yaml
+#
+# Selettori verificati su emulatore Medium_Phone_API_36 (2026-07-16).
+# =============================================================================
+appId: it.kidville.app
+name: Kidville · Android — percorso docente
+tags:
+  - android
+  - docente
+env:
+  KV_EMAIL: ${MAESTRO_KV_EMAIL_DOCENTE}
+  KV_PASSWORD: ${MAESTRO_KV_PASSWORD}
+---
+- launchApp:
+    clearState: true
+
+# ── 1. LOGIN ─────────────────────────────────────────────────────────────────
+- extendedWaitUntil:
+    visible: "Accedi al tuo account Kidville"
+    timeout: 60000
+- tapOn:
+    below: "Email"
+- inputText: ${KV_EMAIL}
+- hideKeyboard
+- tapOn:
+    below: "Password"
+- inputText: ${KV_PASSWORD}
+- hideKeyboard
+- tapOn: "Accedi"
+
+- runFlow:
+    when:
+      visible: "Non consentire"
+    commands:
+      - tapOn: "Non consentire"
+
+# ── 2. DASHBOARD DOCENTE ─────────────────────────────────────────────────────
+# Saluto "Buongiorno!"; bottom nav con tab "Dashboard" e "Menu · tutte le sezioni".
+- extendedWaitUntil:
+    visible: "Buongiorno!"
+    timeout: 60000
+- assertVisible: "Dashboard"
+- assertVisible:
+    text: "Menu · tutte le sezioni"
+- takeScreenshot: /tmp/kv-android-docente-1-dashboard
+
+# ── 3. PRESENZE (appello) ────────────────────────────────────────────────────
+# La scorciatoia "Modifica appello" sta appena sotto la piega: scroll + tap.
+- scrollUntilVisible:
+    element:
+      text: "Modifica appello"
+    direction: DOWN
+    centerElement: true
+    timeout: 15000
+- tapOn:
+    text: "Modifica appello"
+- extendedWaitUntil:
+    visible: "Appello"
+    timeout: 45000
+- assertVisible: "registrati"
+- assertVisible: "Presente"
+- takeScreenshot: /tmp/kv-android-docente-2-appello
+
+# ── 4. COMUNICAZIONI (bacheca) ───────────────────────────────────────────────
+- tapOn: "Dashboard"
+- extendedWaitUntil:
+    visible: "Apri la bacheca"
+    timeout: 30000
+- tapOn: "Apri la bacheca"
+- extendedWaitUntil:
+    visible: "Circolari e avvisi alle famiglie"
+    timeout: 45000
+- takeScreenshot: /tmp/kv-android-docente-3-bacheca
+
+# ── 5. TASTO INDIETRO DI ANDROID ─────────────────────────────────────────────
+- back
+- extendedWaitUntil:
+    visible: "Dashboard"
+    timeout: 20000
+- takeScreenshot: /tmp/kv-android-docente-4-back

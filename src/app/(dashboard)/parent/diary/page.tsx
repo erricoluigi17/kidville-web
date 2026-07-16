@@ -161,7 +161,7 @@ function buildFirstPersonNarrative(tipo: string, dettagli: Record<string, unknow
         const lines: string[] = [];
         if (pipi   > 0) lines.push(`💧 Ho fatto pipì ${pipi === 1 ? 'una volta' : `${pipi} volte`}`);
         if (cacca  > 0) lines.push(`💩 Ho fatto cacca ${cacca === 1 ? 'una volta' : `${cacca} volte`}`);
-        if (vasino > 0) lines.push(`🪣 Ho usato il vasino ${vasino === 1 ? 'una volta' : `${vasino} volte`}`);
+        if (vasino > 0) lines.push(`🚽 Ho usato il vasino ${vasino === 1 ? 'una volta' : `${vasino} volte`}`);
         if (lines.length === 0) lines.push('Sono stato/a al bagno oggi!');
         return { emoji: '🚿', lines };
     }

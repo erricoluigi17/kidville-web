@@ -10,10 +10,21 @@ export async function setupNativeShell(navigate: (path: string) => void): Promis
   document.documentElement.classList.add('cap-native')
   const vp = document.querySelector('meta[name="viewport"]')
   if (vp) {
-    const content = vp.getAttribute('content') || ''
-    if (!/viewport-fit/.test(content)) {
-      vp.setAttribute('content', `${content}${content ? ', ' : ''}viewport-fit=cover`)
+    // Aggiunge al content del meta viewport SOLO i token mancanti (idempotente).
+    // viewport-fit=cover è già dichiarato staticamente in layout.tsx; qui è
+    // belt-and-braces. maximum-scale=1 + user-scalable=no bloccano l'auto-zoom
+    // iOS al focus di un input: garanzia SOLO nella shell nativa — sul web il
+    // pinch-zoom resta (WCAG 1.4.4), perché layout.tsx non li dichiara.
+    let content = vp.getAttribute('content') || ''
+    const appendToken = (token: string, present: RegExp) => {
+      if (!present.test(content)) {
+        content = `${content}${content ? ', ' : ''}${token}`
+      }
     }
+    appendToken('viewport-fit=cover', /viewport-fit/)
+    appendToken('maximum-scale=1', /maximum-scale/)
+    appendToken('user-scalable=no', /user-scalable/)
+    vp.setAttribute('content', content)
   }
 
   // 2. Status bar: testo chiaro su sfondo verde brand. Su Android la barra è

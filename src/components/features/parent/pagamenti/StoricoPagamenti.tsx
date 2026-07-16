@@ -111,42 +111,6 @@ export function StoricoPagamenti({ userId }: Props) {
 
             <div className="flex justify-end"><PushOptIn userId={userId} /></div>
 
-            {/* Documenti fiscali: attestazione annuale scaricabile in autonomia (730/Bonus Nido). */}
-            {!loading && !error && pagamenti.length > 0 && (() => {
-                const annoCorrente = new Date().getFullYear();
-                const figli = [...new Map(
-                    pagamenti
-                        .filter((p) => p.alunno_id)
-                        .map((p) => [p.alunno_id!, { id: p.alunno_id!, nome: `${p.alunni?.nome ?? ''} ${p.alunni?.cognome ?? ''}`.trim() || 'Alunno' }])
-                ).values()];
-                if (figli.length === 0) return null;
-                return (
-                    <div className="rounded-[18px] border-2 border-kidville-line bg-white p-4">
-                        <p className="mb-2 flex items-center gap-1.5 font-barlow text-sm font-black uppercase text-kidville-green">
-                            <Receipt size={15} /> Documenti fiscali
-                        </p>
-                        <div className="space-y-2">
-                            {figli.map((f) => (
-                                <div key={f.id} className="flex flex-wrap items-center justify-between gap-2">
-                                    <span className="font-maven text-sm text-kidville-ink">{f.nome}</span>
-                                    <span className="flex gap-2">
-                                        {[annoCorrente, annoCorrente - 1].map((a) => (
-                                            <a key={a} href={`/api/pagamenti/attestazione?alunno_id=${f.id}&anno=${a}&userId=${userId}`}
-                                                className="inline-flex items-center gap-1 rounded-full bg-kidville-green/10 px-2 py-1 text-xs font-bold text-kidville-green hover:bg-kidville-green/20">
-                                                <Download size={12} /> Attestazione {a}
-                                            </a>
-                                        ))}
-                                    </span>
-                                </div>
-                            ))}
-                        </div>
-                        <p className="mt-2 font-maven text-[11px] text-kidville-muted">
-                            Per il 730 e il Bonus Nido INPS: la ricevuta numerata di ogni pagamento saldato resta scaricabile dalla voce corrispondente qui sotto.
-                        </p>
-                    </div>
-                );
-            })()}
-
             {loading ? (
                 <p className="font-maven text-sm text-kidville-muted text-center py-8">Caricamento…</p>
             ) : error ? (

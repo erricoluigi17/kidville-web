@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { requireUser } from '@/lib/auth/require-staff'
+import { requireStaff } from '@/lib/auth/require-staff'
 import { resolveScuoleAttive } from '@/lib/auth/scope'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
@@ -21,10 +21,11 @@ const getQuerySchema = z.object({
 // GET /api/pagamenti/attestazione?alunno_id=&anno=&userId= — attestazione
 // annuale dei pagamenti (per il 730): criterio di cassa sull'anno solare,
 // totale versato vs totale TRACCIABILE detraibile (contanti e categorie
-// divise/materiale esclusi). Accesso: staff oppure genitore del bambino.
+// divise/materiale esclusi). Accesso: SOLO staff (segreteria/direzione):
+// l'attestazione la rilascia la segreteria su richiesta del genitore.
 export const GET = withRoute('pagamenti/attestazione:GET', async (request: Request) => {
   try {
-    const auth = await requireUser(request)
+    const auth = await requireStaff(request)
     if (auth.response) return auth.response
     const { user } = auth
     const q = parseQuery(request, getQuerySchema)
@@ -39,22 +40,11 @@ export const GET = withRoute('pagamenti/attestazione:GET', async (request: Reque
       .maybeSingle()
     if (!alunno) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
 
-    const isStaff = user.role === 'admin' || user.role === 'coordinator' || user.role === 'segreteria'
-    if (!isStaff) {
-      const { data: legame } = await supabase
-        .from('legame_genitori_alunni')
-        .select('alunno_id')
-        .eq('genitore_id', user.id)
-        .eq('alunno_id', alunnoId)
-        .maybeSingle()
-      if (!legame) return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
-    } else {
-      // Staff: l'alunno deve appartenere a una sede attiva (niente PDF con
-      // codici fiscali di alunno/pagatore di un altro plesso).
-      const sedi = await resolveScuoleAttive(request as NextRequest, supabase, user)
-      if (!sedi.includes(String(alunno.scuola_id))) {
-        return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
-      }
+    // L'alunno deve appartenere a una sede attiva della segreteria (niente PDF
+    // con codici fiscali di alunno/pagatore di un altro plesso).
+    const sedi = await resolveScuoleAttive(request as NextRequest, supabase, user)
+    if (!sedi.includes(String(alunno.scuola_id))) {
+      return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
     }
 
     // Pagamenti dell'alunno → incassi dell'anno solare (criterio di cassa).

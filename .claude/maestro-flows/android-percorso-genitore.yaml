@@ -1,0 +1,103 @@
+# =============================================================================
+# Kidville · ANDROID — percorso utente reale del GENITORE
+#   login → dashboard → presenze → comunicazioni → tasto Indietro
+#
+# Prerequisiti (vedi .claude/maestro-flows/README.md):
+#   - emulatore Android avviato
+#   - server sull'host, porta 3000 — usare `npx next start` (BUILD di produzione):
+#     con `next dev`/Turbopack l'HMR-websocket non completa l'handshake via il
+#     bridge 10.0.2.2 e la WebView non idrata (React non monta i fiber).
+#   - APK buildato con CAP_SERVER_URL="http://10.0.2.2:3000" e installato
+#   - credenziali negli env MAESTRO_KV_EMAIL_GENITORE / MAESTRO_KV_PASSWORD
+#     ⚠️ vanno ESPORTATE nell'ambiente: `-e KV_EMAIL=...` NON sovrascrive il
+#     blocco env: sottostante, e un ${...} non risolto viene digitato come
+#     la stringa letterale "undefined".
+#
+# Esecuzione:
+#   export MAESTRO_KV_EMAIL_GENITORE=... MAESTRO_KV_PASSWORD=...
+#   maestro test .claude/maestro-flows/android-percorso-genitore.yaml
+#
+# NB: l'app è una WebView Capacitor che carica l'app web da server.url. I tempi
+# di attesa sono generosi di proposito: la prima pagina passa dalla rete.
+# Selettori verificati su emulatore Medium_Phone_API_36 (2026-07-16).
+# =============================================================================
+appId: it.kidville.app
+name: Kidville · Android — percorso genitore
+tags:
+  - android
+  - genitore
+env:
+  KV_EMAIL: ${MAESTRO_KV_EMAIL_GENITORE}
+  KV_PASSWORD: ${MAESTRO_KV_PASSWORD}
+---
+- launchApp:
+    clearState: true
+
+# ── 1. LOGIN ─────────────────────────────────────────────────────────────────
+# Card di login: titolo "Benvenuto/a!", campi Email e Password, CTA "Accedi".
+- extendedWaitUntil:
+    visible: "Accedi al tuo account Kidville"
+    timeout: 60000
+- assertVisible: "Benvenuto/a!"
+- takeScreenshot: /tmp/kv-android-genitore-0-login
+
+- tapOn:
+    below: "Email"
+- inputText: ${KV_EMAIL}
+- hideKeyboard
+
+- tapOn:
+    below: "Password"
+- inputText: ${KV_PASSWORD}
+- hideKeyboard
+
+- tapOn: "Accedi"
+
+# Il primo avvio può mostrare il dialog nativo dei permessi notifiche: chiudilo.
+- runFlow:
+    when:
+      visible: "Non consentire"
+    commands:
+      - tapOn: "Non consentire"
+
+# ── 2. DASHBOARD ─────────────────────────────────────────────────────────────
+# Bottom nav del genitore. La tab Menu ha aria-label "Menu · tutte le sezioni".
+- extendedWaitUntil:
+    visible: "Avvisi"
+    timeout: 60000
+- assertVisible: "Home"
+- assertVisible:
+    text: "Menu · tutte le sezioni"
+- takeScreenshot: /tmp/kv-android-genitore-1-dashboard
+
+# ── 3. PRESENZE ──────────────────────────────────────────────────────────────
+# "Presenze" vive nel foglio Menu; la voce è resa con il sottotitolo univoco
+# "Assenze e giustifiche" (selettore robusto rispetto alle voci vicine).
+- tapOn:
+    text: "Menu · tutte le sezioni"
+- extendedWaitUntil:
+    visible: "Assenze e giustifiche"
+    timeout: 20000
+- tapOn: "Assenze e giustifiche"
+- extendedWaitUntil:
+    visible: "Segnala assenza"
+    timeout: 45000
+- takeScreenshot: /tmp/kv-android-genitore-2-presenze
+
+# ── 4. COMUNICAZIONI ─────────────────────────────────────────────────────────
+# Tab "Avvisi" della bottom nav → pagina "Comunicazioni".
+- tapOn: "Avvisi"
+- extendedWaitUntil:
+    visible: "Comunicazioni"
+    timeout: 45000
+- takeScreenshot: /tmp/kv-android-genitore-3-avvisi
+
+# ── 5. TASTO INDIETRO DI ANDROID ─────────────────────────────────────────────
+# Deve tornare indietro DENTRO l'app, non chiuderla al primo tap.
+- back
+- extendedWaitUntil:
+    visible: "Home"
+    timeout: 20000
+- assertVisible:
+    text: "Menu · tutte le sezioni"
+- takeScreenshot: /tmp/kv-android-genitore-4-back

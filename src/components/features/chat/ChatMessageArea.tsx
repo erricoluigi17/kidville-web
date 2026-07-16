@@ -13,6 +13,9 @@ export interface ChatMessage {
     attachment_url: string | null;
     attachment_type: string | null;
     read_at: string | null;
+    /** Consegnato (scaricato dal destinatario). OPZIONALE: il payload E2E non lo ha
+     *  finché il DB della CI non è migrato — l'assenza degrada a "solo inviato". */
+    delivered_at?: string | null;
     created_at: string;
 }
 
@@ -174,10 +177,19 @@ function MessageBubble({ msg, isMine, currentUserId }: { msg: ChatMessage; isMin
                     {formatMessageTime(msg.created_at)}
                 </span>
                 {isMine && (
-                    <span className="transition-all duration-300">
+                    // Tre stati: letto (doppia spunta gialla) › consegnato (doppia spunta grigia)
+                    // › inviato (singola spunta grigia). `delivered_at` può mancare (payload E2E
+                    // senza colonna): in tal caso si ricade su "inviato", che è la verità visibile.
+                    <span
+                        role="img"
+                        aria-label={msg.read_at ? 'Letto' : msg.delivered_at ? 'Consegnato' : 'Inviato'}
+                        className="transition-all duration-300"
+                    >
                         {msg.read_at
                             ? <CheckCheck size={12} className="text-kidville-yellow" strokeWidth={1.5} />
-                            : <Check size={12} className="text-white/40" strokeWidth={1.5} />}
+                            : msg.delivered_at
+                                ? <CheckCheck size={12} className="text-white/40" strokeWidth={1.5} />
+                                : <Check size={12} className="text-white/40" strokeWidth={1.5} />}
                     </span>
                 )}
             </div>

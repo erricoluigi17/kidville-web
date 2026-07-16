@@ -6,6 +6,7 @@ import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore } from '@/lib/logging/logger';
+import { marcaConsegnati } from '@/lib/chat/delivered';
 
 // Gap auth chiuso in M9: `?userId=` legacy accettato dallo schema ma IGNORATO,
 // l'identità è quella del gate (pattern M4 "parent_id legacy strippato").
@@ -43,6 +44,14 @@ export const GET = withRoute('chat/threads:GET', async (request: Request) => {
             logErrore({ operazione: 'chat/threads:GET', stato: 500, evento: 'db' }, error);
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
+
+        // Aprire la lista consegna TUTTI i messaggi ricevuti nei propri thread (delivered_at).
+        // I thread sono già filtrati per teacher_id/parent_id: nessun rischio cross-account.
+        // UPDATE separato e best-effort (degrada da solo se la colonna non c'è sul DB E2E).
+        await marcaConsegnati(supabase, {
+            userId,
+            threadIds: (threads ?? []).map((t) => t.id as string),
+        });
 
         // Arricchisci con nomi degli interlocutori e conteggio non letti
         const enrichedThreads = await Promise.all(

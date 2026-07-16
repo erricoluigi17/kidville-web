@@ -69,6 +69,12 @@ export function AvvisoCard({ avviso, index, isTeacher, onReadReceipt, onAdesione
     const unread = !isRead && !isTeacher;
     const badge = statusBadge({ isAdesione, isRead, myAnswer, isTeacher });
 
+    // Target leggibile: una pill «🌐 Tutti» per gli avvisi di plesso, una pill
+    // per ogni classe destinataria. Contrasto Clay Village (green su green-soft).
+    const isGlobale = avviso.target_scope === 'globale';
+    const classiTarget = isGlobale ? [] : (avviso.target_classes ?? []).filter(Boolean);
+    const showTargetPills = isGlobale || classiTarget.length > 0;
+
     // Decodifica allegato (JSON o link semplice)
     let fileUrl = null;
     let linkUrl = null;
@@ -126,10 +132,25 @@ export function AvvisoCard({ avviso, index, isTeacher, onReadReceipt, onAdesione
                     </h3>
                     <p className="mt-0.5 font-maven text-[11px] text-kidville-muted">
                         {avviso.author.first_name} {avviso.author.last_name}
-                        {avviso.target_scope === 'classe' && avviso.target_classes && (
-                            <span> · {avviso.target_classes.join(', ')}</span>
-                        )}
                     </p>
+                    {showTargetPills && (
+                        <div className="mt-1.5 flex flex-wrap gap-1">
+                            {isGlobale ? (
+                                <span className="inline-flex items-center rounded-full bg-kidville-green-soft px-2 py-0.5 font-maven text-[10px] font-semibold text-kidville-green">
+                                    🌐 Tutti
+                                </span>
+                            ) : (
+                                classiTarget.map((classe) => (
+                                    <span
+                                        key={classe}
+                                        className="inline-flex items-center rounded-full bg-kidville-green-soft px-2 py-0.5 font-maven text-[10px] font-semibold text-kidville-green"
+                                    >
+                                        {classe}
+                                    </span>
+                                ))
+                            )}
+                        </div>
+                    )}
                 </div>
 
                 <motion.div

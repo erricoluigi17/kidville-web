@@ -49,7 +49,17 @@ next-env.d.ts
 # scratch files
 /scratch
 
-.claude/
+# Claude Code — la configurazione della pipeline /ship-cycle È parte del repo:
+# deve seguire il progetto su qualunque macchina e con qualunque account Claude.
+# Restano fuori solo le preferenze personali e lo stato runtime del ciclo.
+.claude/*
+!.claude/settings.json
+!.claude/agents/
+!.claude/commands/
+!.claude/hooks/
+!.claude/maestro-flows/
+.claude/settings.local.json
+.claude/.ship-cycle/
 
 # working dirs non destinate al repo
 scratch/

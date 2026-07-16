@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
 import { assertAlunnoInScope } from '@/lib/auth/scope'
-import { mediaGiudizi, type ScalaVoce } from '@/lib/primaria/media'
+import { mediaGiudizi, giudiziSintetici, type ScalaVoce } from '@/lib/primaria/media'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
@@ -100,7 +100,10 @@ export const GET = withRoute('primaria/prospetto:GET', async (request: NextReque
       .order('creato_il', { ascending: false })
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-    const mediaMateria = mediaGiudizi(scala, (valutazioni ?? []).map((v) => v.giudizio_sintetico))
+    // Media coerente con la panoramica: si mediano SOLO i giudizi con modalità
+    // 'sintetico' (la panoramica filtra .eq('modalita','sintetico') lato query).
+    // La lista per-obiettivo qui sotto resta INVARIATA: mostra tutte le modalità.
+    const mediaMateria = mediaGiudizi(scala, giudiziSintetici(valutazioni ?? []))
 
     const perObiettivo = new Map<string, { obiettivo: { id: string; codice: string | null; descrizione: string }; valutazioni: unknown[] }>()
     type ObiettivoRow = { id: string; codice: string | null; descrizione: string }

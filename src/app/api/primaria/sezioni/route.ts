@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
-import { scuoleDiUtente } from '@/lib/auth/scope'
+import { resolveScuoleAttive } from '@/lib/auth/scope'
 import { parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
@@ -24,7 +24,9 @@ export const GET = withRoute('primaria/sezioni:GET', async (request: NextRequest
     if ('response' in q) return q.response
 
     const supabase = await createAdminClient()
-    const plessi = await scuoleDiUtente(supabase, auth.user)
+    // Rispetta la selezione del SedeSelector (cookie `sedi_attive`): le sezioni
+    // elencate per la supplenza sono quelle delle sole sedi attive.
+    const plessi = await resolveScuoleAttive(request, supabase, auth.user)
     if (plessi.length === 0) return NextResponse.json({ success: true, data: [] })
 
     const { data, error } = await supabase

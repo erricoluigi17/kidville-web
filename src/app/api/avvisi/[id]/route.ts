@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { scuoleDiUtente } from '@/lib/auth/scope';
+import { verificaTargetAvvisoDocente } from '@/lib/avvisi/target-gate';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody, parseData } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
@@ -105,6 +106,14 @@ export const PUT = withRoute('avvisi/[id]:PUT', async (request: Request, { param
         const supabase = await createAdminClient();
         const scopeErr = await assertAvvisoInScope(supabase, auth.user, id);
         if (scopeErr) return scopeErr;
+
+        // Gate sul TARGET (come nel POST): un educator può riassegnare l'avviso
+        // solo alle proprie classi, mai a tutto il plesso o a classi altrui.
+        const targetErr = await verificaTargetAvvisoDocente(supabase, auth.user, {
+            scope: target_scope,
+            classi: target_classes,
+        });
+        if (targetErr) return targetErr;
 
         const { data, error } = await supabase
             .from('avvisi')

@@ -142,6 +142,12 @@ function ParentChatContent() {
         }).catch(() => {/* silenzioso */});
     }, [parentId]);
 
+    // ── Realtime: un messaggio del thread aperto è cambiato (spunta consegnato/letto) ──
+    // Merge per id, mai append: è lo stesso messaggio con read_at/delivered_at aggiornati.
+    const handleRealtimeMessageUpdate = useCallback((msg: ChatMessage) => {
+        setMessages(prev => prev.map(m => (m.id === msg.id ? { ...m, ...msg } : m)));
+    }, []);
+
     // ── Realtime: nuovo messaggio in thread non attivo → aggiorna badge ──
     const handleRealtimeThreadUnread = useCallback((threadId: string, msg: ChatMessage) => {
         setThreads(prev => prev.map(t => {
@@ -169,6 +175,7 @@ function ParentChatContent() {
         threads,
         onNewMessage: handleRealtimeNewMessage,
         onThreadUnread: handleRealtimeThreadUnread,
+        onMessageUpdate: handleRealtimeMessageUpdate,
     });
 
     // ── Polling thread list per tenere i badge sincronizzati ─────────────

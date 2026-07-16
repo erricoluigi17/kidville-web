@@ -94,11 +94,6 @@
       "count": 2
     }
   },
-  "src/components/features/chat/useChatRealtime.ts": {
-    "no-console": {
-      "count": 2
-    }
-  },
   "src/components/features/forms/FieldRenderer.tsx": {
     "no-console": {
       "count": 1

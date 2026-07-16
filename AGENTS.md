@@ -88,6 +88,17 @@ Devono essere tutti verdi:
 - **Log presenti** sul codice toccato: se hai aggiunto una route, un'integrazione esterna o un
   percorso d'errore e non hai aggiunto un log, **l'intervento non è finito**.
 
+## Pipeline `/ship-cycle` (ciclo autonomo di rilascio)
+Il repo porta con sé una pipeline agentica committata in `.claude/` (agenti, comando, hook di
+gate, flow Maestro). Si invoca con **`/ship-cycle <obiettivo>`**: fa l'intervista iniziale e poi
+gira da sola *pianifica → implementa → collauda → correggi* finché tutti gli 11 tester non danno
+`PASS` (o si ferma dopo 8 cicli). Rispetta e fa rispettare tutte le regole di questo documento:
+branch secondario, PRD aggiornato, logging obbligatorio, gate di verifica.
+
+Spiegazione completa in **`CLAUDE.md`** — dove sta anche il **promemoria pre-lancio**: oggi
+merge, deploy e migrazioni in produzione girano **senza conferma umana** perché non ci sono
+ancora dati reali di famiglie e bambini; prima del lancio le conferme vanno riattivate.
+
 ## Note
 - `utenti.role` è una colonna **generata** da `ruolo`: non scriverla mai.
 - Le route admin usano il pattern service-role (`createAdminClient`) + gate applicativo

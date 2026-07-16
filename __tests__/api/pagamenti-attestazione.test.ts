@@ -1,14 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { NextResponse } from 'next/server'
 
 const h = vi.hoisted(() => ({
-  requireUser: vi.fn(),
+  requireStaff: vi.fn(),
   alunno: null as Record<string, unknown> | null,
-  legame: null as Record<string, unknown> | null,
   pagamenti: [] as Record<string, unknown>[],
   incassi: [] as Record<string, unknown>[],
 }))
 
-vi.mock('@/lib/auth/require-staff', () => ({ requireUser: h.requireUser }))
+vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
 vi.mock('@/lib/auth/scope', () => ({ resolveScuoleAttive: async () => ['sc-1'] }))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
@@ -21,7 +21,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.lte = () => b
       b.order = () => b
       b.maybeSingle = async () => ({
-        data: table === 'alunni' ? h.alunno : table === 'legame_genitori_alunni' ? h.legame : table === 'admin_settings' ? {} : table === 'parents' ? null : null,
+        data: table === 'alunni' ? h.alunno : table === 'admin_settings' ? {} : table === 'parents' ? null : null,
         error: null,
       })
       b.then = (resolve: (v: unknown) => unknown) =>
@@ -38,9 +38,9 @@ const req = (qs: string) => new Request(`http://localhost/api/pagamenti/attestaz
 
 beforeEach(() => {
   vi.clearAllMocks()
-  h.requireUser.mockResolvedValue({ user: { id: 'staff-1', role: 'segreteria' } })
+  // Default: staff (segreteria) autenticato → il gate concede.
+  h.requireStaff.mockResolvedValue({ user: { id: 'staff-1', role: 'segreteria' } })
   h.alunno = { id: AID, nome: 'Mario', cognome: 'Rossi', scuola_id: 'sc-1', intestatario_fatture: null }
-  h.legame = { alunno_id: AID }
   h.pagamenti = [{ id: 'p1', descrizione: 'Retta Gennaio', payment_categories: { slug: 'retta', nome: 'Retta' } }]
   h.incassi = [{ pagamento_id: 'p1', importo: 150, metodo: 'bonifico', data_incasso: '2026-01-10' }]
 })
@@ -52,11 +52,19 @@ describe('GET /api/pagamenti/attestazione', () => {
     expect(res.headers.get('content-type')).toBe('application/pdf')
   })
 
-  it('genitore del bambino: 200; senza legame: 403', async () => {
-    h.requireUser.mockResolvedValue({ user: { id: 'g-1', role: 'genitore' } })
-    expect((await GET(req(`alunno_id=${AID}&anno=2026`))).status).toBe(200)
-    h.legame = null
+  it('genitore autenticato: 403 (attestazione solo lato segreteria)', async () => {
+    // requireStaff nega al genitore prima ancora di entrare nel corpo della route.
+    h.requireStaff.mockResolvedValue({
+      response: NextResponse.json({ error: 'Accesso negato: operazione riservata allo staff' }, { status: 403 }),
+    })
     expect((await GET(req(`alunno_id=${AID}&anno=2026`))).status).toBe(403)
+  })
+
+  it('non autenticato: 401', async () => {
+    h.requireStaff.mockResolvedValue({
+      response: NextResponse.json({ error: 'Non autenticato: userId mancante' }, { status: 401 }),
+    })
+    expect((await GET(req(`alunno_id=${AID}&anno=2026`))).status).toBe(401)
   })
 
   it('400 senza anno o alunno', async () => {

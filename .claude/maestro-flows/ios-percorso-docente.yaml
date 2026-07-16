@@ -1,0 +1,82 @@
+# =============================================================================
+# Kidville · iOS — percorso utente reale del DOCENTE
+#   login → dashboard → appello (presenze) → bacheca (comunicazioni)
+#
+# Prerequisiti: vedi .claude/maestro-flows/README.md
+#
+# Esecuzione:
+#   export MAESTRO_KV_EMAIL_DOCENTE=... MAESTRO_KV_PASSWORD=...
+#   maestro test .claude/maestro-flows/ios-percorso-docente.yaml
+#
+# Su WebView iOS `hideKeyboard` fallisce: la tastiera si chiude con un tap sul
+# titolo statico "Benvenuto/a!". L'appello NON è sulla home docente: si apre
+# dalla scorciatoia "Modifica appello" (sotto la piega). Selettori verificati
+# su iPhone 17 Pro (2026-07-16).
+# =============================================================================
+appId: it.kidville.app
+name: Kidville · iOS — percorso docente
+tags:
+  - ios
+  - docente
+env:
+  KV_EMAIL: ${MAESTRO_KV_EMAIL_DOCENTE}
+  KV_PASSWORD: ${MAESTRO_KV_PASSWORD}
+---
+- launchApp:
+    clearState: true
+
+# ── 1. LOGIN ─────────────────────────────────────────────────────────────────
+- extendedWaitUntil:
+    visible: "Accedi al tuo account Kidville"
+    timeout: 60000
+- tapOn:
+    below: "Email"
+- inputText: ${KV_EMAIL}
+- tapOn: "Benvenuto/a!"    # WebView-safe: chiude la tastiera (no hideKeyboard)
+- tapOn:
+    below: "Password"
+- inputText: ${KV_PASSWORD}
+- tapOn: "Benvenuto/a!"
+- tapOn: "Accedi"
+
+- runFlow:
+    when:
+      visible: "Non consentire"
+    commands:
+      - tapOn: "Non consentire"
+
+# ── 2. DASHBOARD DOCENTE ─────────────────────────────────────────────────────
+- extendedWaitUntil:
+    visible: "Buongiorno!"
+    timeout: 60000
+- assertVisible: "Dashboard"
+- assertVisible:
+    text: "Menu · tutte le sezioni"
+- takeScreenshot: /tmp/kv-ios-docente-1-dashboard
+
+# ── 3. PRESENZE (appello) ────────────────────────────────────────────────────
+# La scorciatoia "Modifica appello" sta sotto la piega: scroll + tap.
+- scrollUntilVisible:
+    element:
+      text: "Modifica appello"
+    direction: DOWN
+    centerElement: true
+    timeout: 15000
+- tapOn:
+    text: "Modifica appello"
+- extendedWaitUntil:
+    visible: "Appello"
+    timeout: 45000
+- assertVisible: "Presente"
+- takeScreenshot: /tmp/kv-ios-docente-2-appello
+
+# ── 4. COMUNICAZIONI (bacheca) ───────────────────────────────────────────────
+- tapOn: "Dashboard"
+- extendedWaitUntil:
+    visible: "Apri la bacheca"
+    timeout: 30000
+- tapOn: "Apri la bacheca"
+- extendedWaitUntil:
+    visible: "Circolari e avvisi alle famiglie"
+    timeout: 45000
+- takeScreenshot: /tmp/kv-ios-docente-3-bacheca

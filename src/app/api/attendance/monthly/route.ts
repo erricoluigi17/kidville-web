@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
+import { resolveScuoleAttive } from '@/lib/auth/scope';
 import { parseQuery } from '@/lib/validation/http';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore } from '@/lib/logging/logger';
@@ -55,11 +56,21 @@ export const GET = withRoute('attendance/monthly:GET', async (request: NextReque
 
         const supabase = await createAdminClient();
 
-        // ── Query 1: alunni della sezione ──────────────────────────────────────
+        // Isolamento per tenant (finora ASSENTE su questa route): la stessa
+        // `classe_sezione` può esistere in più sedi, quindi senza filtro il
+        // prospetto mensile perdeva presenze cross-sede. Rispetta anche la
+        // selezione del SedeSelector (cookie `sedi_attive`).
+        const plessi = await resolveScuoleAttive(request, supabase, auth.user);
+        if (plessi.length === 0) {
+            return NextResponse.json([], { status: 200, headers: { 'Cache-Control': 'no-store' } });
+        }
+
+        // ── Query 1: alunni della sezione (entro le sedi attive) ───────────────
         const { data: alunniData, error: alunniError } = await supabase
             .from('alunni')
             .select('id, nome, cognome, classe_sezione')
-            .eq('classe_sezione', sezione);
+            .eq('classe_sezione', sezione)
+            .in('scuola_id', plessi);
 
         if (alunniError) {
             // L'oggetto errore si PASSA, non si riassume: `JSON.stringify` su un Error nativo

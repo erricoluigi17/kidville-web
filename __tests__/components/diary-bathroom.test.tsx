@@ -8,7 +8,7 @@ describe('Diario 0-6 — evento bagno', () => {
     });
 
     it('nessun tipo bagno usa più il secchiello 🪣', () => {
-        expect(BATHROOM_TYPES.every(b => b.icon !== '🪣')).toBe(true);
+        expect(BATHROOM_TYPES.every(b => (b.icon as string) !== '🪣')).toBe(true);
     });
 
     it('ogni tipo bagno ha una label italiana per la vista impilata (mobile)', () => {

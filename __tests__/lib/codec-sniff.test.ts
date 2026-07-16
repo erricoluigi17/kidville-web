@@ -80,7 +80,7 @@ describe('analizzaContenutoVideo — formati già riproducibili passano', () => 
     });
 
     it('accetta anche un ArrayBuffer, non solo un Uint8Array', () => {
-        const r = analizzaContenutoVideo(ftyp('avc1').buffer, 'video/mp4');
+        const r = analizzaContenutoVideo(ftyp('avc1').buffer as ArrayBuffer, 'video/mp4');
         expect(r.daConvertire).toBe(false);
         expect(r.motivo).toBe('codec-h264-avc1');
     });

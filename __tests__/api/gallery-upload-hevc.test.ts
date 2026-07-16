@@ -51,7 +51,7 @@ function ascii(s: string): Uint8Array {
 }
 
 function fileVideo(bytes: Uint8Array, type: string, name: string): File {
-    return new File([bytes], name, { type });
+    return new File([bytes as unknown as BlobPart], name, { type });
 }
 
 /** Request minimale: la route usa solo `formData().get('file')` (+ header/url difensivi). */

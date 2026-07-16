@@ -14,7 +14,10 @@
 #                .claude/maestro-flows/ios-percorso-genitore.yaml
 #
 # Differenze rispetto ad Android: dal simulatore l'host è `localhost` (non
-# 10.0.2.2) e non c'è tasto Indietro hardware → si naviga con la bottom nav.
+# 10.0.2.2, e localhost non soffre il problema HMR di next dev), e non c'è tasto
+# Indietro hardware → si naviga con la bottom nav. Su WebView iOS `hideKeyboard`
+# fallisce ("Couldn't hide the keyboard"): la tastiera si chiude con un tap sul
+# titolo statico "Benvenuto/a!". Selettori verificati su iPhone 17 Pro (2026-07-16).
 # =============================================================================
 appId: it.kidville.app
 name: Kidville · iOS — percorso genitore
@@ -38,29 +41,40 @@ env:
 - tapOn:
     below: "Email"
 - inputText: ${KV_EMAIL}
-- hideKeyboard
+- tapOn: "Benvenuto/a!"    # WebView-safe: chiude la tastiera (no hideKeyboard)
 
 - tapOn:
     below: "Password"
 - inputText: ${KV_PASSWORD}
-- hideKeyboard
+- tapOn: "Benvenuto/a!"
 
 - tapOn: "Accedi"
 
+# Il primo avvio può mostrare il dialog nativo dei permessi notifiche: chiudilo.
+- runFlow:
+    when:
+      visible: "Non consentire"
+    commands:
+      - tapOn: "Non consentire"
+
 # ── 2. DASHBOARD ─────────────────────────────────────────────────────────────
+# La tab Menu ha aria-label "Menu · tutte le sezioni".
 - extendedWaitUntil:
     visible: "Avvisi"
     timeout: 60000
 - assertVisible: "Home"
-- assertVisible: "Menu"
+- assertVisible:
+    text: "Menu · tutte le sezioni"
 - takeScreenshot: /tmp/kv-ios-genitore-1-dashboard
 
 # ── 3. PRESENZE ──────────────────────────────────────────────────────────────
-- tapOn: "Menu"
+# "Presenze" nel foglio Menu → selettore sul sottotitolo univoco.
+- tapOn:
+    text: "Menu · tutte le sezioni"
 - extendedWaitUntil:
-    visible: "Presenze"
+    visible: "Assenze e giustifiche"
     timeout: 20000
-- tapOn: "Presenze"
+- tapOn: "Assenze e giustifiche"
 - extendedWaitUntil:
     visible: "Segnala assenza"
     timeout: 45000
@@ -69,7 +83,7 @@ env:
 # ── 4. COMUNICAZIONI ─────────────────────────────────────────────────────────
 - tapOn: "Avvisi"
 - extendedWaitUntil:
-    visible: "Avvisi"
+    visible: "Comunicazioni"
     timeout: 45000
 - takeScreenshot: /tmp/kv-ios-genitore-3-avvisi
 
@@ -78,6 +92,7 @@ env:
 # verificare che la nav resti agganciata sopra l'home indicator (safe-area).
 - tapOn: "Home"
 - extendedWaitUntil:
-    visible: "Menu"
+    visible:
+      text: "Menu · tutte le sezioni"
     timeout: 20000
 - takeScreenshot: /tmp/kv-ios-genitore-4-home

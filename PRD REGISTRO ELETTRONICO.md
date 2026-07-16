@@ -23,6 +23,7 @@
 > | `armadietto` | Inventario materiali a scalare | Schema creato, non ancora popolato |
 > | `ticket_mensa` | Saldo ticket pasto prepagato (running int per alunno) | Schema creato, non ancora popolato |
 > | `mensa_ticket_movimenti` | Ledger movimenti ticket (ricarica/consumo/disdetta/rettifica + `saldo_dopo`) — storico e morosità | ✅ RLS + policy service_role |
+> | `mensa_alternative` | Alternativa pasto per allergia/richiesta genitore (UNIQUE alunno+data, origine segreteria/genitore) | ✅ RLS + policy service_role |
 > | `protocolli` (+ `protocolli_allegati`, `protocolli_categorie`, `protocolli_numerazione`) | Registro di protocollo DPR 445/2000: trigger WORM (annullo una-tantum art. 54; DELETE solo via `protocollo_elimina()` senza tracce), numerazione atomica per scuola/anno, titolario con seed | ✅ RLS + policy service_role |
 > | `pagamenti` | Scadenziario rette e quote | Schema creato, non ancora popolato |
 >
@@ -57,6 +58,45 @@
 > | **Accessibilità AgID / Legge Stanca** | 🔶 Baseline (P1, DL-008) | Trasversale | Fatto: alto contrasto globale persistito, focus-ring, reduced-motion, Modal accessibile, landmark/skip-link/aria-current, smoke jest-axe. WCAG-AA = definition-of-done; audit AA per-pagina incrementale |
 
 ---
+
+## 🗓️ Changelog — Batch 15 fix da collaudo sul campo: multi-sede reale, alternativa mensa, spunte chat, mobile, sicurezza 2026-07-16 (branch `feat/batch-fix-multisede-mensa-chat`)
+
+Quindici problemi raccolti usando l'app reale (web + native iOS/Android), risolti in un unico branch con la pipeline `/ship-cycle` (12 esecutori paralleli file-disgiunti → 11 tester-opus → correzioni per causa radice → **11/11 PASS** al 2° ciclo). Quattro migrazioni additive già applicate in produzione (advisor 0 ERROR).
+
+**Fase A — otto fix puntuali**
+- **Diario 0-6, evento bagno**: emoji vasino 🪣→🚽 (docente + genitore + config) e griglia dei tipi bagno da `grid-cols-3` fissa a `grid-cols-1 sm:grid-cols-3` con label testuale visibile solo impilata → niente overflow su schermi stretti.
+- **Armadietto — «Registra Carico»**: lo stepper +/- va **di 1** (non più di 5), default 10 invariato, aggiunto input numerico per digitare la quantità (font-size inline ≥16px anti-zoom iOS).
+- **Prospetto valutazioni primaria**: la media col filtro per materia divergeva dalla panoramica perché mediava **tutte** le modalità; nuova funzione pura `giudiziSintetici()` (`lib/primaria/media.ts`) usata da entrambi i rami → medie identiche. Lista per-obiettivo invariata.
+- **Attestazione 730**: rimossa dal lato genitore (`StoricoPagamenti`); la route `GET /api/pagamenti/attestazione` passa da `requireUser` a **`requireStaff`** (la emette la segreteria su richiesta, via `FiscalePanel`). Ricevute/fatture del genitore intatte.
+- **Appello 0-6 — rettifica**: i 3 bottoni di stato sono ora **sempre visibili** con `aria-pressed` (pattern dell'appello primaria); da «assente» si torna a «presente» (il server già supportava la correzione con revoca notifica entro il buffer di 10′). Via la X hardcoded che rimetteva sempre «assente».
+- **Avvisi — badge classi**: una pill per ogni classe target (`bg-kidville-green-soft`) + pill «🌐 Tutti» per i globali → il docente con due classi capisce a colpo d'occhio dove è andato l'avviso.
+- **Avvisi — gate docente (buco server chiuso)**: un educator poteva pubblicare `globale` (tutto il plesso) o a classi arbitrarie via API. Nuovo `verificaTargetAvvisoDocente` (`lib/avvisi/target-gate.ts`) applicato a POST e PUT: per gli educator rifiuta scope≠`classe`, classi vuote (footgun: `classe`+[] degradava a globale) e classi non proprie (`nomiSezioniDiUtente`) → 403 loggato. UI `AvvisoForm` con prop `soloClassiProprie` (niente toggle «Tutti», classi proprie preselezionate).
+- **Mensa docente — report scoped**: l'educator è limitato alle proprie sezioni (`sezione ∈ nomiSezioniDiUtente`, 403 altrimenti).
+
+**Fase B — strutturali**
+- **Compiti/argomenti per singoli alunni (primaria)**: il docente sceglie «tutta la classe / alunni selezionati» per qualsiasi tipo di firma (prima solo il sostegno), riusando l'infrastruttura esistente (`registro_destinatari` + `firme_docenti.argomento_proprio/compiti_propri`); il genitore vede solo ciò che riguarda il figlio. **Difesa in profondità** (scoperta in collaudo): un'assegnazione mirata non deve mai toccare i contenuti condivisi di classe (`sopprimeCondivisi = haDestinatari` + i campi condivisi vuoti non sovrascrivono più), altrimenti azzerava argomento/compiti del titolare. `data_consegna_propri` rinviata.
+- **Chat — spunta «consegnato»** (migrazione `chat_messages.delivered_at`): tre stati (✓ inviato · ✓✓ consegnato · ✓✓ letto giallo) con `aria-label`; helper `marcaConsegnati` con UPDATE **separato** dal mark-read (degrada da solo su DB E2E senza la colonna); realtime esteso agli UPDATE.
+- **Mensa — alternativa per allergia**: il report giornaliero risolve ora il menu **per classe** (`resolveMenuConfigId`, prima ignorava `mensa_class_menu_assignment`) e per ogni prenotato con conflitto allergene↔menu emette «Alternativa per allergia per …» (automatica, zero storage). Nuova tabella `mensa_alternative` + route `GET/POST/DELETE /api/mensa/alternative` (segreteria) per l'alternativa **su richiesta del genitore**; il testo della richiesta non finisce mai nei log.
+
+**Fase C — mobile & media**
+- **Zoom tastiera iOS**: regola CSS non-layered `input,select,textarea { font-size: max(16px,1em) }` sotto `(hover:none) and (pointer:coarse)` (il desktop resta invariato) + `maximum-scale=1, user-scalable=no` iniettati a runtime **solo nella shell nativa** (il web conserva il pinch-zoom, WCAG 1.4.4).
+- **Login fermo, niente striscia panna**: in app nativa il `padding-top: env(safe-area-inset-top)` sul body rendeva il documento più alto del viewport, scoprendo una striscia di un panna diverso. Ora sfondo unificato sul token `--color-kidville-cream`, `.page` che assorbe la safe-area (`margin-top` negativo su `html.cap-native`) e `overscroll-behavior: none` scoped al nativo.
+- **Video HEVC**: sniff del codec (`lib/media/codec-sniff.ts`, container QuickTime / fourcc HEVC) → conversione **bloccante** (niente più fallback silenzioso all'originale non riproducibile su Android), con messaggio azionabile («iPhone → Impostazioni → Fotocamera → Formati → Più compatibile»); difesa server con **415** su `gallery/upload`; corretto anche il bug audio (i video convertiti uscivano muti).
+
+**Fase D — multi-sede completo**
+- **Provisioning reale** (migrazione `provisiona_sede` SECURITY DEFINER + riconciliazione idempotente): la UI «Gestione Multi-Sede» creava una sede solo nel registry `scuole`, scollegato dal tenant vero `schools` → sede fantasma. Ora `POST /api/admin/schools` crea `schools` + `scuole` con lo **stesso id** + `utenti_scuole` per gli admin; `GET /api/admin/sedi` esclude le sedi disattivate.
+- **Coerenza filtri sede**: `resolveScuoleAttive` (rispetto del SedeSelector) portato su avvisi (ramo staff), diario, sezioni-primaria e presenze mensili (che prima non filtravano affatto per scuola).
+- **Galleria isolata per sede** (migrazione `galleria_media_v2.scuola_id` + backfill): POST valorizza la sede, GET docente/genitore filtrano per plesso (prima i nomi-classe omonimi collidevano cross-tenant), con degrado pulito sul DB E2E non migrato.
+- **Staff per sede**: verificato che il flusso reale (`StaffPanel` su `/admin/staff`) permette già di assegnare sede e classi; il componente orfano `AdultRegistryForm` resta dead-code (cleanup rinviato).
+
+**Correzioni di sicurezza (2° ciclo — route toccate dal batch, chiuse su dati di minori)**
+- `DELETE /api/gallery` non accetta più `?userId=` come identità (spoofing admin → `requireDocente`); `GET/POST /api/chat/messages` e `PATCH /api/chat/messages/read` ora hanno `requireUser` con verifica del partecipante **sempre** (prima la lettura senza `markRead` era libera, e `sender_id`/`userId` erano fidati dal body): IDOR e impersonazione chiusi, RLS a difesa in profondità verificata.
+
+**Accessibilità (2° ciclo)**: contrasto del testo allergia mensa e delle label appello portato ≥4,5:1 (token `error-strong`/`warn-strong`/`sub`/`green`), override Alto Contrasto mirati per le schermate safety-critical, `role="alert"` e label associate nel form alternative.
+
+**Gate finale**: eslint **0** · vitest **1810 / 227 file** verdi (14 test nuovi) · build ok · E2E in CI al push. Collaudo: 11 tester-opus (backend con sessioni reali, mobile-iOS e mobile-Android con percorso utente completo via Maestro su simulatore/emulatore, sicurezza/privacy/accessibilità/localizzazione). Flow Maestro committati riallineati alla UI reale.
+
+**Follow-up dichiarati** (non bloccanti, pre-lancio): Alto Contrasto completo sulle utility Tailwind (sistemico: `@theme inline` inlina l'hex); `text-kidville-muted` dei timestamp su fondo chiaro (~2,5:1, pre-esistente); rimozione del componente orfano `AdultRegistryForm`; scoping chat per sede; `data_consegna_propri` per i compiti mirati; hardening `assertClasseNomeInScope` con verifica docente (4 route); alternativa mensa self-service lato genitore; vincolo `author_id = auth.user.id` negli avvisi educator; signed-URL sul bucket galleria. **Nota tecnica**: un `*/` nel testo di un commento CSS chiude il commento in anticipo — rompe Turbopack (dev) ma **non** `next build`; verificare sempre il dev server, non solo il build.
 
 ## 🗓️ Changelog — Batch: diario che scorre, foto private, anagrafica Staff viva, mensa allo sportello 2026-07-13 (branch `feat/batch-diario-galleria-staff-mensa`)
 

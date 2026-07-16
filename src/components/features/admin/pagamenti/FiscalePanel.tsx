@@ -72,7 +72,7 @@ export function FiscalePanel({ userId, scuolaId }: Props) {
         <div className="space-y-8">
             <div>
                 <SectionTitle icon={FileSpreadsheet} title="Attestazioni annuali"
-                    sub="PDF per il 730 (totale tracciabile detraibile) — scaricabile anche dal genitore in autonomia." />
+                    sub="PDF per il 730 (totale tracciabile detraibile) — emesso esclusivamente dalla segreteria su richiesta del genitore." />
                 <div className="flex flex-wrap items-center gap-2">
                     <select value={attAlunno} onChange={(e) => setAttAlunno(e.target.value)} className={`${selCls} min-w-[220px]`}>
                         {alunni.map((a) => (

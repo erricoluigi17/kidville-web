@@ -167,18 +167,37 @@ export function LoadStockModal({
 
                 {/* Quantità */}
                 <div className="mb-5">
-                    <label className="text-xs font-bold text-kidville-green mb-1 block text-center">Quantità</label>
+                    <label htmlFor="locker-quantita" className="text-xs font-bold text-kidville-green mb-1 block text-center">Quantità da caricare</label>
                     <div className="flex items-center justify-center gap-4">
                         <button
-                            onClick={() => setQuantity(q => Math.max(1, q - 5))}
-                            className="w-10 h-10 rounded-xl border-2 border-kidville-line flex items-center justify-center hover:border-kidville-line active:scale-95 transition-all"
+                            type="button"
+                            aria-label="Diminuisci quantità"
+                            onClick={() => setQuantity(q => Math.max(1, q - 1))}
+                            className="w-11 h-11 rounded-xl border-2 border-kidville-line flex items-center justify-center hover:border-kidville-green active:scale-95 transition-all"
                         >
                             <Minus size={16} />
                         </button>
-                        <span className="text-4xl font-black text-kidville-green w-16 text-center">{quantity}</span>
+                        {/* Input digitabile: min 1, valori non validi (vuoto/<1) clampati a 1.
+                            font-size inline ≥16px = dimensione deliberata (no auto-zoom iOS e
+                            indipendente dalla regola globale font-size: max(16px, 1em)). */}
+                        <input
+                            id="locker-quantita"
+                            type="number"
+                            inputMode="numeric"
+                            min={1}
+                            value={quantity}
+                            onChange={e => {
+                                const n = parseInt(e.target.value, 10);
+                                setQuantity(Number.isNaN(n) ? 1 : Math.max(1, n));
+                            }}
+                            style={{ fontSize: '28px' }}
+                            className="w-20 py-1 text-center font-black text-kidville-green border-2 border-kidville-line rounded-xl outline-none focus:border-kidville-green [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                        />
                         <button
-                            onClick={() => setQuantity(q => q + 5)}
-                            className="w-10 h-10 rounded-xl border-2 border-kidville-line flex items-center justify-center hover:border-kidville-line active:scale-95 transition-all"
+                            type="button"
+                            aria-label="Aumenta quantità"
+                            onClick={() => setQuantity(q => q + 1)}
+                            className="w-11 h-11 rounded-xl border-2 border-kidville-line flex items-center justify-center hover:border-kidville-green active:scale-95 transition-all"
                         >
                             <Plus size={16} />
                         </button>

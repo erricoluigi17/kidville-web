@@ -11,6 +11,34 @@ export interface ScalaVoce {
   valore_numerico: number | null
 }
 
+/**
+ * Valutazione minimale ai fini del calcolo della media: interessa solo la
+ * modalità e l'etichetta del giudizio sintetico. Strutturale, così accetta anche
+ * le righe più ricche restituite dalle query (id, tipo, obiettivi, ecc.).
+ */
+export interface ValutazioneGiudizio {
+  modalita?: string | null
+  giudizio_sintetico?: string | null
+}
+
+/**
+ * Estrae le etichette dei giudizi dalle sole valutazioni con modalità
+ * 'sintetico' e giudizio_sintetico valorizzato. Rispecchia esattamente il filtro
+ * applicato dalla panoramica lato query
+ * (`.eq('modalita','sintetico').not('giudizio_sintetico','is',null)`): così la
+ * media per singola materia e la media in panoramica insistono sullo stesso
+ * insieme di dati e non divergono. Funzione pura, senza effetti collaterali.
+ */
+export function giudiziSintetici<T extends ValutazioneGiudizio>(valutazioni: readonly T[]): string[] {
+  const out: string[] = []
+  for (const v of valutazioni) {
+    if (v.modalita === 'sintetico' && v.giudizio_sintetico != null && v.giudizio_sintetico !== '') {
+      out.push(v.giudizio_sintetico)
+    }
+  }
+  return out
+}
+
 /** Costruisce la mappa etichetta → valore numerico dalla scala configurata. */
 export function mappaValori(scala: ScalaVoce[]): Map<string, number> {
   const m = new Map<string, number>()

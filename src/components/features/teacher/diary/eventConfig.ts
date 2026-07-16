@@ -92,5 +92,5 @@ export const MEAL_QUANTITIES = [
 export const BATHROOM_TYPES = [
     { value: 'pipi', label: 'Pipì', icon: '💧' },
     { value: 'cacca', label: 'Cacca', icon: '💩' },
-    { value: 'vasino', label: 'Vasino', icon: '🪣' },
+    { value: 'vasino', label: 'Vasino', icon: '🚽' },
 ] as const;

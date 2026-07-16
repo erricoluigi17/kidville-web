@@ -24,11 +24,20 @@ function TeacherAvvisiContent() {
     // niente elenco hardcoded; con 0 sezioni le pill del form restano vuote.
     const [availableClasses, setAvailableClasses] = useState<string[]>([]);
 
+    // Un educator può inviare avvisi solo alle proprie classi. Default RESTRITTIVO
+    // (true) finché /api/educator-sections non conferma il ruolo: solo
+    // admin/coordinator (Direzione) ottengono il form completo (con «🌐 Tutti»).
+    const [soloClassiProprie, setSoloClassiProprie] = useState(true);
+
     useEffect(() => {
         if (!teacherId) return;
         fetch(`/api/educator-sections?userId=${teacherId}`)
             .then(r => (r.ok ? r.json() : null))
-            .then(d => setAvailableClasses(d?.sectionNames ?? []))
+            .then(d => {
+                setAvailableClasses(d?.sectionNames ?? []);
+                const role = d?.role;
+                setSoloClassiProprie(!(role === 'admin' || role === 'coordinator'));
+            })
             .catch(() => {});
     }, [teacherId]);
 
@@ -157,6 +166,7 @@ function TeacherAvvisiContent() {
                 onSubmit={handleCreateOrUpdate}
                 availableClasses={availableClasses}
                 initialAvviso={editingAvviso}
+                soloClassiProprie={soloClassiProprie}
             />
 
             {/* Drawer Dettaglio Monitoraggio */}

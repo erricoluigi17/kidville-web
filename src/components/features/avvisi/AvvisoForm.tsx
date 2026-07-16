@@ -18,9 +18,14 @@ interface Props {
     }) => void;
     availableClasses?: string[];
     initialAvviso?: Avviso | null;
+    // Modalità docente (educator): niente destinatario «🌐 Tutti», scope forzato
+    // a 'classe' e classi selezionabili solo tra le proprie (availableClasses),
+    // preselezionate. Chiude il footgun lato UI (il gate server resta la difesa).
+    // Le pagine admin NON passano questa prop → comportamento invariato.
+    soloClassiProprie?: boolean;
 }
 
-export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], initialAvviso = null }: Props) {
+export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], initialAvviso = null, soloClassiProprie = false }: Props) {
     const [titolo, setTitolo] = useState('');
     const [contenuto, setContenuto] = useState('');
     const [tipo, setTipo] = useState<'presa_visione' | 'adesione'>('presa_visione');
@@ -46,8 +51,11 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
                 setTitolo(initialAvviso.titolo);
                 setContenuto(initialAvviso.contenuto);
                 setTipo(initialAvviso.tipo as 'presa_visione' | 'adesione');
-                setScope(initialAvviso.target_scope as 'globale' | 'classe');
-                setSelectedClasses(initialAvviso.target_classes || []);
+                // Docente: scope sempre 'classe'; se l'avviso non aveva classi
+                // (era globale) preseleziona le proprie.
+                const initClasses = initialAvviso.target_classes || [];
+                setScope(soloClassiProprie ? 'classe' : (initialAvviso.target_scope as 'globale' | 'classe'));
+                setSelectedClasses(soloClassiProprie && initClasses.length === 0 ? availableClasses : initClasses);
                 setScadenza(initialAvviso.scadenza || '');
                 
                 // Decodifica allegato (JSON o link semplice)
@@ -74,8 +82,9 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
                 setTitolo('');
                 setContenuto('');
                 setTipo('presa_visione');
-                setScope('globale');
-                setSelectedClasses([]);
+                // Docente: scope forzato a 'classe' con le proprie classi preselezionate.
+                setScope(soloClassiProprie ? 'classe' : 'globale');
+                setSelectedClasses(soloClassiProprie ? availableClasses : []);
                 setScadenza('');
                 setAttachmentUrl('');
                 setLinkUrl('');
@@ -193,13 +202,20 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
                                     <button onClick={() => setTipo('adesione')} className={`flex-1 py-2.5 rounded-2xl font-maven font-semibold text-sm transition-all ${tipo === 'adesione' ? 'bg-kidville-green text-kidville-yellow shadow-sm' : 'bg-kidville-cream text-kidville-muted border border-kidville-line hover:bg-kidville-cream-dark'}`}>📋 Adesione</button>
                                 </div>
                             </div>
-                            <div>
-                                <label className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">Destinatari</label>
-                                <div className="flex gap-2">
-                                    <button onClick={() => setScope('globale')} className={`flex-1 py-2.5 rounded-2xl font-maven font-semibold text-sm transition-all ${scope === 'globale' ? 'bg-kidville-green text-kidville-yellow shadow-sm' : 'bg-kidville-cream text-kidville-muted border border-kidville-line hover:bg-kidville-cream-dark'}`}>🌐 Tutti</button>
-                                    <button onClick={() => setScope('classe')} className={`flex-1 py-2.5 rounded-2xl font-maven font-semibold text-sm transition-all ${scope === 'classe' ? 'bg-kidville-green text-kidville-yellow shadow-sm' : 'bg-kidville-cream text-kidville-muted border border-kidville-line hover:bg-kidville-cream-dark'}`}>🏫 Per classe</button>
+                            {soloClassiProprie ? (
+                                <div>
+                                    <label className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">Le tue classi</label>
+                                    <p className="font-maven text-xs text-kidville-muted mb-2">Come docente pubblichi solo per le tue sezioni.</p>
                                 </div>
-                            </div>
+                            ) : (
+                                <div>
+                                    <label className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">Destinatari</label>
+                                    <div className="flex gap-2">
+                                        <button onClick={() => setScope('globale')} className={`flex-1 py-2.5 rounded-2xl font-maven font-semibold text-sm transition-all ${scope === 'globale' ? 'bg-kidville-green text-kidville-yellow shadow-sm' : 'bg-kidville-cream text-kidville-muted border border-kidville-line hover:bg-kidville-cream-dark'}`}>🌐 Tutti</button>
+                                        <button onClick={() => setScope('classe')} className={`flex-1 py-2.5 rounded-2xl font-maven font-semibold text-sm transition-all ${scope === 'classe' ? 'bg-kidville-green text-kidville-yellow shadow-sm' : 'bg-kidville-cream text-kidville-muted border border-kidville-line hover:bg-kidville-cream-dark'}`}>🏫 Per classe</button>
+                                    </div>
+                                </div>
+                            )}
                             {scope === 'classe' && (
                                 <div className="flex flex-wrap gap-1.5 p-2 bg-kidville-cream rounded-2xl border border-kidville-line">
                                     {availableClasses.map(c => (
@@ -252,7 +268,7 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
                             </div>
                         </div>
                         <div className="px-6 py-4 border-t border-kidville-line bg-white">
-                            <button onClick={handleSubmit} disabled={submitting || fileUploading || !titolo.trim() || !contenuto.trim()}
+                            <button onClick={handleSubmit} disabled={submitting || fileUploading || !titolo.trim() || !contenuto.trim() || (scope === 'classe' && selectedClasses.length === 0)}
                                 className="w-full py-3.5 rounded-2xl bg-kidville-green text-kidville-yellow font-barlow font-black text-lg uppercase tracking-wide hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-kidville-green/20">
                                 {submitting ? (
                                     <>

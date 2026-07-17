@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { NextResponse } from 'next/server'
 
+// G2 — la ricevuta FEA usava getRequestUserId (header `x-user-id`/`?userId=`
+// spoofabili) e, su firmatario null, SALTAVA il 403. Ora: identità da requireUser
+// (sessione-first) e guardia scope in NEGA DI DEFAULT (signerId null O ≠ utente → 403).
 const h = vi.hoisted(() => {
   const state = { rows: {} as Record<string, { data: unknown; error: unknown }> }
   function makeClient() {
@@ -13,14 +17,13 @@ const h = vi.hoisted(() => {
       },
     }
   }
-  return { state, makeClient }
+  return { state, makeClient, requireUser: vi.fn() }
 })
 
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: vi.fn().mockResolvedValue(h.makeClient()),
 }))
-const auth = vi.hoisted(() => ({ getRequestUserId: vi.fn() }))
-vi.mock('@/lib/auth/require-staff', () => ({ getRequestUserId: auth.getRequestUserId }))
+vi.mock('@/lib/auth/require-staff', () => ({ requireUser: h.requireUser }))
 
 import { GET } from '@/app/api/fea/receipt/route'
 import { NextRequest } from 'next/server'
@@ -44,12 +47,12 @@ const firma = {
 beforeEach(() => {
   vi.clearAllMocks()
   h.state.rows = {}
-  auth.getRequestUserId.mockReturnValue('u-1')
+  h.requireUser.mockResolvedValue({ user: { id: 'u-1', role: 'genitore' } })
 })
 
 describe('GET /api/fea/receipt', () => {
-  it('401 senza userId', async () => {
-    auth.getRequestUserId.mockReturnValue(null)
+  it('401 senza sessione (niente identità spoofabile via header)', async () => {
+    h.requireUser.mockResolvedValue({ response: NextResponse.json({ error: 'x' }, { status: 401 }) })
     const res = await GET(req('entita=pagella&id=e-1'))
     expect(res.status).toBe(401)
   })
@@ -73,6 +76,14 @@ describe('GET /api/fea/receipt', () => {
   it('403 se il chiamante non è il firmatario', async () => {
     h.state.rows = {
       pagella_ricezioni: { data: { id: 'e-1', scrutinio_id: 's', alunno_id: 'a', genitore_id: 'altro', firma }, error: null },
+    }
+    const res = await GET(req('entita=pagella&id=e-1'))
+    expect(res.status).toBe(403)
+  })
+
+  it('403 se il firmatario è null (nega di default)', async () => {
+    h.state.rows = {
+      pagella_ricezioni: { data: { id: 'e-1', scrutinio_id: 's', alunno_id: 'a', genitore_id: null, firma }, error: null },
     }
     const res = await GET(req('entita=pagella&id=e-1'))
     expect(res.status).toBe(403)

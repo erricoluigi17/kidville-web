@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
+import { requireParentOfStudent } from '@/lib/auth/require-parent';
 import { parseQuery } from '@/lib/validation/http';
 import { zUuid, zDataYMD } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
@@ -20,6 +21,11 @@ export const GET = withRoute('diary/checkin:GET', async (request: NextRequest) =
     if ('response' in q) return q.response;
     const alunnoId = q.data.alunno_id;
     const date = q.data.date ?? new Date().toISOString().split('T')[0];
+
+    // G1 — orario di entrata/stato presenza è un dato del minore: chiudiamo l'IDOR.
+    // Staff/docenti passano; il genitore solo i propri figli; l'anonimo è 401.
+    const auth = await requireParentOfStudent(request, alunnoId);
+    if (auth.response) return auth.response;
 
     const admin = await createAdminClient();
     const { data, error } = await admin

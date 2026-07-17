@@ -106,6 +106,10 @@ export function useDiaryDay(userId: string | null, sezione: string | null, opts?
     const [showSavedToast, setShowSavedToast] = useState(false);
     const [activities, setActivities] = useState<ActivityItem[]>([]);
     const [notaLibera, setNotaLibera] = useState('');
+    // Nota per SINGOLO bambino (E1): mappa alunno_id → testo. Distinta da notaLibera
+    // (nota di sezione, uguale per tutti): finisce in eventi_diario.nota_bambino ed è
+    // visibile SOLO al genitore di quel bambino.
+    const [noteBambino, setNoteBambino] = useState<Record<string, string>>({});
     // Filtro presenze (incongruenza #7): default = solo presenti; toggle per mostrare tutti.
     const [showAll, setShowAll] = useState(false);
     // 'umore' visibile solo se attivo in diario_config.routine_attive (M5.4).
@@ -171,7 +175,13 @@ export function useDiaryDay(userId: string | null, sezione: string | null, opts?
 
             const newState = buildInitialState(eventType, list);
             const savedIds = new Set<string>();
+            const restoredNotes: Record<string, string> = {};
             Object.entries(latestPerStudent).forEach(([studentId, entry]) => {
+                // Nota per-bambino (E1): la ripopolo SEMPRE (prima dell'early-return
+                // umore), così riaprire lo stesso evento e risalvare non la azzera in
+                // silenzio. Assente sul DB E2E non migrato → resta stringa vuota.
+                const nb = (entry as { nota_bambino?: string | null }).nota_bambino;
+                if (typeof nb === 'string' && nb.length > 0) restoredNotes[studentId] = nb;
                 if (entry.dettagli && typeof entry.dettagli === 'object') {
                     // Eventi umore senza valore (legacy {umore:null}) non contano
                     // come compilati: niente ✅ né ripristino stato.
@@ -180,6 +190,7 @@ export function useDiaryDay(userId: string | null, sezione: string | null, opts?
                     savedIds.add(studentId);
                 }
             });
+            setNoteBambino(restoredNotes);
 
             // Ricostruisce activities[] con partecipazione per-studente dal primo entry trovato
             if (eventType === 'attivita') {
@@ -224,6 +235,7 @@ export function useDiaryDay(userId: string | null, sezione: string | null, opts?
         setSelectedEvent(type);
         setSavedStudentIds(new Set());
         setNotaLibera('');
+        setNoteBambino({});
         // Inizializza con una attività vuota, con partecipazione null per ogni studente
         const initPart: Record<string, string | null> = {};
         students.forEach(s => { initPart[s.id] = null; });
@@ -236,6 +248,13 @@ export function useDiaryDay(userId: string | null, sezione: string | null, opts?
 
     const updateStudent = (id: string, updates: Record<string, unknown>) => {
         setStudentStates(prev => ({ ...prev, [id]: { ...prev[id], ...updates } }));
+        setSavedStudentIds(prev => { const n = new Set(prev); n.delete(id); return n; });
+    };
+
+    // Nota riservata al singolo bambino (E1): aggiorna SOLO la riga indicata e toglie
+    // la ✅ a quel bambino (la modifica è da risalvare).
+    const updateNotaBambino = (id: string, value: string) => {
+        setNoteBambino(prev => ({ ...prev, [id]: value }));
         setSavedStudentIds(prev => { const n = new Set(prev); n.delete(id); return n; });
     };
 
@@ -300,7 +319,10 @@ export function useDiaryDay(userId: string | null, sezione: string | null, opts?
                     tipo_evento: selectedEvent,
                     orario_inizio: nowIso,
                     dettagli,
+                    // Nota di sezione: identica per tutti (broadcast).
                     nota_libera: notaLibera.trim() || null,
+                    // Nota per-bambino: solo di questo bambino, altrimenti null (E1).
+                    nota_bambino: noteBambino[student.id]?.trim() || null,
                 };
             });
 
@@ -351,6 +373,8 @@ export function useDiaryDay(userId: string | null, sezione: string | null, opts?
         setActivities,
         notaLibera,
         setNotaLibera,
+        notaBambino: noteBambino,
+        updateNotaBambino,
         isSaving,
         showSavedToast,
         handleEventSelect,
@@ -370,7 +394,8 @@ export type DiaryDay = ReturnType<typeof useDiaryDay>;
 export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: string | null }) {
     const {
         students, eventTypes, selectedEvent, setSelectedEvent, studentStates, savedStudentIds,
-        activities, setActivities, notaLibera, setNotaLibera, isSaving, showSavedToast,
+        activities, setActivities, notaLibera, setNotaLibera, notaBambino, updateNotaBambino,
+        isSaving, showSavedToast,
         handleEventSelect, updateStudent, updateMealCourse, counter, bulkNannaOra, handleSave,
     } = day;
 
@@ -667,16 +692,46 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
                                 })}
                             </div>
 
-                            {/* ── Nota libera (visibile ai genitori) ── */}
+                            {/* ── Nota di SEZIONE (uguale per tutti i genitori) ── */}
                             <div className="px-4 pt-1 pb-2">
+                                <p className="font-barlow font-bold text-kidville-green uppercase text-[11px] tracking-wide mb-1.5">
+                                    Nota per tutta la sezione
+                                </p>
                                 <textarea
                                     value={notaLibera}
                                     onChange={e => setNotaLibera(e.target.value)}
                                     rows={2}
-                                    placeholder="Nota libera per i genitori (opzionale)…"
+                                    aria-label="Nota per tutta la sezione, visibile a tutti i genitori"
+                                    placeholder="Nota per tutti i genitori della sezione (opzionale)…"
                                     className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:ring-2 focus:ring-kidville-green/30 resize-none"
                                 />
                             </div>
+
+                            {/* ── Nota per SINGOLO bambino (E1): la legge solo quel genitore ── */}
+                            {students.length > 0 && (
+                                <div className="px-4 pt-1 pb-2">
+                                    <p className="font-barlow font-bold text-kidville-green uppercase text-[11px] tracking-wide mb-1.5">
+                                        Nota privata per singolo bambino
+                                    </p>
+                                    <div className="space-y-2">
+                                        {students.map(student => (
+                                            <div key={student.id} className="flex items-center gap-2">
+                                                <div className="w-7 h-7 rounded-full flex-shrink-0 flex items-center justify-center font-barlow font-bold text-[10px] bg-kidville-cream text-kidville-green">
+                                                    {student.firstName[0]}{student.lastName[0]}
+                                                </div>
+                                                <input
+                                                    type="text"
+                                                    value={notaBambino[student.id] ?? ''}
+                                                    onChange={e => updateNotaBambino(student.id, e.target.value)}
+                                                    placeholder={`Nota privata per ${student.firstName} (opzionale)…`}
+                                                    aria-label={`Nota privata per ${student.firstName} ${student.lastName}`}
+                                                    className="flex-1 min-w-0 border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:ring-2 focus:ring-kidville-green/30"
+                                                />
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
 
                             {/* ── Footer salva ── */}
                             <div className="px-4 py-3 border-t border-kidville-line">

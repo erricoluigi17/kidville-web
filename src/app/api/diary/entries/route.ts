@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
+import { requireParentOfStudent } from '@/lib/auth/require-parent';
 import { assertAlunnoInScope, resolveScuoleAttive } from '@/lib/auth/scope';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { notificaTitolariScrittura, enqueueDiarioGenitori } from '@/lib/primaria/notifiche';
@@ -35,7 +36,12 @@ const entrySchema = z.object({
     orario_inizio: z.unknown().optional(),
     orario_fine: z.unknown().optional(),
     dettagli: z.unknown().optional(),
+    // Nota di SEZIONE: broadcast, identica per tutti i genitori.
     nota_libera: z.unknown().optional(),
+    // Nota per SINGOLO bambino (E1): visibile solo al genitore di quel bambino.
+    // Colonna dedicata `nota_bambino`, distinta da nota_libera (per non essere
+    // sovrascritta dalla nota di sezione). Senza questo campo zod la scarterebbe.
+    nota_bambino: z.unknown().optional(),
 });
 
 // Il body può essere un singolo evento o un array di eventi.
@@ -47,10 +53,9 @@ const postBodySchema = z.union([z.array(entrySchema), entrySchema]);
 //
 // P0/S9b (DL-040): tutti gli accessi a `eventi_diario` usano service-role +
 // scoping applicativo (End-state X, DL-035), così le policy permissive anon
-// sono droppate. NB: lo scoping di proprietà del ramo genitore (un genitore solo
-// i propri figli) è rinviato all'onboarding/sigillo S13 — finché l'identità è via
-// header (spoofabile) il gate non aggiunge sicurezza reale e romperebbe l'accesso
-// demo; la lettura passa comunque via service-role (anon = default-deny).
+// sono droppate. Il ramo genitore è ora gated con requireParentOfStudent
+// (privacy minori: la nota_bambino E1 è riservata al genitore di quel bambino):
+// requireUser sessione-first + verifica del legame genitore↔alunno.
 export const GET = withRoute('diary/entries:GET', async (request: NextRequest) => {
     const admin = await createAdminClient();
     const params = request.nextUrl.searchParams;
@@ -59,6 +64,10 @@ export const GET = withRoute('diary/entries:GET', async (request: NextRequest) =
     if (params.get('alunno_id')) {
         const q = parseQuery(request, getParentQuerySchema);
         if ('response' in q) return q.response;
+        // Scoping di proprietà (privacy minori): solo il genitore del bambino
+        // (o staff/docente) legge il diario; chiude la lettura anonima/altrui.
+        const gate = await requireParentOfStudent(request, q.data.alunno_id);
+        if (gate.response) return gate.response;
         const fromDate = q.data.from ?? (() => {
             const d = new Date(); d.setDate(d.getDate() - 14); return d.toISOString().split('T')[0];
         })();
@@ -78,9 +87,14 @@ export const GET = withRoute('diary/entries:GET', async (request: NextRequest) =
         const bufferMin = diarioCfg.buffer_visibilita_min ?? 10;
         const soglia = new Date(Date.now() - bufferMin * 60_000).toISOString();
 
-        const { data, error } = await admin
+        // `nota_bambino` (E1) è la nota riservata al singolo bambino; `nota_libera`
+        // resta la nota di sezione (broadcast). Il DB E2E CI non è migrato: se la
+        // colonna non esiste la SELECT torna 42703 → riprova senza (degrado pulito).
+        const buildParent = (conNotaBambino: boolean) => admin
             .from('eventi_diario')
-            .select('id, tipo_evento, orario_inizio, dettagli, nota_libera')
+            .select(conNotaBambino
+                ? 'id, tipo_evento, orario_inizio, dettagli, nota_libera, nota_bambino'
+                : 'id, tipo_evento, orario_inizio, dettagli, nota_libera')
             .eq('alunno_id', q.data.alunno_id)
             .gte('orario_inizio', `${fromDate}T00:00:00.000Z`)
             .lte('orario_inizio', `${toDate}T23:59:59.999Z`)
@@ -88,14 +102,29 @@ export const GET = withRoute('diary/entries:GET', async (request: NextRequest) =
             .lte('creato_il', soglia)
             .order('orario_inizio', { ascending: false });
 
+        let res = await buildParent(true);
+        if (res.error && ['PGRST204', '42703'].includes((res.error as { code?: string }).code ?? '')) {
+            logEvento('diary', 'info', {
+                operazione: 'diary/entries:GET',
+                esito: 'degrado-nota-bambino-assente',
+            });
+            res = await buildParent(false);
+        }
+        const { data, error } = res;
+
         if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-        const mapped = (data ?? []).map(e => ({
+        // Il type-parser di Supabase non modella la SELECT condizionale (degrado
+        // nota_bambino → union di due literal) e inferisce un ParserError: la query
+        // è corretta a runtime, si normalizza la riga a Record per il map.
+        const mapped = ((data ?? []) as unknown as Record<string, unknown>[]).map((e) => ({
             id:                   e.id,
             tipo_evento:          e.tipo_evento,
             timestamp_evento:     e.orario_inizio,
             dettagli:             e.dettagli,
             note:                 e.nota_libera,
+            // Solo la nota del PROPRIO bambino (il ramo è già filtrato per alunno_id).
+            notaBambino:          (e.nota_bambino as string | null | undefined) ?? null,
             activity_description: null,
         }));
         return NextResponse.json(mapped);
@@ -179,40 +208,54 @@ export const POST = withRoute('diary/entries:POST', async (request: NextRequest)
             .limit(1);
 
         if (existing && existing.length > 0) {
-            // UPDATE
-            const { data, error } = await admin
-                .from('eventi_diario')
-                .update({
-                    dettagli: entry.dettagli ?? null,
-                    orario_fine: entry.orario_fine ?? null,
-                    nota_libera: entry.nota_libera ?? null,
-                    // activity_description escluso: colonna non ancora migrata
-                })
-                .eq('id', existing[0].id)
-                .select('id, alunno_id, tipo_evento');
-
-            if (error) errors.push({ alunno_id: entry.alunno_id, error: error.message });
-            else if (data) results.push(...data);
+            // UPDATE — resiliente alla colonna nota_bambino non ancora migrata (DB E2E CI):
+            // PGRST204/42703 → rimuove la colonna mancante e riprova. In prod esiste → 0 retry.
+            const updateRecord: Record<string, unknown> = {
+                dettagli: entry.dettagli ?? null,
+                orario_fine: entry.orario_fine ?? null,
+                nota_libera: entry.nota_libera ?? null,   // nota di sezione (broadcast a tutti)
+                nota_bambino: entry.nota_bambino ?? null, // nota del singolo bambino (E1)
+                // activity_description escluso: colonna non ancora migrata
+            };
+            let updRes = await admin.from('eventi_diario').update(updateRecord).eq('id', existing[0].id).select('id, alunno_id, tipo_evento');
+            let uAttempts = 0;
+            while (updRes.error && ['PGRST204', '42703'].includes((updRes.error as { code?: string }).code ?? '') && uAttempts < 4) {
+                const m = /Could not find the '([a-z_]+)' column|column "?([a-z_]+)"? of relation/i.exec(updRes.error.message);
+                const col = m?.[1] ?? m?.[2];
+                if (!col || !(col in updateRecord)) break;
+                delete updateRecord[col];
+                updRes = await admin.from('eventi_diario').update(updateRecord).eq('id', existing[0].id).select('id, alunno_id, tipo_evento');
+                uAttempts++;
+            }
+            if (updRes.error) errors.push({ alunno_id: entry.alunno_id, error: updRes.error.message });
+            else if (updRes.data) results.push(...updRes.data);
         } else {
-            // INSERT
-            const { data, error } = await admin
-                .from('eventi_diario')
-                .insert({
-                    alunno_id: entry.alunno_id,
-                    // Provenienza operativa = chi registra (anche la segreteria). Non è una firma valutativa.
-                    maestra_id: auth.user.id,
-                    tipo_evento: entry.tipo_evento,
-                    orario_inizio: entry.orario_inizio ?? new Date().toISOString(),
-                    orario_fine: entry.orario_fine ?? null,
-                    dettagli: entry.dettagli ?? null,
-                    nota_libera: entry.nota_libera ?? null,
-                    // activity_description escluso: colonna non ancora migrata su Supabase
-                    pubblicato: false,
-                })
-                .select('id, alunno_id, tipo_evento');
-
-            if (error) errors.push({ alunno_id: entry.alunno_id, error: error.message });
-            else if (data) results.push(...data);
+            // INSERT — stessa resilienza alla colonna nota_bambino non ancora migrata.
+            const insertRecord: Record<string, unknown> = {
+                alunno_id: entry.alunno_id,
+                // Provenienza operativa = chi registra (anche la segreteria). Non è una firma valutativa.
+                maestra_id: auth.user.id,
+                tipo_evento: entry.tipo_evento,
+                orario_inizio: entry.orario_inizio ?? new Date().toISOString(),
+                orario_fine: entry.orario_fine ?? null,
+                dettagli: entry.dettagli ?? null,
+                nota_libera: entry.nota_libera ?? null,   // nota di sezione (broadcast a tutti)
+                nota_bambino: entry.nota_bambino ?? null, // nota del singolo bambino (E1)
+                // activity_description escluso: colonna non ancora migrata su Supabase
+                pubblicato: false,
+            };
+            let insRes = await admin.from('eventi_diario').insert(insertRecord).select('id, alunno_id, tipo_evento');
+            let iAttempts = 0;
+            while (insRes.error && ['PGRST204', '42703'].includes((insRes.error as { code?: string }).code ?? '') && iAttempts < 4) {
+                const m = /Could not find the '([a-z_]+)' column|column "?([a-z_]+)"? of relation/i.exec(insRes.error.message);
+                const col = m?.[1] ?? m?.[2];
+                if (!col || !(col in insertRecord)) break;
+                delete insertRecord[col];
+                insRes = await admin.from('eventi_diario').insert(insertRecord).select('id, alunno_id, tipo_evento');
+                iAttempts++;
+            }
+            if (insRes.error) errors.push({ alunno_id: entry.alunno_id, error: insRes.error.message });
+            else if (insRes.data) results.push(...insRes.data);
         }
 
         // #9 — Scalo automatico pannolino: ad ogni evento "bagno" scala 1 pannolino

@@ -4,74 +4,89 @@ import { useState, useEffect, useCallback, Suspense } from 'react';
 import { AvvisoCard, Avviso } from '@/components/features/avvisi/AvvisoCard';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
+import { logClient } from '@/lib/logging/client';
+
+// m3: ogni avviso porta l'elenco dei FIGLI cui si riferisce (nome + student_id),
+// così il feed unificato può mostrare a chi si riferisce ogni comunicazione senza
+// duplicare l'avviso. Il campo è aggiunto server-side dal ramo genitore.
+interface FiglioRiferito {
+    student_id: string;
+    nome: string;
+}
+type AvvisoConFigli = Avviso & { figli?: FiglioRiferito[] };
 
 // Identità dalla sessione (URL → localStorage → /api/me), senza fallback demo (M4).
 function ParentAvvisiContent() {
     const { parentId, studentId, ready } = useParentIdentity();
 
-    const [avvisi, setAvvisi] = useState<Avviso[]>([]);
+    const [avvisi, setAvvisi] = useState<AvvisoConFigli[]>([]);
     const [loading, setLoading] = useState(true);
-    const [studentName, setStudentName] = useState<string | null>(null);
-    // Nessun default hardcoded (era 'Girasoli', sezione infanzia): la classe reale
-    // arriva da diary/students del figlio; fino ad allora loadAvvisi attende.
-    const [classe, setClasse] = useState<string>('');
 
-    // 1. Carica info studente (per ricavare nome e classe)
-    useEffect(() => {
-        if (!studentId) return;
-        fetch(`/api/diary/students?id=${studentId}`)
-            .then(r => r.ok ? r.json() : null)
-            .then(d => {
-                if (d?.nome) {
-                    setStudentName(`${d.nome} ${d.cognome ?? ''}`.trim());
-                }
-                if (d?.classe_sezione) {
-                    setClasse(d.classe_sezione);
-                }
-            })
-            .catch(err => console.error('Errore caricamento info studente:', err));
-    }, [studentId]);
-
-    // 2. Carica gli avvisi per la classe dello studente
+    // Feed UNIFICATO server-derived (G3): niente più parentId/classe/studentId nella
+    // query — il server ricava figli, classi e plesso dalla sessione. Si passa solo
+    // l'identità (x-user-id) per il modello header-identity ancora attivo in prod.
+    // try/finally (NON try/catch): dentro un effect il catch farebbe scattare
+    // react-hooks/set-state-in-effect. I fallimenti di rete/!res.ok sono comunque
+    // registrati dal fetch strumentato globale (logClient) — l'osservabilità c'è.
     const loadAvvisi = useCallback(async () => {
-        if (!ready || !parentId || !studentId || !classe) return;
+        if (!ready || !parentId) return;
         try {
-            const res = await fetch(`/api/avvisi?classe=${classe}&parentId=${parentId}&studentId=${studentId}`);
+            const res = await fetch('/api/avvisi', { headers: { 'x-user-id': parentId } });
             if (res.ok) setAvvisi(await res.json());
         } finally {
             setLoading(false);
         }
-    }, [ready, classe, parentId, studentId]);
+    }, [ready, parentId]);
 
     useEffect(() => {
         loadAvvisi();
     }, [loadAvvisi]);
 
+    // I figli a cui si riferisce l'avviso: sono la CHIAVE per-figlio della risposta
+    // (student_id nell'upsert). Fallback al figlio attivo se il feed non li porta.
+    const figliDiAvviso = useCallback((avvisoId: string): string[] => {
+        const a = avvisi.find((x) => x.id === avvisoId);
+        const ids = (a?.figli ?? []).map((f) => f.student_id).filter(Boolean);
+        return ids.length > 0 ? ids : (studentId ? [studentId] : []);
+    }, [avvisi, studentId]);
+
+    const postRisposta = useCallback(async (avvisoId: string, sid: string, risposta?: 'si' | 'no') => {
+        const body = risposta ? { student_id: sid, risposta } : { student_id: sid };
+        await fetch(`/api/avvisi/${avvisoId}/risposte`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...(parentId ? { 'x-user-id': parentId } : {}) },
+            body: JSON.stringify(body),
+        });
+    }, [parentId]);
+
     const handleReadReceipt = async (avvisoId: string) => {
-        if (!parentId || !studentId) return;
+        const ids = figliDiAvviso(avvisoId);
+        if (ids.length === 0) return;
         try {
-            await fetch(`/api/avvisi/${avvisoId}/risposte`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ parent_id: parentId, student_id: studentId }),
-            });
+            // Presa visione = il genitore ha letto: vale per TUTTI i figli cui si riferisce.
+            await Promise.all(ids.map((sid) => postRisposta(avvisoId, sid)));
             await loadAvvisi();
         } catch (err) {
-            console.error('Errore presa visione:', err);
+            logClient({
+                livello: 'warn',
+                evento: 'fetch',
+                messaggio: `parent/avvisi: presa visione fallita (${err instanceof Error ? err.message : 'errore'})`,
+            });
         }
     };
 
     const handleAdesione = async (avvisoId: string, risposta: 'si' | 'no') => {
-        if (!parentId || !studentId) return;
+        const ids = figliDiAvviso(avvisoId);
+        if (ids.length === 0) return;
         try {
-            await fetch(`/api/avvisi/${avvisoId}/risposte`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ parent_id: parentId, student_id: studentId, risposta }),
-            });
+            await Promise.all(ids.map((sid) => postRisposta(avvisoId, sid, risposta)));
             await loadAvvisi();
         } catch (err) {
-            console.error('Errore adesione:', err);
+            logClient({
+                livello: 'warn',
+                evento: 'fetch',
+                messaggio: `parent/avvisi: adesione fallita (${err instanceof Error ? err.message : 'errore'})`,
+            });
         }
     };
 
@@ -88,19 +103,6 @@ function ParentAvvisiContent() {
                 title="Avvisi"
                 subtitle={loading ? 'Comunicazioni dalla scuola' : daGestire > 0 ? `${daGestire} da gestire` : 'Tutto in regola ✓'}
                 className="mb-6"
-                action={studentName ? (
-                    <div className="flex items-center gap-2 rounded-pill bg-white/15 py-1 pl-1 pr-3">
-                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-kidville-yellow font-barlow text-xs font-extrabold text-kidville-green">
-                            {studentName.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase()}
-                        </span>
-                        <span className="min-w-0">
-                            <span className="block truncate font-barlow text-xs font-extrabold uppercase leading-none text-white">
-                                {studentName}
-                            </span>
-                            <span className="block truncate font-maven text-[10px] text-white/70">Classe {classe}</span>
-                        </span>
-                    </div>
-                ) : undefined}
             />
 
             {/* Loading */}
@@ -125,11 +127,30 @@ function ParentAvvisiContent() {
             {/* Avvisi */}
             {!loading && avvisi.length > 0 && (
                 <div className="space-y-3">
-                    {avvisi.map((avviso, idx) => (
-                        <AvvisoCard key={avviso.id} avviso={avviso} index={idx}
-                            onReadReceipt={handleReadReceipt}
-                            onAdesione={handleAdesione} />
-                    ))}
+                    {avvisi.map((avviso, idx) => {
+                        // m3: il/i figlio/i cui si riferisce l'avviso (entrambi se globale).
+                        const figli = avviso.figli ?? [];
+                        return (
+                            <div key={avviso.id}>
+                                {figli.length > 0 && (
+                                    <div className="mb-1 flex flex-wrap items-center gap-1 px-1">
+                                        <span className="font-maven text-[10px] font-semibold text-kidville-green">Per</span>
+                                        {figli.map((f) => (
+                                            <span
+                                                key={f.student_id}
+                                                className="inline-flex items-center rounded-full bg-kidville-green-soft px-2 py-0.5 font-maven text-[10px] font-semibold text-kidville-green"
+                                            >
+                                                {f.nome || 'Figlio'}
+                                            </span>
+                                        ))}
+                                    </div>
+                                )}
+                                <AvvisoCard avviso={avviso} index={idx}
+                                    onReadReceipt={handleReadReceipt}
+                                    onAdesione={handleAdesione} />
+                            </div>
+                        );
+                    })}
                 </div>
             )}
 

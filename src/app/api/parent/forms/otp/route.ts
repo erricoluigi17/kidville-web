@@ -4,7 +4,8 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
 import { genitoreHasFiglio } from '@/lib/anagrafiche/legami'
 import { persistSignedSubmission } from '@/lib/forms/persist-submission'
-import { getUserEmail, sendOtp, verifyTicket, codeHash } from '@/lib/auth/otp-ticket'
+import { getUserEmail, sendOtp, verifyTicket, codeHash, consumeTicket } from '@/lib/auth/otp-ticket'
+import { assertGenitoreNonSospeso } from '@/lib/pagamenti/sospensione'
 import { buildSignatureLog, extractRequestMeta } from '@/lib/fea/signature-log'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
@@ -44,10 +45,16 @@ export const POST = withRoute('parent/forms/otp:POST', async (request: NextReque
     if (auth.response) return auth.response
     const parentId = auth.user.id
 
+    const supabase = await createAdminClient()
+
+    // Morosità (B4/M4): richiedere l'OTP per firmare un modulo Sistema B è un'azione
+    // di servizio → un genitore con un figlio sospeso è bloccato (mai le letture).
+    const sospeso = await assertGenitoreNonSospeso(supabase, parentId)
+    if (sospeso) return sospeso
+
     const b = await parseBody(request, postBodySchema)
     if ('response' in b) return b.response
 
-    const supabase = await createAdminClient()
     const res = await sendOtp(supabase, parentId, {
       subject: 'Codice di firma elettronica — Kidville',
       intro: 'Il tuo codice di firma è',
@@ -69,11 +76,16 @@ export const PATCH = withRoute('parent/forms/otp:PATCH', async (request: NextReq
     if (auth.response) return auth.response
     const parentId = auth.user.id
 
+    const supabase = await createAdminClient()
+
+    // Morosità (B4/M4): firmare un modulo Sistema B è un'azione di servizio →
+    // un genitore con un figlio sospeso è bloccato (mai le letture).
+    const sospeso = await assertGenitoreNonSospeso(supabase, parentId)
+    if (sospeso) return sospeso
+
     const b = await parseBody(request, patchBodySchema)
     if ('response' in b) return b.response
     const { code, expiry, ticket, form_id, student_id, answers } = b.data
-
-    const supabase = await createAdminClient()
 
     // IDOR: la firma è consentita solo su un PROPRIO figlio (onboarding = student_id assente).
     if (student_id && auth.user.role === 'genitore' && !(await genitoreHasFiglio(supabase, auth.user.id, student_id))) {
@@ -88,6 +100,16 @@ export const PATCH = withRoute('parent/forms/otp:PATCH', async (request: NextReq
     // Verifica scadenza + ticket (HMAC ricalcolato con l'email autorevole).
     const check = verifyTicket(email, String(code), Number(expiry), ticket)
     if (!check.ok) return NextResponse.json({ error: check.error }, { status: 400 })
+
+    // Consumo del ticket (uso singolo, anti-replay M5): DOPO la verifica HMAC, PRIMA
+    // di persistere. Un replay dello stesso ticket collide sul jti → 409.
+    const consumo = await consumeTicket(supabase, ticket, 'parent/forms/otp:PATCH')
+    if ('replay' in consumo) {
+      return NextResponse.json(
+        { error: 'Codice già utilizzato, richiedine uno nuovo' },
+        { status: 409 }
+      )
+    }
 
     // signature_log FES autorevole, costruito lato server
     const { ip, userAgent } = extractRequestMeta(request)

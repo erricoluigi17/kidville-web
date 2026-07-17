@@ -19,6 +19,20 @@ const STATO_LABEL: Record<string, { label: string; cls: string }> = {
   uscita_anticipata: { label: 'Uscita anticipata', cls: 'bg-kidville-info-soft text-kidville-info' },
 };
 
+interface Riepilogo {
+  presente: number; assente: number; ritardo: number; uscita_anticipata: number;
+}
+
+// Riquadri del riepilogo in cima: un contatore per stato (presente incluso), coi
+// token di contrasto *-strong su fondo *-soft. Senza il conteggio dei presenti un
+// bambino a scuola era indistinguibile da un appello mai fatto (falla del collaudo).
+const RIEPILOGO_TILES: { key: keyof Riepilogo; label: string; cls: string }[] = [
+  { key: 'presente', label: 'Presenze', cls: 'bg-kidville-success-soft text-kidville-success-strong' },
+  { key: 'assente', label: 'Assenze', cls: 'bg-kidville-error-soft text-kidville-error-strong' },
+  { key: 'ritardo', label: 'Ritardi', cls: 'bg-kidville-warn-soft text-kidville-warn-strong' },
+  { key: 'uscita_anticipata', label: 'Uscite ant.', cls: 'bg-kidville-info-soft text-kidville-info-strong' },
+];
+
 function oraDaTs(ts: string | null): string {
   if (!ts) return '';
   const d = new Date(ts);
@@ -28,6 +42,7 @@ function oraDaTs(ts: string | null): string {
 function AssenzeGenitore() {
   const { parentId, studentId, ready } = useParentIdentity();
   const [presenze, setPresenze] = useState<Presenza[]>([]);
+  const [riepilogo, setRiepilogo] = useState<Riepilogo | null>(null);
   const [loading, setLoading] = useState(true);
 
   // Flusso giustifica con OTP/FES (backend esistente: /giustifica/otp + /giustifica).
@@ -44,7 +59,7 @@ function AssenzeGenitore() {
       headers: { 'x-user-id': parentId },
     })
       .then((r) => r.json())
-      .then((d) => { if (d.success) setPresenze(d.data); })
+      .then((d) => { if (d.success) { setPresenze(d.data); setRiepilogo(d.riepilogo ?? null); } })
       .finally(() => setLoading(false));
   }, [ready, studentId, parentId]);
 
@@ -86,16 +101,24 @@ function AssenzeGenitore() {
       <PageHeaderCard
         eyebrow="Didattica · Primaria"
         title="Presenze"
-        subtitle="Assenze, ritardi e giustifiche"
+        subtitle="Riepilogo di presenze, assenze, ritardi e giustifiche"
         className="mb-4"
       />
 
       {loading ? (
         <p className="font-maven text-sm text-kidville-muted">Caricamento…</p>
-      ) : presenze.length === 0 ? (
-        <p className="font-maven text-sm text-kidville-muted">Nessuna assenza registrata.</p>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-4">
+          {/* Riepilogo: un contatore per stato (presenti inclusi). */}
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {RIEPILOGO_TILES.map((t) => (
+              <div key={t.key} className={`rounded-2xl px-3 py-3 ${t.cls}`}>
+                <p className="font-maven text-2xl font-bold leading-none">{riepilogo?.[t.key] ?? 0}</p>
+                <p className="font-maven text-xs mt-1 font-semibold">{t.label}</p>
+              </div>
+            ))}
+          </div>
+
           {msg && (
             <p className={`font-maven text-sm rounded-2xl px-4 py-2 ${msg.includes('✓') ? 'bg-kidville-success-soft text-kidville-success' : 'bg-kidville-error-soft text-kidville-error'}`}>{msg}</p>
           )}
@@ -108,6 +131,14 @@ function AssenzeGenitore() {
             </div>
           )}
 
+          <h2 className="font-maven text-sm font-semibold text-kidville-ink pt-1">
+            Assenze, ritardi e uscite anticipate
+          </h2>
+
+          {presenze.length === 0 ? (
+            <p className="font-maven text-sm text-kidville-muted">Nessuna assenza, ritardo o uscita anticipata da segnalare.</p>
+          ) : (
+          <div className="space-y-3">
           {presenze.map((p) => {
             const s = STATO_LABEL[p.stato] ?? { label: p.stato, cls: 'bg-kidville-neutral-soft text-kidville-muted' };
             return (
@@ -182,6 +213,8 @@ function AssenzeGenitore() {
               </div>
             );
           })}
+          </div>
+          )}
         </div>
       )}
     </div>

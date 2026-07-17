@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { requireParentOfStudent } from '@/lib/auth/require-parent';
-import { scuoleDiUtente } from '@/lib/auth/scope';
+import { assertAlunnoInScope, scuoleDiUtente } from '@/lib/auth/scope';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
@@ -131,7 +131,29 @@ export const PATCH = withRoute('locker/requests:PATCH', async (request: NextRequ
         if ('response' in b) return b.response;
         const { id, stato } = b.data;
 
+        // M9 — CAMBIO STATO = azione della scuola (presa in carico/evasione): gate
+        // ruolo docente/staff. Gating prima del caricamento della riga per non
+        // esporre nemmeno l'esistenza dell'id a un anonimo.
+        const auth = await requireDocente(request);
+        if (auth.response) return auth.response;
+
         const supabase = await createAdminClient();
+
+        // Carica la riga per ricavarne il contesto (alunno → sezione/plesso) e
+        // applicare lo scope: un docente non tocca richieste fuori dalla sua sezione.
+        const { data: riga, error: rigaErr } = await supabase
+            .from('locker_requests')
+            .select('id, alunno_id')
+            .eq('id', id)
+            .maybeSingle();
+        if (rigaErr) {
+            if (tabellaMancante(rigaErr)) return NextResponse.json({ ok: true, degraded: true });
+            return NextResponse.json({ error: rigaErr.message }, { status: 500 });
+        }
+        if (!riga) return NextResponse.json({ error: 'Richiesta non trovata' }, { status: 404 });
+
+        const scopeErr = await assertAlunnoInScope(supabase, auth.user, riga.alunno_id);
+        if (scopeErr) return scopeErr;
 
         const updates: Record<string, unknown> = { stato };
         if (stato === 'acknowledged') {

@@ -6,6 +6,7 @@ import { PenLine, BookOpen, Check, Paperclip, FileText, Image as ImageIcon } fro
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { saveLocalRegistro, syncPendingRegistro } from '@/lib/offline/syncEngine';
 import { nomeCompleto } from '@/lib/format/nome';
+import { DateField } from '@/components/ui/DateField';
 
 interface Campanella { id: string; ordine: number; ora_inizio: string; ora_fine: string; tipo: string }
 interface OrarioCella { campanella_id: string; materia_id: string | null; materie?: { nome: string } | null }
@@ -95,10 +96,10 @@ export default function RegistroPage() {
     <div className="rounded-card bg-white p-5 shadow-sm">
       <div className="mb-4 flex items-center justify-between">
         <h2 className="font-barlow text-lg font-bold text-kidville-ink">Registro di classe</h2>
-        <input
-          type="date"
+        <DateField
           value={data}
-          onChange={(e) => setData(e.target.value)}
+          onChange={setData}
+          aria-label="Data del registro"
           className="font-maven rounded-pill border border-kidville-line px-3 py-1.5 text-sm"
         />
       </div>
@@ -426,11 +427,10 @@ function FirmaModal({
           {!perAlunni && (
             <div>
               <label className="block font-maven text-xs text-kidville-muted">Consegna compiti (facoltativa)</label>
-              <input
-                type="date"
+              <DateField
                 value={dataConsegnaCompiti}
-                min={data}
-                onChange={(e) => setDataConsegnaCompiti(e.target.value)}
+                onChange={setDataConsegnaCompiti}
+                aria-label="Data di consegna dei compiti"
                 className="font-maven w-full rounded-pill border border-kidville-line px-3 py-2 text-sm"
               />
             </div>

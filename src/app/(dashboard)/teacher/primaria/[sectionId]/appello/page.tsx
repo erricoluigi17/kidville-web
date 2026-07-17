@@ -5,6 +5,7 @@ import { useParams, useSearchParams } from 'next/navigation';
 import { Check, X, Clock, LogOut, Users, BarChart2 } from 'lucide-react';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { saveLocalAppello, syncPendingAppello } from '@/lib/offline/syncEngine';
+import { DateField } from '@/components/ui/DateField';
 
 type Stato = 'presente' | 'assente' | 'ritardo' | 'uscita_anticipata';
 interface Riga {
@@ -186,10 +187,10 @@ export default function AppelloPage() {
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h2 className="font-barlow text-lg font-bold text-kidville-ink">Appello</h2>
         <div className="flex items-center gap-2">
-          <input
-            type="date"
+          <DateField
             value={data}
-            onChange={(e) => setData(e.target.value)}
+            onChange={setData}
+            aria-label="Data dell'appello"
             className="font-maven rounded-pill border border-kidville-line px-3 py-1.5 text-sm"
           />
           <button
@@ -273,9 +274,9 @@ export default function AppelloPage() {
           <option value="">Alunno…</option>
           {alunniList.map((a) => <option key={a.id} value={a.id}>{a.cognome} {a.nome}</option>)}
         </select>
-        <input type="date" value={riepilogoDal} onChange={(e) => setRiepilogoDal(e.target.value)}
+        <DateField value={riepilogoDal} onChange={setRiepilogoDal} aria-label="Riepilogo assenze: data di inizio"
           className="font-maven rounded-pill border border-kidville-line px-3 py-2 text-sm" />
-        <input type="date" value={riepilogoAl} onChange={(e) => setRiepilogoAl(e.target.value)}
+        <DateField value={riepilogoAl} onChange={setRiepilogoAl} aria-label="Riepilogo assenze: data di fine"
           className="font-maven rounded-pill border border-kidville-line px-3 py-2 text-sm" />
       </div>
 

@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Award, AlertTriangle, PenLine, CalendarOff, Hand, CalendarPlus, FileText, Download, Lock } from 'lucide-react';
+import { DateField } from '@/components/ui/DateField';
 
 interface Valutazione { id: string; materia: string; tipo: string; modalita: string; argomento: string | null; giudizio_sintetico: string | null; giudizio_testo: string | null; creato_il: string }
 interface Nota { id: string; categoria: string; testo: string; richiede_firma: boolean; firmata_il: string | null; creato_il: string }
@@ -277,7 +278,7 @@ function AssenzeCard({ assenze, onGiustifica, onRequestGiustificaOtp, onComunica
       {showForm && (
         <div className="mb-3 rounded-card bg-kidville-cream/50 p-3 flex flex-col gap-2">
           <p className="font-maven text-xs text-gray-500">Comunica un&apos;assenza, anche per una data futura.</p>
-          <input type="date" value={data} min={oggiIso()} onChange={(e) => setData(e.target.value)} className="font-maven rounded-pill border border-gray-200 px-3 py-1.5 text-sm" />
+          <DateField value={data} onChange={setData} aria-label="Data dell'assenza da comunicare" className="font-maven rounded-pill border border-gray-200 px-3 py-1.5 text-sm" />
           <input type="text" value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder="Motivo (es. visita medica)" className="font-maven rounded-pill border border-gray-200 px-3 py-1.5 text-sm" />
           <button onClick={comunica} disabled={busy} className="font-maven self-start rounded-pill bg-kidville-green px-4 py-1.5 text-sm text-kidville-yellow disabled:opacity-50">
             {busy ? 'Invio…' : 'Invia'}
@@ -418,10 +419,10 @@ function ImpreparatoForm({ materie, onImpreparato }: {
         Comunica in anticipo al docente che tuo figlio è impreparato per una determinata giornata/materia.
       </p>
       <div className="flex flex-col gap-2">
-        <input
-          type="date"
+        <DateField
           value={data}
-          onChange={(e) => setData(e.target.value)}
+          onChange={setData}
+          aria-label="Data della dichiarazione di impreparato"
           className="font-maven rounded-pill border border-gray-200 px-3 py-1.5 text-sm"
         />
         <select value={materiaId} onChange={(e) => setMateriaId(e.target.value)} className="font-maven rounded-pill border border-gray-200 px-3 py-1.5 text-sm">

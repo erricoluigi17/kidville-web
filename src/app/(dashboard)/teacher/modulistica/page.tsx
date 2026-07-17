@@ -333,7 +333,7 @@ export default function TeacherModulisticaPage() {
                         </span>
                       </div>
                       <p className="font-maven text-xs text-kidville-muted mt-1">
-                        Caricato il: {new Date(cert.creato_il).toLocaleDateString()}
+                        Caricato il: {new Date(cert.creato_il).toLocaleDateString('it-IT')}
                       </p>
                       {cert.note && (
                         <p className="font-maven text-xs text-kidville-ink mt-2 bg-kidville-cream p-2 rounded-lg italic">

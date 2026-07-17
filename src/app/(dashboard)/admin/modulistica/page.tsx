@@ -7,6 +7,7 @@ import {
   Trash2, Download, CheckCircle, ArrowRight, Upload, Shield, Inbox, Send, Stamp, X
 } from 'lucide-react';
 import { HEADER_BTN, PageHeader, Tabs } from '@/components/ui/cockpit';
+import { DateField } from '@/components/ui/DateField';
 import { SedeNotice, useSediAttive } from '@/lib/context/sede-context';
 import { ModuliInviabili } from '@/components/features/admin/iscrizioni/ModuliInviabili';
 import { ModuliRicevuti } from '@/components/features/admin/iscrizioni/ModuliRicevuti';
@@ -415,7 +416,7 @@ function ModulisticaInner() {
       doc.setFontSize(12);
       doc.text(`Modulo: ${form.title}`, 20, 30);
       doc.text(`Descrizione: ${form.description || 'Nessuna'}`, 20, 37);
-      doc.text(`Data di Stampa: ${new Date().toLocaleString()}`, 20, 44);
+      doc.text(`Data di Stampa: ${new Date().toLocaleString('it-IT')}`, 20, 44);
       
       doc.setDrawColor(0, 106, 95); // Kidville Green
       doc.setLineWidth(1);
@@ -564,7 +565,7 @@ function ModulisticaInner() {
                         {form.expiration_date && (
                           <span className={`px-2.5 py-1 rounded-full text-xs font-semibold flex items-center gap-1 ${new Date(form.expiration_date) < new Date() ? 'bg-kidville-error-soft text-kidville-error' : 'bg-kidville-warn-soft text-kidville-warn'}`}>
                             <Calendar size={12} />
-                            Scadenza: {new Date(form.expiration_date).toLocaleDateString()}
+                            Scadenza: {new Date(form.expiration_date).toLocaleDateString('it-IT')}
                           </span>
                         )}
                       </div>
@@ -828,10 +829,10 @@ function ModulisticaInner() {
                   <label className="block font-maven text-sm font-semibold text-kidville-green mb-1.5">
                     Scadenza Modulo
                   </label>
-                  <input
-                    type="date"
+                  <DateField
                     value={formExpiration}
-                    onChange={e => setFormExpiration(e.target.value)}
+                    onChange={setFormExpiration}
+                    aria-label="Data di scadenza del modulo"
                     className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-ink focus:outline-none"
                   />
                 </div>
@@ -991,7 +992,7 @@ function ModulisticaInner() {
                   {selectedPre.students?.map((s, idx) => (
                     <div key={idx} className="p-3 bg-kidville-cream border border-kidville-line rounded-xl text-xs font-maven">
                       <div className="font-semibold text-kidville-ink text-sm">{s.cognome} {s.nome}</div>
-                      <div className="text-kidville-muted mt-1">Data Nascita: {new Date(s.data_nascita).toLocaleDateString()} | CF: {s.codice_fiscale || 'N.D.'}</div>
+                      <div className="text-kidville-muted mt-1">Data Nascita: {new Date(s.data_nascita).toLocaleDateString('it-IT')} | CF: {s.codice_fiscale || 'N.D.'}</div>
                       {s.note_mediche && (
                         <div className="mt-2 text-kidville-error bg-kidville-error-soft p-1.5 rounded-lg font-semibold flex items-start gap-1">
                           ⚠️ Allergie/Note: {s.note_mediche}

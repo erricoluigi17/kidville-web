@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import { FolderLock, Upload, Download, ShieldAlert, FileText, ChevronDown, ChevronRight } from 'lucide-react';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
+import { DateField } from '@/components/ui/DateField';
 
 interface Alunno { id: string; nome: string; cognome: string }
 interface Documento {
@@ -221,7 +222,7 @@ export default function FascicoloPage() {
               <select value={documentType} onChange={(e) => setDocumentType(e.target.value)} className="font-maven rounded-pill border border-kidville-line px-3 py-2 text-sm">
                 {TIPI.map((t) => <option key={t.v} value={t.v}>{t.l}</option>)}
               </select>
-              <input type="date" value={expiry} onChange={(e) => setExpiry(e.target.value)} className="font-maven rounded-pill border border-kidville-line px-3 py-2 text-sm" placeholder="Scadenza" />
+              <DateField value={expiry} onChange={setExpiry} aria-label="Data di scadenza del documento" className="font-maven rounded-pill border border-kidville-line px-3 py-2 text-sm" />
             </div>
             <input value={descrizione} onChange={(e) => setDescrizione(e.target.value)} placeholder="Descrizione (facoltativa)" className="font-maven mt-2 w-full rounded-pill border border-kidville-line px-3 py-2 text-sm" />
             <input ref={fileRef} type="file" accept="application/pdf,image/*" className="font-maven mt-2 block w-full text-sm text-kidville-ink file:mr-3 file:rounded-pill file:border-0 file:bg-kidville-green/10 file:px-4 file:py-1.5 file:text-kidville-green" />

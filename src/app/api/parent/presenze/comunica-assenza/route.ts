@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireParentOfStudent } from '@/lib/auth/require-parent'
+import { assertGenitoreNonSospeso } from '@/lib/pagamenti/sospensione'
 import { notificaEvento } from '@/lib/notifiche/triggers'
 import { docentiDiSezione } from '@/lib/sezioni/docenti'
 import { parseBody } from '@/lib/validation/http'
@@ -33,6 +34,13 @@ export const POST = withRoute('parent/presenze/comunica-assenza:POST', async (re
     const userId = auth.user.id
 
     const supabase = await createAdminClient()
+
+    // Sospensione moroso (DL-021 · M4): il genitore sospeso non può comunicare
+    // un'assenza (azione di servizio). Guard DOPO l'identità di sessione; blocca
+    // solo la SCRITTURA (la consultazione presenze resta accessibile).
+    const sospesoErr = await assertGenitoreNonSospeso(supabase, userId)
+    if (sospesoErr) return sospesoErr
+
     const { data: alunno } = await supabase
       .from('alunni')
       .select('id, section_id')

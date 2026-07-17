@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { getRequestUserId } from '@/lib/auth/require-staff'
+import { requireUser } from '@/lib/auth/require-staff'
 import { buildReceiptPdf } from '@/lib/fea/receipt-pdf'
 import { parseQuery } from '@/lib/validation/http'
 import type { ReceiptPayload, SignatureLog } from '@/lib/fea/types'
@@ -68,8 +68,12 @@ async function resolveEntita(
 
 export const GET = withRoute('fea/receipt:GET', async (request: NextRequest) => {
   try {
-    const userId = getRequestUserId(request)
-    if (!userId) return NextResponse.json({ error: 'Non autenticato' }, { status: 401 })
+    // G2 — identità dalla SESSIONE (requireUser → resolveIdentity): l'header
+    // `x-user-id`/`?userId=` non è più accettato come prova d'identità (era
+    // spoofabile e permetteva di scaricare la ricevuta firmata altrui).
+    const auth = await requireUser(request)
+    if (auth.response) return auth.response
+    const userId = auth.user.id
 
     const q = parseQuery(request, getQuerySchema)
     if ('response' in q) return q.response
@@ -81,8 +85,10 @@ export const GET = withRoute('fea/receipt:GET', async (request: NextRequest) => 
       return NextResponse.json({ error: 'Firma non trovata' }, { status: 404 })
     }
 
-    // Scope: solo il firmatario può scaricare la propria ricevuta.
-    if (resolved.signerId && resolved.signerId !== userId) {
+    // Scope: NEGA DI DEFAULT. Solo il firmatario può scaricare la propria ricevuta.
+    // Se il firmatario è ignoto (signerId null) la ricevuta NON è servibile: prima
+    // questo caso saltava il 403 e chiunque autenticato la scaricava.
+    if (!resolved.signerId || resolved.signerId !== userId) {
       return NextResponse.json({ error: 'Accesso non consentito' }, { status: 403 })
     }
 

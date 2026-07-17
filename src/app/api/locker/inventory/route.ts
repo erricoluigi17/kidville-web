@@ -188,8 +188,15 @@ export const POST = withRoute('locker/inventory:POST', async (request: NextReque
     try {
         const b = await parseBody(request, postBodySchema);
         if ('response' in b) return b.response;
-        const supabase = await createAdminClient();
         const { alunno_id, materiale, quantita, date } = b.data;
+
+        // M9 — CARICO = azione del genitore sul PROPRIO figlio: gate identità
+        // (sessione) + legame genitore↔alunno. Staff/educator passano. Chiude
+        // l'accettazione anonima di scritture su qualsiasi alunno_id.
+        const auth = await requireParentOfStudent(request, alunno_id);
+        if (auth.response) return auth.response;
+
+        const supabase = await createAdminClient();
 
         const targetDate = date ?? new Date().toISOString().slice(0, 10);
 
@@ -233,6 +240,16 @@ export const POST = withRoute('locker/inventory:POST', async (request: NextReque
             if (error) throw error;
             result = data;
         }
+
+        // Audit della scrittura (come la PATCH/CONSUMO accanto): attore, plesso,
+        // sezione, valore dopo. Best-effort (logScrittura non lancia mai).
+        const { data: al } = await supabase
+            .from('alunni').select('section_id, scuola_id').eq('id', alunno_id).maybeSingle();
+        await logScrittura(supabase, {
+            attore: auth.user, entitaTipo: 'armadietto', entitaId: result?.id ?? null,
+            azione: existing ? 'update' : 'insert',
+            scuolaId: al?.scuola_id ?? null, sectionId: al?.section_id ?? null, valoreDopo: result,
+        });
 
         return NextResponse.json({ success: true, data: result });
     } catch (err) {

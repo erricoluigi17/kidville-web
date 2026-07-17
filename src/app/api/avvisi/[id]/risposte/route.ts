@@ -1,7 +1,9 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
-import { requireDocente } from '@/lib/auth/require-staff';
+import { requireDocente, requireUser } from '@/lib/auth/require-staff';
+import { genitoreHasFiglio } from '@/lib/anagrafiche/legami';
+import { assertGenitoreNonSospeso } from '@/lib/pagamenti/sospensione';
 import { notificaEvento } from '@/lib/notifiche/triggers';
 import { parseBody, parseData } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
@@ -12,10 +14,11 @@ interface RouteParams {
     params: Promise<{ id: string }>;
 }
 
+// `parent_id` NON è più nel body (G4): l'autore della risposta è la SESSIONE.
+// `risposta` è vincolata a si/no (adesione); assente = sola presa visione.
 const postBodySchema = z.object({
-    parent_id: zUuid,
     student_id: zUuid,
-    risposta: z.unknown().optional(),
+    risposta: z.enum(['si', 'no']).optional(),
 });
 
 // GET /api/avvisi/[id]/risposte
@@ -79,8 +82,8 @@ export const GET = withRoute('avvisi/[id]/risposte:GET', async (request: Request
 });
 
 // POST /api/avvisi/[id]/risposte
-// Body: { parent_id, student_id, risposta? }
-// Registra presa visione o adesione
+// Body: { student_id, risposta? } — parent_id è la SESSIONE (G4), risposta ∈ {si,no}.
+// Registra presa visione o adesione del genitore per un proprio figlio.
 export const POST = withRoute('avvisi/[id]/risposte:POST', async (request: Request, { params }: RouteParams) => {
     try {
         const rawParams = await params;
@@ -88,11 +91,29 @@ export const POST = withRoute('avvisi/[id]/risposte:POST', async (request: Reque
         if ('response' in pId) return pId.response;
         const avvisoId = pId.data;
 
+        // G4: identità DALLA SESSIONE. Il `parent_id` non arriva più dal client
+        // (era forgiabile in anonimo → adesioni/prese-visione false su minori).
+        const auth = await requireUser(request);
+        if (auth.response) return auth.response;
+        const parent_id = auth.user.id;
+
         const b = await parseBody(request, postBodySchema);
         if ('response' in b) return b.response;
-        const { parent_id, student_id, risposta } = b.data;
+        const { student_id, risposta } = b.data;
 
         const supabase = await createAdminClient();
+
+        // IDOR: si risponde SOLO per i propri figli (staff non è in
+        // legame_genitori_alunni → 403: non forgia prese-visione delle famiglie).
+        const suoFiglio = await genitoreHasFiglio(supabase, parent_id, student_id);
+        if (!suoFiglio) {
+            return NextResponse.json({ error: 'Accesso negato' }, { status: 403 });
+        }
+
+        // Morosità: l'adesione all'avviso è un'azione di servizio → bloccata se sospeso.
+        const sospeso = await assertGenitoreNonSospeso(supabase, parent_id);
+        if (sospeso) return sospeso;
+
         const now = new Date().toISOString();
 
         // Controlla se esiste già una risposta per preservare i campi

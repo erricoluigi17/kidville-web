@@ -2,13 +2,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { NextResponse } from 'next/server'
 
 // P4/DL-040 (S9b): il ramo genitore di GET /api/diary/entries legge eventi_diario
-// via SERVICE-ROLE (così le policy permissive anon sono droppate senza rompere la
-// lettura). Lo scoping di proprietà è rinviato a S13 (vedi commento nella route).
+// via SERVICE-ROLE ed è ora gated con requireParentOfStudent (privacy minori: la
+// nota_bambino E1 è riservata al genitore di quel bambino).
 // Il ramo docente resta gated (requireDocente) E ora è scoperto per SEDE ATTIVA:
 // usa resolveScuoleAttive (SedeSelector/cookie), ri-validata server-side.
 
 const h = vi.hoisted(() => ({
   requireDocente: vi.fn(),
+  requireParentOfStudent: vi.fn(),
   resolveScuoleAttive: vi.fn(),
   events: [{ id: 'e1', tipo_evento: 'pranzo', orario_inizio: '2026-06-27T12:00:00Z', dettagli: {}, nota_libera: 'buona giornata' }],
 }))
@@ -17,6 +18,7 @@ vi.mock('@/lib/auth/require-staff', () => ({
   requireUser: vi.fn(),
   requireDocente: h.requireDocente,
 }))
+vi.mock('@/lib/auth/require-parent', () => ({ requireParentOfStudent: h.requireParentOfStudent }))
 vi.mock('@/lib/auth/scope', () => ({ assertAlunnoInScope: async () => null, resolveScuoleAttive: h.resolveScuoleAttive }))
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: vi.fn() }))
 vi.mock('@/lib/primaria/notifiche', () => ({ notificaTitolariScrittura: vi.fn(), enqueueDiarioGenitori: vi.fn() }))
@@ -43,6 +45,7 @@ const req = (qs: string) => ({ url: `http://test/api/diary/entries?${qs}`, nextU
 beforeEach(() => {
   vi.clearAllMocks()
   h.requireDocente.mockResolvedValue({ user: { id: 'ed1', role: 'educator', scuola_id: 'sc-1' } })
+  h.requireParentOfStudent.mockResolvedValue({ user: { id: 'gen-1', role: 'genitore' } })
   h.resolveScuoleAttive.mockResolvedValue(['sc-1'])
 })
 
@@ -53,6 +56,13 @@ describe('GET /api/diary/entries', () => {
     const j = await res.json()
     expect(Array.isArray(j)).toBe(true)
     expect(j[0]).toMatchObject({ tipo_evento: 'pranzo', note: 'buona giornata' })
+  })
+
+  it('ramo genitore: 403 quando requireParentOfStudent nega (non proprietario/anonimo)', async () => {
+    h.requireParentOfStudent.mockResolvedValue({ response: NextResponse.json({}, { status: 403 }) })
+    const res = await GET(req('alunno_id=11111111-1111-1111-1111-111111111111&from=2026-06-27&to=2026-06-27'))
+    expect(res.status).toBe(403)
+    expect(h.requireParentOfStudent).toHaveBeenCalled()
   })
 
   it('ramo docente: 403 quando il gate nega', async () => {

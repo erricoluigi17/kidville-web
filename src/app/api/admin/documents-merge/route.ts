@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
+import { requireStaff } from '@/lib/auth/require-staff';
 import { parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
@@ -15,6 +16,12 @@ const getQuerySchema = z.object({
 
 export const GET = withRoute('admin/documents-merge:GET', async (request: NextRequest) => {
   try {
+    // B1 — questo endpoint restituisce nome/cognome/CF/firme dell'intera classe:
+    // dati di minori. La route usa service-role (RLS bypassata), quindi il gate
+    // applicativo è l'unico presidio. Solo lo staff (pannello admin modulistica).
+    const auth = await requireStaff(request);
+    if (auth.response) return auth.response;
+
     const q = parseQuery(request, getQuerySchema);
     if ('response' in q) return q.response;
     const { form_id: formId, class_name: className } = q.data;

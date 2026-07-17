@@ -59,6 +59,109 @@
 
 ---
 
+## 🗓️ Changelog — Correzione findings collaudo E2E: sicurezza · morosità · avvisi · OTP · mensa · prodotto 2026-07-18 (branch `feat/collaudo-giornata-e2e`)
+
+Correzione, via pipeline `/ship-cycle`, dei findings prodotti dalle due campagne di collaudo E2E qui sotto —
+**escluse per scelta le voci di contabilità**. Esecutori paralleli su file disgiunti → 11 tester-opus → correzione
+per **causa radice**; gate verde (`eslint` · `tsc` · `vitest` 2080 test · `build`), advisor Supabase **0 ERROR**.
+Il collaudo del ciclo ha intercettato una regressione (RPC mensa eseguibili da `anon`: `REVOKE FROM PUBLIC` non
+basta in Supabase) subito chiusa nel 2° giro.
+
+**Sicurezza — gate applicativo** (le route usano service-role, la RLS è bypassata → il gate è l'unica difesa):
+- `admin/documents-merge` GET → `requireStaff` (chiude il dump anonimo di CF/firme di classe).
+- `diary/checkin` GET e `diary/entries` GET (ramo genitore) → `requireParentOfStudent` (chiude l'IDOR presenze e
+  protegge la nuova nota per-bambino del diario).
+- `fea/receipt` GET → identità sessione-first (`requireUser`, niente header `x-user-id`), deny-by-default se il
+  firmatario è null o diverso dall'utente.
+- `avvisi` GET ramo genitore → **server-derived** dalla sessione (ignora i parametri client), isolamento di plesso
+  **fail-closed**; `avvisi/[id]/risposte` POST → `requireUser` + `genitoreHasFiglio` + `parent_id` di sessione
+  (chiude la forgiatura di adesione/consenso gita), enum risposta `si`/`no`.
+- `locker/inventory` POST → `requireParentOfStudent`; `locker/requests` PATCH → `requireDocente` + scope;
+  `locker/materials` GET → `requireUser`.
+- **Sospensione morosità** estesa a tutte le azioni di servizio del genitore (prenotazione mensa, moduli Sistema B,
+  chat, adesione avvisi, comunica/giustifica assenza); le **letture** (diario, registro/presenze) restano sempre
+  accessibili.
+
+**Avvisi:** autore preso sempre dalla sessione (niente spoofing); avviso «classe» con classi vuote → 400; feed
+genitore **unificato su tutti i figli**, con il nome del/i figlio/i su ogni avviso, adesione tracciata per-figlio.
+
+**Firma OTP:** Sistema B con **consumo del ticket** (tabella `otp_ticket_consumati` → niente replay) + unicità
+`(form_id, student_id)` sulle firmate (ri-firma vietata, 409); Sistema A con **scadenza OTP a 10 minuti**
+(`form_submissions.otp_generato_il`).
+
+**Mensa:** l'alert allergie raggiunge anche il ruolo `segreteria`; prenotazione/disdetta ticket **transazionale**
+via RPC `scala_ticket_e_prenota` / `riaccredita_ticket_e_disdici` (SECURITY DEFINER, EXECUTE **solo** a
+`service_role`; fallback pulito se la RPC manca).
+
+**Prodotto:** diario 0-6 con nota di sezione (broadcast) **+** nota per singolo bambino (`eventi_diario.nota_bambino`,
+solo al suo genitore); presenze primaria genitore con **riepilogo** (presenze/assenze/ritardi/uscite) oltre alla
+lista; date dell'area primaria in **gg/mm/aaaa** (`DateField`) e `it-IT` nei `toLocaleDateString` della modulistica.
+
+**Migrazioni** (via MCP, produzione): RPC mensa transazionali (+ `REVOKE` da `anon`/`authenticated`);
+`otp_ticket_consumati` + indice unique parziale `forms_submissions(form_id,student_id) where is_signed`;
+`form_submissions.otp_generato_il`; `eventi_diario.nota_bambino`. **Escluso** per scelta: **contabilità** (doppio
+incasso, PATCH importi negativi, home «in regola»/`PagamentiSummary`, pagamenti accorpati, stato `scaduto` via cron).
+
+---
+
+## 🗓️ Changelog — Collaudo «360» E2E (armadietto · mensa · contabilità · modulistica · avvisi) 2026-07-17 (branch `feat/collaudo-giornata-e2e`)
+
+Seconda campagna di collaudo end-to-end «l'agente si comporta come l'utente», su **produzione** (account/sezioni
+**TEST**, tutto reversibile e ripulito), via **Chrome** + oracolo **DB** + **email reali** (kidville-mail MCP), con
+corsia negativa `curl` anonimo. Cinque funzioni testate in ogni fattispecie (happy path, casi limite, negativi).
+**Nessun codice di prodotto modificato** — è collaudo: produce findings. Report: `e2e/collaudo-giornata/run/report-giornata.html`;
+elenco completo per la correzione: **`e2e/collaudo-giornata/FINDINGS-CORREZIONE.md`**.
+
+**🔴 Bloccante**: `admin/documents-merge` ri-confermato live — dump di nome/cognome/**CF**/firme di un'intera classe
+**senza auth** (nomi di bambini esposti). **🟠 Gravi**: `diary/checkin` IDOR e `fea/receipt` header `x-user-id`
+ri-confermati; **NUOVI** `GET /api/avvisi?parentId=` (lettura feed avvisi senza auth) e `POST /api/avvisi/[id]/risposte`
+(forgiatura adesione/consenso gita senza auth). **🟡 Medi (nuovi)**: doppio incasso accettato (`importo_pagato>importo`);
+`PATCH` voce accetta importo negativo (arriva alla UI genitore come «€ -999»); **home «Pagamenti in regola» con €70
+scaduti** (`PagamentiSummary` somma i residui senza clamp → un sovra-incasso maschera la morosità); **sospensione
+morosità quasi inefficace** (guardia solo su moduli Sistema A; mensa/avvisi/Sistema B non bloccati); **OTP di firma FES
+ripetibile entro 10′** (replay → firme duplicate); **alert allergie mensa non raggiunge il ruolo `segreteria`**;
+spoofing autore avviso; avviso «classe» con classi vuote accettato; `locker/inventory|requests|materials` senza gate.
+**🟢 Verificati OK** (doppio oracolo): ricarica/prenotazione/cutoff/allergeni mensa, acconto-su-scaduta-resta-moroso,
+**sollecito con email realmente consegnata**, firma OTP end-to-end, adesione avvisi. «Pagamenti accorpati» inesistenti
+(fratelli = voci separate, intestatario per-figlio).
+
+## 🗓️ Changelog — Collaudo «giornata» E2E multi-ruolo su produzione: 3 vulnerabilità di sicurezza + findings 2026-07-17 (branch `feat/collaudo-giornata-e2e`)
+
+Campagna di collaudo end-to-end «giornata simulata» eseguita da agenti-utente su **produzione** (app
+nativa via Maestro su iOS+Android + cockpit), su account/sezioni **TEST**. Infra committata in
+`e2e/collaudo-giornata/` (config personas, seed idempotente, report HTML con screenshot inline,
+`seed/cleanup.sql`). Non modifica codice di prodotto: **produce findings** (dati TEST reversibili, tag
+`[E2E-GIORNATA]`).
+
+**🔴 3 vulnerabilità di sicurezza confermate (dati di minori) — CORRETTE nel changelog di correzione del 2026-07-18 in testa:**
+- **F1 [BLOCCANTE]** `src/app/api/admin/documents-merge/route.ts:16-94`: dump di nome, cognome,
+  **codice fiscale** e firme di un'intera classe **senza autenticazione** (nessun `requireStaff`;
+  `createAdminClient()` bypassa la RLS). Confermato live con `curl` anonimo. Fix: `requireStaff` in
+  testa alla GET.
+- **F2 [grave]** `src/app/api/diary/checkin/route.ts:18-40`: `GET ?alunno_id=` anonimo → presenza e
+  orario d'entrata di qualunque alunno (IDOR). Fix: `requireUser` + `assertAlunnoInScope`.
+- **F3 [grave]** `src/app/api/fea/receipt/route.ts:71-87`: identità via header `x-user-id` accettata
+  anche in prod (bypassa il sigillo `ALLOW_HEADER_IDENTITY`), scope saltato se `signerId` è null →
+  ricevuta firmata di un altro genitore. Fix: `resolveIdentity` sessione-first + deny-by-default.
+- **Positivo**: gli endpoint distruttivi (`wipe`/`seed-full`/`apply-*`/`debug-*`) sono **sigillati**
+  in produzione (`sealDangerous()` → 404 prima di ogni operazione); RLS scoping genitore corretto
+  (intersezione figli = 0); `ALLOW_HEADER_IDENTITY='false'` in prod.
+
+**Findings di prodotto (non bloccanti, dati di minori — da valutare):**
+- **Diario 0-6**: la **nota libera** di «salva merenda per tutti» viene scritta nel diario di **tutti**
+  i bambini della sezione → la stessa nota è visibile a tutti i genitori (verificato: 10 righe
+  `eventi_diario` con nota identica).
+- **Presenze primaria**: la vista genitore espone **solo le assenze**; un bambino presente non ha
+  alcun indicatore positivo (indistinguibile da «appello non ancora fatto»).
+- **Registro primaria**: **date in formato US** (MM/DD/YYYY) invece di DD/MM/YYYY (bug it-IT).
+- **Anagrafica**: **roster TEST 1A duplicato** (un nominativo con doppia grafia) → 12 alunni invece
+  di 10 (dato sporco preesistente, da bonificare).
+
+**Verificati end-to-end (UI + oracolo DB):** handshake Avvisi (segreteria→genitore, `avvisi_risposte`
+letto+adesione), Diario (docente infanzia→genitore, `eventi_diario`), Presenze (docente→`presenze`).
+Corsie native contro prod verificate: Android e iOS (`CAP_SERVER_URL=https://app.kidville.it`). Report:
+`e2e/collaudo-giornata/run/report-giornata.html`.
+
 ## 🗓️ Changelog — Cockpit Direzione/Segreteria responsive per mobile: bottom-nav a pillola, topbar verde brand, Anagrafica a card 2026-07-17 (branch `feat/segreteria-mobile`)
 
 Il re-skin del 2026-07-16 aveva portato l'area `/admin/**` (il cockpit Direzione & Segreteria) sul design dell'app, ma solo **su desktop**: sotto i 1024px la topbar restava bianca (badge K + hamburger → drawer laterale), non c'era bottom-nav né campanella, e le tabelle scorrevano orizzontalmente senza rifinitura. Questo intervento chiude il cockpit sul mobile allineandolo a genitore/docente, mantenendo l'impianto desktop appena rilasciato. Pipeline `/ship-cycle` (esecutori paralleli file-disgiunti a ondate → 11 tester-opus → correzioni per causa radice). **Intervento SOLO design per l'impianto: zero route API, zero DB, zero migrazioni, nessuna variabile d'ambiente** — la struttura dati/rotte e ogni testo utente restano invariati. I **micro-fix funzionali** ammessi (bug piccoli sulle pagine toccate) sono dichiarati sotto; i difetti strutturali pre-esistenti restano segnalati soltanto. Il perimetro condiviso (`BottomNav`/`TeacherBottomNav`/`AppBar`/`PageHeaderCard`/`HeroCard`/`Btn`/`Card`/`Badge`/`Modal`) **non è stato toccato**: la nav admin è codice nuovo che ne mutua il linguaggio, non il codice, così genitore/docente restano identici al pixel.

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireParentOfStudent } from '@/lib/auth/require-parent'
+import { assertGenitoreNonSospeso } from '@/lib/pagamenti/sospensione'
 import { getUserEmail, verifyTicket, codeHash } from '@/lib/auth/otp-ticket'
 import { buildSignatureLog, extractRequestMeta } from '@/lib/fea/signature-log'
 import { recordSignerSlot } from '@/lib/fea/slots'
@@ -43,6 +44,12 @@ export const POST = withRoute('parent/presenze/giustifica:POST', async (request:
     const userId = auth.user.id
 
     const supabase = await createAdminClient()
+
+    // Sospensione moroso (DL-021 · M4): il genitore sospeso non può giustificare
+    // (azione di servizio). Guard DOPO l'identità di sessione e PRIMA della verifica
+    // OTP: un account sospeso non deve neppure innescare la firma. Solo SCRITTURA.
+    const sospesoErr = await assertGenitoreNonSospeso(supabase, userId)
+    if (sospesoErr) return sospesoErr
 
     // Gating primaria: la giustifica genitore è ammessa solo per la scuola primaria.
     const { data: alunno } = await supabase

@@ -9,6 +9,7 @@ import { zUuid, zPaginazione } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 import { marcaConsegnati } from '@/lib/chat/delivered';
+import { assertGenitoreNonSospeso } from '@/lib/pagamenti/sospensione';
 
 // markRead='' è ammesso per retro-compatibilità: equivale ad assente (nessun mark-read).
 const getQuerySchema = z.object({
@@ -138,6 +139,13 @@ export const POST = withRoute('chat/messages:POST', async (request: Request) => 
         const { thread_id, content, attachment_url, attachment_type } = b.data;
 
         const supabase = await createAdminClient();
+
+        // Sospensione moroso (DL-021 · M4): il genitore con un figlio sospeso non
+        // può inviare messaggi (azione di servizio). Solo la SCRITTURA: la lettura
+        // (GET) resta libera. Identità dal gate, mai dal body. Su un docente il
+        // guard è trasparente (nessun legame genitore↔alunno).
+        const sospesoErr = await assertGenitoreNonSospeso(supabase, sender_id);
+        if (sospesoErr) return sospesoErr;
 
         // Autorizzazione: il mittente deve essere partecipante del thread indicato
         // (teacher_id o parent_id). Senza, un utente autenticato poteva iniettare

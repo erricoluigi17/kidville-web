@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { logEvento } from '@/lib/logging/logger'
 
 export interface SignedSubmissionInput {
   form_id: string
@@ -66,7 +67,9 @@ export async function persistSignedSubmission(
       .from('alunni')
       .update(studentUpdates)
       .eq('id', student_id)
-    if (studentErr) console.error('Errore aggiornamento automatico alunno:', studentErr.message)
+    // PostgREST non lancia: si controlla il valore di ritorno. L'auto-aggiornamento
+    // anagrafica è best-effort (la firma resta valida), ma un fallimento va tracciato.
+    if (studentErr) logEvento('db', 'error', { operazione: 'forms/persist-submission', azione: 'auto_update_alunno', esito: 'fallito' }, studentErr)
   }
 
   if (Object.keys(parentUpdates).length > 0) {
@@ -74,7 +77,7 @@ export async function persistSignedSubmission(
       .from('utenti')
       .update(parentUpdates)
       .eq('id', parent_id)
-    if (parentErr) console.error('Errore aggiornamento automatico genitore:', parentErr.message)
+    if (parentErr) logEvento('db', 'error', { operazione: 'forms/persist-submission', azione: 'auto_update_genitore', esito: 'fallito' }, parentErr)
 
     // Aggiorna anche adults per compatibilità (se la tabella esiste)
     try {
@@ -87,6 +90,27 @@ export async function persistSignedSubmission(
       }
     } catch {
       // tabella adults non presente: skip
+    }
+  }
+
+  // 2-bis. Ri-firma vietata (M5): una sola submission FIRMATA per (form_id, student_id).
+  // Difesa in profondità: pre-check applicativo (409 deterministico e testabile) +
+  // indice unique parziale su forms_submissions(form_id, student_id) WHERE is_signed
+  // (backstop race-safe, gestito sotto sul 23505 dell'INSERT). Solo con student_id:
+  // l'onboarding (student_id assente) resta non vincolato, coerente con l'indice.
+  if (is_signed && student_id) {
+    const { data: giaFirmata, error: dupErr } = await supabase
+      .from('forms_submissions')
+      .select('id')
+      .eq('form_id', form_id)
+      .eq('student_id', student_id)
+      .eq('is_signed', true)
+      .limit(1)
+      .maybeSingle()
+    // PostgREST non lancia: se `is_signed` non esiste (DB E2E CI) → 42703, si degrada
+    // pulito saltando il pre-check (il vincolo DB, se presente, resta il backstop).
+    if (!dupErr && giaFirmata) {
+      return { error: 'Esiste già una firma per questo modulo e alunno', status: 409 }
     }
   }
 
@@ -111,6 +135,11 @@ export async function persistSignedSubmission(
     .single()
 
   if (subErr) {
+    // Backstop race-safe: l'indice unique parziale ha respinto una firma duplicata
+    // arrivata in concorrenza col pre-check (M5) → 409, non 500.
+    if ((subErr as { code?: string }).code === '23505') {
+      return { error: 'Esiste già una firma per questo modulo e alunno', status: 409 }
+    }
     return { error: subErr.message, status: 500 }
   }
 

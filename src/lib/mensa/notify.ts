@@ -3,6 +3,7 @@ import { sendPush } from '@/lib/push/web-push'
 import { allergeneLabel, type ConflittoAllergia } from '@/lib/mensa/allergeni'
 import { docentiDiSezione } from '@/lib/sezioni/docenti'
 import { isNotificaAbilitata } from '@/lib/notifiche/config'
+import { logEvento } from '@/lib/logging/logger'
 
 const PORTATA_LABEL: Record<string, string> = { primo: 'primo', secondo: 'secondo', contorno: 'contorno', frutta: 'frutta' }
 
@@ -37,8 +38,8 @@ async function inviaNotifiche(
 // scuola SEMPRE, più gli insegnanti DELLA SEZIONE del bambino (via utenti_sezioni).
 // Se la sezione non ha docenti mappati, fallback a tutti gli insegnanti della
 // scuola (su un alert di sicurezza è preferibile sovra-notificare che mancare).
-async function destinatariAllerta(supabase: SupabaseClient, scuolaId: string, sectionId?: string | null): Promise<string[]> {
-  const ruoliSegreteriaCuoca = new Set(['admin', 'coordinator', 'cuoca'])
+export async function destinatariAllerta(supabase: SupabaseClient, scuolaId: string, sectionId?: string | null): Promise<string[]> {
+  const ruoliSegreteriaCuoca = new Set(['admin', 'coordinator', 'segreteria', 'cuoca'])
   const ruoliInsegnanti = new Set(['educator', 'maestra'])
   const { data } = await supabase
     .from('utenti')
@@ -100,7 +101,9 @@ export async function notificaAllergie(
     })
     return { inviata: true }
   } catch (err) {
-    console.error('notificaAllergie (best-effort) fallita:', err)
+    // Best-effort: non blocca lo scalo ticket. Via logger (mai console.*): la
+    // redazione a lista bianca protegge eventuali dati del minore nell'errore.
+    logEvento('mensa', 'error', { operazione: 'notificaAllergie', esito: 'alert-allergie-non-inviato' }, err)
     return { inviata: false }
   }
 }
@@ -155,6 +158,7 @@ export async function notificaSaldoBasso(
       }
     }
   } catch (err) {
-    console.error('notificaSaldoBasso (best-effort) fallita:', err)
+    // Best-effort: non blocca lo scalo ticket. Via logger (mai console.*).
+    logEvento('mensa', 'error', { operazione: 'notificaSaldoBasso', esito: 'notifica-saldo-basso-non-inviata' }, err)
   }
 }

@@ -9,6 +9,7 @@ import { controllaAllergie } from '@/lib/mensa/allergie-check'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid, zDataYMD } from '@/lib/validation/common'
 import { genitoreHasFiglio } from '@/lib/anagrafiche/legami'
+import { assertAlunnoNonSospeso } from '@/lib/pagamenti/sospensione'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
@@ -51,6 +52,95 @@ async function setSaldo(supabase: Awaited<ReturnType<typeof createAdminClient>>,
     { alunno_id: alunnoId, saldo_ticket: saldo, ultimo_carico: new Date().toISOString() },
     { onConflict: 'alunno_id' }
   )
+}
+
+// La RPC transazionale manca dal DB (E2E CI non migrato) quando PostgREST non la
+// trova nel cache dello schema (PGRST202) o Postgres non la conosce (42883).
+function rpcAssente(err: { code?: string } | null | undefined): boolean {
+  return err?.code === 'PGRST202' || err?.code === '42883'
+}
+
+type SupabaseAdmin = Awaited<ReturnType<typeof createAdminClient>>
+type EsitoScalo = { ok: boolean; saldo: number; motivo?: string; fallback: boolean }
+type OptsScalo = { alunnoId: string; scuolaId: string; data: string; origine: string; utenteId: string; saldoPrima: number }
+
+// Scala 1 ticket + prenota + movimento di ledger in TRANSAZIONE atomica (RPC).
+// Prima erano 3 scritture separate: se il movimento falliva, saldo e ledger
+// divergevano in silenzio (findings m6). Se la RPC non c'è → fallback pulito.
+async function scalaTicketPrenotaAtomico(supabase: SupabaseAdmin, opts: OptsScalo): Promise<EsitoScalo> {
+  const { data: nuovoSaldo, error: rpcErr } = await supabase.rpc('scala_ticket_e_prenota', {
+    p_alunno_id: opts.alunnoId, p_scuola_id: opts.scuolaId, p_data: opts.data,
+    p_origine: opts.origine, p_utente_id: opts.utenteId,
+  })
+  if (!rpcErr) return { ok: true, saldo: Number(nuovoSaldo), fallback: false }
+  if (rpcAssente(rpcErr)) return scalaTicketPrenotaFallback(supabase, opts)
+  // Errore RPC "vero" (constraint, ecc.): la transazione ha fatto ROLLBACK, quindi
+  // saldo e ledger NON divergono. Si logga e si segna la data come fallita.
+  logEvento('db', 'error', { operazione: 'mensa/prenotazioni:POST', esito: 'rpc-scala-ticket-fallita' }, rpcErr)
+  return { ok: false, saldo: opts.saldoPrima, motivo: 'Errore prenotazione', fallback: false }
+}
+
+// Percorso storico a 3 scritture (usato solo quando la RPC non esiste ancora).
+async function scalaTicketPrenotaFallback(supabase: SupabaseAdmin, opts: OptsScalo): Promise<EsitoScalo> {
+  const nuovo = opts.saldoPrima - 1
+  const { error: sErr } = await setSaldo(supabase, opts.alunnoId, nuovo)
+  if (sErr) return { ok: false, saldo: opts.saldoPrima, motivo: 'Errore saldo', fallback: true }
+
+  const { data: pren, error: pErr } = await supabase.from('mensa_prenotazioni').upsert(
+    { alunno_id: opts.alunnoId, scuola_id: opts.scuolaId, data: opts.data, stato: 'prenotato', origine: opts.origine, ticket_scalato: 1, prenotato_da: opts.utenteId },
+    { onConflict: 'alunno_id,data' }
+  ).select('id').single()
+  if (pErr) {
+    await setSaldo(supabase, opts.alunnoId, opts.saldoPrima) // ripristina il saldo
+    return { ok: false, saldo: opts.saldoPrima, motivo: 'Errore prenotazione', fallback: true }
+  }
+
+  const { error: mErr } = await supabase.from('mensa_ticket_movimenti').insert({
+    alunno_id: opts.alunnoId, scuola_id: opts.scuolaId, tipo: 'consumo', delta: -1,
+    saldo_dopo: nuovo, prenotazione_id: pren?.id, origine: opts.origine, data: opts.data, creato_da: opts.utenteId,
+  })
+  if (mErr) {
+    // Senza transazione il ticket È SCALATO ma il movimento non è nel ledger: divergenza
+    // silenziosa (è esattamente il difetto che la RPC elimina). `error`, non `info`.
+    logEvento('db', 'error', {
+      operazione: 'mensa/prenotazioni:POST', esito: 'movimento-consumo-non-registrato', tipo: 'consumo',
+    }, mErr)
+  }
+  return { ok: true, saldo: nuovo, fallback: true }
+}
+
+type EsitoDisdetta = { ok: boolean; saldo: number; fallback: boolean; error?: unknown }
+type OptsDisdetta = { alunnoId: string; data: string; utenteId: string; scuolaId: string; prenId: string; ticket: number }
+
+// Riaccredita il ticket + disdici + movimento in TRANSAZIONE atomica (RPC).
+async function riaccreditaTicketDisdiciAtomico(supabase: SupabaseAdmin, opts: OptsDisdetta): Promise<EsitoDisdetta> {
+  const { data: nuovoSaldo, error: rpcErr } = await supabase.rpc('riaccredita_ticket_e_disdici', {
+    p_alunno_id: opts.alunnoId, p_data: opts.data, p_utente_id: opts.utenteId,
+  })
+  if (!rpcErr) return { ok: true, saldo: Number(nuovoSaldo), fallback: false }
+  if (rpcAssente(rpcErr)) return riaccreditaTicketDisdiciFallback(supabase, opts)
+  // Errore RPC "vero": ROLLBACK, nessuna divergenza → l'esito è un fallimento (500).
+  return { ok: false, saldo: 0, fallback: false, error: rpcErr }
+}
+
+async function riaccreditaTicketDisdiciFallback(supabase: SupabaseAdmin, opts: OptsDisdetta): Promise<EsitoDisdetta> {
+  const saldo = (await saldoCorrente(supabase, opts.alunnoId)) + opts.ticket
+  await setSaldo(supabase, opts.alunnoId, saldo)
+  await supabase.from('mensa_prenotazioni')
+    .update({ stato: 'disdetto', prenotato_da: opts.utenteId })
+    .eq('id', opts.prenId)
+
+  const { error: mErr } = await supabase.from('mensa_ticket_movimenti').insert({
+    alunno_id: opts.alunnoId, scuola_id: opts.scuolaId, tipo: 'disdetta', delta: opts.ticket,
+    saldo_dopo: saldo, prenotazione_id: opts.prenId, origine: 'disdetta', data: opts.data, creato_da: opts.utenteId,
+  })
+  if (mErr) {
+    // Come sopra: il ticket è RIACCREDITATO ma il movimento non è nel ledger → divergenza.
+    logEvento('db', 'error', {
+      operazione: 'mensa/prenotazioni:DELETE', esito: 'movimento-disdetta-non-registrato', tipo: 'disdetta',
+    }, mErr)
+  }
+  return { ok: true, saldo, fallback: true }
 }
 
 // GET /api/mensa/prenotazioni?userId=&alunno_id=&from=&to=
@@ -120,8 +210,15 @@ export const POST = withRoute('mensa/prenotazioni:POST', async (request: Request
     const supabase = await createAdminClient()
     const isStaff = STAFF_FORZA.includes(user.role)
     const origine = isStaff ? 'segreteria' : 'genitore'
-    if (!isStaff && !(await genitoreDiAlunno(supabase, user.id, alunnoId))) {
-      return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
+    if (!isStaff) {
+      if (!(await genitoreDiAlunno(supabase, user.id, alunnoId))) {
+        return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
+      }
+      // Morosità (B4/M4): un genitore con figlio SOSPESO non può prenotare — è
+      // un'azione di servizio. La sospensione NON tocca login/letture (sicurezza
+      // del minore); lo staff (STAFF_FORZA) resta abilitato a forzare allo sportello.
+      const sospesoErr = await assertAlunnoNonSospeso(supabase, alunnoId)
+      if (sospesoErr) return sospesoErr
     }
 
     // scuola dell'alunno + nome (per notifiche)
@@ -136,6 +233,7 @@ export const POST = withRoute('mensa/prenotazioni:POST', async (request: Request
 
     let saldo = await saldoCorrente(supabase, alunnoId)
     const esiti: { data: string; ok: boolean; motivo?: string }[] = []
+    let fallbackUsato = false
 
     for (const data of dates) {
       const menu = resolveMenuGiorno(data, options)
@@ -157,36 +255,20 @@ export const POST = withRoute('mensa/prenotazioni:POST', async (request: Request
         esiti.push({ data, ok: false, motivo: 'Saldo ticket esaurito' }); continue
       }
 
-      // scala 1 ticket + upsert prenotazione (stato prenotato)
-      saldo = saldo - 1
-      const { error: sErr } = await setSaldo(supabase, alunnoId, saldo)
-      if (sErr) { saldo = saldo + 1; esiti.push({ data, ok: false, motivo: 'Errore saldo' }); continue }
-
-      const { data: pren, error: pErr } = await supabase.from('mensa_prenotazioni').upsert(
-        {
-          alunno_id: alunnoId, scuola_id: scuolaId, data, stato: 'prenotato',
-          origine, ticket_scalato: 1, prenotato_da: user.id,
-        },
-        { onConflict: 'alunno_id,data' }
-      ).select('id').single()
-      if (pErr) { saldo = saldo + 1; await setSaldo(supabase, alunnoId, saldo); esiti.push({ data, ok: false, motivo: 'Errore prenotazione' }); continue }
-      // movimento ledger ticket (best-effort): consumo -1
-      const { error: mErr } = await supabase.from('mensa_ticket_movimenti').insert({
-        alunno_id: alunnoId, scuola_id: scuolaId, tipo: 'consumo', delta: -1,
-        saldo_dopo: saldo, prenotazione_id: pren?.id, origine, data, creato_da: user.id,
+      // scala 1 ticket + prenotazione + movimento ledger, TUTTO-O-NIENTE (RPC).
+      const esito = await scalaTicketPrenotaAtomico(supabase, {
+        alunnoId, scuolaId, data, origine, utenteId: user.id, saldoPrima: saldo,
       })
-      if (mErr) {
-        // `error` benché la prenotazione sia riuscita: il ticket È STATO SCALATO dal saldo ma il
-        // movimento non è finito nel ledger. È esattamente una scrittura persa — il saldo e il
-        // libro mastro divergono, e a fine mese i conti non torneranno senza che nulla, da
-        // nessuna parte, dica perché.
-        logEvento('db', 'error', {
-          operazione: 'mensa/prenotazioni:POST',
-          esito: 'movimento-consumo-non-registrato',
-          tipo: 'consumo',
-        }, mErr)
-      }
+      if (esito.fallback) fallbackUsato = true
+      if (!esito.ok) { esiti.push({ data, ok: false, motivo: esito.motivo }); continue }
+      saldo = esito.saldo
       esiti.push({ data, ok: true })
+    }
+
+    // La RPC transazionale non c'era (DB E2E CI non migrato): si è degradato al
+    // percorso storico a 3 scritture. Warn una volta per richiesta (non per data).
+    if (fallbackUsato) {
+      logEvento('mensa', 'warn', { operazione: 'mensa/prenotazioni:POST', esito: 'rpc-mensa-assente-fallback' })
     }
 
     // notifica saldo basso (best-effort) se sceso sotto soglia per effetto degli scali
@@ -278,27 +360,21 @@ export const DELETE = withRoute('mensa/prenotazioni:DELETE', async (request: Req
       return NextResponse.json({ error: 'Nessuna prenotazione attiva per questa data' }, { status: 404 })
     }
 
-    // riaccredito + stato disdetto
-    const saldo = (await saldoCorrente(supabase, alunnoId)) + Number(existing.ticket_scalato ?? 1)
-    await setSaldo(supabase, alunnoId, saldo)
-    await supabase.from('mensa_prenotazioni')
-      .update({ stato: 'disdetto', prenotato_da: user.id })
-      .eq('id', existing.id)
-
-    // movimento ledger ticket (best-effort): disdetta +ticket_scalato
-    const { error: mErr } = await supabase.from('mensa_ticket_movimenti').insert({
-      alunno_id: alunnoId, scuola_id: scuolaId, tipo: 'disdetta', delta: Number(existing.ticket_scalato ?? 1),
-      saldo_dopo: saldo, prenotazione_id: existing.id, origine: 'disdetta', data, creato_da: user.id,
+    // riaccredito + stato disdetto + movimento in TRANSAZIONE atomica (RPC).
+    const ticket = Number(existing.ticket_scalato ?? 1)
+    const esito = await riaccreditaTicketDisdiciAtomico(supabase, {
+      alunnoId, data, utenteId: user.id, scuolaId, prenId: existing.id as string, ticket,
     })
-    if (mErr) {
-      // Come sopra: il ticket è stato RIACCREDITATO ma il movimento non è nel ledger. Saldo e
-      // libro mastro divergono in silenzio → `error`, anche se la disdetta è andata a buon fine.
-      logEvento('db', 'error', {
-        operazione: 'mensa/prenotazioni:DELETE',
-        esito: 'movimento-disdetta-non-registrato',
-        tipo: 'disdetta',
-      }, mErr)
+    if (esito.fallback) {
+      logEvento('mensa', 'warn', { operazione: 'mensa/prenotazioni:DELETE', esito: 'rpc-mensa-assente-fallback' })
     }
+    if (!esito.ok) {
+      // Errore RPC "vero" (ROLLBACK, nessuna divergenza): 500 con log esplicito —
+      // `withRoute` non vede questo ritorno anticipato, quindi il log è d'obbligo.
+      logErrore({ operazione: 'mensa/prenotazioni:DELETE', stato: 500 }, esito.error)
+      return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
+    }
+    const saldo = esito.saldo
 
     // Evento critico (riaccredito ticket) → si logga anche il SUCCESSO: saldo dopo
     // il riaccredito + origine (staff che forza fuori orario vs genitore). No PII.

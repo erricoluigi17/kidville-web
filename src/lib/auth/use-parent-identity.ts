@@ -9,6 +9,13 @@ import { getCurrentStudentId } from './current-user';
 export interface ParentIdentity {
   parentId: string | null;
   studentId: string | null;
+  /**
+   * Elenco COMPLETO dei figli del genitore (m3): serve al feed unificato degli
+   * avvisi, che mostra le comunicazioni di TUTTI i figli, non solo del primo.
+   * `studentId` resta il figlio "attivo" (primo/URL) per i consumatori storici.
+   * `[]` quando la lista non è (ancora) determinabile — nessun figlio o fetch fallita.
+   */
+  figliIds: string[];
   ready: boolean; // false finché l'auto-resolve non è completato
 }
 
@@ -116,6 +123,7 @@ export function useParentIdentity(): ParentIdentity {
   // è disponibile durante SSR). Il useEffect risolve/rivalida dopo il mount.
   const fromUrl = searchParams.get('id');
   const [studentId, setStudentId] = useState<string | null>(fromUrl);
+  const [figliIds, setFigliIds] = useState<string[]>([]);
   const [studentReady, setStudentReady] = useState<boolean>(false);
 
   useEffect(() => {
@@ -128,9 +136,12 @@ export function useParentIdentity(): ParentIdentity {
       // è in URL, lo persiste in cache — lo rivalidiamo comunque subito dopo.
       const known = getCurrentStudentId(searchParams);
 
-      // Una sola rivalidazione per mount (non per render): la fetch vive qui,
-      // dentro l'effect, non nel corpo del componente.
-      const esito = await rivalidaFiglio(known, parentId);
+      // UNA sola fetch per mount: prende la lista COMPLETA dei figli (m3, feed
+      // unificato avvisi) e da quella deriva anche il singolo `studentId` con la
+      // decisione pura. Non si passa più da `rivalidaFiglio` per non fare due giri
+      // (la lista servirebbe comunque, e sarebbe una seconda chiamata a /students).
+      const figli = parentId ? await fetchFigliIds(parentId) : null;
+      const esito = decidiFiglioRivalidato(known, figli);
       if (cancelled) return;
 
       if (esito.rimuoviCache) {
@@ -151,11 +162,12 @@ export function useParentIdentity(): ParentIdentity {
       }
 
       setStudentId(esito.studentId);
+      setFigliIds(figli ?? []);
       setStudentReady(true);
     };
     void resolve();
     return () => { cancelled = true; };
   }, [session.ready, session.userId, searchParams]);
 
-  return { parentId: session.userId, studentId, ready: session.ready && studentReady };
+  return { parentId: session.userId, studentId, figliIds, ready: session.ready && studentReady };
 }

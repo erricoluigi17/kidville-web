@@ -19,6 +19,9 @@ const h = vi.hoisted(() => ({
   existingPren: null as Record<string, unknown> | null,
   prenotazioniList: [] as Record<string, unknown>[],
   menu: { attivo: true, chiuso: false } as Record<string, unknown>,
+  // Se impostato, la RPC transazionale ritorna questo errore. { code: 'PGRST202' }
+  // simula la RPC ASSENTE (DB E2E CI non migrato) → il route degrada al fallback.
+  rpcError: null as { code: string } | null,
   // catture delle scritture per verificare la catena
   saldoWrites: [] as number[],
   prenUpserts: [] as Record<string, unknown>[],
@@ -46,6 +49,37 @@ vi.mock('@/lib/logging/logger', async (originale) => ({
 }))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
+    // RPC transazionale: di default (rpcError=null) simula il SUCCESSO della
+    // transazione atomica, replicando gli stessi side-effect delle 3 scritture
+    // (saldo ↔ prenotazione ↔ ledger) così le asserzioni della catena reggono
+    // sul percorso RPC. Con rpcError impostato ritorna l'errore → fallback.
+    rpc: async (fn: string, params: Record<string, unknown>) => {
+      if (h.rpcError) return { data: null, error: h.rpcError }
+      if (fn === 'scala_ticket_e_prenota') {
+        const nuovo = Number(h.saldo) - 1
+        h.saldo = nuovo
+        h.saldoWrites.push(nuovo)
+        h.prenUpserts.push({
+          alunno_id: params.p_alunno_id, scuola_id: params.p_scuola_id, data: params.p_data,
+          stato: 'prenotato', origine: params.p_origine, ticket_scalato: 1, prenotato_da: params.p_utente_id,
+        })
+        h.ledger.push({
+          alunno_id: params.p_alunno_id, scuola_id: params.p_scuola_id, tipo: 'consumo', delta: -1,
+          saldo_dopo: nuovo, prenotazione_id: 'pr-1', origine: params.p_origine, data: params.p_data, creato_da: params.p_utente_id,
+        })
+        return { data: nuovo, error: null }
+      }
+      if (fn === 'riaccredita_ticket_e_disdici') {
+        const ticket = Number(h.existingPren?.ticket_scalato ?? 1)
+        const nuovo = Number(h.saldo) + ticket
+        h.saldo = nuovo
+        h.saldoWrites.push(nuovo)
+        h.prenUpdates.push({ stato: 'disdetto', prenotato_da: params.p_utente_id })
+        h.ledger.push({ tipo: 'disdetta', delta: ticket, saldo_dopo: nuovo, origine: 'disdetta' })
+        return { data: nuovo, error: null }
+      }
+      return { data: null, error: null }
+    },
     from: (table: string) => {
       const b: Record<string, unknown> = {}
       const chain = () => b
@@ -97,6 +131,7 @@ beforeEach(() => {
   h.existingPren = null
   h.prenotazioniList = []
   h.menu = { attivo: true, chiuso: false }
+  h.rpcError = null
   h.alunno = { id: ALUNNO, scuola_id: 'sc-1', nome: 'Mia', cognome: 'Rossi', classe_sezione: '1A', section_id: null, allergies: null, allergeni: null }
   h.saldoWrites = []; h.prenUpserts = []; h.prenUpdates = []; h.ledger = []
   h.requireUser.mockResolvedValue({ user: { id: GENITORE, role: 'genitore' } })
@@ -203,6 +238,70 @@ describe('POST /api/mensa/prenotazioni', () => {
       .toEqual(expect.arrayContaining(['prenotazione', 'saldo-negativo']))
     const neg = ev.find((c) => (c[2] as { tipo?: string }).tipo === 'saldo-negativo')
     expect(neg?.[2]).toMatchObject({ operazione: 'mensa/prenotazioni:POST', tipo: 'saldo-negativo', alunno_id: ALUNNO, saldo: -1, origine: 'segreteria' })
+  })
+})
+
+describe('POST /api/mensa/prenotazioni — morosità (B4/M4)', () => {
+  it('genitore con figlio SOSPESO → 403 account_sospeso, nessuno scalo/prenotazione/ledger', async () => {
+    // Prima della modifica la sospensione morosità non toccava la mensa: il
+    // genitore sospeso prenotava lo stesso (findings M4, riprodotto LIVE → 201).
+    h.alunno = { ...(h.alunno as Record<string, unknown>), sospeso: true }
+    const res = await POST(postReq({ alunno_id: ALUNNO, date: '2026-07-20' }))
+    expect(res.status).toBe(403)
+    const j = await res.json()
+    expect(j.motivo).toBe('account_sospeso')
+    // il gate scatta PRIMA di qualunque scrittura
+    expect(h.saldoWrites).toHaveLength(0)
+    expect(h.prenUpserts).toHaveLength(0)
+    expect(h.ledger).toHaveLength(0)
+  })
+
+  it('SEGRETERIA può forzare anche se l\'alunno è sospeso (azione di servizio dello sportello, non del genitore)', async () => {
+    // La sospensione inibisce le azioni del GENITORE; lo staff che forza fuori
+    // orario resta abilitato (gestione morosità allo sportello).
+    h.requireUser.mockResolvedValue({ user: { id: SEGRETERIA, role: 'segreteria' } })
+    h.genitoreHasFiglio.mockResolvedValue(false)
+    h.alunno = { ...(h.alunno as Record<string, unknown>), sospeso: true }
+    h.saldo = 0
+    const res = await POST(postReq({ alunno_id: ALUNNO, date: '2026-07-20' }))
+    expect(res.status).toBe(201)
+    const j = await res.json()
+    expect(j.data.esiti[0].ok).toBe(true)
+  })
+})
+
+describe('mensa · transazione atomica RPC + fallback pulito (m6/D3)', () => {
+  it('POST: RPC assente (PGRST202) → degrada alle 3 scritture con catena coerente + warn una volta', async () => {
+    h.rpcError = { code: 'PGRST202' } // funzione non nel cache PostgREST (DB E2E non migrato)
+    h.saldo = 5
+    const res = await POST(postReq({ alunno_id: ALUNNO, date: '2026-07-20' }))
+    expect(res.status).toBe(201)
+    const j = await res.json()
+    expect(j.data.saldo).toBe(4)
+    // stessa catena del percorso RPC: saldo↔prenotazione↔ledger coerenti
+    expect(h.saldoWrites).toEqual([4])
+    expect(h.prenUpserts[0].stato).toBe('prenotato')
+    expect(h.ledger[0]).toMatchObject({ tipo: 'consumo', delta: -1, saldo_dopo: 4, origine: 'genitore' })
+    // warn di degrado (RPC assente), a livello 'mensa'
+    const warn = eventiMensa().filter((c) => c[1] === 'warn')
+    expect(warn).toHaveLength(1)
+    expect(warn[0][2]).toMatchObject({ operazione: 'mensa/prenotazioni:POST', esito: 'rpc-mensa-assente-fallback' })
+  })
+
+  it('DELETE: RPC assente (PGRST202) → riaccredito + disdetta + ledger via fallback + warn', async () => {
+    h.rpcError = { code: 'PGRST202' }
+    h.existingPren = { id: 'pr-1', stato: 'prenotato', ticket_scalato: 1 }
+    h.saldo = 4
+    const res = await DELETE(delReq(`alunno_id=${ALUNNO}&data=2026-07-20`))
+    expect(res.status).toBe(200)
+    const j = await res.json()
+    expect(j.data.saldo).toBe(5)
+    expect(h.saldoWrites).toEqual([5])
+    expect(h.prenUpdates[0].stato).toBe('disdetto')
+    expect(h.ledger[0]).toMatchObject({ tipo: 'disdetta', delta: 1, saldo_dopo: 5, origine: 'disdetta' })
+    const warn = eventiMensa().filter((c) => c[1] === 'warn')
+    expect(warn).toHaveLength(1)
+    expect(warn[0][2]).toMatchObject({ operazione: 'mensa/prenotazioni:DELETE', esito: 'rpc-mensa-assente-fallback' })
   })
 })
 

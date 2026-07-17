@@ -6,6 +6,7 @@ import {
   ArrowRight, Download, CheckCircle2, Upload, Mail
 } from 'lucide-react';
 import { OtpEmailModal } from '@/components/features/parent/forms/OtpEmailModal';
+import { DateField } from '@/components/ui/DateField';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { Btn } from '@/components/ui/Btn';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
@@ -573,7 +574,7 @@ export default function ParentModulisticaPage() {
                         {form.expiration_date && (
                           <span className="bg-kidville-warn-soft text-kidville-warn px-2.5 py-1 rounded-full text-xs font-semibold flex items-center gap-1">
                             <Clock size={12} />
-                            Scade il: {new Date(form.expiration_date).toLocaleDateString()}
+                            Scade il: {new Date(form.expiration_date).toLocaleDateString('it-IT')}
                           </span>
                         )}
                       </div>
@@ -669,9 +670,18 @@ export default function ParentModulisticaPage() {
                           </div>
                         )}
 
-                        {(field.type === 'text' || field.type === 'date') && (
+                        {field.type === 'date' && (
+                          <DateField
+                            value={String(formAnswers[field.id] ?? '')}
+                            onChange={(iso) => handleFieldChange(field.id, iso)}
+                            aria-label={field.label}
+                            className="w-full border-2 border-kidville-line rounded-xl px-4 py-2.5 font-maven text-sm focus:outline-none focus:border-kidville-green"
+                          />
+                        )}
+
+                        {field.type === 'text' && (
                           <input
-                            type={field.type === 'date' ? 'date' : 'text'}
+                            type="text"
                             value={String(formAnswers[field.id] ?? '')}
                             onChange={e => handleFieldChange(field.id, e.target.value)}
                             className="w-full border-2 border-kidville-line rounded-xl px-4 py-2.5 font-maven text-sm focus:outline-none focus:border-kidville-green"
@@ -738,7 +748,7 @@ export default function ParentModulisticaPage() {
                         {item.forms_templates?.title}
                       </h3>
                       <p className="font-maven text-xs text-kidville-muted mt-1">
-                        Figlio: {item.alunni?.nome} {item.alunni?.cognome} | Firmato il: {new Date(item.created_at).toLocaleDateString()}
+                        Figlio: {item.alunni?.nome} {item.alunni?.cognome} | Firmato il: {new Date(item.created_at).toLocaleDateString('it-IT')}
                       </p>
                       <div className="mt-2.5 flex items-center gap-1 text-[10px] text-kidville-success bg-kidville-success-soft px-2 py-0.5 rounded-full font-bold w-fit uppercase tracking-wider">
                         <Shield size={10} /> Ricevuta FES Protetta
@@ -853,12 +863,12 @@ export default function ParentModulisticaPage() {
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="block font-maven text-xs font-semibold text-kidville-green mb-1">Coperto dal *</label>
-                    <input type="date" value={certDal} onChange={e => setCertDal(e.target.value)}
+                    <DateField value={certDal} onChange={setCertDal} aria-label="Certificato medico: coperto dal"
                       className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-xs text-kidville-sub focus:outline-none focus:border-kidville-green" />
                   </div>
                   <div>
                     <label className="block font-maven text-xs font-semibold text-kidville-green mb-1">al *</label>
-                    <input type="date" value={certAl} min={certDal || undefined} onChange={e => setCertAl(e.target.value)}
+                    <DateField value={certAl} onChange={setCertAl} aria-label="Certificato medico: coperto al"
                       className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-xs text-kidville-sub focus:outline-none focus:border-kidville-green" />
                   </div>
                 </div>
@@ -894,7 +904,7 @@ export default function ParentModulisticaPage() {
                     <div key={cert.id} className="bg-white rounded-card p-4 border border-kidville-line flex items-center justify-between text-xs font-maven">
                       <div>
                         <div className="font-semibold text-kidville-ink">Certificato: {cert.fileName}</div>
-                        <div className="text-kidville-muted mt-0.5">Figlio: {cert.alunno?.nome} | Caricato il: {new Date(cert.creato_il).toLocaleDateString()}</div>
+                        <div className="text-kidville-muted mt-0.5">Figlio: {cert.alunno?.nome} | Caricato il: {new Date(cert.creato_il).toLocaleDateString('it-IT')}</div>
                         {cert.notes && <div className="text-kidville-muted mt-1 italic">Note: {cert.notes}</div>}
                       </div>
 

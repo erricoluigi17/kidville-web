@@ -18,7 +18,10 @@ interface DiaryEntry {
     tipo_evento: string;
     timestamp_evento: string;
     dettagli: Record<string, unknown> | null;
+    // Nota di SEZIONE: la stessa per tutti i genitori (broadcast).
     note: string | null;
+    // Nota per SINGOLO bambino (E1): riservata a questo genitore.
+    notaBambino?: string | null;
     activity_description?: string | null;
 }
 
@@ -243,6 +246,18 @@ function EventCard({ entry, index }: { entry: DiaryEntry; index: number }) {
                     <p className="font-maven text-sm text-kidville-muted italic mt-2 pt-2 border-t border-kidville-line/60">
                         💬 &ldquo;{entry.note}&rdquo;
                     </p>
+                )}
+                {/* Nota per il singolo bambino (E1): riservata a questo genitore, distinta
+                    dalla nota di sezione qui sopra. */}
+                {entry.notaBambino && (
+                    <div className="mt-2 rounded-xl bg-kidville-cream px-3 py-2">
+                        <p className="font-barlow font-bold uppercase text-[10px] tracking-wide text-kidville-green">
+                            Nota per te
+                        </p>
+                        <p className="font-maven text-sm text-kidville-ink leading-relaxed mt-0.5">
+                            💬 &ldquo;{entry.notaBambino}&rdquo;
+                        </p>
+                    </div>
                 )}
             </div>
         </motion.div>

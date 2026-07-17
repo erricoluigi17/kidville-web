@@ -2,8 +2,9 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { getModuleConfig } from '@/lib/settings/module-config';
-import { requireDocente } from '@/lib/auth/require-staff';
+import { requireUser, requireDocente } from '@/lib/auth/require-staff';
 import { resolveScuoleAttive } from '@/lib/auth/scope';
+import { getFigliDiGenitore } from '@/lib/anagrafiche/legami';
 import { verificaTargetAvvisoDocente } from '@/lib/avvisi/target-gate';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { notificaEvento } from '@/lib/notifiche/triggers';
@@ -13,24 +14,18 @@ import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 
-// Uuid opzionale da query string: stringa vuota trattata come assente
-// (preserva i check truthy `if (parentId)` / `if (studentId)` pre-esistenti).
-const zUuidQueryOpzionale = z.preprocess(
-    (v) => (v === '' ? undefined : v),
-    zUuid.optional()
-);
-
+// Il ramo STAFF filtra ancora per scope/classe (dashboard cockpit). Il ramo
+// GENITORE è SERVER-DERIVED (G3): i parametri client sono ignorati, figli e
+// classi si ricavano dalla sessione — quindi qui non c'è più parentId/studentId.
 const getQuerySchema = z.object({
     scope: z.string().optional(),
     classe: z.string().optional(),
-    parentId: zUuidQueryOpzionale,
-    studentId: zUuidQueryOpzionale,
 });
 
 const postBodySchema = z.object({
-    author_id: zUuid,
-    titolo: z.string().min(1, 'author_id, titolo e contenuto sono obbligatori'),
-    contenuto: z.string().min(1, 'author_id, titolo e contenuto sono obbligatori'),
+    // NB: `author_id` NON è più nel body (M7): l'autore è sempre la sessione.
+    titolo: z.string().min(1, 'titolo e contenuto sono obbligatori'),
+    contenuto: z.string().min(1, 'titolo e contenuto sono obbligatori'),
     tipo: z.string().nullish(),
     target_scope: z.string().nullish(),
     target_classes: z.unknown().optional(),
@@ -40,135 +35,221 @@ const postBodySchema = z.object({
     form_model_id: zUuid.nullish(),
 });
 
-// GET /api/avvisi?scope=globale|classe&classe=xxx&parentId=xxx
-// Lista avvisi con filtri
+type SupabaseAdmin = Awaited<ReturnType<typeof createAdminClient>>;
+
+const AVVISO_COLS =
+    'id, author_id, titolo, contenuto, tipo, target_scope, target_classes, scadenza, attachment_url, created_at';
+
+type AvvisoRow = {
+    id: string; author_id: string; titolo: string; contenuto: string;
+    tipo: string | null; target_scope: string | null; target_classes: string[] | null;
+    scadenza: string | null; attachment_url: string | null; created_at: string;
+    form_model_id?: string | null;
+};
+
+type Figlio = { id: string; nome: string | null; classe_sezione: string | null; scuola_id: string | null };
+type RispostaFiglio = { letto_il: string | null; risposta: string | null; risposto_il: string | null };
+
+// PostgREST torna 42703 (SELECT) / PGRST204 (INSERT) quando `form_model_id` manca
+// nel DB E2E CI non migrato: si riprova senza la colonna.
+function colonnaMancante(err: { code?: string } | null | undefined): boolean {
+    return !!err && ['PGRST204', '42703'].includes(err.code ?? '');
+}
+
+// Conteggi risposte + info autore: identico per staff e genitore.
+async function autoreEStats(supabase: SupabaseAdmin, avviso: AvvisoRow) {
+    const [lettiRes, siRes, noRes, autoreRes] = await Promise.all([
+        supabase.from('avvisi_risposte').select('*', { count: 'exact', head: true })
+            .eq('avviso_id', avviso.id).not('letto_il', 'is', null),
+        supabase.from('avvisi_risposte').select('*', { count: 'exact', head: true })
+            .eq('avviso_id', avviso.id).eq('risposta', 'si'),
+        supabase.from('avvisi_risposte').select('*', { count: 'exact', head: true })
+            .eq('avviso_id', avviso.id).eq('risposta', 'no'),
+        supabase.from('utenti')
+            .select('nome, cognome, ruolo, first_name, last_name, role')
+            .eq('id', avviso.author_id).maybeSingle(),
+    ]);
+    const author = autoreRes.data as {
+        nome?: string | null; cognome?: string | null; ruolo?: string | null;
+        first_name?: string | null; last_name?: string | null; role?: string | null;
+    } | null;
+    return {
+        author: author
+            ? {
+                first_name: author.first_name || author.nome || '?',
+                last_name: author.last_name || author.cognome || '?',
+                role: author.role || author.ruolo || 'unknown',
+            }
+            : { first_name: '?', last_name: '?', role: 'unknown' },
+        stats: {
+            letti: lettiRes.count ?? 0,
+            adesioni_si: siRes.count ?? 0,
+            adesioni_no: noRes.count ?? 0,
+        },
+    };
+}
+
+// Aggrega le risposte per-figlio di UN avviso in un singolo `my_response` (il
+// contratto di AvvisoCard). Un figlio solo → è esattamente la sua risposta.
+// Più figli (avviso globale) → "letto" solo se TUTTI hanno letto, "risposto"
+// solo se tutti hanno dato la STESSA risposta (altrimenti i bottoni riappaiono).
+function aggregaRisposta(
+    studentIds: string[],
+    perFiglio: Map<string, RispostaFiglio>,
+): RispostaFiglio | null {
+    if (studentIds.length === 0) return null;
+    const righe = studentIds.map((id) => perFiglio.get(id) ?? null);
+
+    const tuttiLetti = righe.every((r) => !!r?.letto_il);
+    const letti = righe.map((r) => r?.letto_il).filter((x): x is string => !!x).sort();
+    const letto_il = tuttiLetti ? letti[letti.length - 1] ?? null : null;
+
+    const risposte = righe.map((r) => r?.risposta ?? null);
+    const tuttiRisposto = risposte.every((x) => x != null);
+    const uguali = tuttiRisposto && new Set(risposte).size === 1;
+    const rispostiIl = righe.map((r) => r?.risposto_il).filter((x): x is string => !!x).sort();
+
+    return {
+        letto_il,
+        risposta: uguali ? risposte[0] : null,
+        risposto_il: uguali ? (rispostiIl[rispostiIl.length - 1] ?? null) : null,
+    };
+}
+
+// ── Ramo STAFF/DOCENTE: cockpit /admin|/teacher avvisi, isolato per plesso. ──
+async function listaAvvisiStaff(
+    request: NextRequest,
+    supabase: SupabaseAdmin,
+    plessiScope: string[],
+): Promise<NextResponse> {
+    const q = parseQuery(request, getQuerySchema);
+    if ('response' in q) return q.response;
+    const { scope, classe } = q.data;
+
+    const buildQuery = (cols: string) => {
+        let query = supabase.from('avvisi').select(cols).order('created_at', { ascending: false })
+            .in('scuola_id', plessiScope);
+        if (scope) query = query.eq('target_scope', scope);
+        return query;
+    };
+    let res = await buildQuery(`${AVVISO_COLS}, form_model_id`);
+    if (colonnaMancante(res.error as { code?: string } | null)) res = await buildQuery(AVVISO_COLS);
+    if (res.error) {
+        logErrore({ operazione: 'avvisi:GET', stato: 500, evento: 'db' }, res.error);
+        return NextResponse.json({ error: res.error.message }, { status: 500 });
+    }
+    let filtered = (res.data ?? []) as unknown as AvvisoRow[];
+    if (classe) {
+        filtered = filtered.filter(
+            (a) => a.target_scope === 'globale' || (a.target_classes?.includes(classe) ?? false),
+        );
+    }
+
+    const enriched = await Promise.all(
+        filtered.map(async (avviso) => {
+            const { author, stats } = await autoreEStats(supabase, avviso);
+            return { ...avviso, author, stats, my_response: null };
+        }),
+    );
+    return NextResponse.json(enriched);
+}
+
+// ── Ramo GENITORE (G3+m3): parentId dalla SESSIONE, feed unificato dei figli. ─
+async function listaAvvisiGenitore(supabase: SupabaseAdmin, parentId: string): Promise<NextResponse> {
+    const figliIds = await getFigliDiGenitore(supabase, parentId);
+    if (figliIds.length === 0) return NextResponse.json([]);
+
+    const { data: figliRows, error: figliErr } = await supabase
+        .from('alunni')
+        .select('id, nome, classe_sezione, scuola_id')
+        .in('id', figliIds);
+    if (figliErr) {
+        logErrore({ operazione: 'avvisi:GET', stato: 500, evento: 'db' }, figliErr);
+        return NextResponse.json({ error: figliErr.message }, { status: 500 });
+    }
+    const figli = (figliRows ?? []) as unknown as Figlio[];
+    const classiFigli = new Set(figli.map((f) => f.classe_sezione).filter((c): c is string => !!c));
+    // Isolamento di plesso anche lato genitore: un globale di un'altra sede non compare.
+    const scuoleFigli = [...new Set(figli.map((f) => f.scuola_id).filter((s): s is string => !!s))];
+    // Fail-closed: se nessun figlio ha un plesso determinabile non si mostra nulla,
+    // così un globale cross-tenant non appare quando scuola_id manca sull'anagrafica.
+    if (scuoleFigli.length === 0) return NextResponse.json([]);
+
+    const buildQuery = (cols: string) => {
+        let query = supabase.from('avvisi').select(cols).order('created_at', { ascending: false });
+        query = query.in('scuola_id', scuoleFigli);
+        return query;
+    };
+    let res = await buildQuery(`${AVVISO_COLS}, form_model_id`);
+    if (colonnaMancante(res.error as { code?: string } | null)) res = await buildQuery(AVVISO_COLS);
+    if (res.error) {
+        logErrore({ operazione: 'avvisi:GET', stato: 500, evento: 'db' }, res.error);
+        return NextResponse.json({ error: res.error.message }, { status: 500 });
+    }
+    const avvisi = (res.data ?? []) as unknown as AvvisoRow[];
+
+    const oggi = new Date().toISOString().split('T')[0];
+    const rilevanti = avvisi.filter((a) => {
+        if (a.scadenza && a.scadenza < oggi) return false; // scaduti fuori dal feed
+        if (a.target_scope === 'globale') return true;
+        return (a.target_classes ?? []).some((c) => classiFigli.has(c));
+    });
+
+    const enriched = await Promise.all(
+        rilevanti.map(async (avviso) => {
+            const { author, stats } = await autoreEStats(supabase, avviso);
+
+            // m3: i FIGLI cui si riferisce (globale=tutti, classe=chi è in quella classe).
+            const figliRiferiti = avviso.target_scope === 'globale'
+                ? figli
+                : figli.filter(
+                    (f) => f.classe_sezione && (avviso.target_classes ?? []).includes(f.classe_sezione),
+                );
+            const figliOut = figliRiferiti.map((f) => ({ student_id: f.id, nome: f.nome ?? '' }));
+
+            // Risposte del genitore per QUESTO avviso, una riga per figlio.
+            const { data: risposteRows } = await supabase
+                .from('avvisi_risposte')
+                .select('student_id, letto_il, risposta, risposto_il')
+                .eq('avviso_id', avviso.id)
+                .eq('parent_id', parentId);
+            const perFiglio = new Map<string, RispostaFiglio>();
+            for (const r of (risposteRows ?? []) as Array<{ student_id: string } & RispostaFiglio>) {
+                perFiglio.set(r.student_id, { letto_il: r.letto_il, risposta: r.risposta, risposto_il: r.risposto_il });
+            }
+            const my_response = aggregaRisposta(figliRiferiti.map((f) => f.id), perFiglio);
+
+            return { ...avviso, author, stats, figli: figliOut, my_response };
+        }),
+    );
+
+    return NextResponse.json(enriched);
+}
+
+// GET /api/avvisi
+// Ramo deciso sul RUOLO di sessione (non su un parametro client, G3):
+//  - genitore → feed unificato dei propri figli, server-derived.
+//  - docente/staff → cockpit isolato per plesso.
 export const GET = withRoute('avvisi:GET', async (request: NextRequest) => {
     try {
-        // Il ramo (staff vs genitore) si decide sul valore grezzo di parentId,
-        // così il gate auth resta PRIMA della validazione (come oggi).
-        const parentIdGrezzo = new URL(request.url).searchParams.get('parentId');
-
+        const auth = await requireUser(request);
+        if (auth.response) return auth.response;
         const supabase = await createAdminClient();
 
-        // Ramo STAFF (no parentId): gate ruolo + isolamento per plesso.
-        // Ramo GENITORE (?parentId): resta aperto (scoping per classe del figlio).
-        let plessiScope: string[] | null = null;
-        if (!parentIdGrezzo) {
-            const auth = await requireDocente(request);
-            if (auth.response) return auth.response;
-            // Sedi ATTIVE (cookie SedeSelector) ∩ sedi accessibili: la GET staff
-            // rispetta la selezione multi-sede, ri-validata server-side.
-            plessiScope = await resolveScuoleAttive(request, supabase, auth.user);
-            if (plessiScope.length === 0) return NextResponse.json([]);
+        if (auth.user.role === 'genitore') {
+            return await listaAvvisiGenitore(supabase, auth.user.id);
         }
 
-        const q = parseQuery(request, getQuerySchema);
-        if ('response' in q) return q.response;
-        const { scope, classe, parentId, studentId } = q.data;
-
-        const baseCols = 'id, author_id, titolo, contenuto, tipo, target_scope, target_classes, scadenza, attachment_url, created_at';
-        const buildQuery = (cols: string) => {
-            let query = supabase.from('avvisi').select(cols).order('created_at', { ascending: false });
-            if (plessiScope) query = query.in('scuola_id', plessiScope);
-            if (scope) query = query.eq('target_scope', scope);
-            return query;
-        };
-        // Prova con form_model_id (item 19); se la colonna manca (DB E2E CI non
-        // migrato) PostgREST torna 42703/PGRST204 → riprova senza.
-        let res = await buildQuery(`${baseCols}, form_model_id`);
-        if (res.error && ['PGRST204', '42703'].includes((res.error as { code?: string }).code ?? '')) {
-            res = await buildQuery(baseCols);
+        // Personale docente/staff: il genitore è già uscito sopra; cuoca e altri
+        // ruoli non hanno una bacheca avvisi.
+        const ruoliStaff = ['educator', 'admin', 'coordinator', 'segreteria'];
+        if (!ruoliStaff.includes(auth.user.role)) {
+            return NextResponse.json({ error: 'Accesso negato' }, { status: 403 });
         }
-        if (res.error) {
-            logErrore({ operazione: 'avvisi:GET', stato: 500, evento: 'db' }, res.error);
-            return NextResponse.json({ error: res.error.message }, { status: 500 });
-        }
-        const avvisi = (res.data ?? []) as unknown as Array<{
-            id: string; author_id: string; titolo: string; contenuto: string;
-            tipo: string | null; target_scope: string | null; target_classes: string[] | null;
-            scadenza: string | null; attachment_url: string | null; created_at: string;
-            form_model_id?: string | null;
-        }>;
-
-        // Filtra lato server per la classe se specificata
-        let filtered = avvisi ?? [];
-        if (classe) {
-            filtered = filtered.filter(a =>
-                a.target_scope === 'globale' ||
-                (a.target_classes && a.target_classes.includes(classe))
-            );
-        }
-
-        // Filtra per scadenza solo se è un genitore (parentId presente)
-        if (parentId) {
-            const todayStr = new Date().toISOString().split('T')[0];
-            filtered = filtered.filter(a => !a.scadenza || a.scadenza >= todayStr);
-        }
-
-        // Arricchisci con conteggi risposte e info autore
-        const enriched = await Promise.all(
-            filtered.map(async (avviso) => {
-                // Conta risposte
-                const { count: lettiCount } = await supabase
-                    .from('avvisi_risposte')
-                    .select('*', { count: 'exact', head: true })
-                    .eq('avviso_id', avviso.id)
-                    .not('letto_il', 'is', null);
-
-                const { count: adesioni_si } = await supabase
-                    .from('avvisi_risposte')
-                    .select('*', { count: 'exact', head: true })
-                    .eq('avviso_id', avviso.id)
-                    .eq('risposta', 'si');
-
-                const { count: adesioni_no } = await supabase
-                    .from('avvisi_risposte')
-                    .select('*', { count: 'exact', head: true })
-                    .eq('avviso_id', avviso.id)
-                    .eq('risposta', 'no');
-
-                // Info autore
-                const { data: author } = await supabase
-                    .from('utenti')
-                    .select('nome, cognome, ruolo, first_name, last_name, role')
-                    .eq('id', avviso.author_id)
-                    .maybeSingle();
-
-                // Se è un genitore, controlla se ha letto
-                let myResponse = null;
-                if (parentId) {
-                    let rQuery = supabase
-                        .from('avvisi_risposte')
-                        .select('letto_il, risposta, risposto_il')
-                        .eq('avviso_id', avviso.id)
-                        .eq('parent_id', parentId);
-
-                    if (studentId) {
-                        rQuery = rQuery.eq('student_id', studentId);
-                    }
-
-                    const { data: resp } = await rQuery.limit(1).maybeSingle();
-                    myResponse = resp;
-                }
-
-                return {
-                    ...avviso,
-                    author: author ? {
-                        first_name: author.first_name || author.nome || '?',
-                        last_name: author.last_name || author.cognome || '?',
-                        role: author.role || author.ruolo || 'unknown',
-                    } : { first_name: '?', last_name: '?', role: 'unknown' },
-                    stats: {
-                        letti: lettiCount ?? 0,
-                        adesioni_si: adesioni_si ?? 0,
-                        adesioni_no: adesioni_no ?? 0,
-                    },
-                    my_response: myResponse,
-                };
-            })
-        );
-
-        return NextResponse.json(enriched);
+        // Sedi ATTIVE (cookie SedeSelector) ∩ sedi accessibili, ri-validate server-side.
+        const plessiScope = await resolveScuoleAttive(request, supabase, auth.user);
+        if (plessiScope.length === 0) return NextResponse.json([]);
+        return await listaAvvisiStaff(request, supabase, plessiScope);
     } catch (error) {
         logErrore({ operazione: 'avvisi:GET', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
@@ -176,7 +257,7 @@ export const GET = withRoute('avvisi:GET', async (request: NextRequest) => {
 });
 
 // POST /api/avvisi
-// Body: { author_id, titolo, contenuto, tipo, target_scope, target_classes?, scadenza?, attachment_url? }
+// Body: { titolo, contenuto, tipo?, target_scope?, target_classes?, scadenza?, attachment_url?, form_model_id? }
 export const POST = withRoute('avvisi:POST', async (request: Request) => {
     try {
         const auth = await requireDocente(request);
@@ -184,43 +265,51 @@ export const POST = withRoute('avvisi:POST', async (request: Request) => {
 
         const b = await parseBody(request, postBodySchema);
         if ('response' in b) return b.response;
-        const { author_id, titolo, contenuto, tipo, target_scope, target_classes, scadenza, attachment_url, form_model_id } = b.data;
+        const { titolo, contenuto, tipo, target_scope, target_classes, scadenza, attachment_url, form_model_id } = b.data;
+
+        // M7: l'autore è SEMPRE l'utente di sessione. `author_id` del client non esiste più.
+        const authorId = auth.user.id;
+        const scuolaId = auth.user.scuola_id ?? null;
+        const ruolo = (auth.user.role || '').toLowerCase();
 
         const supabase = await createAdminClient();
 
         // Ruoli abilitati alla pubblicazione, configurabili da Impostazioni → Avvisi.
-        const { data: autore } = await supabase
-            .from('utenti')
-            .select('id, role, ruolo, scuola_id')
-            .eq('id', author_id)
-            .maybeSingle();
-        const ruolo = (autore?.role || autore?.ruolo || '').toLowerCase();
         const gruppo = ['admin', 'coordinator'].includes(ruolo) ? 'admin' : 'teacher';
         const avvisiCfg = await getModuleConfig<{ ruoli_pubblicazione: string[] }>(
-            supabase, 'avvisi_config', autore?.scuola_id
+            supabase, 'avvisi_config', scuolaId,
         );
         const abilitati = avvisiCfg.ruoli_pubblicazione ?? ['admin'];
         if (!abilitati.includes(gruppo)) {
             return NextResponse.json(
                 { error: 'La pubblicazione di avvisi è riservata alla segreteria (vedi Impostazioni → Avvisi)' },
-                { status: 403 }
+                { status: 403 },
             );
         }
 
-        // Gate sul TARGET: un educator scrive solo alle proprie classi (mai
-        // globale, mai classi altrui, mai 'classe'+[] che degrada a globale).
-        // Staff/direzione/segreteria non sono limitati.
+        // M8: 'classe' senza classi VALIDE → 400 (per TUTTI i ruoli). Niente più
+        // degradazione implicita a globale: notifica e feed coincidono sempre.
+        const classiTarget = Array.isArray(target_classes)
+            ? [...new Set((target_classes as unknown[]).filter((c): c is string => typeof c === 'string' && c.trim() !== ''))]
+            : [];
+        if ((target_scope ?? 'globale') === 'classe' && classiTarget.length === 0) {
+            return NextResponse.json(
+                { error: 'Seleziona almeno una classe destinataria per un avviso di classe.' },
+                { status: 400 },
+            );
+        }
+
+        // Gate sul TARGET: un educator scrive solo alle proprie classi (mai globale,
+        // mai classi altrui). Staff/direzione/segreteria non sono limitati.
         const targetErr = await verificaTargetAvvisoDocente(supabase, auth.user, {
             scope: target_scope,
             classi: target_classes,
         });
         if (targetErr) return targetErr;
 
-        // Insert resiliente alla colonna mancante: su DB E2E CI privo della
-        // migrazione 20260708174440 (form_model_id) → PGRST204/42703 → la rimuove
-        // e riprova. In prod la colonna esiste → nessun retry.
+        // Insert resiliente alla colonna form_model_id mancante (DB E2E CI non migrato).
         const avvisoRecord: Record<string, unknown> = {
-            author_id,
+            author_id: authorId,
             titolo,
             contenuto,
             tipo: tipo ?? 'presa_visione',
@@ -229,7 +318,7 @@ export const POST = withRoute('avvisi:POST', async (request: Request) => {
             scadenza: scadenza ?? null,
             attachment_url: attachment_url ?? null,
             form_model_id: form_model_id ?? null,
-            scuola_id: autore?.scuola_id ?? auth.user.scuola_id ?? null, // tenant
+            scuola_id: scuolaId, // tenant
         };
         let insRes = await supabase.from('avvisi').insert(avvisoRecord).select().single();
         let attempts = 0;
@@ -250,17 +339,14 @@ export const POST = withRoute('avvisi:POST', async (request: Request) => {
 
         await logScrittura(supabase, {
             attore: auth.user, entitaTipo: 'avviso', entitaId: (data as { id?: string })?.id ?? null,
-            azione: 'insert', scuolaId: autore?.scuola_id ?? auth.user.scuola_id ?? null,
+            azione: 'insert', scuolaId,
             valoreDopo: { id: (data as { id?: string })?.id, titolo, target_scope },
         });
 
         // Notifica ai genitori destinatari (best-effort). UN solo enqueue con
-        // tipo per priorità: modulo firmabile > richiesta adesione > avviso —
-        // avviso, consenso e modulo sono lo stesso evento, mai doppioni.
+        // tipo per priorità: modulo firmabile > richiesta adesione > avviso.
         try {
-            const scuolaId = (autore?.scuola_id ?? auth.user.scuola_id ?? null) as string | null;
-            const classiTarget = Array.isArray(target_classes) ? (target_classes as string[]).filter(Boolean) : [];
-            const globale = (target_scope ?? 'globale') === 'globale' || classiTarget.length === 0;
+            const globale = (target_scope ?? 'globale') === 'globale';
             const destinatari = globale
                 ? await genitoriDiScuola(supabase, scuolaId)
                 : await genitoriDiClassi(supabase, scuolaId, classiTarget);

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
-import { requireDocente } from '@/lib/auth/require-staff';
+import { requireDocente, requireUser } from '@/lib/auth/require-staff';
 import { assertClasseNomeInScope } from '@/lib/auth/scope';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody, parseQuery } from '@/lib/validation/http';
@@ -46,6 +46,11 @@ const deleteQuerySchema = z.object({
  * Se la tabella non esiste ancora, ritorna i materiali di default.
  */
 export const GET = withRoute('locker/materials:GET', async (request: NextRequest) => {
+    // m1 — ferma l'enumerazione anonima della configurazione materiali. Qualsiasi
+    // utente autenticato (genitore incluso) continua a leggere.
+    const auth = await requireUser(request);
+    if (auth.response) return auth.response;
+
     const q = parseQuery(request, getQuerySchema);
     if ('response' in q) return q.response;
     const classeSezione = q.data.classe_sezione ?? null;

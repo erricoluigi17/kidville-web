@@ -16,8 +16,17 @@ const getQuerySchema = z.object({
   limit: z.string().optional(),
 })
 
+// Stati contati nel riepilogo. `presente` INCLUSO di proposito: senza, un bambino
+// presente resta indistinguibile da un appello non ancora fatto (falla del collaudo).
+const STATI_RIEPILOGO = ['presente', 'assente', 'ritardo', 'uscita_anticipata'] as const
+type StatoRiepilogo = (typeof STATI_RIEPILOGO)[number]
+
 // GET /api/parent/primaria/assenze?studentId=&userId=&limit=30
-// Cronologia presenze (assenze, ritardi, uscite anticipate) del figlio.
+// Restituisce:
+//  - `data`: la cronologia dettagliata dei SOLI stati negativi (assenze, ritardi,
+//    uscite anticipate) — quelli su cui il genitore può agire (giustifica);
+//  - `riepilogo`: i conteggi per stato (incluso `presente`) calcolati con COUNT
+//    aggregato lato DB, SENZA scaricare i ~180 giorni di presenza dell'anno.
 export const GET = withRoute('parent/primaria/assenze:GET', async (request: NextRequest) => {
   try {
     const q = parseQuery(request, getQuerySchema)
@@ -29,6 +38,8 @@ export const GET = withRoute('parent/primaria/assenze:GET', async (request: Next
     if (auth.response) return auth.response
 
     const supabase = await createAdminClient()
+
+    // Lista dettagliata dei soli stati negativi (comportamento invariato).
     const { data: presenze } = await supabase
       .from('presenze')
       .select('id, data, stato, orario_entrata, orario_uscita, giustificata, giustificazione_testo, giustificata_il, note_appello')
@@ -37,7 +48,25 @@ export const GET = withRoute('parent/primaria/assenze:GET', async (request: Next
       .order('data', { ascending: false })
       .limit(limit)
 
-    return NextResponse.json({ success: true, data: presenze ?? [] })
+    // Riepilogo: una query di conteggio per stato (`head: true` → nessuna riga
+    // scaricata, solo il COUNT). PostgREST non lancia: su tabella/colonna assente
+    // (E2E CI non migrato) `error` è valorizzato e `count` è null → il conteggio
+    // degrada pulito a 0, e la risposta resta 200.
+    const conteggi = await Promise.all(
+      STATI_RIEPILOGO.map((stato) =>
+        supabase
+          .from('presenze')
+          .select('id', { count: 'exact', head: true })
+          .eq('alunno_id', studentId)
+          .eq('stato', stato),
+      ),
+    )
+    const riepilogo = STATI_RIEPILOGO.reduce((acc, stato, i) => {
+      acc[stato] = conteggi[i]?.count ?? 0
+      return acc
+    }, {} as Record<StatoRiepilogo, number>)
+
+    return NextResponse.json({ success: true, data: presenze ?? [], riepilogo })
   } catch (err) {
     logErrore({ operazione: 'parent/primaria/assenze:GET', stato: 500 }, err)
     const msg = err instanceof Error ? err.message : 'Errore interno'

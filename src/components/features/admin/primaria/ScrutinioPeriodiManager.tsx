@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Plus, Trash2, GraduationCap } from 'lucide-react';
+import { DateField } from '@/components/ui/DateField';
 
 interface Periodo {
   id: string; nome: string; anno_scolastico: string; ordine: number;
@@ -104,8 +105,8 @@ export function ScrutinioPeriodiManager({ userId }: { scuolaId: string; userId: 
         <p className="font-maven text-xs text-kidville-muted mb-2">Nuovo periodo</p>
         <div className="grid gap-2 md:grid-cols-3">
           <input value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Nome (es. Scrutinio finale)" className="font-maven rounded-pill border border-kidville-line px-3 py-1.5 text-sm" />
-          <input type="date" value={dataInizio} onChange={(e) => setDataInizio(e.target.value)} className="font-maven rounded-pill border border-kidville-line px-3 py-1.5 text-sm" />
-          <input type="date" value={dataFine} onChange={(e) => setDataFine(e.target.value)} className="font-maven rounded-pill border border-kidville-line px-3 py-1.5 text-sm" />
+          <DateField value={dataInizio} onChange={setDataInizio} aria-label="Data inizio periodo" className="font-maven rounded-pill border border-kidville-line px-3 py-1.5 text-sm" />
+          <DateField value={dataFine} onChange={setDataFine} aria-label="Data fine periodo" className="font-maven rounded-pill border border-kidville-line px-3 py-1.5 text-sm" />
         </div>
         {msg && <p className="font-maven text-xs text-kidville-error mt-2">{msg}</p>}
         <button onClick={aggiungi} className="font-maven mt-2 inline-flex items-center gap-1.5 rounded-pill bg-kidville-green px-4 py-1.5 text-sm text-kidville-yellow">

@@ -249,6 +249,7 @@ export interface Database {
           orario_fine: string | null
           dettagli: Record<string, unknown> | null
           nota_libera: string | null
+          nota_bambino: string | null
           activity_description: string | null
           pubblicato: boolean
           created_at: string
@@ -261,6 +262,7 @@ export interface Database {
           orario_fine?: string | null
           dettagli?: Record<string, unknown> | null
           nota_libera?: string | null
+          nota_bambino?: string | null
           activity_description?: string | null
           pubblicato?: boolean
         }
@@ -268,6 +270,7 @@ export interface Database {
           dettagli?: Record<string, unknown> | null
           orario_fine?: string | null
           nota_libera?: string | null
+          nota_bambino?: string | null
           activity_description?: string | null
           pubblicato?: boolean
         }
@@ -502,6 +505,8 @@ export interface Database {
           manual_adjustments: { delta: number; reason: string; by?: string | null; at: string }[]
           /** Hash SHA-256 del segreto OTP — mai memorizzato in chiaro */
           otp_secret: string | null
+          /** Orario di generazione dell'OTP; la verifica lo rifiuta oltre 10 min (m4) */
+          otp_generato_il: string | null
           signed_at: string | null
           /** Presa in carico dallo staff ("Segna gestita", migr. 20260760) */
           gestita_il: string | null
@@ -518,6 +523,7 @@ export interface Database {
           score?: number
           manual_adjustments?: { delta: number; reason: string; by?: string | null; at: string }[]
           otp_secret?: string | null
+          otp_generato_il?: string | null
           signed_at?: string | null
           gestita_il?: string | null
           gestita_da?: string | null
@@ -530,6 +536,7 @@ export interface Database {
           score?: number
           manual_adjustments?: { delta: number; reason: string; by?: string | null; at: string }[]
           otp_secret?: string | null
+          otp_generato_il?: string | null
           signed_at?: string | null
           gestita_il?: string | null
           gestita_da?: string | null

@@ -6,7 +6,7 @@ import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { sendEmail } from '@/lib/email/send'
 import { rateLimit, clientIp } from '@/lib/security/rate-limit'
-import { getUserEmail } from '@/lib/auth/otp-ticket'
+import { getUserEmail, OTP_TTL_MS } from '@/lib/auth/otp-ticket'
 import { buildSignatureLog, extractRequestMeta } from '@/lib/fea/signature-log'
 import { recordSignerSlot, getSlots } from '@/lib/fea/slots'
 import { firmaCompleta, prossimoSlot } from '@/lib/fea/firma-congiunta'
@@ -45,6 +45,28 @@ const patchBodySchema = z.object({
 // Hash deterministico: lega il codice alla submission (sale anti-rainbow-table)
 function hashOtp(submissionId: string, code: string): string {
   return createHash('sha256').update(`${submissionId}:${code}`).digest('hex')
+}
+
+// m4 — salva l'hash del codice + l'orario di generazione (per il TTL 10 min in
+// verifica). Degrada pulito se `otp_generato_il` non esiste (DB E2E CI non
+// migrato → PGRST204/42703): riprova salvando solo l'hash.
+async function salvaOtpSecret(
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
+  submissionId: string,
+  otpHash: string
+): Promise<{ error: { message?: string } | null }> {
+  const generatoIl = new Date().toISOString()
+  let res = await supabase
+    .from('form_submissions')
+    .update({ otp_secret: otpHash, otp_generato_il: generatoIl })
+    .eq('id', submissionId)
+  if (res.error && ['PGRST204', '42703'].includes((res.error as { code?: string }).code ?? '')) {
+    res = await supabase
+      .from('form_submissions')
+      .update({ otp_secret: otpHash })
+      .eq('id', submissionId)
+  }
+  return { error: res.error }
 }
 
 // Invio email: usa Resend se configurato, altrimenti log server-side (modalità dev)
@@ -100,10 +122,7 @@ export const POST = withRoute('forms/send-otp:POST', async (request: Request) =>
       }
 
       const code = String(randomInt(0, 1_000_000)).padStart(6, '0')
-      const { error: updErr } = await supabase
-        .from('form_submissions')
-        .update({ otp_secret: hashOtp(submissionId, code) })
-        .eq('id', submissionId)
+      const { error: updErr } = await salvaOtpSecret(supabase, submissionId, hashOtp(submissionId, code))
       if (updErr) {
         return NextResponse.json({ error: updErr.message }, { status: 500 })
       }
@@ -184,10 +203,7 @@ export const POST = withRoute('forms/send-otp:POST', async (request: Request) =>
     const code = String(randomInt(0, 1_000_000)).padStart(6, '0')
     const otpHash = hashOtp(submission.id, code)
 
-    const { error: updErr } = await supabase
-      .from('form_submissions')
-      .update({ otp_secret: otpHash })
-      .eq('id', submission.id)
+    const { error: updErr } = await salvaOtpSecret(supabase, submission.id, otpHash)
 
     if (updErr) {
       logErrore({ operazione: 'forms/send-otp:POST', stato: 500, evento: 'db' }, updErr)
@@ -219,11 +235,22 @@ export const PATCH = withRoute('forms/send-otp:PATCH', async (request: Request) 
 
     const supabase = await createAdminClient()
 
-    const { data: submission, error: fetchErr } = await supabase
+    // m4 — si legge anche `otp_generato_il` (TTL). Degrado pulito se la colonna
+    // manca sul DB E2E CI non migrato (SELECT → 42703): si riprova senza.
+    const baseCols = 'id, otp_secret, status, user_id, model_id'
+    let selRes = await supabase
       .from('form_submissions')
-      .select('id, otp_secret, status, user_id, model_id')
+      .select(`${baseCols}, otp_generato_il`)
       .eq('id', submissionId)
       .maybeSingle()
+    if (selRes.error && ['PGRST204', '42703'].includes((selRes.error as { code?: string }).code ?? '')) {
+      selRes = await supabase
+        .from('form_submissions')
+        .select(baseCols)
+        .eq('id', submissionId)
+        .maybeSingle()
+    }
+    const { data: submission, error: fetchErr } = selRes
 
     if (fetchErr || !submission) {
       return NextResponse.json({ error: 'Submission non trovata' }, { status: 404 })
@@ -235,6 +262,13 @@ export const PATCH = withRoute('forms/send-otp:PATCH', async (request: Request) 
 
     if (!submission.otp_secret || hashOtp(submissionId, code) !== submission.otp_secret) {
       return NextResponse.json({ error: 'Codice non valido' }, { status: 400 })
+    }
+
+    // m4 — TTL 10 minuti (allineato al Sistema B). Se `otp_generato_il` è assente/null
+    // (colonna non migrata o riga pregressa) si mantiene il comportamento attuale.
+    const generatoIl = (submission as { otp_generato_il?: string | null }).otp_generato_il
+    if (generatoIl && Date.now() - Date.parse(generatoIl) > OTP_TTL_MS) {
+      return NextResponse.json({ error: 'Codice scaduto, richiedine uno nuovo' }, { status: 400 })
     }
 
     const signedAt = new Date().toISOString()

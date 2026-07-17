@@ -14,11 +14,6 @@
       "count": 2
     }
   },
-  "src/app/(dashboard)/parent/avvisi/page.tsx": {
-    "no-console": {
-      "count": 3
-    }
-  },
   "src/app/(dashboard)/parent/chat/page.tsx": {
     "no-console": {
       "count": 4
@@ -149,19 +144,9 @@
       "count": 1
     }
   },
-  "src/lib/forms/persist-submission.ts": {
-    "no-console": {
-      "count": 2
-    }
-  },
   "src/lib/media/processing.ts": {
     "no-console": {
       "count": 3
-    }
-  },
-  "src/lib/mensa/notify.ts": {
-    "no-console": {
-      "count": 2
     }
   },
   "src/lib/merch/notify.ts": {

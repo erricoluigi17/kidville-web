@@ -1,6 +1,7 @@
 # =============================================================================
 # Kidville · iOS — percorso utente reale della SEGRETERIA/DIREZIONE (cockpit /admin)
-#   login → dashboard (cockpit) → drawer → Anagrafica → torna → drawer → Avvisi → torna
+#   login → dashboard → tab Avvisi → tab Mensa → Menu (bottom-sheet) →
+#           Anagrafica → tab Home
 #
 # Prerequisiti (vedi .claude/maestro-flows/README.md):
 #   - simulatore iOS avviato (xcrun simctl boot …)
@@ -16,12 +17,15 @@
 #                .claude/maestro-flows/ios-percorso-segreteria.yaml
 #
 # Differenze rispetto ad Android: dal simulatore l'host è `localhost` (non
-# 10.0.2.2), e non c'è tasto Indietro hardware → si torna col drawer laterale.
-# Su WebView iOS `hideKeyboard` fallisce ("Couldn't hide the keyboard"): la
-# tastiera si chiude con un tap sul titolo statico "Benvenuto/a!". La segreteria
-# NON ha bottom nav: naviga dal drawer (topbar "Apri menu"). Selettori ancorati
-# a testi STABILI del cockpit ri-skinnato: "Dashboard Direzione", "Anagrafica",
-# "Avvisi".
+# 10.0.2.2), e non c'è tasto Indietro hardware → i "ritorni" avvengono toccando i
+# tab della bottom-nav, che è persistente su ogni pagina. Su WebView iOS
+# `hideKeyboard` fallisce ("Couldn't hide the keyboard"): la tastiera si chiude
+# con un tap sul titolo statico "Benvenuto/a!". Da questo ciclo la segreteria
+# naviga con la BOTTOM-NAV a pillola (Home · Avvisi · Contabilità · Mensa +
+# «Menu») come genitore/docente, NON più col drawer. Il tab «Menu» ha aria-label
+# "Menu · tutte le sezioni" e apre un bottom-sheet (Anagrafica in evidenza).
+# Selettori ancorati a testi STABILI: "Dashboard Direzione", "Mensa & Cucina",
+# "Anagrafica Generale".
 # =============================================================================
 appId: it.kidville.app
 name: Kidville · iOS — percorso segreteria
@@ -63,75 +67,53 @@ env:
 
 # ── 2. DASHBOARD (cockpit Direzione/Segreteria) ──────────────────────────────
 # Lo staff atterra su /admin. Heading stabile (E2E) "Dashboard Direzione".
-# Su mobile la nav è un drawer: la topbar mostra il bottone "Apri menu".
+# Su mobile la nav è la bottom-nav a pillola: i tab e il bottone «Menu» sono
+# sempre presenti (niente più drawer laterale).
 - extendedWaitUntil:
     visible: "Dashboard Direzione"
     timeout: 60000
+- assertVisible: "Avvisi"
 - assertVisible:
-    text: "Apri menu"
+    text: "Menu · tutte le sezioni"
 - takeScreenshot: /tmp/kv-ios-segreteria-1-dashboard
 
-# ── 3. DRAWER → ANAGRAFICA ───────────────────────────────────────────────────
-- tapOn:
-    text: "Apri menu"
-# Il drawer aperto mostra il brand con sottotitolo (assente nella topbar chiusa).
-- extendedWaitUntil:
-    visible: "Direzione & Segreteria"
-    timeout: 15000
-# "Anagrafica" compare due volte nel drawer: il TITOLO del gruppo (più in alto) e
-# la VOCE di menu cliccabile (subito sotto). index:1 = la voce, non il titolo.
-- tapOn:
-    text: "^Anagrafica$"
-    index: 1
-- extendedWaitUntil:
-    visible: "Anagrafica Generale"
-    timeout: 45000
-- assertVisible: "Gestione studenti, genitori e personale"
-- takeScreenshot: /tmp/kv-ios-segreteria-2-anagrafica
-
-# ── 4. TORNA AL COCKPIT (niente back hardware su iOS: si usa il drawer) ───────
-- tapOn:
-    text: "Apri menu"
-- extendedWaitUntil:
-    visible: "Direzione & Segreteria"
-    timeout: 15000
-- tapOn:
-    text: "^Dashboard$"       # la VOCE "Dashboard", non l'heading "Dashboard Direzione"
-- extendedWaitUntil:
-    visible: "Dashboard Direzione"
-    timeout: 30000
-
-# ── 5. DRAWER → AVVISI ───────────────────────────────────────────────────────
-- tapOn:
-    text: "Apri menu"
-- extendedWaitUntil:
-    visible: "Direzione & Segreteria"
-    timeout: 15000
-# "Avvisi" è nel gruppo "Comunicazione", in fondo alla lista → scorri il drawer.
-- scrollUntilVisible:
-    element:
-      text: "^Avvisi$"
-    direction: DOWN
-    centerElement: true
-    timeout: 10000
-- tapOn:
-    text: "^Avvisi$"
+# ── 3. TAB «AVVISI» ──────────────────────────────────────────────────────────
+- tapOn: "Avvisi"
 - extendedWaitUntil:
     visible: "Nuovo avviso"
     timeout: 45000
 - assertVisible: "Avvisi pubblicati"
-- takeScreenshot: /tmp/kv-ios-segreteria-3-avvisi
+- takeScreenshot: /tmp/kv-ios-segreteria-2-avvisi
 
-# ── 6. RITORNO AL COCKPIT (drawer → Dashboard) ───────────────────────────────
-# Verifica anche che topbar/drawer restino agganciati sopra la safe-area.
-- tapOn:
-    text: "Apri menu"
+# ── 4. TAB «MENSA» (la bottom-nav è persistente: niente back hardware) ────────
+- tapOn: "Mensa"
 - extendedWaitUntil:
-    visible: "Direzione & Segreteria"
-    timeout: 15000
+    visible: "Mensa & Cucina"
+    timeout: 45000
+- takeScreenshot: /tmp/kv-ios-segreteria-3-mensa
+
+# ── 5. TAB «MENU» → BOTTOM-SHEET → ANAGRAFICA ────────────────────────────────
+# Il tab «Menu» apre il bottom-sheet modale con tutte le altre sezioni;
+# "Anagrafica" è la voce in evidenza in cima (sottotitolo univoco).
 - tapOn:
-    text: "^Dashboard$"
+    text: "Menu · tutte le sezioni"
+- extendedWaitUntil:
+    visible: ".*Alunni, famiglie e personale.*"
+    timeout: 15000
+- takeScreenshot: /tmp/kv-ios-segreteria-4-menu
+- tapOn:
+    text: ".*Anagrafica.*"
+- extendedWaitUntil:
+    visible: "Anagrafica Generale"
+    timeout: 45000
+- assertVisible: "Gestione studenti, genitori e personale"
+- takeScreenshot: /tmp/kv-ios-segreteria-5-anagrafica
+
+# ── 6. RITORNO AL COCKPIT (tab «Home» della bottom-nav) ──────────────────────
+# Verifica anche che la bottom-nav resti agganciata sopra la safe-area (home
+# indicator) e che il tab Home riporti al cockpit.
+- tapOn: "Home"
 - extendedWaitUntil:
     visible: "Dashboard Direzione"
     timeout: 30000
-- takeScreenshot: /tmp/kv-ios-segreteria-4-home
+- takeScreenshot: /tmp/kv-ios-segreteria-6-home

@@ -8,17 +8,19 @@ dentro la pipeline `/ship-cycle`.
 |---|---|
 | `android-percorso-genitore.yaml` | login → dashboard → **presenze** → **comunicazioni** → tasto Indietro |
 | `android-percorso-docente.yaml` | login → dashboard → **appello** → **bacheca** |
-| `android-percorso-segreteria.yaml` | login → dashboard (cockpit) → drawer → **Anagrafica** → Indietro → drawer → **Avvisi** → Indietro |
+| `android-percorso-segreteria.yaml` | login → dashboard (cockpit) → tab **Avvisi** → Indietro → tab **Mensa** → Indietro → **Menu** (bottom-sheet) → **Anagrafica** → Indietro |
 | `ios-percorso-genitore.yaml` | login → dashboard → **presenze** → **comunicazioni** → ritorno home |
 | `ios-percorso-docente.yaml` | login → dashboard → **appello** → **bacheca** |
-| `ios-percorso-segreteria.yaml` | login → dashboard (cockpit) → drawer → **Anagrafica** → torna → drawer → **Avvisi** → torna |
+| `ios-percorso-segreteria.yaml` | login → dashboard (cockpit) → tab **Avvisi** → tab **Mensa** → **Menu** (bottom-sheet) → **Anagrafica** → tab **Home** |
 
-> **Segreteria/Direzione (cockpit `/admin`).** A differenza di genitore e docente, il cockpit
-> **non ha bottom nav** su mobile: si naviga dal **drawer laterale** (bottone `Apri menu` della
-> topbar). I flow segreteria si ancorano ai testi stabili del cockpit ri-skinnato
-> (`Dashboard Direzione`, `Anagrafica`, `Avvisi`). Nota: nel drawer la voce `Anagrafica` ha lo
-> stesso testo del titolo del suo gruppo → il tap la seleziona con `index: 1` (la voce, non il
-> titolo). Su iOS, mancando il tasto Indietro hardware, il "torna" avviene riaprendo il drawer.
+> **Segreteria/Direzione (cockpit `/admin`).** Da questo ciclo il cockpit naviga come genitore e
+> docente: una **bottom-nav a pillola** su mobile (Home · Avvisi · Contabilità · Mensa + un
+> bottone **`Menu`** che apre un bottom-sheet con le altre sezioni, Anagrafica in evidenza) al
+> posto del vecchio **drawer laterale**, ormai rimosso. I 4 tab si toccano col loro testo; il tab
+> `Menu` ha aria-label `Menu · tutte le sezioni`. I flow si ancorano ai testi stabili del cockpit
+> ri-skinnato (`Dashboard Direzione`, `Mensa & Cucina`, `Anagrafica Generale`). Su Android i
+> "ritorni" usano il tasto Indietro hardware; su iOS, che non ce l'ha, si tocca un tab della
+> bottom-nav (persistente su ogni pagina).
 
 ## La cosa da capire prima di tutto
 

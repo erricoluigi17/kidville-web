@@ -50,11 +50,11 @@ export function PrenotazioneSegreteria({ userId, scuolaId }: Props) {
       <div>
         <h3 className="font-barlow font-bold text-kidville-green uppercase text-sm mb-3 flex items-center gap-2"><Search size={14} /> Seleziona alunno</h3>
         <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Cerca…"
-          className="w-full border-2 border-kidville-line rounded-full px-4 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green mb-2" />
+          className="w-full min-h-[44px] border-2 border-kidville-line rounded-full px-4 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green mb-2" />
         <div className="space-y-1 max-h-72 overflow-y-auto">
           {filtered.map(a => (
             <button key={a.id} onClick={() => select(a)}
-              className={`w-full text-left px-3 py-2 rounded-xl font-maven text-sm ${sel?.id === a.id ? 'bg-kidville-green text-white' : 'hover:bg-kidville-cream text-kidville-green'}`}>
+              className={`w-full min-h-[44px] text-left px-3 py-2 rounded-xl font-maven text-sm ${sel?.id === a.id ? 'bg-kidville-green text-white' : 'hover:bg-kidville-cream text-kidville-green'}`}>
               {a.nome} {a.cognome} <span className="text-xs opacity-70">{a.classe_sezione}</span>
             </button>
           ))}
@@ -73,8 +73,8 @@ export function PrenotazioneSegreteria({ userId, scuolaId }: Props) {
             </div>
             <label className="font-maven text-xs text-kidville-muted block mb-1">Data del pasto</label>
             <input type="date" value={data} onChange={e => { setData(e.target.value); if (sel) loadSaldo(sel.id); }}
-              className="w-full border-2 border-kidville-line rounded-lg px-3 py-1.5 font-maven text-sm text-kidville-green mb-3" />
-            <button onClick={inserisci} className="w-full py-2.5 rounded-full bg-kidville-green text-white font-maven font-bold text-sm flex items-center justify-center gap-1">
+              className="w-full min-h-[44px] border-2 border-kidville-line rounded-lg px-3 py-1.5 font-maven text-sm text-kidville-green mb-3" />
+            <button onClick={inserisci} className="w-full min-h-[44px] py-2.5 rounded-full bg-kidville-green text-white font-maven font-bold text-sm flex items-center justify-center gap-1">
               <CalendarPlus size={15} /> Inserisci ticket (scala 1)
             </button>
             <p className="mt-2 font-maven text-[11px] text-kidville-muted flex items-start gap-1">

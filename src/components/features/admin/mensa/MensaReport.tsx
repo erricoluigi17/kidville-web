@@ -234,7 +234,7 @@ export function MensaReport({ userId, scuolaId, sezione, sezioni, soloLettura = 
             ) : (
               <div className="grid md:grid-cols-2 gap-3">
                 {report.perClasse.map(c => (
-                  <div key={c.classe} className="rounded-2xl border border-kidville-line bg-white overflow-hidden">
+                  <div key={c.classe} className="kv-admin-rowcard rounded-2xl border border-kidville-line bg-white overflow-hidden">
                     <div className="flex items-center justify-between px-3 py-2 bg-kidville-cream/60">
                       <span className="font-barlow font-bold text-kidville-green text-sm">{c.classe}</span>
                       <span className="font-barlow font-black text-kidville-green">{c.conteggio}</span>
@@ -243,7 +243,7 @@ export function MensaReport({ userId, scuolaId, sezione, sezioni, soloLettura = 
                       {c.alunni.map(a => {
                         const conflitto = a.conflitti.length > 0;
                         return (
-                          <li key={a.id} className={`px-3 py-2 ${conflitto ? 'bg-kidville-error-soft' : ''}`}>
+                          <li key={a.id} className={`px-3 py-2 min-h-[44px] flex flex-col justify-center ${conflitto ? 'bg-kidville-error-soft' : ''}`}>
                             <div className="flex items-center justify-between gap-2">
                               <span className={`font-maven text-sm ${conflitto ? 'text-kidville-error-strong font-bold' : 'text-kidville-green'}`}>
                                 {conflitto && <AlertTriangle size={12} className="inline mr-1 -mt-0.5 text-kidville-error" />}

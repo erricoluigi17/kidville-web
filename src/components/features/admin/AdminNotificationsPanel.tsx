@@ -9,7 +9,7 @@
  * SedeSelector (card bianca SHADOW_FLOAT, righe hover cream).
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useRouter } from 'next/navigation';
 import { Bell, BellOff } from 'lucide-react';
 import { SHADOW_FLOAT } from '@/components/ui/Card';
@@ -30,13 +30,46 @@ function quando(iso: string): string {
   return `${d.toLocaleDateString('it-IT', { day: 'numeric', month: 'short' })} · ${d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })}`;
 }
 
-export function AdminNotificationsPanel({ userId }: { userId: string | null }) {
+export function AdminNotificationsPanel({
+  userId,
+  attivoSu,
+}: {
+  userId: string | null;
+  /**
+   * Media query che gatea fetch+poll. La campanella è montata due volte
+   * (topbar desktop + topbar mobile), entrambe sempre nel DOM: senza guardia
+   * entrambe le istanze farebbero fetch e poll, raddoppiando le chiamate a
+   * /api/notifiche. Ogni topbar passa la propria breakpoint e resta attiva
+   * SOLO quando è quella effettivamente visibile. Se assente (usi legacy) il
+   * pannello resta sempre attivo.
+   */
+  attivoSu?: string;
+}) {
   const router = useRouter();
   const ref = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<Notifica[]>([]);
   const [nonLette, setNonLette] = useState(0);
   const [ready, setReady] = useState(false);
+
+  // `attivo` segue la media query passata (fetch/poll solo quando la topbar è
+  // effettivamente visibile); senza prop resta sempre true (retro-compatibile).
+  // `useSyncExternalStore` è il modo idiomatico del repo per lo stato esterno
+  // (matchMedia): niente `setState` sincrono negli effect (react-hooks 7).
+  const subscribeMq = useCallback(
+    (onChange: () => void) => {
+      if (attivoSu === undefined) return () => {};
+      const mql = window.matchMedia(attivoSu);
+      mql.addEventListener('change', onChange);
+      return () => mql.removeEventListener('change', onChange);
+    },
+    [attivoSu],
+  );
+  const getMq = useCallback(
+    () => (attivoSu === undefined ? true : window.matchMedia(attivoSu).matches),
+    [attivoSu],
+  );
+  const attivo = useSyncExternalStore(subscribeMq, getMq, () => attivoSu === undefined);
 
   const qs = userId ? `?userId=${userId}` : '';
 
@@ -55,18 +88,24 @@ export function AdminNotificationsPanel({ userId }: { userId: string | null }) {
     }
   }, [userId]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { if (attivo) void load(); }, [attivo, load]);
 
-  // Poll 60s (niente canali realtime, vedi mini-design M7).
+  // Poll 60s (niente canali realtime, vedi mini-design M7) — solo se attivo.
   useEffect(() => {
+    if (!attivo) return;
     const t = setInterval(() => { void load(); }, 60_000);
     return () => clearInterval(t);
-  }, [load]);
+  }, [attivo, load]);
 
   useEffect(() => {
     const onDoc = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
     document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+    };
   }, []);
 
   const withUser = (href: string) =>
@@ -100,7 +139,7 @@ export function AdminNotificationsPanel({ userId }: { userId: string | null }) {
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-label={nonLette > 0 ? `Notifiche (${nonLette} non lette)` : 'Notifiche'}
-        className="relative flex h-10 w-10 items-center justify-center rounded-[11px] bg-kidville-white/[0.12] text-kidville-white"
+        className="relative flex h-11 w-11 items-center justify-center rounded-[11px] bg-kidville-white/[0.12] text-kidville-white"
       >
         <Bell size={19} />
         {nonLette > 0 && (
@@ -110,7 +149,7 @@ export function AdminNotificationsPanel({ userId }: { userId: string | null }) {
 
       {open && (
         <div
-          className="absolute right-0 top-[calc(100%+8px)] z-[60] w-[340px] rounded-[14px] bg-kidville-white p-1.5"
+          className="absolute right-0 top-[calc(100%+8px)] z-[60] w-[min(340px,calc(100vw-24px))] rounded-[14px] bg-kidville-white p-1.5"
           style={{ boxShadow: SHADOW_FLOAT }}
         >
           <div className="flex items-center justify-between gap-2 px-2.5 pb-1.5 pt-2">

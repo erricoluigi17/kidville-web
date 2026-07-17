@@ -5,9 +5,14 @@
  * logo · ricerca globale (reale, /api/admin/search — M7.2) · selettore sede
  * (reale, /api/admin/schools) · centro notifiche (reale, /api/notifiche —
  * M7.3) · avatar+ruolo. Mirror di DR `ds.css .kv-topbar`. Su mobile è
- * nascosta: la topbar/drawer mobile vive già in AdminSidebar.
+ * nascosta (`lg:flex`/`hidden`): sotto i 1024px c'è `AdminTopBarMobile` (barra
+ * verde) e la navigazione è la bottom-nav — il vecchio drawer non esiste più.
+ * La campanella riceve `attivoSu` così solo la topbar visibile fa fetch/poll
+ * (entrambe restano nel DOM a ogni breakpoint: senza guardia raddoppierebbero).
  */
 import { useState } from 'react';
+import Link from 'next/link';
+import Image from 'next/image';
 import { Search } from 'lucide-react';
 import { SedeSelector } from '@/components/ui/cockpit';
 import { UserMenu } from '@/components/ui/UserMenu';
@@ -24,7 +29,7 @@ export function AdminTopBar() {
   // userId e ruolo dall'identità condivisa del cockpit (<AdminIdentityProvider>):
   // niente lettura duplicata; il markup della TopBar non dipende da userId
   // (usato solo come prop verso i pannelli), quindi nessun mismatch di hydration.
-  const { userId, ruolo } = useAdminIdentity();
+  const { userId, ruolo, withUser } = useAdminIdentity();
   const [search, setSearch] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
 
@@ -32,10 +37,18 @@ export function AdminTopBar() {
 
   return (
     <header className="sticky top-0 z-40 hidden h-16 items-center gap-4 bg-kidville-green px-5 lg:flex">
-        {/* brand */}
-        <div className="flex w-[214px] shrink-0 items-center gap-2.5">
-          <div className="flex h-9 w-9 items-center justify-center rounded-[10px] bg-kidville-yellow font-barlow text-xl font-black text-kidville-green">K</div>
-          <span className="font-barlow text-[21px] font-black uppercase tracking-[0.02em] text-kidville-white">Kidville</span>
+        {/* brand — wordmark ufficiale (stessa metrica dell'AppBar genitore/docente) */}
+        <div className="flex w-[214px] shrink-0 items-center">
+          <Link href={withUser('/admin')} aria-label="Home Kidville" className="shrink-0">
+            <Image
+              src="/logo-light.png"
+              alt="Kidville"
+              width={620}
+              height={209}
+              priority
+              style={{ height: 19, width: 'auto', display: 'block' }}
+            />
+          </Link>
         </div>
 
         {/* ricerca globale (reale, /api/admin/search — M7.2) */}
@@ -49,7 +62,7 @@ export function AdminTopBar() {
             onKeyDown={(e) => { if (e.key === 'Escape') { setSearchOpen(false); e.currentTarget.blur(); } }}
             placeholder="Cerca alunno, genitore, codice fiscale…"
             aria-label="Ricerca globale"
-            className="h-10 w-full rounded-[11px] border-none bg-kidville-white/[0.14] pl-10 pr-3.5 font-maven text-[13.5px] text-kidville-white transition-colors placeholder:text-kidville-white/60 focus-visible:bg-kidville-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-kidville-yellow/70"
+            className="h-10 w-full rounded-full border-none bg-white/15 pl-10 pr-3.5 font-maven text-[13.5px] text-kidville-white transition-colors placeholder:text-kidville-white/60 focus-visible:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-kidville-yellow/70"
           />
           {searchOpen && (
             <AdminSearchPanel
@@ -65,8 +78,9 @@ export function AdminTopBar() {
         {/* selettore sede (reale) */}
         <SedeSelector userId={userId} />
 
-        {/* centro notifiche (reale, /api/notifiche — M7.3) */}
-        <AdminNotificationsPanel userId={userId} />
+        {/* centro notifiche (reale, /api/notifiche — M7.3); attiva fetch/poll
+            solo quando questa topbar desktop è effettivamente visibile */}
+        <AdminNotificationsPanel userId={userId} attivoSu="(min-width: 1024px)" />
 
         {/* avatar + ruolo (chip giallo, iniziale verde — mirror DR) + menu Esci */}
         <UserMenu ruoloLabel={ruoloLabel} />

@@ -61,4 +61,19 @@ describe('PagamentoCardMobile', () => {
     expect(screen.queryByRole('button', { name: 'Incassa' })).toBeNull();
     expect(screen.getByText('Da fatturare')).toBeInTheDocument();
   });
+
+  it('la card espone il marker .kv-admin-rowcard (aggancio HC/alto contrasto)', () => {
+    const { container } = render(
+      <PagamentoCardMobile pagamento={base} alunnoLabel="Mario Rossi" onIncassa={() => {}} onApri={() => {}} />
+    );
+    expect(container.firstElementChild).toHaveClass('kv-admin-rowcard');
+  });
+
+  it('i bottoni Incassa e Dettagli hanno touch target ≥44px', () => {
+    render(
+      <PagamentoCardMobile pagamento={base} alunnoLabel="Mario Rossi" onIncassa={() => {}} onApri={() => {}} />
+    );
+    expect(screen.getByRole('button', { name: 'Incassa' })).toHaveClass('min-h-[44px]');
+    expect(screen.getByRole('button', { name: /Dettagli/ })).toHaveClass('min-h-[44px]');
+  });
 });

@@ -22,6 +22,7 @@
   --color-kidville-error-soft: #FDECEC;
   --color-kidville-error-strong: #C62828;  /* testo d'errore su error-soft (4,9:1) */
   --color-kidville-success-soft: #E7F3E8;
+  --color-kidville-success-strong: #1B5E20;  /* testo/stato su success-soft: 8,0:1 (badge "iscritto") */
 
   /* ── Stati semantici cockpit (segreteria/admin) ── */
   --color-kidville-warn: #E6720A;
@@ -135,6 +136,15 @@ body {
 .cap-native [data-kv-shell] .kv-appbar {
   padding-top: env(safe-area-inset-top);
 }
+/* Idem per la topbar mobile del cockpit (barra verde admin, `AdminTopBarMobile`).
+   L'AppBar tiene il `pt-2` su un div INTERNO e aggiunge l'inset sull'header nudo
+   → spazio nativo = 0.5rem + inset. La topbar admin mette invece `pt-2` sullo
+   STESSO elemento di `.kv-appbar-admin`: qui l'inset va SOMMATO al 0.5rem (con
+   `env()`=0 su Android il solo inset azzererebbe il padding → wordmark incollato
+   alla status bar). `calc()` replica lo spazio effettivo dell'AppBar. */
+.cap-native [data-kv-shell] .kv-appbar-admin {
+  padding-top: calc(0.5rem + env(safe-area-inset-top));
+}
 
 /* =============================================================================
    Cockpit Direzione/Segreteria — la cornice persistente (sidebar) non deve MAI
@@ -176,6 +186,7 @@ body {
   --color-kidville-error-soft: #000000;
   --color-kidville-error-strong: #FF5252;
   --color-kidville-success-soft: #000000;
+  --color-kidville-success-strong: #00E676;
   --color-kidville-warn: #FFB300;
   --color-kidville-warn-soft: #1A1A1A;
   --color-kidville-warn-strong: #FFB300;
@@ -356,19 +367,19 @@ body {
 [data-contrast="high"] .kv-admin-nav a:not([aria-current="page"]):hover {
   box-shadow: inset 0 0 0 2px #000000;
 }
-/* Topbar mobile del cockpit: verde→nera come `.kv-appbar` (il fondo
-   `bg-kidville-white/90` resta chiaro se non forzato). Brand e menu leggibili
-   su nero: wordmark/menu bianchi, badge "K" giallo con lettera nera. */
+/* Topbar mobile del cockpit — barra VERDE del brand (`AdminTopBarMobile`): in
+   alto contrasto `--color-kidville-green` diventa #FFF e i contenuti bianchi
+   sparirebbero → fondo nero con inset ring, come `.kv-appbar`. Il wordmark è
+   `logo-light.png` (immagine già bianca, il colore CSS non la tocca); la
+   campanella usa `text-kidville-white`, che in HC vira a #000 (nero su nero,
+   invisibile) → va riforzata a bianco. Niente più badge "K": i due selettori
+   `.text-kidville-green`/`.bg-kidville-green` erano orfani e sono stati rimossi. */
 [data-contrast="high"] .kv-admin-topbar {
   background: #000000;
   box-shadow: inset 0 0 0 1px #8A8A8A;
 }
-[data-contrast="high"] .kv-admin-topbar .text-kidville-green {
+[data-contrast="high"] .kv-admin-topbar .text-kidville-white {
   color: #FFFFFF;
-}
-[data-contrast="high"] .kv-admin-topbar .bg-kidville-green {
-  background-color: #FFE500;
-  color: #000000;
 }
 /* Alto contrasto — pillole Tabs del cockpit (@theme inline → coppie esplicite). */
 [data-contrast="high"] .kv-cockpit-tabs button[aria-pressed="true"] {
@@ -376,4 +387,125 @@ body {
 }
 [data-contrast="high"] .kv-cockpit-tabs button[aria-pressed="false"] {
   background: #FFFFFF; color: #000000; box-shadow: inset 0 0 0 1px #000000;
+}
+
+/* =============================================================================
+   Scroll orizzontale rifinito per le tabelle admin che restano a scorrimento
+   (Step 8, `TABLE_WRAP`): indicatori di scorrimento a ombre-bordo CSS-only, che
+   compaiono SOLO quando c'è ancora contenuto da scorrere e spariscono ai bordi.
+   Tecnica classica delle quattro gradient con `background-attachment` misto: i due
+   "coperchi" del colore-superficie scrollano col contenuto (`local`) e a fine
+   corsa coprono l'ombra sottostante; le due ombre restano agganciate alla
+   scroll-box (`scroll`). Il colore-coperchio è il token superficie → si ribalta
+   da solo in Alto Contrasto. Nessun JS. */
+.kv-table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  background:
+    linear-gradient(to right, var(--color-kidville-white) 30%, transparent) 0 0,
+    linear-gradient(to left, var(--color-kidville-white) 30%, transparent) 100% 0,
+    radial-gradient(farthest-side at 0 50%, rgba(0, 0, 0, 0.18), transparent) 0 0,
+    radial-gradient(farthest-side at 100% 50%, rgba(0, 0, 0, 0.18), transparent) 100% 0;
+  background-repeat: no-repeat;
+  background-size: 40px 100%, 40px 100%, 14px 100%, 14px 100%;
+  background-attachment: local, local, scroll, scroll;
+}
+
+/* =============================================================================
+   Alto contrasto — superfici mobile NUOVE del cockpit (bottom-nav, sheet «Menu»,
+   row-card). `@theme inline` inlinea gli hex nelle utility Tailwind, quindi il
+   remap dei token dentro [data-contrast="high"] NON le tocca: qui si forzano le
+   coppie esplicite, esattamente come per `.kv-admin-nav` e `.kv-cockpit-tabs`.
+   ============================================================================= */
+
+/* Bottom-nav a pillola (`AdminBottomNav`): la pillola resta BIANCA con bordo nero
+   netto; la voce attiva — `aria-current="page"` sui tab, `aria-expanded="true"`
+   sul bottone «Menu» aperto, `aria-current="true"` sul bottone «Menu» quando la
+   rotta è una sua sezione a sheet chiuso — è un pieno NERO con icona GIALLA (il
+   pill `bg-kidville-green` in HC diventerebbe bianco su bianco, invisibile). */
+[data-contrast="high"] .kv-admin-bottomnav {
+  background: #FFFFFF;
+  box-shadow: inset 0 0 0 2px #000000;
+}
+[data-contrast="high"] .kv-admin-bottomnav [aria-current="page"] .bg-kidville-green,
+[data-contrast="high"] .kv-admin-bottomnav [aria-current="true"] .bg-kidville-green,
+[data-contrast="high"] .kv-admin-bottomnav [aria-expanded="true"] .bg-kidville-green {
+  background-color: #000000;
+}
+[data-contrast="high"] .kv-admin-bottomnav [aria-current="page"] svg,
+[data-contrast="high"] .kv-admin-bottomnav [aria-current="true"] svg,
+[data-contrast="high"] .kv-admin-bottomnav [aria-expanded="true"] svg {
+  color: #FFE500;
+}
+/* Label token della nav (inattive `text-kidville-sub`, attive `text-kidville-green`):
+   sul fondo bianco della pillola HC vanno a NERO pieno per il massimo contrasto —
+   la voce attiva resta distinta dal pill nero + icona gialla, non dal colore label. */
+[data-contrast="high"] .kv-admin-bottomnav .text-kidville-sub,
+[data-contrast="high"] .kv-admin-bottomnav .text-kidville-green {
+  color: #000000;
+}
+
+/* Bottom-sheet «Menu» (`AdminMenuSheet`): superficie CHIARA invertita sul nero del
+   body — fondo bianco, bordo e divisori neri. I testi token (green/ink/sub/muted)
+   virerebbero a bianco o grigio-chiaro su bianco → riforzati a nero. */
+[data-contrast="high"] .kv-admin-sheet {
+  background: #FFFFFF;
+  box-shadow: inset 0 0 0 2px #000000;
+  color: #000000;
+}
+[data-contrast="high"] .kv-admin-sheet .text-kidville-green,
+[data-contrast="high"] .kv-admin-sheet .text-kidville-ink,
+[data-contrast="high"] .kv-admin-sheet .text-kidville-sub,
+[data-contrast="high"] .kv-admin-sheet .text-kidville-muted {
+  color: #000000;
+}
+[data-contrast="high"] .kv-admin-sheet .border-kidville-line {
+  border-color: #000000;
+}
+
+/* Row-card mobile (`StudentRowCard` / `PagamentoCardMobile` / card-classe di
+   `MensaReport`): fondo bianco, bordo nero 2px, testi token a nero. I badge/pill
+   usano coppie ESPLICITE bianco/nero/giallo — i soft-token darebbero grigio-su-
+   grigio (`bg-kidville-line`) o giallo-su-bianco (`bg-kidville-green`), sotto
+   soglia di contrasto. L'ordine conta: le regole `.bg-*` (che impostano anche il
+   `color` del badge) vengono DOPO le regole di testo, così vincono sul badge. */
+[data-contrast="high"] .kv-admin-rowcard {
+  background: #FFFFFF;
+  border-color: transparent;
+  box-shadow: inset 0 0 0 2px #000000;
+  color: #000000;
+}
+[data-contrast="high"] .kv-admin-rowcard .text-kidville-green,
+[data-contrast="high"] .kv-admin-rowcard .text-kidville-ink,
+[data-contrast="high"] .kv-admin-rowcard .text-kidville-sub,
+[data-contrast="high"] .kv-admin-rowcard .text-kidville-muted {
+  color: #000000;
+}
+[data-contrast="high"] .kv-admin-rowcard [class*="bg-kidville-cream"] {
+  background-color: #FFFFFF;
+}
+[data-contrast="high"] .kv-admin-rowcard .bg-kidville-green {
+  background-color: #000000;
+  color: #FFE500;
+}
+[data-contrast="high"] .kv-admin-rowcard .bg-kidville-line {
+  background-color: #000000;
+  color: #FFFFFF;
+}
+[data-contrast="high"] .kv-admin-rowcard .border-kidville-line {
+  border-color: #000000;
+}
+/* Badge di stato / BES: i soft-token (`bg-kidville-success-soft`/`bg-kidville-warn-soft`)
+   e i loro testi `*-strong` sono hex inlinati da `@theme inline` → il remap HC non
+   li tocca. Coppie ESPLICITE su nero: verde-fosforo per «iscritto», ambra per
+   «sospeso»/BES. In coda al blocco così vincono su testo e sfondo del badge. */
+[data-contrast="high"] .kv-admin-rowcard .bg-kidville-success-soft {
+  background: #000000;
+  border-color: #00E676;
+  color: #00E676;
+}
+[data-contrast="high"] .kv-admin-rowcard .bg-kidville-warn-soft {
+  background: #000000;
+  border-color: #FFB300;
+  color: #FFB300;
 }

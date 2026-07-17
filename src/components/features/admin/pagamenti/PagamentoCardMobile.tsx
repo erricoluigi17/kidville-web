@@ -23,7 +23,7 @@ export function PagamentoCardMobile({ pagamento, alunnoLabel, sezioneLabel, sosp
     const saldato = pagamento.stato === 'pagato';
 
     return (
-        <div className={cx('rounded-card border-[1.5px] border-kidville-line bg-kidville-white p-3', pagamento.stato === 'scaduto' && 'bg-kidville-error-soft/40')}>
+        <div className={cx('kv-admin-rowcard rounded-card border-[1.5px] border-kidville-line bg-kidville-white p-3', pagamento.stato === 'scaduto' && 'bg-kidville-error-soft/40')}>
             <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                     <p className="truncate font-maven text-sm font-bold text-kidville-green">
@@ -51,12 +51,12 @@ export function PagamentoCardMobile({ pagamento, alunnoLabel, sezioneLabel, sosp
                 <div className="ml-auto flex items-center gap-2">
                     {!saldato && (
                         <button type="button" onClick={onIncassa}
-                            className="rounded-pill bg-kidville-green px-3 py-1.5 font-maven text-xs font-bold text-kidville-yellow transition-colors hover:bg-kidville-green-dark">
+                            className="inline-flex min-h-[44px] items-center justify-center rounded-pill bg-kidville-green px-3 py-1.5 font-maven text-xs font-bold text-kidville-yellow transition-colors hover:bg-kidville-green-dark">
                             Incassa
                         </button>
                     )}
                     <button type="button" onClick={onApri}
-                        className="inline-flex items-center gap-0.5 rounded-pill border-[1.5px] border-kidville-line px-3 py-1 font-maven text-xs font-bold text-kidville-muted transition-colors hover:border-kidville-green hover:text-kidville-green">
+                        className="inline-flex min-h-[44px] items-center justify-center gap-0.5 rounded-pill border-[1.5px] border-kidville-line px-3 py-1 font-maven text-xs font-bold text-kidville-muted transition-colors hover:border-kidville-green hover:text-kidville-green">
                         Dettagli <ChevronRight size={13} />
                     </button>
                 </div>

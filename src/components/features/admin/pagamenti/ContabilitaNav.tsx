@@ -24,7 +24,7 @@ export const VISTE_CONTABILITA: { id: VistaContabilita; label: string; icon: Luc
 export function ContabilitaNav({ value, onChange }: { value: VistaContabilita; onChange: (v: VistaContabilita) => void }) {
     return (
         <>
-            <div className="md:hidden -mx-4 mb-4 overflow-x-auto px-4">
+            <div className="md:hidden mb-4 min-w-0 overflow-x-auto">
                 <div className="flex w-max gap-2">
                     {VISTE_CONTABILITA.map((v) => {
                         const Icon = v.icon;

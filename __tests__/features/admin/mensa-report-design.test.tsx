@@ -59,4 +59,22 @@ describe('MensaReport — Report Cucina (re-skin W4)', () => {
     const btn = await screen.findByRole('button', { name: /Registra alternativa/ });
     expect(btn.className).toContain('min-h-[44px]');
   });
+
+  it('aggancia il marker `.kv-admin-rowcard` alle card classe (HC dello Step 5)', async () => {
+    render(<MensaReport userId="u1" scuolaId="s1" />);
+    await screen.findByRole('button', { name: /Registra alternativa/ });
+    const cards = document.querySelectorAll('.kv-admin-rowcard');
+    expect(cards.length).toBeGreaterThanOrEqual(1);
+    // la card della classe della fixture ('Girasoli') porta il marker
+    expect(Array.from(cards).some((c) => c.textContent?.includes('Girasoli'))).toBe(true);
+  });
+
+  it('dà alle righe alunno un touch target ≥44px (colonna singola su mobile)', async () => {
+    render(<MensaReport userId="u1" scuolaId="s1" />);
+    await screen.findByRole('button', { name: /Registra alternativa/ });
+    const nome = screen.getByText('Bimbo Uno');
+    const row = nome.closest('li');
+    expect(row).not.toBeNull();
+    expect(row!.className).toContain('min-h-[44px]');
+  });
 });

@@ -250,8 +250,8 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                 </div>
             )}
 
-            {/* KPI (StatCard cockpit): 2 colonne su mobile, 4 su desktop */}
-            <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
+            {/* KPI (StatCard cockpit): 1 colonna sotto sm, 2 da sm, 4 da lg */}
+            <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 <StatCard icon={CheckCircle2} label="Incassato" value={loading ? '—' : `€ ${totals.incassato.toFixed(2)}`} tone="success" />
                 <StatCard icon={Clock} label="Da incassare" value={loading ? '—' : `€ ${totals.daIncassare.toFixed(2)}`} tone="warn" />
                 <StatCard icon={AlertTriangle} label="Scaduto (morosità)" value={loading ? '—' : `€ ${totals.scaduto.toFixed(2)}`} tone="error" />

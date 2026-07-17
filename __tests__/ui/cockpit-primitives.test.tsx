@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import fs from 'node:fs';
 import path from 'node:path';
-import { PageHeader, Tabs } from '@/components/ui/cockpit';
+import { PageHeader, StatCard, Tabs, TABLE_WRAP } from '@/components/ui/cockpit';
 import { TAB_GIALLO_OVUNQUE } from '@/lib/ui/tab-theme';
 
 /**
@@ -74,6 +74,35 @@ describe('Tabs (pillole)', () => {
     render(<Tabs value="iscritti" options={options} onChange={vi.fn()} />);
     expect(screen.getByRole('button', { name: /Iscritti/ })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByRole('button', { name: /Archiviati/ })).toHaveAttribute('aria-pressed', 'false');
+  });
+});
+
+describe('StatCard (comprimibilità su viewport strette — fix overflow ciclo 2)', () => {
+  it('la card radice ha `min-w-0` per non imporre larghezza intrinseca nella griglia', () => {
+    const { container } = render(<StatCard label="Da fatturare" value="€ 1.234,00" />);
+    const root = container.firstElementChild as HTMLElement;
+    expect(root).not.toBeNull();
+    expect(root.className).toMatch(/min-w-0/);
+  });
+
+  it('la riga valore+sub va a capo (`flex-wrap`) quando il sub è presente', () => {
+    render(<StatCard label="Da fatturare" value="€ 1.234,00" sub="3 pagamenti" />);
+    const valore = screen.getByText('€ 1.234,00');
+    const riga = valore.parentElement as HTMLElement;
+    expect(riga).not.toBeNull();
+    expect(riga.className).toMatch(/flex-wrap/);
+    // il sub è nella stessa riga wrappabile
+    expect(riga.contains(screen.getByText('3 pagamenti'))).toBe(true);
+  });
+});
+
+describe('TABLE_WRAP (scroll rifinito per le tabelle non convertite a card)', () => {
+  it('applica il marker CSS `.kv-table-scroll` (indicatore di scorrimento dallo Step 5)', () => {
+    expect(TABLE_WRAP).toContain('kv-table-scroll');
+  });
+
+  it('conserva lo scroll orizzontale con `overflow-x-auto`', () => {
+    expect(TABLE_WRAP).toContain('overflow-x-auto');
   });
 });
 

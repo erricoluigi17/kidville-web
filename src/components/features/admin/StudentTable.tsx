@@ -3,8 +3,9 @@
 import React, { useState } from 'react';
 import { ArrowUpDown, AlertTriangle } from 'lucide-react';
 import { labelRuolo } from '@/lib/auth/ruoli';
+import { StudentRowCard } from './StudentRowCard';
 
-interface Student {
+export interface Student {
     id: string;
     nome?: string;
     cognome?: string;
@@ -38,9 +39,9 @@ type SortField = 'cognome' | 'nome' | 'classe_sezione' | 'stato' | 'data_nascita
 
 function getStatoBadge(stato: string) {
     switch (stato) {
-        case 'iscritto': return 'bg-kidville-success-soft text-kidville-success border-kidville-success/30';
+        case 'iscritto': return 'bg-kidville-success-soft text-kidville-success-strong border-kidville-success/30';
         case 'ritirato': return 'bg-kidville-line text-kidville-muted border-kidville-line';
-        case 'sospeso': return 'bg-kidville-warn-soft text-kidville-warn border-kidville-warn/30';
+        case 'sospeso': return 'bg-kidville-warn-soft text-kidville-warn-strong border-kidville-warn/30';
         default: return 'bg-kidville-line text-kidville-muted border-kidville-line';
     }
 }
@@ -98,9 +99,25 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
         </th>
     );
 
+    // Opzioni di ordinamento per il select compatto della lista mobile — riusano
+    // gli stessi campi delle intestazioni cliccabili della tabella.
+    const sortOptions: { field: SortField; label: string }[] = currentTypeFilter === 'child'
+        ? [
+            { field: 'cognome', label: 'Cognome' },
+            { field: 'nome', label: 'Nome' },
+            { field: 'classe_sezione', label: 'Classe' },
+            { field: 'stato', label: 'Stato' },
+            { field: 'data_nascita', label: 'Nascita' },
+        ]
+        : [
+            { field: 'cognome', label: 'Cognome' },
+            { field: 'nome', label: 'Nome' },
+        ];
+
     return (
         <div className="bg-kidville-white rounded-card shadow-sm overflow-hidden">
-            <div className="overflow-x-auto">
+            {/* ≥sm: tabella con scroll orizzontale rifinito. */}
+            <div className="hidden sm:block kv-table-scroll overflow-x-auto">
                 <table className="w-full">
                     <thead className="bg-kidville-cream/50 border-b border-kidville-line">
                         <tr>
@@ -253,6 +270,48 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                     </tbody>
                 </table>
             </div>
+
+            {/* <sm: la tabella diventa una lista di card (stessi dati della riga). */}
+            {students.length > 0 && (
+                <div data-testid="student-cards-mobile" className="sm:hidden p-3">
+                    <div className="mb-3 flex items-center gap-2">
+                        <label htmlFor="student-sort-mobile" className="font-barlow text-xs font-bold uppercase tracking-wide text-kidville-muted">
+                            Ordina
+                        </label>
+                        <select
+                            id="student-sort-mobile"
+                            value={sortField}
+                            onChange={(e) => setSortField(e.target.value as SortField)}
+                            className="min-h-[44px] flex-1 rounded-pill border-[1.5px] border-kidville-line bg-kidville-white px-3 font-maven text-sm text-kidville-green"
+                        >
+                            {sortOptions.map(opt => (
+                                <option key={opt.field} value={opt.field}>{opt.label}</option>
+                            ))}
+                        </select>
+                        <button
+                            type="button"
+                            onClick={() => setSortDir(d => (d === 'asc' ? 'desc' : 'asc'))}
+                            aria-label={sortDir === 'asc' ? 'Ordine crescente, tocca per invertire' : 'Ordine decrescente, tocca per invertire'}
+                            className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-pill border-[1.5px] border-kidville-line bg-kidville-white text-kidville-green"
+                        >
+                            <ArrowUpDown size={16} />
+                            <span className="ml-0.5 font-maven text-xs font-bold">{sortDir === 'asc' ? 'A-Z' : 'Z-A'}</span>
+                        </button>
+                    </div>
+                    <div className="space-y-2">
+                        {sorted.map(student => (
+                            <StudentRowCard
+                                key={student.id}
+                                student={student}
+                                isSelected={selectedIds.has(student.id)}
+                                onToggleSelect={onToggleSelect}
+                                onClick={onStudentClick}
+                                currentTypeFilter={currentTypeFilter}
+                            />
+                        ))}
+                    </div>
+                </div>
+            )}
 
             {students.length === 0 && (
                 <div className="flex flex-col items-center justify-center py-16 text-center">

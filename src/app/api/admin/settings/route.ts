@@ -6,7 +6,7 @@ import { resolveScuolaScrittura } from '@/lib/auth/scope'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 /**
@@ -50,11 +50,42 @@ const ALLOWED_FIELDS = [
   'fiscale_config',
   'solleciti_config',
   'notifiche_config',
+  'rette_config',
 ] as const
+
+// Configurazione rette (sconto fratelli + pro-rata iscrizione) — shape S6.
+// Validazione conservativa: la shape è quella di `@/lib/pagamenti/rette-config`.
+// zod scarta le chiavi ignote; i valori vengono comunque risanificati dalla SQL
+// (`genera_rette_mensili` v2) e dal client (`normalizzaRetteConfig`).
+const zScaglioneFratelli = z.object({
+  posizione: z.coerce.number().int().min(2).max(50),
+  valore: z.coerce.number().min(0).max(1_000_000),
+})
+const zScaglioneProRata = z.object({
+  dal_giorno: z.coerce.number().int().min(1).max(31),
+  percentuale: z.coerce.number().min(0).max(100),
+})
+const zRetteConfig = z.object({
+  sconto_fratelli: z
+    .object({
+      enabled: z.boolean().optional(),
+      modo: z.enum(['percentuale', 'importo']).optional(),
+      scaglioni: z.array(zScaglioneFratelli).max(50).optional(),
+    })
+    .optional(),
+  pro_rata_iscrizione: z
+    .object({
+      enabled: z.boolean().optional(),
+      scaglioni: z.array(zScaglioneProRata).max(31).optional(),
+    })
+    .optional(),
+})
 
 const patchBodySchema = z.object({
   scuola_id: zScuolaId,
   ...Object.fromEntries(ALLOWED_FIELDS.map((f) => [f, z.unknown().optional()])),
+  // Override della validazione permissiva: rette_config ha una shape nota.
+  rette_config: zRetteConfig.optional(),
 })
 
 // GET /api/admin/settings?userId=&scuola_id=  (staff) — impostazioni della scuola
@@ -145,6 +176,7 @@ export const PATCH = withRoute('admin/settings:PATCH', async (request: NextReque
         'fiscale_config',
         'solleciti_config',
         'notifiche_config',
+        'rette_config',
       ]
       const updates: Record<string, unknown> = { scuola_id: scuolaId }
       for (const f of ALLOWED_FIELDS) if (body[f] !== undefined) updates[f] = body[f]
@@ -175,11 +207,29 @@ export const PATCH = withRoute('admin/settings:PATCH', async (request: NextReque
           }
         }
       }
-      const { data, error } = await supabase
+      let { data, error } = await supabase
         .from('admin_settings')
         .upsert(updates, { onConflict: 'scuola_id' })
         .select()
         .single()
+
+      // Degradazione: sul DB E2E CI (NON migrato) la colonna rette_config non
+      // esiste ancora → PostgREST risponde PGRST204. Si salva tutto il resto
+      // best-effort (il flusso base resta invariato) e si continua con un warn.
+      if (error && error.code === 'PGRST204' && 'rette_config' in updates) {
+        logEvento('config', 'warn', {
+          operazione: 'admin/settings:PATCH',
+          esito: 'rette_config_non_disponibile_pgrst204',
+          stato: 200,
+        })
+        const senzaRette = { ...updates }
+        delete senzaRette.rette_config
+        ;({ data, error } = await supabase
+          .from('admin_settings')
+          .upsert(senzaRette, { onConflict: 'scuola_id' })
+          .select()
+          .single())
+      }
       if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
       return NextResponse.json({ success: true, data })

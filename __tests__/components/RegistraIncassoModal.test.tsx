@@ -30,8 +30,9 @@ describe('RegistraIncassoModal — anti-errore', () => {
 
   it('il bottone di conferma riporta l\'importo che verrà registrato', () => {
     render(<RegistraIncassoModal pagamento={pagamento} userId="u1" onClose={() => {}} onDone={() => {}} />);
-    expect(screen.getByRole('button', { name: /Registra € 50\.00/ })).toBeInTheDocument();
+    // Formato valuta it-IT (virgola decimale) via formatEuro.
+    expect(screen.getByRole('button', { name: /Registra € 50,00/ })).toBeInTheDocument();
     fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '20' } });
-    expect(screen.getByRole('button', { name: /Registra € 20\.00/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Registra € 20,00/ })).toBeInTheDocument();
   });
 });

@@ -5,6 +5,7 @@ import { requireStaff } from '@/lib/auth/require-staff'
 import { parseBody, parseData } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { annullaRicevutaAttiva } from '@/lib/pagamenti/ricevute'
+import { eseguiStornoIncasso } from '../storno/route'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
 
@@ -84,7 +85,9 @@ export const PATCH = withRoute('pagamenti/incassi/[id]:PATCH', async (request: R
   }
 })
 
-// DELETE /api/pagamenti/incassi/[id]  (staff) — storno di un incasso (variante REST path)
+// DELETE /api/pagamenti/incassi/[id]?motivo=yyy  (staff) — storno TRACCIATO
+// Wrapper della stessa logica dello storno: niente più cancellazione fisica.
+// Il motivo è obbligatorio (query ?motivo= o body), min 3 caratteri.
 export const DELETE = withRoute('pagamenti/incassi/[id]:DELETE', async (request: Request, context: { params: Promise<{ id: string }> }) => {
   try {
     const auth = await requireStaff(request)
@@ -95,23 +98,29 @@ export const DELETE = withRoute('pagamenti/incassi/[id]:DELETE', async (request:
     if ('response' in idParsed) return idParsed.response
     const id = idParsed.data
 
+    let motivo: string | undefined
+    try {
+      const url = new URL(request.url)
+      motivo = url.searchParams.get('motivo')?.trim() || undefined
+    } catch {
+      motivo = undefined
+    }
+    if (!motivo || motivo.length < 3) {
+      try {
+        const parsed = await request.json()
+        const m = (parsed as { motivo?: string } | null)?.motivo?.trim()
+        if (m) motivo = m
+      } catch {
+        // nessun body JSON: il motivo doveva arrivare in query
+      }
+    }
+    if (!motivo || motivo.length < 3) {
+      return NextResponse.json({ error: 'Motivo dello storno obbligatorio (min 3 caratteri)' }, { status: 400 })
+    }
+
     const supabase = await createAdminClient()
-    const { data: old } = await supabase.from('incassi').select('*').eq('id', id).maybeSingle()
-    if (!old) return NextResponse.json({ error: 'Incasso non trovato' }, { status: 404 })
-    const { error } = await supabase.from('incassi').delete().eq('id', id)
-    if (error) return NextResponse.json({ error: 'Errore nello storno', details: error.message }, { status: 500 })
-
-    await supabase.from('registro_modifiche').insert({
-      azione: 'storno_incasso',
-      tabella_interessata: 'incassi',
-      record_id: id,
-      vecchio_valore: old,
-      utente_id: user.id,
-    }).then(() => {}, () => {})
-
-    await annullaRicevutaAttiva(supabase, old.pagamento_id as string, { da: user.id, motivo: 'storno incasso' })
-
-    return NextResponse.json({ success: true })
+    const esito = await eseguiStornoIncasso(supabase, { incassoId: id, motivo, userId: user.id })
+    return NextResponse.json(esito.body, { status: esito.status })
   } catch (err) {
     logErrore({ operazione: 'pagamenti/incassi/[id]:DELETE', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })

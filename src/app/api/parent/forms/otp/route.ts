@@ -5,7 +5,8 @@ import { requireUser } from '@/lib/auth/require-staff'
 import { genitoreHasFiglio } from '@/lib/anagrafiche/legami'
 import { persistSignedSubmission } from '@/lib/forms/persist-submission'
 import { getUserEmail, sendOtp, verifyTicket, codeHash, consumeTicket } from '@/lib/auth/otp-ticket'
-import { assertGenitoreNonSospeso } from '@/lib/pagamenti/sospensione'
+import { assertGenitoreNonSospesoSalvoEssenziale } from '@/lib/pagamenti/sospensione'
+import { leggiSempreFirmabile } from '@/lib/forms/sempre-firmabile'
 import { buildSignatureLog, extractRequestMeta } from '@/lib/fea/signature-log'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
@@ -48,8 +49,11 @@ export const POST = withRoute('parent/forms/otp:POST', async (request: NextReque
     const supabase = await createAdminClient()
 
     // Morosità (B4/M4): richiedere l'OTP per firmare un modulo Sistema B è un'azione
-    // di servizio → un genitore con un figlio sospeso è bloccato (mai le letture).
-    const sospeso = await assertGenitoreNonSospeso(supabase, parentId)
+    // di servizio → genitore con figlio sospeso bloccato (mai le letture). Il POST
+    // non conosce il form_id (arriva col PATCH), quindi non può valutare
+    // l'eccezione «essenziale»: resta bloccante. L'eccezione sempre_firmabile è
+    // applicata al PATCH, dove il modulo in lavorazione è noto.
+    const sospeso = await assertGenitoreNonSospesoSalvoEssenziale(supabase, parentId, { sempreFirmabile: false })
     if (sospeso) return sospeso
 
     const b = await parseBody(request, postBodySchema)
@@ -78,14 +82,17 @@ export const PATCH = withRoute('parent/forms/otp:PATCH', async (request: NextReq
 
     const supabase = await createAdminClient()
 
-    // Morosità (B4/M4): firmare un modulo Sistema B è un'azione di servizio →
-    // un genitore con un figlio sospeso è bloccato (mai le letture).
-    const sospeso = await assertGenitoreNonSospeso(supabase, parentId)
-    if (sospeso) return sospeso
-
     const b = await parseBody(request, patchBodySchema)
     if ('response' in b) return b.response
     const { code, expiry, ticket, form_id, student_id, answers } = b.data
+
+    // Morosità (B4/M4): firmare un modulo Sistema B è un'azione di servizio → un
+    // genitore con un figlio sospeso è bloccato (mai le letture), SALVO i moduli
+    // essenziali (forms_templates.sempre_firmabile, letto col retry 42703). Qui il
+    // form_id è noto, quindi l'eccezione «essenziale» è valutabile.
+    const sempreFirmabile = await leggiSempreFirmabile(supabase, 'forms_templates', form_id)
+    const sospeso = await assertGenitoreNonSospesoSalvoEssenziale(supabase, parentId, { sempreFirmabile })
+    if (sospeso) return sospeso
 
     // IDOR: la firma è consentita solo su un PROPRIO figlio (onboarding = student_id assente).
     if (student_id && auth.user.role === 'genitore' && !(await genitoreHasFiglio(supabase, auth.user.id, student_id))) {

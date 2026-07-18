@@ -7,6 +7,7 @@ import { withIdentity } from '@/lib/auth/current-user';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 import { useChildSchoolType } from '@/lib/auth/use-child-school-type';
 import { HeroCard } from '@/components/features/shell/HeroCard';
+import { SospensioneBanner } from '@/components/features/parent/SospensioneBanner';
 import { PagamentiSummary } from '@/components/features/parent/pagamenti/PagamentiSummary';
 import { SectionHeader } from '@/components/features/parent/home/SectionHeader';
 import { DiaryTodayCard } from '@/components/features/parent/home/DiaryTodayCard';
@@ -81,6 +82,9 @@ function ParentHomeContent() {
           subtitle={firstName ? 'Ecco le novità di oggi 🌈' : undefined}
         />
       </div>
+
+      {/* ── BANNER SOSPENSIONE (solo se la famiglia è sospesa) ─────── */}
+      {parentId && <SospensioneBanner userId={parentId} className="px-4 pt-4" />}
 
       {/* ── QUICK ACTIONS ──────────────────────────── */}
       <div className="grid grid-cols-4 gap-[9px] px-4 pt-4">

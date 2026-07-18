@@ -232,6 +232,9 @@ function FormBuilderInner() {
   const linkInputRef = useRef<HTMLInputElement>(null)
   // Modalità firma (DL-031): joint = firma congiunta dei due genitori.
   const [signatureMode, setSignatureMode] = useState<'single' | 'joint'>('single')
+  // Contabilità v2: modulo «essenziale» (salute/sicurezza) → firmabile anche da
+  // genitore sospeso per morosità (eccezione alla matrice sospensione).
+  const [sempreFirmabile, setSempreFirmabile] = useState(false)
   const [draggingPaletteId, setDraggingPaletteId] = useState<string | null>(null)
   const [draggingPresetId, setDraggingPresetId] = useState<string | null>(null)
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
@@ -250,6 +253,7 @@ function FormBuilderInner() {
         setEditingId(m.id)
         setSavedModelId(m.id)
         if (m.signature_mode === 'joint' || m.signature_mode === 'single') setSignatureMode(m.signature_mode)
+        setSempreFirmabile(m.sempre_firmabile === true)
         if (m.access_mode === 'public' || m.access_mode === 'authenticated') setAccessMode(m.access_mode)
         if (m.published_at && m.public_token) {
           setPub({ token: m.public_token, url: publicFormUrl(m.public_token), access_mode: m.access_mode })
@@ -406,8 +410,8 @@ function FormBuilderInner() {
         headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
         body: JSON.stringify(
           editing
-            ? { id: editing, title: formTitle, schema, requires_signature: hasSignature, signature_mode: hasSignature ? signatureMode : 'single' }
-            : { title: formTitle, schema, is_active: false, requires_signature: hasSignature, signature_mode: hasSignature ? signatureMode : 'single' },
+            ? { id: editing, title: formTitle, schema, requires_signature: hasSignature, signature_mode: hasSignature ? signatureMode : 'single', sempre_firmabile: sempreFirmabile }
+            : { title: formTitle, schema, is_active: false, requires_signature: hasSignature, signature_mode: hasSignature ? signatureMode : 'single', sempre_firmabile: sempreFirmabile },
         ),
       })
       const json = await res.json()
@@ -509,6 +513,14 @@ function FormBuilderInner() {
                 {signatureMode === 'joint' ? 'Firma congiunta' : 'Firma singola'}
               </button>
             )}
+            <button
+              onClick={() => setSempreFirmabile(v => !v)}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs transition-all ${sempreFirmabile ? 'border-kidville-success/50 bg-kidville-success-soft text-kidville-success' : 'border-kidville-line text-kidville-muted hover:text-kidville-ink'}`}
+              title="Modulo essenziale (salute/sicurezza): firmabile anche da genitore sospeso per morosità"
+            >
+              <ShieldCheck className="w-3.5 h-3.5" />
+              {sempreFirmabile ? 'Essenziale: sempre firmabile' : 'Essenziale: off'}
+            </button>
             <div className="flex items-center gap-2 text-xs text-kidville-muted font-mono tabular-nums">
               <span>{schema.pages.length} {schema.pages.length === 1 ? 'pag.' : 'pag.'}</span>
               <span className="text-kidville-muted">·</span>

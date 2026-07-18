@@ -117,6 +117,9 @@ function ModulisticaInner() {
   const [formType, setFormType] = useState<FormType>('autorizzazione');
   const [formClasses, setFormClasses] = useState<string[]>([]);
   const [formExpiration, setFormExpiration] = useState('');
+  // Contabilità v2: modulo «essenziale» (salute/sicurezza) → firmabile anche da
+  // genitore sospeso per morosità (eccezione alla matrice sospensione).
+  const [formSempreFirmabile, setFormSempreFirmabile] = useState(false);
   const [formFields, setFormFields] = useState<FormField[]>([defaultFieldForType('autorizzazione')]);
 
   // Pre-inscription details modal
@@ -235,6 +238,7 @@ function ModulisticaInner() {
           target_classes: formClasses,
           expiration_date: formExpiration || null,
           fields: formFields,
+          sempre_firmabile: formSempreFirmabile,
           scuola_id: sedeCorrente
         })
       });
@@ -252,6 +256,7 @@ function ModulisticaInner() {
       setFormType('autorizzazione');
       setFormClasses([]);
       setFormExpiration('');
+      setFormSempreFirmabile(false);
       setFormFields([defaultFieldForType('autorizzazione')]);
 
       fetchInitialData();
@@ -837,6 +842,22 @@ function ModulisticaInner() {
                   />
                 </div>
               </div>
+
+              {/* Contabilità v2: flag «essenziale» — firmabile anche da moroso sospeso */}
+              <label className="flex items-start gap-3 rounded-xl border-2 border-kidville-line px-3 py-2.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={formSempreFirmabile}
+                  onChange={e => setFormSempreFirmabile(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 accent-kidville-green"
+                />
+                <span className="font-maven text-sm text-kidville-green">
+                  <span className="font-semibold">Modulo essenziale (salute/sicurezza)</span>
+                  <span className="block text-xs text-kidville-muted">
+                    Resta firmabile anche da un genitore sospeso per morosità.
+                  </span>
+                </span>
+              </label>
 
               {formScope === 'class' && (
                 <div>

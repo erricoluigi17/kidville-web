@@ -241,19 +241,41 @@ describe('POST /api/mensa/prenotazioni', () => {
   })
 })
 
-describe('POST /api/mensa/prenotazioni — morosità (B4/M4)', () => {
-  it('genitore con figlio SOSPESO → 403 account_sospeso, nessuno scalo/prenotazione/ledger', async () => {
-    // Prima della modifica la sospensione morosità non toccava la mensa: il
-    // genitore sospeso prenotava lo stesso (findings M4, riprodotto LIVE → 201).
+describe('POST /api/mensa/prenotazioni — morosità (Contabilità v2: via di mezzo)', () => {
+  it('genitore SOSPESO con saldo SUFFICIENTE → 201: la mensa resta prenotabile entro il credito già caricato', async () => {
+    // Matrice v2: la prenotazione mensa NON è più bloccata a priori per i sospesi;
+    // è consentita SOLO col credito ticket già disponibile (mai a debito).
     h.alunno = { ...(h.alunno as Record<string, unknown>), sospeso: true }
+    h.saldo = 5
+    const res = await POST(postReq({ alunno_id: ALUNNO, date: '2026-07-20' }))
+    expect(res.status).toBe(201)
+    const j = await res.json()
+    expect(j.data.esiti[0]).toEqual({ data: '2026-07-20', ok: true })
+    expect(j.data.saldo).toBe(4)
+    expect(h.prenUpserts).toHaveLength(1)
+  })
+
+  it('genitore SOSPESO SENZA saldo sufficiente → 403 (mai a debito), nessuna scrittura', async () => {
+    h.alunno = { ...(h.alunno as Record<string, unknown>), sospeso: true }
+    h.saldo = 0
     const res = await POST(postReq({ alunno_id: ALUNNO, date: '2026-07-20' }))
     expect(res.status).toBe(403)
     const j = await res.json()
-    expect(j.motivo).toBe('account_sospeso')
+    expect(j.motivo).toBe('account_sospeso_saldo')
     // il gate scatta PRIMA di qualunque scrittura
     expect(h.saldoWrites).toHaveLength(0)
     expect(h.prenUpserts).toHaveLength(0)
     expect(h.ledger).toHaveLength(0)
+  })
+
+  it('genitore SOSPESO con saldo che NON copre l\'intera richiesta multi-data → 403 (nessuna prenotazione a debito)', async () => {
+    h.alunno = { ...(h.alunno as Record<string, unknown>), sospeso: true }
+    h.saldo = 2
+    const res = await POST(postReq({ alunno_id: ALUNNO, date: ['2026-07-20', '2026-07-21', '2026-07-22'] }))
+    expect(res.status).toBe(403)
+    const j = await res.json()
+    expect(j.motivo).toBe('account_sospeso_saldo')
+    expect(h.saldoWrites).toHaveLength(0)
   })
 
   it('SEGRETERIA può forzare anche se l\'alunno è sospeso (azione di servizio dello sportello, non del genitore)', async () => {

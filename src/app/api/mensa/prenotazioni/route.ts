@@ -9,7 +9,7 @@ import { controllaAllergie } from '@/lib/mensa/allergie-check'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid, zDataYMD } from '@/lib/validation/common'
 import { genitoreHasFiglio } from '@/lib/anagrafiche/legami'
-import { assertAlunnoNonSospeso } from '@/lib/pagamenti/sospensione'
+import { alunnoSospeso } from '@/lib/pagamenti/sospensione'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
@@ -210,15 +210,16 @@ export const POST = withRoute('mensa/prenotazioni:POST', async (request: Request
     const supabase = await createAdminClient()
     const isStaff = STAFF_FORZA.includes(user.role)
     const origine = isStaff ? 'segreteria' : 'genitore'
+    let sospeso = false
     if (!isStaff) {
       if (!(await genitoreDiAlunno(supabase, user.id, alunnoId))) {
         return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
       }
-      // Morosità (B4/M4): un genitore con figlio SOSPESO non può prenotare — è
-      // un'azione di servizio. La sospensione NON tocca login/letture (sicurezza
-      // del minore); lo staff (STAFF_FORZA) resta abilitato a forzare allo sportello.
-      const sospesoErr = await assertAlunnoNonSospeso(supabase, alunnoId)
-      if (sospesoErr) return sospesoErr
+      // Morosità (Contabilità v2 — «via di mezzo»): un genitore con figlio SOSPESO
+      // PUÒ ancora prenotare la mensa, ma SOLO col credito ticket già caricato (mai
+      // a debito). Il vincolo saldo scatta più sotto, quando il saldo è noto. Lo
+      // staff (STAFF_FORZA) resta libero di forzare allo sportello.
+      sospeso = await alunnoSospeso(supabase, alunnoId)
     }
 
     // scuola dell'alunno + nome (per notifiche)
@@ -232,6 +233,20 @@ export const POST = withRoute('mensa/prenotazioni:POST', async (request: Request
     const options = await loadResolveOptions(supabase, scuolaId, config, menuConfigId)
 
     let saldo = await saldoCorrente(supabase, alunnoId)
+
+    // Matrice sospensione v2: il genitore sospeso può prenotare SOLO se il credito
+    // ticket già disponibile copre l'INTERA richiesta (mai a debito). Se non basta,
+    // 403 chiaro invece del vecchio blocco secco. Disdetta e ricariche staff libere.
+    if (sospeso && saldo < dates.length) {
+      return NextResponse.json(
+        {
+          error: 'Account sospeso per morosità: la mensa è prenotabile solo con credito ticket già disponibile. Ricarica il credito o contatta la Segreteria.',
+          motivo: 'account_sospeso_saldo',
+        },
+        { status: 403 }
+      )
+    }
+
     const esiti: { data: string; ok: boolean; motivo?: string }[] = []
     let fallbackUsato = false
 

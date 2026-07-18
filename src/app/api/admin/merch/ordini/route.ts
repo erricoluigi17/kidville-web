@@ -8,6 +8,7 @@ import { logScrittura } from '@/lib/audit/scrittura'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { derivaStatoTestata } from '@/lib/merch/stati'
+import { alunnoSospeso } from '@/lib/pagamenti/sospensione'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
 
@@ -120,6 +121,15 @@ export const POST = withRoute('admin/merch/ordini:POST', async (request: Request
     const supabase = await createAdminClient()
     const scopeErr = await assertAlunnoInScope(supabase, auth.user, alunno_id)
     if (scopeErr) return scopeErr
+
+    // Sospensione moroso (Contabilità v2): la famiglia sospesa non può ricevere
+    // nuovi ordini divise/merch → 409 con messaggio esplicito per la Segreteria.
+    if (await alunnoSospeso(supabase, alunno_id)) {
+      return NextResponse.json(
+        { error: 'Famiglia sospesa per morosità: regolarizza la posizione prima di creare un ordine divise/merch.', motivo: 'account_sospeso' },
+        { status: 409 }
+      )
+    }
 
     const { data: al } = await supabase.from('alunni').select('scuola_id').eq('id', alunno_id).maybeSingle()
     const scuolaId = (al?.scuola_id as string) ?? null

@@ -8,7 +8,12 @@ const h = vi.hoisted(() => ({
 
 vi.mock('@/lib/security/rate-limit', () => ({ rateLimit: () => ({ ok: true }), clientIp: () => '1.2.3.4' }))
 vi.mock('@/lib/email/send', () => ({ sendEmail: async () => true }))
-vi.mock('@/lib/pagamenti/sospensione', () => ({ assertGenitoreNonSospeso: h.assertGenitore }))
+vi.mock('@/lib/pagamenti/sospensione', () => ({
+  assertGenitoreNonSospeso: h.assertGenitore,
+  // Contabilità v2: la route usa la variante flag-aware; delega su assertGenitore.
+  assertGenitoreNonSospesoSalvoEssenziale: async (_sb: unknown, _id: unknown, opts: { sempreFirmabile?: boolean }) =>
+    opts?.sempreFirmabile ? null : h.assertGenitore(),
+}))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
     from: (table: string) => {

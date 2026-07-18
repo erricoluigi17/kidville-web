@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { Euro, Users2, FileText } from 'lucide-react';
+import { Euro, Users2, FileText, Crown } from 'lucide-react';
 
 // Identità app-level (M4, session-only): userId da query param, poi sessione
 // persistita da useSessionIdentity (kv_user_id). Nessun fallback demo:
@@ -46,6 +46,11 @@ export function StudentEconomicSection({ alunnoId, form, updateForm, parents }: 
 
     const [tutori, setTutori] = useState<Tutore[]>([]);
 
+    // Intestatario di famiglia (predefinito): `parents.intestatario_default`. Vale
+    // per tutti i figli, salvo l'eccezione per-figlio (intestatario_fatture) che vince.
+    const [defaultParentId, setDefaultParentId] = useState<string | null>(null);
+    const [savingDefault, setSavingDefault] = useState(false);
+
     const parentOptions: ParentOption[] = (parents || [])
         .filter((p) => p.parents)
         .map((p) => ({
@@ -66,6 +71,49 @@ export function StudentEconomicSection({ alunnoId, form, updateForm, parents }: 
             .then((d) => { if (d?.success) setTutori(d.data); })
             .catch(() => {});
     }, [separati, alunnoId]);
+
+    // Carica quale genitore è l'intestatario di famiglia predefinito (parents.*).
+    useEffect(() => {
+        if (!alunnoId) return;
+        const uid = currentUserId();
+        if (!uid) return;
+        let active = true;
+        fetch(`/api/admin/parents?student_id=${alunnoId}`, { headers: { 'x-user-id': uid } })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((d) => {
+                if (!active || !Array.isArray(d)) return;
+                const def = d.find((p: { id: string; intestatario_default?: boolean }) => p.intestatario_default === true);
+                setDefaultParentId(def?.id ?? null);
+            })
+            .catch(() => { /* colonna assente / errore: nessun default mostrato */ });
+        return () => { active = false; };
+    }, [alunnoId]);
+
+    // Scegliere un intestatario di famiglia AZZERA l'altro tutore (uno solo per
+    // famiglia). Scritture best-effort: se la colonna non c'è (PGRST204/42703) il
+    // PATCH la scarta e il flusso non si rompe.
+    const setIntestatarioFamiglia = useCallback(async (parentId: string | null) => {
+        const uid = currentUserId();
+        if (!uid) return;
+        const precedente = defaultParentId;
+        setDefaultParentId(parentId);
+        setSavingDefault(true);
+        try {
+            const ids = new Set<string>(parentOptions.map((p) => p.id));
+            if (precedente) ids.add(precedente);
+            await Promise.all(
+                [...ids].map((id) =>
+                    fetch('/api/admin/parents', {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json', 'x-user-id': uid },
+                        body: JSON.stringify({ id, intestatario_default: id === parentId }),
+                    }).catch(() => { /* best-effort per singolo tutore */ }),
+                ),
+            );
+        } finally {
+            setSavingDefault(false);
+        }
+    }, [defaultParentId, parentOptions]);
 
     // Inizializza split di default quando si attiva "genitori separati"
     const seedSplit = useCallback(() => {
@@ -121,7 +169,8 @@ export function StudentEconomicSection({ alunnoId, form, updateForm, parents }: 
                     className={inputCls}
                 />
                 <p className="font-maven text-[11px] text-kidville-muted mt-1">
-                    Per lo sconto fratelli, assegna l&apos;intero importo familiare a un solo figlio (gli altri a 0).
+                    Lo sconto fratelli si configura in <strong>Impostazioni → Rette</strong> (percentuale automatica
+                    sui figli dal secondo in poi): non serve più assegnare l&apos;intero importo a un solo figlio.
                 </p>
             </div>
 
@@ -200,10 +249,34 @@ export function StudentEconomicSection({ alunnoId, form, updateForm, parents }: 
                 </div>
             )}
 
-            {/* Intestatario fatture */}
+            {/* Intestatario di famiglia (predefinito) — parents.intestatario_default */}
+            {parentOptions.length > 0 && (
+                <div className="mb-4">
+                    <label className={`${labelCls} flex items-center gap-1`}>
+                        <Crown size={12} /> Intestatario di famiglia (predefinito)
+                    </label>
+                    <select
+                        value={defaultParentId ?? ''}
+                        disabled={savingDefault}
+                        onChange={(e) => setIntestatarioFamiglia(e.target.value || null)}
+                        className={`${inputCls} bg-white disabled:opacity-60`}
+                    >
+                        <option value="">— Nessuno —</option>
+                        {parentOptions.map((p) => (
+                            <option key={p.id} value={p.id}>{p.relazione}: {p.nome}</option>
+                        ))}
+                    </select>
+                    <p className="font-maven text-[11px] text-kidville-muted mt-1">
+                        Vale per tutti i figli della famiglia. Sceglierne uno azzera l&apos;altro tutore.
+                        L&apos;eccezione «Intestatario fatture» qui sotto, se impostata, ha comunque la precedenza su questo bambino.
+                    </p>
+                </div>
+            )}
+
+            {/* Intestatario fatture (eccezione per questo figlio, vince sul default) */}
             <div>
                 <label className={`${labelCls} flex items-center gap-1`}>
-                    <FileText size={12} /> Intestatario fatture
+                    <FileText size={12} /> Intestatario fatture <span className="font-normal text-kidville-muted/80">(eccezione per questo figlio)</span>
                 </label>
                 <select
                     value={intestatario?.tipo === 'altro' ? '__altro__' : intestatario?.adult_id ?? ''}

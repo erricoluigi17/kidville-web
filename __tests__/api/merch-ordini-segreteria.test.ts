@@ -82,6 +82,15 @@ it('400 carrello vuoto', async () => {
   expect((await POST(post({ alunno_id: AID, righe: [] }))).status).toBe(400)
 })
 
+it('409 se la famiglia dell\'alunno è sospesa per morosità (Contabilità v2)', async () => {
+  h.alunno = { scuola_id: 'sc-1', sospeso: true }
+  const res = await POST(post({ alunno_id: AID, righe: [{ articolo_id: ART, taglia: 'M', quantita: 1 }] }))
+  expect(res.status).toBe(409)
+  // nessun ordine/addebito creato
+  expect(h.inserts.find((i) => i.table === 'divise_ordini')).toBeUndefined()
+  expect(h.inserts.find((i) => i.table === 'pagamenti')).toBeUndefined()
+})
+
 it('400 articolo di un\'altra scuola', async () => {
   h.articoli = [{ id: ART, nome: 'Polo', prezzo: 18, taglie: ['M'], attivo: true, scuola_id: 'sc-ALTRA' }]
   expect((await POST(post({ alunno_id: AID, righe: [{ articolo_id: ART, taglia: 'M', quantita: 1 }] }))).status).toBe(400)

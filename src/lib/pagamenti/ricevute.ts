@@ -171,3 +171,157 @@ export async function annullaRicevutaAttiva(
         // registro assente (CI) o errore transitorio: lo storno non deve fallire per questo
     }
 }
+
+/** Annulla (best-effort) la ricevuta famiglia attiva di una TRANSAZIONE (Contabilità v2). */
+export async function annullaRicevutaTransazioneAttiva(
+    supabase: SupabaseClient,
+    transazioneId: string,
+    opts: { da?: string | null; motivo: string },
+): Promise<void> {
+    try {
+        await supabase
+            .from('ricevute_emesse')
+            .update({
+                annullata_il: new Date().toISOString(),
+                annullata_da: opts.da ?? null,
+                annullo_motivo: opts.motivo,
+            })
+            .eq('transazione_id', transazioneId)
+            .is('annullata_il', null)
+    } catch {
+        // registro assente (CI) o errore transitorio: l'annullo transazione non deve fallire per questo
+    }
+}
+
+// ── Ricevuta UNICA di famiglia per una transazione (Contabilità v2 S4) ─────────
+
+export interface RicevutaTransazioneRiga {
+    /** Nome leggibile del figlio (o "Mensa" per le ricariche). */
+    figlio: string
+    descrizione: string
+    importo: number
+    tipo: 'voce' | 'ricarica'
+}
+
+export interface TransazionePerRicevuta {
+    id: string
+    scuola_id: string
+    pagante_parent_id: string
+    importo_totale: number | string
+    metodo: string
+    data_valuta?: string | null
+    riferimento?: string | null
+    creato_il?: string | null
+}
+
+export interface RicevutaTransazioneRecord extends Omit<RicevutaRecord, 'pagamento_id'> {
+    transazione_id: string
+    righe: RicevutaTransazioneRiga[]
+}
+
+export type EsitoRicevutaTransazione =
+    | { ok: true; legacy: false; record: RicevutaTransazioneRecord }
+    | { ok: true; legacy: true }
+    | { ok: false; messaggio: string }
+
+/**
+ * Emette (o recupera) la ricevuta UNICA di famiglia di una transazione:
+ *  • numerata dal registro esistente (`prossimo_numero_ricevuta`), SENZA toccare
+ *    la numerazione né l'indice «una attiva per pagamento»: qui l'indice è «una
+ *    attiva per transazione»;
+ *  • intestata al pagante (`parents` via resolveParentRegistry);
+ *  • con dettaglio per figlio nelle `righe` jsonb.
+ * Degrada dove il registro/colonne non esistono (DB E2E CI): ok+legacy.
+ */
+export async function emettiORecuperaRicevutaTransazione(
+    supabase: SupabaseClient,
+    transazione: TransazionePerRicevuta,
+    opts: { creatoDa?: string | null } = {},
+): Promise<EsitoRicevutaTransazione> {
+    const attiva = await supabase
+        .from('ricevute_emesse')
+        .select('*')
+        .eq('transazione_id', transazione.id)
+        .is('annullata_il', null)
+        .maybeSingle()
+    if (attiva.error) {
+        if (SCHEMA_MANCANTE.has(attiva.error.code ?? '')) return { ok: true, legacy: true }
+        return { ok: false, messaggio: attiva.error.message }
+    }
+    if (attiva.data) return { ok: true, legacy: false, record: attiva.data as RicevutaTransazioneRecord }
+
+    // Righe per figlio: incassi (voci) + ricariche mensa collegati alla transazione.
+    const righe: RicevutaTransazioneRiga[] = []
+    const { data: incassi } = await supabase
+        .from('incassi')
+        .select('importo, pagamento_id, pagamenti:pagamento_id ( descrizione, alunni:alunno_id ( nome, cognome ) )')
+        .eq('transazione_id', transazione.id)
+    for (const inc of (incassi ?? []) as {
+        importo: number | string
+        pagamenti?: { descrizione?: string | null; alunni?: { nome?: string | null; cognome?: string | null } | null } | null
+    }[]) {
+        if (Number(inc.importo) <= 0) continue
+        const al = inc.pagamenti?.alunni
+        const figlio = `${al?.nome ?? ''} ${al?.cognome ?? ''}`.trim() || 'Alunno'
+        righe.push({ figlio, descrizione: inc.pagamenti?.descrizione ?? 'Pagamento', importo: Number(inc.importo), tipo: 'voce' })
+    }
+    const { data: ricariche } = await supabase
+        .from('mensa_ticket_movimenti')
+        .select('delta, alunni:alunno_id ( nome, cognome )')
+        .eq('transazione_id', transazione.id)
+    for (const r of (ricariche ?? []) as { delta: number; alunni?: { nome?: string | null; cognome?: string | null } | null }[]) {
+        const al = r.alunni
+        const figlio = `${al?.nome ?? ''} ${al?.cognome ?? ''}`.trim() || 'Alunno'
+        righe.push({ figlio, descrizione: `Ricarica mensa (${r.delta} ticket)`, importo: 0, tipo: 'ricarica' })
+    }
+
+    // Intestatario = pagante (parents.id → riga fatturabile).
+    const reg = await resolveParentRegistry(supabase, transazione.pagante_parent_id)
+    const intestatario: RicevutaIntestatario | null = reg
+        ? { nome: [reg.first_name, reg.last_name].filter(Boolean).join(' '), codice_fiscale: reg.fiscal_code }
+        : null
+
+    const fiscale = (await getModuleConfig(supabase, 'fiscale_config', transazione.scuola_id)) as FiscaleConfig
+    const aruba = (await getModuleConfig(supabase, 'aruba_config', transazione.scuola_id)) as ArubaFiscalConfig
+    const struttura = datiStruttura(fiscale, aruba)
+    const importo = Number(transazione.importo_totale)
+    const tracciabile = isTracciabile([transazione.metodo])
+    const bollo = bolloDovuto(importo, fiscale) > 0
+    const anno = annoFiscale()
+
+    const num = await supabase.rpc('prossimo_numero_ricevuta', { p_scuola: transazione.scuola_id, p_anno: anno })
+    if (num.error || typeof num.data !== 'number') return { ok: true, legacy: true }
+
+    const riga = {
+        transazione_id: transazione.id,
+        pagamento_id: null,
+        scuola_id: transazione.scuola_id,
+        alunno_id: null,
+        numero: num.data,
+        anno,
+        importo,
+        periodo_competenza: null,
+        metodi: [transazione.metodo],
+        tracciabile,
+        bollo,
+        intestatario,
+        righe,
+        dati_struttura: { ...struttura, dicitura_bollo: fiscale?.dicitura_bollo_ricevuta || DICITURA_BOLLO_DEFAULT },
+        creato_da: opts.creatoDa ?? null,
+    }
+    const ins = await supabase.from('ricevute_emesse').insert(riga).select('*').single()
+    if (ins.error) {
+        if (ins.error.code === '23505') {
+            const retry = await supabase
+                .from('ricevute_emesse')
+                .select('*')
+                .eq('transazione_id', transazione.id)
+                .is('annullata_il', null)
+                .maybeSingle()
+            if (retry.data) return { ok: true, legacy: false, record: retry.data as RicevutaTransazioneRecord }
+        }
+        if (SCHEMA_MANCANTE.has(ins.error.code ?? '')) return { ok: true, legacy: true }
+        return { ok: false, messaggio: ins.error.message }
+    }
+    return { ok: true, legacy: false, record: ins.data as RicevutaTransazioneRecord }
+}

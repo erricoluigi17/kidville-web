@@ -11,7 +11,8 @@ import { buildSignatureLog, extractRequestMeta } from '@/lib/fea/signature-log'
 import { recordSignerSlot, getSlots } from '@/lib/fea/slots'
 import { firmaCompleta, prossimoSlot } from '@/lib/fea/firma-congiunta'
 import { logFeaEvent } from '@/lib/fea/audit'
-import { assertGenitoreNonSospeso } from '@/lib/pagamenti/sospensione'
+import { assertGenitoreNonSospesoSalvoEssenziale } from '@/lib/pagamenti/sospensione'
+import { leggiSempreFirmabile } from '@/lib/forms/sempre-firmabile'
 import { estraiConsensi, consensiObbligatoriMancanti } from '@/lib/forms/consensi'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
@@ -104,7 +105,7 @@ export const POST = withRoute('forms/send-otp:POST', async (request: Request) =>
     if (submissionId) {
       const { data: sub } = await supabase
         .from('form_submissions')
-        .select('id, status, user_id')
+        .select('id, status, user_id, model_id')
         .eq('id', submissionId)
         .maybeSingle()
       if (!sub) {
@@ -112,6 +113,14 @@ export const POST = withRoute('forms/send-otp:POST', async (request: Request) =>
       }
       if (sub.status === 'completed') {
         return NextResponse.json({ error: 'Modulo già firmato' }, { status: 409 })
+      }
+
+      // Sospensione moroso (finding #4): anche il REINVIO/2° firmatario è un'azione
+      // di servizio. Eccezione per i moduli essenziali (sempre_firmabile).
+      if (sub.user_id) {
+        const sempreFirmabile = await leggiSempreFirmabile(supabase, 'form_models', sub.model_id as string)
+        const sospesoErr = await assertGenitoreNonSospesoSalvoEssenziale(supabase, sub.user_id as string, { sempreFirmabile })
+        if (sospesoErr) return sospesoErr
       }
 
       let email: string | null = signerEmail ?? null
@@ -145,8 +154,10 @@ export const POST = withRoute('forms/send-otp:POST', async (request: Request) =>
 
     // Sospensione moroso (DL-021): un genitore con un figlio sospeso non può
     // avviare nuove firme/compilazioni di moduli (azione di servizio inibita).
+    // Eccezione per i moduli essenziali (sempre_firmabile: salute/sicurezza).
     if (userId) {
-      const sospesoErr = await assertGenitoreNonSospeso(supabase, userId)
+      const sempreFirmabile = await leggiSempreFirmabile(supabase, 'form_models', modelId)
+      const sospesoErr = await assertGenitoreNonSospesoSalvoEssenziale(supabase, userId, { sempreFirmabile })
       if (sospesoErr) return sospesoErr
     }
 
@@ -258,6 +269,15 @@ export const PATCH = withRoute('forms/send-otp:PATCH', async (request: Request) 
 
     if (submission.status === 'completed') {
       return NextResponse.json({ error: 'Modulo già firmato' }, { status: 409 })
+    }
+
+    // Sospensione moroso (finding #4): la finalizzazione della firma è un'azione di
+    // servizio → bloccata, salvo moduli essenziali (sempre_firmabile). Prima di
+    // qualunque verifica del codice, così il sospeso non può nemmeno tentare.
+    if (submission.user_id) {
+      const sempreFirmabile = await leggiSempreFirmabile(supabase, 'form_models', submission.model_id as string)
+      const sospesoErr = await assertGenitoreNonSospesoSalvoEssenziale(supabase, submission.user_id as string, { sempreFirmabile })
+      if (sospesoErr) return sospesoErr
     }
 
     if (!submission.otp_secret || hashOtp(submissionId, code) !== submission.otp_secret) {

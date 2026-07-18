@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireUser } from '@/lib/auth/require-staff';
 import { genitoreHasFiglio } from '@/lib/anagrafiche/legami';
+import { assertGenitoreNonSospesoSalvoEssenziale } from '@/lib/pagamenti/sospensione';
+import { leggiSempreFirmabile } from '@/lib/forms/sempre-firmabile';
 import { persistSignedSubmission } from '@/lib/forms/persist-submission';
 import { notificaEvento } from '@/lib/notifiche/triggers';
 import { staffScuola, scuolaUnicaReale } from '@/lib/notifiche/destinatari';
@@ -51,6 +53,13 @@ export const POST = withRoute('parent/submissions:POST', async (request: NextReq
     if (student_id && auth.user.role === 'genitore' && !(await genitoreHasFiglio(supabase, auth.user.id, student_id))) {
       return NextResponse.json({ error: 'Accesso negato' }, { status: 403 });
     }
+
+    // Sospensione moroso (finding #4: ramo scoperto): sottoscrivere/firmare un
+    // modulo Sistema B è un'azione di servizio → bloccata, salvo i moduli
+    // essenziali (forms_templates.sempre_firmabile). Il flag si legge col retry 42703.
+    const sempreFirmabile = await leggiSempreFirmabile(supabase, 'forms_templates', form_id);
+    const sospesoErr = await assertGenitoreNonSospesoSalvoEssenziale(supabase, auth.user.id, { sempreFirmabile });
+    if (sospesoErr) return sospesoErr;
 
     const result = await persistSignedSubmission(supabase, {
       form_id,

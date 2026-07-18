@@ -7,7 +7,10 @@ import { zUuid } from '@/lib/validation/common'
 import { resolveScuoleAttive } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
+import { notificaEvento } from '@/lib/notifiche/triggers'
+import { verificaRevocaSospensioneMorosita } from '@/lib/pagamenti/sospensione'
+import { formatEuro } from '@/lib/format/valuta'
 
 const patchBodySchema = z.object({
   azione: z.enum(['conferma', 'ignora', 'riapri']),
@@ -80,12 +83,13 @@ export const PATCH = withRoute('pagamenti/riconciliazione/[id]:PATCH', async (re
     }
     const { data: pag } = await supabase
       .from('pagamenti')
-      .select('id, scuola_id, stato')
+      .select('id, scuola_id, stato, alunno_id, descrizione')
       .eq('id', pagamentoId)
       .maybeSingle()
     if (!pag || !sediAttive.includes((pag as { scuola_id: string }).scuola_id)) {
       return NextResponse.json({ error: 'Pagamento non trovato' }, { status: 404 })
     }
+    const pagDett = pag as { scuola_id: string; alunno_id: string | null; descrizione: string | null }
 
     const { data: incasso, error: errInc } = await supabase
       .from('incassi')
@@ -131,6 +135,36 @@ export const PATCH = withRoute('pagamenti/riconciliazione/[id]:PATCH', async (re
       scuolaId: mov.scuola_id,
       valoreDopo: { stato: 'confermato', pagamento_id: pagamentoId, importo: mov.importo },
     })
+
+    // Abbinare un bonifico dall'estratto conto È registrare un pagamento: il
+    // genitore va avvisato come per un incasso a mano (finora era l'unica strada
+    // che creava un incasso in silenzio) e un bonifico che salda lo scaduto deve
+    // poter revocare la sospensione. Best-effort: lo stato l'ha già ricalcolato
+    // il trigger; se l'avviso non parte, la conferma resta valida (si logga).
+    try {
+      if (pagDett.alunno_id) {
+        const { data: aggiornato } = await supabase
+          .from('pagamenti')
+          .select('stato')
+          .eq('id', pagamentoId)
+          .maybeSingle()
+        const saldato = (aggiornato as { stato?: string } | null)?.stato === 'pagato'
+        await notificaEvento(supabase, {
+          tipo: 'pagamento_registrato',
+          scuolaId: pagDett.scuola_id,
+          alunnoIds: [pagDett.alunno_id],
+          titolo: saldato ? 'Pagamento registrato' : 'Acconto registrato',
+          corpo: `${pagDett.descrizione ?? 'Pagamento'}: registrato un bonifico di ${formatEuro(mov.importo)}.${saldato ? ' La ricevuta è disponibile.' : ''}`,
+          link: '/parent/pagamenti',
+          entitaTipo: 'pagamento',
+          entitaId: pagamentoId,
+          debounce: true,
+        })
+        await verificaRevocaSospensioneMorosita(supabase, [pagDett.alunno_id])
+      }
+    } catch (e) {
+      logEvento('pagamento', 'error', { operazione: 'pagamenti/riconciliazione/[id]:PATCH', esito: 'avviso_o_revoca_non_eseguiti' }, e)
+    }
 
     return NextResponse.json({ success: true, data: { incasso_id: (incasso as { id: string }).id } })
   } catch (err) {

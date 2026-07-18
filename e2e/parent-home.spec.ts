@@ -21,9 +21,10 @@ test('la home mostra il saluto e le card seedate', async ({ page }) => {
   await expect(page.getByText('Gita al museo E2E')).toBeVisible();
   await expect(page.getByText('Uscita · ore 09:30')).toBeVisible();
 
-  // Pagamenti: la retta aperta seedata (150 €).
-  await expect(page.getByText('Totale da saldare')).toBeVisible();
-  await expect(page.getByText('€ 150.00')).toBeVisible();
+  // Pagamenti: la retta aperta seedata (150 €), non ancora scaduta → home in
+  // stato "ambra" con label "Totale da pagare" e importo in formato it-IT.
+  await expect(page.getByText('Totale da pagare')).toBeVisible();
+  await expect(page.getByText('€ 150,00')).toBeVisible();
 });
 
 test('locker: "Avvisa" invia la segnalazione e mostra il toast', async ({ page }) => {

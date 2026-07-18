@@ -11,7 +11,7 @@ test('lo storico mostra la retta aperta e la gita pagata', async ({ page }) => {
 
   // Riepilogo del dovuto (solo la retta da 150 € è aperta).
   await expect(page.getByText('Totale da saldare')).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByText('€ 150.00').first()).toBeVisible();
+  await expect(page.getByText('€ 150,00').first()).toBeVisible();
   await expect(page.getByText('1 voce da saldare')).toBeVisible();
 
   // Voce aperta: badge "Da pagare", intestata ad Aurora.

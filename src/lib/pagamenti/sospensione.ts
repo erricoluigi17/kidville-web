@@ -92,12 +92,17 @@ function colonnaAssente(err: { code?: string } | null | undefined): boolean {
 /**
  * Σ dei residui EFFETTIVI (importo−sconto−pagato, clampato) delle SOLE voci con
  * stato effettivo 'scaduto' degli alunni dati. Legge `sconto` con retry 42703
- * (DB non migrato → sconto assente = 0). Ritorna 0 su lista vuota o su errore.
+ * (DB non migrato → sconto assente = 0). Ritorna 0 su lista vuota.
+ *
+ * FAIL-CLOSED: su ERRORE di lettura ritorna `null` (= «non determinabile»), NON 0.
+ * Un totale 0 «pulito» farebbe proseguire la revoca automatica della sospensione
+ * (operazione a senso unico): un glitch DB toglierebbe una sospensione legittima.
+ * Il chiamante deve revocare SOLO quando il totale è CERTAMENTE 0.
  */
 export async function totaleScadutoAlunni(
   supabase: SupabaseClient,
   alunnoIds: string[],
-): Promise<number> {
+): Promise<number | null> {
   if (!alunnoIds || alunnoIds.length === 0) return 0
   const oggi = new Date().toISOString().slice(0, 10)
   let res = await supabase.from('pagamenti').select(COLS_PAG_FULL).in('alunno_id', alunnoIds)
@@ -105,8 +110,9 @@ export async function totaleScadutoAlunni(
     res = (await supabase.from('pagamenti').select(COLS_PAG_BASE).in('alunno_id', alunnoIds)) as typeof res
   }
   if (res.error) {
+    // Non determinabile: NON restituire 0 (vedi sopra) → null.
     logEvento('db', 'error', { operazione: 'totaleScadutoAlunni', esito: 'lettura-pagamenti-fallita' }, res.error)
-    return 0
+    return null
   }
   let totale = 0
   for (const p of (res.data ?? []) as AgingPagamento[]) {
@@ -129,8 +135,10 @@ export async function infoSospensioneFamiglia(
   if (figli.length === 0) return { sospeso: false, totaleScaduto: 0 }
   const { data } = await supabase.from('alunni').select('id, sospeso').in('id', figli)
   const sospeso = (data ?? []).some((a) => (a as { sospeso?: boolean }).sospeso === true)
+  // Solo display nel banner: se non determinabile mostriamo 0 (lo stato `sospeso`,
+  // autoritativo, resta corretto). La DECISIONE di revoca è altrove (fail-closed).
   const totaleScaduto = await totaleScadutoAlunni(supabase, figli)
-  return { sospeso, totaleScaduto }
+  return { sospeso, totaleScaduto: totaleScaduto ?? 0 }
 }
 
 /**
@@ -206,8 +214,18 @@ export async function verificaRevocaSospensioneMorosita(
     }
     const familyIds = [...family]
 
-    // 2) se resta anche 1€ scaduto in famiglia → nessuna revoca.
+    // 2) FAIL-CLOSED: la revoca (a senso unico) parte SOLO se lo scaduto è
+    //    CERTAMENTE 0. Se non è determinabile (errore di lettura → null) o se resta
+    //    anche 1€ scaduto → nessuna revoca. Un glitch DB non deve mai togliere una
+    //    sospensione legittima.
     const totaleScaduto = await totaleScadutoAlunni(supabase, familyIds)
+    if (totaleScaduto === null) {
+      logEvento('pagamento', 'error', {
+        operazione: 'verificaRevocaSospensioneMorosita',
+        esito: 'scaduto-non-determinabile-no-revoca',
+      })
+      return { revocati }
+    }
     if (totaleScaduto > 0) return { revocati }
 
     // 3) sospesi della famiglia PER CAUSA (retry-less: se la colonna manca → warn+stop).

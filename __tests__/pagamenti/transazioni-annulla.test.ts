@@ -1,27 +1,32 @@
 import { it, expect, vi, beforeEach, describe } from 'vitest'
 
-// POST /api/pagamenti/transazioni/[id]/annulla — annullo tracciato (slice S4).
-//  (f) senza motivo → 400; doppio annullo → 409;
-//  storno di ogni incasso collegato + storno dell'eccedenza a credito;
-//  se il credito è già stato speso (saldo < eccedenza) → 409 senza toccare nulla.
+// POST /api/pagamenti/transazioni/[id]/annulla — annullo ATOMICO via RPC (ciclo 2).
+//  L'annullo non enumera più a mano incassi/credito (che dimenticava le RICARICHE
+//  MENSA): delega tutto alla RPC `annulla_transazione_contabile`, che storna in una
+//  sola transazione incassi + ricariche mensa (saldo ticket) + eccedenza a credito.
+//  Contratto verificato:
+//   (a) annullo con ricarica mensa → chiama la RPC; payload = { transazione_id, motivo }
+//   (b) RPC assente (PGRST202/42883) → 503 pulito, senza storni parziali
+//   (c) motivo mancante/troppo corto → 400
+//   (d) doppio annullo → 409 (sia pre-check sia EXCEPTION KV409 della RPC)
+//   + credito eccedenza già speso (KV410) → 409; transazione non trovata → 404.
 const h = vi.hoisted(() => ({
   requireStaff: vi.fn(),
   scope: vi.fn(),
-  storno: vi.fn(),
-  saldo: vi.fn(),
   revoca: vi.fn(),
   annullaRic: vi.fn(),
+  rpc: vi.fn(),
+  rpcCalls: [] as { name: string; args: Record<string, unknown> }[],
   tx: null as Record<string, unknown> | null,
-  incassi: [] as Record<string, unknown>[],
-  eccedenzaRows: [] as { importo: number }[],
+  txErr: null as { code: string } | null,
+  incassiRevoca: [] as Record<string, unknown>[],
+  pagamentiRevoca: [] as Record<string, unknown>[],
   inserts: [] as { table: string; row: unknown }[],
   updates: [] as { table: string; row: unknown }[],
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
 vi.mock('@/lib/auth/scope', () => ({ resolveScuoleAttive: (...a: unknown[]) => h.scope(...a) }))
-vi.mock('@/app/api/pagamenti/incassi/storno/route', () => ({ eseguiStornoIncasso: (...a: unknown[]) => h.storno(...a) }))
-vi.mock('@/lib/pagamenti/credito', () => ({ saldoCredito: (...a: unknown[]) => h.saldo(...a) }))
 vi.mock('@/lib/pagamenti/sospensione', () => ({ verificaRevocaSospensioneMorosita: (...a: unknown[]) => h.revoca(...a) }))
 vi.mock('@/lib/pagamenti/ricevute', () => ({ annullaRicevutaTransazioneAttiva: (...a: unknown[]) => h.annullaRic(...a) }))
 vi.mock('@/lib/supabase/server-client', () => ({
@@ -30,17 +35,21 @@ vi.mock('@/lib/supabase/server-client', () => ({
       const b: Record<string, unknown> & { _op?: string } = {}
       b.select = () => b
       b.eq = () => b
-      b.is = () => b
-      b.maybeSingle = async () => (table === 'pagamenti_transazioni' ? { data: h.tx, error: null } : { data: null, error: null })
-      b.insert = (row: unknown) => { h.inserts.push({ table, row }); b._op = 'insert'; return b }
-      b.update = (row: unknown) => { h.updates.push({ table, row }); b._op = 'update'; return b }
+      b.in = () => b
+      b.maybeSingle = async () =>
+        table === 'pagamenti_transazioni' ? { data: h.tx, error: h.txErr } : { data: null, error: null }
+      b.insert = (row: unknown) => { h.inserts.push({ table, row }); return { then: (res: (v: unknown) => unknown) => res({ data: null, error: null }) } }
+      b.update = (row: unknown) => { h.updates.push({ table, row }); return { eq: () => ({ then: (res: (v: unknown) => unknown) => res({ data: null, error: null }) }) } }
       b.then = (resolve: (v: unknown) => unknown) => {
-        if (b._op === 'insert' || b._op === 'update') return resolve({ data: null, error: null })
-        if (table === 'incassi') return resolve({ data: h.incassi, error: null })
-        if (table === 'crediti_famiglia') return resolve({ data: h.eccedenzaRows, error: null })
+        if (table === 'incassi') return resolve({ data: h.incassiRevoca, error: null })
+        if (table === 'pagamenti') return resolve({ data: h.pagamentiRevoca, error: null })
         return resolve({ data: [], error: null })
       }
       return b
+    },
+    rpc: async (name: string, args: Record<string, unknown>) => {
+      h.rpcCalls.push({ name, args })
+      return h.rpc(name, args)
     },
   }),
 }))
@@ -60,69 +69,89 @@ beforeEach(() => {
   vi.clearAllMocks()
   h.requireStaff.mockResolvedValue({ user: { id: 'seg-1', role: 'segreteria', scuola_id: SC } })
   h.scope.mockResolvedValue([SC])
-  h.storno.mockResolvedValue({ status: 200, body: { success: true } })
-  h.saldo.mockResolvedValue(100)
   h.revoca.mockResolvedValue({ revocati: [] })
   h.annullaRic.mockResolvedValue(undefined)
+  h.rpc.mockResolvedValue({ data: { incassi_stornati: 2, ricariche_stornate: 1, credito_stornato: 0, ticket_gia_consumati: false }, error: null })
   h.tx = { id: TX, scuola_id: SC, pagante_parent_id: PARENT, importo_totale: 200, annullata_il: null }
-  h.incassi = [
-    { id: 'inc-1', importo: 100, metodo: 'bonifico', stornato_il: null, transazione_id: TX },
-    { id: 'inc-2', importo: 100, metodo: 'bonifico', stornato_il: null, transazione_id: TX },
-  ]
-  h.eccedenzaRows = []
-  h.inserts = []; h.updates = []
+  h.txErr = null
+  h.incassiRevoca = [{ pagamento_id: 'pag-1' }]
+  h.pagamentiRevoca = [{ alunno_id: 'alu-1' }]
+  h.inserts = []; h.updates = []; h.rpcCalls = []
 })
 
-describe('POST annulla transazione', () => {
-  it('(f) senza motivo → 400', async () => {
+describe('POST annulla transazione — via RPC atomica', () => {
+  it('(c) senza motivo → 400 (RPC non chiamata)', async () => {
     const res = await POST(post({}), ctx)
     expect(res.status).toBe(400)
+    expect(h.rpcCalls).toHaveLength(0)
   })
 
-  it('(f) motivo troppo corto → 400', async () => {
+  it('(c) motivo troppo corto → 400', async () => {
     const res = await POST(post({ motivo: 'x' }), ctx)
     expect(res.status).toBe(400)
+    expect(h.rpcCalls).toHaveLength(0)
   })
 
-  it('annullo valido → storna ogni incasso collegato e marca la transazione', async () => {
+  it('(a) annullo con ricarica mensa → chiama la RPC; payload include transazione_id+motivo', async () => {
     const res = await POST(post({ motivo: 'errore di registrazione' }), ctx)
     expect(res.status).toBe(200)
-    expect(h.storno).toHaveBeenCalledTimes(2)
-    const upd = h.updates.find((u) => u.table === 'pagamenti_transazioni')!.row as { annullata_il: string; annullo_motivo: string }
-    expect(upd.annullo_motivo).toBe('errore di registrazione')
-    expect(upd.annullata_il).toBeTruthy()
+    expect(h.rpcCalls).toHaveLength(1)
+    expect(h.rpcCalls[0].name).toBe('annulla_transazione_contabile')
+    const payload = h.rpcCalls[0].args.p as Record<string, unknown>
+    expect(payload.transazione_id).toBe(TX)
+    expect(payload.motivo).toBe('errore di registrazione')
+    // i conteggi della RPC (incl. ricariche mensa stornate) tornano al chiamante
+    const body = await res.json()
+    expect(body.data.ricariche_stornate).toBe(1)
+    expect(body.data.incassi_stornati).toBe(2)
+    // ricevuta famiglia annullata come oggi
     expect(h.annullaRic).toHaveBeenCalledTimes(1)
   })
 
-  it('(f) doppio annullo → 409', async () => {
+  it('(b) RPC assente (PGRST202) → 503 pulito senza storni parziali', async () => {
+    h.rpc.mockResolvedValue({ data: null, error: { code: 'PGRST202', message: 'function not found' } })
+    const res = await POST(post({ motivo: 'errore di registrazione' }), ctx)
+    expect(res.status).toBe(503)
+    expect(h.annullaRic).not.toHaveBeenCalled()
+  })
+
+  it('(b bis) RPC assente (42883) → 503', async () => {
+    h.rpc.mockResolvedValue({ data: null, error: { code: '42883', message: 'undefined function' } })
+    const res = await POST(post({ motivo: 'errore di registrazione' }), ctx)
+    expect(res.status).toBe(503)
+  })
+
+  it('(d) doppio annullo (tx già annullata, pre-check) → 409, RPC non chiamata', async () => {
     h.tx = { id: TX, scuola_id: SC, pagante_parent_id: PARENT, importo_totale: 200, annullata_il: '2026-07-18T10:00:00Z' }
     const res = await POST(post({ motivo: 'errore di registrazione' }), ctx)
     expect(res.status).toBe(409)
-    expect(h.storno).not.toHaveBeenCalled()
+    expect(h.rpcCalls).toHaveLength(0)
   })
 
-  it('eccedenza a credito già speso (saldo < eccedenza) → 409 senza stornare nulla', async () => {
-    h.eccedenzaRows = [{ importo: 50 }]
-    h.saldo.mockResolvedValue(20) // saldo 20 < eccedenza 50
+  it('(d bis) doppio annullo in gara (RPC KV409) → 409', async () => {
+    h.rpc.mockResolvedValue({ data: null, error: { code: 'KV409', message: 'transazione già annullata' } })
     const res = await POST(post({ motivo: 'errore di registrazione' }), ctx)
     expect(res.status).toBe(409)
-    expect(h.storno).not.toHaveBeenCalled()
   })
 
-  it('eccedenza a credito recuperabile → storno credito con saldo_dopo aggiornato', async () => {
-    h.eccedenzaRows = [{ importo: 50 }]
-    h.saldo.mockResolvedValue(80)
+  it('credito eccedenza già speso (RPC KV410) → 409 senza annullare la ricevuta', async () => {
+    h.rpc.mockResolvedValue({ data: null, error: { code: 'KV410', message: 'credito già utilizzato' } })
     const res = await POST(post({ motivo: 'errore di registrazione' }), ctx)
-    expect(res.status).toBe(200)
-    const rev = h.inserts.find((i) => i.table === 'crediti_famiglia')!.row as { causale: string; importo: number; saldo_dopo: number }
-    expect(rev.causale).toBe('storno')
-    expect(rev.importo).toBe(-50)
-    expect(rev.saldo_dopo).toBe(30)
+    expect(res.status).toBe(409)
+    expect(h.annullaRic).not.toHaveBeenCalled()
   })
 
-  it('transazione non trovata → 404', async () => {
+  it('transazione non trovata → 404 (RPC non chiamata)', async () => {
     h.tx = null
     const res = await POST(post({ motivo: 'errore di registrazione' }), ctx)
     expect(res.status).toBe(404)
+    expect(h.rpcCalls).toHaveLength(0)
+  })
+
+  it('scope di sede diverso → 404', async () => {
+    h.scope.mockResolvedValue(['99999999-9999-4999-8999-999999999999'])
+    const res = await POST(post({ motivo: 'errore di registrazione' }), ctx)
+    expect(res.status).toBe(404)
+    expect(h.rpcCalls).toHaveLength(0)
   })
 })

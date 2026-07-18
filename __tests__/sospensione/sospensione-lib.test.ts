@@ -178,6 +178,26 @@ describe('verificaRevocaSospensioneMorosita', () => {
     expect(h.notifiche).toHaveLength(0)
   })
 
+  it('FAIL-CLOSED: errore di lettura pagamenti (non column-missing) → nessuna revoca + error', async () => {
+    // Scenario: un glitch DB durante il ricalcolo dello scaduto. Se totaleScaduto
+    // NON è determinabile con certezza, la revoca (a senso unico) NON deve partire:
+    // un errore transiente non può togliere una sospensione legittima.
+    const rows = baseRows()
+    rows.pagamenti = [
+      { alunno_id: 'a1', importo: 100, importo_pagato: 100, sconto: 0, scadenza: PAST, stato: 'pagato', tipo: 'singolo' },
+      { alunno_id: 'a2', importo: 60, importo_pagato: 60, sconto: 0, scadenza: PAST, stato: 'pagato', tipo: 'singolo' },
+    ]
+    const c = cap()
+    // 'importo_pagato' è nel SELECT sia con `sconto` sia senza → l'errore colpisce
+    // entrambi i tentativi e NON è un 42703 (colonna mancante) → non determinabile.
+    const out = await verificaRevocaSospensioneMorosita(fake(rows, c, { importo_pagato: { code: '08006' } }), ['a1'])
+    expect(out.revocati).toEqual([])
+    expect(c.updates).toHaveLength(0)
+    expect(h.notifiche).toHaveLength(0)
+    const errCalls = h.logEvento.mock.calls.filter((cl) => cl[1] === 'error')
+    expect(errCalls.length).toBeGreaterThan(0)
+  })
+
   it('colonna sospeso_causa assente (42703) → NON revoca nulla e logga warn', async () => {
     const rows = baseRows()
     rows.pagamenti = [

@@ -5,8 +5,6 @@ import { requireStaff } from '@/lib/auth/require-staff'
 import { resolveScuoleAttive } from '@/lib/auth/scope'
 import { parseBody, parseData } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
-import { eseguiStornoIncasso } from '@/app/api/pagamenti/incassi/storno/route'
-import { saldoCredito } from '@/lib/pagamenti/credito'
 import { verificaRevocaSospensioneMorosita } from '@/lib/pagamenti/sospensione'
 import { annullaRicevutaTransazioneAttiva } from '@/lib/pagamenti/ricevute'
 import { withRoute } from '@/lib/logging/with-route'
@@ -16,12 +14,19 @@ const postBodySchema = z.object({
   motivo: z.string().min(3, 'Il motivo dell\'annullo è obbligatorio (min 3 caratteri)'),
 })
 
-const round2 = (n: number) => Math.round(n * 100) / 100
+/** La funzione RPC non esiste su questo ambiente (DB E2E CI non migrato). */
+const RPC_ASSENTE = new Set(['PGRST202', '42883'])
+/** Tabella non presente (DB non migrato) sulla lettura di pre-check. */
+const TABELLA_ASSENTE = new Set(['42P01', 'PGRST205', 'PGRST204', '42703'])
 
 // POST /api/pagamenti/transazioni/[id]/annulla  (staff) — annulla una transazione.
-// Storna OGNI incasso collegato (contro-incassi tracciati), storna l'eventuale
-// eccedenza accreditata a credito (409 se il credito è già stato speso), marca la
-// transazione e annulla la ricevuta famiglia attiva. Il motivo è obbligatorio.
+//
+// L'annullo è ATOMICO e delegato alla RPC `annulla_transazione_contabile`, gemella
+// speculare di `registra_transazione_contabile`: in UNA transazione storna gli
+// incassi (contro-incassi tracciati), le RICARICHE MENSA (movimento inverso +
+// saldo ticket, mai negativo) e l'eventuale eccedenza a credito. La vecchia
+// enumerazione manuale dimenticava le ricariche mensa → i ticket restavano
+// regalati alla famiglia (bug corretto). Il motivo è obbligatorio.
 export const POST = withRoute('pagamenti/transazioni/[id]/annulla:POST', async (request: Request, context: { params: Promise<{ id: string }> }) => {
   try {
     const auth = await requireStaff(request)
@@ -39,18 +44,24 @@ export const POST = withRoute('pagamenti/transazioni/[id]/annulla:POST', async (
 
     const supabase = await createAdminClient()
 
+    // Pre-check applicativo: esistenza + scope di sede + già-annullata. Lo scope
+    // NON può stare nella RPC (gira a service-role, non conosce la sede del chiamante).
     const { data: tx, error: txErr } = await supabase
       .from('pagamenti_transazioni')
-      .select('id, scuola_id, pagante_parent_id, importo_totale, annullata_il')
+      .select('id, scuola_id, pagante_parent_id, annullata_il')
       .eq('id', id)
       .maybeSingle()
     if (txErr) {
+      // Ambiente non migrato (tabella assente) → 503 pulito, coerente con la RPC.
+      if (TABELLA_ASSENTE.has((txErr as { code?: string }).code ?? '')) {
+        logEvento('pagamento', 'warn', { operazione: 'pagamenti/transazioni/[id]/annulla:POST', esito: 'ambiente-non-migrato' }, txErr)
+        return NextResponse.json({ error: 'Annullo non disponibile su questo ambiente' }, { status: 503 })
+      }
       logErrore({ operazione: 'pagamenti/transazioni/[id]/annulla:POST', stato: 500, evento: 'db' }, txErr)
       return NextResponse.json({ error: 'Errore nel recupero della transazione' }, { status: 500 })
     }
     if (!tx) return NextResponse.json({ error: 'Transazione non trovata' }, { status: 404 })
 
-    // Scope di sede.
     const sedi = await resolveScuoleAttive(request as NextRequest, supabase, user)
     if (!sedi.includes(String((tx as { scuola_id: string }).scuola_id))) {
       return NextResponse.json({ error: 'Transazione non trovata' }, { status: 404 })
@@ -60,80 +71,58 @@ export const POST = withRoute('pagamenti/transazioni/[id]/annulla:POST', async (
       return NextResponse.json({ error: 'Transazione già annullata' }, { status: 409 })
     }
 
-    const parentId = (tx as { pagante_parent_id: string }).pagante_parent_id
+    // Annullo atomico: incassi + ricariche mensa + eccedenza a credito, tutto o niente.
+    const { data: esito, error: rpcErr } = await supabase.rpc('annulla_transazione_contabile', {
+      p: { transazione_id: id, motivo, annullato_da: user.id },
+    })
 
-    // 1) Eccedenza accreditata su questa transazione (causale 'eccedenza').
-    //    Verifica PRIMA di stornare gli incassi: se il credito è già stato speso
-    //    (saldo corrente < eccedenza) l'annullo lascerebbe il saldo negativo → 409.
-    const { data: eccRows } = await supabase
-      .from('crediti_famiglia')
-      .select('importo')
-      .eq('transazione_id', id)
-      .eq('causale', 'eccedenza')
-    const eccedenza = round2(((eccRows ?? []) as { importo: number | string }[]).reduce((s, r) => s + Number(r.importo), 0))
-    let saldoDopoStorno = 0
-    if (eccedenza > 0.005) {
-      const saldo = await saldoCredito(supabase, parentId)
-      if (saldo + 0.005 < eccedenza) {
+    if (rpcErr) {
+      const code = (rpcErr as { code?: string }).code ?? ''
+      // RPC assente (DB non migrato) → 503 SENZA storni parziali (nulla è stato scritto).
+      if (RPC_ASSENTE.has(code)) {
+        logEvento('pagamento', 'warn', { operazione: 'pagamenti/transazioni/[id]/annulla:POST', esito: 'rpc-assente' }, rpcErr)
+        return NextResponse.json({ error: 'Funzione di annullo non disponibile su questo ambiente' }, { status: 503 })
+      }
+      // Transazione già annullata (race col pre-check) → 409.
+      if (code === 'KV409') {
+        return NextResponse.json({ error: 'Transazione già annullata' }, { status: 409 })
+      }
+      // Credito eccedenza già speso: l'annullo lascerebbe il saldo negativo → 409.
+      if (code === 'KV410') {
         return NextResponse.json(
-          { error: 'Il credito generato da questa transazione è già stato utilizzato: non è possibile annullarla. Registra prima una rettifica.' },
+          { error: 'Il credito generato da questa transazione è già stato utilizzato: non è possibile annullarla. Recupera prima il credito speso.' },
           { status: 409 },
         )
       }
-      saldoDopoStorno = round2(saldo - eccedenza)
-    }
-
-    // 2) Storna ogni incasso originale collegato (i contro-incassi/storni si saltano).
-    const { data: incassi } = await supabase
-      .from('incassi')
-      .select('id, importo, metodo, stornato_il')
-      .eq('transazione_id', id)
-    let stornati = 0
-    for (const inc of (incassi ?? []) as { id: string; importo: number | string; metodo?: string | null; stornato_il?: string | null }[]) {
-      if (Number(inc.importo) <= 0 || inc.metodo === 'storno' || inc.stornato_il) continue
-      const esito = await eseguiStornoIncasso(supabase, { incassoId: inc.id, motivo: `Annullo transazione: ${motivo}`, userId: user.id })
-      if (esito.status === 200) stornati += 1
-      else {
-        // 409 (già stornato) o altro: non blocca l'annullo, ma va tracciato.
-        logEvento('pagamento', 'warn', {
-          operazione: 'pagamenti/transazioni/[id]/annulla:POST',
-          esito: 'storno_incasso_saltato',
-          transazione_id: id,
-          incasso_id: inc.id,
-          stato: esito.status,
-        })
+      // Transazione sparita fra pre-check e RPC → 404.
+      if (code === 'KV404') {
+        return NextResponse.json({ error: 'Transazione non trovata' }, { status: 404 })
       }
+      logErrore({ operazione: 'pagamenti/transazioni/[id]/annulla:POST', stato: 500, evento: 'db' }, rpcErr)
+      return NextResponse.json({ error: 'Errore durante l\'annullo della transazione' }, { status: 500 })
     }
 
-    // 3) Storna l'eccedenza a credito (riga 'storno' con saldo_dopo aggiornato).
-    if (eccedenza > 0.005) {
-      await supabase.from('crediti_famiglia').insert({
-        parent_id: parentId,
-        scuola_id: (tx as { scuola_id: string }).scuola_id,
-        causale: 'storno',
-        importo: -eccedenza,
-        saldo_dopo: saldoDopoStorno,
-        transazione_id: id,
-        creato_da: user.id,
-      }).then(() => {}, () => {})
+    const conteggi = (esito ?? {}) as {
+      incassi_stornati?: number
+      ricariche_stornate?: number
+      credito_stornato?: number
+      ticket_gia_consumati?: boolean
     }
 
-    // 4) Marca la transazione annullata (il motivo vive in colonna, non nei log).
-    await supabase
-      .from('pagamenti_transazioni')
-      .update({ annullata_il: new Date().toISOString(), annullo_motivo: motivo })
-      .eq('id', id)
-      .then(() => {}, () => {})
-
-    // 5) Annulla la ricevuta famiglia attiva (numero bruciato).
+    // Annulla la ricevuta famiglia attiva (numero bruciato) — come oggi.
     await annullaRicevutaTransazioneAttiva(supabase, id, { da: user.id, motivo: 'annullo transazione' })
 
-    // 6) Audit col MOTIVO (registro, non log).
+    // Audit col MOTIVO (registro DB, non log). PostgREST non lancia → best-effort.
     await supabase.from('registro_modifiche').insert({
       azione: 'annulla_transazione',
       tabella_interessata: 'pagamenti_transazioni',
       record_id: id,
-      nuovo_valore: { annullo_motivo: motivo, incassi_stornati: stornati, eccedenza_stornata: eccedenza },
+      nuovo_valore: {
+        annullo_motivo: motivo,
+        incassi_stornati: conteggi.incassi_stornati ?? 0,
+        ricariche_stornate: conteggi.ricariche_stornate ?? 0,
+        credito_stornato: conteggi.credito_stornato ?? 0,
+      },
       utente_id: user.id,
     }).then(() => {}, () => {})
 
@@ -142,13 +131,13 @@ export const POST = withRoute('pagamenti/transazioni/[id]/annulla:POST', async (
       operazione: 'pagamenti/transazioni/[id]/annulla:POST',
       esito: 'transazione_annullata',
       transazione_id: id,
-      incassi_stornati: stornati,
-      eccedenza: eccedenza,
+      incassi_stornati: conteggi.incassi_stornati ?? 0,
+      ricariche_stornate: conteggi.ricariche_stornate ?? 0,
+      ticket_gia_consumati: conteggi.ticket_gia_consumati === true,
     })
 
-    // La sospensione può DIVENTARE dovuta di nuovo (lo storno riapre lo scaduto):
-    // verificaRevoca non riattiva mai una sospensione, quindi qui è inerte ma
-    // coerente col resto — nessun effetto indesiderato.
+    // Lo storno riapre lo scaduto: verificaRevoca non riattiva mai una sospensione,
+    // qui è coerente col resto (best-effort, non blocca la risposta).
     try {
       const alunni = new Set<string>()
       const { data: pagRows } = await supabase
@@ -165,7 +154,16 @@ export const POST = withRoute('pagamenti/transazioni/[id]/annulla:POST', async (
       logEvento('pagamento', 'error', { operazione: 'pagamenti/transazioni/[id]/annulla:POST', esito: 'revoca_non_verificata' }, e)
     }
 
-    return NextResponse.json({ success: true, data: { transazione_id: id, incassi_stornati: stornati, eccedenza_stornata: eccedenza } })
+    return NextResponse.json({
+      success: true,
+      data: {
+        transazione_id: id,
+        incassi_stornati: conteggi.incassi_stornati ?? 0,
+        ricariche_stornate: conteggi.ricariche_stornate ?? 0,
+        credito_stornato: conteggi.credito_stornato ?? 0,
+        ticket_gia_consumati: conteggi.ticket_gia_consumati === true,
+      },
+    })
   } catch (err) {
     logErrore({ operazione: 'pagamenti/transazioni/[id]/annulla:POST', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })

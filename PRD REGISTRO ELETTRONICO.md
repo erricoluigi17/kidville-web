@@ -59,6 +59,10 @@
 
 ---
 
+## 🗓️ Changelog — Igiene migrazioni (ledger↔file) + lock CI su SECURITY DEFINER 2026-07-18 (branch `fix/migrazioni-ledger-e-lock-secdef`)
+
+Follow-up di igiene/sicurezza al changelog sottostante. **(1) Allineamento ledger↔file**: le 4 migrazioni del 2026-07-17 erano state applicate via MCP con version diversi dai nomi file (drift: file `20260717230000…230300` vs ledger di produzione `212758`/`212830`/`212832`/`212834`/`221651`). I file sono stati **rinominati ai version del ledger** e il file mensa **splittato in due** (`212758` RPC transazionale + `221651` revoke anon/authenticated) per il match 1:1 con lo storico di produzione, così `supabase db push`/`migrate.yml` non ri-applicherà nulla. Nessuna modifica al DB (già applicato). **(2) Lock CI** (`__tests__/architecture/security-definer-revoke-lock.test.ts`): fallisce se una migrazione introduce una funzione `SECURITY DEFINER` senza `REVOKE … FROM PUBLIC, anon, authenticated` — impedisce il ripetersi della regressione RPC mensa (in Supabase il `REVOKE … FROM PUBLIC` non toglie l'EXECUTE ad anon/authenticated). Allowlist documentata: `baseline` e `anagrafiche_residenza` (funzioni SECURITY DEFINER pre-esistenti, da rivedere prima del lancio).
+
 ## 🗓️ Changelog — Correzione findings collaudo E2E: sicurezza · morosità · avvisi · OTP · mensa · prodotto 2026-07-18 (branch `feat/collaudo-giornata-e2e`)
 
 Correzione, via pipeline `/ship-cycle`, dei findings prodotti dalle due campagne di collaudo E2E qui sotto —

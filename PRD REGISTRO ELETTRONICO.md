@@ -61,6 +61,23 @@
 
 ---
 
+## 🗓️ Changelog — Notifica di pagamento anche sulla riconciliazione bancaria 2026-07-19 (branch `feat/notifiche-pagamento`)
+
+La notifica automatica al genitore quando la segreteria **registra un pagamento** (`pagamento_registrato`,
+campanella subito + push dopo la finestra di 10′) era già attiva su tutte le strade a mano — incasso singolo
+(`/api/pagamenti/incassi`), transazione unica di famiglia (`/api/pagamenti/transazioni`) e marcatura manuale
+«pagato» (`PATCH /api/pagamenti/[id]`) — e abilitata per la sede di produzione (toggle assente = attivo).
+Restava **una sola strada muta**: la **conferma della riconciliazione bancaria** (`PATCH
+/api/pagamenti/riconciliazione/[id]`), che abbina un bonifico dell'estratto conto e crea l'incasso **direttamente**,
+senza passare dalle route sopra → il genitore non veniva avvisato. Ora anche quella conferma invia
+`pagamento_registrato` (titolo «Pagamento/Acconto registrato» secondo lo stato ricalcolato dal trigger, corpo con
+l'importo in formato it-IT) **e** riaggancia `verificaRevocaSospensioneMorosita` (un bonifico che salda lo scaduto
+revoca la sospensione, come per gli incassi a mano — era l'altro buco della stessa strada). Best-effort, coerente
+col contratto «una notifica persa non trasforma in 500 un salvataggio riuscito, ma lascia una riga di log».
+Verifica end-to-end su produzione: `notifiche` contiene già righe `pagamento_registrato` con `push_inviata_il`
+valorizzata (catena campanella→push funzionante). Gate verde (`eslint` · `tsc` · `vitest` 2247 · `build`); nessuna
+migrazione.
+
 ## 🗓️ Changelog — Contabilità v2: fonte unica dello stato, transazione unica di famiglia, sospensione a famiglia, sconti/pro-rata, solleciti schedulati 2026-07-18 (branch `feat/contabilita-v2`)
 
 Riscrittura della contabilità in **7 slice** committabili (S1..S7) via pipeline `/ship-cycle`, che chiude i

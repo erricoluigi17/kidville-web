@@ -4,6 +4,8 @@ import { NextResponse } from 'next/server'
 const h = vi.hoisted(() => ({
   requireStaff: vi.fn(),
   logScrittura: vi.fn(),
+  notificaEvento: vi.fn(),
+  verificaRevoca: vi.fn(),
   esistenti: [] as { hash_movimento: string }[],
   aperti: [] as Record<string, unknown>[],
   movimento: null as Record<string, unknown> | null,
@@ -16,6 +18,8 @@ const h = vi.hoisted(() => ({
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: h.logScrittura }))
+vi.mock('@/lib/notifiche/triggers', () => ({ notificaEvento: h.notificaEvento }))
+vi.mock('@/lib/pagamenti/sospensione', () => ({ verificaRevocaSospensioneMorosita: h.verificaRevoca }))
 vi.mock('@/lib/auth/scope', () => ({
   resolveScuolaScrittura: async () => ({ scuolaId: 'sc-1' }),
   resolveScuoleAttive: async () => ['sc-1'],
@@ -102,7 +106,7 @@ beforeEach(() => {
     causale: 'BONIFICO RETTA', stato: 'suggerito',
     suggerimenti: [{ pagamento_id: PID, score: 75 }],
   }
-  h.pagamento = { id: PID, scuola_id: 'sc-1', stato: 'scaduto' }
+  h.pagamento = { id: PID, scuola_id: 'sc-1', stato: 'scaduto', alunno_id: 'al-1', descrizione: 'Retta Settembre' }
 })
 
 describe('POST /api/pagamenti/riconciliazione (import CSV)', () => {
@@ -151,9 +155,30 @@ describe('PATCH /api/pagamenti/riconciliazione/[id]', () => {
     expect(upd!.row.pagamento_id).toBe(PID)
   })
 
-  it('conferma di un movimento già confermato → 409', async () => {
+  it('conferma → avvisa il genitore (pagamento_registrato) e verifica la revoca sospensione', async () => {
+    const res = await patch({ azione: 'conferma' })
+    expect(res.status).toBe(200)
+    // Un bonifico abbinato è un pagamento registrato: il genitore va notificato.
+    expect(h.notificaEvento).toHaveBeenCalledTimes(1)
+    const [, params] = h.notificaEvento.mock.calls[0]
+    expect(params.tipo).toBe('pagamento_registrato')
+    expect(params.alunnoIds).toEqual(['al-1'])
+    expect(params.entitaId).toBe(PID)
+    // …e un bonifico che salda lo scaduto deve poter revocare la sospensione.
+    expect(h.verificaRevoca).toHaveBeenCalledWith(expect.anything(), ['al-1'])
+  })
+
+  it('conferma di un movimento già confermato → 409 (nessun avviso)', async () => {
     h.movimento = { ...h.movimento!, stato: 'confermato' }
     expect((await patch({ azione: 'conferma' })).status).toBe(409)
+    expect(h.notificaEvento).not.toHaveBeenCalled()
+  })
+
+  it('ignora/riapri NON avvisano il genitore', async () => {
+    await patch({ azione: 'ignora' })
+    h.movimento = { id: MID, scuola_id: 'sc-1', importo: 150, data_operazione: '2026-09-05', causale: 'x', stato: 'suggerito', suggerimenti: [{ pagamento_id: PID }] }
+    await patch({ azione: 'riapri' })
+    expect(h.notificaEvento).not.toHaveBeenCalled()
   })
 
   it('corsa persa (0 righe aggiornate dal CAS) → 409 e storno dell’incasso appena creato', async () => {

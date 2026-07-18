@@ -6,6 +6,7 @@ import { parseBody, parseData } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { resolveScuoleAttive } from '@/lib/auth/scope'
 import { annullaRicevutaAttiva } from '@/lib/pagamenti/ricevute'
+import { verificaRevocaSospensioneMorosita } from '@/lib/pagamenti/sospensione'
 import { notificaEvento } from '@/lib/notifiche/triggers'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
@@ -208,6 +209,15 @@ export const PATCH = withRoute('pagamenti/[id]:PATCH', async (request: Request, 
         await supabase.rpc('ricalcola_stato_padre', { p_parent: id }).then(() => {}, () => {})
       } else {
         await supabase.rpc('ricalcola_stato_pagamento', { p_id: id }).then(() => {}, () => {})
+      }
+
+      // Un importo più basso o una scadenza spostata al futuro può azzerare lo
+      // scaduto famiglia → revoca automatica della sospensione (best-effort).
+      try {
+        const alunnoId = (esistente as { alunno_id?: string | null }).alunno_id
+        if (alunnoId) await verificaRevocaSospensioneMorosita(supabase, [alunnoId])
+      } catch (e) {
+        logEvento('pagamento', 'error', { operazione: 'pagamenti/[id]:PATCH', esito: 'revoca_non_verificata' }, e)
       }
     }
 

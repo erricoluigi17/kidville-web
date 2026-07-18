@@ -84,6 +84,30 @@ export interface AlunnoQuoteInput {
 }
 
 /**
+ * Intestatario di DEFAULT della famiglia (Contabilità v2): il primo genitore del
+ * bambino con `parents.intestatario_default = true`. Usato solo in assenza di
+ * eccezione per-figlio. Retry-less sulla colonna: se `intestatario_default` non
+ * esiste (DB E2E CI non migrato, 42703) → `null`, così si cade sul fallback.
+ */
+async function intestatarioDefaultFamiglia(
+  supabase: SupabaseClient,
+  alunnoId: string,
+): Promise<string | null> {
+  const { data: sp } = await supabase.from('student_parents').select('parent_id').eq('student_id', alunnoId)
+  const parentIds = [...new Set(((sp ?? []) as { parent_id?: string | null }[]).map((r) => r.parent_id).filter(Boolean) as string[])]
+  if (parentIds.length === 0) return null
+  const def = await supabase
+    .from('parents')
+    .select('id')
+    .in('id', parentIds)
+    .eq('intestatario_default', true)
+    .limit(1)
+    .maybeSingle()
+  if (def.error) return null // colonna assente (42703) o errore → fallback
+  return (def.data as { id?: string } | null)?.id ?? null
+}
+
+/**
  * Determina le quote di fatturazione di un pagamento. Priorità:
  *  1) ordine divise (`divise_ordini.pagamento_id`) → quota UNICA a chi ha ordinato;
  *  2) alunno con genitori separati →
@@ -153,8 +177,16 @@ export async function determinaQuoteFatturazione(
     }
   }
 
-  // 3) Default → intestatario unico.
+  // 3) Eccezione per-figlio → intestatario unico (vince sul default famiglia).
   const adultId = alunno.intestatario_fatture?.adult_id
   if (adultId) return [{ adultId, importo: totale, label: '' }]
+
+  // 4) DEFAULT FAMIGLIA → parents.intestatario_default fra i genitori del bambino.
+  if (alunno.id) {
+    const def = await intestatarioDefaultFamiglia(supabase, alunno.id)
+    if (def) return [{ adultId: def, importo: totale, label: '' }]
+  }
+
+  // 5) Fallback: nessun intestatario risolvibile.
   return []
 }

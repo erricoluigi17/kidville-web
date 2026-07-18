@@ -25,7 +25,9 @@
 > | `mensa_ticket_movimenti` | Ledger movimenti ticket (ricarica/consumo/disdetta/rettifica + `saldo_dopo`) — storico e morosità | ✅ RLS + policy service_role |
 > | `mensa_alternative` | Alternativa pasto per allergia/richiesta genitore (UNIQUE alunno+data, origine segreteria/genitore) | ✅ RLS + policy service_role |
 > | `protocolli` (+ `protocolli_allegati`, `protocolli_categorie`, `protocolli_numerazione`) | Registro di protocollo DPR 445/2000: trigger WORM (annullo una-tantum art. 54; DELETE solo via `protocollo_elimina()` senza tracce), numerazione atomica per scuola/anno, titolario con seed | ✅ RLS + policy service_role |
-> | `pagamenti` | Scadenziario rette e quote | Schema creato, non ancora popolato |
+> | `pagamenti` | Scadenziario rette e quote (+ `sconto`/`sconto_motivo` per voce, Contabilità v2) | Schema creato, non ancora popolato |
+> | `pagamenti_transazioni` | Contenitore «incasso unico di famiglia»: un versamento → più voci di più figli + ricariche mensa (pagante = `parents.id`, metodo, riferimento/CRO, data valuta, note, annullo tracciato) | ✅ RLS + policy service_role |
+> | `crediti_famiglia` | Ledger del credito di famiglia (causali eccedenza/utilizzo/rettifica/storno con `saldo_dopo`, ancorato a `parents.id`) — visibile **solo alla segreteria** | ✅ RLS + policy service_role |
 >
 > ### Moduli Implementati
 > | Modulo | Stato | Pagine | API Routes |
@@ -36,7 +38,7 @@
 > | **Armadietto** | ✅ Operativo | `/teacher/locker`, `/parent/locker` | `/api/locker/*` |
 > | **Mensa** | ✅ Operativo | `/admin/mensa`, `/parent/mensa` | `/api/mensa/*` |
 > | **Chat** | ✅ Operativo | `/teacher/chat`, `/parent/chat` | `/api/chat/*` |
-> | **Contabilità (Pagamenti)** | ✅ Operativo | `/admin/pagamenti` (6 viste), `/parent/pagamenti` | `/api/pagamenti/*` (+ ricevute numerate, attestazioni, export AdE/XLSX, solleciti, riconciliazione) |
+> | **Contabilità (Pagamenti)** | ✅ Operativo | `/admin/pagamenti` (7 viste, con «Incasso unico»), `/parent/pagamenti` | `/api/pagamenti/*` (+ transazione unica di famiglia, credito famiglia, ricevute numerate, attestazioni, export AdE/XLSX, solleciti schedulati, riconciliazione, sconti/pro-rata configurabili) |
 > | **Modulistica** | ✅ Operativo | `/admin/forms`, `/parent/forms` | `/api/forms/*` |
 > | **Registro Protocolli** | ✅ Operativo (solo admin+segreteria) | `/admin/protocolli` | `/api/admin/protocolli/*` (upload-url diretto, analizza, registrazione/annullo/eliminazione, file firmati, verifica integrità, categorie, export XLSX/PDF, da-documento, genera-documento) |
 > | **Foto/Video** | ✅ Operativo | `/teacher/gallery`, `/parent/gallery` | `/api/gallery/*` |
@@ -58,6 +60,86 @@
 > | **Accessibilità AgID / Legge Stanca** | 🔶 Baseline (P1, DL-008) | Trasversale | Fatto: alto contrasto globale persistito, focus-ring, reduced-motion, Modal accessibile, landmark/skip-link/aria-current, smoke jest-axe. WCAG-AA = definition-of-done; audit AA per-pagina incrementale |
 
 ---
+
+## 🗓️ Changelog — Contabilità v2: fonte unica dello stato, transazione unica di famiglia, sospensione a famiglia, sconti/pro-rata, solleciti schedulati 2026-07-18 (branch `feat/contabilita-v2`)
+
+Riscrittura della contabilità in **7 slice** committabili (S1..S7) via pipeline `/ship-cycle`, che chiude i
+5 findings di contabilità lasciati aperti dai collaudi E2E (esclusi di proposito dalla PR precedente) e aggiunge
+la funzione più richiesta dall'operatività: **un genitore paga con un solo bonifico più cose insieme**. Gate verde
+(`eslint --max-warnings 0` · `tsc --noEmit` · `vitest` · `build`); migrazioni via MCP con `get_advisors` **0 ERROR**.
+Il DB E2E della CI **non è migrato** → il codice degrada in modo pulito (SELECT colonne nuove: retry `42703`;
+scritture: best-effort `PGRST204`; RPC assenti: `503` senza scritture parziali; tabelle nuove su GET:
+`{ data: [], disponibile: false }`; config assente: regole spente = comportamento odierno).
+
+**Fonte unica dello stato/residuo (S1).** `aging.ts` diventa la sola verità: `residuoEffettivo(p) = max(0, importo −
+sconto − pagato)` (clamp **per voce**, mai compensazioni fra voci) e `statoEffettivo(p, oggi)` deriva «scaduta»
+**sempre dalle date** (il cron resta solo per notifiche/solleciti). Tutti i consumatori migrati (GET pagamenti,
+`PagamentiSummary`, `StoricoPagamenti`, dashboard, bucket aging, solleciti, revoca). **Home genitore tri-stato**:
+rosso «€X scaduti» · ambra «€Y da pagare» · verde solo a zero. Finding «home in regola con €70 scaduti» chiuso
+(prima `PagamentiSummary` sommava residui **negativi** che compensavano gli scaduti).
+
+**Regole d'incasso (S3).** Il **doppio incasso** è fermato: un versamento oltre il residuo effettivo dà **409
+`{ eccedenza }`** finché la segreteria non conferma esplicitamente «credito famiglia» (o riallocazione) — **mai
+silenzioso**; lo spill fra rate dello stesso piano resta invariato. `PATCH` voce: `importo ≥ 0` (zero ammesso per
+le esenzioni) e mai sotto il già incassato (409 «storna prima»). I **DELETE secchi** degli incassi diventano
+**storno tracciato**: contro-incasso negativo collegato + `storno_di`/`stornato_il`/`storno_motivo`, **motivo
+obbligatorio** e audit in `registro_modifiche` (niente cancellazioni mute). **Sconto/abbuono** su singola voce
+(importo, con motivo) + scorciatoia «salda con abbuono della differenza» all'incasso; residuo = importo − sconto −
+pagato.
+
+**Transazione unica di famiglia (S4).** Nuova vista **«Incasso unico»** in `/admin/pagamenti` (`TransazioniPanel`,
+wizard a 3 passi: pagante → importi con voci per figlio, **proposta automatica** «più vecchie prima» e **quadratura
+live**, ricariche mensa in euro + ticket → conferma). Un solo versamento salda **più voci di più figli** e ricarica
+la mensa, con campi dedicati **metodo, riferimento/CRO, data valuta, note**. L'atomicità è di due RPC
+`SECURITY DEFINER` **service-role only** (`REVOKE` da `PUBLIC, anon, authenticated`): `registra_transazione_contabile`
+(transazione + incassi + ricariche + eventuale credito) e `utilizza_credito_famiglia`. L'**eccedenza non è mai
+silenziosa**: dialog esplicito «€X in eccesso → credito famiglia» (conferma/annulla). Il **credito famiglia** è un
+ledger tracciato (`crediti_famiglia`), **visibile solo alla segreteria**, riutilizzabile sulle voci future.
+**Ricevuta unica di famiglia** numerata (dettaglio per figlio, intestata al pagante) **oppure** «dividi in fatture»
+(riusa il flusso fattura elettronica esistente, una per voce). Registro transazioni con dettaglio, **annullo con
+motivo obbligatorio** (storna ogni incasso collegato e l'eventuale credito; 409 se il credito è già stato speso) e
+**ristampa ricevuta**. **Intestatario di famiglia predefinito** (`parents.intestatario_default`, sceglierne uno
+azzera l'altro tutore) con **eccezione per-figlio** (`alunni.intestatario_fatture`) che **vince** e resta.
+
+**Sospensione a livello famiglia v2 (S5).** Il flag vive su `alunni.sospeso` (+ `sospeso_causa` `morosita`|`altro`)
+su **tutti i figli** del genitore moroso; attivazione manuale della Direzione. I guard risalgono ai figli
+sull'**unione canonica dei legami** (`legame_genitori_alunni` + `student_parents` via ponte `parents.auth_user_id`):
+il finding «un legame solo in `student_parents` sfugge al blocco» è chiuso. **Revoca automatica** quando **tutto lo
+scaduto della famiglia è saldato** (solo causa `morosita`), agganciata a incassi/storno/transazione/credito/sconto/
+PATCH + safety-net nel cron; **banner** esplicito al genitore. Matrice: bloccate adesioni avvisi, ordini divise,
+tutti i moduli di tutti i sistemi **tranne** quelli col nuovo flag «essenziale salute/sicurezza: sempre firmabile»;
+chat e comunica/giustifica assenza restano bloccate; **mensa via di mezzo** (prenotazione solo con credito ticket
+già caricato, mai a debito). **Non** bloccati: locker, giustifiche didattiche, firme note/pagelle, certificati medici.
+
+**Rette configurabili (S6).** `genera_rette_mensili` v2 (firma invariata → la CI degrada gratis) legge `rette_config`:
+**sconto fratelli** (percentuale automatica sui figli in posizione ≥2, famiglie via unione legami) e **pro-rata solo
+per iscrizioni tardive** (mai per assenze), a **soglie a scaglioni** sul giorno di `alunni.data_iscrizione`. Pannello
+**«Rette»** nelle Impostazioni con anteprima; entrambi resi come `sconto` con motivo. Config vuota = comportamento
+odierno. Chiuso il workaround rotto «tutto su un figlio, gli altri a 0» (lo 0 veniva NULLIF-ato).
+
+**Solleciti schedulati (S7).** Accesa la schedulazione (`pagamenti_solleciti_tick()` pattern Vault +
+`cron.schedule('…','0 6 * * *')`, sede prod `d53b0fbc`): livelli **1-2 automatici**, **3° manuale**. Il run
+aggiorna gli stati e invia; anteprima obbligatoria invariata.
+
+**Bonifica pre-lancio & migrazioni.** Bonifica dei dati esistenti (importi `<0` → 0, sovraincassi → contro-incassi
+negativi) **tracciata** in `registro_modifiche`, niente cancellazioni mute, poi `CHECK (importo >= 0)` NOT VALID →
+VALIDATE (mai un CHECK su `importo_pagato ≤ importo`: spill transiente + legacy). Migrazioni S2a/S2b/S7 applicate via
+MCP (`sconto`, storno su `incassi`, `sospeso_causa`, `intestatario_default`, `rette_config`, `sempre_firmabile`,
+`pagamenti_transazioni`, `crediti_famiglia`, `incassi.transazione_id`, `ricevute_emesse.transazione_id + righe`,
+le due RPC, il cron); `ricalcola_stato_pagamento`/`ricalcola_stato_padre` sconto-aware **a firma invariata**.
+
+**Nuove/aggiornate API** (tutte `withRoute` + `requireStaff` + `zod`): `POST/GET /api/pagamenti/transazioni`
+(+`[id]`, `[id]/annulla`, `[id]/ricevuta`), `GET /api/pagamenti/famiglia`, `GET/POST /api/pagamenti/credito`,
+`POST /api/pagamenti/incassi/storno`, `POST /api/pagamenti/[id]/sconto`; `incassi` POST con gate eccedenza→credito;
+`[id]` PATCH con guardie importo/scadenza. **Logging**: successi espliciti (transazione registrata con conteggi/uuid,
+storno, sconto/abbuono, credito utilizzato, revoca automatica) — i **motivi liberi vivono in `registro_modifiche`,
+mai nei log**; nessuna chiave nuova in lista bianca (sono dati di minori).
+
+**Decisioni.** Pagamento online in app (**PSP**): **fuori** da questo ciclo, resta in roadmap. Credito famiglia
+**non visibile al genitore** (solo segreteria). «Scaduta» **derivata dalle date** ovunque. **Censite per il futuro**
+(nota, non ora): pre-compilazione transazione dalla riconciliazione bancaria, rimborsi monetari veri (oggi coperti
+da storno+credito), deposito cauzionale, registro cassa/prima nota, voucher/contributi comunali, chiusura esercizio,
+eventuale visibilità del credito al genitore.
 
 ## 🗓️ Changelog — Igiene migrazioni (ledger↔file) + lock CI su SECURITY DEFINER 2026-07-18 (branch `fix/migrazioni-ledger-e-lock-secdef`)
 

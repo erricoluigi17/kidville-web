@@ -21,6 +21,7 @@ const TicketMensaPanel = dynamic(() => import('@/components/features/admin/pagam
 const FiscalePanel = dynamic(() => import('@/components/features/admin/pagamenti/FiscalePanel').then((m) => m.FiscalePanel), { loading: caricamento });
 const SollecitiPanel = dynamic(() => import('@/components/features/admin/pagamenti/SollecitiPanel').then((m) => m.SollecitiPanel), { loading: caricamento });
 const RiconciliazionePanel = dynamic(() => import('@/components/features/admin/pagamenti/RiconciliazionePanel').then((m) => m.RiconciliazionePanel), { loading: caricamento });
+const TransazioniPanel = dynamic(() => import('@/components/features/admin/pagamenti/TransazioniPanel').then((m) => m.TransazioniPanel), { loading: caricamento });
 
 const isVista = (v: string | null): v is VistaContabilita => !!v && VISTE_CONTABILITA.some((o) => o.id === v);
 
@@ -62,6 +63,8 @@ function PagamentiInner() {
                 {(scuolaId) => (
                     <Card className="p-4 md:p-6">
                         {vista === 'scadenzario' && userId && <PaymentsDashboard userId={userId} scuolaId={scuolaId} />}
+
+                        {vista === 'transazioni' && userId && <TransazioniPanel userId={userId} scuolaId={scuolaId} />}
 
                         {vista === 'genera' && userId && (
                             <div className="space-y-8">

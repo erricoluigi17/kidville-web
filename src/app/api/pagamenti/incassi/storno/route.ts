@@ -6,6 +6,7 @@ import { requireStaff } from '@/lib/auth/require-staff'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { annullaRicevutaAttiva } from '@/lib/pagamenti/ricevute'
+import { verificaRevocaSospensioneMorosita } from '@/lib/pagamenti/sospensione'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
@@ -170,6 +171,23 @@ export const POST = withRoute('pagamenti/incassi/storno:POST', async (request: R
 
     const supabase = await createAdminClient()
     const esito = await eseguiStornoIncasso(supabase, { incassoId: incasso_id, motivo, userId: user.id })
+
+    // Hook di revoca sospensione (best-effort, coerente con gli altri punti). Uno
+    // storno aumenta lo scaduto, quindi qui è di norma inerte, ma il hook resta a
+    // prova di futuri cambi della logica di aging e non blocca mai la risposta.
+    if (esito.status === 200) {
+      try {
+        const pagId = (esito.body.data as { pagamento_id?: string } | undefined)?.pagamento_id
+        if (pagId) {
+          const { data: pag } = await supabase.from('pagamenti').select('alunno_id').eq('id', pagId).maybeSingle()
+          const alunnoId = (pag as { alunno_id?: string | null } | null)?.alunno_id
+          if (alunnoId) await verificaRevocaSospensioneMorosita(supabase, [alunnoId])
+        }
+      } catch (e) {
+        logEvento('pagamento', 'error', { operazione: 'pagamenti/incassi/storno:POST', esito: 'revoca_non_verificata' }, e)
+      }
+    }
+
     return NextResponse.json(esito.body, { status: esito.status })
   } catch (err) {
     logErrore({ operazione: 'pagamenti/incassi/storno:POST', stato: 500 }, err)

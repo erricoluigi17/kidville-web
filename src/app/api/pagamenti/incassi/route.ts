@@ -6,6 +6,7 @@ import { applyOverpaymentSpill } from '@/lib/pagamenti/spill'
 import { residuoEffettivo } from '@/lib/pagamenti/aging'
 import { accreditaEccedenza, creditoDisponibile } from '@/lib/pagamenti/credito'
 import { resolveParentRegistry } from '@/lib/pagamenti/intestatari'
+import { verificaRevocaSospensioneMorosita } from '@/lib/pagamenti/sospensione'
 import { eseguiStornoIncasso } from './storno/route'
 import { notificaEvento } from '@/lib/notifiche/triggers'
 import { parseBody, parseQuery } from '@/lib/validation/http'
@@ -301,6 +302,14 @@ export const POST = withRoute('pagamenti/incassi:POST', async (request: Request)
         tipo: 'pagamento_registrato',
         esito: 'notifica_non_inviata',
       }, e)
+    }
+
+    // Revoca automatica della sospensione se lo scaduto famiglia è azzerato
+    // (best-effort: mai bloccante per la risposta, errori loggati dentro l'helper).
+    try {
+      if (pag.alunno_id) await verificaRevocaSospensioneMorosita(supabase, [pag.alunno_id])
+    } catch (e) {
+      logEvento('pagamento', 'error', { operazione: 'pagamenti/incassi:POST', esito: 'revoca_non_verificata' }, e)
     }
 
     return NextResponse.json({ success: true, data: { incasso, pagamento: aggiornato, spills, credito } }, { status: 201 })

@@ -1,14 +1,15 @@
 'use client';
 
 import type { LucideIcon } from 'lucide-react';
-import { Euro, CalendarClock, BellRing, Landmark, FileSpreadsheet, Ticket } from 'lucide-react';
+import { Euro, Coins, CalendarClock, BellRing, Landmark, FileSpreadsheet, Ticket } from 'lucide-react';
 import { Tabs } from '@/components/ui/cockpit';
 import { cx } from '@/lib/ui/cx';
 
-export type VistaContabilita = 'scadenzario' | 'genera' | 'solleciti' | 'riconciliazione' | 'fiscale' | 'ticket';
+export type VistaContabilita = 'scadenzario' | 'transazioni' | 'genera' | 'solleciti' | 'riconciliazione' | 'fiscale' | 'ticket';
 
 export const VISTE_CONTABILITA: { id: VistaContabilita; label: string; icon: LucideIcon }[] = [
     { id: 'scadenzario', label: 'Scadenzario', icon: Euro },
+    { id: 'transazioni', label: 'Incasso unico', icon: Coins },
     { id: 'genera', label: 'Genera', icon: CalendarClock },
     { id: 'solleciti', label: 'Solleciti', icon: BellRing },
     { id: 'riconciliazione', label: 'Riconciliazione', icon: Landmark },

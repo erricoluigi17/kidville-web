@@ -5,12 +5,14 @@ import { it, expect, vi, beforeEach, describe } from 'vitest'
 //  UPDATE + ricalcolo stato; PGRST204 (colonna assente) → 503 pulito.
 const h = vi.hoisted(() => ({
   requireStaff: vi.fn(),
+  revoca: vi.fn(),
   pag: {} as Record<string, unknown>,
   updates: [] as { table: string; row: unknown }[],
   updateErr: null as { code: string } | null,
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
+vi.mock('@/lib/pagamenti/sospensione', () => ({ verificaRevocaSospensioneMorosita: (...a: unknown[]) => h.revoca(...a) }))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
     rpc: async () => ({ data: null, error: null }),
@@ -38,7 +40,8 @@ const post = (body: unknown) =>
 beforeEach(() => {
   vi.clearAllMocks()
   h.requireStaff.mockResolvedValue({ user: { id: 'seg-1', role: 'segreteria', scuola_id: 'sc-1' } })
-  h.pag = { id: PID, importo: 100, importo_pagato: 40, tipo: 'singolo' }
+  h.revoca.mockResolvedValue({ revocati: [] })
+  h.pag = { id: PID, alunno_id: 'al-1', importo: 100, importo_pagato: 40, tipo: 'singolo' }
   h.updates = []; h.updateErr = null
 })
 
@@ -69,6 +72,12 @@ describe('POST sconto', () => {
     const upd = h.updates.find((u) => u.table === 'pagamenti')!.row as { sconto: number; sconto_motivo: string }
     expect(upd.sconto).toBe(30)
     expect(upd.sconto_motivo).toBe('sconto fratelli')
+  })
+
+  it('sconto valido → hook di revoca sospensione con l\'alunno toccato', async () => {
+    await POST(post({ sconto: 30, sconto_motivo: 'sconto fratelli' }), ctx)
+    expect(h.revoca).toHaveBeenCalledTimes(1)
+    expect(h.revoca).toHaveBeenCalledWith(expect.anything(), ['al-1'])
   })
 
   it('(g) colonna sconto assente (PGRST204) → 503 pulito', async () => {

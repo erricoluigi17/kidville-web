@@ -180,3 +180,97 @@ export function buildRicevutaPdf(i: RicevutaPdfInput) {
 
     return Buffer.from(doc.output('arraybuffer'))
 }
+
+export interface RicevutaFamigliaPdfInput {
+    numero?: number | null
+    anno?: number | null
+    struttura: Partial<DatiStruttura>
+    intestatario?: { nome?: string | null; codice_fiscale?: string | null } | null
+    /** Dettaglio per figlio: nome, causale, importo, tipo. */
+    righe: { figlio: string; descrizione: string; importo: number; tipo?: 'voce' | 'ricarica' }[]
+    importoTotale: number
+    metodo?: string | null
+    riferimento?: string | null
+    dataValuta?: string | null
+    tracciabile: boolean
+    bollo: boolean
+    dicituraBollo?: string | null
+    emessaIl?: string
+}
+
+// Ricevuta UNICA di famiglia (Contabilità v2): un'intestazione al pagante, il
+// dettaglio per figlio (una riga per voce/ricarica) e un solo totale.
+export function buildRicevutaFamigliaPdf(i: RicevutaFamigliaPdfInput) {
+    const doc = new jsPDF()
+    let y = 20
+
+    doc.setFontSize(15)
+    doc.text(i.struttura.denominazione || 'Ricevuta di pagamento', 20, y)
+    y += 6
+    doc.setFontSize(9)
+    doc.setTextColor(110)
+    const fiscali = [
+        i.struttura.piva ? `P.IVA ${i.struttura.piva}` : null,
+        i.struttura.codice_fiscale ? `CF ${i.struttura.codice_fiscale}` : null,
+    ].filter(Boolean).join(' · ')
+    if (fiscali) { doc.text(fiscali, 20, y); y += 5 }
+    const indirizzo = [
+        i.struttura.indirizzo,
+        [i.struttura.cap, i.struttura.comune, i.struttura.provincia].filter(Boolean).join(' '),
+    ].filter(Boolean).join(' — ')
+    if (indirizzo) { doc.text(indirizzo, 20, y); y += 5 }
+    doc.setTextColor(0)
+    y += 7
+
+    doc.setFontSize(16)
+    doc.text(i.numero ? `RICEVUTA n. ${i.numero}/${i.anno}` : 'RICEVUTA DI PAGAMENTO (documento di cortesia)', 20, y)
+    y += 7
+    doc.setFontSize(9)
+    doc.setTextColor(110)
+    doc.text(`Emessa il ${i.emessaIl ?? new Date().toLocaleDateString('it-IT')}`, 20, y)
+    y += 9
+    doc.setTextColor(0)
+
+    doc.setFontSize(11)
+    if (i.intestatario?.nome) {
+        doc.text(`Intestatario: ${i.intestatario.nome}${i.intestatario.codice_fiscale ? ` — CF ${i.intestatario.codice_fiscale}` : ''}`, 20, y)
+        y += 7
+    }
+    const metodoLabel = i.metodo ? (METODO_LABEL[i.metodo] ?? i.metodo) : null
+    if (metodoLabel) {
+        doc.text(`Metodo: ${metodoLabel}${i.riferimento ? ` — Rif. ${i.riferimento}` : ''}${dataIt(i.dataValuta) ? ` — Valuta ${dataIt(i.dataValuta)}` : ''}`, 20, y)
+        y += 7
+    }
+    y += 2
+
+    doc.setFontSize(10)
+    for (const r of i.righe) {
+        if (y > 265) { doc.addPage(); y = 20 }
+        const importoTxt = r.tipo === 'ricarica' ? '' : ` — € ${r.importo.toFixed(2)}`
+        doc.text(`• ${r.figlio}: ${r.descrizione}${importoTxt}`, 24, y)
+        y += 6
+    }
+    y += 3
+
+    doc.setFontSize(14)
+    doc.text(`Totale versato: € ${i.importoTotale.toFixed(2)} — PAGATO`, 20, y)
+    y += 9
+
+    doc.setFontSize(9)
+    doc.setTextColor(110)
+    if (i.tracciabile) {
+        doc.text('Pagamento eseguito con strumenti tracciabili (art. 1, c. 679, L. 160/2019).', 20, y)
+        y += 5
+    } else {
+        doc.text('Pagamento con quote in contanti: importo non detraibile ai fini fiscali (art. 1, c. 679, L. 160/2019).', 20, y)
+        y += 5
+    }
+    if (i.bollo && i.dicituraBollo) {
+        const righe = doc.splitTextToSize(i.dicituraBollo, 170) as string[]
+        doc.text(righe, 20, y)
+        y += righe.length * 4.5 + 2
+    }
+    doc.text('Documento non fiscale. Per la fattura elettronica usare l’apposita funzione.', 20, y)
+
+    return Buffer.from(doc.output('arraybuffer'))
+}

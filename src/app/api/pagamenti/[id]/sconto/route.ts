@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { parseBody, parseData } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { verificaRevocaSospensioneMorosita } from '@/lib/pagamenti/sospensione'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
@@ -34,7 +35,7 @@ export const POST = withRoute('pagamenti/[id]/sconto:POST', async (request: Requ
     const supabase = await createAdminClient()
     const { data: pag, error: pErr } = await supabase
       .from('pagamenti')
-      .select('id, importo, importo_pagato, tipo')
+      .select('id, alunno_id, importo, importo_pagato, tipo')
       .eq('id', id)
       .maybeSingle()
     if (pErr) {
@@ -94,6 +95,15 @@ export const POST = withRoute('pagamenti/[id]/sconto:POST', async (request: Requ
       pagamento_id: id,
       sconto,
     })
+
+    // Lo sconto abbassa il residuo effettivo → può azzerare lo scaduto famiglia:
+    // revoca automatica della sospensione (best-effort, mai bloccante).
+    try {
+      const alunnoId = (pag as { alunno_id?: string | null }).alunno_id
+      if (alunnoId) await verificaRevocaSospensioneMorosita(supabase, [alunnoId])
+    } catch (e) {
+      logEvento('pagamento', 'error', { operazione: 'pagamenti/[id]/sconto:POST', esito: 'revoca_non_verificata' }, e)
+    }
 
     return NextResponse.json({ success: true, data: { id, sconto } })
   } catch (err) {

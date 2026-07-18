@@ -6,6 +6,7 @@ import { motion } from 'framer-motion';
 import { FatturaButton } from './FatturaButton';
 import { SaveCheck } from '@/components/ui/SaveConfirmation';
 import { cx } from '@/lib/ui/cx';
+import { residuoEffettivo } from '@/lib/pagamenti/aging';
 import { MODAL_OVERLAY, MODAL_CARD, MODAL_SHADOW, INPUT, SELECT, BTN_PRIMARY, BTN_SECONDARY } from './ui';
 
 export interface PagamentoRow {
@@ -15,6 +16,9 @@ export interface PagamentoRow {
     importo_pagato: number;
     stato: string;
     tipo: string;
+    /** Sconto/abbuono già applicato sulla voce (Contabilità v2). */
+    sconto?: number;
+    alunno_id?: string;
     parent_payment_id?: string | null;
     fattura_stato?: string;
     alunni?: { nome?: string; cognome?: string };
@@ -28,6 +32,8 @@ const METODI = [
     { v: 'altro', l: 'Altro' },
 ];
 
+interface Pagante { adult_id: string; nome: string; cognome: string; }
+
 interface Props {
     pagamento: PagamentoRow;
     userId: string;
@@ -36,40 +42,86 @@ interface Props {
 }
 
 export function RegistraIncassoModal({ pagamento, userId, onClose, onDone }: Props) {
-    const mancante = Math.max(0, Number(pagamento.importo) - Number(pagamento.importo_pagato));
+    // Residuo EFFETTIVO (fonte unica S1): importo − sconto − già incassato, clampato a 0.
+    const mancante = residuoEffettivo({
+        importo: pagamento.importo,
+        importo_pagato: pagamento.importo_pagato,
+        sconto: pagamento.sconto,
+        stato: pagamento.stato,
+    });
     const [importo, setImporto] = useState<number>(mancante);
     const [metodo, setMetodo] = useState('contanti');
     const [data, setData] = useState(() => new Date().toISOString().slice(0, 10));
     const [note, setNote] = useState('');
     const [spill, setSpill] = useState(true);
+    const [abbuono, setAbbuono] = useState(false);
+    const [abbuonoMotivo, setAbbuonoMotivo] = useState('');
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [saldato, setSaldato] = useState(pagamento.stato === 'pagato');
 
-    const eccedenza = importo - mancante;
-    const isRata = !!pagamento.parent_payment_id;
+    // Dialog di conferma eccedenza → credito famiglia.
+    const [eccedenza, setEccedenza] = useState<number | null>(null);
+    const [paganti, setPaganti] = useState<Pagante[]>([]);
+    const [paganteId, setPaganteId] = useState('');
 
-    const submit = async () => {
+    const eccedenzaLive = importo - mancante;
+    const isRata = !!pagamento.parent_payment_id;
+    const isParziale = importo > 0 && importo < mancante;
+
+    const caricaPaganti = async () => {
+        if (!pagamento.alunno_id) return;
+        try {
+            const res = await fetch(`/api/pagamenti/tutori?alunno_id=${pagamento.alunno_id}&userId=${userId}`, {
+                headers: { 'x-user-id': userId },
+            });
+            const j = await res.json();
+            const lista: Pagante[] = j.success ? (j.data || []) : [];
+            setPaganti(lista);
+            if (lista.length > 0) setPaganteId(lista[0].adult_id);
+        } catch {
+            setPaganti([]);
+        }
+    };
+
+    const doSubmit = async (opts?: { confermaEccedenza?: boolean }) => {
         if (!importo || importo === 0) { setError('Inserisci un importo'); return; }
+        if (abbuono && isParziale && abbuonoMotivo.trim().length < 3) {
+            setError('Indica il motivo dell\'abbuono (almeno 3 caratteri)');
+            return;
+        }
         setSaving(true);
         setError(null);
         try {
+            const payload: Record<string, unknown> = {
+                pagamento_id: pagamento.id,
+                importo,
+                data_incasso: data,
+                metodo,
+                note: note || null,
+                spill: isRata ? spill : false,
+            };
+            if (abbuono && isParziale) payload.abbuono = { motivo: abbuonoMotivo.trim() };
+            if (opts?.confermaEccedenza && paganteId) {
+                payload.conferma_eccedenza = 'credito_famiglia';
+                payload.pagante_parent_id = paganteId;
+            }
             const res = await fetch('/api/pagamenti/incassi', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
-                body: JSON.stringify({
-                    pagamento_id: pagamento.id,
-                    importo,
-                    data_incasso: data,
-                    metodo,
-                    note: note || null,
-                    spill: isRata ? spill : false,
-                }),
+                body: JSON.stringify(payload),
             });
             const json = await res.json();
+            // Sovraincasso su voce non-rata: apri la conferma esplicita «credito famiglia».
+            if (res.status === 409 && json.eccedenza != null) {
+                await caricaPaganti();
+                setEccedenza(Number(json.eccedenza));
+                return;
+            }
             if (!res.ok) { setError(json.error || 'Errore nella registrazione'); return; }
+            setEccedenza(null);
             // Se l'incasso salda il pagamento, resta nel popup per inviare la fattura
-            if (importo >= mancante) setSaldato(true);
+            if (importo >= mancante || (abbuono && isParziale)) setSaldato(true);
             else onDone();
         } catch {
             setError('Errore di rete');
@@ -104,6 +156,9 @@ export function RegistraIncassoModal({ pagamento, userId, onClose, onDone }: Pro
                         <span className="text-kidville-muted">Già incassato € {Number(pagamento.importo_pagato).toFixed(2)}</span>
                         <span className="text-kidville-green font-bold">Resta € {mancante.toFixed(2)}</span>
                     </div>
+                    {Number(pagamento.sconto) > 0 && (
+                        <p className="font-maven text-[11px] text-kidville-muted mt-1">Sconto applicato € {Number(pagamento.sconto).toFixed(2)}</p>
+                    )}
                 </div>
 
                 <div className={`space-y-3 ${saldato ? 'hidden' : ''}`}>
@@ -114,12 +169,12 @@ export function RegistraIncassoModal({ pagamento, userId, onClose, onDone }: Pro
                             onChange={(e) => setImporto(e.target.value === '' ? 0 : Number(e.target.value))}
                             className={INPUT}
                         />
-                        {importo > 0 && importo < mancante && (
+                        {isParziale && !abbuono && (
                             <p className="font-maven text-[11px] text-kidville-warn mt-1">Pagamento parziale: resterà € {(mancante - importo).toFixed(2)}.</p>
                         )}
-                        {eccedenza > 0 && (
+                        {eccedenzaLive > 0 && (
                             <p className="font-maven text-[11px] text-kidville-warn mt-1">
-                                Eccedenza € {eccedenza.toFixed(2)}{isRata && spill ? ' → riportata sulla rata successiva.' : '.'}
+                                Eccedenza € {eccedenzaLive.toFixed(2)}{isRata && spill ? ' → riportata sulla rata successiva.' : ' → richiederà conferma come credito famiglia.'}
                             </p>
                         )}
                     </div>
@@ -152,12 +207,27 @@ export function RegistraIncassoModal({ pagamento, userId, onClose, onDone }: Pro
                             className={INPUT} />
                     </div>
 
-                    {isRata && eccedenza > 0 && (
+                    {isRata && eccedenzaLive > 0 && (
                         <label className="flex items-center gap-2 cursor-pointer">
                             <input type="checkbox" checked={spill} onChange={(e) => setSpill(e.target.checked)}
                                 className="w-4 h-4 rounded border-kidville-muted text-kidville-green focus:ring-kidville-green" />
                             <span className="font-maven text-xs text-kidville-green">Riporta l&apos;eccedenza sulla rata successiva</span>
                         </label>
+                    )}
+
+                    {isParziale && (
+                        <div className="space-y-2">
+                            <label className="flex items-center gap-2 cursor-pointer">
+                                <input type="checkbox" checked={abbuono} onChange={(e) => setAbbuono(e.target.checked)}
+                                    className="w-4 h-4 rounded border-kidville-muted text-kidville-green focus:ring-kidville-green" />
+                                <span className="font-maven text-xs text-kidville-green">Salda con abbuono della differenza (€ {(mancante - importo).toFixed(2)})</span>
+                            </label>
+                            {abbuono && (
+                                <input type="text" value={abbuonoMotivo} onChange={(e) => setAbbuonoMotivo(e.target.value)}
+                                    placeholder="Motivo dell'abbuono (obbligatorio)"
+                                    className={INPUT} />
+                            )}
+                        </div>
                     )}
 
                     {error && <p className="font-maven text-xs text-kidville-error">{error}</p>}
@@ -180,9 +250,42 @@ export function RegistraIncassoModal({ pagamento, userId, onClose, onDone }: Pro
                         <button onClick={onClose} className={cx(BTN_SECONDARY, 'flex-1')}>
                             Annulla
                         </button>
-                        <button onClick={submit} disabled={saving} className={cx(BTN_PRIMARY, 'flex-1')}>
+                        <button onClick={() => doSubmit()} disabled={saving} className={cx(BTN_PRIMARY, 'flex-1')}>
                             {saving ? 'Salvataggio…' : `Registra € ${(importo || 0).toFixed(2)}`}
                         </button>
+                    </div>
+                )}
+
+                {/* Conferma esplicita dell'eccedenza → credito famiglia */}
+                {eccedenza != null && (
+                    <div className={MODAL_OVERLAY} onClick={() => setEccedenza(null)}>
+                        <div className={cx(MODAL_CARD, 'max-w-sm')} style={{ boxShadow: MODAL_SHADOW }} onClick={(e) => e.stopPropagation()}>
+                            <h4 className="font-barlow font-black text-base text-kidville-green uppercase mb-2">Eccedenza da gestire</h4>
+                            <p className="font-maven text-sm text-kidville-ink mb-3">
+                                Stai incassando € {eccedenza.toFixed(2)} oltre il residuo di questa voce.
+                                Vuoi registrarli come <strong>credito famiglia</strong> riutilizzabile?
+                            </p>
+                            <label className="font-maven text-xs text-kidville-muted mb-1 block">Intesta il credito a</label>
+                            {paganti.length > 0 ? (
+                                <select value={paganteId} onChange={(e) => setPaganteId(e.target.value)} className={cx(SELECT, 'mb-3')}>
+                                    {paganti.map((p) => (
+                                        <option key={p.adult_id} value={p.adult_id}>{p.nome} {p.cognome}</option>
+                                    ))}
+                                </select>
+                            ) : (
+                                <p className="font-maven text-xs text-kidville-error mb-3">Nessun pagante disponibile per questo alunno.</p>
+                            )}
+                            <div className="flex gap-2">
+                                <button onClick={() => setEccedenza(null)} className={cx(BTN_SECONDARY, 'flex-1')}>Annulla</button>
+                                <button
+                                    onClick={() => { setEccedenza(null); doSubmit({ confermaEccedenza: true }); }}
+                                    disabled={saving || !paganteId}
+                                    className={cx(BTN_PRIMARY, 'flex-1')}
+                                >
+                                    Conferma credito
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 )}
             </motion.div>

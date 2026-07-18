@@ -10,20 +10,20 @@ import { notificaEvento } from '@/lib/notifiche/triggers'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
-// ─── Schemi di validazione input (M3) ────────────────────────────────────────
-// PATCH: merge parziale sui soli campi ammessi; i valori restano senza vincoli
-// aggiuntivi (come oggi: qualunque valore ≠ undefined viene passato al DB).
-// NB zod v4: z.unknown() nudo è required a runtime → serve .optional().
+// ─── Schemi di validazione input (M3 + Contabilità v2 S3) ────────────────────
+// PATCH: merge parziale sui soli campi ammessi, ora TIPIZZATI (finding #3: prima
+// era z.unknown() e scriveva raw → importi negativi passavano). Importo ≥ 0
+// (zero ammesso: esenzioni); scadenza/visibile_dal in formato YYYY-MM-DD.
 const patchBodySchema = z.object({
-  descrizione: z.unknown().optional(),
-  importo: z.unknown().optional(),
-  scadenza: z.unknown().optional(),
-  categoria_id: z.unknown().optional(),
-  obbligatorio: z.unknown().optional(),
-  periodo_competenza: z.unknown().optional(),
-  gruppo: z.unknown().optional(),
-  tipo: z.unknown().optional(),
-  visibile_dal: z.unknown().optional(),
+  descrizione: z.string().optional(),
+  importo: z.coerce.number().min(0, 'L\'importo non può essere negativo').optional(),
+  scadenza: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Scadenza non valida (atteso YYYY-MM-DD)').optional(),
+  categoria_id: zUuid.nullish(),
+  obbligatorio: z.boolean().optional(),
+  periodo_competenza: z.string().nullish(),
+  gruppo: z.string().nullish(),
+  tipo: z.string().optional(),
+  visibile_dal: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Data non valida (atteso YYYY-MM-DD)').nullish(),
 })
 
 const CAMPI_EDITABILI = [
@@ -166,13 +166,35 @@ export const PATCH = withRoute('pagamenti/[id]:PATCH', async (request: Request, 
     updates.aggiornato_il = new Date().toISOString()
 
     const supabase = await createAdminClient()
-    // scoping di sede: non modificare pagamenti fuori dalle sedi attive
-    const { data: esistente } = await supabase.from('pagamenti').select('scuola_id, stato, alunno_id, descrizione').eq('id', id).maybeSingle()
+    // scoping di sede: non modificare pagamenti fuori dalle sedi attive.
+    // Legge anche importo_pagato + sconto per la guardia importo (retry senza sconto
+    // su DB non migrato → sconto = 0).
+    const selEsistente = 'scuola_id, stato, alunno_id, descrizione, importo_pagato, sconto'
+    const selEsistenteBase = 'scuola_id, stato, alunno_id, descrizione, importo_pagato'
+    let esistente: Record<string, unknown> | null = null
+    const selE = await supabase.from('pagamenti').select(selEsistente).eq('id', id).maybeSingle()
+    if (selE.error && (selE.error as { code?: string }).code === '42703') {
+      const retry = await supabase.from('pagamenti').select(selEsistenteBase).eq('id', id).maybeSingle()
+      esistente = retry.data as Record<string, unknown> | null
+    } else {
+      esistente = selE.data as Record<string, unknown> | null
+    }
     if (!esistente) return NextResponse.json({ error: 'Pagamento non trovato' }, { status: 404 })
     const sedi = await resolveScuoleAttive(request as NextRequest, supabase, auth.user)
     if (!sedi.includes(String((esistente as { scuola_id: string }).scuola_id))) {
       return NextResponse.json({ error: 'Pagamento non trovato' }, { status: 404 })
     }
+
+    // GUARDIA (finding #3): il nuovo importo, al netto dello sconto, non può
+    // scendere sotto quanto GIÀ incassato — prima si stornano gli incassi.
+    if (updates.importo !== undefined) {
+      const sconto = Number((esistente as { sconto?: number | string | null }).sconto ?? 0)
+      const pagato = Number((esistente as { importo_pagato?: number | string | null }).importo_pagato ?? 0)
+      if (Number(updates.importo) - sconto < pagato - 0.005) {
+        return NextResponse.json({ error: 'Il nuovo importo è inferiore a quanto già incassato. Storna prima gli incassi.' }, { status: 409 })
+      }
+    }
+
     const { data, error } = await supabase.from('pagamenti').update(updates).eq('id', id).select(SELECT).single()
     if (error) return NextResponse.json({ error: 'Errore aggiornamento', details: error.message }, { status: 500 })
 
@@ -246,6 +268,13 @@ export const DELETE = withRoute('pagamenti/[id]:DELETE', async (request: Request
     const { data: fatt, error: fattErr } = await supabase.from('fatture_emesse').select('id').eq('pagamento_id', id).limit(1)
     if (!fattErr && fatt && fatt.length > 0) {
       return NextResponse.json({ error: 'Pagamento con fattura emessa: non eliminabile per conservazione fiscale. Annulla/storna prima la fattura.' }, { status: 409 })
+    }
+    // Voce agganciata a una transazione unica di famiglia: non si cancella qui
+    // (annullare la transazione). Retry sulla colonna transazione_id: se il DB non
+    // la ha (E2E CI non migrato) il controllo si salta.
+    const tx = await supabase.from('incassi').select('id').eq('pagamento_id', id).not('transazione_id', 'is', null).limit(1)
+    if (!tx.error && tx.data && tx.data.length > 0) {
+      return NextResponse.json({ error: 'Pagamento con incassi di una transazione di famiglia: annulla prima la transazione.' }, { status: 409 })
     }
     await annullaRicevutaAttiva(supabase, id, { da: user.id, motivo: 'cancellazione pagamento' })
     const { error } = await supabase.from('pagamenti').delete().eq('id', id)

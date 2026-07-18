@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { X, Pencil, Trash2, Save } from 'lucide-react';
+import { X, Pencil, Trash2, Save, BadgePercent } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { cx } from '@/lib/ui/cx';
 import { MODAL_OVERLAY, MODAL_CARD, MODAL_SHADOW, INPUT, SELECT, BTN_PRIMARY, BTN_SECONDARY } from './ui';
@@ -14,6 +14,8 @@ interface Incasso { id: string; importo: number; data_incasso: string; metodo: s
 interface PagamentoBase {
     id: string; descrizione: string; importo: number; scadenza: string;
     categoria_id?: string | null; obbligatorio: boolean; stato: string;
+    importo_pagato?: number;
+    sconto?: number;
     alunni?: { nome?: string; cognome?: string };
 }
 
@@ -43,6 +45,15 @@ export function ModificaPagamentoModal({ pagamento, categorie, userId, onClose, 
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
+    // Sconto/abbuono sulla singola voce (via la route dedicata /sconto).
+    const [sconto, setSconto] = useState<number>(Number(pagamento.sconto ?? 0));
+    const [scontoMotivo, setScontoMotivo] = useState('');
+    const [scontoMsg, setScontoMsg] = useState<string | null>(null);
+    const [savingSconto, setSavingSconto] = useState(false);
+
+    // Somma incassata dal ledger (per le validazioni speculari lato server).
+    const giaIncassato = incassi.reduce((s, i) => s + Number(i.importo), 0);
+
     const loadIncassi = useCallback(async () => {
         try {
             const res = await fetch(`/api/pagamenti/incassi?pagamento_id=${pagamento.id}&userId=${userId}`, {
@@ -58,6 +69,12 @@ export function ModificaPagamentoModal({ pagamento, categorie, userId, onClose, 
     useEffect(() => { loadIncassi(); }, [loadIncassi]);
 
     const salvaDati = async () => {
+        // Validazioni speculari a quelle del server (finding #3):
+        if (importo < 0) { setError('L\'importo non può essere negativo.'); return; }
+        if (importo - sconto < giaIncassato - 0.005) {
+            setError('Il nuovo importo è inferiore a quanto già incassato. Storna prima gli incassi.');
+            return;
+        }
         setSaving(true); setError(null);
         try {
             const res = await fetch(`/api/pagamenti/${pagamento.id}`, {
@@ -76,6 +93,27 @@ export function ModificaPagamentoModal({ pagamento, categorie, userId, onClose, 
         } finally { setSaving(false); }
     };
 
+    const applicaSconto = async () => {
+        if (sconto < 0) { setScontoMsg('Lo sconto non può essere negativo.'); return; }
+        if (sconto > importo + 0.005) { setScontoMsg('Lo sconto non può superare l\'importo.'); return; }
+        if (importo - sconto < giaIncassato - 0.005) { setScontoMsg('Sconto troppo alto: la voce scenderebbe sotto l\'incassato.'); return; }
+        if (scontoMotivo.trim().length < 3) { setScontoMsg('Indica il motivo dello sconto (almeno 3 caratteri).'); return; }
+        setSavingSconto(true); setScontoMsg(null);
+        try {
+            const res = await fetch(`/api/pagamenti/${pagamento.id}/sconto`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
+                body: JSON.stringify({ sconto: Number(sconto), sconto_motivo: scontoMotivo.trim() }),
+            });
+            const j = await res.json().catch(() => ({}));
+            if (!res.ok) { setScontoMsg(j.error || 'Errore nell\'applicazione dello sconto'); return; }
+            setScontoMsg('Sconto applicato.');
+            onDone();
+        } catch {
+            setScontoMsg('Errore di rete');
+        } finally { setSavingSconto(false); }
+    };
+
     const salvaIncasso = async (id: string) => {
         const res = await fetch(`/api/pagamenti/incassi/${id}`, {
             method: 'PATCH',
@@ -86,10 +124,18 @@ export function ModificaPagamentoModal({ pagamento, categorie, userId, onClose, 
         else { const j = await res.json().catch(() => ({})); alert(j.error || 'Errore'); }
     };
 
-    const eliminaIncasso = async (id: string) => {
-        if (!confirm('Stornare questo incasso?')) return;
-        const res = await fetch(`/api/pagamenti/incassi/${id}`, { method: 'DELETE', headers: { 'x-user-id': userId } });
+    // Storno TRACCIATO: il motivo è obbligatorio (niente più cancellazione secca).
+    const stornaIncasso = async (id: string) => {
+        const motivo = window.prompt('Storno incasso — indica il motivo (obbligatorio):')?.trim();
+        if (!motivo) return;
+        if (motivo.length < 3) { alert('Il motivo deve avere almeno 3 caratteri.'); return; }
+        const res = await fetch('/api/pagamenti/incassi/storno', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
+            body: JSON.stringify({ incasso_id: id, motivo }),
+        });
         if (res.ok) await loadIncassi();
+        else { const j = await res.json().catch(() => ({})); alert(j.error || 'Errore nello storno'); }
     };
 
     return (
@@ -146,6 +192,30 @@ export function ModificaPagamentoModal({ pagamento, categorie, userId, onClose, 
                     {error && <p className="font-maven text-xs text-kidville-error">{error}</p>}
                 </div>
 
+                {/* Sconto / abbuono sulla voce */}
+                <div className="mt-5 rounded-card bg-kidville-cream/50 p-3">
+                    <h4 className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                        <BadgePercent size={14} /> Sconto sulla voce
+                    </h4>
+                    <div className="grid grid-cols-[100px_1fr] gap-2 items-end">
+                        <div>
+                            <label className="font-maven text-[11px] text-kidville-muted mb-1 block">Sconto (€)</label>
+                            <input type="number" min={0} step="0.01" value={sconto || ''}
+                                onChange={(e) => setSconto(e.target.value === '' ? 0 : Number(e.target.value))}
+                                className={INPUT} />
+                        </div>
+                        <div>
+                            <label className="font-maven text-[11px] text-kidville-muted mb-1 block">Motivo</label>
+                            <input type="text" value={scontoMotivo} onChange={(e) => setScontoMotivo(e.target.value)}
+                                placeholder="Es. sconto fratelli, esenzione…" className={INPUT} />
+                        </div>
+                    </div>
+                    {scontoMsg && <p className="font-maven text-[11px] text-kidville-muted mt-2">{scontoMsg}</p>}
+                    <button onClick={applicaSconto} disabled={savingSconto} className={cx(BTN_SECONDARY, 'mt-2 w-full')}>
+                        {savingSconto ? 'Applicazione…' : 'Applica sconto'}
+                    </button>
+                </div>
+
                 {/* Incassi registrati */}
                 <div className="mt-5">
                     <h4 className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide mb-2">Incassi registrati</h4>
@@ -178,7 +248,7 @@ export function ModificaPagamentoModal({ pagamento, categorie, userId, onClose, 
                                             </span>
                                             <div className="flex items-center gap-2">
                                                 <button onClick={() => { setEditId(inc.id); setEditDraft({}); }} className="text-kidville-muted hover:text-kidville-green"><Pencil size={14} /></button>
-                                                <button onClick={() => eliminaIncasso(inc.id)} className="text-kidville-muted hover:text-kidville-error"><Trash2 size={14} /></button>
+                                                <button onClick={() => stornaIncasso(inc.id)} title="Storna (con motivo)" className="text-kidville-muted hover:text-kidville-error"><Trash2 size={14} /></button>
                                             </div>
                                         </div>
                                     )}

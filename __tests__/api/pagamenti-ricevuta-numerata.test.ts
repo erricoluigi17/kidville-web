@@ -139,8 +139,9 @@ describe('DELETE /api/pagamenti/incassi/[id] — annullo ricevuta su storno', ()
   it('lo storno annulla (best-effort) la ricevuta attiva del pagamento', async () => {
     h.incassi = [] // non usato qui
     // maybeSingle su incassi: il mock generico ritorna null per tabelle ignote → serve la riga old
+    // Contratto Contabilità v2: lo storno esige il motivo (query o body, min 3)
     const res = await DELETE(
-      new Request(`http://localhost/api/pagamenti/incassi/${IID}`, { method: 'DELETE' }),
+      new Request(`http://localhost/api/pagamenti/incassi/${IID}?motivo=storno%20di%20prova`, { method: 'DELETE' }),
       { params: Promise.resolve({ id: IID }) }
     )
     expect(res.status).toBe(200)

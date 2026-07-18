@@ -13,7 +13,7 @@ import { ModificaPagamentoModal } from './ModificaPagamentoModal';
 import { RateizzaModal } from './RateizzaModal';
 import { STATI_PAGAMENTO as STATI, calcolaTotaliPagamenti } from './stati';
 import { AgendaScadenze } from './AgendaScadenze';
-import { AGING_LABEL, bucketScadenze, isMoroso, type AgingBucketId } from '@/lib/pagamenti/aging';
+import { AGING_LABEL, bucketScadenze, isMoroso, residuoEffettivo, type AgingBucketId } from '@/lib/pagamenti/aging';
 import { Badge } from '@/components/ui/Badge';
 import { StatCard, TABLE_WRAP, TABLE, TH, TD, TROW } from '@/components/ui/cockpit';
 import { cx } from '@/lib/ui/cx';
@@ -354,7 +354,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                             <tbody>
                                 {agendaItems.map((p) => {
                                     const st = STATI[p.stato] ?? STATI.da_pagare;
-                                    const residuo = Math.max(0, Number(p.importo) - Number(p.importo_pagato || 0));
+                                    const residuo = residuoEffettivo(p);
                                     return (
                                         <tr key={p.id} className={TROW}>
                                             <td className={cx(TD, 'font-semibold text-kidville-green')}>{p.alunni?.nome} {p.alunni?.cognome}</td>

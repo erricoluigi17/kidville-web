@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { AlertTriangle, Download, Receipt } from 'lucide-react';
 import { getSupabase } from '@/lib/supabase/browser-client';
 import { raggruppaPerCategoria } from '@/lib/pagamenti/categorie';
+import { residuoEffettivo } from '@/lib/pagamenti/aging';
 import { isoToIt } from '@/lib/format/data';
 import { PushOptIn } from './PushOptIn';
 
@@ -13,6 +14,7 @@ interface Pagamento {
     descrizione: string;
     importo: number;
     importo_pagato: number;
+    sconto?: number | string | null;
     scadenza: string;
     stato: string;
     tipo: string;
@@ -20,8 +22,20 @@ interface Pagamento {
     fattura_stato?: string;
     fattura_pdf_path?: string | null;
     importo_totale_famiglia?: number;
+    residuo?: number | string | null;
+    stato_effettivo?: string;
     payment_categories?: { nome?: string; colore?: string; icona?: string } | null;
     alunni?: { nome?: string; cognome?: string; sospeso?: boolean };
+}
+
+// Residuo per riga (fonte unica): per gli split importo_pagato è dell'intero
+// pagamento (non della quota del genitore), quindi il residuo affidabile è
+// l'intera quota; per gli altri è residuoEffettivo (importo − sconto − pagato,
+// clampato). Mai negativo.
+function residuoRiga(p: Pagamento): number {
+    if (p.stato === 'pagato') return 0;
+    if (p.tipo === 'split') return Math.max(0, Number(p.importo) - Number(p.sconto || 0));
+    return residuoEffettivo(p);
 }
 
 interface Props { userId: string }
@@ -76,14 +90,24 @@ export function StoricoPagamenti({ userId }: Props) {
     // Vista a categorie (DL-022): Rette / Iscrizione / Mensa / Divisa / Materiale / Altro.
     const gruppi = raggruppaPerCategoria(pagamenti);
 
-    // Totale ancora dovuto (DR banner "Totale da saldare"): somma del residuo sulle
-    // voci non saldate. Per gli split importo_pagato è dell'intero pagamento (non
-    // della quota del genitore): il residuo affidabile è l'intera quota; per i
-    // non-split è importo − importo_pagato, mai negativo.
-    const residuoDi = (p: Pagamento) =>
-        p.stato === 'pagato' ? 0 : p.tipo === 'split' ? Number(p.importo) : Math.max(0, Number(p.importo) - Number(p.importo_pagato));
-    const totaleDovuto = pagamenti.reduce((s, p) => s + residuoDi(p), 0);
+    // Totale ancora dovuto (DR banner "Totale da saldare"): somma del residuo
+    // effettivo per voce (fonte unica aging.ts, split-aware, mai negativo).
+    const totaleDovuto = pagamenti.reduce((s, p) => s + residuoRiga(p), 0);
     const vociAperte = pagamenti.filter((p) => p.stato !== 'pagato').length;
+
+    // Vista «Totale famiglia»: subtotale del residuo per figlio (raggruppa per
+    // alunno_id sui dati già in memoria — zero nuove fetch) + totale complessivo.
+    // Compare solo con ≥2 figli distinti.
+    const perFiglio = new Map<string, { nome: string; totale: number }>();
+    for (const p of pagamenti) {
+        const key = p.alunno_id ?? 'sconosciuto';
+        const nome = `${p.alunni?.nome ?? ''} ${p.alunni?.cognome ?? ''}`.trim() || 'Alunno';
+        const cur = perFiglio.get(key) ?? { nome, totale: 0 };
+        cur.totale += residuoRiga(p);
+        cur.nome = nome;
+        perFiglio.set(key, cur);
+    }
+    const mostraTotaleFamiglia = perFiglio.size >= 2;
 
     return (
         <div className="space-y-5">
@@ -106,6 +130,24 @@ export function StoricoPagamenti({ userId }: Props) {
                     <p className="font-maven text-xs text-white/70 mt-1">
                         {vociAperte} voc{vociAperte === 1 ? 'e' : 'i'} da saldare
                     </p>
+                </div>
+            )}
+
+            {!loading && !error && mostraTotaleFamiglia && (
+                <div className="rounded-card border border-kidville-line bg-white p-4">
+                    <p className="font-barlow font-bold text-kidville-green uppercase text-xs tracking-wide mb-2">Totale famiglia</p>
+                    <div className="space-y-1.5">
+                        {[...perFiglio.entries()].map(([id, f]) => (
+                            <div key={id} className="flex items-center justify-between font-maven text-sm">
+                                <span className="text-kidville-ink">{f.nome}</span>
+                                <span className="font-bold text-kidville-green">€ {f.totale.toFixed(2)}</span>
+                            </div>
+                        ))}
+                    </div>
+                    <div className="mt-2 flex items-center justify-between border-t border-kidville-line pt-2 font-maven text-sm">
+                        <span className="font-bold text-kidville-green">Totale complessivo</span>
+                        <span className="font-black text-kidville-green">€ {totaleDovuto.toFixed(2)}</span>
+                    </div>
                 </div>
             )}
 
@@ -186,7 +228,8 @@ function PagamentoCard({ p, userId }: { p: Pagamento; userId: string }) {
     const isSplit = p.tipo === 'split';
     // Per gli split importo_pagato è dell'intero pagamento, non della quota:
     // il residuo per-quota non è calcolabile qui, quindi non si mostra "(resta …)".
-    const resto = Number(p.importo) - Number(p.importo_pagato);
+    // Per i non-split: importo − sconto − pagato, mai negativo (guard sui sovraincassi).
+    const resto = residuoEffettivo(p);
     const fatturaPronta = p.fattura_stato === 'emessa';
 
     return (

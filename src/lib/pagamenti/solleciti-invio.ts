@@ -2,6 +2,8 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { sendEmail } from '@/lib/email/send'
 import { enqueueNotifiche } from '@/lib/push/enqueue'
 import { getModuleConfig } from '@/lib/settings/module-config'
+import { logErrore } from '@/lib/logging/logger'
+import { residuoEffettivo } from './aging'
 import { datiStruttura, type ArubaFiscalConfig, type FiscaleConfig } from './fiscale'
 import {
     DEFAULT_SOLLECITI_CONFIG,
@@ -36,6 +38,7 @@ interface PagRow {
     descrizione: string
     importo: number
     importo_pagato: number | null
+    sconto?: number | null
     stato: string
     scadenza: string | null
     tipo: string
@@ -57,10 +60,17 @@ export async function sollecitaPagamenti(
         sediAmmesse?: string[]
     } = {},
 ): Promise<EsitoSollecito[]> {
-    const { data: pagRows } = await supabase
-        .from('pagamenti')
-        .select('id, alunno_id, scuola_id, descrizione, importo, importo_pagato, stato, scadenza, tipo, ultimo_sollecito_il, alunni:alunno_id ( nome, cognome )')
-        .in('id', pagamentoIds)
+    const COLONNE_PAG_BASE = 'id, alunno_id, scuola_id, descrizione, importo, importo_pagato, stato, scadenza, tipo, ultimo_sollecito_il, alunni:alunno_id ( nome, cognome )'
+    const COLONNE_PAG = 'id, alunno_id, scuola_id, descrizione, importo, importo_pagato, sconto, stato, scadenza, tipo, ultimo_sollecito_il, alunni:alunno_id ( nome, cognome )'
+    let { data: pagRows, error: errPag } = await supabase.from('pagamenti').select(COLONNE_PAG).in('id', pagamentoIds)
+    // DB E2E CI non migrato: `sconto` assente → 42703, ritenta senza (residuo = importo − pagato).
+    if (errPag && (errPag as { code?: string }).code === '42703') {
+        const retry = await supabase.from('pagamenti').select(COLONNE_PAG_BASE).in('id', pagamentoIds)
+        pagRows = retry.data as unknown as typeof pagRows
+        errPag = retry.error
+    }
+    // PostgREST non lancia: un errore residuo (≠ colonna mancante) va tracciato, non ingoiato.
+    if (errPag) logErrore({ operazione: 'solleciti:pagamenti', evento: 'db' }, errPag)
     const pags = (pagRows || []) as unknown as PagRow[]
 
     // livello già raggiunto (registro; degrade → si riparte da 1)
@@ -84,7 +94,7 @@ export async function sollecitaPagamenti(
         if (opts.sediAmmesse && !opts.sediAmmesse.includes(pag.scuola_id)) {
             esiti.push({ pagamento_id: id, ok: false, motivo: 'fuori dalle sedi attive' }); continue
         }
-        const residuo = Number(pag.importo) - Number(pag.importo_pagato || 0)
+        const residuo = residuoEffettivo(pag)
         if (pag.stato === 'pagato' || residuo <= 0) { esiti.push({ pagamento_id: id, ok: false, motivo: 'già saldato' }); continue }
         if (pag.tipo === 'padre') { esiti.push({ pagamento_id: id, ok: false, motivo: 'contenitore rateale: sollecitare le rate' }); continue }
 

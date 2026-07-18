@@ -7,6 +7,7 @@ import { zUuid } from '@/lib/validation/common'
 import { resolveScuoleAttive, assertAlunnoInScope } from '@/lib/auth/scope'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
+import { residuoEffettivo, statoEffettivo } from '@/lib/pagamenti/aging'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // Uuid opzionale da query string: stringa vuota trattata come assente
@@ -55,6 +56,30 @@ const SELECT = `
   alunni ( id, nome, cognome, classe_sezione, sospeso )
 `
 
+// SELECT del GET con le colonne Contabilità v2 (sconto/sconto_motivo). Sul DB
+// E2E CI (non migrato) queste colonne non esistono → 42703, gestito con retry
+// sul SELECT base (stesso pattern di genera-rette/route.ts).
+const SELECT_GET = SELECT.replace(
+  'importo, importo_pagato, scadenza, stato,',
+  'importo, importo_pagato, sconto, sconto_motivo, scadenza, stato,',
+)
+
+// Riga grezza del GET. Il SELECT è passato come `string` (retry con/senza sconto),
+// quindi supabase non ne inferisce la forma: la fissiamo qui (index signature per
+// i campi non elencati, es. quota_id aggiunto lato genitore).
+type PagamentoGetRow = {
+  id: string
+  alunno_id: string
+  scuola_id: string
+  importo: number | string
+  importo_pagato: number | string | null
+  sconto?: number | string | null
+  scadenza: string | null
+  stato: string
+  tipo: string | null
+  [k: string]: unknown
+}
+
 // GET /api/pagamenti
 //   staff  -> tutti i pagamenti (filtri: alunno_id, stato, categoria_id, scuola_id, gruppo, periodo)
 //   parent -> solo i pagamenti dei propri figli; per gli split, solo se ha una quota
@@ -67,44 +92,65 @@ export const GET = withRoute('pagamenti:GET', async (request: NextRequest) => {
 
     const supabase = await createAdminClient()
 
-    let query = supabase.from('pagamenti').select(SELECT).order('scadenza', { ascending: false })
-
+    const oggi = new Date().toISOString().slice(0, 10)
     const isStaff = user.role === 'admin' || user.role === 'coordinator' || user.role === 'segreteria'
+
+    // Input dei filtri risolti UNA volta (parsing + scoping/legami async), poi la
+    // catena di filtri è sincrona e riapplicabile per il retry senza sconto.
+    let qData: z.infer<typeof getQuerySchema> | null = null
+    let sediAttive: string[] = []
+    let figli: string[] | null = null
 
     if (isStaff) {
       // I filtri sono validati solo nel ramo staff: il ramo genitore li ignora (come oggi).
       const q = parseQuery(request, getQuerySchema)
       if ('response' in q) return q.response
-      const { alunno_id: alunnoId, stato, categoria_id: categoriaId, scuola_id: scuolaId, gruppo, periodo } = q.data
+      qData = q.data
       // Scoping multi-tenant: limita SEMPRE ai plessi accessibili; lo scuola_id
       // del client serve solo a restringere DENTRO quell'insieme, mai ad allargarlo.
-      const sediAttive = await resolveScuoleAttive(request, supabase, user)
-      query = query.in('scuola_id', sediAttive)
-      if (alunnoId) query = query.eq('alunno_id', alunnoId)
-      if (stato) query = query.eq('stato', stato)
-      if (categoriaId) query = query.eq('categoria_id', categoriaId)
-      if (scuolaId && sediAttive.includes(scuolaId)) query = query.eq('scuola_id', scuolaId)
-      if (gruppo) query = query.eq('gruppo', gruppo)
-      if (periodo) query = query.eq('periodo_competenza', periodo)
-      if (q.data.scadenza_da) query = query.gte('scadenza', q.data.scadenza_da)
-      if (q.data.scadenza_a) query = query.lte('scadenza', q.data.scadenza_a)
-      if (q.data.fattura_stato) query = query.eq('fattura_stato', q.data.fattura_stato)
-      if (q.data.solo_aperti === 'true') query = query.in('stato', ['da_pagare', 'parziale', 'scaduto'])
+      sediAttive = await resolveScuoleAttive(request, supabase, user)
     } else {
       // genitore: solo i propri figli
       const { data: legami } = await supabase
         .from('legame_genitori_alunni')
         .select('alunno_id')
         .eq('genitore_id', user.id)
-      const figli = (legami || []).map((l) => l.alunno_id)
+      figli = (legami || []).map((l) => l.alunno_id)
       if (figli.length === 0) return NextResponse.json({ success: true, data: [] })
-      query = query.in('alunno_id', figli)
-      // visibilità ritardata: nasconde i pagamenti non ancora "pubblicati" (es. retta del mese futuro)
-      const oggi = new Date().toISOString().slice(0, 10)
-      query = query.or(`visibile_dal.is.null,visibile_dal.lte.${oggi}`)
     }
 
-    const { data, error } = await query
+    // Costruttore della query parametrizzato sul SELECT: il ramo di retry lo
+    // richiama con il SELECT base quando il DB non ha le colonne Contabilità v2.
+    const costruisci = (select: string) => {
+      let query = supabase.from('pagamenti').select(select).order('scadenza', { ascending: false })
+      if (isStaff && qData) {
+        const { alunno_id: alunnoId, stato, categoria_id: categoriaId, scuola_id: scuolaId, gruppo, periodo } = qData
+        query = query.in('scuola_id', sediAttive)
+        if (alunnoId) query = query.eq('alunno_id', alunnoId)
+        if (stato) query = query.eq('stato', stato)
+        if (categoriaId) query = query.eq('categoria_id', categoriaId)
+        if (scuolaId && sediAttive.includes(scuolaId)) query = query.eq('scuola_id', scuolaId)
+        if (gruppo) query = query.eq('gruppo', gruppo)
+        if (periodo) query = query.eq('periodo_competenza', periodo)
+        if (qData.scadenza_da) query = query.gte('scadenza', qData.scadenza_da)
+        if (qData.scadenza_a) query = query.lte('scadenza', qData.scadenza_a)
+        if (qData.fattura_stato) query = query.eq('fattura_stato', qData.fattura_stato)
+        if (qData.solo_aperti === 'true') query = query.in('stato', ['da_pagare', 'parziale', 'scaduto'])
+      } else if (figli) {
+        query = query.in('alunno_id', figli)
+        // visibilità ritardata: nasconde i pagamenti non ancora "pubblicati" (es. retta del mese futuro)
+        query = query.or(`visibile_dal.is.null,visibile_dal.lte.${oggi}`)
+      }
+      return query
+    }
+
+    let { data, error } = await costruisci(SELECT_GET)
+    // DB E2E CI non migrato: sconto/sconto_motivo assenti → 42703, ritenta senza.
+    if (error && (error as { code?: string }).code === '42703') {
+      const retry = await costruisci(SELECT)
+      data = retry.data
+      error = retry.error
+    }
     if (error) {
       // PostgREST non lancia: il catch qui sotto non scatterebbe mai. La riga di errore
       // (con lo stack e la marca anti-doppione per `withRoute`) va emessa qui.
@@ -112,7 +158,7 @@ export const GET = withRoute('pagamenti:GET', async (request: NextRequest) => {
       return NextResponse.json({ error: 'Errore nel recupero dei pagamenti', details: error.message }, { status: 500 })
     }
 
-    let rows = data || []
+    let rows = (data ?? []) as unknown as PagamentoGetRow[]
 
     // Proiezione lato genitore: nasconde i container rateali (padre); le rate
     // figlie (tipo='rata') restano visibili come voci separate con la propria scadenza.
@@ -141,7 +187,16 @@ export const GET = withRoute('pagamenti:GET', async (request: NextRequest) => {
         })
     }
 
-    return NextResponse.json({ success: true, data: rows })
+    // Campi derivati (fonte unica aging.ts): stato/residuo calcolati SEMPRE dalle
+    // date, così client web e app leggono lo stesso valore del server. `sconto` è
+    // assente sui DB non migrati (retry sopra) → residuoEffettivo lo tratta come 0.
+    const rowsArricchite = rows.map((r) => ({
+      ...r,
+      residuo: residuoEffettivo(r),
+      stato_effettivo: statoEffettivo(r, oggi),
+    }))
+
+    return NextResponse.json({ success: true, data: rowsArricchite })
   } catch (err) {
     logErrore({ operazione: 'pagamenti:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })

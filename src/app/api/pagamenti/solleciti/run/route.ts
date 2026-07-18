@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { sollecitaPagamenti } from '@/lib/pagamenti/solleciti-invio'
+import { verificaRevocaSospensioneMorosita } from '@/lib/pagamenti/sospensione'
 import type { SollecitiConfig } from '@/lib/pagamenti/solleciti'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { withRoute } from '@/lib/logging/with-route'
@@ -83,6 +84,39 @@ export const POST = withRoute('pagamenti/solleciti/run:POST', async (request: Re
       .in('stato', ['da_pagare', 'parziale'])
       .lt('scadenza', oggi)
     if (errStati) return queryFallita('aggiornamento stati scaduti', errStati, t0)
+
+    // 1b) SAFETY-NET revoca automatica morosità: dopo il refresh degli stati,
+    // individua i sospesi per morosità e revoca chi ha saldato TUTTO lo scaduto
+    // famiglia. È un rete di sicurezza: la revoca scatta già dagli hook su
+    // incassi/storno/transazioni, ma se un pagamento è arrivato fuori da quei
+    // percorsi (bonifica, correzione manuale) qui la si recupera. Mai un crash del
+    // cron: PostgREST non lancia (si controlla `{ error }`) e verificaRevoca è
+    // best-effort. Retry 42703: colonna assente sul DB non migrato → nessuna revoca.
+    try {
+      const sel = await supabase
+        .from('alunni')
+        .select('id')
+        .eq('sospeso', true)
+        .eq('sospeso_causa', 'morosita')
+      if (sel.error) {
+        if (['42703', 'PGRST204'].includes((sel.error as { code?: string }).code ?? '')) {
+          logEvento('cron', 'warn', { operazione: JOB, esito: 'revoca-morosita-non-disponibile' }, sel.error)
+        } else {
+          logEvento('cron', 'error', { operazione: JOB, esito: 'lettura-sospesi-fallita' }, sel.error)
+        }
+      } else {
+        const idsSospesi = ((sel.data ?? []) as { id: string }[]).map((r) => r.id)
+        if (idsSospesi.length > 0) {
+          const { revocati } = await verificaRevocaSospensioneMorosita(supabase, idsSospesi)
+          if (revocati.length > 0) {
+            logEvento('cron', 'info', { operazione: JOB, esito: 'revoca-morosita', revocati: revocati.length, msg: `${JOB}: revoca-morosita` })
+          }
+        }
+      }
+    } catch (e) {
+      // La safety-net non deve MAI abbattere il giro dei solleciti.
+      logEvento('cron', 'error', { operazione: JOB, esito: 'revoca-morosita-errore' }, e)
+    }
 
     // 2) scuole con invio automatico attivo
     const { data: settingsRows, error } = await supabase

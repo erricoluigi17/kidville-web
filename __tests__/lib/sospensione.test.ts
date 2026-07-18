@@ -12,6 +12,7 @@ function fakeSupabase(responses: Record<string, unknown>) {
       const builder = {
         select: () => builder,
         eq: () => builder,
+        in: () => builder,
         maybeSingle: async () => ({ data: responses[table] ?? null, error: null }),
         then: (resolve: (v: unknown) => void) =>
           resolve({ data: responses[table] ?? [], error: null }),
@@ -45,12 +46,20 @@ describe('assertAlunnoNonSospeso', () => {
 })
 
 describe('assertGenitoreNonSospeso', () => {
+  // Contabilità v2: i figli si risolvono via unione legami (legame_genitori_alunni
+  // → alunno_id) e lo stato sospeso si legge da `alunni` (query separata).
   it('null se nessun figlio sospeso', async () => {
-    const sb = fakeSupabase({ legame_genitori_alunni: [{ alunni: { sospeso: false } }, { alunni: { sospeso: false } }] })
+    const sb = fakeSupabase({
+      legame_genitori_alunni: [{ alunno_id: 'a1' }, { alunno_id: 'a2' }],
+      alunni: [{ id: 'a1', sospeso: false }, { id: 'a2', sospeso: false }],
+    })
     expect(await assertGenitoreNonSospeso(sb, 'g1')).toBeNull()
   })
   it('403 se almeno un figlio è sospeso', async () => {
-    const sb = fakeSupabase({ legame_genitori_alunni: [{ alunni: { sospeso: false } }, { alunni: { sospeso: true } }] })
+    const sb = fakeSupabase({
+      legame_genitori_alunni: [{ alunno_id: 'a1' }, { alunno_id: 'a2' }],
+      alunni: [{ id: 'a1', sospeso: false }, { id: 'a2', sospeso: true }],
+    })
     const res = await assertGenitoreNonSospeso(sb, 'g1')
     expect(res!.status).toBe(403)
   })

@@ -47,6 +47,10 @@ vi.mock('@/lib/anagrafiche/legami', () => ({
 
 vi.mock('@/lib/pagamenti/sospensione', () => ({
   assertGenitoreNonSospeso: vi.fn().mockImplementation(async () => h.sospeso),
+  // Contabilità v2: POST/PATCH usano la variante flag-aware; delega su h.sospeso.
+  assertGenitoreNonSospesoSalvoEssenziale: vi.fn().mockImplementation(
+    async (_sb: unknown, _id: unknown, opts: { sempreFirmabile?: boolean }) => (opts?.sempreFirmabile ? null : h.sospeso)
+  ),
 }))
 
 vi.mock('@/lib/forms/persist-submission', () => ({

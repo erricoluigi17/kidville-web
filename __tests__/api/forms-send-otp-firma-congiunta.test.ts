@@ -41,7 +41,10 @@ vi.mock('@/lib/security/rate-limit', () => ({
   rateLimit: vi.fn().mockReturnValue({ ok: true, remaining: 7, retryAfterMs: 0 }),
   clientIp: vi.fn().mockReturnValue('ip'),
 }))
-vi.mock('@/lib/pagamenti/sospensione', () => ({ assertGenitoreNonSospeso: vi.fn(async () => null) }))
+vi.mock('@/lib/pagamenti/sospensione', () => ({
+  assertGenitoreNonSospeso: vi.fn(async () => null),
+  assertGenitoreNonSospesoSalvoEssenziale: vi.fn(async () => null),
+}))
 
 import { POST, PATCH } from '@/app/api/forms/send-otp/route'
 

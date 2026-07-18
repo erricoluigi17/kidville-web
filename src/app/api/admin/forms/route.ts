@@ -27,7 +27,12 @@ const postBodySchema = z.object({
   // Un form_type non ammesso NON viene rifiutato: oggi il codice lo normalizza
   // silenziosamente ad 'autorizzazione' → .catch() replica quel fallback.
   form_type: z.enum(['sondaggio', 'gradimento', 'autorizzazione']).catch('autorizzazione'),
+  // Flag «essenziale: sempre firmabile» — firmabile anche da genitore sospeso.
+  sempre_firmabile: z.unknown().optional(),
 });
+
+// Colonna nuova assente sul DB E2E CI non migrato → si omette (best-effort).
+const COLONNA_NUOVA_ASSENTE = new Set(['PGRST204', '42703']);
 
 // PATCH: i campi presenti nel body (anche null) vengono inclusi nell'update
 // come oggi; i valori restano senza vincoli di forma (z.unknown).
@@ -38,6 +43,7 @@ const patchBodySchema = z.object({
   title: z.unknown().optional(),
   description: z.unknown().optional(),
   target_classes: z.unknown().optional(),
+  sempre_firmabile: z.unknown().optional(),
 });
 
 const deleteBodySchema = z.object({
@@ -86,7 +92,7 @@ export const POST = withRoute('admin/forms:POST', async (request: NextRequest) =
     if ('response' in b) return b.response;
 
     try {
-      const { title, description, fields, target_scope, target_classes, expiration_date, scuola_id, form_type } = b.data;
+      const { title, description, fields, target_scope, target_classes, expiration_date, scuola_id, form_type, sempre_firmabile } = b.data;
 
       const supabase = await createAdminClient();
 
@@ -104,17 +110,21 @@ export const POST = withRoute('admin/forms:POST', async (request: NextRequest) =
         expiration_date: expiration_date || null
       };
 
-      const { data, error } = await supabase
+      let res = await supabase
         .from('forms_templates')
-        .insert(record)
+        .insert({ ...record, sempre_firmabile: sempre_firmabile === true })
         .select()
         .single();
-
-      if (error) {
-        return NextResponse.json({ error: error.message }, { status: 500 });
+      // DB non migrato (colonna assente): riprova senza il flag.
+      if (res.error && COLONNA_NUOVA_ASSENTE.has(res.error.code ?? '')) {
+        res = await supabase.from('forms_templates').insert(record).select().single();
       }
 
-      return NextResponse.json(data, { status: 201 });
+      if (res.error) {
+        return NextResponse.json({ error: res.error.message }, { status: 500 });
+      }
+
+      return NextResponse.json(res.data, { status: 201 });
     } catch (err) {
       logErrore({ operazione: 'admin/forms:POST', stato: 500 }, err);
       const message = err instanceof Error && err.message ? err.message : 'Errore interno';
@@ -131,7 +141,7 @@ export const PATCH = withRoute('admin/forms:PATCH', async (request: NextRequest)
     if ('response' in b) return b.response;
 
     try {
-      const { id, expiration_date, title, description, target_classes } = b.data;
+      const { id, expiration_date, title, description, target_classes, sempre_firmabile } = b.data;
 
       const supabase = await createAdminClient();
       const updates: Record<string, unknown> = {};
@@ -140,19 +150,27 @@ export const PATCH = withRoute('admin/forms:PATCH', async (request: NextRequest)
       if (title !== undefined) updates.title = title;
       if (description !== undefined) updates.description = description;
       if (target_classes !== undefined) updates.target_classes = target_classes;
+      if (sempre_firmabile !== undefined) updates.sempre_firmabile = sempre_firmabile === true;
 
-      const { data, error } = await supabase
+      let res = await supabase
         .from('forms_templates')
         .update(updates)
         .eq('id', id)
         .select()
         .single();
-
-      if (error) {
-        return NextResponse.json({ error: error.message }, { status: 500 });
+      // DB non migrato: se la PATCH portava `sempre_firmabile` e la colonna manca,
+      // riprova senza — gli altri campi devono comunque salvarsi.
+      if (res.error && COLONNA_NUOVA_ASSENTE.has(res.error.code ?? '') && 'sempre_firmabile' in updates) {
+        const rest = { ...updates };
+        delete rest.sempre_firmabile;
+        res = await supabase.from('forms_templates').update(rest).eq('id', id).select().single();
       }
 
-      return NextResponse.json(data);
+      if (res.error) {
+        return NextResponse.json({ error: res.error.message }, { status: 500 });
+      }
+
+      return NextResponse.json(res.data);
     } catch (err) {
       logErrore({ operazione: 'admin/forms:PATCH', stato: 500 }, err);
       const message = err instanceof Error && err.message ? err.message : 'Errore interno';

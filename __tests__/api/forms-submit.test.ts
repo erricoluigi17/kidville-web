@@ -14,7 +14,9 @@ vi.mock('@/lib/security/rate-limit', () => ({
   clientIp: vi.fn().mockReturnValue('test-ip'),
 }))
 vi.mock('@/lib/pagamenti/sospensione', () => ({
-  assertGenitoreNonSospeso: vi.fn(async () => h.sospensione),
+  // Contabilità v2: la route usa la variante flag-aware. Delega sul flag come la reale.
+  assertGenitoreNonSospesoSalvoEssenziale: vi.fn(async (_sb: unknown, _id: unknown, opts: { sempreFirmabile?: boolean }) =>
+    opts?.sempreFirmabile ? null : h.sospensione),
 }))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({

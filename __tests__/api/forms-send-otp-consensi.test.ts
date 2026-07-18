@@ -28,6 +28,7 @@ vi.mock('@/lib/security/rate-limit', () => ({
 }))
 vi.mock('@/lib/pagamenti/sospensione', () => ({
   assertGenitoreNonSospeso: vi.fn(async () => null),
+  assertGenitoreNonSospesoSalvoEssenziale: vi.fn(async () => null),
 }))
 
 import { POST } from '@/app/api/forms/send-otp/route'

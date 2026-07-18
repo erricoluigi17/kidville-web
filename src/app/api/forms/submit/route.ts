@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { rateLimit, clientIp } from '@/lib/security/rate-limit'
-import { assertGenitoreNonSospeso } from '@/lib/pagamenti/sospensione'
+import { assertGenitoreNonSospesoSalvoEssenziale } from '@/lib/pagamenti/sospensione'
+import { leggiSempreFirmabile } from '@/lib/forms/sempre-firmabile'
 import { estraiConsensi, consensiObbligatoriMancanti } from '@/lib/forms/consensi'
 import { notificaEvento } from '@/lib/notifiche/triggers'
 import { staffScuola, scuolaUnicaReale } from '@/lib/notifiche/destinatari'
@@ -43,9 +44,11 @@ export const POST = withRoute('forms/submit:POST', async (request: Request) => {
 
     const supabase = await createAdminClient()
 
-    // Sospensione moroso (DL-021): inibisce nuove compilazioni di moduli.
+    // Sospensione moroso (DL-021): inibisce nuove compilazioni di moduli, salvo
+    // i moduli essenziali (sempre_firmabile: salute/sicurezza).
     if (userId) {
-      const sospesoErr = await assertGenitoreNonSospeso(supabase, userId)
+      const sempreFirmabile = await leggiSempreFirmabile(supabase, 'form_models', modelId)
+      const sospesoErr = await assertGenitoreNonSospesoSalvoEssenziale(supabase, userId, { sempreFirmabile })
       if (sospesoErr) return sospesoErr
     }
 

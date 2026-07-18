@@ -18,7 +18,13 @@ const postBodySchema = z.object({
   is_active: z.unknown().optional(),
   requires_signature: z.unknown().optional(),
   signature_mode: z.unknown().optional(),
+  // Flag «essenziale: sempre firmabile» (salute/sicurezza) — firmabile anche da
+  // genitore sospeso. Best-effort: assente sul DB non migrato (PGRST204) → si omette.
+  sempre_firmabile: z.unknown().optional(),
 })
+
+// Colonna nuova assente sul DB E2E CI non migrato.
+const COLONNA_NUOVA_ASSENTE = new Set(['PGRST204', '42703'])
 
 // PATCH — il resto del body viene spalmato nell'update (...updates):
 // .loose() preserva le chiavi extra. `id` resta stringa libera come il
@@ -36,27 +42,32 @@ export const POST = withRoute('admin/form-models:POST', async (request: Request)
   const b = await parseBody(request, postBodySchema)
   if ('response' in b) return b.response
   try {
-    const { title, schema, is_active, requires_signature, description, signature_mode } = b.data
+    const { title, schema, is_active, requires_signature, description, signature_mode, sempre_firmabile } = b.data
 
     const supabase = await createAdminClient()
-    const { data, error } = await supabase
+    const base = {
+      title,
+      description: description ?? null,
+      schema,
+      is_active: is_active ?? false,
+      requires_signature: requires_signature ?? false,
+      signature_mode: signature_mode === 'joint' ? 'joint' : 'single',
+    }
+    let res = await supabase
       .from('form_models')
-      .insert({
-        title,
-        description: description ?? null,
-        schema,
-        is_active: is_active ?? false,
-        requires_signature: requires_signature ?? false,
-        signature_mode: signature_mode === 'joint' ? 'joint' : 'single',
-      })
+      .insert({ ...base, sempre_firmabile: sempre_firmabile === true })
       .select()
       .single()
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 })
+    // DB non migrato (colonna sempre_firmabile assente): riprova senza il flag.
+    if (res.error && COLONNA_NUOVA_ASSENTE.has(res.error.code ?? '')) {
+      res = await supabase.from('form_models').insert(base).select().single()
     }
 
-    return NextResponse.json(data, { status: 201 })
+    if (res.error) {
+      return NextResponse.json({ error: res.error.message }, { status: 500 })
+    }
+
+    return NextResponse.json(res.data, { status: 201 })
   } catch (err) {
     logErrore({ operazione: 'admin/form-models:POST', stato: 500 }, err)
     return NextResponse.json(
@@ -76,18 +87,30 @@ export const PATCH = withRoute('admin/form-models:PATCH', async (request: Reques
     const { id, ...updates } = b.data
 
     const supabase = await createAdminClient()
-    const { data, error } = await supabase
+    let res = await supabase
       .from('form_models')
       .update({ ...updates, updated_at: new Date().toISOString() })
       .eq('id', id)
       .select()
       .single()
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 })
+    // DB non migrato: se la PATCH portava `sempre_firmabile` e la colonna manca,
+    // riprova senza — gli altri campi devono comunque salvarsi.
+    if (res.error && COLONNA_NUOVA_ASSENTE.has(res.error.code ?? '') && 'sempre_firmabile' in updates) {
+      const rest = { ...updates } as Record<string, unknown>
+      delete rest.sempre_firmabile
+      res = await supabase
+        .from('form_models')
+        .update({ ...rest, updated_at: new Date().toISOString() })
+        .eq('id', id)
+        .select()
+        .single()
     }
 
-    return NextResponse.json(data)
+    if (res.error) {
+      return NextResponse.json({ error: res.error.message }, { status: 500 })
+    }
+
+    return NextResponse.json(res.data)
   } catch (err) {
     logErrore({ operazione: 'admin/form-models:PATCH', stato: 500 }, err)
     return NextResponse.json(

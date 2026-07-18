@@ -65,4 +65,66 @@ describe('Modal (primitive accessibile)', () => {
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(document.activeElement).toBe(trigger)
   })
+
+  it('usa aria-labelledby (e omette aria-label) quando labelledBy è passato', () => {
+    render(
+      <Modal open onClose={() => {}} title="Titolo" labelledBy="h">
+        <h2 id="h">Intestazione</h2>
+        <button>ok</button>
+      </Modal>
+    )
+    const d = screen.getByRole('dialog')
+    expect(d).toHaveAttribute('aria-labelledby', 'h')
+    expect(d).not.toHaveAttribute('aria-label')
+  })
+
+  it('con dialoghi annidati Escape chiude SOLO quello in cima (stack)', () => {
+    const onCloseBottom = vi.fn()
+    const onCloseTop = vi.fn()
+    function Harness() {
+      const [topOpen, setTopOpen] = useState(true)
+      return (
+        <>
+          <Modal open onClose={onCloseBottom} title="Sotto">
+            <button>sotto</button>
+          </Modal>
+          <Modal open={topOpen} onClose={() => { onCloseTop(); setTopOpen(false) }} title="Sopra">
+            <button>sopra</button>
+          </Modal>
+        </>
+      )
+    }
+    render(<Harness />)
+    // Primo Escape: chiude solo il dialogo in cima.
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(onCloseTop).toHaveBeenCalledTimes(1)
+    expect(onCloseBottom).not.toHaveBeenCalled()
+    // Secondo Escape: ora il dialogo di sotto è in cima e risponde.
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(onCloseBottom).toHaveBeenCalledTimes(1)
+  })
+
+  it('un onClose inline (ricreato a ogni render) non ruba il focus a ogni render', () => {
+    function Harness() {
+      const [, setTick] = useState(0)
+      return (
+        <>
+          <button data-testid="rerender" onClick={() => setTick((t) => t + 1)}>tick</button>
+          {/* onClose inline: nuova funzione a ogni render */}
+          <Modal open onClose={() => {}} title="X">
+            <button>primo</button>
+            <button data-testid="secondo">secondo</button>
+          </Modal>
+        </>
+      )
+    }
+    render(<Harness />)
+    const secondo = screen.getByTestId('secondo')
+    secondo.focus()
+    expect(document.activeElement).toBe(secondo)
+    // Un re-render del genitore NON deve rifar partire l'effetto e riportare il
+    // focus al primo controllo (regressione del focus-steal con deps [open,onClose]).
+    fireEvent.click(screen.getByTestId('rerender'))
+    expect(document.activeElement).toBe(secondo)
+  })
 })

@@ -1,5 +1,6 @@
 import { jsPDF } from 'jspdf'
 import type { DatiStruttura } from './fiscale'
+import { formatEuro } from '@/lib/format/valuta'
 
 // Builder jsPDF dei documenti della contabilità (ricevute; attestazioni in
 // pdf-attestazione). Nessun accesso a DB: input già risolto e snapshot-abile.
@@ -81,19 +82,19 @@ export function buildAttestazionePdf(i: AttestazionePdfInput) {
     for (const r of i.righe) {
         if (y > 265) { doc.addPage(); y = 20 }
         const note = r.escluso ? ' (servizio non detraibile)' : r.tracciabile ? '' : ' (quote in contanti: non detraibile)'
-        doc.text(`• ${r.descrizione} — € ${r.importo.toFixed(2)}${note}`, 24, y)
+        doc.text(`• ${r.descrizione} — ${formatEuro(r.importo)}${note}`, 24, y)
         y += 6
     }
     y += 4
 
     doc.setFontSize(12)
-    doc.text(`Totale versato nell'anno: € ${i.versato.toFixed(2)}`, 20, y); y += 7
+    doc.text(`Totale versato nell'anno: ${formatEuro(i.versato)}`, 20, y); y += 7
     doc.setTextColor(0, 106, 95)
-    doc.text(`di cui pagato con strumenti tracciabili (detraibile): € ${i.detraibile.toFixed(2)}`, 20, y); y += 7
+    doc.text(`di cui pagato con strumenti tracciabili (detraibile): ${formatEuro(i.detraibile)}`, 20, y); y += 7
     doc.setTextColor(0)
     doc.setFontSize(10)
-    if (i.nonTracciabile > 0) { doc.text(`Quote non tracciabili (non detraibili): € ${i.nonTracciabile.toFixed(2)}`, 20, y); y += 6 }
-    if (i.escluso > 0) { doc.text(`Servizi esclusi dalla detrazione (es. divise/materiale): € ${i.escluso.toFixed(2)}`, 20, y); y += 6 }
+    if (i.nonTracciabile > 0) { doc.text(`Quote non tracciabili (non detraibili): ${formatEuro(i.nonTracciabile)}`, 20, y); y += 6 }
+    if (i.escluso > 0) { doc.text(`Servizi esclusi dalla detrazione (es. divise/materiale): ${formatEuro(i.escluso)}`, 20, y); y += 6 }
     y += 4
 
     doc.setFontSize(8.5)
@@ -149,7 +150,7 @@ export function buildRicevutaPdf(i: RicevutaPdfInput) {
     y += 2
 
     doc.setFontSize(14)
-    doc.text(`Importo: € ${i.importo.toFixed(2)} — PAGATO`, 20, y)
+    doc.text(`Importo: ${formatEuro(i.importo)} — PAGATO`, 20, y)
     y += 9
 
     doc.setFontSize(10)
@@ -157,7 +158,7 @@ export function buildRicevutaPdf(i: RicevutaPdfInput) {
         const negativo = Number(inc.importo) < 0
         const label = negativo ? 'Storno' : (METODO_LABEL[inc.metodo ?? ''] ?? inc.metodo ?? '—')
         const quando = dataIt(inc.data_incasso)
-        doc.text(`• ${negativo ? '−' : ''}€ ${Math.abs(Number(inc.importo)).toFixed(2)} — ${label}${quando ? ` il ${quando}` : ''}`, 24, y)
+        doc.text(`• ${negativo ? '−' : ''}${formatEuro(Math.abs(Number(inc.importo)))} — ${label}${quando ? ` il ${quando}` : ''}`, 24, y)
         y += 6
     }
     y += 4
@@ -246,14 +247,14 @@ export function buildRicevutaFamigliaPdf(i: RicevutaFamigliaPdfInput) {
     doc.setFontSize(10)
     for (const r of i.righe) {
         if (y > 265) { doc.addPage(); y = 20 }
-        const importoTxt = r.tipo === 'ricarica' ? '' : ` — € ${r.importo.toFixed(2)}`
+        const importoTxt = r.tipo === 'ricarica' ? '' : ` — ${formatEuro(r.importo)}`
         doc.text(`• ${r.figlio}: ${r.descrizione}${importoTxt}`, 24, y)
         y += 6
     }
     y += 3
 
     doc.setFontSize(14)
-    doc.text(`Totale versato: € ${i.importoTotale.toFixed(2)} — PAGATO`, 20, y)
+    doc.text(`Totale versato: ${formatEuro(i.importoTotale)} — PAGATO`, 20, y)
     y += 9
 
     doc.setFontSize(9)

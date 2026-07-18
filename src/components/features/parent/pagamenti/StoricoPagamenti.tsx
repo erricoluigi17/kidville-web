@@ -6,6 +6,7 @@ import { getSupabase } from '@/lib/supabase/browser-client';
 import { raggruppaPerCategoria } from '@/lib/pagamenti/categorie';
 import { residuoEffettivo } from '@/lib/pagamenti/aging';
 import { isoToIt } from '@/lib/format/data';
+import { formatEuro } from '@/lib/format/valuta';
 import { PushOptIn } from './PushOptIn';
 
 interface Pagamento {
@@ -41,10 +42,10 @@ function residuoRiga(p: Pagamento): number {
 interface Props { userId: string }
 
 const STATI: Record<string, { label: string; cls: string }> = {
-    da_pagare: { label: 'Da pagare', cls: 'bg-kidville-neutral-soft text-kidville-neutral' },
-    parziale: { label: 'Parziale', cls: 'bg-kidville-warn-soft text-kidville-warn' },
-    pagato: { label: 'Pagato', cls: 'bg-kidville-success-soft text-kidville-success' },
-    scaduto: { label: 'Scaduto', cls: 'bg-kidville-error-soft text-kidville-error' },
+    da_pagare: { label: 'Da pagare', cls: 'bg-kidville-neutral-soft text-kidville-sub' },
+    parziale: { label: 'Parziale', cls: 'bg-kidville-warn-soft text-kidville-warn-strong' },
+    pagato: { label: 'Pagato', cls: 'bg-kidville-success-soft text-kidville-success-strong' },
+    scaduto: { label: 'Scaduto', cls: 'bg-kidville-error-soft text-kidville-error-strong' },
 };
 
 export function StoricoPagamenti({ userId }: Props) {
@@ -125,7 +126,7 @@ export function StoricoPagamenti({ userId }: Props) {
                 <div className="rounded-[22px] p-[18px]" style={{ background: 'linear-gradient(135deg, var(--color-kidville-green), var(--color-kidville-green-dark))' }}>
                     <p className="font-maven text-[12.5px] text-white/75">Totale da saldare</p>
                     <p className="font-barlow font-black text-[40px] leading-none text-kidville-yellow">
-                        € {totaleDovuto.toFixed(2)}
+                        {formatEuro(totaleDovuto)}
                     </p>
                     <p className="font-maven text-xs text-white/70 mt-1">
                         {vociAperte} voc{vociAperte === 1 ? 'e' : 'i'} da saldare
@@ -140,13 +141,13 @@ export function StoricoPagamenti({ userId }: Props) {
                         {[...perFiglio.entries()].map(([id, f]) => (
                             <div key={id} className="flex items-center justify-between font-maven text-sm">
                                 <span className="text-kidville-ink">{f.nome}</span>
-                                <span className="font-bold text-kidville-green">€ {f.totale.toFixed(2)}</span>
+                                <span className="font-bold text-kidville-green">{formatEuro(f.totale)}</span>
                             </div>
                         ))}
                     </div>
                     <div className="mt-2 flex items-center justify-between border-t border-kidville-line pt-2 font-maven text-sm">
                         <span className="font-bold text-kidville-green">Totale complessivo</span>
-                        <span className="font-black text-kidville-green">€ {totaleDovuto.toFixed(2)}</span>
+                        <span className="font-black text-kidville-green">{formatEuro(totaleDovuto)}</span>
                     </div>
                 </div>
             )}
@@ -250,8 +251,8 @@ function PagamentoCard({ p, userId }: { p: Pagamento; userId: string }) {
 
             <div className="flex items-center justify-between mt-2">
                 <div className="font-maven text-sm">
-                    <span className="text-kidville-green font-bold">€ {Number(p.importo).toFixed(2)}</span>
-                    {(p.stato === 'parziale' || p.stato === 'scaduto') && !isSplit && Number(p.importo_pagato) > 0 && <span className="text-kidville-muted text-xs ml-2">(resta € {resto.toFixed(2)})</span>}
+                    <span className="text-kidville-green font-bold">{formatEuro(p.importo)}</span>
+                    {(p.stato === 'parziale' || p.stato === 'scaduto') && !isSplit && Number(p.importo_pagato) > 0 && <span className="text-kidville-sub text-xs ml-2">(resta {formatEuro(resto)})</span>}
                 </div>
                 {fatturaPronta ? (
                     <FatturaLinks pagamentoId={p.id} userId={userId} />

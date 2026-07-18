@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Ban } from 'lucide-react';
 import { getSupabase } from '@/lib/supabase/browser-client';
+import { formatEuro } from '@/lib/format/valuta';
 
 interface Props {
     userId: string;
@@ -62,7 +63,7 @@ export function SospensioneBanner({ userId, className }: Props) {
                     </p>
                     <p className="mt-1 font-maven text-[12.5px] leading-snug text-kidville-error-strong/85">
                         La tua posizione risulta sospesa per morosità
-                        {stato.totaleScaduto > 0 ? ` (€ ${stato.totaleScaduto.toFixed(2)} scaduti)` : ''}.
+                        {stato.totaleScaduto > 0 ? ` (${formatEuro(stato.totaleScaduto)} scaduti)` : ''}.
                         Alcuni servizi (moduli, adesioni, ordini) sono temporaneamente bloccati.
                         Salda gli importi scaduti o contatta la <strong>Segreteria</strong> per regolarizzare:
                         la riattivazione è automatica una volta saldato tutto lo scaduto.

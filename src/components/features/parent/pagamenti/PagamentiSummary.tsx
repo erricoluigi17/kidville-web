@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { Euro, ChevronRight, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { getSupabase } from '@/lib/supabase/browser-client';
 import { isoToIt } from '@/lib/format/data';
+import { formatEuro } from '@/lib/format/valuta';
 import { riepilogoHome, residuoEffettivo, type AgingPagamentoDerivato } from '@/lib/pagamenti/aging';
 
 interface Pagamento extends AgingPagamentoDerivato {
@@ -66,7 +67,7 @@ export function PagamentiSummary({ userId, href }: Props) {
                             Pagamenti scaduti
                         </p>
                         <p className="font-barlow text-2xl font-black leading-none text-kidville-error-strong">
-                            € {scaduto.toFixed(2)} scaduti
+                            {formatEuro(scaduto)} scaduti
                         </p>
                         {prossima && (
                             <p className="mt-1 truncate font-maven text-[12px] text-kidville-error-strong/75">
@@ -96,7 +97,7 @@ export function PagamentiSummary({ userId, href }: Props) {
                             Totale da pagare
                         </p>
                         <p className="font-barlow text-2xl font-black leading-none text-kidville-yellow">
-                            € {daPagare.toFixed(2)}
+                            {formatEuro(daPagare)}
                         </p>
                         {prossima && (
                             <p className="mt-1 truncate font-maven text-[12px]" style={{ color: 'rgba(255,255,255,0.72)' }}>

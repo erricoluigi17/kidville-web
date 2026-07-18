@@ -2,12 +2,13 @@
 
 import { useState } from 'react';
 import { X, Euro } from 'lucide-react';
-import { motion } from 'framer-motion';
 import { FatturaButton } from './FatturaButton';
 import { SaveCheck } from '@/components/ui/SaveConfirmation';
 import { cx } from '@/lib/ui/cx';
 import { residuoEffettivo } from '@/lib/pagamenti/aging';
-import { MODAL_OVERLAY, MODAL_CARD, MODAL_SHADOW, INPUT, SELECT, BTN_PRIMARY, BTN_SECONDARY } from './ui';
+import { formatEuro } from '@/lib/format/valuta';
+import { Modal } from '@/components/ui/Modal';
+import { MODAL_CARD, MODAL_SHADOW, INPUT, SELECT, BTN_PRIMARY, BTN_SECONDARY } from './ui';
 
 export interface PagamentoRow {
     id: string;
@@ -131,79 +132,81 @@ export function RegistraIncassoModal({ pagamento, userId, onClose, onDone }: Pro
     };
 
     return (
-        <div className={MODAL_OVERLAY} onClick={onClose}>
-            <motion.div
-                initial={{ scale: 0.95, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
+        <>
+            <Modal
+                open
+                onClose={onClose}
+                title="Registra incasso"
+                labelledBy="registra-incasso-title"
                 className={MODAL_CARD}
                 style={{ boxShadow: MODAL_SHADOW }}
-                onClick={(e) => e.stopPropagation()}
             >
                 <div className="flex items-center justify-between mb-4">
-                    <h3 className="font-barlow font-black text-lg text-kidville-green uppercase flex items-center gap-2">
+                    <h3 id="registra-incasso-title" className="font-barlow font-black text-lg text-kidville-green uppercase flex items-center gap-2">
                         <Euro size={18} /> Registra incasso
                     </h3>
-                    <button onClick={onClose} className="text-kidville-muted hover:text-kidville-ink"><X size={20} /></button>
+                    <button onClick={onClose} aria-label="Chiudi" className="text-kidville-muted hover:text-kidville-ink"><X size={20} /></button>
                 </div>
 
                 <div className="bg-kidville-cream/60 rounded-card p-3 mb-4">
                     <p className="font-maven text-sm text-kidville-green font-bold">{pagamento.descrizione}</p>
-                    <p className="font-maven text-xs text-kidville-muted">
+                    <p className="font-maven text-xs text-kidville-sub">
                         {pagamento.alunni?.nome} {pagamento.alunni?.cognome}
                     </p>
                     <div className="flex justify-between mt-2 font-maven text-xs">
-                        <span className="text-kidville-muted">Totale € {Number(pagamento.importo).toFixed(2)}</span>
-                        <span className="text-kidville-muted">Già incassato € {Number(pagamento.importo_pagato).toFixed(2)}</span>
-                        <span className="text-kidville-green font-bold">Resta € {mancante.toFixed(2)}</span>
+                        <span className="text-kidville-sub">Totale {formatEuro(pagamento.importo)}</span>
+                        <span className="text-kidville-sub">Già incassato {formatEuro(pagamento.importo_pagato)}</span>
+                        <span className="text-kidville-green font-bold">Resta {formatEuro(mancante)}</span>
                     </div>
                     {Number(pagamento.sconto) > 0 && (
-                        <p className="font-maven text-[11px] text-kidville-muted mt-1">Sconto applicato € {Number(pagamento.sconto).toFixed(2)}</p>
+                        <p className="font-maven text-[11px] text-kidville-sub mt-1">Sconto applicato {formatEuro(pagamento.sconto)}</p>
                     )}
                 </div>
 
                 <div className={`space-y-3 ${saldato ? 'hidden' : ''}`}>
                     <div>
-                        <label className="font-maven text-xs text-kidville-muted mb-1 block">Importo incassato (€)</label>
+                        <label htmlFor="inc-importo" className="font-maven text-xs text-kidville-sub mb-1 block">Importo incassato (€)</label>
                         <input
+                            id="inc-importo"
                             type="number" min={0} step="0.01" value={importo || ''}
                             onChange={(e) => setImporto(e.target.value === '' ? 0 : Number(e.target.value))}
                             className={INPUT}
                         />
                         {isParziale && !abbuono && (
-                            <p className="font-maven text-[11px] text-kidville-warn mt-1">Pagamento parziale: resterà € {(mancante - importo).toFixed(2)}.</p>
+                            <p className="font-maven text-[11px] text-kidville-warn-strong mt-1">Pagamento parziale: resterà {formatEuro(mancante - importo)}.</p>
                         )}
                         {eccedenzaLive > 0 && (
-                            <p className="font-maven text-[11px] text-kidville-warn mt-1">
-                                Eccedenza € {eccedenzaLive.toFixed(2)}{isRata && spill ? ' → riportata sulla rata successiva.' : ' → richiederà conferma come credito famiglia.'}
+                            <p className="font-maven text-[11px] text-kidville-warn-strong mt-1">
+                                Eccedenza {formatEuro(eccedenzaLive)}{isRata && spill ? ' → riportata sulla rata successiva.' : ' → richiederà conferma come credito famiglia.'}
                             </p>
                         )}
                     </div>
 
                     <div className="grid grid-cols-2 gap-3">
                         <div>
-                            <label className="font-maven text-xs text-kidville-muted mb-1 block">Metodo</label>
-                            <select value={metodo} onChange={(e) => setMetodo(e.target.value)}
+                            <label htmlFor="inc-metodo" className="font-maven text-xs text-kidville-sub mb-1 block">Metodo</label>
+                            <select id="inc-metodo" value={metodo} onChange={(e) => setMetodo(e.target.value)}
                                 className={SELECT}>
                                 {METODI.map((m) => <option key={m.v} value={m.v}>{m.l}</option>)}
                             </select>
                         </div>
                         <div>
-                            <label className="font-maven text-xs text-kidville-muted mb-1 block">Data</label>
-                            <input type="date" value={data} onChange={(e) => setData(e.target.value)}
+                            <label htmlFor="inc-data" className="font-maven text-xs text-kidville-sub mb-1 block">Data</label>
+                            <input id="inc-data" type="date" value={data} onChange={(e) => setData(e.target.value)}
                                 className={INPUT} />
                         </div>
                     </div>
 
                     {metodo === 'contanti' && (
-                        <p className="rounded-xl bg-kidville-warn-soft px-3 py-2 font-maven text-[11px] leading-snug text-kidville-warn">
+                        <p className="rounded-xl bg-kidville-warn-soft px-3 py-2 font-maven text-[11px] leading-snug text-kidville-warn-strong">
                             Contanti: pagamento non tracciabile. La quota non sarà detraibile nel 730 (art. 15 TUIR)
                             e resterà esclusa dalla comunicazione delle spese scolastiche all&apos;AdE.
                         </p>
                     )}
 
                     <div>
-                        <label className="font-maven text-xs text-kidville-muted mb-1 block">Note (facoltativo)</label>
-                        <input type="text" value={note} onChange={(e) => setNote(e.target.value)}
+                        <label htmlFor="inc-note" className="font-maven text-xs text-kidville-sub mb-1 block">Note (facoltativo)</label>
+                        <input id="inc-note" type="text" value={note} onChange={(e) => setNote(e.target.value)}
                             className={INPUT} />
                     </div>
 
@@ -220,23 +223,23 @@ export function RegistraIncassoModal({ pagamento, userId, onClose, onDone }: Pro
                             <label className="flex items-center gap-2 cursor-pointer">
                                 <input type="checkbox" checked={abbuono} onChange={(e) => setAbbuono(e.target.checked)}
                                     className="w-4 h-4 rounded border-kidville-muted text-kidville-green focus:ring-kidville-green" />
-                                <span className="font-maven text-xs text-kidville-green">Salda con abbuono della differenza (€ {(mancante - importo).toFixed(2)})</span>
+                                <span className="font-maven text-xs text-kidville-green">Salda con abbuono della differenza ({formatEuro(mancante - importo)})</span>
                             </label>
                             {abbuono && (
                                 <input type="text" value={abbuonoMotivo} onChange={(e) => setAbbuonoMotivo(e.target.value)}
-                                    placeholder="Motivo dell'abbuono (obbligatorio)"
+                                    placeholder="Motivo dell'abbuono (obbligatorio)" aria-label="Motivo dell'abbuono"
                                     className={INPUT} />
                             )}
                         </div>
                     )}
 
-                    {error && <p className="font-maven text-xs text-kidville-error">{error}</p>}
+                    {error && <p role="alert" className="font-maven text-xs text-kidville-error-strong">{error}</p>}
                 </div>
 
                 {saldato ? (
                     <div className="mt-5">
-                        <div className="flex items-center justify-between gap-2 bg-kidville-success-soft rounded-card px-3 py-2.5 mb-3">
-                            <span className="flex items-center gap-1.5 font-maven text-sm text-kidville-success font-bold">
+                        <div role="status" className="flex items-center justify-between gap-2 bg-kidville-success-soft rounded-card px-3 py-2.5 mb-3">
+                            <span className="flex items-center gap-1.5 font-maven text-sm text-kidville-success-strong font-bold">
                                 <SaveCheck size={17} /> Pagamento saldato
                             </span>
                             <FatturaButton pagamentoId={pagamento.id} userId={userId} fatturaStato={pagamento.fattura_stato} descrizione={pagamento.descrizione} />
@@ -251,44 +254,47 @@ export function RegistraIncassoModal({ pagamento, userId, onClose, onDone }: Pro
                             Annulla
                         </button>
                         <button onClick={() => doSubmit()} disabled={saving} className={cx(BTN_PRIMARY, 'flex-1')}>
-                            {saving ? 'Salvataggio…' : `Registra € ${(importo || 0).toFixed(2)}`}
+                            {saving ? 'Salvataggio…' : `Registra ${formatEuro(importo || 0)}`}
                         </button>
                     </div>
                 )}
+            </Modal>
 
-                {/* Conferma esplicita dell'eccedenza → credito famiglia */}
-                {eccedenza != null && (
-                    <div className={MODAL_OVERLAY} onClick={() => setEccedenza(null)}>
-                        <div className={cx(MODAL_CARD, 'max-w-sm')} style={{ boxShadow: MODAL_SHADOW }} onClick={(e) => e.stopPropagation()}>
-                            <h4 className="font-barlow font-black text-base text-kidville-green uppercase mb-2">Eccedenza da gestire</h4>
-                            <p className="font-maven text-sm text-kidville-ink mb-3">
-                                Stai incassando € {eccedenza.toFixed(2)} oltre il residuo di questa voce.
-                                Vuoi registrarli come <strong>credito famiglia</strong> riutilizzabile?
-                            </p>
-                            <label className="font-maven text-xs text-kidville-muted mb-1 block">Intesta il credito a</label>
-                            {paganti.length > 0 ? (
-                                <select value={paganteId} onChange={(e) => setPaganteId(e.target.value)} className={cx(SELECT, 'mb-3')}>
-                                    {paganti.map((p) => (
-                                        <option key={p.adult_id} value={p.adult_id}>{p.nome} {p.cognome}</option>
-                                    ))}
-                                </select>
-                            ) : (
-                                <p className="font-maven text-xs text-kidville-error mb-3">Nessun pagante disponibile per questo alunno.</p>
-                            )}
-                            <div className="flex gap-2">
-                                <button onClick={() => setEccedenza(null)} className={cx(BTN_SECONDARY, 'flex-1')}>Annulla</button>
-                                <button
-                                    onClick={() => { setEccedenza(null); doSubmit({ confermaEccedenza: true }); }}
-                                    disabled={saving || !paganteId}
-                                    className={cx(BTN_PRIMARY, 'flex-1')}
-                                >
-                                    Conferma credito
-                                </button>
-                            </div>
-                        </div>
-                    </div>
+            {/* Conferma esplicita dell'eccedenza → credito famiglia */}
+            <Modal
+                open={eccedenza != null}
+                onClose={() => setEccedenza(null)}
+                title="Eccedenza da gestire"
+                labelledBy="incasso-ecc-title"
+                className={cx(MODAL_CARD, 'max-w-sm')}
+                style={{ boxShadow: MODAL_SHADOW }}
+            >
+                <h4 id="incasso-ecc-title" className="font-barlow font-black text-base text-kidville-green uppercase mb-2">Eccedenza da gestire</h4>
+                <p className="font-maven text-sm text-kidville-ink mb-3">
+                    Stai incassando {formatEuro(eccedenza)} oltre il residuo di questa voce.
+                    Vuoi registrarli come <strong>credito famiglia</strong> riutilizzabile?
+                </p>
+                <label htmlFor="inc-pagante" className="font-maven text-xs text-kidville-sub mb-1 block">Intesta il credito a</label>
+                {paganti.length > 0 ? (
+                    <select id="inc-pagante" value={paganteId} onChange={(e) => setPaganteId(e.target.value)} className={cx(SELECT, 'mb-3')}>
+                        {paganti.map((p) => (
+                            <option key={p.adult_id} value={p.adult_id}>{p.nome} {p.cognome}</option>
+                        ))}
+                    </select>
+                ) : (
+                    <p role="alert" className="font-maven text-xs text-kidville-error-strong mb-3">Nessun pagante disponibile per questo alunno.</p>
                 )}
-            </motion.div>
-        </div>
+                <div className="flex gap-2">
+                    <button onClick={() => setEccedenza(null)} className={cx(BTN_SECONDARY, 'flex-1')}>Annulla</button>
+                    <button
+                        onClick={() => { setEccedenza(null); doSubmit({ confermaEccedenza: true }); }}
+                        disabled={saving || !paganteId}
+                        className={cx(BTN_PRIMARY, 'flex-1')}
+                    >
+                        Conferma credito
+                    </button>
+                </div>
+            </Modal>
+        </>
     );
 }

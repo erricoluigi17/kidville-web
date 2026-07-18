@@ -5,6 +5,7 @@ import { Users, CalendarClock, Plus, Trash2, Sparkles } from 'lucide-react';
 import { card, h3, input, label, hint, checkbox, checkboxLabel, checkboxRow } from './ui';
 import { hdr } from './ui';
 import { SaveRow } from './fields';
+import { formatEuro } from '@/lib/format/valuta';
 import {
     normalizzaRetteConfig,
     scontoFratelli,
@@ -17,8 +18,6 @@ import {
 } from '@/lib/pagamenti/rette-config';
 
 interface Props { userId: string; scuolaId: string }
-
-const euro = (n: number) => `€${n.toFixed(2)}`;
 
 // Sconto fratelli strutturato + rette proporzionali per iscrizione tardiva (slice S6).
 // L'ANTEPRIMA è calcolata con le stesse funzioni pure che replicano la SQL
@@ -131,14 +130,14 @@ export function RetteSettings({ userId, scuolaId }: Props) {
                             {sf.scaglioni.map((s, i) => (
                                 <div key={i} className="flex flex-wrap items-end gap-2">
                                     <div>
-                                        <label className={label}>Dal figlio n°</label>
-                                        <input type="number" min={2} value={Number.isFinite(s.posizione) ? s.posizione : ''}
+                                        <label htmlFor={`sf-pos-${i}`} className={label}>Dal figlio n°</label>
+                                        <input id={`sf-pos-${i}`} type="number" min={2} value={Number.isFinite(s.posizione) ? s.posizione : ''}
                                             onChange={e => updF(i, 'posizione', Math.max(2, Math.trunc(Number(e.target.value) || 2)))}
                                             className={`${input} w-28`} />
                                     </div>
                                     <div>
-                                        <label className={label}>{sf.modo === 'importo' ? 'Sconto (€)' : 'Sconto (%)'}</label>
-                                        <input type="number" min={0} max={sf.modo === 'importo' ? undefined : 100} step={sf.modo === 'importo' ? '0.01' : '1'}
+                                        <label htmlFor={`sf-val-${i}`} className={label}>{sf.modo === 'importo' ? 'Sconto (€)' : 'Sconto (%)'}</label>
+                                        <input id={`sf-val-${i}`} type="number" min={0} max={sf.modo === 'importo' ? undefined : 100} step={sf.modo === 'importo' ? '0.01' : '1'}
                                             value={Number.isFinite(s.valore) ? s.valore : ''}
                                             onChange={e => updF(i, 'valore', Math.max(0, Number(e.target.value) || 0))}
                                             className={`${input} w-28`} />
@@ -175,14 +174,14 @@ export function RetteSettings({ userId, scuolaId }: Props) {
                             {pr.scaglioni.map((s, i) => (
                                 <div key={i} className="flex flex-wrap items-end gap-2">
                                     <div>
-                                        <label className={label}>Iscritto dal giorno</label>
-                                        <input type="number" min={1} max={31} value={Number.isFinite(s.dal_giorno) ? s.dal_giorno : ''}
+                                        <label htmlFor={`pr-day-${i}`} className={label}>Iscritto dal giorno</label>
+                                        <input id={`pr-day-${i}`} type="number" min={1} max={31} value={Number.isFinite(s.dal_giorno) ? s.dal_giorno : ''}
                                             onChange={e => updP(i, 'dal_giorno', Math.min(31, Math.max(1, Math.trunc(Number(e.target.value) || 1))))}
                                             className={`${input} w-32`} />
                                     </div>
                                     <div>
-                                        <label className={label}>Retta dovuta (%)</label>
-                                        <input type="number" min={0} max={100} value={Number.isFinite(s.percentuale) ? s.percentuale : ''}
+                                        <label htmlFor={`pr-perc-${i}`} className={label}>Retta dovuta (%)</label>
+                                        <input id={`pr-perc-${i}`} type="number" min={0} max={100} value={Number.isFinite(s.percentuale) ? s.percentuale : ''}
                                             onChange={e => updP(i, 'percentuale', Math.min(100, Math.max(0, Number(e.target.value) || 0)))}
                                             className={`${input} w-32`} />
                                     </div>
@@ -205,33 +204,33 @@ export function RetteSettings({ userId, scuolaId }: Props) {
                 <h3 className={h3}><Sparkles size={16} /> Anteprima sconto</h3>
                 <div className="flex flex-wrap items-end gap-3">
                     <div>
-                        <label className={label}>Retta (€)</label>
-                        <input type="number" min={0} value={Number.isFinite(pvImporto) ? pvImporto : ''}
+                        <label htmlFor="pv-importo" className={label}>Retta (€)</label>
+                        <input id="pv-importo" type="number" min={0} value={Number.isFinite(pvImporto) ? pvImporto : ''}
                             onChange={e => setPvImporto(Math.max(0, Number(e.target.value) || 0))} className={`${input} w-28`} />
                     </div>
                     <div>
-                        <label className={label}>Figlio n°</label>
-                        <input type="number" min={1} value={Number.isFinite(pvPosizione) ? pvPosizione : ''}
+                        <label htmlFor="pv-posizione" className={label}>Figlio n°</label>
+                        <input id="pv-posizione" type="number" min={1} value={Number.isFinite(pvPosizione) ? pvPosizione : ''}
                             onChange={e => setPvPosizione(Math.max(1, Math.trunc(Number(e.target.value) || 1)))} className={`${input} w-24`} />
                     </div>
                     <div>
-                        <label className={label}>Iscritto il giorno</label>
-                        <input type="number" min={1} max={31} value={Number.isFinite(pvGiorno) ? pvGiorno : ''}
+                        <label htmlFor="pv-giorno" className={label}>Iscritto il giorno</label>
+                        <input id="pv-giorno" type="number" min={1} max={31} value={Number.isFinite(pvGiorno) ? pvGiorno : ''}
                             onChange={e => setPvGiorno(Math.min(31, Math.max(1, Math.trunc(Number(e.target.value) || 1))))} className={`${input} w-28`} />
                     </div>
                 </div>
                 <div className="mt-4 rounded-card bg-kidville-cream p-4 space-y-1.5">
                     <div className="flex justify-between font-maven text-sm text-kidville-sub">
-                        <span>Sconto fratelli (figlio n° {pvPosizione})</span><span className="font-bold text-kidville-green">{euro(pvF)}</span>
+                        <span>Sconto fratelli (figlio n° {pvPosizione})</span><span className="font-bold text-kidville-green">{formatEuro(pvF)}</span>
                     </div>
                     <div className="flex justify-between font-maven text-sm text-kidville-sub">
-                        <span>Pro-rata (iscritto il {pvGiorno})</span><span className="font-bold text-kidville-green">{euro(pvP)}</span>
+                        <span>Pro-rata (iscritto il {pvGiorno})</span><span className="font-bold text-kidville-green">{formatEuro(pvP)}</span>
                     </div>
                     <div className="flex justify-between border-t border-kidville-line pt-1.5 font-barlow font-black uppercase text-sm text-kidville-green">
-                        <span>Sconto totale</span><span>{euro(pvTot.sconto)}</span>
+                        <span>Sconto totale</span><span>{formatEuro(pvTot.sconto)}</span>
                     </div>
                     <div className="flex justify-between font-maven text-sm text-kidville-sub">
-                        <span>Retta da pagare</span><span className="font-bold text-kidville-green">{euro(residuo)}</span>
+                        <span>Retta da pagare</span><span className="font-bold text-kidville-green">{formatEuro(residuo)}</span>
                     </div>
                     {pvTot.motivo && <p className="font-maven text-[11px] text-kidville-muted pt-1">Motivo: {pvTot.motivo}</p>}
                 </div>

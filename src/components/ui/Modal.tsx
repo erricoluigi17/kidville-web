@@ -5,6 +5,12 @@ import { useEffect, useRef } from 'react'
 const FOCUSABLE =
   'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])'
 
+// Stack degli id dei Modal aperti: SOLO il Modal in cima gestisce Escape e il
+// focus-trap. Senza questo, due dialoghi annidati (entrambi in ascolto su
+// `document`) si chiuderebbero a vicenda con un solo Escape e si contenderebbero
+// il focus. `stopPropagation()` non basta: i listener sono sullo stesso target.
+const modalStack: symbol[] = []
+
 interface ModalProps {
   open: boolean
   onClose: () => void
@@ -13,30 +19,45 @@ interface ModalProps {
   labelledBy?: string
   closeOnBackdrop?: boolean
   className?: string
+  /** Stile inline del pannello dialog (es. box-shadow fluttuante). Retrocompatibile: opzionale. */
+  style?: React.CSSProperties
   children: React.ReactNode
 }
 
 /**
  * Primitive modale accessibile (WCAG): role="dialog" + aria-modal, focus-trap
  * (Tab/Shift+Tab ciclici), chiusura con Escape, scroll-lock del body e ripristino
- * del focus al trigger alla chiusura. Nessuna nuova dipendenza. I modali esistenti
- * vi migrano incrementalmente.
+ * del focus al trigger alla chiusura. Regge i dialoghi annidati (stack). Nessuna
+ * nuova dipendenza. I modali esistenti vi migrano incrementalmente.
  */
-export function Modal({ open, onClose, title, labelledBy, closeOnBackdrop = true, className, children }: ModalProps) {
+export function Modal({ open, onClose, title, labelledBy, closeOnBackdrop = true, className, style, children }: ModalProps) {
   const dialogRef = useRef<HTMLDivElement>(null)
   const previouslyFocused = useRef<HTMLElement | null>(null)
+  // Id stabile per istanza + onClose via ref: l'effetto dipende solo da `open`,
+  // così un handler inline (`onClose={() => …}`, ricreato a ogni render) non
+  // fa ripartire l'effetto rubando il focus al primo controllo a ogni render.
+  const idRef = useRef<symbol | null>(null)
+  if (idRef.current === null) idRef.current = Symbol('modal')
+  const onCloseRef = useRef(onClose)
+  useEffect(() => {
+    onCloseRef.current = onClose
+  })
 
   useEffect(() => {
     if (!open) return
+    const myId = idRef.current as symbol
+    modalStack.push(myId)
     previouslyFocused.current = (document.activeElement as HTMLElement) ?? null
 
+    const isTop = () => modalStack[modalStack.length - 1] === myId
     const focusables = () => Array.from(dialogRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? [])
     focusables()[0]?.focus()
 
     function onKeyDown(e: KeyboardEvent) {
+      if (!isTop()) return
       if (e.key === 'Escape') {
         e.stopPropagation()
-        onClose()
+        onCloseRef.current()
         return
       }
       if (e.key === 'Tab') {
@@ -63,10 +84,13 @@ export function Modal({ open, onClose, title, labelledBy, closeOnBackdrop = true
 
     return () => {
       document.removeEventListener('keydown', onKeyDown)
-      document.body.style.overflow = prevOverflow
+      const idx = modalStack.lastIndexOf(myId)
+      if (idx !== -1) modalStack.splice(idx, 1)
+      // Sblocca lo scroll solo quando non resta alcun modale aperto.
+      document.body.style.overflow = modalStack.length === 0 ? prevOverflow : 'hidden'
       previouslyFocused.current?.focus()
     }
-  }, [open, onClose])
+  }, [open])
 
   if (!open) return null
 
@@ -85,6 +109,7 @@ export function Modal({ open, onClose, title, labelledBy, closeOnBackdrop = true
         aria-label={labelledBy ? undefined : title}
         aria-labelledby={labelledBy}
         className={className}
+        style={style}
       >
         {children}
       </div>

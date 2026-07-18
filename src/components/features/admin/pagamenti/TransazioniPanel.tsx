@@ -14,8 +14,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Coins, Search, Wand2, X, RotateCcw, FileText, UtensilsCrossed, ArrowLeft, Check, Printer } from 'lucide-react';
 import { SectionTitle } from '@/components/ui/cockpit';
+import { Modal } from '@/components/ui/Modal';
 import { cx } from '@/lib/ui/cx';
-import { INPUT, SELECT, BTN_PRIMARY, BTN_SECONDARY, MODAL_OVERLAY, MODAL_CARD, MODAL_SHADOW } from './ui';
+import { formatEuro } from '@/lib/format/valuta';
+import { INPUT, SELECT, BTN_PRIMARY, BTN_SECONDARY, MODAL_CARD, MODAL_SHADOW } from './ui';
 import { FatturaButton } from './FatturaButton';
 import { proponiAllocazione, round2 } from '@/lib/pagamenti/transazioni-quadratura';
 
@@ -36,7 +38,6 @@ interface TxRow {
 }
 
 const hdr = (u: string) => ({ 'Content-Type': 'application/json', 'x-user-id': u });
-const eur = (n: number) => `€ ${(Math.round(n * 100) / 100).toFixed(2)}`;
 const dataIt = (d?: string | null) => (d ? new Date(d).toLocaleDateString('it-IT') : '—');
 const nomeFiglio = (f?: { nome?: string | null; cognome?: string | null } | null) =>
     `${f?.nome ?? ''} ${f?.cognome ?? ''}`.trim() || 'Alunno';
@@ -264,7 +265,7 @@ export function TransazioniPanel({ userId, scuolaId }: Props) {
                                 </button>
                             ))}
                         </div>
-                        {error && <p className="font-maven text-xs text-kidville-error">{error}</p>}
+                        {error && <p role="alert" className="font-maven text-xs text-kidville-error-strong">{error}</p>}
                     </div>
                 )}
 
@@ -274,8 +275,8 @@ export function TransazioniPanel({ userId, scuolaId }: Props) {
                         <div className="flex flex-wrap items-center justify-between gap-2">
                             <div>
                                 <p className="font-barlow text-sm font-black uppercase text-kidville-green">{fam.parent.nome || 'Pagante'}</p>
-                                <p className="font-maven text-xs text-kidville-muted">
-                                    {fam.figli.length} figlio/i · credito famiglia {eur(fam.credito)}
+                                <p className="font-maven text-xs text-kidville-sub">
+                                    {fam.figli.length} {fam.figli.length === 1 ? 'figlio' : 'figli'} · credito famiglia {formatEuro(fam.credito)}
                                 </p>
                             </div>
                             <button type="button" onClick={reset} className={cx(BTN_SECONDARY, 'py-1.5 px-3 text-xs')}>
@@ -286,29 +287,29 @@ export function TransazioniPanel({ userId, scuolaId }: Props) {
                         {/* Dati del versamento */}
                         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
                             <div>
-                                <label className="mb-1 block font-maven text-xs text-kidville-muted">Totale versato (€)</label>
-                                <input type="number" min={0} step="0.01" value={totale} onChange={(e) => setTotale(e.target.value)} className={INPUT} aria-label="Totale versato" />
+                                <label htmlFor="tx-totale" className="mb-1 block font-maven text-xs text-kidville-sub">Totale versato (€)</label>
+                                <input id="tx-totale" type="number" min={0} step="0.01" value={totale} onChange={(e) => setTotale(e.target.value)} className={INPUT} />
                             </div>
                             <div>
-                                <label className="mb-1 block font-maven text-xs text-kidville-muted">Metodo</label>
-                                <select value={metodo} onChange={(e) => setMetodo(e.target.value)} className={SELECT}>
+                                <label htmlFor="tx-metodo" className="mb-1 block font-maven text-xs text-kidville-sub">Metodo</label>
+                                <select id="tx-metodo" value={metodo} onChange={(e) => setMetodo(e.target.value)} className={SELECT}>
                                     {METODI.map((m) => <option key={m.v} value={m.v}>{m.l}</option>)}
                                 </select>
                             </div>
                             <div>
-                                <label className="mb-1 block font-maven text-xs text-kidville-muted">Riferimento / CRO</label>
-                                <input type="text" value={riferimento} onChange={(e) => setRiferimento(e.target.value)} placeholder="CRO / TRN" className={INPUT} />
+                                <label htmlFor="tx-riferimento" className="mb-1 block font-maven text-xs text-kidville-sub">Riferimento / CRO</label>
+                                <input id="tx-riferimento" type="text" value={riferimento} onChange={(e) => setRiferimento(e.target.value)} placeholder="CRO / TRN" className={INPUT} />
                             </div>
                             <div>
-                                <label className="mb-1 block font-maven text-xs text-kidville-muted">Data valuta</label>
-                                <input type="date" value={dataValuta} onChange={(e) => setDataValuta(e.target.value)} className={INPUT} />
+                                <label htmlFor="tx-datavaluta" className="mb-1 block font-maven text-xs text-kidville-sub">Data valuta</label>
+                                <input id="tx-datavaluta" type="date" value={dataValuta} onChange={(e) => setDataValuta(e.target.value)} className={INPUT} />
                             </div>
                         </div>
 
                         {/* Voci aperte per figlio */}
                         <div className="space-y-4">
                             <div className="flex items-center justify-between">
-                                <h4 className="font-barlow text-xs font-black uppercase tracking-wide text-kidville-green">Voci da saldare</h4>
+                                <h3 className="font-barlow text-xs font-black uppercase tracking-wide text-kidville-green">Voci da saldare</h3>
                                 <button type="button" onClick={proponi} className={cx(BTN_SECONDARY, 'py-1.5 px-3 text-xs')}>
                                     <Wand2 size={13} /> Proposta automatica
                                 </button>
@@ -329,8 +330,8 @@ export function TransazioniPanel({ userId, scuolaId }: Props) {
                                                     />
                                                     <span className="flex-1 truncate font-maven text-sm text-kidville-ink">
                                                         {v.descrizione ?? 'Voce'}
-                                                        <span className={cx('ml-2 text-xs', v.stato_effettivo === 'scaduto' ? 'text-kidville-error' : 'text-kidville-muted')}>
-                                                            resta {eur(v.residuo)}{v.scadenza ? ` · scad. ${dataIt(v.scadenza)}` : ''}
+                                                        <span className={cx('ml-2 text-xs', v.stato_effettivo === 'scaduto' ? 'text-kidville-error-strong' : 'text-kidville-sub')}>
+                                                            resta {formatEuro(v.residuo)}{v.scadenza ? ` · scad. ${dataIt(v.scadenza)}` : ''}
                                                         </span>
                                                     </span>
                                                     <span className="font-maven text-xs text-kidville-muted">€</span>
@@ -350,9 +351,9 @@ export function TransazioniPanel({ userId, scuolaId }: Props) {
 
                         {/* Ricariche mensa per figlio */}
                         <div className="space-y-2">
-                            <h4 className="flex items-center gap-1.5 font-barlow text-xs font-black uppercase tracking-wide text-kidville-green">
+                            <h3 className="flex items-center gap-1.5 font-barlow text-xs font-black uppercase tracking-wide text-kidville-green">
                                 <UtensilsCrossed size={13} /> Ricarica mensa
-                            </h4>
+                            </h3>
                             {fam.figli.map((f) => (
                                 <div key={f.id} className="flex flex-wrap items-center gap-2">
                                     <span className="min-w-40 flex-1 font-maven text-sm text-kidville-ink">
@@ -379,27 +380,27 @@ export function TransazioniPanel({ userId, scuolaId }: Props) {
                                 </div>
                             ))}
                             {hasRigheOltreTotale && (
-                                <p className="font-maven text-[11px] text-kidville-error">Ogni ricarica richiede sia gli euro sia i ticket (entrambi &gt; 0).</p>
+                                <p role="alert" className="font-maven text-[11px] text-kidville-error-strong">Ogni ricarica richiede sia gli euro sia i ticket (entrambi &gt; 0).</p>
                             )}
                         </div>
 
-                        {/* Quadratura live */}
-                        <div className={cx(
+                        {/* Quadratura live — annunciata agli screen reader mentre cambia */}
+                        <div role="status" aria-live="polite" className={cx(
                             'flex flex-wrap items-center justify-between gap-2 rounded-card px-3 py-2.5',
                             differenza === 0 ? 'bg-kidville-success-soft' : differenza > 0 ? 'bg-kidville-warn-soft' : 'bg-kidville-error-soft',
                         )}>
                             <span className="font-maven text-sm text-kidville-ink">
-                                Allocato <strong>{eur(allocato)}</strong> su <strong>{eur(totaleNum)}</strong>
+                                Allocato <strong>{formatEuro(allocato)}</strong> su <strong>{formatEuro(totaleNum)}</strong>
                             </span>
                             <span className={cx(
                                 'font-barlow text-sm font-black uppercase',
-                                differenza === 0 ? 'text-kidville-success' : differenza > 0 ? 'text-kidville-warn' : 'text-kidville-error',
+                                differenza === 0 ? 'text-kidville-success-strong' : differenza > 0 ? 'text-kidville-warn-strong' : 'text-kidville-error-strong',
                             )}>
-                                {differenza === 0 ? 'Quadra' : differenza > 0 ? `${eur(differenza)} in eccesso → credito` : `${eur(-differenza)} oltre il totale`}
+                                {differenza === 0 ? 'Quadra' : differenza > 0 ? `${formatEuro(differenza)} in eccesso → credito` : `${formatEuro(-differenza)} oltre il totale`}
                             </span>
                         </div>
 
-                        {error && <p className="font-maven text-xs text-kidville-error">{error}</p>}
+                        {error && <p role="alert" className="font-maven text-xs text-kidville-error-strong">{error}</p>}
 
                         <div className="flex gap-2">
                             <button type="button" onClick={reset} className={cx(BTN_SECONDARY, 'flex-1')}>Annulla</button>
@@ -416,9 +417,9 @@ export function TransazioniPanel({ userId, scuolaId }: Props) {
                 {/* ESITO — ricevuta / dividi in fatture */}
                 {fatto && fam && (
                     <div className="space-y-4">
-                        <div className="flex items-center gap-2 rounded-card bg-kidville-success-soft px-3 py-2.5">
-                            <Check size={18} className="text-kidville-success" />
-                            <span className="font-maven text-sm font-bold text-kidville-success">Transazione registrata · {eur(totaleNum)}</span>
+                        <div role="status" className="flex items-center gap-2 rounded-card bg-kidville-success-soft px-3 py-2.5">
+                            <Check size={18} className="text-kidville-success-strong" />
+                            <span className="font-maven text-sm font-bold text-kidville-success-strong">Transazione registrata · {formatEuro(totaleNum)}</span>
                         </div>
 
                         <div className="flex flex-wrap gap-2">
@@ -471,7 +472,7 @@ export function TransazioniPanel({ userId, scuolaId }: Props) {
                                 {registro.map((t) => (
                                     <tr key={t.id} className={cx('border-b border-kidville-line last:border-0', t.annullata_il && 'opacity-50')}>
                                         <td className="px-3 py-2 font-maven text-sm text-kidville-ink">{dataIt(t.data_valuta ?? t.creato_il)}</td>
-                                        <td className="px-3 py-2 font-maven text-sm font-bold text-kidville-green">{eur(Number(t.importo_totale))}</td>
+                                        <td className="px-3 py-2 font-maven text-sm font-bold text-kidville-green">{formatEuro(Number(t.importo_totale))}</td>
                                         <td className="px-3 py-2 font-maven text-sm text-kidville-ink">{METODI.find((m) => m.v === t.metodo)?.l ?? t.metodo}</td>
                                         <td className="px-3 py-2 font-maven text-xs text-kidville-muted">{t.riferimento || '—'}</td>
                                         <td className="px-3 py-2 text-right">
@@ -503,47 +504,53 @@ export function TransazioniPanel({ userId, scuolaId }: Props) {
                 )}
             </div>
 
-            {/* DIALOG — conferma eccedenza → credito famiglia */}
-            {confermaEcc != null && (
-                <div className={MODAL_OVERLAY} onClick={() => setConfermaEcc(null)}>
-                    <div className={cx(MODAL_CARD, 'max-w-sm')} style={{ boxShadow: MODAL_SHADOW }} onClick={(e) => e.stopPropagation()}>
-                        <h4 className="mb-2 font-barlow text-base font-black uppercase text-kidville-green">Eccedenza da confermare</h4>
-                        <p className="mb-3 font-maven text-sm text-kidville-ink">
-                            Il totale versato supera l&apos;allocato di <strong>{eur(confermaEcc)}</strong>.
-                            Vuoi registrare l&apos;eccedenza come <strong>credito famiglia</strong> riutilizzabile?
-                        </p>
-                        <div className="flex gap-2">
-                            <button type="button" onClick={() => setConfermaEcc(null)} className={cx(BTN_SECONDARY, 'flex-1')}>Annulla</button>
-                            <button type="button" onClick={() => invia(true)} disabled={saving} className={cx(BTN_PRIMARY, 'flex-1')}>Conferma credito</button>
-                        </div>
-                    </div>
+            {/* DIALOG — conferma eccedenza → credito famiglia (primitiva accessibile) */}
+            <Modal
+                open={confermaEcc != null}
+                onClose={() => setConfermaEcc(null)}
+                title="Eccedenza da confermare"
+                labelledBy="tx-eccedenza-title"
+                className={cx(MODAL_CARD, 'max-w-sm')}
+                style={{ boxShadow: MODAL_SHADOW }}
+            >
+                <h2 id="tx-eccedenza-title" className="mb-2 font-barlow text-base font-black uppercase text-kidville-green">Eccedenza da confermare</h2>
+                <p className="mb-3 font-maven text-sm text-kidville-ink">
+                    Il totale versato supera l&apos;allocato di <strong>{formatEuro(confermaEcc)}</strong>.
+                    Vuoi registrare l&apos;eccedenza come <strong>credito famiglia</strong> riutilizzabile?
+                </p>
+                <div className="flex gap-2">
+                    <button type="button" onClick={() => setConfermaEcc(null)} className={cx(BTN_SECONDARY, 'flex-1')}>Annulla</button>
+                    <button type="button" onClick={() => invia(true)} disabled={saving} className={cx(BTN_PRIMARY, 'flex-1')}>Conferma credito</button>
                 </div>
-            )}
+            </Modal>
 
-            {/* DIALOG — annullo transazione */}
-            {annullaTx && (
-                <div className={MODAL_OVERLAY} onClick={() => setAnnullaTx(null)}>
-                    <div className={cx(MODAL_CARD, 'max-w-sm')} style={{ boxShadow: MODAL_SHADOW }} onClick={(e) => e.stopPropagation()}>
-                        <h4 className="mb-2 font-barlow text-base font-black uppercase text-kidville-green">Annulla transazione</h4>
-                        <p className="mb-3 font-maven text-sm text-kidville-ink">
-                            Verranno stornati tutti gli incassi collegati ({eur(Number(annullaTx.importo_totale))}). Indica il motivo (obbligatorio).
-                        </p>
-                        <input
-                            type="text" value={motivoAnnullo} onChange={(e) => setMotivoAnnullo(e.target.value)}
-                            placeholder="Motivo dell'annullo (min 3 caratteri)" className={cx(INPUT, 'mb-3')} aria-label="Motivo annullo"
-                        />
-                        <div className="flex gap-2">
-                            <button type="button" onClick={() => setAnnullaTx(null)} className={cx(BTN_SECONDARY, 'flex-1')}>Indietro</button>
-                            <button
-                                type="button" onClick={eseguiAnnullo} disabled={busyAnnullo || motivoAnnullo.trim().length < 3}
-                                className={cx(BTN_PRIMARY, 'flex-1')}
-                            >
-                                {busyAnnullo ? 'Annullo…' : 'Conferma annullo'}
-                            </button>
-                        </div>
-                    </div>
+            {/* DIALOG — annullo transazione (primitiva accessibile) */}
+            <Modal
+                open={annullaTx != null}
+                onClose={() => setAnnullaTx(null)}
+                title="Annulla transazione"
+                labelledBy="tx-annullo-title"
+                className={cx(MODAL_CARD, 'max-w-sm')}
+                style={{ boxShadow: MODAL_SHADOW }}
+            >
+                <h2 id="tx-annullo-title" className="mb-2 font-barlow text-base font-black uppercase text-kidville-green">Annulla transazione</h2>
+                <p className="mb-3 font-maven text-sm text-kidville-ink">
+                    Verranno stornati tutti gli incassi collegati, incluse le eventuali ricariche mensa{annullaTx ? ` (${formatEuro(Number(annullaTx.importo_totale))})` : ''}. Indica il motivo (obbligatorio).
+                </p>
+                <input
+                    type="text" value={motivoAnnullo} onChange={(e) => setMotivoAnnullo(e.target.value)}
+                    placeholder="Motivo dell'annullo (min 3 caratteri)" className={cx(INPUT, 'mb-3')} aria-label="Motivo dell'annullo"
+                />
+                <div className="flex gap-2">
+                    <button type="button" onClick={() => setAnnullaTx(null)} className={cx(BTN_SECONDARY, 'flex-1')}>Indietro</button>
+                    <button
+                        type="button" onClick={eseguiAnnullo} disabled={busyAnnullo || motivoAnnullo.trim().length < 3}
+                        className={cx(BTN_PRIMARY, 'flex-1')}
+                    >
+                        {busyAnnullo ? 'Annullo…' : 'Conferma annullo'}
+                    </button>
                 </div>
-            )}
+            </Modal>
         </div>
     );
 }

@@ -69,8 +69,8 @@ export function SaveRow({ onSave, saving, msg, error }: { onSave: () => void; sa
             <button onClick={onSave} disabled={saving} className={btnPrimary}>
                 <Save size={14} /> {saving ? 'Salvataggio…' : 'Salva'}
             </button>
-            {msg && <span className="font-maven text-sm text-kidville-success">{msg}</span>}
-            {error && <span className="font-maven text-sm text-kidville-error">{error}</span>}
+            {msg && <span role="status" className="font-maven text-sm text-kidville-success">{msg}</span>}
+            {error && <span role="alert" className="font-maven text-sm text-kidville-error">{error}</span>}
         </div>
     );
 }

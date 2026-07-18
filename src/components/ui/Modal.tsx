@@ -21,6 +21,14 @@ interface ModalProps {
   className?: string
   /** Stile inline del pannello dialog (es. box-shadow fluttuante). Retrocompatibile: opzionale. */
   style?: React.CSSProperties
+  /**
+   * Fallback per il ripristino del focus alla chiusura (WCAG 2.4.3). Serve quando il
+   * dialog è aperto da un handler async il cui trigger era `disabled` durante la POST:
+   * a quell'istante `document.activeElement` è già `<body>`, quindi il capture di
+   * `previouslyFocused` perde il bottone. Se fornito, alla chiusura si torna a
+   * `returnFocusRef.current` invece che a `<body>`. Retrocompatibile: opzionale.
+   */
+  returnFocusRef?: React.RefObject<HTMLButtonElement | null>
   children: React.ReactNode
 }
 
@@ -30,7 +38,7 @@ interface ModalProps {
  * del focus al trigger alla chiusura. Regge i dialoghi annidati (stack). Nessuna
  * nuova dipendenza. I modali esistenti vi migrano incrementalmente.
  */
-export function Modal({ open, onClose, title, labelledBy, closeOnBackdrop = true, className, style, children }: ModalProps) {
+export function Modal({ open, onClose, title, labelledBy, closeOnBackdrop = true, className, style, returnFocusRef, children }: ModalProps) {
   const dialogRef = useRef<HTMLDivElement>(null)
   const previouslyFocused = useRef<HTMLElement | null>(null)
   // Id stabile per istanza + onClose via ref: l'effetto dipende solo da `open`,
@@ -41,6 +49,13 @@ export function Modal({ open, onClose, title, labelledBy, closeOnBackdrop = true
   const onCloseRef = useRef(onClose)
   useEffect(() => {
     onCloseRef.current = onClose
+  })
+  // Ref «sempre aggiornata» al fallback di ripristino focus: tenuta fuori dalle
+  // deps dell'effetto (che restano `[open]`) esattamente come `onCloseRef`, così
+  // un nuovo oggetto ref a ogni render non fa ripartire l'effetto e non ruba il focus.
+  const returnFocusRefLatest = useRef(returnFocusRef)
+  useEffect(() => {
+    returnFocusRefLatest.current = returnFocusRef
   })
 
   useEffect(() => {
@@ -88,7 +103,13 @@ export function Modal({ open, onClose, title, labelledBy, closeOnBackdrop = true
       if (idx !== -1) modalStack.splice(idx, 1)
       // Sblocca lo scroll solo quando non resta alcun modale aperto.
       document.body.style.overflow = modalStack.length === 0 ? prevOverflow : 'hidden'
-      previouslyFocused.current?.focus()
+      // Ripristino del focus (WCAG 2.4.3). Caso normale: torna a `previouslyFocused`.
+      // Caso degradato (dialog aperto da handler async col trigger `disabled`): al
+      // capture activeElement era già `<body>`, quindi torna al `returnFocusRef` se dato.
+      const prev = previouslyFocused.current
+      const fallback = returnFocusRefLatest.current?.current ?? null
+      const target = fallback && (!prev || prev === document.body) ? fallback : prev
+      target?.focus()
     }
   }, [open])
 

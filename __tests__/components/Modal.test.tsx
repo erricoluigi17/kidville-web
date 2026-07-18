@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { Modal } from '@/components/ui/Modal'
 
@@ -64,6 +64,53 @@ describe('Modal (primitive accessibile)', () => {
     expect(screen.getByRole('dialog')).toBeInTheDocument()
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(document.activeElement).toBe(trigger)
+  })
+
+  it('con returnFocusRef ripristina il focus al trigger anche se all’apertura activeElement era body', () => {
+    // Regressione WCAG 2.4.3: il trigger è `disabled` durante la POST async che
+    // precede l’apertura, quindi al momento del capture activeElement è già <body>.
+    // Senza returnFocusRef il focus tornerebbe a body; col ref torna al bottone.
+    function Harness() {
+      const [open, setOpen] = useState(false)
+      const triggerRef = useRef<HTMLButtonElement>(null)
+      return (
+        <>
+          <button ref={triggerRef} data-testid="trigger" onClick={() => setOpen(true)}>apri</button>
+          <Modal open={open} onClose={() => setOpen(false)} title="X" returnFocusRef={triggerRef}>
+            <button>dentro</button>
+          </Modal>
+        </>
+      )
+    }
+    render(<Harness />)
+    const trigger = screen.getByTestId('trigger')
+    // Non mettiamo a fuoco il trigger: in jsdom fireEvent.click NON dà il focus,
+    // quindi all’apertura activeElement è <body> (simula il bottone disabilitato).
+    fireEvent.click(trigger)
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(document.activeElement).toBe(trigger)
+  })
+
+  it('senza returnFocusRef, se all’apertura activeElement era body, alla chiusura il focus NON viene forzato al trigger', () => {
+    // Retrocompatibilità: il comportamento storico (focus torna a previouslyFocused,
+    // cioè body) resta invariato quando non si passa il ref di fallback.
+    function Harness() {
+      const [open, setOpen] = useState(false)
+      return (
+        <>
+          <button data-testid="trigger" onClick={() => setOpen(true)}>apri</button>
+          <Modal open={open} onClose={() => setOpen(false)} title="X">
+            <button>dentro</button>
+          </Modal>
+        </>
+      )
+    }
+    render(<Harness />)
+    const trigger = screen.getByTestId('trigger')
+    fireEvent.click(trigger)
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(document.activeElement).not.toBe(trigger)
   })
 
   it('usa aria-labelledby (e omette aria-label) quando labelledBy è passato', () => {

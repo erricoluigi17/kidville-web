@@ -63,14 +63,14 @@ export function PagamentiSummary({ userId, href }: Props) {
                         <AlertTriangle size={20} />
                     </span>
                     <div className="min-w-0 flex-1">
-                        <p className="font-maven text-[11.5px] font-semibold text-kidville-error-strong/80">
+                        <p className="font-maven text-[11.5px] font-semibold text-kidville-error-strong">
                             Pagamenti scaduti
                         </p>
                         <p className="font-barlow text-2xl font-black leading-none text-kidville-error-strong">
                             {formatEuro(scaduto)} scaduti
                         </p>
                         {prossima && (
-                            <p className="mt-1 truncate font-maven text-[12px] text-kidville-error-strong/75">
+                            <p className="mt-1 truncate font-maven text-[12px] text-kidville-error-strong">
                                 {prossima.descrizione} · scad. {isoToIt(prossima.scadenza) || prossima.scadenza}
                             </p>
                         )}

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { X, Euro } from 'lucide-react';
 import { FatturaButton } from './FatturaButton';
 import { SaveCheck } from '@/components/ui/SaveConfirmation';
@@ -61,7 +61,10 @@ export function RegistraIncassoModal({ pagamento, userId, onClose, onDone }: Pro
     const [error, setError] = useState<string | null>(null);
     const [saldato, setSaldato] = useState(pagamento.stato === 'pagato');
 
-    // Dialog di conferma eccedenza → credito famiglia.
+    // Dialog di conferma eccedenza → credito famiglia. Il ref sul bottone «Registra»
+    // permette il ripristino del focus (WCAG 2.4.3): durante la POST async quel
+    // bottone è `disabled`, quindi al capture del Modal activeElement è già <body>.
+    const registraBtnRef = useRef<HTMLButtonElement>(null);
     const [eccedenza, setEccedenza] = useState<number | null>(null);
     const [paganti, setPaganti] = useState<Pagante[]>([]);
     const [paganteId, setPaganteId] = useState('');
@@ -253,7 +256,7 @@ export function RegistraIncassoModal({ pagamento, userId, onClose, onDone }: Pro
                         <button onClick={onClose} className={cx(BTN_SECONDARY, 'flex-1')}>
                             Annulla
                         </button>
-                        <button onClick={() => doSubmit()} disabled={saving} className={cx(BTN_PRIMARY, 'flex-1')}>
+                        <button ref={registraBtnRef} onClick={() => doSubmit()} disabled={saving} className={cx(BTN_PRIMARY, 'flex-1')}>
                             {saving ? 'Salvataggio…' : `Registra ${formatEuro(importo || 0)}`}
                         </button>
                     </div>
@@ -268,6 +271,7 @@ export function RegistraIncassoModal({ pagamento, userId, onClose, onDone }: Pro
                 labelledBy="incasso-ecc-title"
                 className={cx(MODAL_CARD, 'max-w-sm')}
                 style={{ boxShadow: MODAL_SHADOW }}
+                returnFocusRef={registraBtnRef}
             >
                 <h4 id="incasso-ecc-title" className="font-barlow font-black text-base text-kidville-green uppercase mb-2">Eccedenza da gestire</h4>
                 <p className="font-maven text-sm text-kidville-ink mb-3">

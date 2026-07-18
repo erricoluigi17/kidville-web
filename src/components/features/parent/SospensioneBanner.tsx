@@ -61,7 +61,7 @@ export function SospensioneBanner({ userId, className }: Props) {
                     <p className="font-barlow text-base font-black uppercase leading-none text-kidville-error-strong">
                         Servizi sospesi
                     </p>
-                    <p className="mt-1 font-maven text-[12.5px] leading-snug text-kidville-error-strong/85">
+                    <p className="mt-1 font-maven text-[12.5px] leading-snug text-kidville-error-strong">
                         La tua posizione risulta sospesa per morosità
                         {stato.totaleScaduto > 0 ? ` (${formatEuro(stato.totaleScaduto)} scaduti)` : ''}.
                         Alcuni servizi (moduli, adesioni, ordini) sono temporaneamente bloccati.

@@ -124,11 +124,11 @@ export function StoricoPagamenti({ userId }: Props) {
 
             {!loading && !error && totaleDovuto > 0 && (
                 <div className="rounded-[22px] p-[18px]" style={{ background: 'linear-gradient(135deg, var(--color-kidville-green), var(--color-kidville-green-dark))' }}>
-                    <p className="font-maven text-[12.5px] text-white/75">Totale da saldare</p>
+                    <p className="font-maven text-[12.5px] text-white">Totale da saldare</p>
                     <p className="font-barlow font-black text-[40px] leading-none text-kidville-yellow">
                         {formatEuro(totaleDovuto)}
                     </p>
-                    <p className="font-maven text-xs text-white/70 mt-1">
+                    <p className="font-maven text-xs text-white mt-1">
                         {vociAperte} voc{vociAperte === 1 ? 'e' : 'i'} da saldare
                     </p>
                 </div>
@@ -243,7 +243,7 @@ function PagamentoCard({ p, userId }: { p: Pagamento; userId: string }) {
                     </p>
                     <p className="font-maven text-xs text-kidville-muted">
                         {p.alunni?.nome} {p.alunni?.cognome} · scad. {isoToIt(p.scadenza) || p.scadenza}
-                        {isSplit && <span className="ml-1 text-kidville-warn">· tua quota</span>}
+                        {isSplit && <span className="ml-1 text-kidville-warn-strong">· tua quota</span>}
                     </p>
                 </div>
                 <span className={`shrink-0 px-2 py-0.5 rounded-full text-[11px] font-bold ${st.cls}`}>{st.label}</span>

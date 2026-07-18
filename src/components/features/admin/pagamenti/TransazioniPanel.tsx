@@ -11,7 +11,7 @@
 //                  ricevuta famiglia PDF o «dividi in fatture»
 // In fondo: registro transazioni con annullo (motivo obbligatorio) e ristampa.
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Coins, Search, Wand2, X, RotateCcw, FileText, UtensilsCrossed, ArrowLeft, Check, Printer } from 'lucide-react';
 import { SectionTitle } from '@/components/ui/cockpit';
 import { Modal } from '@/components/ui/Modal';
@@ -70,7 +70,10 @@ export function TransazioniPanel({ userId, scuolaId }: Props) {
     const [alloc, setAlloc] = useState<Record<string, string>>({}); // voce.id → importo (assente = esclusa)
     const [ric, setRic] = useState<Record<string, Ricarica>>({});    // alunno_id → { euro, ticket }
 
-    // Dialog eccedenza + esito.
+    // Dialog eccedenza + esito. Il ref sul bottone che apre il dialog serve al
+    // ripristino del focus (WCAG 2.4.3): durante la POST async il bottone è
+    // `disabled`, quindi al capture del Modal activeElement è già <body>.
+    const registraBtnRef = useRef<HTMLButtonElement>(null);
     const [confermaEcc, setConfermaEcc] = useState<number | null>(null);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -405,6 +408,7 @@ export function TransazioniPanel({ userId, scuolaId }: Props) {
                         <div className="flex gap-2">
                             <button type="button" onClick={reset} className={cx(BTN_SECONDARY, 'flex-1')}>Annulla</button>
                             <button
+                                ref={registraBtnRef}
                                 type="button" onClick={() => invia(false)} disabled={!puoConfermare || saving}
                                 className={cx(BTN_PRIMARY, 'flex-1')}
                             >
@@ -512,6 +516,7 @@ export function TransazioniPanel({ userId, scuolaId }: Props) {
                 labelledBy="tx-eccedenza-title"
                 className={cx(MODAL_CARD, 'max-w-sm')}
                 style={{ boxShadow: MODAL_SHADOW }}
+                returnFocusRef={registraBtnRef}
             >
                 <h2 id="tx-eccedenza-title" className="mb-2 font-barlow text-base font-black uppercase text-kidville-green">Eccedenza da confermare</h2>
                 <p className="mb-3 font-maven text-sm text-kidville-ink">

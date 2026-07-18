@@ -5,9 +5,10 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import {
     Settings, CreditCard, GraduationCap, LayoutGrid, NotebookPen, CalendarCheck,
     StickyNote, Megaphone, MessageCircle, Images, Package, FileSignature,
-    UtensilsCrossed, BookOpenCheck, BellRing,
+    UtensilsCrossed, BookOpenCheck, BellRing, Percent,
 } from 'lucide-react';
 import { SettingsPanel } from '@/components/features/admin/settings/SettingsPanel';
+import { RetteSettings } from '@/components/features/admin/settings/RetteSettings';
 import { DidatticaPrimariaPanel } from '@/components/features/admin/primaria/DidatticaPrimariaPanel';
 import { FunzioniMatricePanel } from '@/components/features/admin/settings/FunzioniMatricePanel';
 import { PagelleScrutinioPanel } from '@/components/features/admin/settings/PagelleScrutinioPanel';
@@ -27,7 +28,7 @@ import { SedeRequired } from '@/lib/context/sede-context';
 
 type Sezione =
     | 'moduli'
-    | 'pagamenti' | 'modulistica'
+    | 'pagamenti' | 'rette' | 'modulistica'
     | 'didattica' | 'pagelle' | 'diario' | 'presenze' | 'note'
     | 'mensa' | 'armadietto'
     | 'avvisi' | 'chat' | 'galleria' | 'notifiche';
@@ -44,6 +45,7 @@ const GRUPPI: Gruppo[] = [
         label: 'Amministrazione',
         voci: [
             { id: 'pagamenti', label: 'Pagamenti & Fatturazione', icon: <CreditCard size={15} /> },
+            { id: 'rette', label: 'Rette & Sconti', icon: <Percent size={15} /> },
             { id: 'modulistica', label: 'Modulistica', icon: <FileSignature size={15} /> },
         ],
     },
@@ -165,6 +167,7 @@ function Inner() {
                         </h2>
                         {userId && sezione === 'moduli' && <FunzioniMatricePanel userId={userId} />}
                         {userId && sezione === 'pagamenti' && <SedeRequired cosa="pagamenti & fatturazione">{(sid) => <SettingsPanel userId={userId} scuolaId={sid} />}</SedeRequired>}
+                        {userId && sezione === 'rette' && <SedeRequired cosa="rette & sconti">{(sid) => <RetteSettings userId={userId} scuolaId={sid} />}</SedeRequired>}
                         {userId && sezione === 'modulistica' && <ModulisticaSettings userId={userId} />}
                         {userId && sezione === 'didattica' && <SedeRequired cosa="la didattica primaria">{(sid) => <DidatticaPrimariaPanel scuolaId={sid} userId={userId} />}</SedeRequired>}
                         {userId && sezione === 'pagelle' && <SedeRequired cosa="pagelle & scrutinio">{(sid) => <PagelleScrutinioPanel scuolaId={sid} userId={userId} />}</SedeRequired>}

@@ -3,7 +3,9 @@ import { sendEmail } from '@/lib/email/send'
 import { enqueueNotifiche } from '@/lib/push/enqueue'
 import { getModuleConfig } from '@/lib/settings/module-config'
 import { logErrore } from '@/lib/logging/logger'
+import { formatEuro } from '@/lib/format/valuta'
 import { residuoEffettivo } from './aging'
+import { rigaCausaleSollecito } from './causale'
 import { datiStruttura, type ArubaFiscalConfig, type FiscaleConfig } from './fiscale'
 import {
     DEFAULT_SOLLECITI_CONFIG,
@@ -43,7 +45,7 @@ interface PagRow {
     scadenza: string | null
     tipo: string
     ultimo_sollecito_il: string | null
-    alunni?: { nome?: string; cognome?: string } | null
+    alunni?: { nome?: string; cognome?: string; codice_fiscale?: string | null } | null
 }
 
 const MS_GIORNO = 86_400_000
@@ -60,8 +62,8 @@ export async function sollecitaPagamenti(
         sediAmmesse?: string[]
     } = {},
 ): Promise<EsitoSollecito[]> {
-    const COLONNE_PAG_BASE = 'id, alunno_id, scuola_id, descrizione, importo, importo_pagato, stato, scadenza, tipo, ultimo_sollecito_il, alunni:alunno_id ( nome, cognome )'
-    const COLONNE_PAG = 'id, alunno_id, scuola_id, descrizione, importo, importo_pagato, sconto, stato, scadenza, tipo, ultimo_sollecito_il, alunni:alunno_id ( nome, cognome )'
+    const COLONNE_PAG_BASE = 'id, alunno_id, scuola_id, descrizione, importo, importo_pagato, stato, scadenza, tipo, ultimo_sollecito_il, alunni:alunno_id ( nome, cognome, codice_fiscale )'
+    const COLONNE_PAG = 'id, alunno_id, scuola_id, descrizione, importo, importo_pagato, sconto, stato, scadenza, tipo, ultimo_sollecito_il, alunni:alunno_id ( nome, cognome, codice_fiscale )'
     let { data: pagRows, error: errPag } = await supabase.from('pagamenti').select(COLONNE_PAG).in('id', pagamentoIds)
     // DB E2E CI non migrato: `sconto` assente → 42703, ritenta senza (residuo = importo − pagato).
     if (errPag && (errPag as { code?: string }).code === '42703') {
@@ -130,14 +132,21 @@ export async function sollecitaPagamenti(
         const ctx = {
             alunno: [pag.alunni?.nome, pag.alunni?.cognome].filter(Boolean).join(' ') || 'vostro figlio/a',
             descrizione: pag.descrizione ?? '—',
-            importo: `€ ${Number(pag.importo).toFixed(2)}`,
-            residuo: `€ ${residuo.toFixed(2)}`,
+            importo: formatEuro(pag.importo),
+            residuo: formatEuro(residuo),
             scadenza: pag.scadenza ? new Date(pag.scadenza).toLocaleDateString('it-IT') : '—',
             scuola: scuolaNome,
             giorni_ritardo: giorniRitardo,
         }
         const oggetto = renderTemplate(liv.oggetto, ctx)
-        const corpo = renderTemplate(liv.testo, ctx)
+        // Il CF del bambino va SOLO nel corpo dell'email (destinatario = tutore →
+        // dato lecito), MAI nei log: `corpo` non viene passato a nessun logger, e
+        // `sendEmail`/`externalFetch` non loggano il body della richiesta.
+        const corpo = `${renderTemplate(liv.testo, ctx)}\n\n${rigaCausaleSollecito({
+            nome: pag.alunni?.nome,
+            cognome: pag.alunni?.cognome,
+            codiceFiscale: pag.alunni?.codice_fiscale,
+        })}`
 
         // destinatari: titolari quota (split) oppure tutori del bambino
         let adultIds: string[] = []

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   placeholderFor, patchAlunno, patchParent, nomeConferma, confermaValida,
+  scrubSuggerimenti,
 } from '@/lib/gdpr/anonimizza'
 
 describe('placeholderFor', () => {
@@ -36,6 +37,31 @@ describe('patchParent', () => {
     expect(patch.emails).toBeNull()
     expect(patch.auth_user_id).toBeNull()
     expect(patch.anonimizzato_il).toBeTruthy()
+  })
+})
+
+describe('scrubSuggerimenti', () => {
+  it('rimuove il `label` (Nome Cognome) da ogni suggerimento, preservando i campi tecnici', () => {
+    const out = scrubSuggerimenti([
+      { pagamento_id: 'p-1', score: 1050, motivi: ['codice fiscale'], label: 'Mario Rossi', cf_match: true },
+      { pagamento_id: 'p-2', score: 50, motivi: ['importo esatto'], label: 'Mario Rossi' },
+    ])
+    expect(Array.isArray(out)).toBe(true)
+    for (const s of out as Record<string, unknown>[]) {
+      expect('label' in s).toBe(false)
+    }
+    expect(out![0]).toMatchObject({ pagamento_id: 'p-1', score: 1050, cf_match: true })
+    expect(out![1]).toMatchObject({ pagamento_id: 'p-2', score: 50 })
+  })
+
+  it('input non-array (null/undefined/oggetto) → null', () => {
+    expect(scrubSuggerimenti(null)).toBeNull()
+    expect(scrubSuggerimenti(undefined)).toBeNull()
+    expect(scrubSuggerimenti({ label: 'x' })).toBeNull()
+  })
+
+  it('array vuoto → array vuoto', () => {
+    expect(scrubSuggerimenti([])).toEqual([])
   })
 })
 

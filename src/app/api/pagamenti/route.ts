@@ -53,7 +53,7 @@ const SELECT = `
   fattura_stato, fattura_pdf_path, fattura_aruba_id, fattura_emessa_il,
   data_incasso, ultimo_sollecito_il, creato_il, aggiornato_il,
   payment_categories ( id, nome, slug, colore, icona ),
-  alunni ( id, nome, cognome, classe_sezione, sospeso )
+  alunni ( id, nome, cognome, codice_fiscale, classe_sezione, sospeso )
 `
 
 // SELECT del GET con le colonne Contabilità v2 (sconto/sconto_motivo). Sul DB

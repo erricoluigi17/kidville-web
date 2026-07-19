@@ -21,7 +21,20 @@ import { INPUT, SELECT, BTN_PRIMARY, BTN_SECONDARY, MODAL_CARD, MODAL_SHADOW } f
 import { FatturaButton } from './FatturaButton';
 import { proponiAllocazione, round2 } from '@/lib/pagamenti/transazioni-quadratura';
 
-interface Props { userId: string; scuolaId: string }
+/**
+ * Precompilazione del wizard «Incasso unico» quando lo si apre da un bonifico
+ * multi-CF della Riconciliazione: pagante risolto (o null → step «scegli
+ * pagante»), riferimento/CRO dalla causale, totale dall'importo del movimento e
+ * alunni riconosciuti (per pre-spuntare solo le loro voci).
+ */
+export interface PrecompilaTransazione {
+    parent?: string | null;
+    rif?: string | null;
+    tot?: number | null;
+    alunni?: string[] | null;
+}
+
+interface Props { userId: string; scuolaId: string; precompila?: PrecompilaTransazione | null }
 
 interface ParentLite { id: string; first_name?: string | null; last_name?: string | null }
 interface Figlio { id: string; nome: string | null; cognome: string | null; saldo_ticket: number }
@@ -52,7 +65,7 @@ const METODI = [
 
 type Ricarica = { euro: string; ticket: string };
 
-export function TransazioniPanel({ userId, scuolaId }: Props) {
+export function TransazioniPanel({ userId, scuolaId, precompila }: Props) {
     const [step, setStep] = useState<'pagante' | 'importi'>('pagante');
 
     // Step (a) — ricerca pagante.
@@ -122,24 +135,66 @@ export function TransazioniPanel({ userId, scuolaId }: Props) {
         })
         .slice(0, 40);
 
+    // Applica una famiglia caricata allo step «importi»: pre-spunta le voci con il
+    // loro residuo effettivo (modificabili). `soloAlunni` restringe la pre-spunta
+    // agli alunni riconosciuti dal bonifico multi-CF (precompilazione); assente =
+    // tutte le voci (scelta manuale del pagante). NON tocca il totale: così un
+    // totale già precompilato sopravvive alla scelta manuale del pagante.
+    const applicaFamiglia = useCallback((f: Famiglia, soloAlunni?: string[] | null) => {
+        const filtro = soloAlunni && soloAlunni.length > 0 ? new Set(soloAlunni) : null;
+        const initAlloc: Record<string, string> = {};
+        for (const v of f.voci) {
+            if (filtro && !filtro.has(v.alunno_id)) continue;
+            initAlloc[v.id] = String(v.residuo);
+        }
+        setFam(f);
+        setAlloc(initAlloc);
+        setRic({});
+        setStep('importi');
+        setFatto(null);
+    }, []);
+
     const selezionaPagante = async (p: ParentLite) => {
         setError(null);
         try {
             const r = await fetch(`/api/pagamenti/famiglia?parent_id=${p.id}`, { headers: hdr(userId) });
             const j = await r.json();
             if (!j?.success) { setError(j?.error || 'Impossibile caricare la famiglia'); return; }
-            const f = j.data as Famiglia;
-            setFam(f);
-            // Precompila le allocazioni con il residuo effettivo di ogni voce (modificabili).
-            const initAlloc: Record<string, string> = {};
-            for (const v of f.voci) initAlloc[v.id] = String(v.residuo);
-            setAlloc(initAlloc);
-            setRic({});
-            setTotale('');
-            setStep('importi');
-            setFatto(null);
+            applicaFamiglia(j.data as Famiglia);
         } catch { setError('Errore di rete nel caricamento della famiglia'); }
     };
+
+    // ── Precompilazione da bonifico multi-CF (Riconciliazione v2) ──────────────
+    // All'apertura da «Apri Incasso unico»: se il pagante è risolto carica la sua
+    // famiglia e va allo step «importi» (voci degli alunni riconosciuti pre-spuntate);
+    // altrimenti resta su «scegli pagante». In entrambi i casi imposta totale e
+    // riferimento. setState SOLO dopo un await (mai sincrono nell'effetto →
+    // react-hooks/set-state-in-effect).
+    useEffect(() => {
+        if (!precompila) return;
+        let active = true;
+        (async () => {
+            const { parent, rif, tot, alunni } = precompila;
+            if (parent) {
+                let f: Famiglia | null = null;
+                try {
+                    const r = await fetch(`/api/pagamenti/famiglia?parent_id=${parent}`, { headers: hdr(userId) });
+                    const j = await r.json();
+                    if (j?.success) f = j.data as Famiglia;
+                } catch { f = null; }
+                if (!active) return;
+                // Famiglia non caricabile → degrada allo step «scegli pagante».
+                if (f) applicaFamiglia(f, alunni);
+            } else {
+                await Promise.resolve(); // confine microtask: il setState sotto non è sincrono
+                if (!active) return;
+            }
+            if (!active) return;
+            if (tot != null) setTotale(String(tot));
+            if (rif) setRiferimento(rif);
+        })();
+        return () => { active = false; };
+    }, [precompila, userId, applicaFamiglia]);
 
     // ── Step (b): quadratura ──────────────────────────────────────────────────
     const totaleNum = Number(totale) || 0;

@@ -28,6 +28,14 @@ export const SELECT = `${INPUT} cursor-pointer hover:border-kidville-green/50`;
 export const BTN_PRIMARY =
   'inline-flex items-center justify-center gap-1.5 rounded-pill bg-kidville-green px-5 py-2.5 font-maven text-sm font-bold text-kidville-yellow transition-colors hover:bg-kidville-green-dark disabled:opacity-50';
 
+/**
+ * CTA primaria AA della feature Riconciliazione: come `BTN_PRIMARY` ma testo
+ * BIANCO su verde (≈6,5:1) invece del giallo-su-verde (~4:1, sotto AA). Locale
+ * alla feature per non toccare il `Btn` globale dell'app.
+ */
+export const BTN_PRIMARY_AA =
+  'inline-flex items-center justify-center gap-1.5 rounded-pill bg-kidville-green px-5 py-2.5 font-maven text-sm font-bold text-kidville-white transition-colors hover:bg-kidville-green-dark disabled:opacity-50';
+
 /** Bottone secondario pillola: bordo line, testo muted (annulla/chiudi). */
 export const BTN_SECONDARY =
   'inline-flex items-center justify-center gap-1.5 rounded-pill border-[1.5px] border-kidville-line bg-kidville-white px-5 py-2.5 font-maven text-sm font-bold text-kidville-muted transition-colors hover:border-kidville-green hover:text-kidville-green disabled:opacity-50';

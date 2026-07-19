@@ -73,7 +73,8 @@ beforeEach(() => {
   h.pagamenti = [{
     id: PID, alunno_id: 'al-1', scuola_id: 'sc-1', descrizione: 'Retta Giugno', importo: 150, importo_pagato: 0,
     stato: 'scaduto', scadenza: '2026-06-05', tipo: 'singolo', ultimo_sollecito_il: null,
-    alunni: { nome: 'Mario', cognome: 'Rossi' },
+    // CF SINTETICO — non appartiene a nessuna persona reale (repo pubblico).
+    alunni: { nome: 'Mario', cognome: 'Rossi', codice_fiscale: 'TSTTST00T00T000T' },
   }]
   h.sollecitiEsistenti = []
   h.settingsRow = { solleciti_config: {}, fiscale_config: { denominazione: 'Kidville' }, aruba_config: {} }
@@ -89,9 +90,25 @@ describe('POST /api/pagamenti/solleciti', () => {
     const j = await res.json()
     expect(j.data[0].ok).toBe(true)
     expect(j.data[0].corpo).toContain('Mario Rossi')
-    expect(j.data[0].corpo).toContain('150.00')
+    // Importi in formato it-IT (virgola decimale), MAI in stile US col punto.
+    expect(j.data[0].corpo).toContain('150,00')
+    expect(j.data[0].corpo).not.toContain('150.00')
     expect(h.sendEmail).not.toHaveBeenCalled()
     expect(h.inserts).toHaveLength(0)
+  })
+
+  // E1 — l'email deve riportare gli importi in it-IT: virgola decimale e punto
+  // separatore delle migliaia («€ 1.234,50»), mai lo stile US «1234.50».
+  it('importi in it-IT: separatore migliaia + virgola decimale nel corpo email', async () => {
+    h.pagamenti[0].importo = 1234.5
+    h.pagamenti[0].importo_pagato = 0
+    const res = await POST(post({ pagamento_ids: [PID] }))
+    expect(res.status).toBe(200)
+    expect(h.sendEmail).toHaveBeenCalledTimes(1)
+    const text = (h.sendEmail.mock.calls[0][0] as { text: string }).text
+    expect(text).toContain('1.234,50')
+    expect(text).not.toContain('1234.50')
+    expect(text).not.toContain('1234.5')
   })
 
   it('invio: email al genitore, log a registro e ultimo_sollecito_il aggiornato', async () => {
@@ -102,6 +119,17 @@ describe('POST /api/pagamenti/solleciti', () => {
     expect(h.inserts.some((i) => i.table === 'solleciti')).toBe(true)
     expect(h.updates.some((u) => u.table === 'pagamenti' && u.row.ultimo_sollecito_il)).toBe(true)
     expect(h.enqueueNotifiche).toHaveBeenCalled()
+  })
+
+  // Causale bonifico: il corpo dell'email deve portare la causale consigliata col
+  // CF del bambino (abbinamento univoco dei bonifici in riconciliazione).
+  it('causale: il corpo email contiene «Nome Cognome CF» del bambino', async () => {
+    const res = await POST(post({ pagamento_ids: [PID] }))
+    expect(res.status).toBe(200)
+    expect(h.sendEmail).toHaveBeenCalledTimes(1)
+    const text = (h.sendEmail.mock.calls[0][0] as { text: string }).text
+    expect(text).toContain('Mario Rossi TSTTST00T00T000T')
+    expect(text.toLowerCase()).toContain('causale')
   })
 
   it('anti-spam: sollecito recente → saltato con motivo cadenza', async () => {

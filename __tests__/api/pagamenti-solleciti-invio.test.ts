@@ -32,7 +32,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.neq = () => b
       b.order = () => b
       b.limit = () => b
-      b.maybeSingle = async () => ({ data: table === 'admin_settings' ? h.settingsRow : null, error: null })
+      b.maybeSingle = async () => ({ data: table === 'admin_settings' ? h.settingsRow : table === 'scuole' ? { nome: 'Kidville Giugliano' } : null, error: null })
       b.insert = (row: Record<string, unknown>) => {
         h.inserts.push({ table, row })
         return { then: (r: (v: unknown) => unknown) => r({ data: null, error: null }), select: () => ({ single: async () => ({ data: row, error: null }) }) }
@@ -121,14 +121,15 @@ describe('POST /api/pagamenti/solleciti', () => {
     expect(h.enqueueNotifiche).toHaveBeenCalled()
   })
 
-  // Causale bonifico: il corpo dell'email deve portare la causale consigliata col
-  // CF del bambino (abbinamento univoco dei bonifici in riconciliazione).
-  it('causale: il corpo email contiene «Nome Cognome CF» del bambino', async () => {
+  // Causale bonifico: il corpo dell'email deve portare la causale consigliata
+  // completa «{descrizione} - per il minore {Nome Cognome} - {CF} - {SEDE}»
+  // (abbinamento univoco dei bonifici in riconciliazione).
+  it('causale: il corpo email contiene la causale completa (descrizione, minore, CF, sede)', async () => {
     const res = await POST(post({ pagamento_ids: [PID] }))
     expect(res.status).toBe(200)
     expect(h.sendEmail).toHaveBeenCalledTimes(1)
     const text = (h.sendEmail.mock.calls[0][0] as { text: string }).text
-    expect(text).toContain('Mario Rossi TSTTST00T00T000T')
+    expect(text).toContain('Retta Giugno - per il minore Mario Rossi - TSTTST00T00T000T - GIUGLIANO')
     expect(text.toLowerCase()).toContain('causale')
   })
 

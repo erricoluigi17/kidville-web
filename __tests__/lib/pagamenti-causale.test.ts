@@ -1,29 +1,49 @@
 import { describe, it, expect } from 'vitest'
-import { causaleBonifico, haCodiceFiscale, rigaCausaleSollecito } from '@/lib/pagamenti/causale'
+import { causaleBonifico, haCodiceFiscale, rigaCausaleSollecito, sedeCausale, nomeCompleto } from '@/lib/pagamenti/causale'
 
 // CF SINTETICO — non appartiene a nessuna persona reale (repo pubblico).
 const CF_SINTETICO = 'TSTTST00T00T000T'
 
+describe('sedeCausale', () => {
+  it('maiuscolo, senza il prefisso «Kidville»', () => {
+    expect(sedeCausale('Kidville Giugliano')).toBe('GIUGLIANO')
+    expect(sedeCausale('kidville  napoli')).toBe('NAPOLI')
+    expect(sedeCausale('Giugliano')).toBe('GIUGLIANO')
+    expect(sedeCausale(null)).toBe('')
+    expect(sedeCausale('  ')).toBe('')
+  })
+})
+
 describe('causaleBonifico', () => {
-  it('compone "Nome Cognome CF"', () => {
-    expect(causaleBonifico({ nome: 'Mario', cognome: 'Rossi', codiceFiscale: CF_SINTETICO }))
-      .toBe(`Mario Rossi ${CF_SINTETICO}`)
+  it('compone «{descrizione} - per il minore {Nome Cognome} - {CF} - {SEDE}»', () => {
+    expect(causaleBonifico({ descrizione: 'Retta Settembre 2026', nome: 'Mario', cognome: 'Rossi', codiceFiscale: CF_SINTETICO, sede: 'Kidville Giugliano' }))
+      .toBe(`Retta Settembre 2026 - per il minore Mario Rossi - ${CF_SINTETICO} - GIUGLIANO`)
   })
 
-  it('normalizza il CF (trim + maiuscolo)', () => {
-    expect(causaleBonifico({ nome: 'Mario', cognome: 'Rossi', codiceFiscale: '  tsttst00t00t000t  ' }))
-      .toBe(`Mario Rossi ${CF_SINTETICO}`)
+  it('normalizza CF (trim+maiuscolo) e sede', () => {
+    expect(causaleBonifico({ descrizione: 'Retta', nome: 'Mario', cognome: 'Rossi', codiceFiscale: '  tsttst00t00t000t  ', sede: 'Kidville Giugliano' }))
+      .toBe(`Retta - per il minore Mario Rossi - ${CF_SINTETICO} - GIUGLIANO`)
   })
 
-  it('senza CF ritorna solo "Nome Cognome"', () => {
-    expect(causaleBonifico({ nome: 'Mario', cognome: 'Rossi', codiceFiscale: null }))
-      .toBe('Mario Rossi')
+  it('omette le parti assenti (senza CF / senza sede)', () => {
+    expect(causaleBonifico({ descrizione: 'Retta', nome: 'Mario', cognome: 'Rossi' }))
+      .toBe('Retta - per il minore Mario Rossi')
+    expect(causaleBonifico({ descrizione: 'Retta', nome: 'Mario', cognome: 'Rossi', codiceFiscale: CF_SINTETICO }))
+      .toBe(`Retta - per il minore Mario Rossi - ${CF_SINTETICO}`)
   })
 
-  it('tollera nome o cognome mancante senza produrre spazi sporchi o "undefined"', () => {
-    expect(causaleBonifico({ nome: 'Mario', cognome: null, codiceFiscale: null })).toBe('Mario')
-    expect(causaleBonifico({ nome: null, cognome: null, codiceFiscale: CF_SINTETICO })).toBe(CF_SINTETICO)
+  it('tollera campi mancanti senza spazi sporchi né «undefined»', () => {
+    expect(causaleBonifico({ descrizione: 'Retta', nome: 'Mario', cognome: null })).toBe('Retta - per il minore Mario')
+    expect(causaleBonifico({ nome: null, cognome: null, codiceFiscale: CF_SINTETICO, sede: 'Kidville Giugliano' })).toBe(`${CF_SINTETICO} - GIUGLIANO`)
     expect(causaleBonifico({})).toBe('')
+  })
+})
+
+describe('nomeCompleto', () => {
+  it('ripulisce spazi e campi assenti', () => {
+    expect(nomeCompleto({ nome: 'Mario', cognome: 'Rossi' })).toBe('Mario Rossi')
+    expect(nomeCompleto({ nome: null, cognome: 'Rossi' })).toBe('Rossi')
+    expect(nomeCompleto({})).toBe('')
   })
 })
 
@@ -38,16 +58,19 @@ describe('haCodiceFiscale', () => {
 })
 
 describe('rigaCausaleSollecito', () => {
-  it('con CF include la causale completa col codice fiscale', () => {
-    const riga = rigaCausaleSollecito({ nome: 'Mario', cognome: 'Rossi', codiceFiscale: CF_SINTETICO })
+  it('include la causale completa (descrizione, minore, CF, sede)', () => {
+    const riga = rigaCausaleSollecito({ descrizione: 'Retta Settembre 2026', nome: 'Mario', cognome: 'Rossi', codiceFiscale: CF_SINTETICO, sede: 'Kidville Giugliano' })
     expect(riga.toLowerCase()).toContain('causale')
-    expect(riga).toContain(`Mario Rossi ${CF_SINTETICO}`)
+    expect(riga).toContain(`Retta Settembre 2026 - per il minore Mario Rossi - ${CF_SINTETICO} - GIUGLIANO`)
   })
 
-  it('senza CF invita a indicare nome e cognome del bambino', () => {
-    const riga = rigaCausaleSollecito({ nome: 'Mario', cognome: 'Rossi', codiceFiscale: null })
-    expect(riga).toContain('Mario Rossi')
-    expect(riga.toLowerCase()).toContain('nome e cognome')
+  it('senza CF resta utile (descrizione + minore) e senza «undefined»', () => {
+    const riga = rigaCausaleSollecito({ descrizione: 'Retta', nome: 'Mario', cognome: 'Rossi', codiceFiscale: null })
+    expect(riga).toContain('Retta - per il minore Mario Rossi')
     expect(riga).not.toContain('undefined')
+  })
+
+  it('senza dati ritorna stringa vuota', () => {
+    expect(rigaCausaleSollecito({})).toBe('')
   })
 })

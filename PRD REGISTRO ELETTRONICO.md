@@ -61,6 +61,10 @@
 
 ---
 
+## 🗓️ Changelog — Causale bonifico completa: «{descrizione} - per il minore {Nome Cognome} - {CF} - {SEDE}» 2026-07-19 (branch `feat/causale-bonifico-completa`)
+
+Rifinitura della causale consigliata introdotta con la Riconciliazione v2 (sotto): dal formato minimo «Nome Cognome CF» a una **causale completa per singola voce** — `{descrizione del pagamento} - per il minore {Nome Cognome} - {CODICE FISCALE} - {SEDE}` (es. «Retta Settembre 2026 - per il minore Mario Rossi - «CF» - GIUGLIANO»). Così il bonifico porta con sé descrizione, mese, nome, CF e sede: l'abbinamento in riconciliazione è a **margine d'errore zero**. La card genitore `CausaleBonifico` mostra ora **una causale per ogni voce ancora aperta** (non più una per figlio); il nome sede è risolto da `scuole.nome` (query batch best-effort in `GET /api/pagamenti`) e reso «GIUGLIANO» (maiuscolo, senza il prefisso «Kidville») da `sedeCausale`. Il motore dei solleciti usa lo stesso builder `rigaCausaleSollecito`, col CF sempre **fuori dai log**. Le parti assenti (CF/sede) sono omesse con grazia. Gate: `eslint 0 · tsc 0 · vitest 2361 · build`; nessuna migrazione.
+
 ## 🗓️ Changelog — Riconciliazione bancaria v2: codice fiscale prioritario, estratto conto unico cross-sede, lista a semaforo con popup 2026-07-19 (branch `feat/riconciliazione-v2`)
 
 Quando arriva un bonifico, *di chi è, per quale minore, per cosa?* Il matcher indovinava da nome+importo+periodo (ambiguo: due rette da 150€ senza nome non si distinguono), la lista mostrava due soli colori senza i confermati, e l'estratto conto era **legato a una singola sede** (`riconciliazione_movimenti.scuola_id NOT NULL`), mentre il conto corrente è **uno solo per tutte le sedi**. Questo ciclo (pipeline `/ship-cycle`) riscrive la riconciliazione attorno a tre decisioni del titolare.

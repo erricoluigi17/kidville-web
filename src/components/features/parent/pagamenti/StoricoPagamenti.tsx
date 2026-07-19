@@ -8,7 +8,7 @@ import { residuoEffettivo } from '@/lib/pagamenti/aging';
 import { isoToIt } from '@/lib/format/data';
 import { formatEuro } from '@/lib/format/valuta';
 import { PushOptIn } from './PushOptIn';
-import { CausaleBonifico, type FiglioCausale } from './CausaleBonifico';
+import { CausaleBonifico, type VoceCausale } from './CausaleBonifico';
 
 interface Pagamento {
     id: string;
@@ -26,6 +26,7 @@ interface Pagamento {
     importo_totale_famiglia?: number;
     residuo?: number | string | null;
     stato_effettivo?: string;
+    scuola_nome?: string | null;
     payment_categories?: { nome?: string; colore?: string; icona?: string } | null;
     alunni?: { nome?: string; cognome?: string; codice_fiscale?: string | null; sospeso?: boolean };
 }
@@ -111,23 +112,19 @@ export function StoricoPagamenti({ userId }: Props) {
     }
     const mostraTotaleFamiglia = perFiglio.size >= 2;
 
-    // Causale consigliata per il bonifico: un'entrata per figlio distinto (dedup
-    // per alunno_id sui dati già in memoria — zero nuove fetch). Il CF è del PROPRIO
-    // figlio: dato del genitore, lecito da mostrargli.
-    const figliCausale = (() => {
-        const m = new Map<string, FiglioCausale>();
-        for (const p of pagamenti) {
-            const id = p.alunno_id;
-            if (!id || m.has(id)) continue;
-            m.set(id, {
-                alunno_id: id,
-                nome: p.alunni?.nome ?? '',
-                cognome: p.alunni?.cognome ?? '',
-                codiceFiscale: p.alunni?.codice_fiscale ?? null,
-            });
-        }
-        return [...m.values()];
-    })();
+    // Causale consigliata per il bonifico: UNA per voce ancora aperta (ogni retta
+    // ha la sua descrizione), col CF del proprio figlio (dato del genitore, lecito)
+    // e la sede. Zero nuove fetch: usa i dati già in memoria.
+    const vociCausale: VoceCausale[] = pagamenti
+        .filter((p) => residuoRiga(p) > 0)
+        .map((p) => ({
+            id: p.id,
+            descrizione: p.descrizione,
+            nome: p.alunni?.nome ?? '',
+            cognome: p.alunni?.cognome ?? '',
+            codiceFiscale: p.alunni?.codice_fiscale ?? null,
+            sede: p.scuola_nome ?? null,
+        }));
 
     return (
         <div className="space-y-5">
@@ -171,8 +168,8 @@ export function StoricoPagamenti({ userId }: Props) {
                 </div>
             )}
 
-            {!loading && !error && figliCausale.length > 0 && (
-                <CausaleBonifico figli={figliCausale} />
+            {!loading && !error && vociCausale.length > 0 && (
+                <CausaleBonifico voci={vociCausale} />
             )}
 
             <div className="flex justify-end"><PushOptIn userId={userId} /></div>

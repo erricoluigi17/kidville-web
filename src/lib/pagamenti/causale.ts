@@ -1,17 +1,18 @@
-// Causale consigliata per il bonifico. Il genitore che scrive in causale il
-// CODICE FISCALE del minore rende univoco l'abbinamento automatico dei bonifici
-// (riconciliazione): «Nome Cognome CODICE_FISCALE». Se il CF manca, si degrada a
-// «Nome Cognome» con l'invito a indicare comunque il nome del bambino.
+// Causale consigliata per il bonifico, completa per l'abbinamento automatico
+// (riconciliazione) SENZA margine d'errore:
+//   «{descrizione} - per il minore {Nome Cognome} - {CODICE FISCALE} - {SEDE}»
+// es. «Retta Settembre 2026 - per il minore Mario Rossi - RSSMRA85T10A562S - GIUGLIANO».
+// Ogni parte assente viene omessa. Il CF del minore va SOLO al genitore (card
+// «Copia» + email di sollecito), MAI nei log: qui si formatta solo una stringa.
 //
-// Funzioni PURE, senza I/O: condivise dalla UI genitore (card «Copia») e dal
-// motore dei solleciti (riga nel corpo email). Nessun dato personale passa dai
-// log: qui si formatta soltanto una stringa, chi la usa non la logga (il CF è un
-// dato che va al genitore, non in `app_log`).
+// Funzioni PURE, senza I/O: condivise dalla UI genitore e dal motore dei solleciti.
 
 export interface DatiCausale {
+    descrizione?: string | null
     nome?: string | null
     cognome?: string | null
     codiceFiscale?: string | null
+    sede?: string | null
 }
 
 /** «Nome Cognome» ripulito: niente spazi doppi né «undefined» da campi assenti. */
@@ -28,21 +29,34 @@ export function haCodiceFiscale(cf?: string | null): boolean {
 }
 
 /**
- * La stringa da copiare/incollare in causale: «Nome Cognome CF» (CF normalizzato
- * in maiuscolo). Senza CF ritorna il solo «Nome Cognome».
+ * Nome sede per la causale: MAIUSCOLO, senza il prefisso «Kidville».
+ * «Kidville Giugliano» → «GIUGLIANO». Vuoto/assente → «».
  */
-export function causaleBonifico(dati: DatiCausale): string {
-    const cf = (dati.codiceFiscale ?? '').trim().toUpperCase()
-    return [nomeCompleto(dati), cf].filter(Boolean).join(' ')
+export function sedeCausale(nome?: string | null): string {
+    return (nome ?? '').trim().toUpperCase().replace(/^KIDVILLE\s+/, '').trim()
 }
 
 /**
- * La riga da aggiungere al corpo dell'email di sollecito. Con CF mostra la causale
- * completa; senza, invita a indicare nome e cognome del bambino.
+ * La stringa da copiare/incollare in causale:
+ *   «{descrizione} - per il minore {Nome Cognome} - {CF} - {SEDE}».
+ * Le parti assenti sono omesse (join con « - »); il CF è normalizzato in maiuscolo.
+ */
+export function causaleBonifico(dati: DatiCausale): string {
+    const nome = nomeCompleto(dati)
+    const cf = (dati.codiceFiscale ?? '').trim().toUpperCase()
+    const desc = (dati.descrizione ?? '').trim()
+    const sede = sedeCausale(dati.sede)
+    return [desc, nome ? `per il minore ${nome}` : '', cf, sede]
+        .filter(Boolean)
+        .join(' - ')
+}
+
+/**
+ * La riga da aggiungere al corpo dell'email di sollecito con la causale completa.
+ * Se non c'è nulla da comporre (tutti i campi assenti) ritorna stringa vuota.
  */
 export function rigaCausaleSollecito(dati: DatiCausale): string {
-    if (haCodiceFiscale(dati.codiceFiscale)) {
-        return `Per pagare tramite bonifico, indicate come causale: "${causaleBonifico(dati)}".`
-    }
-    return `Per pagare tramite bonifico, indicate come causale il nome e cognome del bambino: "${nomeCompleto(dati)}".`
+    const causale = causaleBonifico(dati)
+    if (!causale) return ''
+    return `Per pagare tramite bonifico, indicate come causale: "${causale}".`
 }

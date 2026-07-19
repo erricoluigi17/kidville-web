@@ -211,6 +211,9 @@ body {
 [data-contrast="high"] *:focus-visible {
   outline: 3px solid #FFE500;
   outline-offset: 2px;
+  /* A3: separatore nero, così l'anello giallo si stacca anche dai controlli a
+     bordo/fondo giallo (es. riga «suggerito» in Alto Contrasto). */
+  box-shadow: 0 0 0 2px #000000;
 }
 /* AppBar e card-header verdi: in alto contrasto --color-kidville-green diventa
    #FFF e il testo bianco sparirebbe (bug latente degli header verdi inline).
@@ -221,10 +224,34 @@ body {
   box-shadow: inset 0 0 0 1px #8A8A8A;
 }
 
-/* Focus-ring visibile anche in modalità normale (baseline WCAG). */
+/* Riconciliazione bancaria — righe a semaforo (RiconciliazionePanel). Gli sfondi
+   pieni per stato (verde/giallo/rosso/grigio) restano leggibili in luce normale
+   e, in Alto Contrasto, il rimappaggio naturale dei token li tiene AA — TRANNE il
+   giallo: `--color-kidville-yellow` diventa near-white e il testo `ink` (→ bianco
+   in HC) vi sparirebbe sopra. Solo per «suggerito» si passa al linguaggio HC
+   (fondo nero + bordo giallo brillante), come `.kv-appbar`. Non-layered → vince
+   sulle utility Tailwind senza !important. */
+[data-contrast="high"] .kv-recon-row--suggerito {
+  background: #000000;
+  box-shadow: inset 0 0 0 2px #FFE500;
+}
+/* A2: sul box nero, il testo `text-kidville-ink` è inlinato SCURO da `@theme inline`
+   e NON si ribalta col rimappaggio del token → sparirebbe. Lo si forza chiaro sui
+   discendenti di testo (importo/data/causale/etichetta/chevron). Il badge «CF»
+   (text-kidville-green su pill bianca) resta leggibile: si lascia stare. */
+[data-contrast="high"] .kv-recon-row--suggerito .text-kidville-ink {
+  color: #FFFFFF;
+}
+
+/* Focus-ring visibile anche in modalità normale (baseline WCAG 2.4.7). A3: colore
+   verde ESPLICITO (#006A5F, non `var()` che in certi contesti ricade su currentColor
+   e sparisce sui controlli a testo chiaro) + separatore bianco, così l'anello resta
+   visibile sia sui controlli a fondo pieno (pill-filtro verde attiva, bottoni del
+   popup) sia sul fondo chiaro della pagina. */
 :focus-visible {
-  outline: 2px solid var(--color-kidville-green);
+  outline: 2px solid #006A5F;
   outline-offset: 2px;
+  box-shadow: 0 0 0 2px #FFFFFF;
 }
 
 /* Rispetta la preferenza di movimento ridotto (vestibolarità). */

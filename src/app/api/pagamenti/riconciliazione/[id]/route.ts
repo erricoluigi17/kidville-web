@@ -10,6 +10,7 @@ import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { notificaEvento } from '@/lib/notifiche/triggers'
 import { verificaRevocaSospensioneMorosita } from '@/lib/pagamenti/sospensione'
+import { residuoEffettivo } from '@/lib/pagamenti/aging'
 import { formatEuro } from '@/lib/format/valuta'
 
 const patchBodySchema = z.object({
@@ -19,13 +20,20 @@ const patchBodySchema = z.object({
 
 interface Movimento {
   id: string
-  scuola_id: string
+  // I movimenti sono ora GLOBALI: nasce senza sede (null) e assume quella del pagamento alla conferma.
+  scuola_id: string | null
   importo: number
   data_operazione: string
   causale: string | null
   stato: string
   suggerimenti?: { pagamento_id: string }[] | null
 }
+
+// SELECT del pagamento con le colonne Contabilità v2 (sconto) e quelle per il residuo effettivo.
+// Sul DB E2E CI (non migrato) `sconto` non esiste → 42703: si ritenta senza (residuoEffettivo
+// tratta sconto assente come 0). Stesso pattern di /api/pagamenti.
+const PAG_SELECT_BASE = 'id, scuola_id, stato, alunno_id, descrizione, importo, importo_pagato, scadenza'
+const PAG_SELECT_V2 = 'id, scuola_id, stato, alunno_id, descrizione, importo, importo_pagato, sconto, scadenza'
 
 // PATCH /api/pagamenti/riconciliazione/[id] — conferma/ignora/riapri (staff).
 // La CONFERMA crea l'incasso (metodo bonifico, data = data operazione): lo
@@ -52,16 +60,26 @@ export const PATCH = withRoute('pagamenti/riconciliazione/[id]:PATCH', async (re
     if (!movRaw) return NextResponse.json({ error: 'Movimento non trovato' }, { status: 404 })
     const mov = movRaw as unknown as Movimento
 
-    const sediAttive = await resolveScuoleAttive(request as NextRequest, supabase, auth.user)
-    if (!sediAttive.includes(mov.scuola_id)) {
-      return NextResponse.json({ error: 'Movimento fuori dalle sedi attive' }, { status: 403 })
-    }
+    // I movimenti sono GLOBALI (scuola_id può essere null finché non confermati): niente gate di
+    // sede in cima. ignora/riapri restano azioni staff sulla coda globale. Il vincolo di scrittura
+    // (registrare solo sulla PROPRIA sede) vale sul PAGAMENTO, nella conferma.
 
     if (azione === 'ignora') {
       if (mov.stato === 'confermato') {
         return NextResponse.json({ error: 'Movimento già confermato: stornare prima l’incasso' }, { status: 409 })
       }
-      await supabase.from('riconciliazione_movimenti').update({ stato: 'ignorato' }).eq('id', id)
+      // PostgREST non lancia: l'esito dell'UPDATE va letto. `.select('id')` conferma quante righe
+      // sono state toccate: `error` → 500 (non un finto success); 0 righe → 404 (già lavorato/sparito).
+      const { data: upd, error } = await supabase
+        .from('riconciliazione_movimenti')
+        .update({ stato: 'ignorato' })
+        .eq('id', id)
+        .select('id')
+      if (error) {
+        logErrore({ operazione: 'pagamenti/riconciliazione/[id]:PATCH', evento: 'ignora_update_fallita', stato: 500 }, error)
+        return NextResponse.json({ error: 'Errore nell’aggiornamento del movimento' }, { status: 500 })
+      }
+      if (!upd?.length) return NextResponse.json({ error: 'Movimento non trovato' }, { status: 404 })
       return NextResponse.json({ success: true })
     }
 
@@ -69,7 +87,16 @@ export const PATCH = withRoute('pagamenti/riconciliazione/[id]:PATCH', async (re
       if (mov.stato === 'confermato') {
         return NextResponse.json({ error: 'Movimento già confermato: stornare prima l’incasso' }, { status: 409 })
       }
-      await supabase.from('riconciliazione_movimenti').update({ stato: 'da_abbinare' }).eq('id', id)
+      const { data: upd, error } = await supabase
+        .from('riconciliazione_movimenti')
+        .update({ stato: 'da_abbinare' })
+        .eq('id', id)
+        .select('id')
+      if (error) {
+        logErrore({ operazione: 'pagamenti/riconciliazione/[id]:PATCH', evento: 'riapri_update_fallita', stato: 500 }, error)
+        return NextResponse.json({ error: 'Errore nell’aggiornamento del movimento' }, { status: 500 })
+      }
+      if (!upd?.length) return NextResponse.json({ error: 'Movimento non trovato' }, { status: 404 })
       return NextResponse.json({ success: true })
     }
 
@@ -81,15 +108,50 @@ export const PATCH = withRoute('pagamenti/riconciliazione/[id]:PATCH', async (re
     if (!pagamentoId) {
       return NextResponse.json({ error: 'Indica il pagamento da abbinare' }, { status: 400 })
     }
-    const { data: pag } = await supabase
+
+    // Vincolo di SCRITTURA: una segreteria registra un incasso solo sulla PROPRIA sede.
+    const sediAttive = await resolveScuoleAttive(request as NextRequest, supabase, auth.user)
+
+    let { data: pag, error: errPag } = await supabase
       .from('pagamenti')
-      .select('id, scuola_id, stato, alunno_id, descrizione')
+      .select(PAG_SELECT_V2)
       .eq('id', pagamentoId)
       .maybeSingle()
+    if (errPag?.code === '42703') {
+      // DB E2E CI non migrato: colonna `sconto` assente → ritenta senza.
+      ;({ data: pag, error: errPag } = await supabase
+        .from('pagamenti')
+        .select(PAG_SELECT_BASE)
+        .eq('id', pagamentoId)
+        .maybeSingle())
+    }
     if (!pag || !sediAttive.includes((pag as { scuola_id: string }).scuola_id)) {
       return NextResponse.json({ error: 'Pagamento non trovato' }, { status: 404 })
     }
-    const pagDett = pag as { scuola_id: string; alunno_id: string | null; descrizione: string | null }
+    const pagDett = pag as {
+      scuola_id: string; alunno_id: string | null; descrizione: string | null; stato: string
+      importo: number | string; importo_pagato?: number | string | null
+      sconto?: number | string | null; scadenza?: string | null
+    }
+
+    // GUARD unificato sul residuo: si evita OGNI sovra-incasso (importo_pagato che sfonda importo).
+    //  • residuo ≤ 0 → voce già saldata (es. incasso a mano): niente secondo incasso.
+    //  • bonifico > residuo → registrare l'INTERO bonifico come incasso su questa voce sfonderebbe
+    //    l'importo, senza 409 e con notifica «Pagamento registrato» al genitore. Si blocca e si
+    //    rimanda all'«Incasso unico», che gestisce l'eccedenza come credito.
+    const residuo = Math.round(residuoEffettivo(pagDett) * 100) / 100
+    if (residuo <= 0) {
+      return NextResponse.json(
+        { error: 'Pagamento già saldato: ignora la riga o scegli un\'altra voce' },
+        { status: 409 },
+      )
+    }
+    if (Number(mov.importo) > residuo) {
+      return NextResponse.json(
+        { error: `L'importo del bonifico (${formatEuro(mov.importo)}) supera il residuo (${formatEuro(residuo)}): usa «Incasso unico» per gestire l'eccedenza/credito` },
+        { status: 409 },
+      )
+    }
 
     const { data: incasso, error: errInc } = await supabase
       .from('incassi')
@@ -116,6 +178,8 @@ export const PATCH = withRoute('pagamenti/riconciliazione/[id]:PATCH', async (re
         stato: 'confermato',
         pagamento_id: pagamentoId,
         incasso_id: (incasso as { id: string }).id,
+        // Il movimento (finora globale/senza sede) assume la sede del pagamento confermato.
+        scuola_id: pagDett.scuola_id,
         confermato_da: auth.user.id,
         confermato_il: new Date().toISOString(),
       })
@@ -132,7 +196,7 @@ export const PATCH = withRoute('pagamenti/riconciliazione/[id]:PATCH', async (re
       entitaTipo: 'riconciliazione_movimenti',
       entitaId: id,
       azione: 'update',
-      scuolaId: mov.scuola_id,
+      scuolaId: pagDett.scuola_id,
       valoreDopo: { stato: 'confermato', pagamento_id: pagamentoId, importo: mov.importo },
     })
 

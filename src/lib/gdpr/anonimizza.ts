@@ -59,6 +59,23 @@ export function patchParent(id: string, at: string): Record<string, unknown> {
   }
 }
 
+/**
+ * Bonifica dei `suggerimenti` di un movimento di riconciliazione: rimuove da ogni
+ * elemento il campo `label` (= «Nome Cognome» dell'alunno, unico dato identificante
+ * dentro il JSON), preservando i campi tecnici (pagamento_id, score, motivi, cf_match…).
+ * Usato dal diritto all'oblio (DL-034) per bonificare i movimenti confermati collegati
+ * all'alunno anonimizzato. Input non-array (null/oggetto) → `null` (niente da scrubbare).
+ */
+export function scrubSuggerimenti(suggerimenti: unknown): Record<string, unknown>[] | null {
+  if (!Array.isArray(suggerimenti)) return null
+  return suggerimenti.map((s) => {
+    if (!s || typeof s !== 'object') return s as Record<string, unknown>
+    const clone: Record<string, unknown> = { ...(s as Record<string, unknown>) }
+    delete clone.label
+    return clone
+  })
+}
+
 /** Nominativo atteso per la doppia conferma: `COGNOME NOME` normalizzato. */
 export function nomeConferma(alunno: { nome?: string | null; cognome?: string | null }): string {
   return `${(alunno.cognome ?? '').trim()} ${(alunno.nome ?? '').trim()}`.trim().toUpperCase()

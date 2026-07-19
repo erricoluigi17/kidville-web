@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { logScrittura } from '@/lib/audit/scrittura'
-import { patchAlunno, patchParent, confermaValida } from '@/lib/gdpr/anonimizza'
+import { patchAlunno, patchParent, confermaValida, scrubSuggerimenti } from '@/lib/gdpr/anonimizza'
 import { parentHaAltriFigliIscritti } from '@/lib/gdpr/orfano'
 import { parseBody } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
@@ -38,7 +38,7 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
     const supabase = await createAdminClient()
     const { data: alunno } = await supabase
       .from('alunni')
-      .select('id, nome, cognome, stato, anonimizzato_il, documento_path')
+      .select('id, nome, cognome, stato, anonimizzato_il, documento_path, codice_fiscale, fiscal_code')
       .eq('id', alunno_id)
       .maybeSingle()
     if (!alunno) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
@@ -98,7 +98,96 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
       await supabase.from('parents').update(patchParent(pid, at)).eq('id', pid)
     }
 
-    // 3. Rimuovi i file PII (escluso il bucket fatture). Best-effort.
+    // 3. Bonifica dei dati di riconciliazione/incassi COLLEGATI (D1). La causale
+    //    consigliata porta CF+nome del minore, che finiscono persistiti nei movimenti
+    //    (causale/controparte/suggerimenti.label), copiati nella nota dell'incasso
+    //    («Riconciliazione: …»): senza questo passo il CF resterebbe leggibile a tempo
+    //    indefinito dopo l'oblio. Il CF va letto PRIMA (patchAlunno l'ha già azzerato in DB,
+    //    ma `alunno` è il record letto in cima). Nessuna PII nei log: solo conteggi/uuid.
+    const cfAlunno = [alunno.codice_fiscale, alunno.fiscal_code]
+      .map((v) => (typeof v === 'string' ? v.trim() : ''))
+      .find((v) => v.length > 0) ?? ''
+    let riconciliazioneBonificati = 0
+    let incassiBonificati = 0
+
+    // Pagamenti dell'alunno anonimizzato (l'aggancio movimento→alunno passa dal pagamento).
+    const { data: pagRows, error: errPag } = await supabase
+      .from('pagamenti')
+      .select('id')
+      .eq('alunno_id', alunno_id)
+    if (errPag) logErrore({ operazione: 'admin/gdpr/erase:POST', evento: 'bonifica_pagamenti' }, errPag)
+    const pagIds = ((pagRows ?? []) as { id: string }[]).map((p) => p.id)
+
+    if (pagIds.length > 0) {
+      // 3a. Movimenti CONFERMATI collegati → azzera causale/controparte, scrub del `label`
+      //     (nome+cognome) nei suggerimenti. Per-riga: il patch dei suggerimenti dipende
+      //     dal valore esistente.
+      const { data: movConf, error: errMovSel } = await supabase
+        .from('riconciliazione_movimenti')
+        .select('id, suggerimenti')
+        .in('pagamento_id', pagIds)
+        .eq('stato', 'confermato')
+      if (errMovSel) logErrore({ operazione: 'admin/gdpr/erase:POST', evento: 'bonifica_riconciliazione_select' }, errMovSel)
+      for (const m of (movConf ?? []) as { id: string; suggerimenti: unknown }[]) {
+        const { error: errU } = await supabase
+          .from('riconciliazione_movimenti')
+          .update({ causale: null, controparte: null, suggerimenti: scrubSuggerimenti(m.suggerimenti) })
+          .eq('id', m.id)
+        if (errU) logErrore({ operazione: 'admin/gdpr/erase:POST', evento: 'bonifica_riconciliazione_update' }, errU)
+        else riconciliazioneBonificati++
+      }
+
+      // 3b. Incassi generati dalla riconciliazione (nota «Riconciliazione: …») → azzera la nota.
+      const { data: incBon, error: errInc } = await supabase
+        .from('incassi')
+        .update({ note: null })
+        .in('pagamento_id', pagIds)
+        .ilike('note', 'Riconciliazione:%')
+        .select('id')
+      if (errInc) logErrore({ operazione: 'admin/gdpr/erase:POST', evento: 'bonifica_incassi' }, errInc)
+      else incassiBonificati = (incBon ?? []).length
+    }
+
+    // 3c. Best-effort: movimenti NON confermati la cui causale cita il CF dell'alunno.
+    //     (Il CF è alfanumerico puro: nessun metacarattere ILIKE da escapare.)
+    if (cfAlunno) {
+      const { data: movCf, error: errMovCf } = await supabase
+        .from('riconciliazione_movimenti')
+        .update({ causale: null, controparte: null })
+        .neq('stato', 'confermato')
+        .ilike('causale', `%${cfAlunno}%`)
+        .select('id')
+      if (errMovCf) logErrore({ operazione: 'admin/gdpr/erase:POST', evento: 'bonifica_riconciliazione_cf' }, errMovCf)
+      else riconciliazioneBonificati += (movCf ?? []).length
+    }
+
+    // 3d. Movimenti NON confermati agganciati all'alunno tramite i `suggerimenti`
+    //     (match per CF/nome all'import, senza `pagamento_id` top-level ancora): il
+    //     `label` porta «Nome Cognome» del minore. Azzera causale/controparte e fa lo
+    //     scrub del `label`. Senza questo, l'oblio lascerebbe il nome nel JSON persistito.
+    if (pagIds.length > 0) {
+      const pagSet = new Set(pagIds)
+      const { data: movNc, error: errNcSel } = await supabase
+        .from('riconciliazione_movimenti')
+        .select('id, suggerimenti')
+        .neq('stato', 'confermato')
+      if (errNcSel) logErrore({ operazione: 'admin/gdpr/erase:POST', evento: 'bonifica_riconciliazione_nonconf_select' }, errNcSel)
+      for (const m of (movNc ?? []) as { id: string; suggerimenti: unknown }[]) {
+        const sugg = Array.isArray(m.suggerimenti) ? (m.suggerimenti as Record<string, unknown>[]) : []
+        const riferito = sugg.some(
+          (s) => s && typeof s === 'object' && pagSet.has(String((s as { pagamento_id?: unknown }).pagamento_id)),
+        )
+        if (!riferito) continue
+        const { error: errU } = await supabase
+          .from('riconciliazione_movimenti')
+          .update({ causale: null, controparte: null, suggerimenti: scrubSuggerimenti(m.suggerimenti) })
+          .eq('id', m.id)
+        if (errU) logErrore({ operazione: 'admin/gdpr/erase:POST', evento: 'bonifica_riconciliazione_nonconf_update' }, errU)
+        else riconciliazioneBonificati++
+      }
+    }
+
+    // 4. Rimuovi i file PII (escluso il bucket fatture). Best-effort.
     if (fileAlunno.length > 0) {
       try {
         await supabase.storage.from('form_attachments').remove(fileAlunno)
@@ -107,14 +196,20 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
       }
     }
 
-    // 4. Log immutabile dell'oblio.
+    // 5. Log immutabile dell'oblio (solo conteggi/uuid: nessuna PII).
     await logScrittura(supabase, {
       attore: auth.user,
       entitaTipo: 'gdpr_oblio',
       entitaId: alunno_id,
       azione: 'update',
       scuolaId: auth.user.scuola_id ?? null,
-      valoreDopo: { alunno_id, parents_anonimizzati: parentiOrfani, file_rimossi: fileAlunno.length },
+      valoreDopo: {
+        alunno_id,
+        parents_anonimizzati: parentiOrfani,
+        file_rimossi: fileAlunno.length,
+        riconciliazione_bonificati: riconciliazioneBonificati,
+        incassi_bonificati: incassiBonificati,
+      },
     })
 
     return NextResponse.json({
@@ -122,6 +217,8 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
       alunno: 1,
       parents: parentiOrfani.length,
       file_rimossi: fileAlunno.length,
+      riconciliazione_bonificati: riconciliazioneBonificati,
+      incassi_bonificati: incassiBonificati,
     })
   } catch (err) {
     logErrore({ operazione: 'admin/gdpr/erase:POST', stato: 500 }, err)

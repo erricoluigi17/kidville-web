@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useState } from 'react';
+import { Suspense, useCallback, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { CalendarClock, Euro, Layers, Settings, UtensilsCrossed } from 'lucide-react';
@@ -22,6 +22,7 @@ const FiscalePanel = dynamic(() => import('@/components/features/admin/pagamenti
 const SollecitiPanel = dynamic(() => import('@/components/features/admin/pagamenti/SollecitiPanel').then((m) => m.SollecitiPanel), { loading: caricamento });
 const RiconciliazionePanel = dynamic(() => import('@/components/features/admin/pagamenti/RiconciliazionePanel').then((m) => m.RiconciliazionePanel), { loading: caricamento });
 const TransazioniPanel = dynamic(() => import('@/components/features/admin/pagamenti/TransazioniPanel').then((m) => m.TransazioniPanel), { loading: caricamento });
+type PrecompilaTransazione = import('@/components/features/admin/pagamenti/TransazioniPanel').PrecompilaTransazione;
 
 const isVista = (v: string | null): v is VistaContabilita => !!v && VISTE_CONTABILITA.some((o) => o.id === v);
 
@@ -31,14 +32,27 @@ function PagamentiInner() {
     const params = useSearchParams();
     const fromUrl = params.get('vista');
     const [vista, setVista] = useState<VistaContabilita>(isVista(fromUrl) ? fromUrl : 'scadenzario');
+    // Precompilazione del wizard «Incasso unico» quando lo si apre da un bonifico
+    // multi-CF della Riconciliazione. Transitoria: la nav manuale (ContabilitaNav)
+    // la azzera, così una tornata successiva sulla vista riparte da wizard pulito.
+    const [precompilaTx, setPrecompilaTx] = useState<PrecompilaTransazione | null>(null);
 
     // Identità di sessione (M4): con identità non risolta il parametro viene
     // omesso (href invariato), mai `userId=null`.
     const withUser = (href: string) => (userId ? `${href}?userId=${userId}` : href);
     const cambiaVista = (id: VistaContabilita) => {
         setVista(id);
+        setPrecompilaTx(null);
         router.replace(userId ? `?userId=${userId}&vista=${id}` : `?vista=${id}`, { scroll: false });
     };
+
+    // Aggancio «Incasso unico»: dalla Riconciliazione apre il wizard precompilato.
+    // Non passa da `cambiaVista` (che azzererebbe la precompilazione appena impostata).
+    const apriIncassoUnico = useCallback((pre: PrecompilaTransazione) => {
+        setPrecompilaTx(pre);
+        setVista('transazioni');
+        router.replace(userId ? `?userId=${userId}&vista=transazioni` : `?vista=transazioni`, { scroll: false });
+    }, [router, userId]);
 
     const linkCls = 'inline-flex h-[40px] items-center gap-1.5 rounded-pill border border-kidville-line bg-kidville-white px-4 font-barlow text-[13px] font-extrabold uppercase tracking-[0.03em] text-kidville-green transition-colors hover:border-kidville-green';
 
@@ -64,7 +78,7 @@ function PagamentiInner() {
                     <Card className="p-4 md:p-6">
                         {vista === 'scadenzario' && userId && <PaymentsDashboard userId={userId} scuolaId={scuolaId} />}
 
-                        {vista === 'transazioni' && userId && <TransazioniPanel userId={userId} scuolaId={scuolaId} />}
+                        {vista === 'transazioni' && userId && <TransazioniPanel userId={userId} scuolaId={scuolaId} precompila={precompilaTx} />}
 
                         {vista === 'genera' && userId && (
                             <div className="space-y-8">
@@ -80,7 +94,7 @@ function PagamentiInner() {
                         )}
 
                         {vista === 'solleciti' && userId && <SollecitiPanel userId={userId} scuolaId={scuolaId} />}
-                        {vista === 'riconciliazione' && userId && <RiconciliazionePanel userId={userId} scuolaId={scuolaId} />}
+                        {vista === 'riconciliazione' && userId && <RiconciliazionePanel userId={userId} scuolaId={scuolaId} onIncassoUnico={apriIncassoUnico} />}
                         {vista === 'fiscale' && userId && <FiscalePanel userId={userId} scuolaId={scuolaId} />}
 
                         {vista === 'ticket' && userId && <TicketMensaPanel userId={userId} scuolaId={scuolaId} />}

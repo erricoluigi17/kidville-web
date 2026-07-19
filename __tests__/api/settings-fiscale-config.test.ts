@@ -54,4 +54,34 @@ describe('PATCH /api/admin/settings — fiscale_config', () => {
     expect(res.status).toBe(200)
     expect(h.upserted?.solleciti_config).toEqual({ enabled: false, cadenza_min_giorni: 10 })
   })
+
+  it('accetta causali_config e lo salva in shallow-merge, preservando le altre chiavi/categorie', async () => {
+    // JSONB flat per-slug: { default, <slug> }. Salvare una categoria NON deve
+    // sovrascrivere il predefinito né le altre categorie già impostate.
+    h.existing = { causali_config: { default: '{descrizione} - {sede}', gita: 'Quota {descrizione}' } }
+    const res = await PATCH(req({
+      scuola_id: '11111111-1111-4111-8111-111111111111',
+      causali_config: { mensa: 'Mensa {mese} {anno}' },
+    }))
+    expect(res.status).toBe(200)
+    expect(h.upserted?.causali_config).toEqual({
+      default: '{descrizione} - {sede}',
+      gita: 'Quota {descrizione}',
+      mensa: 'Mensa {mese} {anno}',
+    })
+  })
+
+  it('causali_config: una stringa VUOTA rimuove la chiave (reset al predefinito) e i valori non-stringa sono scartati', async () => {
+    h.existing = { causali_config: { default: '{descrizione} - {sede}', retta: 'Retta {mese}', mensa: 'Mensa' } }
+    const res = await PATCH(req({
+      scuola_id: '11111111-1111-4111-8111-111111111111',
+      // retta svuotata (reset), mensa aggiornata, un valore non-stringa da scartare
+      causali_config: { retta: '', mensa: 'Mensa {anno}', divisa: 123 },
+    }))
+    expect(res.status).toBe(200)
+    expect(h.upserted?.causali_config).toEqual({
+      default: '{descrizione} - {sede}',
+      mensa: 'Mensa {anno}',
+    })
+  })
 })

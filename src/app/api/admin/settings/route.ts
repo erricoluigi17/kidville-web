@@ -51,6 +51,7 @@ const ALLOWED_FIELDS = [
   'solleciti_config',
   'notifiche_config',
   'rette_config',
+  'causali_config',
 ] as const
 
 // Configurazione rette (sconto fratelli + pro-rata iscrizione) — shape S6.
@@ -177,6 +178,7 @@ export const PATCH = withRoute('admin/settings:PATCH', async (request: NextReque
         'solleciti_config',
         'notifiche_config',
         'rette_config',
+        'causali_config',
       ]
       const updates: Record<string, unknown> = { scuola_id: scuolaId }
       for (const f of ALLOWED_FIELDS) if (body[f] !== undefined) updates[f] = body[f]
@@ -204,6 +206,15 @@ export const PATCH = withRoute('admin/settings:PATCH', async (request: NextReque
             updates[k] = merged
           } else {
             updates[k] = { ...prev, ...next }
+            if (k === 'causali_config') {
+              // Solo stringhe NON vuote: una stringa vuota = reset al Predefinito
+              // (si rimuove la chiave — lo shallow-merge da solo non potrebbe), e
+              // nessun valore non-stringa (che farebbe esplodere renderCausale → 500).
+              updates[k] = Object.fromEntries(
+                Object.entries(updates[k] as Record<string, unknown>)
+                  .filter(([, val]) => typeof val === 'string' && (val as string).trim() !== ''),
+              )
+            }
           }
         }
       }
@@ -213,20 +224,23 @@ export const PATCH = withRoute('admin/settings:PATCH', async (request: NextReque
         .select()
         .single()
 
-      // Degradazione: sul DB E2E CI (NON migrato) la colonna rette_config non
-      // esiste ancora → PostgREST risponde PGRST204. Si salva tutto il resto
-      // best-effort (il flusso base resta invariato) e si continua con un warn.
-      if (error && error.code === 'PGRST204' && 'rette_config' in updates) {
+      // Degradazione: sul DB E2E CI (NON migrato) alcune colonne JSONB recenti
+      // (rette_config, causali_config) non esistono ancora → PostgREST risponde
+      // PGRST204. Si rimuovono e si ritenta, salvando tutto il resto best-effort
+      // (il flusso base resta invariato) con un warn. In produzione le colonne
+      // esistono, quindi questo ramo non scatta mai.
+      const COLONNE_RECENTI = ['rette_config', 'causali_config']
+      if (error && error.code === 'PGRST204' && COLONNE_RECENTI.some((c) => c in updates)) {
         logEvento('config', 'warn', {
           operazione: 'admin/settings:PATCH',
-          esito: 'rette_config_non_disponibile_pgrst204',
+          esito: 'colonna_recente_non_disponibile_pgrst204',
           stato: 200,
         })
-        const senzaRette = { ...updates }
-        delete senzaRette.rette_config
+        const ridotto = { ...updates }
+        for (const c of COLONNE_RECENTI) delete ridotto[c]
         ;({ data, error } = await supabase
           .from('admin_settings')
-          .upsert(senzaRette, { onConflict: 'scuola_id' })
+          .upsert(ridotto, { onConflict: 'scuola_id' })
           .select()
           .single())
       }

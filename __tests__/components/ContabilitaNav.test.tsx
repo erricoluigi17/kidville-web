@@ -3,9 +3,9 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { ContabilitaNav, VISTE_CONTABILITA } from '@/components/features/admin/pagamenti/ContabilitaNav';
 
 describe('ContabilitaNav', () => {
-  it('espone le 7 viste attese (con «Incasso unico», Contabilità v2)', () => {
+  it('espone le 8 viste attese (con «Incasso unico» e «Causali»)', () => {
     expect(VISTE_CONTABILITA.map((v) => v.id)).toEqual([
-      'scadenzario', 'transazioni', 'genera', 'solleciti', 'riconciliazione', 'fiscale', 'ticket',
+      'scadenzario', 'transazioni', 'genera', 'solleciti', 'riconciliazione', 'fiscale', 'ticket', 'causali',
     ]);
   });
 

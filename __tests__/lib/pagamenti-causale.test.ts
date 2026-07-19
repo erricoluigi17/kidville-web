@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { causaleBonifico, haCodiceFiscale, rigaCausaleSollecito, sedeCausale, nomeCompleto } from '@/lib/pagamenti/causale'
+import { causaleBonifico, haCodiceFiscale, rigaCausaleSollecito, sedeCausale, nomeCompleto, renderCausale, DEFAULT_CAUSALE_TEMPLATE } from '@/lib/pagamenti/causale'
 
 // CF SINTETICO — non appartiene a nessuna persona reale (repo pubblico).
 const CF_SINTETICO = 'TSTTST00T00T000T'
@@ -36,6 +36,54 @@ describe('causaleBonifico', () => {
     expect(causaleBonifico({ descrizione: 'Retta', nome: 'Mario', cognome: null })).toBe('Retta - per il minore Mario')
     expect(causaleBonifico({ nome: null, cognome: null, codiceFiscale: CF_SINTETICO, sede: 'Kidville Giugliano' })).toBe(`${CF_SINTETICO} - GIUGLIANO`)
     expect(causaleBonifico({})).toBe('')
+  })
+})
+
+describe('renderCausale (motore a segnaposto per-categoria)', () => {
+  it('rende un modello CUSTOM sostituendo i segnaposto', () => {
+    expect(renderCausale('ISCRIZIONE {nome} {cognome} - {sede}', { nome: 'Mario', cognome: 'Rossi', sede: 'Kidville Giugliano' }))
+      .toBe('ISCRIZIONE Mario Rossi - GIUGLIANO')
+  })
+
+  it('OMETTE un segmento coi soli segnaposto vuoti («per il minore {nome_completo}» sparisce senza nome)', () => {
+    // segmento con placeholder ma tutti vuoti → via del tutto (niente label penzolante)
+    expect(renderCausale('Retta - per il minore {nome_completo}', { descrizione: 'x', nome: null, cognome: null }))
+      .toBe('Retta')
+    expect(renderCausale('per il minore {nome_completo}', {})).toBe('')
+  })
+
+  it('MANTIENE il testo FISSO privo di segnaposto', () => {
+    expect(renderCausale('Contributo volontario - {nome_completo}', { nome: 'Ada', cognome: 'Neri' }))
+      .toBe('Contributo volontario - Ada Neri')
+    // segmento di solo testo fisso: resta anche se gli altri spariscono
+    expect(renderCausale('Contributo volontario - {codice_fiscale}', { nome: 'Ada', cognome: 'Neri' }))
+      .toBe('Contributo volontario')
+  })
+
+  it('supporta i nuovi segnaposto {mese} {anno} {importo} {scadenza}', () => {
+    expect(renderCausale('{descrizione} {mese} {anno} - {importo} - scad. {scadenza}', {
+      descrizione: 'Retta', mese: 'settembre', anno: '2026', importo: '€ 150,00', scadenza: '30/09/2026',
+    })).toBe('Retta settembre 2026 - € 150,00 - scad. 30/09/2026')
+    // mese/anno assenti → il segmento che li contiene sparisce, il resto resta
+    expect(renderCausale('{descrizione} {mese} {anno} - {importo}', {
+      descrizione: 'Retta', importo: '€ 150,00',
+    })).toBe('Retta - € 150,00')
+  })
+
+  it('DIFESA: un template NON-stringa ricade sul predefinito (niente crash su .split)', () => {
+    const dati = { descrizione: 'Retta', nome: 'Mario', cognome: 'Rossi', codiceFiscale: 'TSTTST00T00T000T', sede: 'Kidville Giugliano' }
+    const atteso = renderCausale(DEFAULT_CAUSALE_TEMPLATE, dati)
+    for (const t of [999, {}, [], null, undefined]) {
+      expect(renderCausale(t as unknown as string, dati)).toBe(atteso)
+    }
+  })
+
+  it('il PREDEFINITO è retro-compatibile con la causale storica', () => {
+    expect(renderCausale(DEFAULT_CAUSALE_TEMPLATE, { descrizione: 'Retta Settembre 2026', nome: 'Mario', cognome: 'Rossi', codiceFiscale: CF_SINTETICO, sede: 'Kidville Giugliano' }))
+      .toBe(`Retta Settembre 2026 - per il minore Mario Rossi - ${CF_SINTETICO} - GIUGLIANO`)
+    // le parti assenti si omettono, esattamente come il formato storico
+    expect(renderCausale(DEFAULT_CAUSALE_TEMPLATE, { descrizione: 'Retta', nome: 'Mario', cognome: 'Rossi' }))
+      .toBe('Retta - per il minore Mario Rossi')
   })
 })
 

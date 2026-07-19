@@ -27,6 +27,8 @@ interface Pagamento {
     residuo?: number | string | null;
     stato_effettivo?: string;
     scuola_nome?: string | null;
+    /** Causale del bonifico COMPOSTA DAL SERVER (modello per-categoria). */
+    causale_suggerita?: string | null;
     payment_categories?: { nome?: string; colore?: string; icona?: string } | null;
     alunni?: { nome?: string; cognome?: string; codice_fiscale?: string | null; sospeso?: boolean };
 }
@@ -112,19 +114,20 @@ export function StoricoPagamenti({ userId }: Props) {
     }
     const mostraTotaleFamiglia = perFiglio.size >= 2;
 
-    // Causale consigliata per il bonifico: UNA per voce ancora aperta (ogni retta
-    // ha la sua descrizione), col CF del proprio figlio (dato del genitore, lecito)
-    // e la sede. Zero nuove fetch: usa i dati già in memoria.
+    // Causale consigliata per il bonifico: UNA per voce ancora aperta. La stringa è
+    // COMPOSTA DAL SERVER col modello per-categoria (la segreteria può personalizzarla);
+    // qui la si mostra soltanto. Le voci senza causale (server non l'ha prodotta) si
+    // scartano. Zero nuove fetch: usa i dati già in memoria.
     const vociCausale: VoceCausale[] = pagamenti
         .filter((p) => residuoRiga(p) > 0)
         .map((p) => ({
             id: p.id,
-            descrizione: p.descrizione,
+            causale: p.causale_suggerita ?? '',
             nome: p.alunni?.nome ?? '',
             cognome: p.alunni?.cognome ?? '',
-            codiceFiscale: p.alunni?.codice_fiscale ?? null,
-            sede: p.scuola_nome ?? null,
-        }));
+            hasCf: !!p.alunni?.codice_fiscale,
+        }))
+        .filter((v) => v.causale.trim() !== '');
 
     return (
         <div className="space-y-5">

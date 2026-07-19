@@ -4,8 +4,10 @@ import { enqueueNotifiche } from '@/lib/push/enqueue'
 import { getModuleConfig } from '@/lib/settings/module-config'
 import { logErrore } from '@/lib/logging/logger'
 import { formatEuro } from '@/lib/format/valuta'
+import { isoToIt } from '@/lib/format/data'
 import { residuoEffettivo } from './aging'
 import { rigaCausaleSollecito } from './causale'
+import { meseAnnoDaPeriodo } from './periodo'
 import { datiStruttura, type ArubaFiscalConfig, type FiscaleConfig } from './fiscale'
 import {
     DEFAULT_SOLLECITI_CONFIG,
@@ -44,8 +46,10 @@ interface PagRow {
     stato: string
     scadenza: string | null
     tipo: string
+    periodo_competenza: string | null
     ultimo_sollecito_il: string | null
     alunni?: { nome?: string; cognome?: string; codice_fiscale?: string | null } | null
+    payment_categories?: { slug?: string | null } | null
 }
 
 const MS_GIORNO = 86_400_000
@@ -62,8 +66,8 @@ export async function sollecitaPagamenti(
         sediAmmesse?: string[]
     } = {},
 ): Promise<EsitoSollecito[]> {
-    const COLONNE_PAG_BASE = 'id, alunno_id, scuola_id, descrizione, importo, importo_pagato, stato, scadenza, tipo, ultimo_sollecito_il, alunni:alunno_id ( nome, cognome, codice_fiscale )'
-    const COLONNE_PAG = 'id, alunno_id, scuola_id, descrizione, importo, importo_pagato, sconto, stato, scadenza, tipo, ultimo_sollecito_il, alunni:alunno_id ( nome, cognome, codice_fiscale )'
+    const COLONNE_PAG_BASE = 'id, alunno_id, scuola_id, descrizione, importo, importo_pagato, stato, scadenza, tipo, periodo_competenza, ultimo_sollecito_il, alunni:alunno_id ( nome, cognome, codice_fiscale ), payment_categories:categoria_id ( slug )'
+    const COLONNE_PAG = 'id, alunno_id, scuola_id, descrizione, importo, importo_pagato, sconto, stato, scadenza, tipo, periodo_competenza, ultimo_sollecito_il, alunni:alunno_id ( nome, cognome, codice_fiscale ), payment_categories:categoria_id ( slug )'
     let { data: pagRows, error: errPag } = await supabase.from('pagamenti').select(COLONNE_PAG).in('id', pagamentoIds)
     // DB E2E CI non migrato: `sconto` assente → 42703, ritenta senza (residuo = importo − pagato).
     if (errPag && (errPag as { code?: string }).code === '42703') {
@@ -86,7 +90,7 @@ export async function sollecitaPagamenti(
         // registro assente: nessuno storico livelli
     }
 
-    const cfgCache = new Map<string, { cfg: SollecitiConfig; scuolaNome: string; sedeNome: string }>()
+    const cfgCache = new Map<string, { cfg: SollecitiConfig; scuolaNome: string; sedeNome: string; causaliCfg: Partial<Record<string, string>> }>()
     const esiti: EsitoSollecito[] = []
     const adesso = Date.now()
 
@@ -105,6 +109,9 @@ export async function sollecitaPagamenti(
             const cfg = (await getModuleConfig(supabase, 'solleciti_config', pag.scuola_id)) as SollecitiConfig
             const fiscale = (await getModuleConfig(supabase, 'fiscale_config', pag.scuola_id)) as FiscaleConfig
             const aruba = (await getModuleConfig(supabase, 'aruba_config', pag.scuola_id)) as ArubaFiscalConfig
+            // Modelli di causale per-categoria (per slug, con eventuale `default`).
+            // `getModuleConfig` degrada da solo (config/colonna assente → `{}` → predefinito).
+            const causaliCfg = await getModuleConfig<Record<string, string>>(supabase, 'causali_config', pag.scuola_id)
             // Nome sede per la causale consigliata (best-effort): `scuole.nome`
             // («Kidville Giugliano» → «GIUGLIANO» via sedeCausale nel builder).
             const { data: sede } = await supabase.from('scuole').select('nome').eq('id', pag.scuola_id).maybeSingle()
@@ -112,10 +119,11 @@ export async function sollecitaPagamenti(
                 cfg,
                 scuolaNome: datiStruttura(fiscale, aruba).denominazione || 'La Segreteria',
                 sedeNome: ((sede?.nome as string | null | undefined) ?? '') || '',
+                causaliCfg,
             }
             cfgCache.set(pag.scuola_id, scuolaCtx)
         }
-        const { cfg, scuolaNome, sedeNome } = scuolaCtx
+        const { cfg, scuolaNome, sedeNome, causaliCfg } = scuolaCtx
 
         const cadenza = cfg.cadenza_min_giorni ?? DEFAULT_SOLLECITI_CONFIG.cadenza_min_giorni
         if (pag.ultimo_sollecito_il && adesso - Date.parse(pag.ultimo_sollecito_il) < cadenza * MS_GIORNO) {
@@ -146,6 +154,11 @@ export async function sollecitaPagamenti(
             giorni_ritardo: giorniRitardo,
         }
         const oggetto = renderTemplate(liv.oggetto, ctx)
+        // Modello di causale per la categoria della voce (per slug) → `default` → predefinito
+        // (undefined lasciato a `rigaCausaleSollecito`, che ricade sul predefinito).
+        const slug = pag.payment_categories?.slug ?? undefined
+        const templateCausale = (slug ? causaliCfg[slug] : undefined) ?? causaliCfg.default
+        const { mese, anno } = meseAnnoDaPeriodo(pag.periodo_competenza)
         // Il CF del bambino va SOLO nel corpo dell'email (destinatario = tutore →
         // dato lecito), MAI nei log: `corpo` non viene passato a nessun logger, e
         // `sendEmail`/`externalFetch` non loggano il body della richiesta.
@@ -155,7 +168,11 @@ export async function sollecitaPagamenti(
             cognome: pag.alunni?.cognome,
             codiceFiscale: pag.alunni?.codice_fiscale,
             sede: sedeNome,
-        })}`
+            mese,
+            anno,
+            importo: formatEuro(pag.importo),
+            scadenza: isoToIt(pag.scadenza ?? ''),
+        }, templateCausale)}`
 
         // destinatari: titolari quota (split) oppure tutori del bambino
         let adultIds: string[] = []

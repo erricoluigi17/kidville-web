@@ -8,6 +8,11 @@ import { resolveScuoleAttive, assertAlunnoInScope } from '@/lib/auth/scope'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
 import { residuoEffettivo, statoEffettivo } from '@/lib/pagamenti/aging'
+import { getModuleConfig } from '@/lib/settings/module-config'
+import { renderCausale, DEFAULT_CAUSALE_TEMPLATE } from '@/lib/pagamenti/causale'
+import { meseAnnoDaPeriodo } from '@/lib/pagamenti/periodo'
+import { formatEuro } from '@/lib/format/valuta'
+import { isoToIt } from '@/lib/format/data'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // Uuid opzionale da query string: stringa vuota trattata come assente
@@ -190,11 +195,13 @@ export const GET = withRoute('pagamenti:GET', async (request: NextRequest) => {
     // Campi derivati (fonte unica aging.ts): stato/residuo calcolati SEMPRE dalle
     // date, così client web e app leggono lo stesso valore del server. `sconto` è
     // assente sui DB non migrati (retry sopra) → residuoEffettivo lo tratta come 0.
+    // Il cast ripristina l'index signature di PagamentoGetRow che lo spread perde:
+    // sotto si leggono descrizione/periodo_competenza/payment_categories/alunni (→ unknown, poi cast).
     const rowsArricchite = rows.map((r) => ({
       ...r,
       residuo: residuoEffettivo(r),
       stato_effettivo: statoEffettivo(r, oggi),
-    }))
+    })) as (PagamentoGetRow & { residuo: number; stato_effettivo: string })[]
 
     // Nome sede per la causale consigliata del bonifico (best-effort): risolve
     // scuola_id → nome da `scuole`. Se fallisce, la causale resta senza sede (ha
@@ -207,9 +214,39 @@ export const GET = withRoute('pagamenti:GET', async (request: NextRequest) => {
       else nomiSedi = Object.fromEntries(((sedi ?? []) as { id: string; nome: string | null }[]).map((s) => [s.id, s.nome ?? '']))
     }
 
+    // Modelli di causale per-categoria (per-scuola): un JSONB indicizzato per slug,
+    // con eventuale `default`. `getModuleConfig` degrada da solo (config assente o
+    // colonna mancante sul DB E2E CI → `{}`, quindi si ricade sul predefinito) e
+    // non solleva: qui non serve altro rumore. Una sola lettura per sede distinta.
+    const causaliBySede: Record<string, Partial<Record<string, string>>> = {}
+    for (const sid of scuolaIds) {
+      causaliBySede[sid] = await getModuleConfig<Record<string, string>>(supabase, 'causali_config', sid)
+    }
+
     return NextResponse.json({
       success: true,
-      data: rowsArricchite.map((r) => ({ ...r, scuola_nome: nomiSedi[r.scuola_id] ?? null })),
+      data: rowsArricchite.map((r) => {
+        const sede = nomiSedi[r.scuola_id] ?? null
+        // Causale consigliata: modello della categoria (per slug) → `default` → predefinito.
+        const cfg = causaliBySede[r.scuola_id] ?? {}
+        const cat = r.payment_categories as { slug?: string | null } | null | undefined
+        const slug = cat?.slug ?? undefined
+        const template = (slug ? cfg[slug] : undefined) ?? cfg.default ?? DEFAULT_CAUSALE_TEMPLATE
+        const al = r.alunni as { nome?: string | null; cognome?: string | null; codice_fiscale?: string | null } | null | undefined
+        const { mese, anno } = meseAnnoDaPeriodo(r.periodo_competenza as string | null)
+        const causale_suggerita = renderCausale(template, {
+          descrizione: r.descrizione as string | null,
+          nome: al?.nome,
+          cognome: al?.cognome,
+          codiceFiscale: al?.codice_fiscale,
+          sede,
+          mese,
+          anno,
+          importo: formatEuro(r.importo),
+          scadenza: isoToIt((r.scadenza as string | null) ?? ''),
+        })
+        return { ...r, scuola_nome: sede, causale_suggerita }
+      }),
     })
   } catch (err) {
     logErrore({ operazione: 'pagamenti:GET', stato: 500 }, err)

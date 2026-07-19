@@ -133,6 +133,21 @@ describe('POST /api/pagamenti/solleciti', () => {
     expect(text.toLowerCase()).toContain('causale')
   })
 
+  // Modello di causale PER CATEGORIA (causali_config, per slug) reso coi dati della
+  // voce, inclusi i nuovi segnaposto {mese}/{anno}/{importo}.
+  it('causale per-categoria: usa il modello dello slug con mese/anno/importo', async () => {
+    h.settingsRow = {
+      solleciti_config: {}, fiscale_config: { denominazione: 'Kidville' }, aruba_config: {},
+      causali_config: { retta: 'Retta {mese} {anno} {importo} - {nome_completo} - {codice_fiscale}' },
+    }
+    h.pagamenti[0].periodo_competenza = '2026-06-01'
+    h.pagamenti[0].payment_categories = { slug: 'retta' }
+    const res = await POST(post({ pagamento_ids: [PID], anteprima: true }))
+    expect(res.status).toBe(200)
+    const j = await res.json()
+    expect(j.data[0].corpo).toContain('Retta giugno 2026 € 150,00 - Mario Rossi - TSTTST00T00T000T')
+  })
+
   it('anti-spam: sollecito recente → saltato con motivo cadenza', async () => {
     h.pagamenti[0].ultimo_sollecito_il = new Date().toISOString()
     const res = await POST(post({ pagamento_ids: [PID] }))

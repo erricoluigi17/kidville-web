@@ -2,19 +2,24 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { CausaleBonifico } from '@/components/features/parent/pagamenti/CausaleBonifico';
 
-// Codici fiscali SINTETICI (non appartengono a nessuna persona reale): il repo è
-// pubblico, nei test niente PII di minori.
-const figli = [
-  { alunno_id: 'a1', nome: 'Mara', cognome: 'Bianchi', codiceFiscale: 'ABCDEF00A00A000A' },
-  { alunno_id: 'a2', nome: 'Ugo', cognome: 'Verdi', codiceFiscale: null },
+// Codici fiscali SINTETICI (nessuna persona reale): repo pubblico, niente PII di minori.
+const voci = [
+  { id: 'p1', descrizione: 'Retta Settembre 2026', nome: 'Mara', cognome: 'Bianchi', codiceFiscale: 'ABCDEF00A00A000A', sede: 'Kidville Giugliano' },
+  { id: 'p2', descrizione: 'Iscrizione', nome: 'Ugo', cognome: 'Verdi', codiceFiscale: null, sede: 'Kidville Giugliano' },
 ];
 
-describe('CausaleBonifico — a11y (A4 testo informativo · A5 CTA)', () => {
+describe('CausaleBonifico — formato completo + a11y (A4·A5)', () => {
   afterEach(() => { vi.clearAllMocks(); });
 
-  it('A5: il CTA «Copia» è bianco su verde (AA), non giallo-su-verde', () => {
-    const { container } = render(<CausaleBonifico figli={figli} />);
-    // un bottone «Copia» per figlio, con nome accessibile
+  it('mostra la causale completa per voce: «{descrizione} - per il minore {Nome Cognome} - {CF} - {SEDE}»', () => {
+    render(<CausaleBonifico voci={voci} />);
+    expect(screen.getByText('Retta Settembre 2026 - per il minore Mara Bianchi - ABCDEF00A00A000A - GIUGLIANO')).toBeInTheDocument();
+    // voce senza CF: lo omette ma la causale resta utile (descrizione + minore + sede)
+    expect(screen.getByText('Iscrizione - per il minore Ugo Verdi - GIUGLIANO')).toBeInTheDocument();
+  });
+
+  it('A5: il CTA «Copia» è bianco su verde (AA), non giallo-su-verde — uno per voce', () => {
+    const { container } = render(<CausaleBonifico voci={voci} />);
     expect(screen.getAllByRole('button', { name: /Copia la causale/ }).length).toBe(2);
     const html = container.innerHTML;
     expect(html).toContain('bg-kidville-green');
@@ -23,10 +28,9 @@ describe('CausaleBonifico — a11y (A4 testo informativo · A5 CTA)', () => {
   });
 
   it('A4: i testi informativi non usano `muted` (sotto AA) ma `sub`', () => {
-    const { container } = render(<CausaleBonifico figli={figli} />);
+    const { container } = render(<CausaleBonifico voci={voci} />);
     const html = container.innerHTML;
-    // istruzione operativa + nota «Codice fiscale non disponibile…»: informative, ≥4.5:1
-    expect(screen.getByText(/Per abbinare più in fretta/)).toBeInTheDocument();
+    expect(screen.getByText(/Copia la causale della voce/)).toBeInTheDocument();
     expect(screen.getByText(/Codice fiscale non disponibile/)).toBeInTheDocument();
     expect(html).not.toContain('text-kidville-muted');
     expect(html).toContain('text-kidville-sub');

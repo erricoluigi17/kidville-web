@@ -86,7 +86,7 @@ export async function sollecitaPagamenti(
         // registro assente: nessuno storico livelli
     }
 
-    const cfgCache = new Map<string, { cfg: SollecitiConfig; scuolaNome: string }>()
+    const cfgCache = new Map<string, { cfg: SollecitiConfig; scuolaNome: string; sedeNome: string }>()
     const esiti: EsitoSollecito[] = []
     const adesso = Date.now()
 
@@ -105,10 +105,17 @@ export async function sollecitaPagamenti(
             const cfg = (await getModuleConfig(supabase, 'solleciti_config', pag.scuola_id)) as SollecitiConfig
             const fiscale = (await getModuleConfig(supabase, 'fiscale_config', pag.scuola_id)) as FiscaleConfig
             const aruba = (await getModuleConfig(supabase, 'aruba_config', pag.scuola_id)) as ArubaFiscalConfig
-            scuolaCtx = { cfg, scuolaNome: datiStruttura(fiscale, aruba).denominazione || 'La Segreteria' }
+            // Nome sede per la causale consigliata (best-effort): `scuole.nome`
+            // («Kidville Giugliano» → «GIUGLIANO» via sedeCausale nel builder).
+            const { data: sede } = await supabase.from('scuole').select('nome').eq('id', pag.scuola_id).maybeSingle()
+            scuolaCtx = {
+                cfg,
+                scuolaNome: datiStruttura(fiscale, aruba).denominazione || 'La Segreteria',
+                sedeNome: ((sede?.nome as string | null | undefined) ?? '') || '',
+            }
             cfgCache.set(pag.scuola_id, scuolaCtx)
         }
-        const { cfg, scuolaNome } = scuolaCtx
+        const { cfg, scuolaNome, sedeNome } = scuolaCtx
 
         const cadenza = cfg.cadenza_min_giorni ?? DEFAULT_SOLLECITI_CONFIG.cadenza_min_giorni
         if (pag.ultimo_sollecito_il && adesso - Date.parse(pag.ultimo_sollecito_il) < cadenza * MS_GIORNO) {
@@ -143,9 +150,11 @@ export async function sollecitaPagamenti(
         // dato lecito), MAI nei log: `corpo` non viene passato a nessun logger, e
         // `sendEmail`/`externalFetch` non loggano il body della richiesta.
         const corpo = `${renderTemplate(liv.testo, ctx)}\n\n${rigaCausaleSollecito({
+            descrizione: pag.descrizione,
             nome: pag.alunni?.nome,
             cognome: pag.alunni?.cognome,
             codiceFiscale: pag.alunni?.codice_fiscale,
+            sede: sedeNome,
         })}`
 
         // destinatari: titolari quota (split) oppure tutori del bambino

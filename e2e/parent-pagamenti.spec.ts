@@ -14,8 +14,9 @@ test('lo storico mostra la retta aperta e la gita pagata', async ({ page }) => {
   await expect(page.getByText('€ 150,00').first()).toBeVisible();
   await expect(page.getByText('1 voce da saldare')).toBeVisible();
 
-  // Voce aperta: badge "Da pagare", intestata ad Aurora.
-  await expect(page.getByText('Retta E2E luglio')).toBeVisible();
+  // Voce aperta: badge "Da pagare", intestata ad Aurora. La descrizione compare
+  // in DUE punti (la voce + la «causale consigliata» che inizia con essa) → .first().
+  await expect(page.getByText('Retta E2E luglio').first()).toBeVisible();
   await expect(page.getByText('Da pagare', { exact: true })).toBeVisible();
   await expect(page.getByText('Aurora Arcobaleno-E2E').first()).toBeVisible();
 

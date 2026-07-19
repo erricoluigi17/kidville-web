@@ -7,24 +7,28 @@ import { logClient } from '@/lib/logging/client';
 
 // CTA primaria AA della feature: BIANCO su verde (≈6,5:1) invece del giallo-su-verde
 // del `Btn` primary dell'app (~4:1, sotto AA). Locale al componente per non toccare
-// il `Btn` globale. Stessa forma del `btnClass('primary','sm')`, solo testo bianco.
+// il `Btn` globale.
 const BTN_COPIA_AA =
     'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-pill font-barlow font-extrabold uppercase tracking-[0.05em] transition-transform active:scale-95 disabled:opacity-45 disabled:pointer-events-none h-9 px-4 text-[13px] bg-kidville-green text-kidville-white hover:bg-kidville-green-dark';
 
-export interface FiglioCausale {
-    alunno_id: string;
+export interface VoceCausale {
+    id: string;
+    descrizione: string;
     nome: string;
     cognome: string;
     codiceFiscale: string | null;
+    sede: string | null;
 }
 
-// Card «Causale consigliata per il bonifico»: per ciascun figlio mostra la stringa
-// «Nome Cognome CODICE_FISCALE» pronta da copiare. Scrivere il CF in causale rende
-// univoco l'abbinamento del bonifico (riconciliazione). Se il CF manca, mostra solo
-// «Nome Cognome» con una nota discreta.
-export function CausaleBonifico({ figli }: { figli: FiglioCausale[] }) {
+// Card «Causale consigliata per il bonifico»: UNA causale per voce ancora aperta,
+// nel formato «{descrizione} - per il minore {Nome Cognome} - {CF} - {SEDE}», pronta
+// da copiare. Scrivere questa causale rende univoco l'abbinamento del bonifico
+// (riconciliazione). Se il CF manca, la causale lo omette e una nota invita a
+// indicare comunque il nome del bambino. Il CF è del PROPRIO figlio: dato del
+// genitore, lecito da mostrargli.
+export function CausaleBonifico({ voci }: { voci: VoceCausale[] }) {
     const [copiato, setCopiato] = useState<string | null>(null);
-    if (figli.length === 0) return null;
+    if (voci.length === 0) return null;
 
     const copia = async (id: string, testo: string) => {
         try {
@@ -50,15 +54,16 @@ export function CausaleBonifico({ figli }: { figli: FiglioCausale[] }) {
                 Causale consigliata per il bonifico
             </p>
             <p className="font-maven text-xs text-kidville-sub mb-3">
-                Per abbinare più in fretta il pagamento, indica questa causale nel bonifico.
+                Copia la causale della voce che stai pagando: contiene tutto per l&apos;abbinamento automatico del bonifico.
             </p>
             <div className="space-y-2">
-                {figli.map((f) => {
-                    const causale = causaleBonifico({ nome: f.nome, cognome: f.cognome, codiceFiscale: f.codiceFiscale });
-                    const conCf = haCodiceFiscale(f.codiceFiscale);
-                    const done = copiato === f.alunno_id;
+                {voci.map((v) => {
+                    const causale = causaleBonifico(v);
+                    const conCf = haCodiceFiscale(v.codiceFiscale);
+                    const done = copiato === v.id;
+                    const nome = [v.nome, v.cognome].filter(Boolean).join(' ');
                     return (
-                        <div key={f.alunno_id} className="rounded-[14px] bg-kidville-cream px-3 py-2.5">
+                        <div key={v.id} className="rounded-[14px] bg-kidville-cream px-3 py-2.5">
                             <div className="flex items-center justify-between gap-2">
                                 <p className="min-w-0 flex-1 font-maven text-sm font-bold text-kidville-green break-words">
                                     {causale}
@@ -66,8 +71,8 @@ export function CausaleBonifico({ figli }: { figli: FiglioCausale[] }) {
                                 <button
                                     type="button"
                                     className={BTN_COPIA_AA}
-                                    onClick={() => copia(f.alunno_id, causale)}
-                                    aria-label={`Copia la causale di ${[f.nome, f.cognome].filter(Boolean).join(' ')}`}
+                                    onClick={() => copia(v.id, causale)}
+                                    aria-label={`Copia la causale di ${nome || 'questo pagamento'}`}
                                 >
                                     {done ? <><Check size={14} /> Copiato</> : <><Copy size={14} /> Copia</>}
                                 </button>

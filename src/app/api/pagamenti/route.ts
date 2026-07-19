@@ -196,7 +196,21 @@ export const GET = withRoute('pagamenti:GET', async (request: NextRequest) => {
       stato_effettivo: statoEffettivo(r, oggi),
     }))
 
-    return NextResponse.json({ success: true, data: rowsArricchite })
+    // Nome sede per la causale consigliata del bonifico (best-effort): risolve
+    // scuola_id → nome da `scuole`. Se fallisce, la causale resta senza sede (ha
+    // comunque descrizione + nome + CF). Una sola query batch sulle sedi distinte.
+    const scuolaIds = [...new Set(rowsArricchite.map((r) => r.scuola_id).filter(Boolean))]
+    let nomiSedi: Record<string, string> = {}
+    if (scuolaIds.length > 0) {
+      const { data: sedi, error: errSedi } = await supabase.from('scuole').select('id, nome').in('id', scuolaIds)
+      if (errSedi) logErrore({ operazione: 'pagamenti:GET', evento: 'sedi_nome' }, errSedi)
+      else nomiSedi = Object.fromEntries(((sedi ?? []) as { id: string; nome: string | null }[]).map((s) => [s.id, s.nome ?? '']))
+    }
+
+    return NextResponse.json({
+      success: true,
+      data: rowsArricchite.map((r) => ({ ...r, scuola_nome: nomiSedi[r.scuola_id] ?? null })),
+    })
   } catch (err) {
     logErrore({ operazione: 'pagamenti:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })

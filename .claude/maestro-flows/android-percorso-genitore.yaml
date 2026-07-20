@@ -61,20 +61,23 @@ env:
       - tapOn: "Non consentire"
 
 # ── 2. DASHBOARD ─────────────────────────────────────────────────────────────
-# Bottom nav del genitore. La tab Menu ha aria-label "Menu · tutte le sezioni".
+# Bottom nav del genitore. La tab Menu ha aria-label "Menu · tutte le sezioni",
+# ma la WebView Android collassa il button col suo <span> figlio ed espone solo
+# il testo visibile "MENU" (l'aria-label NON diventa contentDescription). Il
+# selettore va quindi sul testo esposto, non sull'aria-label.
 - extendedWaitUntil:
     visible: "Avvisi"
     timeout: 60000
 - assertVisible: "Home"
 - assertVisible:
-    text: "Menu · tutte le sezioni"
+    text: "MENU"
 - takeScreenshot: /tmp/kv-android-genitore-1-dashboard
 
 # ── 3. PRESENZE ──────────────────────────────────────────────────────────────
 # "Presenze" vive nel foglio Menu; la voce è resa con il sottotitolo univoco
 # "Assenze e giustifiche" (selettore robusto rispetto alle voci vicine).
 - tapOn:
-    text: "Menu · tutte le sezioni"
+    text: "MENU"
 - extendedWaitUntil:
     visible: "Assenze e giustifiche"
     timeout: 20000
@@ -99,5 +102,5 @@ env:
     visible: "Home"
     timeout: 20000
 - assertVisible:
-    text: "Menu · tutte le sezioni"
+    text: "MENU"
 - takeScreenshot: /tmp/kv-android-genitore-4-back

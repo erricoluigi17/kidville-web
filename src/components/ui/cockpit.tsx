@@ -115,9 +115,11 @@ export function StatCard({ icon: Icon, label, value, sub, tone = 'green', accent
       <div className="min-w-0">
         <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
           <span className={cx('font-barlow text-[26px] font-black leading-none', t.text)}>{value}</span>
-          {sub && <span className="font-maven text-xs text-kidville-muted">{sub}</span>}
+          {/* label/sub sono contenuto informativo (non decorativo) → -sub per l'AA
+              (muted/neutral su bianco erano 2,5–3,1:1, ciclo 1 RC5). */}
+          {sub && <span className="font-maven text-xs text-kidville-sub">{sub}</span>}
         </div>
-        <div className="mt-1 font-barlow text-[11.5px] font-bold uppercase tracking-[0.04em] text-kidville-neutral">{label}</div>
+        <div className="mt-1 font-barlow text-[11.5px] font-bold uppercase tracking-[0.04em] text-kidville-sub">{label}</div>
       </div>
     </div>
   );
@@ -259,7 +261,7 @@ export function Toggle({ on, onClick, disabled }: { on: boolean; onClick?: () =>
 /* ── Tabella cockpit: classi condivise (th uppercase muted, righe hover cream) ── */
 export const TABLE_WRAP = 'kv-table-scroll overflow-x-auto';
 export const TABLE = 'w-full border-collapse';
-export const TH = 'whitespace-nowrap px-3 pb-2.5 text-left font-barlow text-[12px] font-bold uppercase tracking-[0.06em] text-kidville-neutral';
+export const TH = 'whitespace-nowrap px-3 pb-2.5 text-left font-barlow text-[12px] font-bold uppercase tracking-[0.06em] text-kidville-sub';
 export const TD = 'border-t border-kidville-line px-3 py-2.5 align-middle';
 export const TROW = 'transition-colors hover:bg-kidville-cream';
 

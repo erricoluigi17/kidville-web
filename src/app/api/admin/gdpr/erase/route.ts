@@ -109,6 +109,7 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
       .find((v) => v.length > 0) ?? ''
     let riconciliazioneBonificati = 0
     let incassiBonificati = 0
+    let cassaBonificati = 0
 
     // Pagamenti dell'alunno anonimizzato (l'aggancio movimento→alunno passa dal pagamento).
     const { data: pagRows, error: errPag } = await supabase
@@ -187,6 +188,31 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
       }
     }
 
+    // 3e. Bonifica del TESTO LIBERO dei movimenti di cassa che citano il CF (P6).
+    //     `cassa_movimenti` NON ha `alunno_id`: l'unico aggancio al minore è il CF
+    //     eventualmente scritto in descrizione/note/storno_motivo (es. categoria
+    //     «Rimborsi»). Senza questa passata il CF/nome sopravviverebbe all'oblio a
+    //     tempo indefinito. Pattern ILIKE-per-CF come 3c; il CF è alfanumerico puro
+    //     (nessun metacarattere ILIKE/`.or()` da escapare). Degrada in silenzio se lo
+    //     schema cassa è assente (DB E2E CI non migrato).
+    if (cfAlunno) {
+      const like = `%${cfAlunno}%`
+      const { data: cassaBon, error: errCassa } = await supabase
+        .from('cassa_movimenti')
+        .update({ descrizione: '[rimosso]', note: '[rimosso]', storno_motivo: '[rimosso]' })
+        .or(`descrizione.ilike.${like},note.ilike.${like},storno_motivo.ilike.${like}`)
+        .select('id')
+      if (errCassa) {
+        const code = (errCassa as { code?: string }).code ?? ''
+        const CASSA_SCHEMA_ASSENTE = ['42P01', '42703', 'PGRST202', 'PGRST204', 'PGRST205']
+        if (!CASSA_SCHEMA_ASSENTE.includes(code)) {
+          logErrore({ operazione: 'admin/gdpr/erase:POST', evento: 'bonifica_cassa' }, errCassa)
+        }
+      } else {
+        cassaBonificati = (cassaBon ?? []).length
+      }
+    }
+
     // 4. Rimuovi i file PII (escluso il bucket fatture). Best-effort.
     if (fileAlunno.length > 0) {
       try {
@@ -209,6 +235,7 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
         file_rimossi: fileAlunno.length,
         riconciliazione_bonificati: riconciliazioneBonificati,
         incassi_bonificati: incassiBonificati,
+        cassa_bonificati: cassaBonificati,
       },
     })
 
@@ -219,6 +246,7 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
       file_rimossi: fileAlunno.length,
       riconciliazione_bonificati: riconciliazioneBonificati,
       incassi_bonificati: incassiBonificati,
+      cassa_bonificati: cassaBonificati,
     })
   } catch (err) {
     logErrore({ operazione: 'admin/gdpr/erase:POST', stato: 500 }, err)

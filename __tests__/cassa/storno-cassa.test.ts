@@ -1,0 +1,188 @@
+import { it, expect, vi, beforeEach, describe } from 'vitest'
+
+// =============================================================================
+// E1.5 — storno di un movimento cassa (test PRIMA dell'implementazione).
+//  · 400 motivo < 3 · 404 inesistente
+//  · 409 già stornato / è esso stesso uno storno / movimento di chiusura /
+//    entrata auto
+//  · 200 → contro-movimento (stesso tipo, importo negato, metodo, storno_di) +
+//    marca l'originale (stornato_il/storno_motivo)
+//  · il MOTIVO non finisce MAI nei log
+// =============================================================================
+
+const h = vi.hoisted(() => ({
+  requireStaff: vi.fn(),
+  resolveScuoleAttive: vi.fn(),
+  verificaSoglia: vi.fn(),
+  orig: null as Record<string, unknown> | null,
+  inserts: [] as { table: string; row: Record<string, unknown> }[],
+  updates: [] as { table: string; row: Record<string, unknown> }[],
+  logCalls: [] as unknown[][],
+  // Esiti parametrizzabili della marcatura (update su cassa_movimenti) e
+  // dell'audit (insert su registro_modifiche): permettono di simularne il fallimento.
+  marcaResult: { data: null as unknown, error: null as unknown },
+  auditResult: { data: null as unknown, error: null as unknown },
+}))
+
+vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
+vi.mock('@/lib/auth/scope', () => ({ resolveScuoleAttive: (...a: unknown[]) => h.resolveScuoleAttive(...a) }))
+vi.mock('@/lib/cassa/notifiche', () => ({ verificaSogliaCassa: (...a: unknown[]) => h.verificaSoglia(...a) }))
+vi.mock('@/lib/logging/logger', () => ({
+  logOk: (...a: unknown[]) => h.logCalls.push(a),
+  logErrore: (...a: unknown[]) => h.logCalls.push(a),
+  logEvento: (...a: unknown[]) => h.logCalls.push(a),
+}))
+vi.mock('@/lib/supabase/server-client', () => ({
+  createAdminClient: async () => ({
+    from: (table: string) => {
+      const b: Record<string, unknown> = {}
+      b.select = () => b
+      b.eq = () => b
+      b.maybeSingle = async () => (table === 'cassa_movimenti' ? { data: h.orig, error: null } : { data: null, error: null })
+      b.single = async () => ({ data: { id: 'contro-1' }, error: null })
+      b.insert = (row: Record<string, unknown>) => {
+        h.inserts.push({ table, row })
+        b._op = 'insert'
+        return b
+      }
+      b.update = (row: Record<string, unknown>) => {
+        h.updates.push({ table, row })
+        b._op = 'update'
+        return b
+      }
+      b.then = (resolve: (v: unknown) => unknown) => {
+        if (table === 'cassa_movimenti' && b._op === 'update') return resolve(h.marcaResult)
+        if (table === 'registro_modifiche') return resolve(h.auditResult)
+        return resolve({ data: null, error: null })
+      }
+      return b
+    },
+  }),
+}))
+
+import { POST } from '@/app/api/pagamenti/cassa/movimenti/storno/route'
+
+const MOV = '22222222-2222-4222-8222-222222222222'
+const SEDE = 'd53b0fbc-a9eb-4073-b302-73d1d5abd529'
+const MOTIVO = 'errore di conteggio'
+
+const post = (body: unknown) =>
+  new Request('http://localhost/api/pagamenti/cassa/movimenti/storno', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-user-id': 'seg-1' },
+    body: JSON.stringify(body),
+  })
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  h.requireStaff.mockResolvedValue({ user: { id: 'seg-1', role: 'segreteria', scuola_id: SEDE } })
+  h.resolveScuoleAttive.mockResolvedValue([SEDE])
+  h.verificaSoglia.mockResolvedValue(undefined)
+  h.orig = { id: MOV, scuola_id: SEDE, tipo: 'uscita', importo: 20, metodo: 'contanti', stornato_il: null, storno_di: null, chiusura_id: null, incasso_id: null, categoria_id: null }
+  h.inserts = []
+  h.updates = []
+  h.logCalls = []
+  h.marcaResult = { data: null, error: null }
+  h.auditResult = { data: null, error: null }
+})
+
+// RC3 — audit/marcatura NON muti: PostgREST non lancia, ritorna { error }. Un
+// fallimento (diverso da schema-assente) va a `warn`; MAI il motivo/PII nei log.
+describe('RC3 — osservabilità di marcatura e audit', () => {
+  const esitoDi = (c: unknown[]): string | undefined => (c[2] as { esito?: string } | undefined)?.esito
+
+  it('marcatura fallita (errore reale) → warn «marcatura-storno-fallita», route comunque 200', async () => {
+    h.marcaResult = { data: null, error: { code: '23505', message: 'boom' } }
+    const res = await POST(post({ movimento_id: MOV, motivo: MOTIVO }))
+    expect(res.status).toBe(200)
+    const warn = h.logCalls.find((c) => c[1] === 'warn' && esitoDi(c) === 'marcatura-storno-fallita')
+    expect(warn).toBeTruthy()
+    expect(JSON.stringify(h.logCalls)).not.toContain(MOTIVO)
+  })
+
+  it('marcatura schema-assente (42703) → info, nessun warn', async () => {
+    h.marcaResult = { data: null, error: { code: '42703' } }
+    const res = await POST(post({ movimento_id: MOV, motivo: MOTIVO }))
+    expect(res.status).toBe(200)
+    expect(h.logCalls.some((c) => c[1] === 'warn' && esitoDi(c) === 'marcatura-storno-fallita')).toBe(false)
+    expect(h.logCalls.some((c) => c[1] === 'info' && esitoDi(c) === 'marcatura-schema-assente')).toBe(true)
+  })
+
+  it('audit fallito (errore reale) → warn «audit-non-scritto», route comunque 200', async () => {
+    h.auditResult = { data: null, error: { code: '23505', message: 'boom' } }
+    const res = await POST(post({ movimento_id: MOV, motivo: MOTIVO }))
+    expect(res.status).toBe(200)
+    const warn = h.logCalls.find((c) => c[1] === 'warn' && esitoDi(c) === 'audit-non-scritto')
+    expect(warn).toBeTruthy()
+    expect(JSON.stringify(h.logCalls)).not.toContain(MOTIVO)
+  })
+})
+
+describe('POST /api/pagamenti/cassa/movimenti/storno', () => {
+  it('motivo troppo corto → 400', async () => {
+    const res = await POST(post({ movimento_id: MOV, motivo: 'x' }))
+    expect(res.status).toBe(400)
+  })
+
+  it('movimento inesistente → 404', async () => {
+    h.orig = null
+    const res = await POST(post({ movimento_id: MOV, motivo: MOTIVO }))
+    expect(res.status).toBe(404)
+  })
+
+  it('già stornato → 409', async () => {
+    h.orig = { ...(h.orig as Record<string, unknown>), stornato_il: '2026-07-20T10:00:00Z' }
+    const res = await POST(post({ movimento_id: MOV, motivo: MOTIVO }))
+    expect(res.status).toBe(409)
+  })
+
+  it('è esso stesso uno storno → 409', async () => {
+    h.orig = { ...(h.orig as Record<string, unknown>), storno_di: 'altro-mov' }
+    const res = await POST(post({ movimento_id: MOV, motivo: MOTIVO }))
+    expect(res.status).toBe(409)
+  })
+
+  it('movimento di chiusura (chiusura_id valorizzato) → 409', async () => {
+    h.orig = { ...(h.orig as Record<string, unknown>), chiusura_id: 'chius-1' }
+    const res = await POST(post({ movimento_id: MOV, motivo: MOTIVO }))
+    expect(res.status).toBe(409)
+  })
+
+  it('entrata auto (incasso_id valorizzato) → 409', async () => {
+    h.orig = { ...(h.orig as Record<string, unknown>), incasso_id: 'inc-1' }
+    const res = await POST(post({ movimento_id: MOV, motivo: MOTIVO }))
+    expect(res.status).toBe(409)
+  })
+
+  it('RC2 — movimento di una sede FUORI scope → 403 «Sede non accessibile», nessun contro-movimento', async () => {
+    h.orig = { ...(h.orig as Record<string, unknown>), scuola_id: 'e2e00000-0000-4000-8000-000000000001' }
+    h.resolveScuoleAttive.mockResolvedValue([SEDE]) // l'operatore NON ha la sede del movimento
+    const res = await POST(post({ movimento_id: MOV, motivo: MOTIVO }))
+    expect(res.status).toBe(403)
+    const body = await res.json()
+    expect(body.error).toBe('Sede non accessibile')
+    // Nessun contro-movimento inserito: la mutazione cross-tenant non è avvenuta.
+    expect(h.inserts.find((i) => i.table === 'cassa_movimenti')).toBeUndefined()
+  })
+
+  it('storno valido → 200, contro-movimento con stesso tipo/metodo e importo negato', async () => {
+    const res = await POST(post({ movimento_id: MOV, motivo: MOTIVO }))
+    expect(res.status).toBe(200)
+    const contro = h.inserts.find((i) => i.table === 'cassa_movimenti')!.row
+    expect(contro.tipo).toBe('uscita')
+    expect(Number(contro.importo)).toBe(-20)
+    expect(contro.metodo).toBe('contanti')
+    expect(contro.storno_di).toBe(MOV)
+    // Marca l'originale.
+    const marca = h.updates.find((u) => u.table === 'cassa_movimenti')!.row
+    expect(marca.storno_motivo).toBe(MOTIVO)
+    expect(marca.stornato_il).toBeTruthy()
+    const body = await res.json()
+    expect(body.contro_movimento_id).toBe('contro-1')
+  })
+
+  it('il MOTIVO non finisce mai nei log', async () => {
+    await POST(post({ movimento_id: MOV, motivo: MOTIVO }))
+    expect(JSON.stringify(h.logCalls)).not.toContain(MOTIVO)
+  })
+})

@@ -237,6 +237,16 @@ export const TIPI_NOTIFICA: Record<string, TipoNotifica> = {
     gruppo: 'staff',
     descrizione: 'Quando un documento di un alunno scade entro 30 giorni',
   },
+  cassa_soglia: {
+    label: 'Cassa: soglia contanti superata',
+    gruppo: 'staff',
+    descrizione: 'Quando il contante atteso in cassa supera la soglia impostata',
+  },
+  cassa_uscita: {
+    label: 'Cassa: uscita registrata dalla segreteria',
+    gruppo: 'staff',
+    descrizione: 'Quando un membro dello staff non amministratore registra una spesa',
+  },
 }
 
 /** Risolve eventuali alias sul tipo canonico del catalogo. */

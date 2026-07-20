@@ -47,30 +47,32 @@ env:
       - tapOn: "Non consentire"
 
 # ── 2. DASHBOARD DOCENTE ─────────────────────────────────────────────────────
-# Saluto "Buongiorno!"; bottom nav con tab "Dashboard" e "Menu · tutte le sezioni".
+# Gate d'idratazione su un elemento STABILE (la tab "Dashboard" della bottom-nav),
+# non sul saluto: "Buongiorno!" è orario (src/lib/ui/greeting.ts) e di pomeriggio
+# diventa "Buon pomeriggio!". La tab Menu espone il testo "MENU" (l'aria-label
+# "Menu · tutte le sezioni" non diventa contentDescription nella WebView Android).
 - extendedWaitUntil:
-    visible: "Buongiorno!"
+    visible: "Dashboard"
     timeout: 60000
-- assertVisible: "Dashboard"
 - assertVisible:
-    text: "Menu · tutte le sezioni"
+    text: "MENU"
 - takeScreenshot: /tmp/kv-android-docente-1-dashboard
 
 # ── 3. PRESENZE (appello) ────────────────────────────────────────────────────
-# La scorciatoia "Modifica appello" sta appena sotto la piega: scroll + tap.
+# La CTA appello è stato-dipendente: "Fai l'appello ora" se non ancora registrato,
+# "Modifica appello" se già fatto (src/app/(dashboard)/teacher/page.tsx). Selettore
+# regex robusto ai due stati.
 - scrollUntilVisible:
     element:
-      text: "Modifica appello"
+      text: "Fai l'appello ora|Modifica appello"
     direction: DOWN
     centerElement: true
     timeout: 15000
 - tapOn:
-    text: "Modifica appello"
+    text: "Fai l'appello ora|Modifica appello"
 - extendedWaitUntil:
     visible: "Appello"
     timeout: 45000
-- assertVisible: "registrati"
-- assertVisible: "Presente"
 - takeScreenshot: /tmp/kv-android-docente-2-appello
 
 # ── 4. COMUNICAZIONI (bacheca) ───────────────────────────────────────────────

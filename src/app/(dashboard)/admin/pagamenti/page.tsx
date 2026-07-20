@@ -23,6 +23,7 @@ const SollecitiPanel = dynamic(() => import('@/components/features/admin/pagamen
 const RiconciliazionePanel = dynamic(() => import('@/components/features/admin/pagamenti/RiconciliazionePanel').then((m) => m.RiconciliazionePanel), { loading: caricamento });
 const TransazioniPanel = dynamic(() => import('@/components/features/admin/pagamenti/TransazioniPanel').then((m) => m.TransazioniPanel), { loading: caricamento });
 const CausaliPanel = dynamic(() => import('@/components/features/admin/pagamenti/CausaliPanel').then((m) => m.CausaliPanel), { ssr: false, loading: caricamento });
+const CassaPanel = dynamic(() => import('@/components/features/admin/pagamenti/CassaPanel').then((m) => m.CassaPanel), { ssr: false, loading: caricamento });
 type PrecompilaTransazione = import('@/components/features/admin/pagamenti/TransazioniPanel').PrecompilaTransazione;
 
 const isVista = (v: string | null): v is VistaContabilita => !!v && VISTE_CONTABILITA.some((o) => o.id === v);
@@ -99,6 +100,8 @@ function PagamentiInner() {
                         {vista === 'fiscale' && userId && <FiscalePanel userId={userId} scuolaId={scuolaId} />}
 
                         {vista === 'ticket' && userId && <TicketMensaPanel userId={userId} scuolaId={scuolaId} />}
+
+                        {vista === 'cassa' && userId && <CassaPanel userId={userId} scuolaId={scuolaId} />}
 
                         {vista === 'causali' && userId && <CausaliPanel userId={userId} scuolaId={scuolaId} />}
                     </Card>

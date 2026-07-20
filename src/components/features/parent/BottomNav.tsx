@@ -8,7 +8,7 @@ import {
   Home, Bell, MessageCircle, BookOpen, LayoutGrid,
   Image, Package, FileText, BarChart3, X, Euro, UtensilsCrossed,
   GraduationCap, ClipboardList, AlertTriangle, Megaphone, CalendarX2, IdCard,
-  ChevronRight,
+  ChevronRight, Newspaper,
 } from 'lucide-react';
 import { useChildSchoolType } from '@/lib/auth/use-child-school-type';
 import { LogoutMenuButton } from '@/components/ui/LogoutMenuButton';
@@ -76,6 +76,7 @@ export default function BottomNav() {
       label: 'Comunicazioni',
       items: [
         { id: 'avvisi', label: 'Avvisi', sub: 'Circolari e adesioni', icon: Megaphone, href: '/parent/avvisi', tint: '#006A5F', grado: 'comune' },
+        { id: 'news', label: 'News', sub: 'Novità e comunicati', icon: Newspaper, href: '/parent/news', tint: '#D14D8A', grado: 'comune' },
         { id: 'chat', label: 'Chat', sub: 'Scrivi alle maestre', icon: MessageCircle, href: '/parent/chat', tint: '#2A6FDB', grado: 'comune' },
       ],
     },

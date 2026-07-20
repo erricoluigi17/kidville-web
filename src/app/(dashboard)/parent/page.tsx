@@ -12,6 +12,7 @@ import { PagamentiSummary } from '@/components/features/parent/pagamenti/Pagamen
 import { SectionHeader } from '@/components/features/parent/home/SectionHeader';
 import { DiaryTodayCard } from '@/components/features/parent/home/DiaryTodayCard';
 import { AvvisiPreview } from '@/components/features/parent/home/AvvisiPreview';
+import { NewsPreview } from '@/components/features/parent/home/NewsPreview';
 import { GalleryTodayCard } from '@/components/features/parent/home/GalleryTodayCard';
 import { LockerTodayCard } from '@/components/features/parent/home/LockerTodayCard';
 import { AgendaTodayCard } from '@/components/features/parent/home/AgendaTodayCard';
@@ -141,6 +142,14 @@ function ParentHomeContent() {
         <div className="px-4 pt-5">
           <SectionHeader eyebrow="Comunicazioni" title="Avvisi" actionLabel="Tutti" actionHref={wi('/parent/avvisi')} />
           <AvvisiPreview parentId={parentId} studentId={studentId} />
+        </div>
+      )}
+
+      {/* ── NEWS (top 3, sola lettura; si nasconde se vuoto) ── */}
+      {parentId && (
+        <div className="px-4 pt-5">
+          <SectionHeader eyebrow="Comunicazioni" title="News" actionLabel="Tutte" actionHref={wi('/parent/news')} />
+          <NewsPreview parentId={parentId} studentId={studentId} />
         </div>
       )}
 

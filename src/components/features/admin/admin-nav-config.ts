@@ -17,6 +17,7 @@ import {
   ShoppingBag,
   MessageCircle,
   Stamp,
+  Newspaper,
 } from 'lucide-react';
 
 /**
@@ -88,6 +89,7 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: '/admin/messaggi', label: 'Messaggi', icon: MessageCircle },
       { href: '/admin/avvisi', label: 'Avvisi', icon: Bell },
+      { href: '/admin/news', label: 'News', icon: Newspaper },
       { href: '/admin/compiti', label: 'Compiti', icon: ListTodo },
     ],
   },

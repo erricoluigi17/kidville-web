@@ -96,6 +96,11 @@ export const TIPI_NOTIFICA: Record<string, TipoNotifica> = {
     gruppo: 'genitore',
     descrizione: 'Quando vengono pubblicate foto della sezione del figlio',
   },
+  news: {
+    label: 'News della scuola',
+    gruppo: 'genitore',
+    descrizione: 'Quando la scuola pubblica una novità nella sezione News',
+  },
   locker_richiesta: {
     label: 'Richiesta materiale armadietto',
     gruppo: 'genitore',

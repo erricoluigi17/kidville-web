@@ -59,7 +59,7 @@ function ParentDigestDetail() {
         </div>
       ) : (
         <div className="flex flex-col items-center justify-center rounded-card bg-kidville-white py-12 text-center">
-          <p className="font-maven text-sm text-kidville-muted">Digest non disponibile.</p>
+          <p className="font-maven text-sm text-kidville-sub">Digest non disponibile.</p>
           <button
             type="button"
             onClick={() => {
@@ -67,7 +67,7 @@ function ParentDigestDetail() {
               setErrore(false)
               void carica()
             }}
-            className="mt-3 inline-flex items-center gap-2 rounded-pill bg-kidville-green px-4 py-2 font-barlow text-sm font-extrabold uppercase tracking-wide text-kidville-yellow active:scale-95"
+            className="mt-3 inline-flex items-center gap-2 rounded-pill bg-kidville-green px-4 py-2 font-barlow text-sm font-extrabold uppercase tracking-wide text-white active:scale-95"
           >
             <RotateCcw size={15} strokeWidth={2.4} />
             Riprova

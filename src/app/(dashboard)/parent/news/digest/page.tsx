@@ -59,7 +59,7 @@ function ParentDigestList() {
         <div className="flex flex-col items-center justify-center py-16 text-center">
           <div className="mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-kidville-cream text-4xl">✉️</div>
           <h2 className="mb-1 font-barlow text-xl font-bold uppercase text-kidville-green">Ancora nessun digest</h2>
-          <p className="max-w-xs font-maven text-sm text-kidville-muted">Ogni mese qui trovi il riepilogo delle novità della scuola.</p>
+          <p className="max-w-xs font-maven text-sm text-kidville-sub">Ogni mese qui trovi il riepilogo delle novità della scuola.</p>
         </div>
       ) : (
         <div className="flex flex-col gap-3">
@@ -77,7 +77,7 @@ function ParentDigestList() {
                 <span className="block font-barlow text-sm font-extrabold uppercase tracking-wide text-kidville-green">
                   {ed.titolo || `Kidville News — ${MESI_IT[(ed.mese ?? 1) - 1] ?? ''} ${ed.anno ?? ''}`.trim()}
                 </span>
-                <span className="block font-maven text-xs text-kidville-muted">{MESI_IT[(ed.mese ?? 1) - 1] ?? ''} {ed.anno}</span>
+                <span className="block font-maven text-xs text-kidville-sub">{MESI_IT[(ed.mese ?? 1) - 1] ?? ''} {ed.anno}</span>
               </span>
               <ChevronRight size={16} strokeWidth={2} className="flex-shrink-0 text-kidville-muted/60" />
             </Link>

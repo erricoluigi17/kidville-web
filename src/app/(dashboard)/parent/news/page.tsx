@@ -31,7 +31,7 @@ function ParentNewsContent() {
         </span>
         <span className="min-w-0 flex-1">
           <span className="block font-barlow text-sm font-extrabold uppercase tracking-wide text-kidville-green">Digest mensile</span>
-          <span className="block font-maven text-xs text-kidville-muted">Il riepilogo «Kidville News» via email</span>
+          <span className="block font-maven text-xs text-kidville-sub">Il riepilogo «Kidville News» via email</span>
         </span>
         <ChevronRight size={16} strokeWidth={2} className="flex-shrink-0 text-kidville-muted/60" />
       </Link>

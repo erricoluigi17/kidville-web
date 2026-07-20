@@ -18,7 +18,7 @@ import { logClient } from '@/lib/logging/client';
 import { cx } from '@/lib/ui/cx';
 import type { NewsPost, NewsStato } from '@/lib/news/tipi';
 
-const caricamento = () => <p className="py-8 text-center font-maven text-sm text-kidville-muted">Caricamento…</p>;
+const caricamento = () => <p className="py-8 text-center font-maven text-sm text-kidville-sub">Caricamento…</p>;
 const NewsEditorPanel = dynamic(() => import('@/components/features/admin/news/NewsEditorPanel').then((m) => m.NewsEditorPanel), { ssr: false, loading: caricamento });
 
 const STATO_META: Record<NewsStato, { label: string; tone: BadgeTone }> = {
@@ -109,7 +109,7 @@ function TeacherNewsContent() {
           {teacherId && scuolaId ? (
             <NewsEditorPanel key={postInModifica?.id ?? 'nuovo'} userId={teacherId} scuolaId={scuolaId} modalita="docente" canAllSedi={false} postIniziale={postInModifica} onSalvato={chiudiEditor} onAnnulla={chiudiEditor} />
           ) : (
-            <p className="py-8 text-center font-maven text-sm text-kidville-muted">Caricamento della tua sede…</p>
+            <p className="py-8 text-center font-maven text-sm text-kidville-sub">Caricamento della tua sede…</p>
           )}
         </div>
       ) : (
@@ -119,11 +119,11 @@ function TeacherNewsContent() {
           {loading ? (
             <div className="flex flex-col gap-2">{[0, 1].map((i) => <div key={i} className="h-16 animate-pulse rounded-card bg-kidville-cream-dark" />)}</div>
           ) : !disponibile ? (
-            <p className="rounded-card bg-kidville-cream-dark px-4 py-8 text-center font-maven text-sm text-kidville-muted">Le News non sono ancora disponibili su questo ambiente.</p>
+            <p className="rounded-card bg-kidville-cream-dark px-4 py-8 text-center font-maven text-sm text-kidville-sub">Le News non sono ancora disponibili su questo ambiente.</p>
           ) : posts.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-center">
               <Newspaper size={40} className="mb-3 text-kidville-green/40" strokeWidth={1.6} />
-              <p className="font-maven text-sm text-kidville-muted">Non hai ancora creato contenuti.</p>
+              <p className="font-maven text-sm text-kidville-sub">Non hai ancora creato contenuti.</p>
             </div>
           ) : (
             <div className="flex flex-col gap-2">
@@ -156,7 +156,7 @@ function TeacherNewsContent() {
 
 export default function TeacherNewsPage() {
   return (
-    <Suspense fallback={<div className="p-8 font-maven text-kidville-muted">Caricamento…</div>}>
+    <Suspense fallback={<div className="p-8 font-maven text-kidville-sub">Caricamento…</div>}>
       <TeacherNewsContent />
     </Suspense>
   );

@@ -59,7 +59,7 @@ export function NewsArchivioDrawer({ open, onClose, mesi, current, onSelect }: P
           </button>
 
           {mesi.length === 0 && (
-            <p className="px-3 py-4 font-maven text-[13px] text-kidville-muted">Ancora nessun mese in archivio.</p>
+            <p className="px-3 py-4 font-maven text-[13px] text-kidville-sub">Ancora nessun mese in archivio.</p>
           )}
 
           {mesi.map((m, i) => {

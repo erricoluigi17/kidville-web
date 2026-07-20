@@ -197,7 +197,7 @@ export function NewsFeedList({ parentId, studentId, onCount }: Props) {
             onClick={() => setCatFiltro(null)}
             className={cx(
               'flex-shrink-0 rounded-pill px-3.5 py-1.5 font-barlow text-[12px] font-extrabold uppercase tracking-wide',
-              catFiltro === null ? 'bg-kidville-green text-kidville-yellow' : 'bg-kidville-white text-kidville-green border border-kidville-line',
+              catFiltro === null ? 'bg-kidville-green text-white' : 'bg-kidville-white text-kidville-green border border-kidville-line',
             )}
           >
             Tutte
@@ -210,7 +210,7 @@ export function NewsFeedList({ parentId, studentId, onCount }: Props) {
               onClick={() => setCatFiltro((v) => (v === c.id ? null : c.id))}
               className={cx(
                 'flex-shrink-0 rounded-pill px-3.5 py-1.5 font-barlow text-[12px] font-extrabold uppercase tracking-wide',
-                catFiltro === c.id ? 'bg-kidville-green text-kidville-yellow' : 'bg-kidville-white text-kidville-green border border-kidville-line',
+                catFiltro === c.id ? 'bg-kidville-green text-white' : 'bg-kidville-white text-kidville-green border border-kidville-line',
               )}
             >
               {c.nome}
@@ -255,7 +255,7 @@ export function NewsFeedList({ parentId, studentId, onCount }: Props) {
               setLoading(true)
               void caricaFeed()
             }}
-            className="mt-3 inline-flex items-center gap-2 rounded-pill bg-kidville-green px-4 py-2 font-barlow text-sm font-extrabold uppercase tracking-wide text-kidville-yellow active:scale-95"
+            className="mt-3 inline-flex items-center gap-2 rounded-pill bg-kidville-green px-4 py-2 font-barlow text-sm font-extrabold uppercase tracking-wide text-white active:scale-95"
           >
             <RotateCcw size={15} strokeWidth={2.4} />
             Riprova

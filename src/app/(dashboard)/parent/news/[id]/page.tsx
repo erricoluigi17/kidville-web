@@ -62,7 +62,7 @@ function ParentNewsDetail() {
         <NewsDetailContent post={post} media={media} />
       ) : problema === 'errore' ? (
         <div className="flex flex-col items-center justify-center rounded-card bg-kidville-white py-12 text-center">
-          <p className="font-maven text-sm text-kidville-muted">Non è stato possibile caricare la news.</p>
+          <p className="font-maven text-sm text-kidville-sub">Non è stato possibile caricare la news.</p>
           <button
             type="button"
             onClick={() => {
@@ -70,7 +70,7 @@ function ParentNewsDetail() {
               setProblema(null)
               void carica()
             }}
-            className="mt-3 inline-flex items-center gap-2 rounded-pill bg-kidville-green px-4 py-2 font-barlow text-sm font-extrabold uppercase tracking-wide text-kidville-yellow active:scale-95"
+            className="mt-3 inline-flex items-center gap-2 rounded-pill bg-kidville-green px-4 py-2 font-barlow text-sm font-extrabold uppercase tracking-wide text-white active:scale-95"
           >
             <RotateCcw size={15} strokeWidth={2.4} />
             Riprova
@@ -80,7 +80,7 @@ function ParentNewsDetail() {
         <div className="flex flex-col items-center justify-center py-16 text-center">
           <div className="mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-kidville-cream text-4xl">📰</div>
           <h2 className="mb-1 font-barlow text-xl font-bold uppercase text-kidville-green">News non disponibile</h2>
-          <p className="max-w-xs font-maven text-sm text-kidville-muted">Potrebbe essere stata rimossa o non essere destinata al tuo profilo.</p>
+          <p className="max-w-xs font-maven text-sm text-kidville-sub">Potrebbe essere stata rimossa o non essere destinata al tuo profilo.</p>
         </div>
       )}
     </div>

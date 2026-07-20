@@ -128,7 +128,7 @@ export function NewsCategoriePanel({ userId, scuolaId }: Props) {
                 />
               )}
               {c.is_sistema ? (
-                <span className="inline-flex flex-shrink-0 items-center gap-1 font-barlow text-[10.5px] font-bold uppercase tracking-wide text-kidville-muted"><Lock size={12} /> Sistema</span>
+                <span className="inline-flex flex-shrink-0 items-center gap-1 font-barlow text-[10.5px] font-bold uppercase tracking-wide text-kidville-sub"><Lock size={12} /> Sistema</span>
               ) : (
                 <button type="button" onClick={() => void elimina(c.id)} aria-label={`Elimina ${c.nome}`} className="flex-shrink-0 text-kidville-error-strong"><Trash2 size={16} /></button>
               )}

@@ -41,7 +41,7 @@ export function InstagramEmbed({ shortcode, url }: Props) {
         href={permalink}
         target="_blank"
         rel="noopener noreferrer"
-        className="inline-flex items-center justify-center gap-2 rounded-pill bg-kidville-green px-4 py-2.5 font-barlow text-sm font-extrabold uppercase tracking-wide text-kidville-yellow active:scale-95"
+        className="inline-flex items-center justify-center gap-2 rounded-pill bg-kidville-green px-4 py-2.5 font-barlow text-sm font-extrabold uppercase tracking-wide text-white active:scale-95"
       >
         Apri su Instagram
       </a>

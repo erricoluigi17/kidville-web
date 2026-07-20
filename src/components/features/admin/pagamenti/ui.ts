@@ -36,6 +36,6 @@ export const BTN_PRIMARY =
 export const BTN_PRIMARY_AA =
   'inline-flex items-center justify-center gap-1.5 rounded-pill bg-kidville-green px-5 py-2.5 font-maven text-sm font-bold text-kidville-white transition-colors hover:bg-kidville-green-dark disabled:opacity-50';
 
-/** Bottone secondario pillola: bordo line, testo muted (annulla/chiudi). */
+/** Bottone secondario pillola: bordo line, testo sub, AA a riposo (annulla/chiudi). */
 export const BTN_SECONDARY =
-  'inline-flex items-center justify-center gap-1.5 rounded-pill border-[1.5px] border-kidville-line bg-kidville-white px-5 py-2.5 font-maven text-sm font-bold text-kidville-muted transition-colors hover:border-kidville-green hover:text-kidville-green disabled:opacity-50';
+  'inline-flex items-center justify-center gap-1.5 rounded-pill border-[1.5px] border-kidville-line bg-kidville-white px-5 py-2.5 font-maven text-sm font-bold text-kidville-sub transition-colors hover:border-kidville-green hover:text-kidville-green disabled:opacity-50';

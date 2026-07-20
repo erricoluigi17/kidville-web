@@ -52,6 +52,7 @@ const ALLOWED_FIELDS = [
   'notifiche_config',
   'rette_config',
   'causali_config',
+  'cassa_config',
 ] as const
 
 // Configurazione rette (sconto fratelli + pro-rata iscrizione) — shape S6.
@@ -179,6 +180,7 @@ export const PATCH = withRoute('admin/settings:PATCH', async (request: NextReque
         'notifiche_config',
         'rette_config',
         'causali_config',
+        'cassa_config',
       ]
       const updates: Record<string, unknown> = { scuola_id: scuolaId }
       for (const f of ALLOWED_FIELDS) if (body[f] !== undefined) updates[f] = body[f]

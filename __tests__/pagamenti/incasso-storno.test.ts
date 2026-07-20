@@ -9,6 +9,9 @@ const h = vi.hoisted(() => ({
   orig: null as Record<string, unknown> | null,
   inserts: [] as { table: string; row: unknown }[],
   updates: [] as { table: string; row: unknown }[],
+  // Simula lo schema NON migrato dove l'enum `incasso_metodo` non ha 'storno':
+  // il primo INSERT (metodo='storno') fallisce con 22P02 → scatta il fallback.
+  forza22P02: false,
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
@@ -21,8 +24,14 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.select = () => b
       b.eq = () => b
       b.maybeSingle = async () => (table === 'incassi' ? { data: h.orig, error: null } : { data: null, error: null })
-      b.single = async () => ({ data: { id: `${table}-new` }, error: null })
-      b.insert = (row: unknown) => { h.inserts.push({ table, row }); b._op = 'insert'; return b }
+      b.single = async () => {
+        // Solo l'INSERT con metodo='storno' su incassi fallisce quando l'enum non ha il valore.
+        if (table === 'incassi' && h.forza22P02 && (b._row as { metodo?: string } | undefined)?.metodo === 'storno') {
+          return { data: null, error: { code: '22P02', message: 'invalid input value for enum incasso_metodo: "storno"' } }
+        }
+        return { data: { id: `${table}-new` }, error: null }
+      }
+      b.insert = (row: unknown) => { h.inserts.push({ table, row }); b._op = 'insert'; b._row = row; return b }
       b.update = (row: unknown) => { h.updates.push({ table, row }); b._op = 'update'; return b }
       b.then = (resolve: (v: unknown) => unknown) => resolve({ data: null, error: null })
       return b
@@ -42,6 +51,7 @@ beforeEach(() => {
   h.annulla.mockResolvedValue(undefined)
   h.orig = { id: INC, pagamento_id: 'p-1', importo: 100, metodo: 'contanti', storno_di: null, stornato_il: null }
   h.inserts = []; h.updates = []
+  h.forza22P02 = false
 })
 
 describe('POST storno incasso', () => {
@@ -80,5 +90,23 @@ describe('POST storno incasso', () => {
     h.orig = null
     const res = await POST(post({ incasso_id: INC, motivo: 'errore di cassa' }))
     expect(res.status).toBe(404)
+  })
+
+  // P9 — ramo degradato (enum senza 'storno', 22P02): il fallback scrive metodo='altro'
+  // ma DEVE mantenere `storno_di`, altrimenti `sommaEntrateAutoContanti` non riconosce
+  // lo storno e il saldo cassa resta gonfiato (dimostrato dal caso negativo in saldo.test.ts).
+  it('fallback 22P02 → contro-incasso metodo=altro CON storno_di collegato', async () => {
+    h.forza22P02 = true
+    const res = await POST(post({ incasso_id: INC, motivo: 'errore di cassa' }))
+    expect(res.status).toBe(200)
+    const incInserts = h.inserts.filter((i) => i.table === 'incassi').map((i) => i.row as Record<string, unknown>)
+    expect(incInserts).toHaveLength(2)
+    // Primo insert: tentativo con metodo='storno' (fallito 22P02).
+    expect(incInserts[0].metodo).toBe('storno')
+    // Secondo insert: fallback degradato.
+    const fallback = incInserts[1]
+    expect(fallback.metodo).toBe('altro')
+    expect(fallback.note).toBe('Storno')
+    expect(fallback.storno_di).toBe(INC)
   })
 })

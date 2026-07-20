@@ -37,6 +37,7 @@ interface EsitoChiusura {
 const hdr = (u: string) => ({ 'Content-Type': 'application/json', 'x-user-id': u });
 const testoErrore = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const TITLE_ID = 'cassa-chiusura-title';
+const ERRORE_ID = 'cassa-chiusura-errore';
 const EPS = 0.005;
 
 export function CassaChiusuraModal({ userId, scuolaId, onClose, onDone, returnFocusRef }: Props) {
@@ -75,9 +76,12 @@ export function CassaChiusuraModal({ userId, scuolaId, onClose, onDone, returnFo
   const prelievo = Math.max(contato - fondo, 0);
   const fondoLasciato = Math.min(contato, fondo);
 
+  const [contatoInvalido, setContatoInvalido] = useState(false);
+
   const conferma = async () => {
     setError(null);
-    if (!hasContato || contato < 0) { setError('Inserisci il totale contato (un numero maggiore o uguale a zero).'); return; }
+    setContatoInvalido(false);
+    if (!hasContato || contato < 0) { setError('Inserisci il totale contato (un numero maggiore o uguale a zero).'); setContatoInvalido(true); return; }
     setSaving(true);
     try {
       const res = await fetch(`/api/pagamenti/cassa/chiusura?userId=${userId}`, {
@@ -121,20 +125,20 @@ export function CassaChiusuraModal({ userId, scuolaId, onClose, onDone, returnFo
         <h3 id={TITLE_ID} className="flex items-center gap-2 font-barlow text-lg font-black uppercase text-kidville-green">
           <Wallet size={18} /> Svuota cassa
         </h3>
-        <button onClick={onClose} aria-label="Chiudi" className="text-kidville-muted hover:text-kidville-ink"><X size={20} /></button>
+        <button onClick={onClose} aria-label="Chiudi" className="-mr-2 flex h-10 w-10 items-center justify-center rounded-pill text-kidville-sub hover:text-kidville-ink"><X size={20} /></button>
       </div>
 
       {loading ? (
-        <p className="py-8 text-center font-maven text-sm text-kidville-muted">Caricamento del saldo…</p>
+        <p className="py-8 text-center font-maven text-sm text-kidville-sub">Caricamento del saldo…</p>
       ) : !disponibile ? (
-        <p className="rounded-card bg-kidville-cream/60 px-3 py-6 text-center font-maven text-sm text-kidville-muted">
+        <p className="rounded-card bg-kidville-cream/60 px-3 py-6 text-center font-maven text-sm text-kidville-sub">
           Modulo cassa non ancora attivo su questo ambiente.
         </p>
       ) : esito ? (
         <div className="space-y-3">
           <div role="status" className="flex items-center gap-2 rounded-card bg-kidville-success-soft px-3 py-2.5">
-            <Check size={18} className="text-kidville-success" />
-            <span className="font-maven text-sm font-bold text-kidville-success">Cassa svuotata correttamente.</span>
+            <Check size={18} className="text-kidville-success-strong" />
+            <span className="font-maven text-sm font-bold text-kidville-success-strong">Cassa svuotata correttamente.</span>
           </div>
           <div className="rounded-card bg-kidville-cream/60 p-3 font-maven text-sm text-kidville-ink">
             <RigaEsito etichetta="Saldo atteso" valore={formatEuro(esito.saldo_atteso)} />
@@ -166,9 +170,10 @@ export function CassaChiusuraModal({ userId, scuolaId, onClose, onDone, returnFo
             <input
               id="cassa-chiusura-contato"
               type="number" min="0" step="0.01" value={contatoStr}
-              onChange={(e) => setContatoStr(e.target.value)}
+              onChange={(e) => { setContatoStr(e.target.value); if (contatoInvalido) setContatoInvalido(false); }}
               className={INPUT}
               placeholder="Quanto contante hai davvero contato"
+              {...(contatoInvalido ? { 'aria-invalid': true as const, 'aria-describedby': ERRORE_ID } : {})}
             />
           </div>
 
@@ -191,7 +196,7 @@ export function CassaChiusuraModal({ userId, scuolaId, onClose, onDone, returnFo
             <input id="cassa-chiusura-note" type="text" value={note} onChange={(e) => setNote(e.target.value)} className={INPUT} maxLength={500} />
           </div>
 
-          {error && <p role="alert" className="font-maven text-xs text-kidville-error-strong">{error}</p>}
+          {error && <p id={ERRORE_ID} role="alert" className="font-maven text-xs text-kidville-error-strong">{error}</p>}
 
           <div className="flex gap-2 pt-1">
             <button onClick={onClose} className={cx(BTN_SECONDARY, 'flex-1')}>Annulla</button>

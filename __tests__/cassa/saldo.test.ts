@@ -29,6 +29,9 @@ describe('sommaEntrateAutoContanti (pura)', () => {
     ).toBe(0)
   })
 
+  // P9 — nel ramo degradato (enum senza 'storno', 22P02) il fallback scrive
+  // metodo='altro' MA con `storno_di` valorizzato (fix E1.5): riconosciuto come
+  // storno, sottrae l'originale → 0.
   it('storno DEGRADATO (metodo altro + storno_di) di un incasso contanti → 0', () => {
     expect(
       sommaEntrateAutoContanti([
@@ -36,6 +39,19 @@ describe('sommaEntrateAutoContanti (pura)', () => {
         { id: 'b', importo: -50, metodo: 'altro', storno_di: 'a' },
       ]),
     ).toBe(0)
+  })
+
+  // CASO NEGATIVO (contratto che P9 protegge): senza `storno_di`, il contro-incasso
+  // 'altro' NON è riconosciuto come storno e non è contante → l'originale +50 resta
+  // contato → saldo GONFIATO (50, non 0). È esattamente il bug che il fallback
+  // 22P02 produceva prima di E1.5: dimostra perché il fallback DEVE impostare storno_di.
+  it('contro-incasso «altro» SENZA storno_di NON annulla l\'originale → 50 (gonfiato)', () => {
+    expect(
+      sommaEntrateAutoContanti([
+        { id: 'a', importo: 50, metodo: 'contanti', storno_di: null },
+        { id: 'b', importo: -50, metodo: 'altro', storno_di: null },
+      ]),
+    ).toBe(50)
   })
 
   it('incassi bonifico/pos/credito_famiglia/rettifica sono ignorati → 0', () => {

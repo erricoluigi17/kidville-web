@@ -1,8 +1,9 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
+import type { SupabaseClient } from '@supabase/supabase-js'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { requireStaff } from '@/lib/auth/require-staff'
-import { resolveScuolaScrittura } from '@/lib/auth/scope'
+import { requireStaff, type AppUser } from '@/lib/auth/require-staff'
+import { resolveScuolaScrittura, resolveScuoleAttive } from '@/lib/auth/scope'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
@@ -48,6 +49,51 @@ function slugify(s: string): string {
     .replace(/[̀-ͯ]/g, '')
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '')
+}
+
+type CategoriaScope = { scuola_id: string | null; is_sistema: boolean }
+
+/**
+ * RC2 — legge la categoria per id e ne verifica lo SCOPE di sede prima di ogni
+ * mutazione (PATCH/DELETE). `requireStaff` verifica il RUOLO, non il TENANT, e la
+ * route gira in service-role (bypassa la RLS): senza questo, un admin potrebbe
+ * modificare/eliminare categorie di un'altra sede conoscendone l'UUID.
+ *
+ * - categoria DI SEDE (`scuola_id` non-NULL): consentita solo se la sede è fra le
+ *   accessibili (`resolveScuoleAttive`) → altrimenti 403;
+ * - categoria GLOBALE (`scuola_id` NULL): gestibile da qualunque admin (sede reale
+ *   unica; seed condiviso). In multi-sede andrà rivista (annotato nel PRD).
+ *
+ * Ritorna la riga oppure una NextResponse 4xx/5xx pronta.
+ */
+async function caricaCategoriaConScope(
+  request: NextRequest,
+  supabase: SupabaseClient,
+  user: AppUser,
+  id: string,
+): Promise<{ cat?: CategoriaScope; response?: NextResponse }> {
+  const { data, error } = await supabase
+    .from('cassa_categorie')
+    .select('scuola_id, is_sistema')
+    .eq('id', id)
+    .maybeSingle()
+  if (error) {
+    if (schemaAssente(error)) {
+      logEvento('cassa', 'info', { operazione: 'categorie:scope', esito: 'schema-assente' })
+      return { response: NextResponse.json({ disponibile: false }, { status: 503 }) }
+    }
+    logErrore({ operazione: 'pagamenti/cassa/categorie:scope', stato: 500, evento: 'db' }, error)
+    return { response: NextResponse.json({ error: 'Errore nella lettura della categoria' }, { status: 500 }) }
+  }
+  if (!data) return { response: NextResponse.json({ error: 'Categoria non trovata' }, { status: 404 }) }
+  const cat = data as CategoriaScope
+  if (cat.scuola_id != null) {
+    const sedi = await resolveScuoleAttive(request, supabase, user)
+    if (!sedi.includes(cat.scuola_id)) {
+      return { response: NextResponse.json({ error: 'Sede non accessibile' }, { status: 403 }) }
+    }
+  }
+  return { cat }
 }
 
 // GET /api/pagamenti/cassa/categorie?scuola_id=  (staff — serve al form uscita)
@@ -149,11 +195,29 @@ export const PATCH = withRoute('pagamenti/cassa/categorie:PATCH', async (request
     }
 
     const supabase = await createAdminClient()
+
+    // RC2 — scope di sede + guard is_sistema PRIMA di scrivere.
+    const sc = await caricaCategoriaConScope(request, supabase, auth.user, b.data.id)
+    if (sc.response) return sc.response
+    if (sc.cat!.is_sistema) {
+      return NextResponse.json({ error: 'Le categorie di sistema non si modificano' }, { status: 409 })
+    }
+
+    // Rinomina → rigenera lo slug server-side (stessa `slugify` del POST): senza,
+    // lo slug resterebbe quello vecchio, disallineato dal nome mostrato.
+    if (typeof updates.nome === 'string' && updates.nome.trim()) {
+      updates.slug = slugify(updates.nome)
+    }
+
     const { data, error } = await supabase.from('cassa_categorie').update(updates).eq('id', b.data.id).select().single()
     if (error) {
       if (schemaAssente(error)) {
         logEvento('cassa', 'info', { operazione: 'categorie:PATCH', esito: 'schema-assente' })
         return NextResponse.json({ disponibile: false }, { status: 503 })
+      }
+      // Violazione unique sullo slug (rinomina che collide con una categoria esistente).
+      if ((error as { code?: string }).code === '23505') {
+        return NextResponse.json({ error: 'Esiste già una categoria con questo nome' }, { status: 409 })
       }
       logErrore({ operazione: 'pagamenti/cassa/categorie:PATCH', stato: 500, evento: 'db' }, error)
       return NextResponse.json({ error: 'Errore nell\'aggiornamento della categoria' }, { status: 500 })
@@ -176,21 +240,11 @@ export const DELETE = withRoute('pagamenti/cassa/categorie:DELETE', async (reque
     const id = q.data.id
 
     const supabase = await createAdminClient()
-    const { data: cat, error: selErr } = await supabase
-      .from('cassa_categorie')
-      .select('is_sistema')
-      .eq('id', id)
-      .maybeSingle()
-    if (selErr) {
-      if (schemaAssente(selErr)) {
-        logEvento('cassa', 'info', { operazione: 'categorie:DELETE', esito: 'schema-assente' })
-        return NextResponse.json({ disponibile: false }, { status: 503 })
-      }
-      logErrore({ operazione: 'pagamenti/cassa/categorie:DELETE', stato: 500, evento: 'db' }, selErr)
-      return NextResponse.json({ error: 'Errore nella lettura della categoria' }, { status: 500 })
-    }
-    if (!cat) return NextResponse.json({ error: 'Categoria non trovata' }, { status: 404 })
-    if ((cat as { is_sistema?: boolean }).is_sistema) {
+
+    // RC2 — scope di sede + guard is_sistema PRIMA di eliminare.
+    const sc = await caricaCategoriaConScope(request, supabase, auth.user, id)
+    if (sc.response) return sc.response
+    if (sc.cat!.is_sistema) {
       return NextResponse.json({ error: 'Le categorie di sistema non possono essere eliminate' }, { status: 409 })
     }
 

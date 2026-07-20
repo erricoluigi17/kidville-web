@@ -76,6 +76,45 @@ describe('CassaMovimentoModal — uscita/entrata + foto facoltativa', () => {
   });
 });
 
+describe('CassaMovimentoModal — un 400 con details nomina il campo in errore (RC1/E3.2)', () => {
+  function mockFetch400(details: { path: string; message?: string }[]) {
+    const fn = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const u = String(url);
+      if (u.includes('/cassa/categorie')) return jsonRes({ disponibile: true, categorie: [] });
+      if (u.includes('/cassa/movimenti') && init?.method === 'POST') {
+        return jsonRes({ error: 'Dati non validi', details }, 400);
+      }
+      return jsonRes({});
+    });
+    return fn;
+  }
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('con details path=note il messaggio d\'errore contiene «Note» (non solo «Dati non validi»)', async () => {
+    vi.stubGlobal('fetch', mockFetch400([{ path: 'note', message: 'Invalid input' }]));
+    render(<CassaMovimentoModal userId="u1" scuolaId="sc-1" tipoIniziale="entrata" onClose={() => {}} onDone={() => {}} />);
+    fireEvent.change(await screen.findByLabelText(/Importo/), { target: { value: '9.99' } });
+    fireEvent.click(screen.getByRole('button', { name: /Salva/ }));
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/Note/);
+    // Il campo Note è marcato come non valido e collegato al messaggio (P8).
+    const note = screen.getByLabelText(/Note/);
+    expect(note).toHaveAttribute('aria-invalid', 'true');
+    expect(note.getAttribute('aria-describedby')).toBe(alert.id);
+  });
+
+  it('con details su descrizione E importo il messaggio nomina entrambi i campi', async () => {
+    vi.stubGlobal('fetch', mockFetch400([{ path: 'descrizione' }, { path: 'importo' }]));
+    render(<CassaMovimentoModal userId="u1" scuolaId="sc-1" tipoIniziale="entrata" onClose={() => {}} onDone={() => {}} />);
+    fireEvent.change(await screen.findByLabelText(/Importo/), { target: { value: '5' } });
+    fireEvent.click(screen.getByRole('button', { name: /Salva/ }));
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/Descrizione/);
+    expect(alert).toHaveTextContent(/Importo/);
+  });
+});
+
 describe('CassaMovimentoModal — la foto facoltativa non blocca il salvataggio', () => {
   it('se l\'upload del giustificativo fallisce, il movimento viene comunque salvato senza allegato', async () => {
     const m = mockFetch({ uploadOk: false });

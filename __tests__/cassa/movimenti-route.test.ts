@@ -17,10 +17,17 @@ const h = vi.hoisted(() => ({
   verificaSoglia: vi.fn(),
   movimentiResp: { data: [], error: null } as { data: unknown; error: unknown },
   incassiResp: { data: [], error: null } as { data: unknown; error: unknown },
+  auditResp: { data: null, error: null } as { data: unknown; error: unknown },
   inserts: [] as { table: string; row: unknown }[],
+  logCalls: [] as unknown[][],
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
+vi.mock('@/lib/logging/logger', () => ({
+  logOk: (...a: unknown[]) => h.logCalls.push(a),
+  logErrore: (...a: unknown[]) => h.logCalls.push(a),
+  logEvento: (...a: unknown[]) => h.logCalls.push(a),
+}))
 vi.mock('@/lib/auth/scope', () => ({
   resolveScuoleAttive: h.resolveScuoleAttive,
   resolveScuolaScrittura: h.resolveScuolaScrittura,
@@ -53,6 +60,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.then = (resolve: (v: unknown) => unknown) => {
         if (table === 'cassa_movimenti') return resolve(h.movimentiResp)
         if (table === 'incassi') return resolve(h.incassiResp)
+        if (table === 'registro_modifiche') return resolve(h.auditResp)
         return resolve({ data: [], error: null })
       }
       return b
@@ -84,7 +92,9 @@ beforeEach(() => {
   h.verificaSoglia.mockResolvedValue(undefined)
   h.movimentiResp = { data: [], error: null }
   h.incassiResp = { data: [], error: null }
+  h.auditResp = { data: null, error: null }
   h.inserts = []
+  h.logCalls = []
 })
 
 describe('GET /api/pagamenti/cassa/movimenti', () => {
@@ -138,6 +148,31 @@ describe('POST /api/pagamenti/cassa/movimenti', () => {
     expect(res.status).toBe(400)
   })
 
+  it('RC1 — campi facoltativi a null (contratto del client) → 201', async () => {
+    // Il modale invia `descrizione/note/allegato_path/categoria_id/data = valore || null`.
+    // Lo schema deve accettarli a null (nullish), non solo a undefined.
+    const res = await POST(
+      postReq({
+        scuola_id: SEDE,
+        tipo: 'entrata',
+        importo: 5,
+        metodo: 'contanti',
+        data: null,
+        categoria_id: null,
+        descrizione: null,
+        note: null,
+        allegato_path: null,
+      }),
+    )
+    expect(res.status).toBe(201)
+    const ins = h.inserts.find((i) => i.table === 'cassa_movimenti')!.row as Record<string, unknown>
+    // I null diventano null (o undefined per la data) nell'INSERT, mai la stringa "null".
+    expect(ins.descrizione).toBeNull()
+    expect(ins.note).toBeNull()
+    expect(ins.allegato_path).toBeNull()
+    expect(ins.categoria_id).toBeNull()
+  })
+
   it('entrata manuale valida → 201, insert con registrato_da = user.id', async () => {
     const res = await POST(postReq({ scuola_id: SEDE, tipo: 'entrata', importo: 10, metodo: 'contanti' }))
     expect(res.status).toBe(201)
@@ -161,5 +196,15 @@ describe('POST /api/pagamenti/cassa/movimenti', () => {
     const res = await POST(postReq({ scuola_id: SEDE, tipo: 'uscita', importo: 15, metodo: 'contanti', categoria_id: catId }))
     expect(res.status).toBe(201)
     expect(h.notificaUscita).not.toHaveBeenCalled()
+  })
+
+  it('RC3 — audit del movimento fallito (errore reale) → warn «audit-non-scritto», 201', async () => {
+    h.auditResp = { data: null, error: { code: '23505', message: 'boom' } }
+    const res = await POST(postReq({ scuola_id: SEDE, tipo: 'entrata', importo: 10, metodo: 'contanti' }))
+    expect(res.status).toBe(201)
+    const warn = h.logCalls.find(
+      (c) => c[1] === 'warn' && (c[2] as { esito?: string } | undefined)?.esito === 'audit-non-scritto',
+    )
+    expect(warn).toBeTruthy()
   })
 })

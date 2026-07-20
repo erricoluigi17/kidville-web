@@ -1,7 +1,8 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { resolveScuoleAttive } from '@/lib/auth/scope'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { verificaSogliaCassa } from '@/lib/cassa/notifiche'
@@ -69,6 +70,14 @@ export const POST = withRoute('pagamenti/cassa/movimenti/storno:POST', async (re
     const orig = sel.data as MovRow | null
     if (!orig) return NextResponse.json({ error: 'Movimento non trovato' }, { status: 404 })
 
+    // RC2 — scope di sede: `requireStaff` verifica il RUOLO, non il TENANT, e la
+    // route gira in service-role (bypassa la RLS). Senza questo controllo lo staff
+    // di una sede potrebbe stornare (mutare) un movimento di un'altra sede.
+    const sedi = await resolveScuoleAttive(request as NextRequest, supabase, user)
+    if (!sedi.includes(orig.scuola_id)) {
+      return NextResponse.json({ error: 'Sede non accessibile' }, { status: 403 })
+    }
+
     if (orig.stornato_il) return NextResponse.json({ error: 'Movimento già stornato' }, { status: 409 })
     if (orig.storno_di) return NextResponse.json({ error: 'Non si può stornare uno storno' }, { status: 409 })
     if (orig.chiusura_id) {
@@ -104,18 +113,26 @@ export const POST = withRoute('pagamenti/cassa/movimenti/storno:POST', async (re
     }
     const controId = (contro.data as { id: string }).id
 
-    // Marca l'originale (best-effort: colonne assenti su DB non migrato → si salta).
-    await supabase
+    // Marca l'originale. Best-effort ma NON muto (RC3): PostgREST non lancia, ritorna
+    // { error }. Se la marcatura fallisce per un errore REALE (≠ schema-assente),
+    // l'originale resta stornabile una seconda volta (doppio contro-movimento): va
+    // tracciato a `warn`. MAI il motivo/PII nel log (solo uuid ed esito).
+    const marca = await supabase
       .from('cassa_movimenti')
       .update({ stornato_il: new Date().toISOString(), storno_motivo: motivo })
       .eq('id', orig.id)
-      .then(
-        () => {},
-        () => {},
-      )
+    if (marca.error) {
+      const code = (marca.error as { code?: string }).code ?? ''
+      if (CASSA_SCHEMA_ASSENTE.has(code)) {
+        logEvento('cassa', 'info', { operazione: 'pagamenti/cassa/movimenti/storno:POST', esito: 'marcatura-schema-assente', movimento_id: orig.id })
+      } else {
+        logEvento('cassa', 'warn', { operazione: 'pagamenti/cassa/movimenti/storno:POST', esito: 'marcatura-storno-fallita', movimento_id: orig.id }, marca.error)
+      }
+    }
 
-    // Audit col MOTIVO (vive qui, non nei log).
-    await supabase
+    // Audit col MOTIVO (vive in registro_modifiche, MAI nei log). Best-effort ma
+    // non muto (RC3): un audit non scritto va tracciato a `warn`.
+    const audit = await supabase
       .from('registro_modifiche')
       .insert({
         azione: 'storno_cassa_movimento',
@@ -125,10 +142,14 @@ export const POST = withRoute('pagamenti/cassa/movimenti/storno:POST', async (re
         nuovo_valore: { storno_motivo: motivo, contro_movimento_id: controId },
         utente_id: user.id,
       })
-      .then(
-        () => {},
-        () => {},
-      )
+    if (audit.error) {
+      const code = (audit.error as { code?: string }).code ?? ''
+      if (CASSA_SCHEMA_ASSENTE.has(code)) {
+        logEvento('cassa', 'info', { operazione: 'pagamenti/cassa/movimenti/storno:POST', esito: 'audit-schema-assente', movimento_id: orig.id })
+      } else {
+        logEvento('cassa', 'warn', { operazione: 'pagamenti/cassa/movimenti/storno:POST', esito: 'audit-non-scritto', movimento_id: orig.id }, audit.error)
+      }
+    }
 
     // Lo storno può far scendere il saldo sotto soglia: rivaluta (best-effort).
     await verificaSogliaCassa(supabase, orig.scuola_id)

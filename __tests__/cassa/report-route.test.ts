@@ -44,6 +44,7 @@ import {
   type IncassoReportData,
   type UscitaReport,
 } from '@/lib/cassa/report'
+import { CASSA_METODO_LABEL, metodoLabel, meseItaliano } from '@/lib/cassa/tipi'
 
 const SC = 'd53b0fbc-a9eb-4073-b302-73d1d5abd529'
 const CAT_SAGGIO = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
@@ -59,6 +60,40 @@ beforeEach(() => {
   h.scuola.mockResolvedValue({ scuolaId: SC })
   h.incassi = { data: [], error: null }
   h.movimenti = { data: [], error: null }
+})
+
+// ── CONTRATTO ETICHETTE (P1/P3, condiviso con E3) ────────────────────────────
+// metodoLabel/meseItaliano sono importati anche dalla UI (CassaReport/CassaPanel):
+// le firme qui asserite sono VINCOLANTI, non cambiarle senza toccare E3.
+describe('metodoLabel', () => {
+  it('mappa i metodi noti alle label capitalizzate', () => {
+    expect(metodoLabel('contanti')).toBe('Contanti')
+    expect(metodoLabel('bonifico')).toBe('Bonifico')
+    expect(metodoLabel('pos')).toBe('POS')
+    expect(metodoLabel('credito_famiglia')).toBe('Credito famiglia')
+  })
+
+  it('fallback per metodi sconosciuti: iniziale maiuscola', () => {
+    expect(metodoLabel('sconosciuto')).toBe('Sconosciuto')
+  })
+
+  it('la tabella CASSA_METODO_LABEL espone le chiavi del contratto', () => {
+    expect(CASSA_METODO_LABEL.pos).toBe('POS')
+    expect(CASSA_METODO_LABEL.assegno).toBe('Assegno')
+    expect(CASSA_METODO_LABEL.storno).toBe('Storno')
+  })
+})
+
+describe('meseItaliano', () => {
+  it("'AAAA-MM' → 'MM/AAAA'", () => {
+    expect(meseItaliano('2026-07')).toBe('07/2026')
+    expect(meseItaliano('2026-01')).toBe('01/2026')
+  })
+
+  it('input non conforme resta invariato (nessun crash)', () => {
+    expect(meseItaliano('2026')).toBe('2026')
+    expect(meseItaliano('')).toBe('')
+  })
 })
 
 // ── LOGICA PURA ────────────────────────────────────────────────────────────────
@@ -159,6 +194,24 @@ describe('costruisciCsvReport', () => {
     expect(csv).toContain('Saggio')
     // niente separatore decimale col punto sugli importi
     expect(csv).not.toContain('50.00')
+  })
+
+  it('CSV localizzato: metodo con label capitalizzata e mese MM/AAAA (P1/P3)', () => {
+    const csv = costruisciCsvReport({
+      entrate_per_categoria: [{ categoria_id: CAT_SAGGIO, categoria_nome: 'Saggio', totale: 50, per_metodo: { contanti: 50 } }],
+      uscite_per_categoria: [{ categoria_id: 'c1', categoria_nome: 'Pulizie', totale: 20, contanti: 20, altri: 0 }],
+      mensile: [{ mese: '2026-06', entrate: 50, uscite: 20 }],
+    })
+    // metodo grezzo 'contanti' → label 'Contanti'
+    expect(csv).toContain('Contanti')
+    expect(csv).not.toMatch(/;contanti;/)
+    // mese 'AAAA-MM' → 'MM/AAAA'
+    expect(csv).toContain('06/2026')
+    expect(csv).not.toContain('2026-06')
+    // BOM/separatore/decimale invariati
+    expect(csv.startsWith('﻿')).toBe(true)
+    expect(csv).toContain(';')
+    expect(csv).toContain('50,00')
   })
 })
 

@@ -52,6 +52,17 @@ describe('CassaChiusuraModal — svuotamento con differenza a parole', () => {
     expect(screen.getByText(/€ 28,00/)).toBeInTheDocument();
   });
 
+  it('confermando senza contato, l\'input è marcato non valido e collegato al messaggio (P8)', async () => {
+    render(<CassaChiusuraModal userId="u1" scuolaId="sc-1" onClose={() => {}} onDone={() => {}} />);
+    await screen.findByText(/€ 130,00/);
+    fireEvent.click(screen.getByRole('button', { name: /Conferma/ }));
+    const alert = await screen.findByRole('alert');
+    expect(alert.id).toBe('cassa-chiusura-errore');
+    const contato = screen.getByLabelText(/Totale contato/);
+    expect(contato).toHaveAttribute('aria-invalid', 'true');
+    expect(contato.getAttribute('aria-describedby')).toBe(alert.id);
+  });
+
   it('la conferma invia SOLO { scuola_id, contato, note } (mai il saldo calcolato dal client)', async () => {
     render(<CassaChiusuraModal userId="u1" scuolaId="sc-1" onClose={() => {}} onDone={() => {}} />);
     await screen.findByText(/€ 130,00/);

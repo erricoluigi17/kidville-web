@@ -16,6 +16,7 @@ import { cx } from '@/lib/ui/cx';
 import { TABLE_WRAP, TABLE, TH, TD, TROW } from '@/components/ui/cockpit';
 import { hdr, card, h3, input, label } from '../settings/ui';
 import { BTN_SECONDARY } from './ui';
+import { metodoLabel, meseItaliano } from '@/lib/cassa/tipi';
 
 interface Props {
   userId: string;
@@ -138,11 +139,11 @@ export function CassaReport({ userId, scuolaId }: Props) {
       </div>
 
       {dati === null && !errore ? (
-        <p className="py-6 text-center font-maven text-sm text-kidville-muted">Caricamento…</p>
+        <p className="py-6 text-center font-maven text-sm text-kidville-sub">Caricamento…</p>
       ) : errore ? (
         <p role="alert" className="font-maven text-sm text-kidville-error-strong">Impossibile caricare il report. Riprova.</p>
       ) : !disponibile ? (
-        <p className="font-maven text-sm text-kidville-muted">Modulo cassa non ancora attivo su questo ambiente.</p>
+        <p className="font-maven text-sm text-kidville-sub">Modulo cassa non ancora attivo su questo ambiente.</p>
       ) : (
         <div className="space-y-6">
           <TabellaEntrate righe={entrate} />
@@ -159,21 +160,21 @@ function TabellaEntrate({ righe }: { righe: EntrataCat[] }) {
     <div>
       <h4 className="mb-2 font-barlow text-xs font-black uppercase tracking-wide text-kidville-green">Entrate per categoria di pagamento</h4>
       {righe.length === 0 ? (
-        <p className="font-maven text-sm text-kidville-muted">Nessuna entrata nel periodo selezionato.</p>
+        <p className="font-maven text-sm text-kidville-sub">Nessuna entrata nel periodo selezionato.</p>
       ) : (
         <div className={TABLE_WRAP}>
           <table className={TABLE}>
             <thead>
-              <tr><th className={TH}>Categoria</th><th className={TH}>Per metodo</th><th className={cx(TH, 'text-right')}>Totale</th></tr>
+              <tr><th scope="col" className={TH}>Categoria</th><th scope="col" className={TH}>Per metodo</th><th scope="col" className={cx(TH, 'text-right')}>Totale</th></tr>
             </thead>
             <tbody>
               {righe.map((r, i) => (
                 <tr key={r.categoria_id ?? `e${i}`} className={TROW}>
                   <td className={TD}><span className="font-maven text-sm text-kidville-ink">{r.categoria_nome ?? 'Senza categoria'}</span></td>
                   <td className={TD}>
-                    <span className="font-maven text-xs text-kidville-muted">
+                    <span className="font-maven text-xs text-kidville-sub">
                       {r.per_metodo && Object.keys(r.per_metodo).length > 0
-                        ? Object.entries(r.per_metodo).map(([m, v]) => `${m}: ${formatEuro(v)}`).join(' · ')
+                        ? Object.entries(r.per_metodo).map(([m, v]) => `${metodoLabel(m)}: ${formatEuro(v)}`).join(' · ')
                         : '—'}
                     </span>
                   </td>
@@ -193,19 +194,19 @@ function TabellaUscite({ righe }: { righe: UscitaCat[] }) {
     <div>
       <h4 className="mb-2 font-barlow text-xs font-black uppercase tracking-wide text-kidville-green">Uscite per categoria</h4>
       {righe.length === 0 ? (
-        <p className="font-maven text-sm text-kidville-muted">Nessuna uscita nel periodo selezionato.</p>
+        <p className="font-maven text-sm text-kidville-sub">Nessuna uscita nel periodo selezionato.</p>
       ) : (
         <div className={TABLE_WRAP}>
           <table className={TABLE}>
             <thead>
-              <tr><th className={TH}>Categoria</th><th className={cx(TH, 'text-right')}>Di cui contanti</th><th className={cx(TH, 'text-right')}>Totale</th></tr>
+              <tr><th scope="col" className={TH}>Categoria</th><th scope="col" className={cx(TH, 'text-right')}>Di cui contanti</th><th scope="col" className={cx(TH, 'text-right')}>Totale</th></tr>
             </thead>
             <tbody>
               {righe.map((r, i) => (
                 <tr key={r.categoria_id ?? `u${i}`} className={TROW}>
                   <td className={TD}><span className="font-maven text-sm text-kidville-ink">{r.categoria_nome ?? 'Senza categoria'}</span></td>
-                  <td className={cx(TD, 'text-right')}><span className="font-maven text-xs text-kidville-muted">{r.contanti != null ? formatEuro(r.contanti) : '—'}</span></td>
-                  <td className={cx(TD, 'text-right')}><span className="font-barlow font-bold text-kidville-error">{formatEuro(r.totale)}</span></td>
+                  <td className={cx(TD, 'text-right')}><span className="font-maven text-xs text-kidville-sub">{r.contanti != null ? formatEuro(r.contanti) : '—'}</span></td>
+                  <td className={cx(TD, 'text-right')}><span className="font-barlow font-bold text-kidville-error-strong">{formatEuro(r.totale)}</span></td>
                 </tr>
               ))}
             </tbody>
@@ -223,14 +224,14 @@ function TabellaMensile({ righe }: { righe: MeseRiga[] }) {
       <div className={TABLE_WRAP}>
         <table className={TABLE}>
           <thead>
-            <tr><th className={TH}>Mese</th><th className={cx(TH, 'text-right')}>Entrate</th><th className={cx(TH, 'text-right')}>Uscite</th></tr>
+            <tr><th scope="col" className={TH}>Mese</th><th scope="col" className={cx(TH, 'text-right')}>Entrate</th><th scope="col" className={cx(TH, 'text-right')}>Uscite</th></tr>
           </thead>
           <tbody>
             {righe.map((r) => (
               <tr key={r.mese} className={TROW}>
-                <td className={TD}><span className="font-maven text-sm text-kidville-ink">{r.mese}</span></td>
+                <td className={TD}><span className="font-maven text-sm text-kidville-ink">{meseItaliano(r.mese)}</span></td>
                 <td className={cx(TD, 'text-right')}><span className="font-maven text-sm text-kidville-green">{formatEuro(r.entrate ?? 0)}</span></td>
-                <td className={cx(TD, 'text-right')}><span className="font-maven text-sm text-kidville-error">{formatEuro(r.uscite ?? 0)}</span></td>
+                <td className={cx(TD, 'text-right')}><span className="font-maven text-sm text-kidville-error-strong">{formatEuro(r.uscite ?? 0)}</span></td>
               </tr>
             ))}
           </tbody>

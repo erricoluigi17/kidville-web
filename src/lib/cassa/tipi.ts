@@ -8,6 +8,34 @@
 export type CassaTipoMovimento = 'entrata' | 'uscita' | 'prelievo' | 'rettifica'
 export type CassaMetodo = 'contanti' | 'bonifico' | 'carta' | 'altro'
 
+// ── Etichette dei metodi (P1/P3) ─────────────────────────────────────────────
+// CONTRATTO condiviso con la UI (E3: CassaReport/CassaPanel/CassaMovimentoModal)
+// e col report CSV (E2: report.ts) e le notifiche (notifiche.ts). Copre sia i
+// metodi di cassa che quelli di incasso ('pos', 'assegno', 'credito_famiglia',
+// 'storno', 'rettifica') → chiave `string`, non `CassaMetodo`.
+export const CASSA_METODO_LABEL: Record<string, string> = {
+  contanti: 'Contanti',
+  bonifico: 'Bonifico',
+  carta: 'Carta',
+  pos: 'POS',
+  assegno: 'Assegno',
+  altro: 'Altro',
+  credito_famiglia: 'Credito famiglia',
+  rettifica: 'Rettifica',
+  storno: 'Storno',
+}
+
+/** Label leggibile di un metodo; fallback: iniziale maiuscola del valore grezzo. */
+export function metodoLabel(m: string): string {
+  return CASSA_METODO_LABEL[m] ?? (m ? m.charAt(0).toUpperCase() + m.slice(1) : m)
+}
+
+/** Mese solare 'AAAA-MM' → 'MM/AAAA'. Input non conforme: restituito invariato. */
+export function meseItaliano(m: string): string {
+  const match = /^(\d{4})-(\d{2})$/.exec(m)
+  return match ? `${match[2]}/${match[1]}` : m
+}
+
 export interface CassaMovimento {
   id: string
   scuola_id: string

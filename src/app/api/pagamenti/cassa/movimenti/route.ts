@@ -38,11 +38,14 @@ const postBodySchema = z
     tipo: z.enum(['entrata', 'uscita']),
     importo: z.coerce.number().positive('L\'importo deve essere maggiore di zero'),
     metodo: z.enum(['contanti', 'bonifico', 'carta', 'altro']).default('contanti'),
-    data: zDataYMD.optional(),
-    categoria_id: zUuid.optional(),
-    descrizione: z.string().max(500).optional(),
-    note: z.string().max(1000).optional(),
-    allegato_path: z.string().max(500).optional(),
+    // Il client invia `valore || null` per i campi vuoti: lo schema deve tollerare
+    // il `null`, non solo l'`undefined` (`.optional()` accetterebbe solo undefined).
+    // L'INSERT sotto normalizza con `?? null` / `?? undefined` (RC1).
+    data: zDataYMD.nullish(),
+    categoria_id: zUuid.nullish(),
+    descrizione: z.string().max(500).nullish(),
+    note: z.string().max(1000).nullish(),
+    allegato_path: z.string().max(500).nullish(),
   })
   .superRefine((v, ctx) => {
     if (v.tipo === 'uscita' && !v.categoria_id) {
@@ -276,8 +279,10 @@ export const POST = withRoute('pagamenti/cassa/movimenti:POST', async (request: 
     }
     const movimento = ins.data as { id: string }
 
-    // Audit (best-effort). Il testo libero resta in registro_modifiche, mai nei log.
-    await supabase
+    // Audit (best-effort ma NON muto — RC3). Il testo libero resta in
+    // registro_modifiche, MAI nei log. PostgREST non lancia: si controlla { error }
+    // e un audit non scritto (≠ schema-assente) va a `warn` con solo uuid ed esito.
+    const audit = await supabase
       .from('registro_modifiche')
       .insert({
         azione: 'cassa_movimento',
@@ -286,10 +291,14 @@ export const POST = withRoute('pagamenti/cassa/movimenti:POST', async (request: 
         nuovo_valore: ins.data,
         utente_id: user.id,
       })
-      .then(
-        () => {},
-        () => {},
-      )
+    if (audit.error) {
+      const code = (audit.error as { code?: string }).code ?? ''
+      if (CASSA_SCHEMA_ASSENTE.has(code)) {
+        logEvento('cassa', 'info', { operazione: 'pagamenti/cassa/movimenti:POST', esito: 'audit-schema-assente', movimento_id: movimento.id })
+      } else {
+        logEvento('cassa', 'warn', { operazione: 'pagamenti/cassa/movimenti:POST', esito: 'audit-non-scritto', movimento_id: movimento.id }, audit.error)
+      }
+    }
 
     // Notifica gli admin se un NON-admin registra un'uscita (best-effort).
     if (body.tipo === 'uscita' && user.role !== 'admin') {

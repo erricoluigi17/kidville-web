@@ -73,7 +73,7 @@ export function CassaImpostazioni({ userId, scuolaId }: Props) {
     }
   };
 
-  if (!caricato) return <p className="py-8 text-center font-maven text-sm text-kidville-muted">Caricamento…</p>;
+  if (!caricato) return <p className="py-8 text-center font-maven text-sm text-kidville-sub">Caricamento…</p>;
 
   return (
     <section className={card}>
@@ -92,8 +92,8 @@ export function CassaImpostazioni({ userId, scuolaId }: Props) {
       </div>
       <div className="mt-4 flex items-center gap-3">
         <button onClick={salva} disabled={saving} className={BTN_PRIMARY_AA}><Save size={14} /> {saving ? 'Salvataggio…' : 'Salva'}</button>
-        {msg && <span role="status" className="font-maven text-sm text-kidville-success">{msg}</span>}
-        {error && <span role="alert" className="font-maven text-sm text-kidville-error">{error}</span>}
+        {msg && <span role="status" className="font-maven text-sm text-kidville-success-strong">{msg}</span>}
+        {error && <span role="alert" className="font-maven text-sm text-kidville-error-strong">{error}</span>}
       </div>
     </section>
   );

@@ -12,14 +12,20 @@ import { it, expect, vi, beforeEach, describe } from 'vitest'
 
 const h = vi.hoisted(() => ({
   requireStaff: vi.fn(),
+  resolveScuoleAttive: vi.fn(),
   verificaSoglia: vi.fn(),
   orig: null as Record<string, unknown> | null,
   inserts: [] as { table: string; row: Record<string, unknown> }[],
   updates: [] as { table: string; row: Record<string, unknown> }[],
   logCalls: [] as unknown[][],
+  // Esiti parametrizzabili della marcatura (update su cassa_movimenti) e
+  // dell'audit (insert su registro_modifiche): permettono di simularne il fallimento.
+  marcaResult: { data: null as unknown, error: null as unknown },
+  auditResult: { data: null as unknown, error: null as unknown },
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
+vi.mock('@/lib/auth/scope', () => ({ resolveScuoleAttive: (...a: unknown[]) => h.resolveScuoleAttive(...a) }))
 vi.mock('@/lib/cassa/notifiche', () => ({ verificaSogliaCassa: (...a: unknown[]) => h.verificaSoglia(...a) }))
 vi.mock('@/lib/logging/logger', () => ({
   logOk: (...a: unknown[]) => h.logCalls.push(a),
@@ -36,13 +42,19 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.single = async () => ({ data: { id: 'contro-1' }, error: null })
       b.insert = (row: Record<string, unknown>) => {
         h.inserts.push({ table, row })
+        b._op = 'insert'
         return b
       }
       b.update = (row: Record<string, unknown>) => {
         h.updates.push({ table, row })
+        b._op = 'update'
         return b
       }
-      b.then = (resolve: (v: unknown) => unknown) => resolve({ data: null, error: null })
+      b.then = (resolve: (v: unknown) => unknown) => {
+        if (table === 'cassa_movimenti' && b._op === 'update') return resolve(h.marcaResult)
+        if (table === 'registro_modifiche') return resolve(h.auditResult)
+        return resolve({ data: null, error: null })
+      }
       return b
     },
   }),
@@ -64,11 +76,46 @@ const post = (body: unknown) =>
 beforeEach(() => {
   vi.clearAllMocks()
   h.requireStaff.mockResolvedValue({ user: { id: 'seg-1', role: 'segreteria', scuola_id: SEDE } })
+  h.resolveScuoleAttive.mockResolvedValue([SEDE])
   h.verificaSoglia.mockResolvedValue(undefined)
   h.orig = { id: MOV, scuola_id: SEDE, tipo: 'uscita', importo: 20, metodo: 'contanti', stornato_il: null, storno_di: null, chiusura_id: null, incasso_id: null, categoria_id: null }
   h.inserts = []
   h.updates = []
   h.logCalls = []
+  h.marcaResult = { data: null, error: null }
+  h.auditResult = { data: null, error: null }
+})
+
+// RC3 — audit/marcatura NON muti: PostgREST non lancia, ritorna { error }. Un
+// fallimento (diverso da schema-assente) va a `warn`; MAI il motivo/PII nei log.
+describe('RC3 — osservabilità di marcatura e audit', () => {
+  const esitoDi = (c: unknown[]): string | undefined => (c[2] as { esito?: string } | undefined)?.esito
+
+  it('marcatura fallita (errore reale) → warn «marcatura-storno-fallita», route comunque 200', async () => {
+    h.marcaResult = { data: null, error: { code: '23505', message: 'boom' } }
+    const res = await POST(post({ movimento_id: MOV, motivo: MOTIVO }))
+    expect(res.status).toBe(200)
+    const warn = h.logCalls.find((c) => c[1] === 'warn' && esitoDi(c) === 'marcatura-storno-fallita')
+    expect(warn).toBeTruthy()
+    expect(JSON.stringify(h.logCalls)).not.toContain(MOTIVO)
+  })
+
+  it('marcatura schema-assente (42703) → info, nessun warn', async () => {
+    h.marcaResult = { data: null, error: { code: '42703' } }
+    const res = await POST(post({ movimento_id: MOV, motivo: MOTIVO }))
+    expect(res.status).toBe(200)
+    expect(h.logCalls.some((c) => c[1] === 'warn' && esitoDi(c) === 'marcatura-storno-fallita')).toBe(false)
+    expect(h.logCalls.some((c) => c[1] === 'info' && esitoDi(c) === 'marcatura-schema-assente')).toBe(true)
+  })
+
+  it('audit fallito (errore reale) → warn «audit-non-scritto», route comunque 200', async () => {
+    h.auditResult = { data: null, error: { code: '23505', message: 'boom' } }
+    const res = await POST(post({ movimento_id: MOV, motivo: MOTIVO }))
+    expect(res.status).toBe(200)
+    const warn = h.logCalls.find((c) => c[1] === 'warn' && esitoDi(c) === 'audit-non-scritto')
+    expect(warn).toBeTruthy()
+    expect(JSON.stringify(h.logCalls)).not.toContain(MOTIVO)
+  })
 })
 
 describe('POST /api/pagamenti/cassa/movimenti/storno', () => {
@@ -105,6 +152,17 @@ describe('POST /api/pagamenti/cassa/movimenti/storno', () => {
     h.orig = { ...(h.orig as Record<string, unknown>), incasso_id: 'inc-1' }
     const res = await POST(post({ movimento_id: MOV, motivo: MOTIVO }))
     expect(res.status).toBe(409)
+  })
+
+  it('RC2 — movimento di una sede FUORI scope → 403 «Sede non accessibile», nessun contro-movimento', async () => {
+    h.orig = { ...(h.orig as Record<string, unknown>), scuola_id: 'e2e00000-0000-4000-8000-000000000001' }
+    h.resolveScuoleAttive.mockResolvedValue([SEDE]) // l'operatore NON ha la sede del movimento
+    const res = await POST(post({ movimento_id: MOV, motivo: MOTIVO }))
+    expect(res.status).toBe(403)
+    const body = await res.json()
+    expect(body.error).toBe('Sede non accessibile')
+    // Nessun contro-movimento inserito: la mutazione cross-tenant non è avvenuta.
+    expect(h.inserts.find((i) => i.table === 'cassa_movimenti')).toBeUndefined()
   })
 
   it('storno valido → 200, contro-movimento con stesso tipo/metodo e importo negato', async () => {

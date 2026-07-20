@@ -11,10 +11,29 @@ import { z } from 'zod';
 /** Identificatore UUID/GUID nel formato 8-4-4-4-12. */
 export const zUuid = z.guid({ error: 'Identificatore non valido (atteso UUID)' });
 
-/** Data in formato YYYY-MM-DD. */
+/**
+ * Vero se `s` (già nel formato YYYY-MM-DD) è una data ESISTENTE nel calendario.
+ * `Date.UTC` normalizza silenziosamente i valori fuori range (30/02 → 02/03,
+ * mese 13 → gennaio dell'anno dopo): il round-trip lo smaschera confrontando i
+ * componenti d'origine con quelli della data ricostruita. Anni bisestili inclusi.
+ */
+function dataCalendarioValida(s: string): boolean {
+    const [y, m, d] = s.split('-').map(Number);
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
+}
+
+/**
+ * Data in formato YYYY-MM-DD ED esistente nel calendario.
+ *
+ * La sola regex validava il FORMATO, non il giorno: `2026-02-30`/`2026-13-99`
+ * la superavano, arrivavano a Postgres e generavano un 22008 → 500 (RC4). Il
+ * `.refine` chiude la falla nel validatore condiviso (cassa, attendance, mensa).
+ */
 export const zDataYMD = z
     .string({ error: 'Data mancante' })
-    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Data non valida (atteso YYYY-MM-DD)');
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Data non valida (atteso YYYY-MM-DD)')
+    .refine(dataCalendarioValida, 'Data inesistente nel calendario');
 
 /** Mese in formato YYYY-MM. */
 export const zAnnoMese = z

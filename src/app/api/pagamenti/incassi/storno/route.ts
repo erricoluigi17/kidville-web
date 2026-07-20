@@ -96,6 +96,7 @@ export async function eseguiStornoIncasso(
         importo: importoStorno,
         metodo: 'altro',
         note: 'Storno',
+        storno_di: orig.id,
         registrato_da: userId,
       })
       .select('id')

@@ -3,7 +3,7 @@ import { notificaEvento } from '@/lib/notifiche/triggers'
 import { getModuleConfig } from '@/lib/settings/module-config'
 import { logEvento } from '@/lib/logging/logger'
 import { caricaSaldoCassa } from './saldo'
-import type { CassaConfig } from './tipi'
+import { metodoLabel, type CassaConfig } from './tipi'
 
 // =============================================================================
 // MODULO CASSA · notifiche agli admin (contratto §3.3).
@@ -29,19 +29,30 @@ function euro(n: number): string {
 }
 
 /**
- * Id degli admin della sede: `utenti.ruolo='admin'` intersecati con
- * `utenti_scuole` per la sede se quella tabella ha righe per questi admin,
- * altrimenti TUTTI gli admin (fail-open, loggato info). Non lancia.
+ * Id degli admin della sede, con TRE livelli di fallback (P10) — dal più preciso
+ * al più largo, per non allargare la platea di una notifica più del necessario:
+ *
+ *   1. mappatura `utenti_scuole` per la sede, se ha righe per questi admin;
+ *   2. altrimenti gli admin la cui colonna `utenti.scuola_id` è la sede richiesta
+ *      (fallback intermedio: nello stato attuale di prod `utenti_scuole` è vuota
+ *      per gli admin, ma la colonna diretta spesso è valorizzata);
+ *   3. solo se anche quello è vuoto → TUTTI gli admin (fail-open, loggato `info`
+ *      perché è un degrado: senza log "notifica a tutti" e "configurazione a posto"
+ *      sarebbero indistinguibili). Non lancia mai.
  */
 export async function adminDellaSede(supabase: SupabaseClient, scuolaId: string): Promise<string[]> {
   try {
-    const { data: admins, error } = await supabase.from('utenti').select('id').eq('ruolo', 'admin')
+    const { data: admins, error } = await supabase.from('utenti').select('id, scuola_id').eq('ruolo', 'admin')
     if (error) {
       logEvento('cassa', 'warn', { operazione: 'adminDellaSede', esito: 'admin-non-letti' }, error)
       return []
     }
-    const ids = (admins ?? []).map((a) => String((a as { id: string }).id))
+    const righe = (admins ?? []) as { id: string; scuola_id: string | null }[]
+    const ids = righe.map((a) => String(a.id))
     if (ids.length === 0) return []
+
+    // Livello 2 (fallback intermedio): calcolato in anticipo, serve in due rami.
+    const perColonna = righe.filter((a) => a.scuola_id === scuolaId).map((a) => String(a.id))
 
     const { data: us, error: eUs } = await supabase
       .from('utenti_scuole')
@@ -49,13 +60,18 @@ export async function adminDellaSede(supabase: SupabaseClient, scuolaId: string)
       .eq('scuola_id', scuolaId)
       .in('utente_id', ids)
     if (eUs) {
-      // Tabella multi-plesso assente o illeggibile → fail-open a tutti gli admin.
+      // Tabella multi-plesso assente/illeggibile: prova la colonna diretta prima di
+      // allargare a tutti.
+      if (perColonna.length > 0) return perColonna
       logEvento('cassa', 'info', { operazione: 'adminDellaSede', esito: 'utenti-scuole-non-letta' })
       return ids
     }
     const perSede = (us ?? []).map((r) => String((r as { utente_id: string }).utente_id))
-    // Se la mappatura per-sede esiste la si usa; se è vuota, fail-open a tutti.
-    return perSede.length > 0 ? perSede : ids
+    if (perSede.length > 0) return perSede
+    if (perColonna.length > 0) return perColonna
+    // Nessuna mappatura per-sede né per-colonna → fail-open a tutti gli admin.
+    logEvento('cassa', 'info', { operazione: 'adminDellaSede', esito: 'fail-open-tutti-admin' })
+    return ids
   } catch (e) {
     logEvento('cassa', 'error', { operazione: 'adminDellaSede', esito: 'errore' }, e)
     return []
@@ -78,7 +94,7 @@ export async function notificaUscitaNonAdmin(
       scuolaId: args.scuolaId,
       utenteIds,
       titolo: 'Uscita di cassa registrata',
-      corpo: `Registrata un'uscita di ${euro(args.importo)} (${args.metodo}) dalla segreteria.`,
+      corpo: `Registrata un'uscita di ${euro(args.importo)} (${metodoLabel(args.metodo)}) dalla segreteria.`,
       link: LINK_CASSA,
       entitaTipo: 'cassa_movimento',
       entitaId: args.movimentoId,

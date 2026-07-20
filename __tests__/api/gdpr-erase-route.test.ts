@@ -14,6 +14,8 @@ const h = vi.hoisted(() => ({
   movConfermati: [] as Record<string, unknown>[],
   movCfMatch: [] as { id: string; suggerimenti?: unknown }[],
   incassiBonificati: [] as { id: string }[],
+  // P6 — bonifica del testo libero dei movimenti di cassa per CF.
+  cassaBonificati: [] as { id: string }[],
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
@@ -27,6 +29,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
         if (table === 'student_parents') return h.links
         if (table === 'pagamenti') return h.pagamenti
         if (table === 'incassi') return h.incassiBonificati
+        if (table === 'cassa_movimenti') return h.cassaBonificati
         if (table === 'riconciliazione_movimenti') {
           if (state.stato === 'confermato') return h.movConfermati
           if (state.neqStato === 'confermato') return h.movCfMatch
@@ -40,6 +43,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.is = () => b
       b.neq = (col: string, val: unknown) => { if (col === 'stato') state.neqStato = String(val); return b }
       b.in = () => b
+      b.or = () => b
       b.ilike = () => b
       b.maybeSingle = async () => ({ data: table === 'alunni' ? h.alunno : null, error: null })
       b.then = (res: (v: unknown) => unknown) => Promise.resolve({ data: dataFor(), error: null }).then(res)
@@ -73,6 +77,7 @@ beforeEach(() => {
   h.parentChildren = { 'p-1': [] } // orfano
   h.updates = []; h.removed = []
   h.pagamenti = []; h.movConfermati = []; h.movCfMatch = []; h.incassiBonificati = []
+  h.cassaBonificati = []
 })
 
 describe('POST /api/admin/gdpr/erase', () => {
@@ -191,5 +196,30 @@ describe('POST /api/admin/gdpr/erase', () => {
     const json = await res.json()
     expect(json.riconciliazione_bonificati).toBe(0)
     expect(json.incassi_bonificati).toBe(0)
+  })
+
+  // P6 — cassa_movimenti NON ha alunno_id: l'unico aggancio al minore è il CF
+  // eventualmente scritto nel testo libero (descrizione/note/storno_motivo, es.
+  // categoria «Rimborsi»). L'oblio deve scrubarlo, o sopravvive a tempo indefinito.
+  it('execute: bonifica il testo libero dei movimenti di cassa che citano il CF (P6)', async () => {
+    h.alunno = { ...h.alunno!, codice_fiscale: 'TSTTST00T00T000T' }
+    h.cassaBonificati = [{ id: 'cm-1' }, { id: 'cm-2' }]
+    const res = await POST(req({ alunno_id: 'al-1', mode: 'execute', confirm: 'rossi marco' }))
+    expect(res.status).toBe(200)
+    const cassaUpd = h.updates.find((u) => u.table === 'cassa_movimenti')
+    expect(cassaUpd).toBeTruthy()
+    expect(cassaUpd!.descrizione).toBe('[rimosso]')
+    expect(cassaUpd!.note).toBe('[rimosso]')
+    expect(cassaUpd!.storno_motivo).toBe('[rimosso]')
+    const json = await res.json()
+    expect(json.cassa_bonificati).toBe(2)
+  })
+
+  it('execute: senza CF non tocca cassa_movimenti', async () => {
+    const res = await POST(req({ alunno_id: 'al-1', mode: 'execute', confirm: 'rossi marco' }))
+    expect(res.status).toBe(200)
+    expect(h.updates.some((u) => u.table === 'cassa_movimenti')).toBe(false)
+    const json = await res.json()
+    expect(json.cassa_bonificati).toBe(0)
   })
 })

@@ -54,7 +54,7 @@ export type Valore = string | number | boolean | null | undefined;
 const SILENZIOSO = !!process.env.VITEST || process.env.KV_LOG_LEVEL === 'silent';
 
 /** Eventi i cui SUCCESSI vengono persistiti (deroga a "solo warn+error in tabella"). */
-export const EVENTI_PERSISTITI = new Set(['email', 'push', 'cron', 'fattura', 'pagamento', 'config']);
+export const EVENTI_PERSISTITI = new Set(['email', 'push', 'cron', 'fattura', 'pagamento', 'config', 'cassa']);
 
 /**
  * BUDGET DELLA RIGA. Vercel tronca le righe lunghe (~3.500 caratteri) e taglia dalla CODA.

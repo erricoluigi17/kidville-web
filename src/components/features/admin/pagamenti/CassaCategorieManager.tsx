@@ -77,26 +77,26 @@ export function CassaCategorieManager({ userId, scuolaId }: Props) {
     <section className={card}>
       <h3 className={h3}><Tag size={16} /> Categorie di uscita</h3>
       {!disponibile ? (
-        <p className="font-maven text-sm text-kidville-muted">Modulo cassa non ancora attivo su questo ambiente.</p>
+        <p className="font-maven text-sm text-kidville-sub">Modulo cassa non ancora attivo su questo ambiente.</p>
       ) : (
         <>
           <div className="mb-3 flex flex-wrap gap-2">
             {cats.map((c) => (
-              <span key={c.id} className="flex items-center gap-1 rounded-pill bg-kidville-cream py-1 pl-3 pr-2 font-maven text-sm text-kidville-green">
+              <span key={c.id} className="flex max-w-full items-center gap-1 rounded-pill bg-kidville-cream py-1 pl-3 pr-2 font-maven text-sm text-kidville-green [overflow-wrap:anywhere]">
                 {c.icona ? `${c.icona} ` : ''}{c.nome}
                 {c.is_sistema
-                  ? <Lock size={11} className="text-kidville-muted" aria-label="categoria di sistema" />
-                  : <button onClick={() => del(c.id)} aria-label={`Elimina ${c.nome}`} className="text-kidville-muted hover:text-kidville-error"><Trash2 size={13} /></button>}
+                  ? <Lock size={11} role="img" className="shrink-0 text-kidville-sub" aria-label="categoria di sistema" />
+                  : <button onClick={() => del(c.id)} aria-label={`Elimina ${c.nome}`} className="shrink-0 text-kidville-sub hover:text-kidville-error"><Trash2 size={13} /></button>}
               </span>
             ))}
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <label htmlFor="cassa-nuova-cat" className="sr-only">Nuova categoria di uscita</label>
-            <input id="cassa-nuova-cat" value={nuovo} onChange={(e) => setNuovo(e.target.value)} placeholder="Nuova categoria…" className={`${input} flex-1`} />
+            <input id="cassa-nuova-cat" value={nuovo} onChange={(e) => setNuovo(e.target.value)} placeholder="Nuova categoria…" className={`${input} min-w-0 flex-1`} />
             <button onClick={add} className={BTN_PRIMARY_AA}><Plus size={14} /> Aggiungi</button>
           </div>
           {error && <p role="alert" className="mt-2 font-maven text-xs text-kidville-error-strong">{error}</p>}
-          <p className={hint}><Lock size={10} className="inline" /> = categoria di sistema (non eliminabile).</p>
+          <p className={hint}><Lock size={10} role="img" aria-label="categoria di sistema" className="inline" /> = categoria di sistema (non eliminabile).</p>
         </>
       )}
     </section>

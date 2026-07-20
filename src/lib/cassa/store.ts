@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { annoFiscale } from '@/lib/format/fiscal-date'
+import { logEvento } from '@/lib/logging/logger'
 
 // =============================================================================
 // MODULO CASSA · storage dei giustificativi (contratto §3.4).
@@ -25,8 +26,12 @@ export async function ensureCassaBucket(supabase: SupabaseClient): Promise<void>
       allowedMimeTypes: [...CASSA_MIME_AMMESSI],
       fileSizeLimit: CASSA_MAX_BYTES,
     })
-  } catch {
-    // bucket già esistente o corsa fra richieste: ignorato
+  } catch (e) {
+    // Caso atteso (bucket già esistente o corsa fra richieste parallele): non è un
+    // guasto → `info`, non `error`. Ma NON è muto: un fallimento REALE (permessi,
+    // quota) qui è l'unico posto in cui compare il motivo originale — a valle
+    // `createSignedUploadUrl` vedrebbe solo "bucket mancante", non il perché.
+    logEvento('cassa', 'info', { operazione: 'ensureCassaBucket', esito: 'creazione-saltata' }, e)
   }
 }
 

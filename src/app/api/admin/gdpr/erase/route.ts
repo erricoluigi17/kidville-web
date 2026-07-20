@@ -5,6 +5,7 @@ import { requireStaff } from '@/lib/auth/require-staff'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { patchAlunno, patchParent, confermaValida, scrubSuggerimenti } from '@/lib/gdpr/anonimizza'
 import { parentHaAltriFigliIscritti } from '@/lib/gdpr/orfano'
+import { schemaAssente } from '@/lib/news/schema-assente'
 import { parseBody } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
@@ -93,9 +94,45 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
     // 1. Anonimizza l'alunno.
     await supabase.from('alunni').update(patchAlunno(alunno_id, at)).eq('id', alunno_id)
 
-    // 2. Anonimizza i genitori orfani.
+    // 2. Anonimizza i genitori orfani. PRIMA raccogli gli `auth_user_id`: il
+    //    patchParent li azzera, ma servono per l'oblio del tracciamento di lettura
+    //    news (passo 2b). Solo conteggi/uuid nei log: nessun auth_user_id.
+    let newsVisualizzazioniRimosse = 0
+    const authIdsOrfani: string[] = []
+    if (parentiOrfani.length > 0) {
+      const { data: authRows, error: errAuth } = await supabase
+        .from('parents')
+        .select('auth_user_id')
+        .in('id', parentiOrfani)
+      if (errAuth) logErrore({ operazione: 'admin/gdpr/erase:POST', evento: 'raccolta_auth_orfani' }, errAuth)
+      for (const r of (authRows ?? []) as { auth_user_id: string | null }[]) {
+        if (r.auth_user_id) authIdsOrfani.push(r.auth_user_id)
+      }
+    }
+
     for (const pid of parentiOrfani) {
       await supabase.from('parents').update(patchParent(pid, at)).eq('id', pid)
+    }
+
+    // 2b. Oblio del tracciamento di lettura news (F1 privacy, ciclo 2). La tabella
+    //     `news_visualizzazioni` lega (post, utente_id = auth.uid del genitore, data):
+    //     dopo l'anonimizzazione di parents/alunni resterebbe joinabile a un'identità
+    //     a tempo indefinito («questo genitore ha letto questi post in queste date»).
+    //     DELETE sugli auth_user_id degli orfani raccolti sopra. Degrada in silenzio
+    //     se lo schema news è assente (DB E2E CI non migrato).
+    if (authIdsOrfani.length > 0) {
+      const { data: visDel, error: errVis } = await supabase
+        .from('news_visualizzazioni')
+        .delete()
+        .in('utente_id', authIdsOrfani)
+        .select('post_id')
+      if (errVis) {
+        if (!schemaAssente(errVis)) {
+          logErrore({ operazione: 'admin/gdpr/erase:POST', evento: 'oblio_news_visualizzazioni' }, errVis)
+        }
+      } else {
+        newsVisualizzazioniRimosse = (visDel ?? []).length
+      }
     }
 
     // 3. Bonifica dei dati di riconciliazione/incassi COLLEGATI (D1). La causale
@@ -236,6 +273,7 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
         riconciliazione_bonificati: riconciliazioneBonificati,
         incassi_bonificati: incassiBonificati,
         cassa_bonificati: cassaBonificati,
+        news_visualizzazioni_rimosse: newsVisualizzazioniRimosse,
       },
     })
 
@@ -247,6 +285,7 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
       riconciliazione_bonificati: riconciliazioneBonificati,
       incassi_bonificati: incassiBonificati,
       cassa_bonificati: cassaBonificati,
+      news_visualizzazioni_rimosse: newsVisualizzazioniRimosse,
     })
   } catch (err) {
     logErrore({ operazione: 'admin/gdpr/erase:POST', stato: 500 }, err)

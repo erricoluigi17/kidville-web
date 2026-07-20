@@ -7,7 +7,7 @@ import { useState } from 'react';
 import {
   Home, NotebookPen, MessageCircle, BookOpen, LayoutGrid,
   Image, Package, FileText, ClipboardCheck, Users, Megaphone,
-  ListTodo, UtensilsCrossed, CalendarDays, User, X, ChevronRight,
+  ListTodo, UtensilsCrossed, CalendarDays, User, X, ChevronRight, Newspaper,
 } from 'lucide-react';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { useTeacherGradi } from '@/lib/auth/use-teacher-gradi';
@@ -73,6 +73,7 @@ export default function TeacherBottomNav() {
         { id: 'mensa', label: 'Mensa', sub: 'Prenotazioni pranzo', icon: UtensilsCrossed, href: '/teacher/mensa', tint: '#E6720A', grado: 'comune' },
         { id: 'foto', label: 'Foto', sub: 'Galleria sezione', icon: Image, href: '/teacher/gallery', tint: '#006A5F', grado: 'comune' },
         { id: 'bacheca', label: 'Bacheca', sub: 'Avvisi e comunicazioni', icon: Megaphone, href: '/teacher/avvisi', tint: '#E53935', grado: 'comune' },
+        { id: 'news', label: 'News', sub: 'Novità e comunicati', icon: Newspaper, href: '/teacher/news', tint: '#006A5F', grado: 'comune' },
         { id: 'calendario', label: 'Calendario', sub: 'Eventi e uscite', icon: CalendarDays, href: null, tint: '#2A6FDB', grado: 'comune', soon: true },
       ],
     },

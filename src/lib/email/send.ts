@@ -39,6 +39,12 @@ export interface SendEmailParams {
   to: string
   subject: string
   text: string
+  /**
+   * Corpo HTML opzionale (additivo). Se presente, Resend lo usa come parte
+   * `html` MULTIPART: `text` resta il fallback per i client senza HTML. Nessun
+   * chiamante esistente lo passa → comportamento invariato. Usato dal digest News.
+   */
+  html?: string
 }
 
 export interface SendEmailResult {
@@ -54,7 +60,7 @@ const DEFAULT_FROM = 'Kidville <onboarding@resend.dev>'
  * viene letto e propagato: un rifiuto (es. sandbox: "solo verso il proprio
  * indirizzo") non deve mai ridursi a un generico "non inviata".
  */
-export async function sendEmailDetailed({ to, subject, text }: SendEmailParams): Promise<SendEmailResult> {
+export async function sendEmailDetailed({ to, subject, text, html }: SendEmailParams): Promise<SendEmailResult> {
   const apiKey = process.env.RESEND_API_KEY
   if (!apiKey) {
     // `error`, non `info`: senza chiave NESSUNA email parte, e in produzione è un incidente.
@@ -83,6 +89,7 @@ export async function sendEmailDetailed({ to, subject, text }: SendEmailParams):
         to,
         subject,
         text,
+        ...(html ? { html } : {}),
       }),
     },
     {

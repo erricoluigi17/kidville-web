@@ -2,6 +2,7 @@ import { cx } from '@/lib/ui/cx'
 
 export type BadgeTone =
   | 'unread'
+  | 'evidenza'
   | 'info'
   | 'read'
   | 'success'
@@ -15,6 +16,9 @@ export type BadgeTone =
 // `unread`/`info`/`read` restano INVARIATI (già conformi o decorativi voluti).
 const TONES: Record<BadgeTone, string> = {
   unread: 'bg-kidville-yellow text-kidville-green',
+  // Testo informativo su giallo: verde-su-giallo sta a 4,05:1 (sotto AA per testo
+  // normale) → per etichette testuali (es. «In evidenza» nelle News) si usa ink (~8:1).
+  evidenza: 'bg-kidville-yellow text-kidville-ink',
   info: 'bg-kidville-green-soft text-kidville-green',
   read: 'bg-kidville-neutral-soft text-kidville-muted',
   success: 'bg-kidville-success-soft text-kidville-success-strong',

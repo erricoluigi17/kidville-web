@@ -46,14 +46,14 @@ function ParentNewsDetail() {
     <div className="px-4 pt-5 pb-28">
       <Link
         href={withIdentity('/parent/news', parentId, studentId)}
-        className="mb-4 inline-flex items-center gap-1.5 font-barlow text-[12.5px] font-extrabold uppercase tracking-wide text-kidville-green active:scale-95"
+        className="kv-news-onbody mb-4 inline-flex items-center gap-1.5 font-barlow text-[12.5px] font-extrabold uppercase tracking-wide text-kidville-green active:scale-95"
       >
         <ArrowLeft size={16} strokeWidth={2.4} />
         Tutte le news
       </Link>
 
       {loading || !ready ? (
-        <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-3" role="status" aria-label="Caricamento della news">
           <div className="h-48 animate-pulse rounded-card bg-kidville-white" />
           <div className="h-6 w-2/3 animate-pulse rounded-pill bg-kidville-white" />
           <div className="h-24 animate-pulse rounded-card bg-kidville-white" />
@@ -61,7 +61,7 @@ function ParentNewsDetail() {
       ) : post && !problema ? (
         <NewsDetailContent post={post} media={media} />
       ) : problema === 'errore' ? (
-        <div className="flex flex-col items-center justify-center rounded-card bg-kidville-white py-12 text-center">
+        <div role="alert" className="flex flex-col items-center justify-center rounded-card bg-kidville-white py-12 text-center">
           <p className="font-maven text-sm text-kidville-sub">Non è stato possibile caricare la news.</p>
           <button
             type="button"
@@ -77,7 +77,7 @@ function ParentNewsDetail() {
           </button>
         </div>
       ) : (
-        <div className="flex flex-col items-center justify-center py-16 text-center">
+        <div role="status" className="kv-news-onbody flex flex-col items-center justify-center py-16 text-center">
           <div className="mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-kidville-cream text-4xl">📰</div>
           <h2 className="mb-1 font-barlow text-xl font-bold uppercase text-kidville-green">News non disponibile</h2>
           <p className="max-w-xs font-maven text-sm text-kidville-sub">Potrebbe essere stata rimossa o non essere destinata al tuo profilo.</p>

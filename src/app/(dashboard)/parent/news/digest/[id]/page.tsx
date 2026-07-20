@@ -43,14 +43,14 @@ function ParentDigestDetail() {
     <div className="px-4 pt-5 pb-28">
       <Link
         href={withIdentity('/parent/news/digest', parentId, studentId)}
-        className="mb-4 inline-flex items-center gap-1.5 font-barlow text-[12.5px] font-extrabold uppercase tracking-wide text-kidville-green active:scale-95"
+        className="kv-news-onbody mb-4 inline-flex items-center gap-1.5 font-barlow text-[12.5px] font-extrabold uppercase tracking-wide text-kidville-green active:scale-95"
       >
         <ArrowLeft size={16} strokeWidth={2.4} />
         Tutti i digest
       </Link>
 
       {loading || !ready ? (
-        <div className="h-[70vh] animate-pulse rounded-card bg-kidville-white" />
+        <div className="h-[70vh] animate-pulse rounded-card bg-kidville-white" role="status" aria-label="Caricamento del digest" />
       ) : edizione && edizione.html && !errore ? (
         <div className="overflow-hidden rounded-card border border-kidville-line bg-kidville-white">
           {/* L'HTML è il template email generato dal server (src/lib/news/digest-email.ts):
@@ -58,7 +58,7 @@ function ParentDigestDetail() {
           <iframe srcDoc={edizione.html} title={titolo} className="h-[75vh] w-full border-0" />
         </div>
       ) : (
-        <div className="flex flex-col items-center justify-center rounded-card bg-kidville-white py-12 text-center">
+        <div role="alert" className="flex flex-col items-center justify-center rounded-card bg-kidville-white py-12 text-center">
           <p className="font-maven text-sm text-kidville-sub">Digest non disponibile.</p>
           <button
             type="button"

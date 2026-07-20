@@ -103,13 +103,13 @@ function TeacherNewsContent() {
 
       {vista === 'editor' ? (
         <div>
-          <button type="button" onClick={chiudiEditor} className="mb-4 inline-flex items-center gap-1.5 font-barlow text-[12.5px] font-extrabold uppercase tracking-wide text-kidville-green active:scale-95">
+          <button type="button" onClick={chiudiEditor} className="kv-news-onbody mb-4 inline-flex items-center gap-1.5 font-barlow text-[12.5px] font-extrabold uppercase tracking-wide text-kidville-green active:scale-95">
             <ArrowLeft size={16} strokeWidth={2.4} /> I miei contenuti
           </button>
           {teacherId && scuolaId ? (
             <NewsEditorPanel key={postInModifica?.id ?? 'nuovo'} userId={teacherId} scuolaId={scuolaId} modalita="docente" canAllSedi={false} postIniziale={postInModifica} onSalvato={chiudiEditor} onAnnulla={chiudiEditor} />
           ) : (
-            <p className="py-8 text-center font-maven text-sm text-kidville-sub">Caricamento della tua sede…</p>
+            <p role="status" className="kv-news-onbody py-8 text-center font-maven text-sm text-kidville-sub">Caricamento della tua sede…</p>
           )}
         </div>
       ) : (
@@ -117,11 +117,11 @@ function TeacherNewsContent() {
           <button type="button" onClick={() => apriEditor(null)} className={BTN_PRIMARY_AA}><Plus size={15} /> Nuovo contenuto</button>
 
           {loading ? (
-            <div className="flex flex-col gap-2">{[0, 1].map((i) => <div key={i} className="h-16 animate-pulse rounded-card bg-kidville-cream-dark" />)}</div>
+            <div className="flex flex-col gap-2" role="status" aria-label="Caricamento dei contenuti">{[0, 1].map((i) => <div key={i} className="h-16 animate-pulse rounded-card bg-kidville-cream-dark" />)}</div>
           ) : !disponibile ? (
             <p className="rounded-card bg-kidville-cream-dark px-4 py-8 text-center font-maven text-sm text-kidville-sub">Le News non sono ancora disponibili su questo ambiente.</p>
           ) : posts.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-center">
+            <div role="status" className="kv-news-onbody flex flex-col items-center justify-center py-12 text-center">
               <Newspaper size={40} className="mb-3 text-kidville-green/40" strokeWidth={1.6} />
               <p className="font-maven text-sm text-kidville-sub">Non hai ancora creato contenuti.</p>
             </div>

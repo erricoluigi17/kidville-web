@@ -46,7 +46,7 @@ export function NewsDetailContent({ post, media, categoriaNome }: Props) {
       <header>
         <div className="flex flex-wrap items-center gap-1.5">
           {post.pinned && (
-            <Badge tone="unread" className="gap-1">
+            <Badge tone="evidenza" className="gap-1">
               <Pin size={11} strokeWidth={2.4} />
               In evidenza
             </Badge>

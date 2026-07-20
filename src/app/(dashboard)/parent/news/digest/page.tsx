@@ -50,13 +50,13 @@ function ParentDigestList() {
       <PageHeaderCard eyebrow="Comunicazioni" title="Digest mensile" subtitle="Il riepilogo «Kidville News» inviato via email" className="mb-5" />
 
       {loading || !ready ? (
-        <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-3" role="status" aria-label="Caricamento del digest">
           {[0, 1, 2].map((i) => (
             <div key={i} className="h-[64px] animate-pulse rounded-card bg-kidville-white" />
           ))}
         </div>
       ) : edizioni.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-16 text-center">
+        <div role="status" className="kv-news-onbody flex flex-col items-center justify-center py-16 text-center">
           <div className="mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-kidville-cream text-4xl">✉️</div>
           <h2 className="mb-1 font-barlow text-xl font-bold uppercase text-kidville-green">Ancora nessun digest</h2>
           <p className="max-w-xs font-maven text-sm text-kidville-sub">Ogni mese qui trovi il riepilogo delle novità della scuola.</p>

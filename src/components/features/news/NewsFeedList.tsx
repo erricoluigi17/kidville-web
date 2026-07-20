@@ -238,7 +238,7 @@ export function NewsFeedList({ parentId, studentId, onCount }: Props) {
 
       {/* Loading */}
       {loading && (
-        <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-3" role="status" aria-label="Caricamento delle news">
           {[0, 1, 2].map((i) => (
             <div key={i} className="h-[120px] animate-pulse rounded-card bg-kidville-white" />
           ))}
@@ -247,7 +247,7 @@ export function NewsFeedList({ parentId, studentId, onCount }: Props) {
 
       {/* Errore con retry */}
       {!loading && errore && (
-        <div className="flex flex-col items-center justify-center rounded-card bg-kidville-white py-12 text-center">
+        <div role="alert" className="flex flex-col items-center justify-center rounded-card bg-kidville-white py-12 text-center">
           <p className="font-maven text-sm text-kidville-sub">Non è stato possibile caricare le news.</p>
           <button
             type="button"
@@ -265,7 +265,7 @@ export function NewsFeedList({ parentId, studentId, onCount }: Props) {
 
       {/* Vuoto */}
       {!loading && !errore && posts.length === 0 && (
-        <div className="flex flex-col items-center justify-center py-16 text-center">
+        <div role="status" className="kv-news-onbody flex flex-col items-center justify-center py-16 text-center">
           <div className="mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-kidville-cream text-4xl">📰</div>
           <h2 className="mb-1 font-barlow text-xl font-bold uppercase text-kidville-green">
             {filtriAttivi ? 'Nessun risultato' : 'Ancora nessuna news'}

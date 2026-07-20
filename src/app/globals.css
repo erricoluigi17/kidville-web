@@ -224,6 +224,26 @@ body {
   box-shadow: inset 0 0 0 1px #8A8A8A;
 }
 
+/* News — testo posato direttamente sul body (back-link, stati vuoti), fuori
+   dalle card bianche. Le utility kidville-* sono inlineate da @theme inline e in
+   Alto Contrasto NON si ribaltano da sole: sul body nero il verde (3,23:1) e il
+   sub (3,25:1) cadono sotto AA. Qui si forzano le coppie; le card bianche interne
+   restano in palette chiara (ink/sub/green su bianco ≥4,5:1). Non-layered →
+   vince sulle utility senza !important. */
+[data-contrast="high"] .kv-news-onbody,
+[data-contrast="high"] .kv-news-onbody .text-kidville-sub,
+[data-contrast="high"] .kv-news-onbody .text-kidville-ink {
+  color: #FFFFFF;
+}
+[data-contrast="high"] a.kv-news-onbody,
+[data-contrast="high"] button.kv-news-onbody,
+[data-contrast="high"] .kv-news-onbody .text-kidville-green {
+  color: #FFE500;
+}
+[data-contrast="high"] .kv-news-onbody .bg-kidville-cream {
+  background: #1A1A1A;
+}
+
 /* Riconciliazione bancaria — righe a semaforo (RiconciliazionePanel). Gli sfondi
    pieni per stato (verde/giallo/rosso/grigio) restano leggibili in luce normale
    e, in Alto Contrasto, il rimappaggio naturale dei token li tiene AA — TRANNE il

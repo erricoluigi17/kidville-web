@@ -43,7 +43,9 @@ test("l'editor rende il form e degrada con grazia al salvataggio", async ({ page
   await page.goto('/admin/news?vista=editor');
 
   // Il form dell'editor c'è (il campo Titolo è sempre presente, indipendente dal DB).
-  const titolo = page.getByLabel('Titolo');
+  // #news-titolo: sulla pagina convivono più label «Titolo» (pannelli dynamic montati) →
+  // getByLabel violerebbe lo strict mode di Playwright.
+  const titolo = page.locator('#news-titolo');
   await expect(titolo).toBeVisible({ timeout: 15_000 });
   await titolo.fill('Bozza di collaudo E2E');
 

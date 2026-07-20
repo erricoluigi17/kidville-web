@@ -40,7 +40,7 @@ export function NewsArchivioDrawer({ open, onClose, mesi, current, onSelect }: P
           <CalendarDays size={19} strokeWidth={1.9} />
         </span>
         <div>
-          <p className="font-barlow text-[10px] font-bold uppercase tracking-[0.14em] text-kidville-yellow-dark">Archivio</p>
+          <p className="font-barlow text-[10px] font-bold uppercase tracking-[0.14em] text-kidville-sub">Archivio</p>
           <h3 className="font-barlow text-lg font-black uppercase leading-none tracking-wide text-kidville-green">Scegli un mese</h3>
         </div>
       </div>

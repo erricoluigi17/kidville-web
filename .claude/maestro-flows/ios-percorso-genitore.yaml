@@ -68,13 +68,18 @@ env:
 - takeScreenshot: /tmp/kv-ios-genitore-1-dashboard
 
 # ── 3. PRESENZE ──────────────────────────────────────────────────────────────
-# "Presenze" nel foglio Menu → selettore sul sottotitolo univoco.
+# "Presenze" nel foglio Menu → selettore sul sottotitolo univoco. Nella WebView iOS
+# ogni voce del Menu-sheet è UN SOLO nodo con accessibilityText concatenato
+# ("PRESENZE Assenze e giustifiche", "NEWS Novità e comunicati", ...) e Maestro fa
+# full-match → i selettori delle voci Menu-sheet vanno in regex NON ancorata ".*…​.*".
 - tapOn:
     text: "Menu · tutte le sezioni"
 - extendedWaitUntil:
-    visible: "Assenze e giustifiche"
+    visible:
+      text: ".*Assenze e giustifiche.*"
     timeout: 20000
-- tapOn: "Assenze e giustifiche"
+- tapOn:
+    text: ".*Assenze e giustifiche.*"
 - extendedWaitUntil:
     visible: "Segnala assenza"
     timeout: 45000

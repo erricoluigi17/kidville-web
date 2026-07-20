@@ -15,7 +15,7 @@ const TIPO_META: Record<NewsTipo, { label: string; Icon: typeof Newspaper }> = {
 const fmtDataLunga = (iso: string | null): string => {
   if (!iso) return ''
   try {
-    return new Date(iso).toLocaleDateString('it-IT', { day: 'numeric', month: 'long', year: 'numeric' })
+    return new Date(iso).toLocaleDateString('it-IT', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/Rome' })
   } catch {
     return ''
   }
@@ -56,14 +56,14 @@ export function NewsDetailContent({ post, media, categoriaNome }: Props) {
             {meta.label}
           </span>
           {categoriaNome && (
-            <span className="inline-flex items-center rounded-pill bg-kidville-yellow-soft px-[9px] py-1 font-barlow text-[11px] font-extrabold uppercase tracking-[0.06em] text-kidville-yellow-dark">
+            <span className="inline-flex items-center rounded-pill bg-kidville-yellow-soft px-[9px] py-1 font-barlow text-[11px] font-extrabold uppercase tracking-[0.06em] text-kidville-ink">
               {categoriaNome}
             </span>
           )}
         </div>
         <h1 className="mt-2 font-barlow text-2xl font-black uppercase leading-tight text-kidville-green">{post.titolo}</h1>
         {post.pubblicata_il && (
-          <p className="mt-1 font-maven text-[12.5px] text-kidville-muted">{fmtDataLunga(post.pubblicata_il)}</p>
+          <p className="mt-1 font-maven text-[12.5px] text-kidville-sub">{fmtDataLunga(post.pubblicata_il)}</p>
         )}
       </header>
 

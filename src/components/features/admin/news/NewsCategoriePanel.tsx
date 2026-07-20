@@ -111,7 +111,7 @@ export function NewsCategoriePanel({ userId, scuolaId }: Props) {
       {loading ? (
         <div className="flex flex-col gap-2">{[0, 1, 2].map((i) => <div key={i} className="h-12 animate-pulse rounded-input bg-kidville-cream-dark" />)}</div>
       ) : !disponibile ? (
-        <p className="rounded-card bg-kidville-cream-dark px-4 py-8 text-center font-maven text-sm text-kidville-muted">Le News non sono ancora disponibili su questo ambiente.</p>
+        <p className="rounded-card bg-kidville-cream-dark px-4 py-8 text-center font-maven text-sm text-kidville-sub">Le News non sono ancora disponibili su questo ambiente.</p>
       ) : (
         <ul className="divide-y divide-kidville-line rounded-card border border-kidville-line bg-kidville-white">
           {categorie.map((c) => (

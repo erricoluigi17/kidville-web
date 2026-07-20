@@ -21,6 +21,14 @@ interface RouteParams {
   params: Promise<{ id: string }>
 }
 
+// Colonne del dettaglio esposto al lettore. Curate (privacy): niente campi
+// editoriali/interni (author_id, approvata_da/_il, nascosta_motivo, ig_check_*,
+// notifica_inviata_il, invia_notifica, contenuto_json). Restano quelle che servono
+// al gate/targeting (stato, scuola_id, target_*) e al rendering.
+const POST_COLS = 'id, tipo, stato, titolo, contenuto_html, categoria_id, pubblicata_il, pinned, target_scope, target_gradi, target_classes, copertina_url, instagram_url, instagram_shortcode, scuola_id'
+
+const MEDIA_COLS = 'id, post_id, tipo, url, poster_url, ordine'
+
 const NON_TROVATA = () => NextResponse.json({ error: 'News non trovata' }, { status: 404 })
 
 export const GET = withRoute('news/feed/[id]:GET', async (request: NextRequest, { params }: RouteParams) => {
@@ -33,7 +41,7 @@ export const GET = withRoute('news/feed/[id]:GET', async (request: NextRequest, 
     const supabase = await createAdminClient()
     const user = auth.user
 
-    const { data, error } = await supabase.from('news_posts').select('*').eq('id', p.data).maybeSingle()
+    const { data, error } = await supabase.from('news_posts').select(POST_COLS).eq('id', p.data).maybeSingle()
     if (error) {
       if (schemaAssente(error)) {
         logEvento('news', 'info', { operazione: 'news/feed/[id]:GET', esito: 'schema-assente' })
@@ -58,7 +66,7 @@ export const GET = withRoute('news/feed/[id]:GET', async (request: NextRequest, 
     // Media ordinati.
     const { data: media, error: mediaErr } = await supabase
       .from('news_media')
-      .select('*')
+      .select(MEDIA_COLS)
       .eq('post_id', p.data)
       .order('ordine', { ascending: true })
     if (mediaErr && !schemaAssente(mediaErr)) {

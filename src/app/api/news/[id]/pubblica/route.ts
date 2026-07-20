@@ -86,6 +86,10 @@ export const POST = withRoute('news/[id]/pubblica:POST', async (request: NextReq
         updates.stato = 'pubblicata'
         updates.pubblicata_il = new Date().toISOString()
         updates.nascosta_motivo = null
+        // Periodo di grazia per l'health-check IG: una pubblicazione manuale riparte
+        // da contatori puliti (un residuo pre-esistente nasconderebbe il post al primo tick).
+        updates.ig_check_falliti = 0
+        updates.ig_check_il = null
         break
       case 'programma': {
         const quando = programmata_il ? Date.parse(programmata_il) : NaN
@@ -104,6 +108,10 @@ export const POST = withRoute('news/[id]/pubblica:POST', async (request: NextReq
         // NON ri-notifica: `notifica_inviata_il` resta invariato e non chiamiamo la notifica.
         updates.stato = 'pubblicata'
         updates.nascosta_motivo = null
+        // Il ripristino manuale azzera i fallimenti dell'health-check IG: senza reset,
+        // un post nascosto per `ig_check_falliti >= 2` tornerebbe nascosto ai tick successivi.
+        updates.ig_check_falliti = 0
+        updates.ig_check_il = null
         break
       case 'pin':
         updates.pinned = pinned ?? !post.pinned

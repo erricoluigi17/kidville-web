@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { requireDocente, requireStaff, type AppUser } from '@/lib/auth/require-staff'
+import { requireUser, requireStaff, type AppUser } from '@/lib/auth/require-staff'
 import { resolveScuolaScrittura, resolveScuoleAttive } from '@/lib/auth/scope'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
@@ -13,10 +13,16 @@ import type { NewsCategoria } from '@/lib/news/tipi'
 
 // =============================================================================
 // /api/news/categorie — clone del pattern pagamenti/cassa/categorie. GET
-// requireDocente (globali + sede), le mutazioni requireStaff con slugify
-// server-side, guard is_sistema → 409, collisione slug 23505 → 409, scope RC2 di
-// sede prima di ogni scrittura, degrado schema-assente (DB CI non migrato).
+// requireUser (il feed genitore consuma le categorie per le pillole filtro e i
+// nomi): i ruoli non-staff/docente vedono SOLO le categorie attive, staff/docente
+// anche le disattivate. Le mutazioni restano requireStaff con slugify server-side,
+// guard is_sistema → 409, collisione slug 23505 → 409, scope RC2 di sede prima di
+// ogni scrittura, degrado schema-assente (DB CI non migrato).
 // =============================================================================
+
+// Ruoli che vedono ANCHE le categorie disattivate (le amministrano dal cockpit).
+// Gli altri (genitore, cuoca) ricevono solo le attive.
+const RUOLI_VEDONO_TUTTE: readonly string[] = ['admin', 'coordinator', 'segreteria', 'educator']
 
 const zScuolaId = z.preprocess((v) => v || undefined, zUuid.optional())
 
@@ -90,7 +96,9 @@ async function caricaCategoriaConScope(
 // GET /api/news/categorie — globali (scuola_id NULL) + quelle delle sedi accessibili.
 export const GET = withRoute('news/categorie:GET', async (request: NextRequest) => {
   try {
-    const auth = await requireDocente(request)
+    // Lettura aperta a QUALSIASI utente autenticato (le categorie non sono dati
+    // sensibili): il feed genitore le usa per le pillole filtro e i nomi.
+    const auth = await requireUser(request)
     if (auth.response) return auth.response
 
     const q = parseQuery(request, getQuerySchema)
@@ -100,6 +108,8 @@ export const GET = withRoute('news/categorie:GET', async (request: NextRequest) 
     const sedi = await resolveScuoleAttive(request, supabase, auth.user)
 
     let query = supabase.from('news_categorie').select('*').order('ordine', { ascending: true })
+    // Non-staff/docente (genitore, cuoca): solo le categorie attive.
+    if (!RUOLI_VEDONO_TUTTE.includes(auth.user.role)) query = query.eq('attivo', true)
     if (sedi.length > 0) query = query.or(`scuola_id.is.null,scuola_id.in.(${sedi.join(',')})`)
     else query = query.is('scuola_id', null)
 

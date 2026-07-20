@@ -16,6 +16,12 @@ const h = vi.hoisted(() => ({
   incassiBonificati: [] as { id: string }[],
   // P6 — bonifica del testo libero dei movimenti di cassa per CF.
   cassaBonificati: [] as { id: string }[],
+  // F1 ciclo 2 — oblio del tracciamento di lettura news (news_visualizzazioni).
+  parentsAuth: [] as { auth_user_id: string | null }[],
+  newsVisDeleted: [] as { post_id: string }[],
+  newsVisError: null as { code: string } | null,
+  newsVisDeleteFilter: null as string[] | null,
+  deletedTables: [] as string[],
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
@@ -30,6 +36,8 @@ vi.mock('@/lib/supabase/server-client', () => ({
         if (table === 'pagamenti') return h.pagamenti
         if (table === 'incassi') return h.incassiBonificati
         if (table === 'cassa_movimenti') return h.cassaBonificati
+        if (table === 'parents') return h.parentsAuth
+        if (table === 'news_visualizzazioni') return h.newsVisDeleted
         if (table === 'riconciliazione_movimenti') {
           if (state.stato === 'confermato') return h.movConfermati
           if (state.neqStato === 'confermato') return h.movCfMatch
@@ -42,11 +50,17 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.eq = (col: string, val: unknown) => { if (col === 'stato') state.stato = String(val); return b }
       b.is = () => b
       b.neq = (col: string, val: unknown) => { if (col === 'stato') state.neqStato = String(val); return b }
-      b.in = () => b
+      b.in = (col: string, vals: unknown) => { if (table === 'news_visualizzazioni' && col === 'utente_id') h.newsVisDeleteFilter = vals as string[]; return b }
       b.or = () => b
       b.ilike = () => b
+      b.delete = () => { h.deletedTables.push(table); return b }
       b.maybeSingle = async () => ({ data: table === 'alunni' ? h.alunno : null, error: null })
-      b.then = (res: (v: unknown) => unknown) => Promise.resolve({ data: dataFor(), error: null }).then(res)
+      b.then = (res: (v: unknown) => unknown) => {
+        if (table === 'news_visualizzazioni' && h.newsVisError) {
+          return Promise.resolve({ data: null, error: h.newsVisError }).then(res)
+        }
+        return Promise.resolve({ data: dataFor(), error: null }).then(res)
+      }
       b.update = (row: Record<string, unknown>) => { h.updates.push({ table, ...row }); return b }
       return b
     },
@@ -78,6 +92,8 @@ beforeEach(() => {
   h.updates = []; h.removed = []
   h.pagamenti = []; h.movConfermati = []; h.movCfMatch = []; h.incassiBonificati = []
   h.cassaBonificati = []
+  h.parentsAuth = []; h.newsVisDeleted = []; h.newsVisError = null
+  h.newsVisDeleteFilter = null; h.deletedTables = []
 })
 
 describe('POST /api/admin/gdpr/erase', () => {
@@ -221,5 +237,48 @@ describe('POST /api/admin/gdpr/erase', () => {
     expect(h.updates.some((u) => u.table === 'cassa_movimenti')).toBe(false)
     const json = await res.json()
     expect(json.cassa_bonificati).toBe(0)
+  })
+
+  // F1 ciclo 2 (privacy) — `news_visualizzazioni` (post, utente_id=auth.uid del
+  // genitore, data) è un tracciamento comportamentale: dopo l'anonimizzazione di
+  // parents/alunni resterebbe joinabile a un'identità a tempo indefinito. L'oblio
+  // deve cancellarlo, sugli auth_user_id RACCOLTI PRIMA di patchParent (che li azzera).
+  it('execute: cancella news_visualizzazioni per gli auth_user_id dei genitori orfani', async () => {
+    h.parentsAuth = [{ auth_user_id: 'auth-p-1' }]
+    h.newsVisDeleted = [{ post_id: 'np-1' }, { post_id: 'np-2' }]
+    const res = await POST(req({ alunno_id: 'al-1', mode: 'execute', confirm: 'rossi marco' }))
+    expect(res.status).toBe(200)
+    expect(h.deletedTables).toContain('news_visualizzazioni')
+    expect(h.newsVisDeleteFilter).toEqual(['auth-p-1'])
+    const json = await res.json()
+    expect(json.news_visualizzazioni_rimosse).toBe(2)
+  })
+
+  it('execute: degrada in silenzio se lo schema news è assente (news_visualizzazioni)', async () => {
+    h.parentsAuth = [{ auth_user_id: 'auth-p-1' }]
+    h.newsVisError = { code: 'PGRST205' } // tabella assente sul DB E2E CI non migrato
+    const res = await POST(req({ alunno_id: 'al-1', mode: 'execute', confirm: 'rossi marco' }))
+    expect(res.status).toBe(200)
+    const json = await res.json()
+    expect(json.news_visualizzazioni_rimosse).toBe(0)
+  })
+
+  it('execute: nessun genitore orfano → non tocca news_visualizzazioni', async () => {
+    h.parentChildren = { 'p-1': [{ stato: 'iscritto', anonimizzato_il: null }] } // non orfano
+    h.parentsAuth = [{ auth_user_id: 'auth-p-1' }]
+    const res = await POST(req({ alunno_id: 'al-1', mode: 'execute', confirm: 'rossi marco' }))
+    expect(res.status).toBe(200)
+    expect(h.deletedTables).not.toContain('news_visualizzazioni')
+    const json = await res.json()
+    expect(json.news_visualizzazioni_rimosse).toBe(0)
+  })
+
+  it('execute: genitore orfano senza auth_user_id → nessuna DELETE', async () => {
+    h.parentsAuth = [{ auth_user_id: null }]
+    const res = await POST(req({ alunno_id: 'al-1', mode: 'execute', confirm: 'rossi marco' }))
+    expect(res.status).toBe(200)
+    expect(h.deletedTables).not.toContain('news_visualizzazioni')
+    const json = await res.json()
+    expect(json.news_visualizzazioni_rimosse).toBe(0)
   })
 })

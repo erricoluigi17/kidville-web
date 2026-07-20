@@ -1,9 +1,12 @@
 import { NextResponse, type NextRequest } from 'next/server'
+import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
 import { resolveScuoleAttive } from '@/lib/auth/scope'
 import { caricaFigliConTarget } from '@/lib/news/target'
 import { schemaAssente } from '@/lib/news/schema-assente'
+import { parseQuery } from '@/lib/validation/http'
+import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import type { NewsDigestEdizione } from '@/lib/news/tipi'
@@ -19,10 +22,18 @@ import type { NewsDigestEdizione } from '@/lib/news/tipi'
 // Nessun `html` in lista (colonna pesante) — solo i metadati.
 const LIST_COLS = 'id, scuola_id, anno, mese, titolo, post_ids, generata_il, inviata_il, destinatari_count, errori_count'
 
+// L'unico query param è `userId` (identità legacy via ?userId=): uuid opzionale.
+// Validarlo blinda la route sotto il lock zod-coverage del gruppo `news` e chiude
+// un uuid malformato con 400 invece di lasciarlo scendere fino a PostgREST.
+const getQuerySchema = z.object({ userId: zUuid.optional() })
+
 export const GET = withRoute('news/digest:GET', async (request: NextRequest) => {
   try {
     const auth = await requireUser(request)
     if (auth.response) return auth.response
+
+    const q = parseQuery(request, getQuerySchema)
+    if ('response' in q) return q.response
 
     const supabase = await createAdminClient()
     const user = auth.user

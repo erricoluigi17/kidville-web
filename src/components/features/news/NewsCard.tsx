@@ -17,7 +17,7 @@ export function estrattoTesto(testo: string | null | undefined, max = 140): stri
 const fmtData = (iso: string | null): string => {
   if (!iso) return ''
   try {
-    return new Date(iso).toLocaleDateString('it-IT', { day: 'numeric', month: 'short' })
+    return new Date(iso).toLocaleDateString('it-IT', { day: 'numeric', month: 'short', timeZone: 'Europe/Rome' })
   } catch {
     return ''
   }
@@ -63,11 +63,11 @@ export function NewsCard({ post, categoriaNome, href }: Props) {
               {meta.label}
             </span>
             {categoriaNome && (
-              <span className="inline-flex items-center rounded-pill bg-kidville-yellow-soft px-[9px] py-1 font-barlow text-[11px] font-extrabold uppercase tracking-[0.06em] text-kidville-yellow-dark">
+              <span className="inline-flex items-center rounded-pill bg-kidville-yellow-soft px-[9px] py-1 font-barlow text-[11px] font-extrabold uppercase tracking-[0.06em] text-kidville-ink">
                 {categoriaNome}
               </span>
             )}
-            <span className="ml-auto font-maven text-[11px] text-kidville-muted">
+            <span className="ml-auto font-maven text-[11px] text-kidville-sub">
               {fmtData(post.pubblicata_il)}
             </span>
           </div>

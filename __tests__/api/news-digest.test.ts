@@ -121,6 +121,22 @@ describe('GET /api/news/digest — lista', () => {
     expect(sel).toBeTruthy()
     expect(String(sel!.args[0])).not.toContain('html')
   })
+
+  // C6 (lock zod-coverage gruppo news): la GET valida il query param opzionale
+  // `userId` (uuid). Un valore malformato → 400, senza toccare il DB.
+  it('400 su userId malformato in query (validazione zod)', async () => {
+    const badReq = { url: 'http://test/api/news/digest?userId=non-uuid', method: 'GET', headers: new Headers(), cookies: { get: () => undefined } } as never
+    const res = await digestGET(badReq)
+    expect(res.status).toBe(400)
+    expect(h.calls.some((c) => c.table === 'news_digest_edizioni')).toBe(false)
+  })
+
+  it('userId uuid valido in query → 200', async () => {
+    h.requireUser.mockResolvedValue({ user: { id: 'seg-1', role: 'segreteria', scuola_id: 'sc-1' } })
+    const okReq = { url: `http://test/api/news/digest?userId=${ED_ID}`, method: 'GET', headers: new Headers(), cookies: { get: () => undefined } } as never
+    const res = await digestGET(okReq)
+    expect(res.status).toBe(200)
+  })
 })
 
 describe('GET /api/news/digest/[id] — dettaglio', () => {

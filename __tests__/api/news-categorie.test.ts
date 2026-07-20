@@ -3,13 +3,15 @@ import { NextResponse } from 'next/server'
 
 // =============================================================================
 // /api/news/categorie (GET+POST+PATCH+DELETE) — clone del pattern
-// pagamenti/cassa/categorie: GET requireDocente (globali + sede), le mutazioni
-// requireStaff con slugify server-side, guard is_sistema → 409, collisione slug
-// 23505 → 409, scope RC2 di sede prima di ogni scrittura, degrado schema-assente.
+// pagamenti/cassa/categorie: GET requireUser (globali + sede; per i ruoli
+// non-staff/docente solo le ATTIVE — le pillole del feed genitore le consumano),
+// le mutazioni requireStaff con slugify server-side, guard is_sistema → 409,
+// collisione slug 23505 → 409, scope RC2 di sede prima di ogni scrittura,
+// degrado schema-assente.
 // =============================================================================
 
 const h = vi.hoisted(() => ({
-  requireDocente: vi.fn(),
+  requireUser: vi.fn(),
   requireStaff: vi.fn(),
   resolveScuoleAttive: vi.fn(),
   resolveScuolaScrittura: vi.fn(),
@@ -23,10 +25,11 @@ const h = vi.hoisted(() => ({
   lastInsert: null as Record<string, unknown> | null,
   lastUpdate: null as Record<string, unknown> | null,
   deleted: false,
+  eqCalls: [] as Array<[string, unknown]>,
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({
-  requireDocente: (...a: unknown[]) => h.requireDocente(...a),
+  requireUser: (...a: unknown[]) => h.requireUser(...a),
   requireStaff: (...a: unknown[]) => h.requireStaff(...a),
 }))
 vi.mock('@/lib/auth/scope', () => ({
@@ -53,7 +56,7 @@ function makeClient() {
       const b: Record<string, unknown> = {}
       b.select = () => b
       b.order = () => b
-      b.eq = (c: string, v: unknown) => { st.filters[c] = v; return b }
+      b.eq = (c: string, v: unknown) => { st.filters[c] = v; h.eqCalls.push([c, v]); return b }
       b.in = () => b
       b.or = () => b
       b.is = (c: string, v: unknown) => { st.filters[c] = v; return b }
@@ -94,15 +97,16 @@ beforeEach(() => {
   h.lastInsert = null
   h.lastUpdate = null
   h.deleted = false
-  h.requireDocente.mockResolvedValue({ user: { id: 'admin-1', role: 'admin', scuola_id: 'sc-1' } })
+  h.eqCalls = []
+  h.requireUser.mockResolvedValue({ user: { id: 'admin-1', role: 'admin', scuola_id: 'sc-1' } })
   h.requireStaff.mockResolvedValue({ user: { id: 'admin-1', role: 'admin', scuola_id: 'sc-1' } })
   h.resolveScuoleAttive.mockResolvedValue(['sc-1'])
   h.resolveScuolaScrittura.mockResolvedValue({ scuolaId: 'sc-1' })
 })
 
 describe('GET /api/news/categorie', () => {
-  it('401 quando requireDocente nega', async () => {
-    h.requireDocente.mockResolvedValue({ response: NextResponse.json({ error: 'x' }, { status: 401 }) })
+  it('401 quando requireUser nega', async () => {
+    h.requireUser.mockResolvedValue({ response: NextResponse.json({ error: 'x' }, { status: 401 }) })
     const res = await GET(req({}))
     expect(res.status).toBe(401)
   })
@@ -114,6 +118,35 @@ describe('GET /api/news/categorie', () => {
     const j = await res.json()
     expect(j.disponibile).toBe(true)
     expect(j.categorie.length).toBe(1)
+  })
+
+  // C1 (frontend FAIL): il feed genitore consuma questa GET per le pillole filtro
+  // e i nomi categoria. Deve rispondere 200 a un genitore, non 403/401.
+  it('genitore: 200 e filtra alle sole categorie ATTIVE (attivo=true)', async () => {
+    h.requireUser.mockResolvedValue({ user: { id: 'gen-1', role: 'genitore', scuola_id: null } })
+    h.cats = [{ id: 'c1', nome: 'Eventi', slug: 'eventi', is_sistema: true, attivo: true, scuola_id: null }]
+    const res = await GET(req({}))
+    expect(res.status).toBe(200)
+    expect(h.eqCalls).toContainEqual(['attivo', true])
+  })
+
+  it('cuoca (non-staff/docente): filtra alle sole attive', async () => {
+    h.requireUser.mockResolvedValue({ user: { id: 'cuoca-1', role: 'cuoca', scuola_id: null } })
+    const res = await GET(req({}))
+    expect(res.status).toBe(200)
+    expect(h.eqCalls).toContainEqual(['attivo', true])
+  })
+
+  it('segreteria (staff): NON filtra su attivo — vede anche le disattivate', async () => {
+    h.requireUser.mockResolvedValue({ user: { id: 'seg-1', role: 'segreteria', scuola_id: 'sc-1' } })
+    await GET(req({}))
+    expect(h.eqCalls.some(([c]) => c === 'attivo')).toBe(false)
+  })
+
+  it('educator (docente): NON filtra su attivo', async () => {
+    h.requireUser.mockResolvedValue({ user: { id: 'edu-1', role: 'educator', scuola_id: 'sc-1' } })
+    await GET(req({}))
+    expect(h.eqCalls.some(([c]) => c === 'attivo')).toBe(false)
   })
 
   it('degrado schema-assente → {disponibile:false, categorie:[]}', async () => {

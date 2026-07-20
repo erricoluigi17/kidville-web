@@ -244,7 +244,7 @@ export function NewsEditorPanel({ userId, scuolaId, modalita, canAllSedi = false
         <div>
           <label htmlFor="news-ig" className={labelCls}>Link al post Instagram</label>
           <div className="flex flex-wrap items-center gap-2">
-            <input id="news-ig" value={instagramUrl} onChange={(e) => { setInstagramUrl(e.target.value); setIgEsito(null); }} placeholder="https://www.instagram.com/p/…" className={cx(INPUT, 'min-w-0 flex-1')} />
+            <input id="news-ig" type="url" inputMode="url" autoCapitalize="none" autoCorrect="off" spellCheck={false} value={instagramUrl} onChange={(e) => { setInstagramUrl(e.target.value); setIgEsito(null); }} placeholder="https://www.instagram.com/p/…" className={cx(INPUT, 'min-w-0 flex-1')} />
             <button type="button" onClick={verificaIg} disabled={igVerificando || !instagramUrl.trim()} className={BTN_SECONDARY}>
               {igVerificando ? 'Verifica…' : 'Verifica'}
             </button>

@@ -1,4 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+
+// Corpo REALE dell'interstiziale consent di Meta (ciò che un fetch anonimo da
+// datacenter riceve SEMPRE, 200, sia per un post vivo sia per uno inesistente).
+const CONSENT_REALE = readFileSync(
+  path.join(process.cwd(), '__tests__', 'fixtures', 'instagram', 'embed-vivo-200-consent.html'),
+  'utf8',
+)
 
 // =============================================================================
 // STEP 3 — motore cron /api/news/cron/run (pattern solleciti/run).
@@ -101,7 +110,7 @@ beforeEach(() => {
   db.state.updateError = null
   supa.createAdminClient.mockReset().mockImplementation(async () => db.client())
   supa.createClient.mockReset().mockImplementation(async () => db.client())
-  ext.externalFetch.mockResolvedValue({ ok: true, stato: 200, corpo: '', res: { text: async () => '<meta property="og:image" content="x">' } })
+  ext.externalFetch.mockResolvedValue({ ok: true, stato: 200, corpo: '', res: { text: async () => 'interstiziale consent' } })
   news.generaEInviaDigest.mockResolvedValue({ edizioni: [] })
   vi.stubEnv('CRON_SECRET', SEGRETO)
 })
@@ -175,12 +184,44 @@ describe('news/cron/run — job tick: health-check Instagram', () => {
     expect(upd!.rec.ig_check_il).toBeTruthy() // solo il timestamp di controllo
   })
 
-  it('embed vivo → azzera il contatore dei fallimenti', async () => {
+  it('200 + interstiziale consent REALE → indeterminato: NÉ azzeramento NÉ incremento (solo ig_check_il)', async () => {
+    // La realtà server-side da datacenter (fixture reale): un post VIVO risponde 200
+    // con la pagina consent, che NON contiene i marker dell'embed reale. Non si deve
+    // concludere nulla: il contatore resta com'è, si aggiorna solo il timestamp.
     db.state.instagram = [{ id: 'ig1', instagram_url: null, instagram_shortcode: 'ABC123', ig_check_falliti: 1 }]
-    ext.externalFetch.mockResolvedValue({ ok: true, stato: 200, corpo: '', res: { text: async () => 'og:image cdninstagram' } })
+    ext.externalFetch.mockResolvedValue({ ok: true, stato: 200, corpo: '', res: { text: async () => CONSENT_REALE } })
+    await cronPOST(req({ job: 'tick' }, SEGRETO))
+    const upd = db.state.updates.find((u) => u.eqs.id === 'ig1')
+    expect(upd).toBeTruthy()
+    expect(upd!.rec.ig_check_falliti).toBeUndefined() // NON azzerato (era 1), NON incrementato
+    expect(upd!.rec.stato).toBeUndefined()
+    expect(upd!.rec.ig_check_il).toBeTruthy() // solo il timestamp di controllo
+  })
+
+  it('embed REALMENTE renderizzato (marker specifici) → azzera il contatore', async () => {
+    db.state.instagram = [{ id: 'ig1', instagram_url: null, instagram_shortcode: 'ABC123', ig_check_falliti: 1 }]
+    ext.externalFetch.mockResolvedValue({ ok: true, stato: 200, corpo: '', res: { text: async () => '<div class="EmbeddedMediaImage"></div><div class="Caption">x</div>' } })
     await cronPOST(req({ job: 'tick' }, SEGRETO))
     const upd = db.state.updates.find((u) => u.eqs.id === 'ig1')
     expect(upd!.rec.ig_check_falliti).toBe(0)
+  })
+
+  it('corpoDaFetch: res.text() lancia (body già consumato) → \'\' → indeterminato (solo ig_check_il)', async () => {
+    db.state.instagram = [{ id: 'ig1', instagram_url: null, instagram_shortcode: 'ABC123', ig_check_falliti: 1 }]
+    ext.externalFetch.mockResolvedValue({ ok: true, stato: 200, corpo: '', res: { text: async () => { throw new Error('body already used') } } })
+    await cronPOST(req({ job: 'tick' }, SEGRETO))
+    const upd = db.state.updates.find((u) => u.eqs.id === 'ig1')
+    expect(upd!.rec.ig_check_falliti).toBeUndefined()
+    expect(upd!.rec.stato).toBeUndefined()
+    expect(upd!.rec.ig_check_il).toBeTruthy()
+  })
+
+  it('UPDATE dell\'health-check fallita → warn loggato (regola 7), best-effort', async () => {
+    db.state.instagram = [{ id: 'ig1', instagram_url: null, instagram_shortcode: 'ABC123', ig_check_falliti: 0 }]
+    ext.externalFetch.mockResolvedValue({ ok: true, stato: 200, corpo: '', res: { text: async () => CONSENT_REALE } })
+    db.state.updateError = { code: '57014', message: 'statement timeout' }
+    await cronPOST(req({ job: 'tick' }, SEGRETO))
+    expect(righe('warn').some((r) => r.evento === 'news' && r.campi.esito === 'ig-update-fallita')).toBe(true)
   })
 })
 

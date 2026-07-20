@@ -71,13 +71,13 @@ export function NewsPropostePanel({ userId }: Props) {
     );
   }
   if (!disponibile) {
-    return <p className="rounded-card bg-kidville-cream-dark px-4 py-8 text-center font-maven text-sm text-kidville-muted">Le News non sono ancora disponibili su questo ambiente.</p>;
+    return <p className="rounded-card bg-kidville-cream-dark px-4 py-8 text-center font-maven text-sm text-kidville-sub">Le News non sono ancora disponibili su questo ambiente.</p>;
   }
   if (proposte.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-12 text-center">
         <Inbox size={40} className="mb-3 text-kidville-green/40" strokeWidth={1.6} />
-        <p className="font-maven text-sm text-kidville-muted">Nessuna proposta in attesa.</p>
+        <p className="font-maven text-sm text-kidville-sub">Nessuna proposta in attesa.</p>
       </div>
     );
   }

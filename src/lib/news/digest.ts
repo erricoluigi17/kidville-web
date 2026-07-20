@@ -177,11 +177,16 @@ export async function generaEInviaDigest(
     esito.generata = true
 
     // 2) Persisti l'edizione (idempotente). Se esiste già, la si riusa.
-    const { data: gia } = await supabase
+    const { data: gia, error: giaErr } = await supabase
       .from('news_digest_edizioni')
       .select('id, inviata_il, destinatari_count, errori_count')
       .eq('scuola_id', sede.id).eq('anno', anno).eq('mese', mese)
       .maybeSingle()
+    // Best-effort (l'upsert ON CONFLICT sotto copre comunque l'esistenza), ma
+    // l'errore non si ingoia (regola 7): senza log un guasto qui è invisibile.
+    if (giaErr && !schemaAssente(giaErr)) {
+      logEvento('news', 'warn', { operazione: 'news/digest:esistenza', esito: 'query-fallita', scuola_id: sede.id }, giaErr)
+    }
 
     let edizione = gia as EdizioneRow | null
     if (!edizione) {
@@ -201,11 +206,14 @@ export async function generaEInviaDigest(
         edizioni.push(esito)
         continue
       }
-      const { data: dopo } = await supabase
+      const { data: dopo, error: dopoErr } = await supabase
         .from('news_digest_edizioni')
         .select('id, inviata_il, destinatari_count, errori_count')
         .eq('scuola_id', sede.id).eq('anno', anno).eq('mese', mese)
         .maybeSingle()
+      if (dopoErr && !schemaAssente(dopoErr)) {
+        logEvento('news', 'warn', { operazione: 'news/digest:rilettura', esito: 'query-fallita', scuola_id: sede.id }, dopoErr)
+      }
       edizione = dopo as EdizioneRow | null
     }
 

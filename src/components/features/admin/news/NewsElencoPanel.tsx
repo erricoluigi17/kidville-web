@@ -12,6 +12,7 @@ import { SELECT, BTN_SECONDARY } from '@/components/features/admin/pagamenti/ui'
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { logClient } from '@/lib/logging/client';
 import { cx } from '@/lib/ui/cx';
+import { plurale } from '@/lib/format/plurale';
 import { NEWS_STATI, NEWS_TIPI, type NewsPost, type NewsStato, type NewsTipo } from '@/lib/news/tipi';
 
 const STATO_META: Record<NewsStato, { label: string; tone: BadgeTone }> = {
@@ -28,7 +29,7 @@ const testoErrore = (e: unknown) => (e instanceof Error ? e.message : String(e))
 const fmtData = (iso: string | null): string => {
   if (!iso) return '';
   try {
-    return new Date(iso).toLocaleDateString('it-IT', { day: '2-digit', month: 'short', year: 'numeric' });
+    return new Date(iso).toLocaleDateString('it-IT', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Europe/Rome' });
   } catch {
     return '';
   }
@@ -121,13 +122,13 @@ export function NewsElencoPanel({ userId, onModifica }: Props) {
           {[0, 1, 2].map((i) => <div key={i} className="h-[72px] animate-pulse rounded-card bg-kidville-cream-dark" />)}
         </div>
       ) : !disponibile ? (
-        <p className="rounded-card bg-kidville-cream-dark px-4 py-8 text-center font-maven text-sm text-kidville-muted">
+        <p className="rounded-card bg-kidville-cream-dark px-4 py-8 text-center font-maven text-sm text-kidville-sub">
           Le News non sono ancora disponibili su questo ambiente.
         </p>
       ) : posts.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-12 text-center">
           <Newspaper size={40} className="mb-3 text-kidville-green/40" strokeWidth={1.6} />
-          <p className="font-maven text-sm text-kidville-muted">Nessuna news con questi filtri.</p>
+          <p className="font-maven text-sm text-kidville-sub">Nessuna news con questi filtri.</p>
         </div>
       ) : (
         <div className="flex flex-col gap-2">
@@ -144,12 +145,12 @@ export function NewsElencoPanel({ userId, onModifica }: Props) {
                       {p.pinned && <Pin size={13} className="text-kidville-yellow-dark" strokeWidth={2.4} />}
                     </div>
                     <h3 className="mt-1 truncate font-barlow text-[15px] font-extrabold uppercase leading-tight text-kidville-green">{p.titolo}</h3>
-                    <p className="mt-0.5 font-maven text-[11.5px] text-kidville-muted">
+                    <p className="mt-0.5 font-maven text-[11.5px] text-kidville-sub">
                       {p.stato === 'pubblicata' && p.pubblicata_il ? `Pubblicata il ${fmtData(p.pubblicata_il)}` : p.stato === 'programmata' && p.programmata_il ? `Programmata per il ${fmtData(p.programmata_il)}` : `Creata il ${fmtData(p.created_at ?? null)}`}
                     </p>
                     {st && (
                       <p className="mt-1 inline-flex items-center gap-1 font-maven text-[11.5px] font-bold text-kidville-green">
-                        <BarChart3 size={12} /> {st.visualizzazioni} letture su {st.famiglie_target} famiglie
+                        <BarChart3 size={12} /> {st.visualizzazioni} {plurale(st.visualizzazioni, 'lettura', 'letture')} su {st.famiglie_target} {plurale(st.famiglie_target, 'famiglia', 'famiglie')}
                       </p>
                     )}
                   </div>

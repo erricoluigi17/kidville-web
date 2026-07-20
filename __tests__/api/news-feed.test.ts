@@ -243,4 +243,28 @@ describe('GET /api/news/feed/[id] — dettaglio', () => {
     const res = await feedIdGET(idReq(), ctx)
     expect(res.status).toBe(404)
   })
+
+  // C4 (privacy): il dettaglio consumato dal genitore NON deve over-fetchare i
+  // campi editoriali/interni. La SELECT su news_posts richiede colonne curate,
+  // mai `*`, e mai i campi interni (author_id, contenuto_json, ig_check_*,
+  // nascosta_motivo, notifica_inviata_il, approvata_da). Idem news_media (no `*`).
+  it('dettaglio: la SELECT su news_posts è curata (no *, nessun campo interno)', async () => {
+    h.requireUser.mockResolvedValue({ user: { id: 'gen-1', role: 'genitore', scuola_id: null } })
+    h.post = { id: POST_ID, stato: 'pubblicata', scuola_id: 'sc-1', target_scope: 'globale', target_gradi: null, target_classes: null, titolo: 'X' }
+    await feedIdGET(idReq(), ctx)
+    const sel = h.calls.find((c) => c.table === 'news_posts' && c.m === 'select')
+    expect(sel).toBeTruthy()
+    const cols = String(sel!.args[0])
+    expect(cols).not.toBe('*')
+    for (const campo of ['author_id', 'contenuto_json', 'ig_check_falliti', 'ig_check_il', 'nascosta_motivo', 'notifica_inviata_il', 'approvata_da', 'invia_notifica', 'approvata_il']) {
+      expect(cols).not.toContain(campo)
+    }
+    // Colonne indispensabili al gate/targeting e al rendering devono restare.
+    for (const campo of ['id', 'stato', 'scuola_id', 'target_scope', 'target_gradi', 'target_classes', 'titolo', 'contenuto_html', 'copertina_url']) {
+      expect(cols).toContain(campo)
+    }
+    const selMedia = h.calls.find((c) => c.table === 'news_media' && c.m === 'select')
+    expect(selMedia).toBeTruthy()
+    expect(String(selMedia!.args[0])).not.toBe('*')
+  })
 })

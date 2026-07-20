@@ -38,7 +38,10 @@ async function corpoDaFetch(r: EsitoEsterno): Promise<string> {
   if (res && typeof res.text === 'function') {
     try {
       return await res.text()
-    } catch {
+    } catch (err) {
+      // Corpo non rileggibile (stream già consumato): NON è un guasto del prodotto,
+      // l'esito degrada a 'indeterminato'. Si logga a info (regola 6: nessun catch muto).
+      logEvento('news', 'info', { operazione: 'news/cron:ig-health', esito: 'corpo-illeggibile' }, err)
       return ''
     }
   }
@@ -102,16 +105,22 @@ async function eseguiTick(supabase: SupabaseClient, t0: number): Promise<NextRes
           upd.stato = 'nascosta'
           upd.nascosta_motivo = 'instagram-non-raggiungibile'
         }
-        await supabase.from('news_posts').update(upd).eq('id', ig.id)
-        if (falliti >= 2) {
+        // PostgREST non lancia: si controlla l'{error} anche se l'health-check è best-effort
+        // (regola 7). Se l'UPDATE fallisce, ig_check_il non avanza → recuperabile al tick dopo.
+        const { error: updErr } = await supabase.from('news_posts').update(upd).eq('id', ig.id)
+        if (updErr) logEvento('news', 'warn', { operazione: 'news/cron:ig-health', esito: 'ig-update-fallita', post_id: ig.id }, updErr)
+        else if (falliti >= 2) {
           logEvento('news', 'warn', { operazione: 'news/cron:ig-health', esito: 'nascosto', post_id: ig.id })
         }
       } else if (esito === 'ok') {
-        // Embed vivo: azzera il contatore dei fallimenti.
-        await supabase.from('news_posts').update({ ig_check_falliti: 0, ig_check_il: nowIso }).eq('id', ig.id)
+        // Embed realmente renderizzato: azzera il contatore dei fallimenti.
+        const { error: updErr } = await supabase.from('news_posts').update({ ig_check_falliti: 0, ig_check_il: nowIso }).eq('id', ig.id)
+        if (updErr) logEvento('news', 'warn', { operazione: 'news/cron:ig-health', esito: 'ig-update-fallita', post_id: ig.id }, updErr)
       } else {
-        // Indeterminato (429/403/5xx): SOLO il timestamp di controllo, mai il contatore.
-        await supabase.from('news_posts').update({ ig_check_il: nowIso }).eq('id', ig.id)
+        // Indeterminato (interstiziale consent 200 / 429 / 403 / 5xx): SOLO il timestamp di
+        // controllo, mai il contatore. È il caso NORMALE server-side (auto-nascondimento best-effort).
+        const { error: updErr } = await supabase.from('news_posts').update({ ig_check_il: nowIso }).eq('id', ig.id)
+        if (updErr) logEvento('news', 'warn', { operazione: 'news/cron:ig-health', esito: 'ig-update-fallita', post_id: ig.id }, updErr)
       }
     }
   }

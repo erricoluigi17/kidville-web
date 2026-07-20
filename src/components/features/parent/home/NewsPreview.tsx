@@ -24,7 +24,7 @@ const TIPO_ICON: Record<NewsTipo, typeof Newspaper> = {
 const fmtData = (iso: string | null): string => {
   if (!iso) return ''
   try {
-    return new Date(iso).toLocaleDateString('it-IT', { day: 'numeric', month: 'short' })
+    return new Date(iso).toLocaleDateString('it-IT', { day: 'numeric', month: 'short', timeZone: 'Europe/Rome' })
   } catch {
     return ''
   }
@@ -74,10 +74,10 @@ export function NewsPreview({ parentId, studentId }: Props) {
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="font-barlow text-[11px] font-bold uppercase tracking-[0.06em] text-kidville-yellow-dark">
+                    <span className="font-barlow text-[11px] font-bold uppercase tracking-[0.06em] text-kidville-sub">
                       {p.pinned ? 'In evidenza' : 'News'}
                     </span>
-                    <span className="font-maven text-[11px] text-kidville-muted">{fmtData(p.pubblicata_il)}</span>
+                    <span className="font-maven text-[11px] text-kidville-sub">{fmtData(p.pubblicata_il)}</span>
                   </div>
                   <h3 className="mt-1 line-clamp-1 font-barlow text-base font-extrabold uppercase leading-tight text-kidville-green">
                     {p.titolo}

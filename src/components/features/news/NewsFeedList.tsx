@@ -190,11 +190,10 @@ export function NewsFeedList({ parentId, studentId, onCount }: Props) {
 
       {/* Pillole categoria (solo se disponibili) */}
       {categorie.length > 0 && (
-        <div className="mb-3 -mx-4 flex gap-2 overflow-x-auto px-4 pb-1" role="tablist" aria-label="Filtra per categoria">
+        <div className="mb-3 -mx-4 flex gap-2 overflow-x-auto px-4 pb-1" role="group" aria-label="Filtra per categoria">
           <button
             type="button"
-            role="tab"
-            aria-selected={catFiltro === null}
+            aria-pressed={catFiltro === null}
             onClick={() => setCatFiltro(null)}
             className={cx(
               'flex-shrink-0 rounded-pill px-3.5 py-1.5 font-barlow text-[12px] font-extrabold uppercase tracking-wide',
@@ -207,8 +206,7 @@ export function NewsFeedList({ parentId, studentId, onCount }: Props) {
             <button
               key={c.id}
               type="button"
-              role="tab"
-              aria-selected={catFiltro === c.id}
+              aria-pressed={catFiltro === c.id}
               onClick={() => setCatFiltro((v) => (v === c.id ? null : c.id))}
               className={cx(
                 'flex-shrink-0 rounded-pill px-3.5 py-1.5 font-barlow text-[12px] font-extrabold uppercase tracking-wide',
@@ -250,7 +248,7 @@ export function NewsFeedList({ parentId, studentId, onCount }: Props) {
       {/* Errore con retry */}
       {!loading && errore && (
         <div className="flex flex-col items-center justify-center rounded-card bg-kidville-white py-12 text-center">
-          <p className="font-maven text-sm text-kidville-muted">Non è stato possibile caricare le news.</p>
+          <p className="font-maven text-sm text-kidville-sub">Non è stato possibile caricare le news.</p>
           <button
             type="button"
             onClick={() => {
@@ -272,7 +270,7 @@ export function NewsFeedList({ parentId, studentId, onCount }: Props) {
           <h2 className="mb-1 font-barlow text-xl font-bold uppercase text-kidville-green">
             {filtriAttivi ? 'Nessun risultato' : 'Ancora nessuna news'}
           </h2>
-          <p className="max-w-xs font-maven text-sm text-kidville-muted">
+          <p className="max-w-xs font-maven text-sm text-kidville-sub">
             {filtriAttivi ? 'Prova a rimuovere i filtri di ricerca.' : 'Qui compariranno le novità e i comunicati della scuola.'}
           </p>
         </div>

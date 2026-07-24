@@ -64,6 +64,18 @@
 
 ---
 
+## 🗓️ Changelog — Fase 3 i18n (in corso): fondazione next-intl + login tradotta (IT/EN) 2026-07-24 (branch `feat/native-fase2`)
+
+Terza fase: internazionalizzazione (inglese). **Fondazione** posata e **pilota** tradotto; la migrazione a tappeto delle restanti pagine/componenti procede a lotti.
+
+- **next-intl 4** *senza routing per-locale*: la lingua sta nel cookie `KV_LOCALE` (default `it`), risolta in `src/i18n/request.ts` — nessun `/[locale]` nell'albero delle rotte, middleware invariato. Plugin in `next.config.ts`, provider + `<html lang>` dinamico nel `RootLayout`.
+- **Cataloghi** `messages/it.json` (sorgente) + `messages/en.json` (traduzione), namespace `common` + `auth`.
+- **Selettore lingua** `LanguageSwitcher` (IT/EN: scrive il cookie e ricarica) sulla login e in «Profilo e deleghe».
+- **Pilota**: pagina di **login** interamente migrata a `useTranslations` (titoli, label, placeholder, errori, aria-label).
+- **Test**: mock globale di `next-intl` in `test/setup.ts` (risolve le chiavi sui testi italiani reali) → i test che renderizzano componenti tradotti passano senza wrapper. Gate verde (343 file / 2815 test).
+
+> ⚠️ **In corso.** Tradotta finora solo la login (+ scaffolding). Resta da migrare il grosso dell'app (parent/teacher/admin/componenti) area per area, con i testi EN da rifinire. Non ancora in produzione.
+
 ## 🗓️ Changelog — Fase 2 native: offline (avvisi·diario·menu) + fotocamera nativa + login biometrico + badge/condivisione 2026-07-24 (branch `feat/native-fase2`)
 
 Seconda fase della preparazione allo store: **funzioni native**. Primo tassello, l'**offline** (l'unico pienamente verificabile col gate web; le altre native — fotocamera, biometria, badge — seguono e richiedono verifica su dispositivo).

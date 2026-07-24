@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { IdCard, ShieldCheck, FileText, LifeBuoy, Loader2, AlertTriangle, Trash2, RotateCcw, Fingerprint } from 'lucide-react';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { doLogout } from '@/lib/auth/logout';
+import { LanguageSwitcher } from '@/components/features/i18n/LanguageSwitcher';
 import { biometriaDisponibile, biometriaAttiva, impostaBiometria, verificaBiometria } from '@/lib/native/biometric';
 
 // Pagina «Profilo e deleghe» (attiva il placeholder della BottomNav). Contiene i
@@ -122,6 +123,10 @@ function Inner() {
         <h1 className="font-barlow text-2xl font-black uppercase tracking-wide text-kidville-green">Profilo e deleghe</h1>
         <p className="mt-1 font-maven text-sm text-kidville-muted">Gestisci l’account, la privacy e la cancellazione dei dati.</p>
       </header>
+
+      <div className="flex justify-center">
+        <LanguageSwitcher />
+      </div>
 
       {/* Link legali / assistenza */}
       <section className="rounded-card border border-kidville-line bg-white p-2">

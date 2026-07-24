@@ -3,7 +3,7 @@
 import { motion } from 'framer-motion';
 import { Eye, ThumbsUp, ThumbsDown, Clock, ChevronDown, Users, Pencil, Trash2, Megaphone, ClipboardList, Share2 } from 'lucide-react';
 import { useState } from 'react';
-import { useTranslations } from 'next-intl';
+import { useTranslations, useLocale } from 'next-intl';
 import { condividi } from '@/lib/native/share';
 
 // Tipo del traduttore next-intl: serve per passare `t` alle funzioni helper
@@ -68,6 +68,7 @@ function statusBadge(opts: { isAdesione: boolean; isRead: boolean; myAnswer?: st
 
 export function AvvisoCard({ avviso, index, isTeacher, onReadReceipt, onAdesione, onShowDetails, onEdit, onDelete }: Props) {
     const t = useTranslations('avvisi');
+    const locale = useLocale();
     const [expanded, setExpanded] = useState(false);
     const isAdesione = avviso.tipo === 'adesione';
     const isRead = !!avviso.my_response?.letto_il;
@@ -192,7 +193,7 @@ export function AvvisoCard({ avviso, index, isTeacher, onReadReceipt, onAdesione
                             }`}>
                                 <Clock size={12} strokeWidth={1.8} />
                                 {isExpired ? t('scadutoIl') : t('scadenza')}{' '}
-                                {new Date(avviso.scadenza).toLocaleDateString('it-IT', {
+                                {new Date(avviso.scadenza).toLocaleDateString(locale, {
                                     day: 'numeric', month: 'long', year: 'numeric'
                                 })}
                             </div>

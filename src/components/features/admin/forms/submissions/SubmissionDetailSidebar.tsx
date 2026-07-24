@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { useTranslations } from 'next-intl'
+import { useTranslations, useLocale } from 'next-intl'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   X, FileText, Download, Clock, CheckCircle2, Hash, CheckCheck,
@@ -49,6 +49,7 @@ function renderValue(value: unknown, siNo: { si: string; no: string }): string {
 
 export function SubmissionDetailSidebar({ submission, onClose, onToggleGestita }: Props) {
   const t = useTranslations('adminModulistica')
+  const locale = useLocale()
   const [savingGestita, setSavingGestita] = useState(false)
 
   const fieldMap: Record<string, { label: string; type: string }> = {}
@@ -153,7 +154,7 @@ export function SubmissionDetailSidebar({ submission, onClose, onToggleGestita }
 
               <span className="text-kidville-muted text-[11px] flex items-center gap-1">
                 <Clock className="w-3 h-3" />
-                {new Date(submission.created_at).toLocaleString('it-IT', {
+                {new Date(submission.created_at).toLocaleString(locale, {
                   day: '2-digit', month: 'short', year: 'numeric',
                   hour: '2-digit', minute: '2-digit',
                 })}
@@ -162,7 +163,7 @@ export function SubmissionDetailSidebar({ submission, onClose, onToggleGestita }
               {submission.signed_at && (
                 <span className="text-kidville-success text-[11px] flex items-center gap-1">
                   <CheckCircle2 className="w-3 h-3" />
-                  {t('sdsFirmato')} {new Date(submission.signed_at).toLocaleDateString('it-IT', {
+                  {t('sdsFirmato')} {new Date(submission.signed_at).toLocaleDateString(locale, {
                     day: '2-digit', month: 'short', year: 'numeric',
                   })}
                 </span>
@@ -225,7 +226,7 @@ export function SubmissionDetailSidebar({ submission, onClose, onToggleGestita }
                 <CheckCheck className="w-4 h-4" /> {submission.gestita_il ? t('subGestita') : t('subSegnaGestita')}
                 {submission.gestita_il && (
                   <span className="rounded-pill bg-kidville-green/[0.12] px-2 py-0.5 font-maven text-[10px] font-semibold normal-case tracking-normal text-kidville-green">
-                    {new Date(submission.gestita_il).toLocaleDateString('it-IT', { day: '2-digit', month: 'short' })}
+                    {new Date(submission.gestita_il).toLocaleDateString(locale, { day: '2-digit', month: 'short' })}
                   </span>
                 )}
               </button>

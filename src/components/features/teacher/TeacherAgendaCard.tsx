@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { useTranslations } from 'next-intl';
+import { useTranslations, useLocale } from 'next-intl';
 import { CalendarDays } from 'lucide-react';
 
 /**
@@ -31,12 +31,12 @@ const TIPI = [
 
 const TIPO_LABEL_KEY: Record<string, string> = Object.fromEntries(TIPI.map((ti) => [ti.value, ti.labelKey]));
 
-function giornoMese(ymd: string): { giorno: string; mese: string } {
+function giornoMese(ymd: string, locale: string): { giorno: string; mese: string } {
   try {
     const d = new Date(`${ymd}T00:00:00`);
     return {
-      giorno: d.toLocaleDateString('it-IT', { day: 'numeric' }),
-      mese: d.toLocaleDateString('it-IT', { month: 'short' }).replace('.', ''),
+      giorno: d.toLocaleDateString(locale, { day: 'numeric' }),
+      mese: d.toLocaleDateString(locale, { month: 'short' }).replace('.', ''),
     };
   } catch {
     return { giorno: '—', mese: '' };
@@ -57,6 +57,7 @@ export function TeacherAgendaCard({
   gruppo?: 'sezione' | 'classe';
 }) {
   const t = useTranslations('teacherNav');
+  const locale = useLocale();
   const isClasse = gruppo === 'classe';
   const [eventi, setEventi] = useState<EventoAgenda[]>([]);
   const [loading, setLoading] = useState(true);
@@ -143,7 +144,7 @@ export function TeacherAgendaCard({
       ) : (
         <div className="divide-y divide-kidville-line">
           {eventi.map((e) => {
-            const { giorno, mese } = giornoMese(e.data);
+            const { giorno, mese } = giornoMese(e.data, locale);
             return (
               <div key={e.id} className="flex items-center gap-3 py-2.5 first:pt-0 last:pb-0">
                 <span className="flex h-10 w-10 flex-shrink-0 flex-col items-center justify-center rounded-xl bg-kidville-yellow-soft text-kidville-yellow-dark">

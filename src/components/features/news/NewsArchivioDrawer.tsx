@@ -1,16 +1,16 @@
 'use client'
 
+import { useLocale } from 'next-intl'
 import { CalendarDays, Check } from 'lucide-react'
 import { Modal } from '@/components/ui/Modal'
 import { cx } from '@/lib/ui/cx'
-import { MESI_IT } from '@/lib/news/tipi'
+import { nomeMese } from '@/lib/i18n/date'
 
-/** 'YYYY-MM' → 'Mese Anno' in italiano; formato non valido → passthrough. */
-export function formattaMeseArchivio(mese: string): string {
+/** 'YYYY-MM' → 'Mese Anno' localizzato (default italiano); formato non valido → passthrough. */
+export function formattaMeseArchivio(mese: string, locale: string = 'it'): string {
   const m = /^(\d{4})-(\d{2})$/.exec(mese)
   if (!m) return mese
-  const idx = Number(m[2]) - 1
-  const nome = MESI_IT[idx]
+  const nome = nomeMese(Number(m[2]), locale)
   return nome ? `${nome} ${m[1]}` : mese
 }
 
@@ -23,6 +23,7 @@ interface Props {
 }
 
 export function NewsArchivioDrawer({ open, onClose, mesi, current, onSelect }: Props) {
+  const locale = useLocale()
   const scegli = (mese: string | null) => {
     onSelect(mese)
     onClose()
@@ -76,7 +77,7 @@ export function NewsArchivioDrawer({ open, onClose, mesi, current, onSelect }: P
               >
                 <span className="flex items-center gap-2">
                   <span className="font-barlow text-sm font-extrabold uppercase tracking-wide text-kidville-green">
-                    {formattaMeseArchivio(m.mese)}
+                    {formattaMeseArchivio(m.mese, locale)}
                   </span>
                   <span className="rounded-pill bg-kidville-neutral-soft px-2 py-0.5 font-maven text-[11px] font-semibold text-kidville-sub">
                     {m.conteggio}

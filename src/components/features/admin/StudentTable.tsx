@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { useTranslations } from 'next-intl';
+import { useTranslations, useLocale } from 'next-intl';
 import { ArrowUpDown, AlertTriangle } from 'lucide-react';
 import { useLabelRuolo } from '@/lib/auth/ruoli';
 import { StudentRowCard } from './StudentRowCard';
@@ -49,6 +49,7 @@ function getStatoBadge(stato: string) {
 
 export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSelectAll, onStudentClick, currentTypeFilter = 'child' }: Props) {
     const t = useTranslations('adminStudents');
+    const locale = useLocale();
     const labelRuolo = useLabelRuolo();
     // Etichette di raggruppamento tradotte: la STESSA stringa deve servire sia
     // all'ordinamento sia alla reduce, così i gruppi combaciano col rendering.
@@ -210,7 +211,7 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                                                 <>
                                                     <td className="px-3 py-3 font-maven text-sm text-kidville-muted">
                                                         {student.data_nascita
-                                                            ? new Date(student.data_nascita).toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: '2-digit' })
+                                                            ? new Date(student.data_nascita).toLocaleDateString(locale, { day: '2-digit', month: '2-digit', year: '2-digit' })
                                                             : '—'
                                                         }
                                                     </td>

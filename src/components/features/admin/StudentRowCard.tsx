@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { useTranslations } from 'next-intl';
+import { useTranslations, useLocale } from 'next-intl';
 import { AlertTriangle } from 'lucide-react';
 import { useLabelRuolo } from '@/lib/auth/ruoli';
 import type { Student } from './StudentTable';
@@ -35,6 +35,7 @@ interface Props {
 
 export function StudentRowCard({ student, isSelected, onToggleSelect, onClick, currentTypeFilter }: Props) {
     const t = useTranslations('adminStudents');
+    const locale = useLocale();
     const labelRuolo = useLabelRuolo();
     const cognome = student.cognome || student.last_name || '—';
     const nome = student.nome || student.first_name || '';
@@ -88,7 +89,7 @@ export function StudentRowCard({ student, isSelected, onToggleSelect, onClick, c
                             </span>
                             <span>
                                 {student.data_nascita
-                                    ? new Date(student.data_nascita).toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: '2-digit' })
+                                    ? new Date(student.data_nascita).toLocaleDateString(locale, { day: '2-digit', month: '2-digit', year: '2-digit' })
                                     : '—'}
                             </span>
                         </div>

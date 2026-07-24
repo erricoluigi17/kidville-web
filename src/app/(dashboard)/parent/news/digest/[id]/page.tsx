@@ -6,10 +6,12 @@ import Link from 'next/link'
 import { ArrowLeft, RotateCcw } from 'lucide-react'
 import { useParentIdentity } from '@/lib/auth/use-parent-identity'
 import { withIdentity } from '@/lib/auth/current-user'
-import { MESI_IT, type NewsDigestEdizione } from '@/lib/news/tipi'
+import { useDateFormat } from '@/lib/i18n/date'
+import { type NewsDigestEdizione } from '@/lib/news/tipi'
 
 function ParentDigestDetail() {
   const { parentId, studentId, ready } = useParentIdentity()
+  const { nomeMese } = useDateFormat()
   const params = useParams<{ id: string }>()
   const id = params?.id
 
@@ -36,7 +38,7 @@ function ParentDigestDetail() {
   }, [ready, carica])
 
   const titolo = edizione
-    ? edizione.titolo || `Kidville News — ${MESI_IT[(edizione.mese ?? 1) - 1] ?? ''} ${edizione.anno ?? ''}`.trim()
+    ? edizione.titolo || `Kidville News — ${nomeMese(edizione.mese ?? 1)} ${edizione.anno ?? ''}`.trim()
     : 'Digest'
 
   return (

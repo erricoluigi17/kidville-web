@@ -14,7 +14,8 @@ import { Modal } from '@/components/ui/Modal';
 import { logClient } from '@/lib/logging/client';
 import { cx } from '@/lib/ui/cx';
 import { useTranslations } from 'next-intl';
-import { MESI_IT, type NewsDigestEdizione } from '@/lib/news/tipi';
+import { useDateFormat } from '@/lib/i18n/date';
+import { type NewsDigestEdizione } from '@/lib/news/tipi';
 
 const testoErrore = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -33,6 +34,7 @@ interface Props {
 
 export function NewsDigestPanel({ userId, scuolaId }: Props) {
   const t = useTranslations('adminComunicazioni');
+  const { nomeMese } = useDateFormat();
   const now = new Date();
   const [edizioni, setEdizioni] = useState<NewsDigestEdizione[]>([]);
   const [loading, setLoading] = useState(true);
@@ -108,7 +110,7 @@ export function NewsDigestPanel({ userId, scuolaId }: Props) {
           <div>
             <label htmlFor="digest-mese" className="mb-1 block font-maven text-[11px] font-bold uppercase tracking-wide text-kidville-sub">{t('digestMese')}</label>
             <select id="digest-mese" value={mese} onChange={(e) => setMese(Number(e.target.value))} className={cx(SELECT, 'w-auto')}>
-              {MESI_IT.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+              {Array.from({ length: 12 }, (_, i) => <option key={i + 1} value={i + 1}>{nomeMese(i + 1)}</option>)}
             </select>
           </div>
           <div>
@@ -137,7 +139,7 @@ export function NewsDigestPanel({ userId, scuolaId }: Props) {
               <li key={ed.id} className="flex items-center gap-3 px-3.5 py-3">
                 <Mail size={17} className="flex-shrink-0 text-kidville-green" strokeWidth={2} />
                 <span className="min-w-0 flex-1">
-                  <span className="block font-barlow text-sm font-extrabold uppercase tracking-wide text-kidville-green">{MESI_IT[(ed.mese ?? 1) - 1] ?? ''} {ed.anno}</span>
+                  <span className="block font-barlow text-sm font-extrabold uppercase tracking-wide text-kidville-green">{nomeMese(ed.mese ?? 1)} {ed.anno}</span>
                   <span className="block font-maven text-[11.5px] text-kidville-sub">{ed.inviata_il ? t('digestEdizioneInviato', { famiglie: ed.destinatari_count }) : t('digestEdizioneNonInviato')}</span>
                 </span>
                 <Badge tone={ed.inviata_il ? 'success' : 'neutral'}>{ed.inviata_il ? t('digestBadgeInviato') : t('digestBadgeBozza')}</Badge>

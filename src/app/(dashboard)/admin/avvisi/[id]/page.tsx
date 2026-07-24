@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { useTranslations } from 'next-intl';
+import { useTranslations, useLocale } from 'next-intl';
 import { ArrowLeft, Paperclip } from 'lucide-react';
 import { CockpitPage } from '@/components/ui/cockpit';
 import { Avviso } from '@/components/features/avvisi/AvvisoCard';
@@ -19,6 +19,7 @@ interface ScuolaScoped { scuolaId: string; scuolaNome: string; sezioni: { id: st
 function AdminAvvisoDetailInner() {
     const params = useParams<{ id: string }>();
     const t = useTranslations('adminComunicazioni');
+    const locale = useLocale();
     const { userId } = useSessionIdentity();
 
     const [avviso, setAvviso] = useState<Avviso | null>(null);
@@ -86,8 +87,8 @@ function AdminAvvisoDetailInner() {
                                 {avviso.tipo === 'adesione' ? t('avvisiDettaglioTipoAdesione') : t('avvisiDettaglioTipoPresaVisione')}
                             </span>
                             <span className="font-maven text-xs text-kidville-muted">
-                                {avviso.author ? `${avviso.author.first_name} ${avviso.author.last_name}` : ''} · {new Date(avviso.created_at).toLocaleDateString('it-IT')}
-                                {avviso.scadenza ? ` · ${t('avvisiDettaglioScadenzaEtichetta', { data: new Date(avviso.scadenza).toLocaleDateString('it-IT') })}` : ''}
+                                {avviso.author ? `${avviso.author.first_name} ${avviso.author.last_name}` : ''} · {new Date(avviso.created_at).toLocaleDateString(locale)}
+                                {avviso.scadenza ? ` · ${t('avvisiDettaglioScadenzaEtichetta', { data: new Date(avviso.scadenza).toLocaleDateString(locale) })}` : ''}
                             </span>
                         </div>
                         <h1 className="font-barlow mt-2 text-3xl font-black uppercase leading-none text-kidville-green">{avviso.titolo}</h1>

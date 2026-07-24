@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { useTranslations } from 'next-intl'
+import { useTranslations, useLocale } from 'next-intl'
 import { Newspaper, Megaphone, Camera, Pin } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
 import { cx } from '@/lib/ui/cx'
@@ -22,10 +22,10 @@ const TIPO_ICON: Record<NewsTipo, typeof Newspaper> = {
   instagram: Camera,
 }
 
-const fmtData = (iso: string | null): string => {
+const fmtData = (iso: string | null, locale: string): string => {
   if (!iso) return ''
   try {
-    return new Date(iso).toLocaleDateString('it-IT', { day: 'numeric', month: 'short', timeZone: 'Europe/Rome' })
+    return new Date(iso).toLocaleDateString(locale, { day: 'numeric', month: 'short', timeZone: 'Europe/Rome' })
   } catch {
     return ''
   }
@@ -38,6 +38,7 @@ const fmtData = (iso: string | null): string => {
  */
 export function NewsPreview({ parentId, studentId }: Props) {
   const t = useTranslations('home')
+  const locale = useLocale()
   const [items, setItems] = useState<NewsPost[]>([])
   const [loaded, setLoaded] = useState(false)
 
@@ -79,7 +80,7 @@ export function NewsPreview({ parentId, studentId }: Props) {
                     <span className="font-barlow text-[11px] font-bold uppercase tracking-[0.06em] text-kidville-sub">
                       {p.pinned ? t('newsInEvidenza') : t('titoloNews')}
                     </span>
-                    <span className="font-maven text-[11px] text-kidville-sub">{fmtData(p.pubblicata_il)}</span>
+                    <span className="font-maven text-[11px] text-kidville-sub">{fmtData(p.pubblicata_il, locale)}</span>
                   </div>
                   <h3 className="mt-1 line-clamp-1 font-barlow text-base font-extrabold uppercase leading-tight text-kidville-green">
                     {p.titolo}

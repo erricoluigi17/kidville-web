@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useCallback, useState } from 'react';
+import { useLocale } from 'next-intl';
 import { motion } from 'framer-motion';
 import { Check, CheckCheck, Languages, Loader2 } from 'lucide-react';
 import { sembraItaliano } from '@/lib/translate/lingua';
@@ -30,26 +31,28 @@ interface Props {
     onMarkRead?: (ids: string[]) => void;
 }
 
-function formatMessageTime(iso: string): string {
-    return new Date(iso).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+function formatMessageTime(iso: string, locale: string): string {
+    return new Date(iso).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
 }
 
-function formatMessageDate(iso: string): string {
+function formatMessageDate(iso: string, locale: string): string {
     const d = new Date(iso);
     const today = new Date();
     const yesterday = new Date(Date.now() - 86400000);
 
+    // NB: «Oggi»/«Ieri» restano stringhe fisse (servono chiavi messaggio, fuori
+    // dallo scope di questo passo). Il resto della data è localizzato.
     if (d.toDateString() === today.toDateString()) return 'Oggi';
     if (d.toDateString() === yesterday.toDateString()) return 'Ieri';
-    return d.toLocaleDateString('it-IT', { day: 'numeric', month: 'long' });
+    return d.toLocaleDateString(locale, { day: 'numeric', month: 'long' });
 }
 
-function groupByDate(messages: ChatMessage[]): { date: string; messages: ChatMessage[] }[] {
+function groupByDate(messages: ChatMessage[], locale: string): { date: string; messages: ChatMessage[] }[] {
     const groups: { date: string; messages: ChatMessage[] }[] = [];
     let currentDate = '';
 
     messages.forEach(msg => {
-        const date = formatMessageDate(msg.created_at);
+        const date = formatMessageDate(msg.created_at, locale);
         if (date !== currentDate) {
             currentDate = date;
             groups.push({ date, messages: [] });
@@ -78,6 +81,7 @@ function UnreadSeparator() {
 
 /** Bolla messaggio + traduzione automatica (DL-042) per i messaggi in ingresso. */
 function MessageBubble({ msg, isMine, currentUserId }: { msg: ChatMessage; isMine: boolean; currentUserId: string }) {
+    const locale = useLocale();
     const [translated, setTranslated] = useState<string | null>(null);
     const [translating, setTranslating] = useState(false);
     const [unavailable, setUnavailable] = useState(false);
@@ -174,7 +178,7 @@ function MessageBubble({ msg, isMine, currentUserId }: { msg: ChatMessage; isMin
             {/* Time + read status */}
             <div className={`flex items-center gap-1 mt-1 ${isMine ? 'justify-end' : 'justify-start'}`}>
                 <span className={`font-maven text-[10px] ${isMine ? 'text-white/60' : 'text-kidville-muted'}`}>
-                    {formatMessageTime(msg.created_at)}
+                    {formatMessageTime(msg.created_at, locale)}
                 </span>
                 {isMine && (
                     // Tre stati: letto (doppia spunta gialla) › consegnato (doppia spunta grigia)
@@ -205,6 +209,7 @@ export function ChatMessageArea({
     firstUnreadId,
     onMarkRead,
 }: Props) {
+    const locale = useLocale();
     const bottomRef = useRef<HTMLDivElement>(null);
     const separatorRef = useRef<HTMLDivElement>(null);
     const observerRef = useRef<IntersectionObserver | null>(null);
@@ -319,7 +324,7 @@ export function ChatMessageArea({
         );
     }
 
-    const groups = groupByDate(messages);
+    const groups = groupByDate(messages, locale);
 
     return (
         <div className="flex-1 overflow-y-auto bg-kidville-cream/50 px-4 py-4 space-y-4">

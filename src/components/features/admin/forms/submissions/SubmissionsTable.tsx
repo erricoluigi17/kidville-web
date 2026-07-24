@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { useTranslations } from 'next-intl'
+import { useTranslations, useLocale } from 'next-intl'
 import { motion } from 'framer-motion'
 import {
   FileText, Table2, Search, ChevronDown, Download, Loader2, Inbox,
@@ -27,6 +27,7 @@ const STATUS_COLORS: Record<FormSubmissionStatus, string> = {
 
 export function SubmissionsTable() {
   const t = useTranslations('adminModulistica')
+  const locale = useLocale()
   const userId = useSearchParams().get('userId') ?? ''
   const [submissions, setSubmissions] = useState<SubmissionRow[]>([])
   const [formModels, setFormModels] = useState<{ id: string; title: string }[]>([])
@@ -311,12 +312,12 @@ export function SubmissionsTable() {
             >
               {/* Date */}
               <div className="px-4 py-4 text-kidville-muted text-xs tabular-nums">
-                {new Date(sub.created_at).toLocaleDateString('it-IT', {
+                {new Date(sub.created_at).toLocaleDateString(locale, {
                   day: '2-digit', month: 'short', year: '2-digit',
                 })}
                 <br />
                 <span className="text-kidville-muted">
-                  {new Date(sub.created_at).toLocaleTimeString('it-IT', {
+                  {new Date(sub.created_at).toLocaleTimeString(locale, {
                     hour: '2-digit', minute: '2-digit',
                   })}
                 </span>
@@ -347,7 +348,7 @@ export function SubmissionsTable() {
               <div className="px-4 py-4 text-xs">
                 {sub.signed_at ? (
                   <span className="text-kidville-success">
-                    {new Date(sub.signed_at).toLocaleDateString('it-IT', {
+                    {new Date(sub.signed_at).toLocaleDateString(locale, {
                       day: '2-digit', month: 'short',
                     })}
                   </span>

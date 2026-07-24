@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { useTranslations } from 'next-intl'
+import { useTranslations, useLocale } from 'next-intl'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   Trophy, Medal, ChevronDown, Search, Loader2, Inbox, Info,
@@ -51,6 +51,7 @@ const MEDAL_STYLES: Record<number, { icon: typeof Trophy; color: string; glow: s
 
 function AdjustmentTooltip({ adjustments }: { adjustments: ManualAdjustment[] }) {
   const t = useTranslations('adminModulistica')
+  const locale = useLocale()
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
@@ -99,7 +100,7 @@ function AdjustmentTooltip({ adjustments }: { adjustments: ManualAdjustment[] })
                 </span>
                 <span className="text-kidville-muted leading-snug flex-1">{adj.reason}</span>
                 <span className="text-kidville-muted tabular-nums shrink-0">
-                  {adj.at ? new Date(adj.at).toLocaleDateString('it-IT', { day: '2-digit', month: 'short' }) : ''}
+                  {adj.at ? new Date(adj.at).toLocaleDateString(locale, { day: '2-digit', month: 'short' }) : ''}
                 </span>
               </div>
             ))}
@@ -118,6 +119,7 @@ interface SubmissionWithModel extends RankingRow {
 
 export function RankingTable() {
   const t = useTranslations('adminModulistica')
+  const locale = useLocale()
   const [submissions, setSubmissions] = useState<SubmissionWithModel[]>([])
   const [formModels, setFormModels] = useState<{ id: string; title: string }[]>([])
   const [loading, setLoading] = useState(true)
@@ -448,7 +450,7 @@ export function RankingTable() {
                   <div className="px-4 py-4 text-xs">
                     {sub.signed_at ? (
                       <span className="text-kidville-muted tabular-nums">
-                        {new Date(sub.signed_at).toLocaleDateString('it-IT', {
+                        {new Date(sub.signed_at).toLocaleDateString(locale, {
                           day: '2-digit', month: 'short', year: '2-digit',
                         })}
                       </span>

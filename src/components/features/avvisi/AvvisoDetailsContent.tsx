@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useTranslations } from 'next-intl';
+import { useTranslations, useLocale } from 'next-intl';
 import { Search, AlertCircle, Users, ThumbsUp, ThumbsDown, Eye, HelpCircle } from 'lucide-react';
 import { Avviso } from './AvvisoCard';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
@@ -37,6 +37,7 @@ interface StudentBasic {
 
 export function AvvisoDetailsContent({ avviso, availableClasses = [], userId, layout = 'drawer' }: Props) {
     const t = useTranslations('avvisi');
+    const locale = useLocale();
     const [risposte, setRisposte] = useState<RispostaDettaglio[]>([]);
     const [targetStudents, setTargetStudents] = useState<StudentBasic[]>([]);
     const [loading, setLoading] = useState(true);
@@ -146,7 +147,7 @@ export function AvvisoDetailsContent({ avviso, availableClasses = [], userId, la
                 studentName: `${student.nome} ${student.cognome}`,
                 classe: student.classe_sezione,
                 parentName: resp?.parent_name || t('genitoreFallback'),
-                lettoIl: resp?.letto_il ? new Date(resp.letto_il).toLocaleString('it-IT') : '-'
+                lettoIl: resp?.letto_il ? new Date(resp.letto_il).toLocaleString(locale) : '-'
             };
         });
 
@@ -166,7 +167,7 @@ export function AvvisoDetailsContent({ avviso, availableClasses = [], userId, la
             classe: student.classe_sezione,
             parentName: resp?.parent_name || t('genitoreFallback'),
             risposta: resp?.risposta || 'attesa', // 'si' | 'no' | 'attesa'
-            rispostoIl: resp?.risposto_il ? new Date(resp.risposto_il).toLocaleString('it-IT') : '-'
+            rispostoIl: resp?.risposto_il ? new Date(resp.risposto_il).toLocaleString(locale) : '-'
         };
     });
 

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useTranslations } from 'next-intl';
+import { useTranslations, useLocale } from 'next-intl';
 import { X, Trash2, Save, AlertTriangle, Users, Baby } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { LinkedAdultProfile, AdultProfileData, AdultType } from './LinkedAdultProfile';
@@ -77,6 +77,7 @@ interface Props {
 
 export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant = 'drawer' }: Props) {
     const t = useTranslations('adminStudents');
+    const locale = useLocale();
     // Il pannello è montato per-alunno ({selectedStudent && <StudentDetailPanel/>}):
     // form inizializzato dal prop, niente state+effect (react-hooks/set-state-in-effect).
     const [form, setForm] = useState<Partial<Student>>(() => (student ? { ...student } : {}));
@@ -670,7 +671,7 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                                             
                                             <div className="text-[8px] text-kidville-muted flex justify-between pt-1 border-t border-kidville-line/30">
                                                 <span>{t('detailCategoria', { categoria: task.category })}</span>
-                                                <span>{t('detailApertoIl', { data: new Date(task.created_at).toLocaleDateString('it-IT') })}</span>
+                                                <span>{t('detailApertoIl', { data: new Date(task.created_at).toLocaleDateString(locale) })}</span>
                                             </div>
                                         </div>
                                     );

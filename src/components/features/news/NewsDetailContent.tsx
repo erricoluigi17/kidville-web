@@ -1,5 +1,6 @@
 'use client'
 
+import { useLocale } from 'next-intl'
 import { Pin, Newspaper, Megaphone, Camera } from 'lucide-react'
 import { Badge } from '@/components/ui/Badge'
 import type { NewsMedia, NewsPost, NewsTipo } from '@/lib/news/tipi'
@@ -12,10 +13,10 @@ const TIPO_META: Record<NewsTipo, { label: string; Icon: typeof Newspaper }> = {
   instagram: { label: 'Instagram', Icon: Camera },
 }
 
-const fmtDataLunga = (iso: string | null): string => {
+const fmtDataLunga = (iso: string | null, locale: string): string => {
   if (!iso) return ''
   try {
-    return new Date(iso).toLocaleDateString('it-IT', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/Rome' })
+    return new Date(iso).toLocaleDateString(locale, { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/Rome' })
   } catch {
     return ''
   }
@@ -28,6 +29,7 @@ interface Props {
 }
 
 export function NewsDetailContent({ post, media, categoriaNome }: Props) {
+  const locale = useLocale()
   const meta = TIPO_META[post.tipo] ?? TIPO_META.articolo
   const Icon = meta.Icon
   const immagini = media.filter((m) => m.tipo === 'immagine')
@@ -63,7 +65,7 @@ export function NewsDetailContent({ post, media, categoriaNome }: Props) {
         </div>
         <h1 className="mt-2 font-barlow text-2xl font-black uppercase leading-tight text-kidville-green">{post.titolo}</h1>
         {post.pubblicata_il && (
-          <p className="mt-1 font-maven text-[12.5px] text-kidville-sub">{fmtDataLunga(post.pubblicata_il)}</p>
+          <p className="mt-1 font-maven text-[12.5px] text-kidville-sub">{fmtDataLunga(post.pubblicata_il, locale)}</p>
         )}
       </header>
 

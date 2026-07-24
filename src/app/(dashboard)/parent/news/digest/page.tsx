@@ -6,7 +6,8 @@ import { ArrowLeft, Mail, ChevronRight } from 'lucide-react'
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard'
 import { useParentIdentity } from '@/lib/auth/use-parent-identity'
 import { withIdentity } from '@/lib/auth/current-user'
-import { MESI_IT, type NewsDigestEdizione } from '@/lib/news/tipi'
+import { useDateFormat } from '@/lib/i18n/date'
+import { type NewsDigestEdizione } from '@/lib/news/tipi'
 
 function estraiEdizioni(data: unknown): NewsDigestEdizione[] {
   if (Array.isArray(data)) return data as NewsDigestEdizione[]
@@ -21,6 +22,7 @@ function estraiEdizioni(data: unknown): NewsDigestEdizione[] {
 
 function ParentDigestList() {
   const { parentId, studentId, ready } = useParentIdentity()
+  const { nomeMese } = useDateFormat()
   const [edizioni, setEdizioni] = useState<NewsDigestEdizione[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -75,9 +77,9 @@ function ParentDigestList() {
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block font-barlow text-sm font-extrabold uppercase tracking-wide text-kidville-green">
-                  {ed.titolo || `Kidville News — ${MESI_IT[(ed.mese ?? 1) - 1] ?? ''} ${ed.anno ?? ''}`.trim()}
+                  {ed.titolo || `Kidville News — ${nomeMese(ed.mese ?? 1)} ${ed.anno ?? ''}`.trim()}
                 </span>
-                <span className="block font-maven text-xs text-kidville-sub">{MESI_IT[(ed.mese ?? 1) - 1] ?? ''} {ed.anno}</span>
+                <span className="block font-maven text-xs text-kidville-sub">{nomeMese(ed.mese ?? 1)} {ed.anno}</span>
               </span>
               <ChevronRight size={16} strokeWidth={2} className="flex-shrink-0 text-kidville-muted/60" />
             </Link>

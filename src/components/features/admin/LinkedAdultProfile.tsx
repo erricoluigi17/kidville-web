@@ -1,5 +1,5 @@
 import React from 'react';
-import { useTranslations } from 'next-intl';
+import { useTranslations, useLocale } from 'next-intl';
 import { User, IdCard, Download, Mail, Phone, MapPin } from 'lucide-react';
 
 export type AdultType = 'mother' | 'father' | 'delegate';
@@ -40,12 +40,13 @@ const Value = ({ children }: { children: React.ReactNode }) => (
 
 export function LinkedAdultProfile({ data, type }: Props) {
     const t = useTranslations('adminStudents');
+    const locale = useLocale();
     const Icon = type === 'delegate' ? IdCard : User;
 
     const formatDate = (dateStr?: string) => {
         if (!dateStr) return '—';
         try {
-            return new Date(dateStr).toLocaleDateString('it-IT');
+            return new Date(dateStr).toLocaleDateString(locale);
         } catch {
             return dateStr;
         }

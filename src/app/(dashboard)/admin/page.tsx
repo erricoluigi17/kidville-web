@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState, Suspense } from 'react';
 import Link from 'next/link';
-import { useTranslations } from 'next-intl';
+import { useTranslations, useLocale } from 'next-intl';
 import { motion } from 'framer-motion';
 import {
   Users,
@@ -49,6 +49,7 @@ const euroFmt = new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'E
 
 function AdminDashboardInner() {
   const t = useTranslations('adminNav');
+  const locale = useLocale();
   const { userId, ready } = useSessionIdentity();
   // Identità di sessione (M4): con identità non risolta il parametro viene
   // omesso (href invariato), mai `userId=null`.
@@ -290,7 +291,7 @@ function AdminDashboardInner() {
               id: s.id,
               left: s.alunno,
               right: euroFmt.format(s.importo),
-              meta: new Date(s.scadenza).toLocaleDateString('it-IT'),
+              meta: new Date(s.scadenza).toLocaleDateString(locale),
             }))}
           />
           <AlertPanel
@@ -304,7 +305,7 @@ function AdminDashboardInner() {
               id: s.id,
               left: t('alertRichiesta', { n: i + 1 }),
               right: t('alertDaGestire'),
-              meta: s.data ? new Date(s.data).toLocaleDateString('it-IT') : '',
+              meta: s.data ? new Date(s.data).toLocaleDateString(locale) : '',
             }))}
           />
         </div>

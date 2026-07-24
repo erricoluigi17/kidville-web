@@ -2,7 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { useTranslations } from 'next-intl';
+import { useTranslations, useLocale } from 'next-intl';
 import { Bell, ClipboardList, Eye, Pencil, Plus, Trash2 } from 'lucide-react';
 import { CockpitPage, HEADER_BTN, PageHeader, StatCard, TABLE, TABLE_WRAP, TD, TH, TROW } from '@/components/ui/cockpit';
 import { Avviso } from '@/components/features/avvisi/AvvisoCard';
@@ -17,6 +17,7 @@ interface ScuolaScoped { scuolaId: string; scuolaNome: string; sezioni: { id: st
 function AdminAvvisiInner() {
     const router = useRouter();
     const t = useTranslations('adminComunicazioni');
+    const locale = useLocale();
     const { userId } = useSessionIdentity();
 
     const [avvisi, setAvvisi] = useState<Avviso[]>([]);
@@ -157,7 +158,7 @@ function AdminAvvisiInner() {
                                         <td className={TD}>
                                             <span className="font-maven block max-w-[360px] truncate text-sm font-semibold text-kidville-ink">{a.titolo}</span>
                                             <span className="font-maven block text-xs text-kidville-muted">
-                                                {a.author ? `${a.author.first_name} ${a.author.last_name}` : ''} · {new Date(a.created_at).toLocaleDateString('it-IT')}
+                                                {a.author ? `${a.author.first_name} ${a.author.last_name}` : ''} · {new Date(a.created_at).toLocaleDateString(locale)}
                                             </span>
                                         </td>
                                         <td className={TD}>
@@ -169,7 +170,7 @@ function AdminAvvisiInner() {
                                             {a.target_scope === 'globale' ? t('avvisiTuttoIstituto') : (a.target_classes ?? []).join(', ')}
                                         </td>
                                         <td className={`${TD} font-maven text-sm text-kidville-muted`}>
-                                            {a.scadenza ? new Date(a.scadenza).toLocaleDateString('it-IT') : '—'}
+                                            {a.scadenza ? new Date(a.scadenza).toLocaleDateString(locale) : '—'}
                                         </td>
                                         <td className={`${TD} font-maven text-sm text-kidville-ink`}>{a.stats?.letti ?? 0}</td>
                                         <td className={`${TD} font-maven text-sm text-kidville-ink`}>

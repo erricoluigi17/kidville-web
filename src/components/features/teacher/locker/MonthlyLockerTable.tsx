@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { useTranslations } from 'next-intl';
+import { useTranslations, useLocale } from 'next-intl';
 import { CheckCircle2, XCircle, ChevronDown, CalendarDays } from 'lucide-react';
 
 // ─── Tipi ────────────────────────────────────────────────────────────────────
@@ -39,9 +39,9 @@ function getDaysInMonth(yearMonth: string): number[] {
     return Array.from({ length: count }, (_, i) => i + 1);
 }
 
-function formatMonthLabel(yearMonth: string): string {
+function formatMonthLabel(yearMonth: string, locale: string): string {
     const [y, m] = yearMonth.split('-').map(Number);
-    return new Date(y, m - 1, 1).toLocaleDateString('it-IT', {
+    return new Date(y, m - 1, 1).toLocaleDateString(locale, {
         month: 'long',
         year: 'numeric',
     });
@@ -55,6 +55,7 @@ export function MonthlyLockerTable({
     hideStudentColumn = false,
 }: MonthlyLockerTableProps) {
     const t = useTranslations('teacherServizi');
+    const locale = useLocale();
     const days = useMemo(() => getDaysInMonth(month), [month]);
 
     // Raccoglie tutti i materiali unici presenti nei dati
@@ -99,7 +100,7 @@ export function MonthlyLockerTable({
         return (
             <div className="flex flex-col items-center justify-center py-16 text-kidville-muted">
                 <CalendarDays className="w-12 h-12 mb-3 opacity-30" />
-                <p className="text-sm">{t('lockerTableNessunDato', { mese: formatMonthLabel(month) })}</p>
+                <p className="text-sm">{t('lockerTableNessunDato', { mese: formatMonthLabel(month, locale) })}</p>
             </div>
         );
     }
@@ -111,7 +112,7 @@ export function MonthlyLockerTable({
                 <div className="flex items-center gap-2">
                     <CalendarDays className="w-5 h-5 text-kidville-info" />
                     <h2 className="text-lg font-semibold text-kidville-green capitalize">
-                        {formatMonthLabel(month)}
+                        {formatMonthLabel(month, locale)}
                     </h2>
                 </div>
 

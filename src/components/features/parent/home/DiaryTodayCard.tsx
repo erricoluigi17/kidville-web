@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useTranslations } from 'next-intl'
 import { BookOpen, ChevronRight } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
+import { useDateFormat } from '@/lib/i18n/date'
 
 interface Entry {
   id: string
@@ -18,14 +19,6 @@ interface Props {
   href: string
 }
 
-const fmtTime = (iso: string) => {
-  try {
-    return new Date(iso).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })
-  } catch {
-    return ''
-  }
-}
-
 // Formatta il codice `tipo_evento` (dato) in etichetta leggibile. Il fallback UI
 // per codice vuoto è gestito al call site con la stringa tradotta.
 const titleCase = (s: string) => s.charAt(0).toUpperCase() + s.slice(1).replace(/_/g, ' ')
@@ -37,6 +30,7 @@ const titleCase = (s: string) => s.charAt(0).toUpperCase() + s.slice(1).replace(
  */
 export function DiaryTodayCard({ studentId, href }: Props) {
   const t = useTranslations('home')
+  const { ora: fmtTime } = useDateFormat()
   const [entries, setEntries] = useState<Entry[]>([])
   const [loaded, setLoaded] = useState(false)
 

@@ -6,7 +6,7 @@ import {
   BookOpen, ClipboardCheck, NotebookPen, Images, Megaphone, ListTodo,
   ChevronRight, Check, AlertTriangle, Eye, Users,
 } from 'lucide-react';
-import { useTranslations } from 'next-intl';
+import { useTranslations, useLocale } from 'next-intl';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { useTeacherGradi } from '@/lib/auth/use-teacher-gradi';
 import { useClientValue } from '@/lib/hooks/use-client-value';
@@ -47,9 +47,9 @@ function Eyebrow({ children }: { children: React.ReactNode }) {
   );
 }
 
-function relDate(iso: string) {
+function relDate(iso: string, locale: string) {
   try {
-    return new Date(iso).toLocaleDateString('it-IT', { day: 'numeric', month: 'short' });
+    return new Date(iso).toLocaleDateString(locale, { day: 'numeric', month: 'short' });
   } catch {
     return '';
   }
@@ -57,6 +57,7 @@ function relDate(iso: string) {
 
 function TeacherDashboardInner() {
   const t = useTranslations('teacherNav');
+  const locale = useLocale();
   const { userId } = useSessionIdentity();
   // La home docente semina i link dell'app: con identità non risolta il
   // parametro viene omesso (href invariato), mai `userId=null`.
@@ -219,7 +220,7 @@ function TeacherDashboardInner() {
                           {isAdesione ? t('badgeAdesione') : t('badgePresaVisione')}
                         </span>
                         <span className="ml-auto font-maven text-[10.5px] text-kidville-muted">
-                          {a.author ? `${a.author.first_name ?? ''} ${a.author.last_name ?? ''}`.trim() : ''} · {relDate(a.created_at)}
+                          {a.author ? `${a.author.first_name ?? ''} ${a.author.last_name ?? ''}`.trim() : ''} · {relDate(a.created_at, locale)}
                         </span>
                       </div>
                       <h3 className="mb-0.5 truncate font-barlow text-base font-extrabold uppercase leading-tight text-kidville-green">{a.titolo}</h3>

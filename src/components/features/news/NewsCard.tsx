@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import { useLocale } from 'next-intl'
 import { Pin, Newspaper, Megaphone, Camera } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
@@ -14,10 +15,10 @@ export function estrattoTesto(testo: string | null | undefined, max = 140): stri
   return t.slice(0, max - 1).trimEnd() + '…'
 }
 
-const fmtData = (iso: string | null): string => {
+const fmtData = (iso: string | null, locale: string): string => {
   if (!iso) return ''
   try {
-    return new Date(iso).toLocaleDateString('it-IT', { day: 'numeric', month: 'short', timeZone: 'Europe/Rome' })
+    return new Date(iso).toLocaleDateString(locale, { day: 'numeric', month: 'short', timeZone: 'Europe/Rome' })
   } catch {
     return ''
   }
@@ -36,6 +37,7 @@ interface Props {
 }
 
 export function NewsCard({ post, categoriaNome, href }: Props) {
+  const locale = useLocale()
   const meta = TIPO_META[post.tipo] ?? TIPO_META.articolo
   const Icon = meta.Icon
   const estratto = estrattoTesto(post.contenuto_testo)
@@ -68,7 +70,7 @@ export function NewsCard({ post, categoriaNome, href }: Props) {
               </span>
             )}
             <span className="ml-auto font-maven text-[11px] text-kidville-sub">
-              {fmtData(post.pubblicata_il)}
+              {fmtData(post.pubblicata_il, locale)}
             </span>
           </div>
           <h3 className="mt-2 line-clamp-2 font-barlow text-base font-extrabold uppercase leading-tight text-kidville-green">

@@ -1,7 +1,7 @@
 'use client';
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
-import { useTranslations } from 'next-intl';
+import { useTranslations, useLocale } from 'next-intl';
 import { MessageCircle, Users, Send, Loader2, Eye } from 'lucide-react';
 import { CockpitPage, CockpitSelect, PageHeader, Tabs } from '@/components/ui/cockpit';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
@@ -17,14 +17,15 @@ interface Filtri { docenti: { id: string; nome: string }[]; genitori: { id: stri
 interface Msg { id: string; sender_id: string; content: string; created_at: string }
 interface Contatto { parentUserId: string; parentName: string; studentId: string; studentName: string; classe: string | null }
 
-function fmtWhen(iso: string | null) {
+function fmtWhen(iso: string | null, locale: string) {
   if (!iso) return '';
-  try { return new Date(iso).toLocaleString('it-IT', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }); }
+  try { return new Date(iso).toLocaleString(locale, { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }); }
   catch { return ''; }
 }
 
 function MessaggiInner() {
   const t = useTranslations('adminComunicazioni');
+  const locale = useLocale();
   const { userId } = useSessionIdentity();
   const [tab, setTab] = useState<'genitori' | 'tutti'>('genitori');
 
@@ -173,7 +174,7 @@ function MessaggiInner() {
                     return (
                       <div key={m.id} className={`max-w-[75%] rounded-2xl px-3 py-2 font-maven text-sm ${mine ? 'ml-auto bg-kidville-green text-white' : 'bg-kidville-cream text-kidville-ink'}`}>
                         <p>{m.content}</p>
-                        <p className={`text-[10px] mt-1 ${mine ? 'text-white/70' : 'text-kidville-muted'}`}>{fmtWhen(m.created_at)}</p>
+                        <p className={`text-[10px] mt-1 ${mine ? 'text-white/70' : 'text-kidville-muted'}`}>{fmtWhen(m.created_at, locale)}</p>
                       </div>
                     );
                   })}
@@ -229,7 +230,7 @@ function MessaggiInner() {
                   className={`w-full text-left rounded-input px-3 py-2.5 mb-1 transition-colors ${selThread?.id === t.id ? 'bg-kidville-green-soft' : 'hover:bg-kidville-cream'}`}
                 >
                   <p className="font-maven text-sm font-semibold text-kidville-ink">{t.parent?.nome ?? '—'} ↔ {t.teacher?.nome ?? '—'}</p>
-                  <p className="font-maven text-xs text-kidville-muted">{t.student?.nome ?? ''}{t.student?.classe ? ` · ${t.student.classe}` : ''} · {fmtWhen(t.last_message_at)}</p>
+                  <p className="font-maven text-xs text-kidville-muted">{t.student?.nome ?? ''}{t.student?.classe ? ` · ${t.student.classe}` : ''} · {fmtWhen(t.last_message_at, locale)}</p>
                 </button>
               ))}
             </div>
@@ -255,7 +256,7 @@ function MessaggiInner() {
                         <div key={m.id} className={`max-w-[75%] rounded-2xl px-3 py-2 font-maven text-sm ${fromTeacher ? 'ml-auto bg-kidville-info-soft text-kidville-ink' : 'bg-kidville-cream text-kidville-ink'}`}>
                           <p className="text-[10px] font-bold text-kidville-muted mb-0.5">{fromTeacher ? (selThread.teacher?.nome ?? t('messaggiRuoloInsegnante')) : (selThread.parent?.nome ?? t('messaggiRuoloGenitore'))}</p>
                           <p>{m.content}</p>
-                          <p className="text-[10px] mt-1 text-kidville-muted">{fmtWhen(m.created_at)}</p>
+                          <p className="text-[10px] mt-1 text-kidville-muted">{fmtWhen(m.created_at, locale)}</p>
                         </div>
                       );
                     })}

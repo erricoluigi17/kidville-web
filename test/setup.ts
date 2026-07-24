@@ -41,6 +41,7 @@ vi.mock('next-intl', async () => {
     parentPrimaria: (await import('../messages/it/parentPrimaria.json')).default,
     parentServizi: (await import('../messages/it/parentServizi.json')).default,
     parentForms: (await import('../messages/it/parentForms.json')).default,
+    public: (await import('../messages/it/public.json')).default,
   };
   const resolve = (ns: string | undefined, key: string): string => {
     const gruppo = ns ? it[ns] : undefined;

@@ -1,8 +1,13 @@
+import type { Metadata } from 'next'
+import { getTranslations } from 'next-intl/server'
 import { EnrollmentWizard } from '@/components/features/public/EnrollmentWizard'
 
-export const metadata = {
-  title: 'Iscrizione Nuovo Alunno — Kidville',
-  description: 'Modulo di iscrizione per nuovi alunni',
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getTranslations('public')
+  return {
+    title: t('iscrMetaTitolo'),
+    description: t('iscrMetaDescrizione'),
+  }
 }
 
 // Link pubblico per-scuola: /iscrizione?scuola=<id>. Se assente, l'API risolve la

@@ -1,6 +1,7 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslations } from 'next-intl'
 import { Fingerprint, Lock, Loader2 } from 'lucide-react'
 import { isNativeApp } from '@/lib/push/native-register'
 import { biometriaAttiva, verificaBiometria } from '@/lib/native/biometric'
@@ -15,11 +16,18 @@ import { doLogout } from '@/lib/auth/logout'
 // (lato client), quindi non c'è mismatch. Nessun setState sincrono nel corpo
 // dell'effetto: il blocco passa da richiediSblocco() (pattern del repo).
 
-const MOTIVO = 'Sblocca Kidville'
-
 export function BiometricGate({ children }: { children: React.ReactNode }) {
+  const t = useTranslations('shared')
   const [bloccato, setBloccato] = useState(false)
   const [verificaInCorso, setVerificaInCorso] = useState(false)
+
+  // Il motivo (mostrato dal prompt biometrico nativo) è localizzato, ma va letto
+  // da `richiediSblocco` senza entrare nelle sue deps `[]` (altrimenti il gate si
+  // ri-armerebbe ad ogni render). Il ref tiene sempre l'ultima traduzione.
+  const motivoRef = useRef(t('bioMotivo'))
+  useEffect(() => {
+    motivoRef.current = t('bioMotivo')
+  }, [t])
 
   const richiediSblocco = useCallback(async () => {
     // `await` prima del primo setState + try/finally: è il boundary async che
@@ -30,7 +38,7 @@ export function BiometricGate({ children }: { children: React.ReactNode }) {
       await Promise.resolve()
       setBloccato(true)
       setVerificaInCorso(true)
-      const ok = await verificaBiometria(MOTIVO)
+      const ok = await verificaBiometria(motivoRef.current)
       if (ok) setBloccato(false)
     } finally {
       setVerificaInCorso(false)
@@ -74,7 +82,7 @@ export function BiometricGate({ children }: { children: React.ReactNode }) {
         <div
           role="dialog"
           aria-modal="true"
-          aria-label="App bloccata"
+          aria-label={t('bioBloccatoAria')}
           className="fixed inset-0 z-[100] flex flex-col items-center justify-center gap-8 bg-kidville-green px-8 text-center"
         >
           <div className="flex h-20 w-20 items-center justify-center rounded-full bg-white/15 text-white">
@@ -82,10 +90,10 @@ export function BiometricGate({ children }: { children: React.ReactNode }) {
           </div>
           <div className="space-y-2">
             <h2 className="font-barlow text-2xl font-black uppercase tracking-wide text-white">
-              Kidville è bloccato
+              {t('bioBloccatoTitolo')}
             </h2>
             <p className="max-w-xs font-maven text-sm text-white/80">
-              Sblocca con Face ID o l&apos;impronta per continuare.
+              {t('bioBloccatoCorpo')}
             </p>
           </div>
 
@@ -100,7 +108,7 @@ export function BiometricGate({ children }: { children: React.ReactNode }) {
             ) : (
               <Fingerprint size={17} strokeWidth={2.4} />
             )}
-            Sblocca
+            {t('bioSblocca')}
           </button>
 
           {/* Anti-lockout: consente sempre l'uscita se la biometria non passa. */}
@@ -109,7 +117,7 @@ export function BiometricGate({ children }: { children: React.ReactNode }) {
             onClick={() => void doLogout()}
             className="font-barlow text-xs font-extrabold uppercase tracking-wide text-white/70 underline active:scale-95"
           >
-            Esci dall&apos;account
+            {t('bioEsci')}
           </button>
         </div>
       )}

@@ -1,6 +1,7 @@
 'use client';
 
 import { motion } from 'framer-motion';
+import { useTranslations } from 'next-intl';
 import { Download, Share2, Play, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useState, useEffect, useCallback } from 'react';
 
@@ -40,6 +41,7 @@ function timeAgo(iso: string): string {
 }
 
 export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags }: Props) {
+    const t = useTranslations('shared');
     const [lightbox, setLightbox] = useState<MediaItem | null>(null);
     const [editMode, setEditMode] = useState(false);
     const [tempTagged, setTempTagged] = useState<string[]>([]);
@@ -162,7 +164,7 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                                         }
                                     }}
                                     className="w-7 h-7 rounded-lg bg-white/90 hover:bg-white text-kidville-green flex items-center justify-center shadow-md active:scale-95 transition-all cursor-pointer border border-gray-100"
-                                    title="Scarica"
+                                    title={t('mediaScarica')}
                                 >
                                     <Download size={12} strokeWidth={2.5} />
                                 </button>
@@ -181,14 +183,14 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                                         } else {
                                             try {
                                                 await navigator.clipboard.writeText(item.file_url);
-                                                alert('Link copiato negli appunti!');
+                                                alert(t('mediaLinkCopiato'));
                                             } catch (err) {
                                                 console.error(err);
                                             }
                                         }
                                     }}
                                     className="w-7 h-7 rounded-lg bg-white/90 hover:bg-white text-kidville-green flex items-center justify-center shadow-md active:scale-95 transition-all cursor-pointer border border-gray-100"
-                                    title="Condividi"
+                                    title={t('mediaCondividi')}
                                 >
                                     <Share2 size={12} strokeWidth={2.5} />
                                 </button>
@@ -211,7 +213,7 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                         <button
                             onClick={handlePrev}
                             className="absolute left-2 sm:left-4 top-1/2 -translate-y-1/2 w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-white/80 hover:bg-white text-kidville-green flex items-center justify-center shadow-lg hover:scale-105 active:scale-95 transition-all z-10 cursor-pointer border border-gray-150"
-                            title="Precedente (Freccia Sinistra)"
+                            title={t('mediaPrecedente')}
                         >
                             <ChevronLeft className="w-5 h-5 sm:w-6 sm:h-6" strokeWidth={2.5} />
                         </button>
@@ -220,7 +222,7 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                         <button
                             onClick={handleNext}
                             className="absolute right-2 sm:right-4 top-1/2 -translate-y-1/2 w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-white/80 hover:bg-white text-kidville-green flex items-center justify-center shadow-lg hover:scale-105 active:scale-95 transition-all z-10 cursor-pointer border border-gray-150"
-                            title="Successiva (Freccia Destra)"
+                            title={t('mediaSuccessiva')}
                         >
                             <ChevronRight className="w-5 h-5 sm:w-6 sm:h-6" strokeWidth={2.5} />
                         </button>
@@ -367,7 +369,7 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                                         }
                                     }}
                                     className="flex items-center gap-2 px-5 py-2.5 bg-kidville-green hover:bg-kidville-green/90 text-white rounded-full font-barlow font-bold text-xs uppercase tracking-wide transition-colors cursor-pointer shadow-sm">
-                                    <Download size={14} strokeWidth={2.5} /> Scarica
+                                    <Download size={14} strokeWidth={2.5} /> {t('mediaScarica')}
                                 </button>
                                 <button
                                     onClick={async () => {
@@ -383,14 +385,14 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                                         } else {
                                             try {
                                                 await navigator.clipboard.writeText(lightbox.file_url);
-                                                alert('Link copiato negli appunti! Puoi incollarlo dove desideri.');
+                                                alert(t('mediaLinkCopiatoLungo'));
                                             } catch (err) {
                                                 console.error('Clipboard copy failed', err);
                                             }
                                         }
                                     }}
                                     className="flex items-center gap-2 px-5 py-2.5 bg-kidville-yellow hover:bg-kidville-yellow/90 text-kidville-green rounded-full font-barlow font-bold text-xs uppercase tracking-wide transition-colors cursor-pointer shadow-sm">
-                                    <Share2 size={14} strokeWidth={2.5} /> Condividi
+                                    <Share2 size={14} strokeWidth={2.5} /> {t('mediaCondividi')}
                                 </button>
                             </div>
                         )}

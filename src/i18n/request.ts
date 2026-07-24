@@ -45,6 +45,7 @@ export default getRequestConfig(async () => {
     parentPrimaria: (await import(`../../messages/${locale}/parentPrimaria.json`)).default,
     parentServizi: (await import(`../../messages/${locale}/parentServizi.json`)).default,
     parentForms: (await import(`../../messages/${locale}/parentForms.json`)).default,
+    public: (await import(`../../messages/${locale}/public.json`)).default,
   };
 
   return { locale, messages };

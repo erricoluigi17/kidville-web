@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import { useTranslations } from 'next-intl'
 import { useForm, FieldValues } from 'react-hook-form'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -42,6 +43,7 @@ function resolveError(errors: FieldValues, path: string): unknown {
 }
 
 export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null } = {}) {
+  const t = useTranslations('public')
   const [childCount, setChildCount] = useState(1)
   const [adultCount, setAdultCount] = useState(1)
   const [step, setStep] = useState(0)
@@ -192,7 +194,7 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
         messaggio: `invio iscrizione fallito — ${err instanceof Error ? err.message : 'errore sconosciuto'}`,
         stack: err instanceof Error ? err.stack : undefined,
       })
-      alert('Si è verificato un errore durante l\'invio. Controlla i dati e riprova.')
+      alert(t('wizardErroreInvio'))
     } finally {
       setSubmitting(false)
     }
@@ -211,13 +213,19 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
     setStep(childCount + adultCount) // nuova pagina adulto
   }
 
-  // Header dinamico
+  // Header dinamico. Il numero dell'istanza è un VALORE composto in JS (il
+  // sostantivo è tradotto, la posizione del numero è identica in it/en); i
+  // plurali veri restano ICU nel riepilogo.
   const heading =
     current.kind === 'child'
-      ? { icon: Baby, title: `Bambino ${current.index + 1}`, sub: 'Dati anagrafici del minore' }
+      ? { icon: Baby, title: `${t('wizardBambino')} ${current.index + 1}`, sub: t('wizardBambinoSub') }
       : current.kind === 'adult'
-      ? { icon: Users, title: `Adulto ${current.index + 1}${current.index === 0 ? ' (obbligatorio)' : ''}`, sub: 'Genitore, tutore o delegato' }
-      : { icon: Check, title: 'Riepilogo', sub: 'Controlla e invia la richiesta' }
+      ? {
+          icon: Users,
+          title: `${t('wizardAdulto')} ${current.index + 1}${current.index === 0 ? t('wizardAdultoObbligatorioSuffix') : ''}`,
+          sub: t('wizardAdultoSub'),
+        }
+      : { icon: Check, title: t('wizardRiepilogo'), sub: t('wizardRiepilogoSub') }
 
   const HeadIcon = heading.icon
 
@@ -238,11 +246,11 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
         <div className="mb-6">
           <div className="flex items-center gap-2 text-xs text-kidville-yellow-dark mb-2">
             <UserPlus className="w-3.5 h-3.5" />
-            <span className="uppercase tracking-widest font-semibold">Iscrizione Nuovo Alunno</span>
+            <span className="uppercase tracking-widest font-semibold">{t('wizardEyebrow')}</span>
           </div>
           {!done && (
             <p className="text-xs text-kidville-muted font-medium">
-              Passo {step + 1} di {steps.length}
+              {t('wizardPassoDi', { corrente: step + 1, totale: steps.length })}
             </p>
           )}
         </div>
@@ -256,10 +264,9 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
             <div className="w-16 h-16 rounded-2xl bg-kidville-success-soft flex items-center justify-center mb-4">
               <PartyPopper className="w-8 h-8 text-kidville-success" />
             </div>
-            <h2 className="text-xl font-semibold text-kidville-green">Richiesta inviata!</h2>
+            <h2 className="text-xl font-semibold text-kidville-green">{t('wizardInviata')}</h2>
             <p className="text-sm text-kidville-muted mt-1.5 max-w-sm">
-              La tua richiesta di iscrizione è stata ricevuta. La segreteria la esaminerà e ti
-              contatterà con le credenziali di accesso.
+              {t('wizardInviataCorpo')}
             </p>
           </motion.div>
         ) : (
@@ -308,7 +315,7 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
                               onClick={addChild}
                               className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-kidville-success-soft border border-kidville-success/30 text-kidville-success text-sm font-medium hover:bg-kidville-success-soft transition-all"
                             >
-                              <Plus className="w-4 h-4" /> Aggiungi un altro figlio
+                              <Plus className="w-4 h-4" /> {t('wizardAggiungiFiglio')}
                             </button>
                           )}
                           {childCount > 1 && current.index === childCount - 1 && (
@@ -317,7 +324,7 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
                               onClick={() => { setChildCount(c => c - 1); setStep(s => Math.max(0, s - 1)) }}
                               className="flex items-center gap-2 px-3 py-2 rounded-xl text-kidville-muted hover:text-kidville-error text-sm transition-all"
                             >
-                              <Trash2 className="w-4 h-4" /> Rimuovi
+                              <Trash2 className="w-4 h-4" /> {t('wizardRimuovi')}
                             </button>
                           )}
                         </div>
@@ -332,9 +339,7 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
                         <div className="flex items-start gap-2.5 px-4 py-3 rounded-xl bg-kidville-info-soft border border-kidville-info/20">
                           <Info className="w-4 h-4 text-kidville-info flex-shrink-0 mt-0.5" />
                           <p className="text-xs text-kidville-info leading-relaxed">
-                            È obbligatorio almeno un adulto. Se sei già genitore di un bambino iscritto,
-                            usa lo stesso codice fiscale: il nuovo figlio verrà collegato automaticamente
-                            alla tua anagrafica.
+                            {t('wizardAdultoInfo')}
                           </p>
                         </div>
                       )}
@@ -357,7 +362,7 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
                               onClick={addAdult}
                               className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-kidville-success-soft border border-kidville-success/30 text-kidville-success text-sm font-medium hover:bg-kidville-success-soft transition-all"
                             >
-                              <Plus className="w-4 h-4" /> Aggiungi adulto / tutore
+                              <Plus className="w-4 h-4" /> {t('wizardAggiungiAdulto')}
                             </button>
                           )}
                           {adultCount > 1 && current.index === adultCount - 1 && (
@@ -366,7 +371,7 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
                               onClick={() => { setAdultCount(a => a - 1); setStep(s => Math.max(0, s - 1)) }}
                               className="flex items-center gap-2 px-3 py-2 rounded-xl text-kidville-muted hover:text-kidville-error text-sm transition-all"
                             >
-                              <Trash2 className="w-4 h-4" /> Rimuovi
+                              <Trash2 className="w-4 h-4" /> {t('wizardRimuovi')}
                             </button>
                           )}
                         </div>
@@ -379,15 +384,17 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
                     <div className="space-y-4">
                       <div className="px-4 py-3 rounded-xl bg-white border border-kidville-line">
                         <p className="text-sm text-kidville-ink">
-                          Stai iscrivendo <span className="text-kidville-success font-semibold">{childCount}</span>
-                          {childCount === 1 ? ' bambino' : ' bambini'} con
-                          <span className="text-kidville-success font-semibold"> {adultCount}</span>
-                          {adultCount === 1 ? ' adulto' : ' adulti'} di riferimento.
+                          {t.rich('wizardRiepilogoConteggio', {
+                            bambini: childCount,
+                            adulti: adultCount,
+                            n: (chunks) => <span className="text-kidville-success font-semibold">{chunks}</span>,
+                          })}
                         </p>
                       </div>
                       <p className="text-xs text-kidville-muted leading-relaxed">
-                        Premi <strong className="text-kidville-ink">Invia richiesta</strong> per trasmettere
-                        i dati alla segreteria. Riceverai conferma e credenziali di accesso dopo la verifica.
+                        {t.rich('wizardRiepilogoNota', {
+                          b: (chunks) => <strong className="text-kidville-ink">{chunks}</strong>,
+                        })}
                       </p>
                     </div>
                   )}
@@ -402,7 +409,7 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
                 disabled={step === 0 || submitting}
                 className="flex items-center gap-2 px-4 py-2.5 rounded-pill font-barlow font-bold uppercase tracking-wide text-sm text-kidville-muted hover:text-kidville-green hover:bg-kidville-green-soft disabled:opacity-30 disabled:cursor-not-allowed transition-all"
               >
-                <ArrowLeft className="w-4 h-4" /> Indietro
+                <ArrowLeft className="w-4 h-4" /> {t('wizardIndietro')}
               </button>
 
               <button
@@ -418,7 +425,7 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
                   <ArrowRight className="w-4 h-4 order-2" />
                 )}
                 <span className={isLast || submitting ? '' : 'order-1'}>
-                  {submitting ? 'Invio…' : isLast ? 'Invia richiesta' : 'Avanti'}
+                  {submitting ? t('wizardInvioInCorso') : isLast ? t('wizardInviaRichiesta') : t('wizardAvanti')}
                 </span>
               </button>
             </div>

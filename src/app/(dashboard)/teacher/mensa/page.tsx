@@ -7,6 +7,7 @@
 
 import { Suspense, useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
+import { useDateFormat } from '@/lib/i18n/date';
 import { useSearchParams } from 'next/navigation';
 import { AlertTriangle, RefreshCw, CalendarDays, UtensilsCrossed } from 'lucide-react';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
@@ -21,6 +22,7 @@ interface AltManuale { id: string; alunno_id: string; nome: string; classe: stri
 
 function MensaDocente() {
   const t = useTranslations('teacherServizi');
+  const f = useDateFormat();
   const allergeneLabel = useAllergeneLabel();
   const search = useSearchParams();
   const userId = getCurrentTeacherId(search);
@@ -150,7 +152,7 @@ function MensaDocente() {
             <p className="font-maven text-sm text-kidville-green">
               {t.rich('mensaPranziPrenotati', {
                 count: report.totale,
-                data: new Date(`${report.data}T00:00:00`).toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' }),
+                data: new Intl.DateTimeFormat(f.locale, { weekday: 'long', day: 'numeric', month: 'long' }).format(new Date(`${report.data}T00:00:00`)),
                 strong: (c) => <strong>{c}</strong>,
               })}
             </p>

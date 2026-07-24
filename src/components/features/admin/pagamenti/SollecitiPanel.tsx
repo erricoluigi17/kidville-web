@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
+import { useDateFormat } from '@/lib/i18n/date';
 import { BellRing, RefreshCw, Send, X } from 'lucide-react';
 import { SectionTitle } from '@/components/ui/cockpit';
 import { Badge } from '@/components/ui/Badge';
@@ -33,12 +34,14 @@ interface EsitoSollecito {
 interface Props { userId: string; scuolaId: string }
 
 const hdr = (u: string) => ({ 'Content-Type': 'application/json', 'x-user-id': u });
-const dataIt = (d?: string | null) => (d ? new Date(d).toLocaleDateString('it-IT') : '—');
 const MS_GIORNO = 86_400_000;
 
 /** Vista Solleciti: coda dei morosi con anteprima OBBLIGATORIA prima dell'invio. */
 export function SollecitiPanel({ userId, scuolaId }: Props) {
     const t = useTranslations('adminContabilita');
+    const f = useDateFormat();
+    // Data breve localizzata (IT identica a `toLocaleDateString('it-IT')`); '—' se assente.
+    const dataIt = (d?: string | null) => (d ? f.dataBreve(d) : '—');
     const [rows, setRows] = useState<Pagamento[]>([]);
     const [loading, setLoading] = useState(true);
     const [selected, setSelected] = useState<Set<string>>(new Set());

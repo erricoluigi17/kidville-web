@@ -3,6 +3,7 @@
 import { Suspense, useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
+import { useDateFormat } from '@/lib/i18n/date';
 import {
   FileText, Plus, UserCheck, Settings, Calendar, Users,
   Trash2, Download, CheckCircle, ArrowRight, Upload, Shield, Inbox, Send, Stamp, X
@@ -102,6 +103,7 @@ type ModulisticaTab = 'inviabili' | 'ricevuti' | 'moduli-genitori' | 'attesa' | 
 
 function ModulisticaInner() {
   const t = useTranslations('adminModulistica');
+  const f = useDateFormat();
   const { sedeCorrente, loading: sediLoading } = useSediAttive();
   const searchParams = useSearchParams();
   const tabParam = searchParams.get('tab');
@@ -574,7 +576,7 @@ function ModulisticaInner() {
                         {form.expiration_date && (
                           <span className={`px-2.5 py-1 rounded-full text-xs font-semibold flex items-center gap-1 ${new Date(form.expiration_date) < new Date() ? 'bg-kidville-error-soft text-kidville-error' : 'bg-kidville-warn-soft text-kidville-warn'}`}>
                             <Calendar size={12} />
-                            {t('modScadenza')} {new Date(form.expiration_date).toLocaleDateString('it-IT')}
+                            {t('modScadenza')} {f.dataBreve(form.expiration_date)}
                           </span>
                         )}
                       </div>
@@ -1017,7 +1019,7 @@ function ModulisticaInner() {
                   {selectedPre.students?.map((s, idx) => (
                     <div key={idx} className="p-3 bg-kidville-cream border border-kidville-line rounded-xl text-xs font-maven">
                       <div className="font-semibold text-kidville-ink text-sm">{s.cognome} {s.nome}</div>
-                      <div className="text-kidville-muted mt-1">{t('modDataNascitaCf', { data: new Date(s.data_nascita).toLocaleDateString('it-IT'), cf: s.codice_fiscale || t('modNd') })}</div>
+                      <div className="text-kidville-muted mt-1">{t('modDataNascitaCf', { data: f.dataBreve(s.data_nascita), cf: s.codice_fiscale || t('modNd') })}</div>
                       {s.note_mediche && (
                         <div className="mt-2 text-kidville-error bg-kidville-error-soft p-1.5 rounded-lg font-semibold flex items-start gap-1">
                           {t('modAllergieNote')} {s.note_mediche}
@@ -1151,7 +1153,7 @@ function ModulisticaInner() {
                   <div className="min-w-0">
                     <p className="truncate font-maven text-sm font-semibold text-kidville-ink">{item.cognome_alunno} {item.nome_alunno}</p>
                     <p className="font-maven text-[11.5px] text-kidville-muted">
-                      {t('modFirmato')} {item.origine === 'cartaceo' ? t('modCartaceoAcquisito') : t('modFesDigitale')}{item.created_at ? ` ${t('modIlData', { data: new Date(item.created_at).toLocaleDateString('it-IT') })}` : ''}
+                      {t('modFirmato')} {item.origine === 'cartaceo' ? t('modCartaceoAcquisito') : t('modFesDigitale')}{item.created_at ? ` ${t('modIlData', { data: f.dataBreve(item.created_at) })}` : ''}
                     </p>
                   </div>
                   {protocollati[item.submission_id ?? ''] ? (

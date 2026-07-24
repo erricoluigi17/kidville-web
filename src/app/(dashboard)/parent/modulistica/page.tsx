@@ -11,6 +11,7 @@ import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { Btn } from '@/components/ui/Btn';
 import { ScattaFotoButton } from '@/components/features/native/ScattaFotoButton';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
+import { useDateFormat } from '@/lib/i18n/date';
 import { annoScolasticoCorrente } from '@/lib/anno-scolastico';
 import { buildCertificatoBody, buildIntestazioneSede, rigaLuogoData } from '@/lib/certificati/self-service';
 
@@ -90,6 +91,7 @@ interface SignedArchiveItem {
 // Identità dalla sessione (URL → localStorage → /api/me), senza fallback demo (M4).
 export default function ParentModulisticaPage() {
   const { userId: parentId } = useSessionIdentity();
+  const f = useDateFormat();
   const [activeTab, setActiveTab] = useState<'compilare' | 'archivio' | 'certificati' | 'medici'>('compilare');
   const [assignedForms, setAssignedForms] = useState<AssignedForm[]>([]);
   const [archive, setArchive] = useState<SignedArchiveItem[]>([]);
@@ -583,7 +585,7 @@ export default function ParentModulisticaPage() {
                         {form.expiration_date && (
                           <span className="bg-kidville-warn-soft text-kidville-warn px-2.5 py-1 rounded-full text-xs font-semibold flex items-center gap-1">
                             <Clock size={12} />
-                            Scade il: {new Date(form.expiration_date).toLocaleDateString('it-IT')}
+                            Scade il: {f.dataBreve(form.expiration_date)}
                           </span>
                         )}
                       </div>
@@ -757,7 +759,7 @@ export default function ParentModulisticaPage() {
                         {item.forms_templates?.title}
                       </h3>
                       <p className="font-maven text-xs text-kidville-muted mt-1">
-                        Figlio: {item.alunni?.nome} {item.alunni?.cognome} | Firmato il: {new Date(item.created_at).toLocaleDateString('it-IT')}
+                        Figlio: {item.alunni?.nome} {item.alunni?.cognome} | Firmato il: {f.dataBreve(item.created_at)}
                       </p>
                       <div className="mt-2.5 flex items-center gap-1 text-[10px] text-kidville-success bg-kidville-success-soft px-2 py-0.5 rounded-full font-bold w-fit uppercase tracking-wider">
                         <Shield size={10} /> Ricevuta FES Protetta
@@ -921,14 +923,14 @@ export default function ParentModulisticaPage() {
                     <div key={cert.id} className="bg-white rounded-card p-4 border border-kidville-line flex items-center justify-between text-xs font-maven">
                       <div>
                         <div className="font-semibold text-kidville-ink">Certificato: {cert.fileName}</div>
-                        <div className="text-kidville-muted mt-0.5">Figlio: {cert.alunno?.nome} | Caricato il: {new Date(cert.creato_il).toLocaleDateString('it-IT')}</div>
+                        <div className="text-kidville-muted mt-0.5">Figlio: {cert.alunno?.nome} | Caricato il: {f.dataBreve(cert.creato_il)}</div>
                         {cert.notes && <div className="text-kidville-muted mt-1 italic">Note: {cert.notes}</div>}
                       </div>
 
                       <div className="flex flex-col items-end gap-1.5">
                         {(cert.giorni_coperti?.length ?? 0) > 0 ? (
                           <span className="bg-kidville-success-soft text-kidville-success px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider">
-                            Giustificato: {(cert.giorni_coperti ?? []).map((d: string) => new Date(d).toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit' })).join(', ')}
+                            Giustificato: {(cert.giorni_coperti ?? []).map((d: string) => new Intl.DateTimeFormat(f.locale, { day: '2-digit', month: '2-digit' }).format(new Date(d))).join(', ')}
                           </span>
                         ) : (
                           <span className="bg-kidville-warn-soft text-kidville-warn px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider">

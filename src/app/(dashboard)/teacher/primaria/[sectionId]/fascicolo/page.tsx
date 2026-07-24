@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
+import { useDateFormat } from '@/lib/i18n/date';
 import { FolderLock, Upload, Download, ShieldAlert, FileText, ChevronDown, ChevronRight } from 'lucide-react';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { DateField } from '@/components/ui/DateField';
@@ -29,6 +30,7 @@ const TIPI: { v: string }[] = [
 
 export default function FascicoloPage() {
   const t = useTranslations('teacherPrimaria');
+  const f = useDateFormat();
   const params = useParams();
   const search = useSearchParams();
   const sectionId = params?.sectionId as string;
@@ -206,7 +208,7 @@ export default function FascicoloPage() {
                             <div>
                               <p className="font-maven text-sm text-kidville-ink">{p.periodoNome}</p>
                               <p className="font-maven text-xs text-kidville-muted">
-                                {t('fascicoloPubblicataIl', { data: p.dataPubblicazione ? new Date(p.dataPubblicazione).toLocaleDateString('it-IT') : '—' })}
+                                {t('fascicoloPubblicataIl', { data: p.dataPubblicazione ? f.dataBreve(p.dataPubblicazione) : '—' })}
                               </p>
                             </div>
                             <button
@@ -269,8 +271,8 @@ export default function FascicoloPage() {
                         {' '}{doc.file_name || doc.descrizione || t('fascicoloDocumento')}
                       </p>
                       <p className="font-maven text-xs text-kidville-muted">
-                        {new Date(doc.created_at).toLocaleDateString('it-IT')}
-                        {doc.expiry_date ? ` · ${t('fascicoloScade', { data: new Date(doc.expiry_date).toLocaleDateString('it-IT') })}` : ''}
+                        {f.dataBreve(doc.created_at)}
+                        {doc.expiry_date ? ` · ${t('fascicoloScade', { data: f.dataBreve(doc.expiry_date) })}` : ''}
                       </p>
                     </div>
                     <button onClick={() => scarica(doc.id)} className="font-maven inline-flex items-center gap-1.5 rounded-pill bg-kidville-green/10 px-3 py-1.5 text-xs text-kidville-green">

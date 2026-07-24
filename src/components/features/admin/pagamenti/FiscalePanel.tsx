@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
+import { useDateFormat } from '@/lib/i18n/date';
 import { Download, FileSpreadsheet, Receipt, RefreshCw } from 'lucide-react';
 import { SectionTitle, TABLE_WRAP, TABLE, TH, TD, TROW } from '@/components/ui/cockpit';
 import { Badge } from '@/components/ui/Badge';
@@ -25,7 +26,6 @@ interface Alunno { id: string; nome?: string; cognome?: string; classe_sezione?:
 interface Props { userId: string; scuolaId: string }
 
 const hdr = (u: string) => ({ 'Content-Type': 'application/json', 'x-user-id': u });
-const dataIt = (d?: string | null) => (d ? new Date(d).toLocaleDateString('it-IT') : '—');
 
 /** Vista Fiscale: attestazioni annuali per alunno + registro delle ricevute numerate. */
 export function FiscalePanel({ userId, scuolaId }: Props) {
@@ -175,6 +175,9 @@ function ChipsRicevuta({ r }: { r: RicevutaRiga }) {
 
 function RigaRegistro({ r, userId, mobile }: { r: RicevutaRiga; userId: string; mobile: boolean }) {
     const t = useTranslations('adminContabilita');
+    const f = useDateFormat();
+    // Data breve localizzata (IT identica a `toLocaleDateString('it-IT')`); '—' se assente.
+    const dataIt = (d?: string | null) => (d ? f.dataBreve(d) : '—');
     const alunno = `${r.alunni?.nome ?? ''} ${r.alunni?.cognome ?? ''}`.trim() || '—';
     const pdf = !r.annullata_il && (
         <a href={`/api/pagamenti/ricevuta?pagamento_id=${r.pagamento_id}&userId=${userId}`}

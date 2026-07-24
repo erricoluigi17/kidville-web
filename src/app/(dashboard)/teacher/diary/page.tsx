@@ -2,6 +2,7 @@
 
 import { useState, useEffect, Suspense } from 'react';
 import { useTranslations } from 'next-intl';
+import { useDateFormat } from '@/lib/i18n/date';
 import { useSearchParams } from 'next/navigation';
 import { Users, WifiOff } from 'lucide-react';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
@@ -13,6 +14,7 @@ import { useDiaryDay, DiaryEventEditor } from '@/components/features/teacher/dia
 
 function TeacherDiaryInner() {
     const t = useTranslations('teacherDiario');
+    const f = useDateFormat();
     const search = useSearchParams();
     const userId = getCurrentTeacherId(search);
 
@@ -103,7 +105,7 @@ function TeacherDiaryInner() {
                     <span className="capitalize">
                         {t('sottotitoloSezione', {
                             sezione: sezione ?? '',
-                            data: new Date().toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' }),
+                            data: new Intl.DateTimeFormat(f.locale, { weekday: 'long', day: 'numeric', month: 'long' }).format(new Date()),
                         })}
                     </span>
                 }

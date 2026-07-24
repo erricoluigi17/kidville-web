@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useTranslations } from 'next-intl'
+import { useDateFormat } from '@/lib/i18n/date'
 import {
   Baby, Users, FileText, CheckCircle2, XCircle, Loader2,
   ChevronLeft, Clock, KeyRound, AlertTriangle, ExternalLink, Star,
@@ -38,6 +39,7 @@ interface Section { id: string; name: string }
 
 export function ModuliRicevuti() {
   const t = useTranslations('adminAltro')
+  const f = useDateFormat()
   const [rows, setRows] = useState<SubmissionRow[]>([])
   const [sections, setSections] = useState<Section[]>([])
   const [loading, setLoading] = useState(true)
@@ -200,7 +202,7 @@ export function ModuliRicevuti() {
                   <div className="flex items-center gap-3 text-xs text-kidville-muted font-maven">
                     <span className="flex items-center gap-1"><Baby size={13} /> {nChildren}</span>
                     <span className="flex items-center gap-1"><Users size={13} /> {nAdults}</span>
-                    <span>{new Date(row.created_at).toLocaleDateString('it-IT')}</span>
+                    <span>{f.dataBreve(row.created_at)}</span>
                   </div>
                 </button>
               )

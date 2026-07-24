@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
+import { useDateFormat } from '@/lib/i18n/date';
 import { AlertTriangle, BarChart3 } from 'lucide-react';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 
@@ -14,6 +15,7 @@ interface PanoramicaVoce { materiaId: string; nome: string; media: number | null
 
 export default function ProspettoPage() {
   const t = useTranslations('teacherPrimaria');
+  const f = useDateFormat();
   const params = useParams();
   const search = useSearchParams();
   const sectionId = params?.sectionId as string;
@@ -149,7 +151,7 @@ export default function ProspettoPage() {
                         {v.giudizio_sintetico || t('prospettoDescrittivo')}
                       </span>
                       <span className="capitalize">{v.tipo}</span>
-                      <span className="text-kidville-muted">{new Date(v.creato_il).toLocaleDateString('it-IT')}</span>
+                      <span className="text-kidville-muted">{f.dataBreve(v.creato_il)}</span>
                       {v.giudizio_testo && <span className="truncate">— {v.giudizio_testo}</span>}
                     </li>
                   ))}

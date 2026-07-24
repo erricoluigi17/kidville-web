@@ -1,7 +1,7 @@
 'use client';
 
 import type { ReactNode } from 'react';
-import { useTranslations } from 'next-intl';
+import { useTranslations, useLocale } from 'next-intl';
 import { motion } from 'framer-motion';
 import { User, Clock, CheckCircle, Timer, LogOut, X } from 'lucide-react';
 
@@ -92,10 +92,10 @@ const STATI_BOTTONI: {
     },
 ];
 
-function formatTime(isoString: string | null): string | null {
+function formatTime(isoString: string | null, locale: string): string | null {
     if (!isoString) return null;
     try {
-        return new Date(isoString).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+        return new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(new Date(isoString));
     } catch {
         return isoString;
     }
@@ -103,14 +103,15 @@ function formatTime(isoString: string | null): string | null {
 
 export function StudentAttendanceRow({ student, record, onSetStato, onCheckoutClick, isLoading }: Props) {
     const t = useTranslations('teacherPresenze');
+    const locale = useLocale();
     const stato = record?.stato ?? null;
     const isPresente = stato === 'presente';
     const isRitardo = stato === 'ritardo';
     const isUscitaAnticipata = stato === 'uscita_anticipata';
     const isAssente = stato === 'assente';
 
-    const checkInTime = formatTime(record?.orario_entrata ?? null);
-    const checkOutTime = formatTime(record?.orario_uscita ?? null);
+    const checkInTime = formatTime(record?.orario_entrata ?? null, locale);
+    const checkOutTime = formatTime(record?.orario_uscita ?? null, locale);
 
     const borderColor = isPresente
         ? '#22c55e'

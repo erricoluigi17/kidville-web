@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
+import { useDateFormat } from '@/lib/i18n/date';
 import { ChevronRight, Landmark, RefreshCw, Upload } from 'lucide-react';
 import { SectionTitle } from '@/components/ui/cockpit';
 import { SaveCheck } from '@/components/ui/SaveConfirmation';
@@ -35,7 +36,6 @@ interface Props {
 }
 
 const hdr = (u: string) => ({ 'Content-Type': 'application/json', 'x-user-id': u });
-const dataIt = (d?: string | null) => (d ? new Date(d).toLocaleDateString('it-IT') : '—');
 const testoErrore = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /**
@@ -47,6 +47,9 @@ const testoErrore = (e: unknown) => (e instanceof Error ? e.message : String(e))
  */
 export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props) {
   const t = useTranslations('adminContabilita');
+  const f = useDateFormat();
+  // Data breve localizzata (IT identica a `toLocaleDateString('it-IT')`); '—' se assente.
+  const dataIt = (d?: string | null) => (d ? f.dataBreve(d) : '—');
   const [movimenti, setMovimenti] = useState<MovimentoUi[]>([]);
   const [aperti, setAperti] = useState<PagamentoApertoUi[]>([]);
   const [disponibile, setDisponibile] = useState(true);

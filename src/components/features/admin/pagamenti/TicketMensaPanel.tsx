@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslations } from 'next-intl';
+import { useDateFormat } from '@/lib/i18n/date';
 import { Ticket, Search, Plus, History, AlertTriangle } from 'lucide-react';
 import { SaveCheck } from '@/components/ui/SaveConfirmation';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
@@ -27,10 +28,12 @@ interface Storico { saldo_ticket: number; ultimo_carico: string | null; moviment
 interface Moroso { alunno_id: string; nome: string; cognome: string; classe_sezione?: string | null; saldo_ticket: number; ultimo_carico: string | null }
 
 const hdr = (u: string) => ({ 'Content-Type': 'application/json', 'x-user-id': u });
-const dataIt = (s: string | null | undefined) => (s ? new Date(s).toLocaleDateString('it-IT') : '—');
 
 export function TicketMensaPanel({ userId, scuolaId }: Props) {
     const t = useTranslations('adminContabilita');
+    const f = useDateFormat();
+    // Data breve localizzata (IT identica a `toLocaleDateString('it-IT')`); '—' se assente.
+    const dataIt = (s: string | null | undefined) => (s ? f.dataBreve(s) : '—');
     const [alunni, setAlunni] = useState<Alunno[]>([]);
     const [search, setSearch] = useState('');
     const [sel, setSel] = useState<Alunno | null>(null);

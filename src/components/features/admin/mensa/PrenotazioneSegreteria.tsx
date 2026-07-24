@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslations } from 'next-intl';
+import { useDateFormat } from '@/lib/i18n/date';
 import { Search, CalendarPlus, Ticket, CheckCircle2, AlertTriangle } from 'lucide-react';
 
 interface Props { userId: string; scuolaId: string }
@@ -10,6 +11,7 @@ const hdr = (u: string) => ({ 'Content-Type': 'application/json', 'x-user-id': u
 
 export function PrenotazioneSegreteria({ userId, scuolaId }: Props) {
   const t = useTranslations('adminMensa');
+  const f = useDateFormat();
   const [alunni, setAlunni] = useState<Alunno[]>([]);
   const [search, setSearch] = useState('');
   const [sel, setSel] = useState<Alunno | null>(null);
@@ -41,7 +43,7 @@ export function PrenotazioneSegreteria({ userId, scuolaId }: Props) {
       setSaldo(j.data.saldo);
       const esito = j.data.esiti?.[0];
       if (esito && !esito.ok) setMsg(esito.motivo ?? t('operazioneNonRiuscita'));
-      else setMsg(t('ticketInserito', { data: new Date(`${data}T00:00:00Z`).toLocaleDateString('it-IT'), saldo: j.data.saldo }));
+      else setMsg(t('ticketInserito', { data: f.dataBreve(`${data}T00:00:00Z`), saldo: j.data.saldo }));
     } else setMsg(j.error ?? t('errore'));
   };
 

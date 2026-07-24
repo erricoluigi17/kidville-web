@@ -11,7 +11,7 @@
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useRouter } from 'next/navigation';
-import { useTranslations } from 'next-intl';
+import { useTranslations, useLocale } from 'next-intl';
 import { Bell, BellOff } from 'lucide-react';
 import { SHADOW_FLOAT } from '@/components/ui/Card';
 
@@ -25,10 +25,10 @@ interface Notifica {
   creato_il: string;
 }
 
-function quando(iso: string): string {
+function quando(iso: string, locale: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
-  return `${d.toLocaleDateString('it-IT', { day: 'numeric', month: 'short' })} · ${d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })}`;
+  return `${new Intl.DateTimeFormat(locale, { day: 'numeric', month: 'short' }).format(d)} · ${new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(d)}`;
 }
 
 export function AdminNotificationsPanel({
@@ -48,6 +48,7 @@ export function AdminNotificationsPanel({
 }) {
   const router = useRouter();
   const t = useTranslations('adminNav');
+  const locale = useLocale();
   const ref = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<Notifica[]>([]);
@@ -192,7 +193,7 @@ export function AdminNotificationsPanel({
                     {n.corpo && (
                       <span className="block truncate font-maven text-[11.5px] text-kidville-muted">{n.corpo}</span>
                     )}
-                    <span className="block font-maven text-[10.5px] text-kidville-muted">{quando(n.creato_il)}</span>
+                    <span className="block font-maven text-[10.5px] text-kidville-muted">{quando(n.creato_il, locale)}</span>
                   </span>
                 </button>
               ))}

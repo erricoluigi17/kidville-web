@@ -13,6 +13,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
+import { useDateFormat } from '@/lib/i18n/date';
 import { Check, Download, FileText, Search, X, Users } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
 import { FatturaButton } from './FatturaButton';
@@ -45,7 +46,6 @@ interface Props {
 }
 
 const hdr = (u: string) => ({ 'Content-Type': 'application/json', 'x-user-id': u });
-const dataIt = (d?: string | null) => (d ? new Date(d).toLocaleDateString('it-IT') : '—');
 const testoErrore = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 const TITLE_ID = 'movimento-dialog-title';
@@ -62,6 +62,9 @@ function CfPill() {
 
 export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, returnFocusRef, onIncassoUnico }: Props) {
   const t = useTranslations('adminContabilita');
+  const f = useDateFormat();
+  // Data breve localizzata (IT identica a `toLocaleDateString('it-IT')`); '—' se assente.
+  const dataIt = (d?: string | null) => (d ? f.dataBreve(d) : '—');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [ricerca, setRicerca] = useState('');

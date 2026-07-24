@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, Suspense } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
+import { useDateFormat } from '@/lib/i18n/date';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronLeft, ChevronRight, Camera, ChevronDown, GraduationCap } from 'lucide-react';
 import { getEventConfig, useEventLabel } from '@/components/features/teacher/diary/eventConfig';
@@ -54,17 +55,17 @@ const MEAL_ICONS: Record<string, string> = {
 
 // Orario leggibile per l'entrata: un ISO (timestamp dell'appello) diventa 'HH:MM'
 // in ora locale; ciò che ISO non è (es. già 'HH:MM') passa invariato.
-function formatOrarioEntrata(raw: string | null | undefined): string | null {
+function formatOrarioEntrata(raw: string | null | undefined, locale: string): string | null {
     if (!raw) return null;
     const d = new Date(raw);
     return !isNaN(d.getTime())
-        ? d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })
+        ? new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(d)
         : raw;
 }
 
-function buildFirstPersonNarrative(tipo: string, dettagli: Record<string, unknown> | null, t: Traduci): { lines: string[], emoji: string } {
+function buildFirstPersonNarrative(tipo: string, dettagli: Record<string, unknown> | null, t: Traduci, locale: string): { lines: string[], emoji: string } {
     if (tipo === 'entrata') {
-        const orario = formatOrarioEntrata((dettagli?.orario as string) ?? '') ?? '';
+        const orario = formatOrarioEntrata((dettagli?.orario as string) ?? '', locale) ?? '';
         return {
             emoji: '👋',
             lines: orario
@@ -166,17 +167,17 @@ function toDateKey(d: Date): string {
     return d.toISOString().split('T')[0];
 }
 
-function formatDayLabel(dateKey: string, t: Traduci): string {
+function formatDayLabel(dateKey: string, t: Traduci, locale: string): string {
     const d = new Date(dateKey + 'T12:00:00');
     const today = toDateKey(new Date());
     const yesterday = toDateKey(new Date(Date.now() - 86400000));
     if (dateKey === today)     return t('giornoOggi');
     if (dateKey === yesterday) return t('giornoIeri');
-    return d.toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' });
+    return new Intl.DateTimeFormat(locale, { weekday: 'long', day: 'numeric', month: 'long' }).format(d);
 }
 
-function formatTime(iso: string): string {
-    return new Date(iso).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+function formatTime(iso: string, locale: string): string {
+    return new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(new Date(iso));
 }
 
 function deduplicateAndSort(entries: DiaryEntry[]): DiaryEntry[] {
@@ -194,12 +195,14 @@ function deduplicateAndSort(entries: DiaryEntry[]): DiaryEntry[] {
 
 function EventCard({ entry, index }: { entry: DiaryEntry; index: number }) {
     const t = useTranslations('diario');
+    const f = useDateFormat();
     const eventLabel = useEventLabel();
     const config = getEventConfig(entry.tipo_evento);
     const { lines, emoji } = buildFirstPersonNarrative(
         entry.tipo_evento,
         entry.dettagli,
         t,
+        f.locale,
     );
     const borderColor = config.accentColor.split(' ').find(c => c.startsWith('border-')) ?? 'border-kidville-line';
 
@@ -220,7 +223,7 @@ function EventCard({ entry, index }: { entry: DiaryEntry; index: number }) {
                         {eventLabel(entry.tipo_evento)}
                     </p>
                     <p className="font-maven text-[11px] text-kidville-muted">
-                        {formatTime(entry.timestamp_evento)}
+                        {formatTime(entry.timestamp_evento, f.locale)}
                     </p>
                 </div>
                 <span className="text-2xl">{emoji}</span>
@@ -311,6 +314,7 @@ function PhotosSection({ photos }: { photos: MediaItem[] }) {
 // Identità dalla sessione (URL → localStorage → /api/me), senza fallback demo (M4).
 function ParentDiaryContent() {
     const t = useTranslations('diario');
+    const f = useDateFormat();
     const umoreLabel = useUmoreLabel();
     const { parentId, studentId: alunnoId, ready } = useParentIdentity();
     // Guardia grado: il diario giornaliero esiste solo per nido/infanzia.
@@ -367,7 +371,7 @@ function ParentDiaryContent() {
             // "Entrata" dal modulo Presenze (orario di check-in del giorno)
             const ciRes = await fetch(`/api/diary/checkin?alunno_id=${alunnoId}&date=${dk}`).catch(() => null);
             const ci = ciRes?.ok ? await ciRes.json().catch(() => null) : null;
-            setCheckIn(formatOrarioEntrata(ci?.orario_entrata));
+            setCheckIn(formatOrarioEntrata(ci?.orario_entrata, f.locale));
 
             // Carica foto reali associate a questo alunno per il giorno selezionato
             // (GET gated: identità anche via header, oltre alla sessione)
@@ -383,7 +387,7 @@ function ParentDiaryContent() {
         } finally {
             setLoadedKey(dk);
         }
-    }, [ready, alunnoId, parentId]);
+    }, [ready, alunnoId, parentId, f.locale]);
 
     useEffect(() => { load(dateKey); }, [dateKey, load]);
 
@@ -477,12 +481,12 @@ function ParentDiaryContent() {
 
                 <div className="text-center">
                     <p className="font-barlow font-black text-base text-kidville-green uppercase tracking-wide">
-                        {formatDayLabel(dateKey, t)}
+                        {formatDayLabel(dateKey, t, f.locale)}
                     </p>
                     <p className="font-maven text-xs text-kidville-muted">
-                        {new Date(dateKey + 'T12:00:00').toLocaleDateString('it-IT', {
+                        {new Intl.DateTimeFormat(f.locale, {
                             day: 'numeric', month: 'long', year: 'numeric',
-                        })}
+                        }).format(new Date(dateKey + 'T12:00:00'))}
                     </p>
                 </div>
 

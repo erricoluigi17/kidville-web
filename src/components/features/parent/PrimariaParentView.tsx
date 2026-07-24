@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Award, AlertTriangle, PenLine, CalendarOff, Hand, CalendarPlus, FileText, Download, Lock } from 'lucide-react';
 import { DateField } from '@/components/ui/DateField';
+import { useDateFormat } from '@/lib/i18n/date';
 
 interface Valutazione { id: string; materia: string; tipo: string; modalita: string; argomento: string | null; giudizio_sintetico: string | null; giudizio_testo: string | null; creato_il: string }
 interface Nota { id: string; categoria: string; testo: string; richiede_firma: boolean; firmata_il: string | null; creato_il: string }
@@ -39,6 +40,7 @@ export function PrimariaParentView({
   onCaricaScrutinio: (scrutinioId: string) => Promise<ScrutinioView | null>;
   signing: string | null;
 }) {
+  const f = useDateFormat();
   return (
     <div className="space-y-5">
       {/* Pagelle (documento di valutazione) */}
@@ -102,7 +104,7 @@ export function PrimariaParentView({
                 <div className="flex items-center gap-2">
                   <span className="font-maven text-sm font-semibold text-gray-800">{v.materia}</span>
                   <span className="text-xs text-gray-400 capitalize">{v.tipo}</span>
-                  <span className="text-xs text-gray-300">{new Date(v.creato_il).toLocaleDateString('it-IT')}</span>
+                  <span className="text-xs text-gray-300">{f.dataBreve(v.creato_il)}</span>
                 </div>
                 {v.argomento && <p className="font-maven text-xs text-gray-500 mt-0.5">Argomento: {v.argomento}</p>}
                 <p className="font-maven text-sm text-kidville-green mt-0.5">
@@ -126,6 +128,7 @@ function PagellaCard({ pagella, onScarica, onRequestOtp, onFirma, onCaricaScruti
   onFirma: (scrutinioId: string, otp: OtpParams) => Promise<void>;
   onCaricaScrutinio: (scrutinioId: string) => Promise<ScrutinioView | null>;
 }) {
+  const f = useDateFormat();
   const [firmato, setFirmato] = useState(pagella.firmato);
   const [view, setView] = useState<ScrutinioView | null>(null);
   const [open, setOpen] = useState(false);
@@ -172,7 +175,7 @@ function PagellaCard({ pagella, onScarica, onRequestOtp, onFirma, onCaricaScruti
         <div>
           <p className="font-maven text-sm font-semibold text-gray-800">{pagella.periodo}</p>
           <p className="font-maven text-xs text-gray-400">
-            {pagella.anno}{pagella.chiusoIl ? ` · ${new Date(pagella.chiusoIl).toLocaleDateString('it-IT')}` : ''}
+            {pagella.anno}{pagella.chiusoIl ? ` · ${f.dataBreve(pagella.chiusoIl)}` : ''}
           </p>
         </div>
         {firmato ? (
@@ -306,13 +309,14 @@ function AssenzaRow({ assenza, onGiustifica, onRequestGiustificaOtp }: {
   onGiustifica: (data: string, motivo: string, otp: OtpParams) => void | Promise<void>;
   onRequestGiustificaOtp: () => Promise<{ expiry: number; ticket: string; devCode?: string } | null>;
 }) {
+  const f = useDateFormat();
   const [motivo, setMotivo] = useState('');
   const [busy, setBusy] = useState(false);
   const [step, setStep] = useState<'motivo' | 'otp'>('motivo');
   const [code, setCode] = useState('');
   const [ticketData, setTicketData] = useState<{ expiry: number; ticket: string } | null>(null);
   const [err, setErr] = useState('');
-  const giorno = new Date(assenza.data).toLocaleDateString('it-IT', { weekday: 'short', day: 'numeric', month: 'short' });
+  const giorno = new Intl.DateTimeFormat(f.locale, { weekday: 'short', day: 'numeric', month: 'short' }).format(new Date(assenza.data));
 
   const richiediCodice = async () => {
     setBusy(true); setErr('');

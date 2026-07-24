@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslations } from 'next-intl';
+import { useDateFormat } from '@/lib/i18n/date';
 import {
   FileText, Users, HeartPulse,
   AlertCircle, Upload, Check, Bell, Calendar
@@ -43,6 +44,7 @@ interface MedicalCertificate {
 // Identità dalla sessione (URL → localStorage → /api/me), senza fallback demo (M4).
 export default function TeacherModulisticaPage() {
   const t = useTranslations('teacherServizi');
+  const f = useDateFormat();
   const { userId: teacherId } = useSessionIdentity();
   const [className, setClassName] = useState('');
   const [availableSections, setAvailableSections] = useState<string[]>([]);
@@ -336,7 +338,7 @@ export default function TeacherModulisticaPage() {
                         </span>
                       </div>
                       <p className="font-maven text-xs text-kidville-muted mt-1">
-                        {t('modulisticaCaricatoIl', { data: new Date(cert.creato_il).toLocaleDateString('it-IT') })}
+                        {t('modulisticaCaricatoIl', { data: f.dataBreve(cert.creato_il) })}
                       </p>
                       {cert.note && (
                         <p className="font-maven text-xs text-kidville-ink mt-2 bg-kidville-cream p-2 rounded-lg italic">

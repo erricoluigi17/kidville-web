@@ -2,6 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useState } from 'react';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
+import { useDateFormat } from '@/lib/i18n/date';
 import { Check } from 'lucide-react';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { Btn } from '@/components/ui/Btn';
@@ -19,6 +20,7 @@ const CATEGORIE: Record<string, { label: string; cls: string }> = {
 
 function NoteGenitore() {
   const { parentId, studentId, ready } = useParentIdentity();
+  const f = useDateFormat();
   const [note, setNote] = useState<Nota[]>([]);
   const [loading, setLoading] = useState(true);
   const [firmando, setFirmando] = useState<string | null>(null);
@@ -97,7 +99,7 @@ function NoteGenitore() {
                 <div className="flex items-center gap-2 mb-2 flex-wrap">
                   <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-maven font-semibold ${cat.cls}`}>{cat.label}</span>
                   <span className="font-maven text-xs text-kidville-muted">
-                    {new Date(n.creato_il).toLocaleDateString('it-IT')}
+                    {f.dataBreve(n.creato_il)}
                   </span>
                   {n.richiede_firma && (
                     n.firmata_il

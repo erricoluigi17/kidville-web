@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
+import { useDateFormat } from '@/lib/i18n/date';
 import { Plus, Trash2, GraduationCap } from 'lucide-react';
 import { DateField } from '@/components/ui/DateField';
 
@@ -20,6 +21,7 @@ const annoCorrente = () => {
 
 export function ScrutinioPeriodiManager({ userId }: { scuolaId: string; userId: string }) {
   const t = useTranslations('adminPrimaria');
+  const f = useDateFormat();
   const [periodi, setPeriodi] = useState<Periodo[]>([]);
   const [anno, setAnno] = useState(annoCorrente);
   const [nome, setNome] = useState('');
@@ -89,7 +91,7 @@ export function ScrutinioPeriodiManager({ userId }: { scuolaId: string; userId: 
               <span className="font-maven text-sm font-semibold text-kidville-ink">{p.ordine}. {p.nome}</span>
               {(p.data_inizio || p.data_fine) && (
                 <span className="font-maven text-xs text-kidville-muted ml-2">
-                  {p.data_inizio ? new Date(p.data_inizio).toLocaleDateString('it-IT') : '…'} – {p.data_fine ? new Date(p.data_fine).toLocaleDateString('it-IT') : '…'}
+                  {p.data_inizio ? f.dataBreve(p.data_inizio) : '…'} – {p.data_fine ? f.dataBreve(p.data_fine) : '…'}
                 </span>
               )}
             </div>

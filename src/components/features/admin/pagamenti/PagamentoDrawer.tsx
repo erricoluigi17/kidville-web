@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
+import { useDateFormat } from '@/lib/i18n/date';
 import { Pencil, Layers, Download, Euro } from 'lucide-react';
 import { Drawer } from '@/components/ui/cockpit';
 import { Badge } from '@/components/ui/Badge';
@@ -39,14 +40,15 @@ interface Props {
     extra?: React.ReactNode;
 }
 
-const fmtData = (d?: string | null) => (d ? new Date(d).toLocaleDateString('it-IT') : '—');
-
 /**
  * Drawer di dettaglio pagamento: riepilogo, timeline incassi/storni e tutte le
  * azioni in un punto solo. L'emissione fattura resta manuale (FatturaButton).
  */
 export function PagamentoDrawer({ pagamento, userId, onClose, onIncassa, onModifica, onRateizza, extra }: Props) {
     const t = useTranslations('adminContabilita');
+    const f = useDateFormat();
+    // Data breve localizzata (IT identica a `toLocaleDateString('it-IT')`); '—' se assente.
+    const fmtData = (d?: string | null) => (d ? f.dataBreve(d) : '—');
     const [dettaglio, setDettaglio] = useState<Dettaglio | null>(null);
     const [loading, setLoading] = useState(true);
 

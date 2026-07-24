@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useCallback, useState } from 'react';
-import { useLocale } from 'next-intl';
+import { useLocale, useTranslations } from 'next-intl';
 import { motion } from 'framer-motion';
 import { Check, CheckCheck, Languages, Loader2 } from 'lucide-react';
 import { sembraItaliano } from '@/lib/translate/lingua';
@@ -35,24 +35,30 @@ function formatMessageTime(iso: string, locale: string): string {
     return new Date(iso).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
 }
 
-function formatMessageDate(iso: string, locale: string): string {
+/** Etichette localizzate per i separatori relativi (da `common.oggi`/`common.ieri`). */
+export interface EtichetteGiorno {
+    oggi: string;
+    ieri: string;
+}
+
+export function formatMessageDate(iso: string, locale: string, labels: EtichetteGiorno): string {
     const d = new Date(iso);
     const today = new Date();
     const yesterday = new Date(Date.now() - 86400000);
 
-    // NB: «Oggi»/«Ieri» restano stringhe fisse (servono chiavi messaggio, fuori
-    // dallo scope di questo passo). Il resto della data è localizzato.
-    if (d.toDateString() === today.toDateString()) return 'Oggi';
-    if (d.toDateString() === yesterday.toDateString()) return 'Ieri';
-    return d.toLocaleDateString(locale, { day: 'numeric', month: 'long' });
+    // «Oggi»/«Ieri» arrivano localizzate (parità it/en); il resto della data
+    // (giorno + mese) è localizzato tramite `Intl.DateTimeFormat(locale, …)`.
+    if (d.toDateString() === today.toDateString()) return labels.oggi;
+    if (d.toDateString() === yesterday.toDateString()) return labels.ieri;
+    return new Intl.DateTimeFormat(locale, { day: 'numeric', month: 'long' }).format(d);
 }
 
-function groupByDate(messages: ChatMessage[], locale: string): { date: string; messages: ChatMessage[] }[] {
+function groupByDate(messages: ChatMessage[], locale: string, labels: EtichetteGiorno): { date: string; messages: ChatMessage[] }[] {
     const groups: { date: string; messages: ChatMessage[] }[] = [];
     let currentDate = '';
 
     messages.forEach(msg => {
-        const date = formatMessageDate(msg.created_at, locale);
+        const date = formatMessageDate(msg.created_at, locale, labels);
         if (date !== currentDate) {
             currentDate = date;
             groups.push({ date, messages: [] });
@@ -210,6 +216,7 @@ export function ChatMessageArea({
     onMarkRead,
 }: Props) {
     const locale = useLocale();
+    const tCommon = useTranslations('common');
     const bottomRef = useRef<HTMLDivElement>(null);
     const separatorRef = useRef<HTMLDivElement>(null);
     const observerRef = useRef<IntersectionObserver | null>(null);
@@ -324,7 +331,7 @@ export function ChatMessageArea({
         );
     }
 
-    const groups = groupByDate(messages, locale);
+    const groups = groupByDate(messages, locale, { oggi: tCommon('oggi'), ieri: tCommon('ieri') });
 
     return (
         <div className="flex-1 overflow-y-auto bg-kidville-cream/50 px-4 py-4 space-y-4">

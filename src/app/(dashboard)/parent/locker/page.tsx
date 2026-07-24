@@ -12,6 +12,7 @@ import {
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { Btn } from '@/components/ui/Btn';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
+import { useDateFormat } from '@/lib/i18n/date';
 
 interface LockerRequest {
     id: string;
@@ -77,6 +78,7 @@ function nextMonth(ym: string): string {
 function LockerInner() {
     // Identità reale (niente ID/nome hardcoded): come le altre pagine genitore.
     const { studentId, ready } = useParentIdentity();
+    const f = useDateFormat();
     const [childName, setChildName] = useState('');
     useEffect(() => {
         if (!studentId) return;
@@ -250,7 +252,7 @@ function LockerInner() {
             />
             {lastUpdated && (
                 <p className="mt-2 px-1 font-maven text-[11px] text-kidville-muted">
-                    Aggiornato alle {lastUpdated.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                    Aggiornato alle {new Intl.DateTimeFormat(f.locale, { hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(lastUpdated)}
                 </p>
             )}
 
@@ -320,7 +322,7 @@ function LockerInner() {
                                                 </p>
                                                 <p className="font-maven text-xs text-kidville-muted mt-0.5 flex items-center gap-1">
                                                     <Clock size={10} />
-                                                    {new Date(req.creato_il).toLocaleDateString('it-IT', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                                                    {new Intl.DateTimeFormat(f.locale, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).format(new Date(req.creato_il))}
                                                 </p>
                                             </div>
                                         </div>
@@ -361,7 +363,7 @@ function LockerInner() {
                                         <div className="flex-1">
                                             <p className="font-maven font-bold text-sm text-kidville-green">{req.locker_catalog.nome}</p>
                                             <p className="font-maven text-xs text-kidville-success">
-                                                ✅ Portare a scuola — Preso il {new Date(req.preso_in_carico_il!).toLocaleDateString('it-IT', { day: 'numeric', month: 'short' })}
+                                                ✅ Portare a scuola — Preso il {new Intl.DateTimeFormat(f.locale, { day: 'numeric', month: 'short' }).format(new Date(req.preso_in_carico_il!))}
                                             </p>
                                         </div>
                                     </div>
@@ -433,7 +435,7 @@ function LockerInner() {
                                                 <p className="font-maven text-sm text-kidville-muted">{req.locker_catalog.nome}</p>
                                             </div>
                                             <span className="font-maven text-xs text-kidville-muted">
-                                                {new Date(req.creato_il).toLocaleDateString('it-IT', { day: 'numeric', month: 'short' })}
+                                                {new Intl.DateTimeFormat(f.locale, { day: 'numeric', month: 'short' }).format(new Date(req.creato_il))}
                                             </span>
                                         </div>
                                     ))}

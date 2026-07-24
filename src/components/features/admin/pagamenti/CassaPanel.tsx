@@ -14,6 +14,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
+import { useDateFormat } from '@/lib/i18n/date';
 import { Wallet, TrendingDown, TrendingUp, Coins, CalendarDays, ArrowDownCircle, RotateCcw, Paperclip } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
@@ -47,7 +48,6 @@ interface TotaliCassa {
 
 const hdr = (u: string) => ({ 'Content-Type': 'application/json', 'x-user-id': u });
 const testoErrore = (e: unknown) => (e instanceof Error ? e.message : String(e));
-const dataIt = (d?: string | null) => (d ? new Date(d).toLocaleDateString('it-IT') : '—');
 
 const TIPO_INFO: Record<string, { labelKey: string; tone: BadgeTone }> = {
   entrata: { labelKey: 'cassaTipoEntrata', tone: 'success' },
@@ -85,6 +85,9 @@ export function importoTone(r: Pick<RigaMovimentoCassa, 'tipo' | 'importo'>): st
 
 export function CassaPanel({ userId, scuolaId }: Props) {
   const t = useTranslations('adminContabilita');
+  const f = useDateFormat();
+  // Data breve localizzata (IT identica a `toLocaleDateString('it-IT')`); '—' se assente.
+  const dataIt = (d?: string | null) => (d ? f.dataBreve(d) : '—');
   const { ruolo } = useAdminIdentity();
   const isAdmin = ruolo === 'admin'; // cosmetico: il gate vero è `mostraKpi` (server)
 

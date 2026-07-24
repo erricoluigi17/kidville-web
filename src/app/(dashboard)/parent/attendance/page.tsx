@@ -5,9 +5,11 @@ import { CheckCircle, CalendarX2, AlertTriangle } from 'lucide-react';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { Btn } from '@/components/ui/Btn';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
+import { useDateFormat } from '@/lib/i18n/date';
 
 function AttendanceInner() {
     const { parentId, studentId, ready } = useParentIdentity();
+    const f = useDateFormat();
     const today = new Date().toISOString().slice(0, 10);
 
     const [data, setData] = useState(today);
@@ -51,7 +53,7 @@ function AttendanceInner() {
                     </div>
                     <h2 className="mb-2 font-barlow text-2xl font-black uppercase text-kidville-green">Assenza comunicata</h2>
                     <p className="mb-6 font-maven text-kidville-muted">
-                        La scuola è stata notificata dell&apos;assenza del {new Date(data + 'T12:00:00').toLocaleDateString('it-IT')}. Grazie per la collaborazione.
+                        La scuola è stata notificata dell&apos;assenza del {f.dataBreve(data + 'T12:00:00')}. Grazie per la collaborazione.
                     </p>
                     <Btn
                         variant="ghost"

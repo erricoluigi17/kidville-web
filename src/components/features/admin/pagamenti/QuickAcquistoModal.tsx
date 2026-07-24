@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useTranslations } from 'next-intl';
+import { useDateFormat } from '@/lib/i18n/date';
 import { X, ShoppingBag } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { FatturaButton } from './FatturaButton';
@@ -35,6 +36,7 @@ const METODI = [
 // "già pagato" (crea l'incasso) e poi inviare la fattura, tutto dal popup.
 export function QuickAcquistoModal({ alunno, categoria, userId, scuolaId, onClose, onDone }: Props) {
     const t = useTranslations('adminContabilita');
+    const f = useDateFormat();
     const [descrizione, setDescrizione] = useState(categoria.nome);
     const [importo, setImporto] = useState<number>(0);
     const [obbligatorio, setObbligatorio] = useState(false);
@@ -65,7 +67,7 @@ export function QuickAcquistoModal({ alunno, categoria, userId, scuolaId, onClos
                     (p) => Number(p.importo) === Number(importo) && p.scadenza && Math.abs(Date.parse(p.scadenza) - Date.parse(data)) <= SOGLIA_MS
                 );
                 if (dup) {
-                    setConfermaDup(`${t('quickDupPre')} "${dup.descrizione}" ${t('quickDupImporto')} € ${Number(dup.importo).toFixed(2)} ${t('quickDupScadenza')} ${dup.scadenza ? new Date(dup.scadenza).toLocaleDateString('it-IT') : '—'}.`);
+                    setConfermaDup(`${t('quickDupPre')} "${dup.descrizione}" ${t('quickDupImporto')} € ${Number(dup.importo).toFixed(2)} ${t('quickDupScadenza')} ${dup.scadenza ? f.dataBreve(dup.scadenza) : '—'}.`);
                     setSaving(false);
                     return;
                 }

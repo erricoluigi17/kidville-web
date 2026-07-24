@@ -13,6 +13,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
+import { useDateFormat } from '@/lib/i18n/date';
 import { Coins, Search, Wand2, X, RotateCcw, FileText, UtensilsCrossed, ArrowLeft, Check, Printer } from 'lucide-react';
 import { SectionTitle } from '@/components/ui/cockpit';
 import { Modal } from '@/components/ui/Modal';
@@ -52,7 +53,6 @@ interface TxRow {
 }
 
 const hdr = (u: string) => ({ 'Content-Type': 'application/json', 'x-user-id': u });
-const dataIt = (d?: string | null) => (d ? new Date(d).toLocaleDateString('it-IT') : '—');
 const nomeFiglio = (f?: { nome?: string | null; cognome?: string | null } | null) =>
     `${f?.nome ?? ''} ${f?.cognome ?? ''}`.trim() || 'Alunno';
 
@@ -68,6 +68,9 @@ type Ricarica = { euro: string; ticket: string };
 
 export function TransazioniPanel({ userId, scuolaId, precompila }: Props) {
     const t = useTranslations('adminContabilita');
+    const f = useDateFormat();
+    // Data breve localizzata (IT identica a `toLocaleDateString('it-IT')`); '—' se assente.
+    const dataIt = (d?: string | null) => (d ? f.dataBreve(d) : '—');
     const [step, setStep] = useState<'pagante' | 'importi'>('pagante');
 
     // Step (a) — ricerca pagante.

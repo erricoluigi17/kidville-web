@@ -1,6 +1,7 @@
 'use client';
 
 import { BookOpen, ClipboardList, FileText, Image as ImageIcon, CalendarClock } from 'lucide-react';
+import { useDateFormat } from '@/lib/i18n/date';
 
 export interface Allegato { id: string; tipo: string; file_url: string; file_name: string | null }
 export interface Individualizzata { argomento: string | null; compiti: string | null }
@@ -20,11 +21,12 @@ function perGiorno(lezioni: Lezione[]): [string, Lezione[]][] {
   return [...m.entries()];
 }
 
-const fmtGiorno = (g: string) =>
-  new Date(g).toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' });
+const fmtGiorno = (g: string, locale: string) =>
+  new Intl.DateTimeFormat(locale, { weekday: 'long', day: 'numeric', month: 'long' }).format(new Date(g));
 
 // Sezione "Lezioni": materia + argomento + allegati (sola lettura).
 export function LezioniList({ lezioni }: { lezioni: Lezione[] }) {
+  const f = useDateFormat();
   const giorni = perGiorno(lezioni);
   return (
     <section className="rounded-card bg-white p-5 shadow-sm">
@@ -37,7 +39,7 @@ export function LezioniList({ lezioni }: { lezioni: Lezione[] }) {
         <div className="space-y-4">
           {giorni.map(([giorno, lez]) => (
             <div key={giorno}>
-              <p className="font-maven text-xs font-semibold text-kidville-muted mb-1">{fmtGiorno(giorno)}</p>
+              <p className="font-maven text-xs font-semibold text-kidville-muted mb-1">{fmtGiorno(giorno, f.locale)}</p>
               <ul className="space-y-1.5">
                 {lez.map((l) => (
                   <li key={l.id} className="rounded-card bg-kidville-cream/40 p-2.5">
@@ -71,6 +73,7 @@ export function LezioniList({ lezioni }: { lezioni: Lezione[] }) {
 
 // Sezione "Compiti": compiti + scadenza (mostra solo le lezioni con compiti).
 export function CompitiList({ lezioni }: { lezioni: Lezione[] }) {
+  const f = useDateFormat();
   const conCompiti = lezioni.filter((l) => l.compiti || l.individualizzate.some((i) => i.compiti));
   const giorni = perGiorno(conCompiti);
   return (
@@ -84,7 +87,7 @@ export function CompitiList({ lezioni }: { lezioni: Lezione[] }) {
         <div className="space-y-4">
           {giorni.map(([giorno, lez]) => (
             <div key={giorno}>
-              <p className="font-maven text-xs font-semibold text-kidville-muted mb-1">{fmtGiorno(giorno)}</p>
+              <p className="font-maven text-xs font-semibold text-kidville-muted mb-1">{fmtGiorno(giorno, f.locale)}</p>
               <ul className="space-y-1.5">
                 {lez.map((l) => (
                   <li key={l.id} className="rounded-card bg-kidville-cream/40 p-2.5">
@@ -98,7 +101,7 @@ export function CompitiList({ lezioni }: { lezioni: Lezione[] }) {
                       // Con il datepicker docente la data non va più scritta nel
                       // testo libero, evitando la doppia indicazione.
                       <p className="mt-1.5 inline-flex items-center gap-1 rounded-pill bg-kidville-error-soft px-2 py-0.5 font-maven text-[11px] font-semibold text-kidville-error">
-                        <CalendarClock size={11} /> Consegna: {new Date(l.data_consegna_compiti).toLocaleDateString('it-IT', { weekday: 'short', day: 'numeric', month: 'short' })}
+                        <CalendarClock size={11} /> Consegna: {new Intl.DateTimeFormat(f.locale, { weekday: 'short', day: 'numeric', month: 'short' }).format(new Date(l.data_consegna_compiti))}
                       </p>
                     )}
                   </li>

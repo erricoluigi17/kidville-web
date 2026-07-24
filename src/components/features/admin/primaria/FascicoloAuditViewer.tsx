@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
+import { useDateFormat } from '@/lib/i18n/date';
 import { FolderLock, RefreshCw } from 'lucide-react';
 
 interface AuditRow {
@@ -25,6 +26,7 @@ const AZIONE: Record<string, { lKey: string; cls: string }> = {
 
 export function FascicoloAuditViewer({ userId }: { scuolaId: string; userId: string }) {
   const t = useTranslations('adminPrimaria');
+  const f = useDateFormat();
   const [rows, setRows] = useState<AuditRow[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -69,7 +71,7 @@ export function FascicoloAuditViewer({ userId }: { scuolaId: string; userId: str
             )}
             {rows.map((r) => (
               <tr key={r.id} className="border-t border-kidville-line font-maven">
-                <td className="py-2 pr-3 text-kidville-ink whitespace-nowrap">{new Date(r.creato_il).toLocaleString('it-IT')}</td>
+                <td className="py-2 pr-3 text-kidville-ink whitespace-nowrap">{new Intl.DateTimeFormat(f.locale, { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date(r.creato_il))}</td>
                 <td className="py-2 pr-3">
                   <span className={`rounded-pill px-2 py-0.5 text-[11px] ${AZIONE[r.azione]?.cls ?? 'bg-kidville-line text-kidville-ink'}`}>{AZIONE[r.azione] ? t(AZIONE[r.azione].lKey) : r.azione}</span>
                 </td>

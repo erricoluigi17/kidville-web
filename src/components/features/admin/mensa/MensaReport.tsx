@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslations } from 'next-intl';
+import { useDateFormat } from '@/lib/i18n/date';
 import { ClipboardList, AlertTriangle, Users, UtensilsCrossed, Trash2, Plus } from 'lucide-react';
 import { DateField } from '@/components/ui/DateField';
 import { useAllergeneLabel, allergeneEmoji } from '@/lib/mensa/allergeni';
@@ -32,6 +33,7 @@ interface AlternativaManuale { id: string; alunno_id: string; nome: string; clas
 
 export function MensaReport({ userId, scuolaId, sezione, sezioni, soloLettura = false }: Props) {
   const t = useTranslations('adminMensa');
+  const f = useDateFormat();
   const allergeneLabel = useAllergeneLabel();
   const [data, setData] = useState(() => new Date().toISOString().slice(0, 10));
   const [filtroSezione, setFiltroSezione] = useState<string>(sezione ?? '');
@@ -204,7 +206,7 @@ export function MensaReport({ userId, scuolaId, sezione, sezioni, soloLettura = 
               {!soloLettura && tuttiAlunni.length > 0 && (
                 <div className="rounded-xl border border-dashed border-kidville-line p-3 space-y-2">
                   <p className="font-maven text-[11px] text-kidville-muted">
-                    {t('formNotaAlternativa', { data: new Date(`${data}T00:00:00`).toLocaleDateString('it-IT', { day: 'numeric', month: 'long' }) })}
+                    {t('formNotaAlternativa', { data: f.giornoMese(`${data}T00:00:00`) })}
                   </p>
                   <div className="flex flex-wrap gap-2">
                     <label htmlFor="mensa-alt-alunno" className="sr-only">{t('bambinoLabel')}</label>

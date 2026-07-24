@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useTranslations } from 'next-intl';
+import { useDateFormat } from '@/lib/i18n/date';
 import { Layers, RefreshCw } from 'lucide-react';
 import { SaveCheck } from '@/components/ui/SaveConfirmation';
 import { cx } from '@/lib/ui/cx';
@@ -25,6 +26,7 @@ function addMonths(iso: string, n: number): string {
 // gli iscritti, con importo unico, causale e scadenza. Opzione divisione in acconti.
 export function GeneratoreCategoria({ userId, scuolaId }: Props) {
     const t = useTranslations('adminContabilita');
+    const f = useDateFormat();
     const [categorie, setCategorie] = useState<Categoria[]>([]);
     const [alunni, setAlunni] = useState<Alunno[]>([]);
     const [categoriaId, setCategoriaId] = useState('');
@@ -210,7 +212,7 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
                     </p>
                     <p className="font-maven text-xs text-kidville-muted">{t('gencGiaPresenti')} {anteprima.giaGenerati}</p>
                     <p className="font-maven text-xs text-kidville-muted">
-                        {t('gencScadenzaPre')} {acconti ? t('gencPrimaRata') : ''}{new Date(scadenza).toLocaleDateString('it-IT')} · {classe || t('gencTuttiIscritti')}
+                        {t('gencScadenzaPre')} {acconti ? t('gencPrimaRata') : ''}{f.dataBreve(scadenza)} · {classe || t('gencTuttiIscritti')}
                     </p>
                 </div>
             )}

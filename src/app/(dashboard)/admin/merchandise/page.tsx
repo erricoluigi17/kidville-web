@@ -1,7 +1,8 @@
 'use client';
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
-import { useTranslations } from 'next-intl';
+import { useTranslations, useLocale } from 'next-intl';
+import { formatData } from '@/lib/i18n/date';
 import { useRouter, useSearchParams } from 'next/navigation';
 import type { LucideIcon } from 'lucide-react';
 import {
@@ -34,7 +35,9 @@ interface GiacenzaCell { articolo_id: string | null; nome: string; taglia: strin
 
 // ============================ Helper ============================
 function euro(n: number) { return `€ ${Number(n).toFixed(2)}`; }
-function dataIt(s?: string | null) { return s ? new Date(s).toLocaleDateString('it-IT') : ''; }
+// Data breve localizzata (IT identica a `toLocaleDateString('it-IT')`); il `locale`
+// arriva dai call-site (componenti con `useLocale()`).
+function dataIt(s: string | null | undefined, locale: string) { return s ? formatData(s, locale, 'breve') : ''; }
 function url(userId: string | null, path: string) {
   const sep = path.includes('?') ? '&' : '?';
   return `/api/admin/merch/${path}${userId ? `${sep}userId=${encodeURIComponent(userId)}` : ''}`;
@@ -135,6 +138,7 @@ function EmptyState({ emoji, children }: { emoji: string; children: React.ReactN
 // ============================ Panello Ordini ============================
 function OrdiniPanel({ userId, ordini, loading, reload }: { userId: string | null; ordini: Ordine[]; loading: boolean; reload: () => void }) {
   const t = useTranslations('adminContabilita');
+  const locale = useLocale();
   const STATO_LABEL: Record<StatoRiga, string> = { da_ordinare: t('merchStatoDaOrdinare'), ordinato: t('merchStatoOrdinato'), arrivato: t('merchStatoArrivato'), consegnato: t('merchStatoConsegnato'), annullato: t('merchStatoAnnullato') };
   const [q, setQ] = useState('');
   const [filtro, setFiltro] = useState('');
@@ -185,7 +189,7 @@ function OrdiniPanel({ userId, ordini, loading, reload }: { userId: string | nul
                       {o.alunni ? `${o.alunni.nome} ${o.alunni.cognome}` : t('merchAlunno')}
                       {o.alunni?.classe_sezione && <span className="ml-2 font-normal text-kidville-muted">· {o.alunni.classe_sezione}</span>}
                     </p>
-                    <p className="font-maven text-xs text-kidville-muted">{dataIt(o.creato_il)} · {o.righe.length} {t('merchArticoli')}</p>
+                    <p className="font-maven text-xs text-kidville-muted">{dataIt(o.creato_il, locale)} · {o.righe.length} {t('merchArticoli')}</p>
                   </div>
                   <div className="flex items-center gap-2">
                     {nonPagato && <span className="rounded-pill bg-kidville-warn-soft px-2 py-0.5 font-maven text-[11px] font-semibold text-kidville-warn">{t('merchNonSaldato')}</span>}
@@ -438,6 +442,7 @@ function DaOrdinarePanel({ userId, onChanged }: { userId: string | null; onChang
 // ============================ Arrivi ============================
 function ArriviPanel({ userId, onChanged }: { userId: string | null; onChanged: () => void }) {
   const t = useTranslations('adminContabilita');
+  const locale = useLocale();
   const [po, setPo] = useState<PO[]>([]);
   const [loading, setLoading] = useState(true);
   const [sel, setSel] = useState<Set<string>>(new Set());
@@ -473,7 +478,7 @@ function ArriviPanel({ userId, onChanged }: { userId: string | null; onChanged: 
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <div>
                 <p className="font-barlow text-sm font-bold uppercase tracking-wide text-kidville-green">{p.numero}</p>
-                <p className="font-maven text-xs text-kidville-muted">{p.fornitore_nome} · {dataIt(p.creato_il)}</p>
+                <p className="font-maven text-xs text-kidville-muted">{p.fornitore_nome} · {dataIt(p.creato_il, locale)}</p>
               </div>
               <div className="flex gap-2">
                 <button type="button" className={BTN_GHOST} onClick={() => window.open(url(userId, `ordini-fornitore/pdf?id=${p.id}`), '_blank')}><FileText size={13} /> {t('merchRistampaPDF')}</button>

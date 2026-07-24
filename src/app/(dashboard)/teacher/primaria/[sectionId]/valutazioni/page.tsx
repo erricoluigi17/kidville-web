@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
+import { useDateFormat } from '@/lib/i18n/date';
 import { Star, Check, Lock } from 'lucide-react';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { suggerisciGiudizio } from '@/lib/primaria/suggerimento';
@@ -22,6 +23,7 @@ function oggiIso() { return new Date().toISOString().slice(0, 10); }
 
 export default function ValutazioniPage() {
   const t = useTranslations('teacherPrimaria');
+  const f = useDateFormat();
   const params = useParams();
   const search = useSearchParams();
   const sectionId = params?.sectionId as string;
@@ -321,7 +323,7 @@ export default function ValutazioniPage() {
                       ✎ {String(v.annotazione_numerica).replace('.', ',')}
                     </span>
                   )}
-                  <span className="text-xs text-kidville-muted">{new Date(v.creato_il).toLocaleDateString('it-IT')}</span>
+                  <span className="text-xs text-kidville-muted">{f.dataBreve(v.creato_il)}</span>
                 </div>
                 {v.argomento && <p className="font-maven text-xs text-kidville-ink mt-0.5"><span className="text-kidville-muted">{t('valutazioniArgomentoRecente')}</span> {v.argomento}</p>}
                 {v.giudizio_testo && <p className="font-maven text-xs text-kidville-muted mt-0.5">{v.giudizio_testo}</p>}

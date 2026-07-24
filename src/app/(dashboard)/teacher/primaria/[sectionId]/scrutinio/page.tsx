@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
+import { useDateFormat } from '@/lib/i18n/date';
 import { GraduationCap, Check, Lock, Download, Upload, FileDown, FileText, Send } from 'lucide-react';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 
@@ -15,6 +16,7 @@ interface Scrutinio { id: string; stato: 'aperto' | 'chiuso'; chiuso_il: string 
 
 export default function ScrutinioPage() {
   const t = useTranslations('teacherPrimaria');
+  const f = useDateFormat();
   const params = useParams();
   const search = useSearchParams();
   const sectionId = params?.sectionId as string;
@@ -286,7 +288,7 @@ export default function ScrutinioPage() {
         {scrutinio && (
           <div className={`mb-3 inline-flex items-center gap-2 rounded-pill px-3 py-1 text-xs font-maven ${chiuso ? 'bg-kidville-neutral-soft text-kidville-ink' : 'bg-kidville-yellow-soft text-kidville-yellow-dark'}`}>
             {chiuso ? <Lock size={13} /> : null}
-            {chiuso ? t('scrutinioChiusoIl', { data: scrutinio.chiuso_il ? new Date(scrutinio.chiuso_il).toLocaleDateString('it-IT') : '' }) : t('scrutinioAperto')}
+            {chiuso ? t('scrutinioChiusoIl', { data: scrutinio.chiuso_il ? f.dataBreve(scrutinio.chiuso_il) : '' }) : t('scrutinioAperto')}
           </div>
         )}
 

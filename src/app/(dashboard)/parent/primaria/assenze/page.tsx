@@ -2,6 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useState } from 'react';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
+import { useDateFormat } from '@/lib/i18n/date';
 import { AlertCircle, Check } from 'lucide-react';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { Btn } from '@/components/ui/Btn';
@@ -41,6 +42,7 @@ function oraDaTs(ts: string | null): string {
 
 function AssenzeGenitore() {
   const { parentId, studentId, ready } = useParentIdentity();
+  const f = useDateFormat();
   const [presenze, setPresenze] = useState<Presenza[]>([]);
   const [riepilogo, setRiepilogo] = useState<Riepilogo | null>(null);
   const [loading, setLoading] = useState(true);
@@ -147,7 +149,7 @@ function AssenzeGenitore() {
                   <div className="flex items-center gap-2">
                     <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-maven font-semibold ${s.cls}`}>{s.label}</span>
                     <span className="font-maven text-sm font-semibold text-kidville-ink">
-                      {new Date(p.data).toLocaleDateString('it-IT', { weekday: 'short', day: 'numeric', month: 'short' })}
+                      {new Intl.DateTimeFormat(f.locale, { weekday: 'short', day: 'numeric', month: 'short' }).format(new Date(p.data))}
                     </span>
                   </div>
                   <span className={`font-maven text-xs ${p.giustificata ? 'text-kidville-success' : 'text-kidville-warn'}`}>

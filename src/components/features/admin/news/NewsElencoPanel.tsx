@@ -12,7 +12,7 @@ import { SELECT, BTN_SECONDARY } from '@/components/features/admin/pagamenti/ui'
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { logClient } from '@/lib/logging/client';
 import { cx } from '@/lib/ui/cx';
-import { useTranslations } from 'next-intl';
+import { useTranslations, useLocale } from 'next-intl';
 import { NEWS_STATI, NEWS_TIPI, type NewsPost, type NewsStato, type NewsTipo } from '@/lib/news/tipi';
 
 // Tono del badge per stato (colore) separato dall'etichetta, che è i18n e viene
@@ -35,10 +35,10 @@ const STATO_LABEL_KEY: Record<NewsStato, string> = {
 const TIPO_LABEL_KEY: Record<NewsTipo, string> = { articolo: 'elencoTipoArticolo', breve: 'elencoTipoBreve', instagram: 'elencoTipoInstagram' };
 
 const testoErrore = (e: unknown) => (e instanceof Error ? e.message : String(e));
-const fmtData = (iso: string | null): string => {
+const fmtData = (iso: string | null, locale: string): string => {
   if (!iso) return '';
   try {
-    return new Date(iso).toLocaleDateString('it-IT', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Europe/Rome' });
+    return new Intl.DateTimeFormat(locale, { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Europe/Rome' }).format(new Date(iso));
   } catch {
     return '';
   }
@@ -52,6 +52,7 @@ interface Props {
 
 export function NewsElencoPanel({ userId, onModifica }: Props) {
   const t = useTranslations('adminComunicazioni');
+  const locale = useLocale();
   const [posts, setPosts] = useState<NewsPost[]>([]);
   const [filtroStato, setFiltroStato] = useState<NewsStato | ''>('');
   const [filtroTipo, setFiltroTipo] = useState<NewsTipo | ''>('');
@@ -156,7 +157,7 @@ export function NewsElencoPanel({ userId, onModifica }: Props) {
                     </div>
                     <h3 className="mt-1 truncate font-barlow text-[15px] font-extrabold uppercase leading-tight text-kidville-green">{p.titolo}</h3>
                     <p className="mt-0.5 font-maven text-[11.5px] text-kidville-sub">
-                      {p.stato === 'pubblicata' && p.pubblicata_il ? t('elencoPubblicataIl', { data: fmtData(p.pubblicata_il) }) : p.stato === 'programmata' && p.programmata_il ? t('elencoProgrammataPerIl', { data: fmtData(p.programmata_il) }) : t('elencoCreataIl', { data: fmtData(p.created_at ?? null) })}
+                      {p.stato === 'pubblicata' && p.pubblicata_il ? t('elencoPubblicataIl', { data: fmtData(p.pubblicata_il, locale) }) : p.stato === 'programmata' && p.programmata_il ? t('elencoProgrammataPerIl', { data: fmtData(p.programmata_il, locale) }) : t('elencoCreataIl', { data: fmtData(p.created_at ?? null, locale) })}
                     </p>
                     {st && (
                       <p className="mt-1 inline-flex items-center gap-1 font-maven text-[11.5px] font-bold text-kidville-green">

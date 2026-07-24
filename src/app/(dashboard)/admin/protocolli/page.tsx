@@ -10,7 +10,8 @@
  */
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
-import { useTranslations } from 'next-intl';
+import { useTranslations, useLocale } from 'next-intl';
+import { formatData } from '@/lib/i18n/date';
 import {
   Stamp, Inbox, Send, RefreshCw, Hash, Plus, FileText, Download, ShieldCheck,
   AlertTriangle, Search, Trash2, Ban, Link2, Paperclip, Settings2, X, FileDown,
@@ -83,8 +84,10 @@ function mimeDaFile(f: File): string | null {
 const MAX_MB = 25;
 
 function numeroFmt(numero: number, anno: number) { return `${String(numero).padStart(7, '0')}/${anno}`; }
-function dataIt(s?: string | null) { return s ? new Date(s).toLocaleDateString('it-IT') : ''; }
-function oraIt(s?: string | null) { return s ? new Date(s).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' }) : ''; }
+// Data/ora localizzate (IT identiche a `toLocale*String('it-IT', …)`); il `locale`
+// arriva dai call-site (componenti con `useLocale()`).
+function dataIt(s: string | null | undefined, locale: string) { return s ? formatData(s, locale, 'breve') : ''; }
+function oraIt(s: string | null | undefined, locale: string) { return s ? formatData(s, locale, 'ora') : ''; }
 
 // Etichetta del tipo di registrazione tradotta (chiave i18n per tipo canonico).
 const TIPO_KEY: Record<TipoProt, string> = { ingresso: 'protTipoIngresso', uscita: 'protTipoUscita', interno: 'protTipoInterno' };
@@ -161,6 +164,7 @@ async function caricaSuStaging(t: Traduttore, userId: string | null, file: File,
 // ============================ Pagina ============================
 function ProtocolliInner() {
   const t = useTranslations('adminAltro');
+  const locale = useLocale();
   const { userId } = useSessionIdentity();
   const { ruolo } = useAdminIdentity();
   const isAdmin = ruolo === 'admin';
@@ -316,7 +320,7 @@ function ProtocolliInner() {
                 {records.map((r) => (
                   <tr key={r.id} className={cx(TROW, 'cursor-pointer', r.annullata_at && 'opacity-60')} onClick={() => setDettaglioId(r.id)}>
                     <td className={cx(TD, 'whitespace-nowrap font-mono text-[13px] font-bold text-kidville-green')}>{numeroFmt(r.numero, r.anno)}</td>
-                    <td className={cx(TD, 'whitespace-nowrap font-maven text-[13px] text-kidville-ink')}>{dataIt(r.data_registrazione)} <span className="text-kidville-muted">{oraIt(r.data_registrazione)}</span></td>
+                    <td className={cx(TD, 'whitespace-nowrap font-maven text-[13px] text-kidville-ink')}>{dataIt(r.data_registrazione, locale)} <span className="text-kidville-muted">{oraIt(r.data_registrazione, locale)}</span></td>
                     <td className={TD}><TipoBadge tipo={r.tipo} /></td>
                     <td className={cx(TD, 'max-w-[380px] font-maven text-sm text-kidville-ink')}>
                       <span className={cx('block truncate', r.annullata_at && 'line-through')}>{r.oggetto}</span>
@@ -411,6 +415,7 @@ function NuovoProtocolloDrawer({ userId, categorie, recenti, onClose, onFatto }:
   onClose: () => void; onFatto: () => void;
 }) {
   const t = useTranslations('adminAltro');
+  const locale = useLocale();
   const [passo, setPasso] = useState<PassoNuovo>(1);
   const [busy, setBusy] = useState('');
   const [errore, setErrore] = useState('');
@@ -533,7 +538,7 @@ function NuovoProtocolloDrawer({ userId, categorie, recenti, onClose, onFatto }:
           {duplicato && (
             <div className="flex items-start gap-2 rounded-card bg-kidville-warn-soft px-3 py-2.5 font-maven text-[13px] text-kidville-warn">
               <AlertTriangle size={16} className="mt-0.5 shrink-0" />
-              <span>{t.rich('protDuplicatoAvviso', { numero: duplicato.numeroFormattato, data: dataIt(duplicato.dataRegistrazione), oggetto: duplicato.oggetto, b: (c) => <b>{c}</b> })}</span>
+              <span>{t.rich('protDuplicatoAvviso', { numero: duplicato.numeroFormattato, data: dataIt(duplicato.dataRegistrazione, locale), oggetto: duplicato.oggetto, b: (c) => <b>{c}</b> })}</span>
             </div>
           )}
 
@@ -880,6 +885,7 @@ function DettaglioDrawer({ userId, id, isAdmin, categorie, onApri, onClose, onCh
   onApri: (id: string) => void; onClose: () => void; onChange: () => void; mostraToast: (m: string) => void;
 }) {
   const t = useTranslations('adminAltro');
+  const locale = useLocale();
   const [rec, setRec] = useState<Protocollo | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -1019,20 +1025,20 @@ function DettaglioDrawer({ userId, id, isAdmin, categorie, onApri, onClose, onCh
   return (
     <Drawer open onClose={onClose} width={560}
       title={rec ? t('protDettaglioTitolo', { numero: numeroFmt(rec.numero, rec.anno) }) : t('protRegistrazione')}
-      subtitle={rec ? t('protDettaglioSubtitle', { tipo: tipoLabel(t, rec.tipo), data: dataIt(rec.data_registrazione), ora: oraIt(rec.data_registrazione) }) : undefined}>
+      subtitle={rec ? t('protDettaglioSubtitle', { tipo: tipoLabel(t, rec.tipo), data: dataIt(rec.data_registrazione, locale), ora: oraIt(rec.data_registrazione, locale) }) : undefined}>
       {loading ? <Spinner /> : !rec ? (
         <p className="font-maven text-sm text-kidville-muted">{t('protRegistrazioneNonTrovata')}</p>
       ) : (
         <div className="flex flex-col gap-4">
           {rec.annullata_at && (
             <div className="rounded-card bg-kidville-error-soft px-3 py-2.5 font-maven text-sm text-kidville-error">
-              {t.rich('protAnnullataBanner', { data: dataIt(rec.annullata_at), ora: oraIt(rec.annullata_at), motivo: rec.annullo_motivo ?? '—', b: (c) => <b>{c}</b> })}
+              {t.rich('protAnnullataBanner', { data: dataIt(rec.annullata_at, locale), ora: oraIt(rec.annullata_at, locale), motivo: rec.annullo_motivo ?? '—', b: (c) => <b>{c}</b> })}
               <span className="mt-0.5 block text-[12px]">{t('protAnnullataNota')}</span>
             </div>
           )}
           {rec.emergenza && (
             <div className="rounded-card bg-kidville-warn-soft px-3 py-2 font-maven text-[13px] text-kidville-warn">
-              {t.rich('protEmergenzaBanner', { b: (c) => <b>{c}</b> })}{rec.emergenza_dichiarata_il ? t('protEmergenzaEvento', { data: dataIt(rec.emergenza_dichiarata_il), ora: oraIt(rec.emergenza_dichiarata_il) }) : ''}
+              {t.rich('protEmergenzaBanner', { b: (c) => <b>{c}</b> })}{rec.emergenza_dichiarata_il ? t('protEmergenzaEvento', { data: dataIt(rec.emergenza_dichiarata_il, locale), ora: oraIt(rec.emergenza_dichiarata_il, locale) }) : ''}
             </div>
           )}
 
@@ -1043,7 +1049,7 @@ function DettaglioDrawer({ userId, id, isAdmin, categorie, onApri, onClose, onCh
                 {rec.mittente && <Campo label={t('protCampoMittente')} value={rec.mittente} />}
                 {rec.destinatario && <Campo label={t('protCampoDestinatario')} value={rec.destinatario} />}
                 {rec.mezzo && <Campo label={t('protCampoMezzo')} value={mezzoLabel(t, rec.mezzo)} />}
-                {rec.rif_prot_mittente && <Campo label={t('protCampoProtMittente')} value={`${rec.rif_prot_mittente}${rec.rif_data_mittente ? t('protDelData', { data: dataIt(rec.rif_data_mittente) }) : ''}`} />}
+                {rec.rif_prot_mittente && <Campo label={t('protCampoProtMittente')} value={`${rec.rif_prot_mittente}${rec.rif_data_mittente ? t('protDelData', { data: dataIt(rec.rif_data_mittente, locale) }) : ''}`} />}
                 {rec.file_nome_originale && <Campo label={t('protCampoFileOriginale')} value={rec.file_nome_originale} />}
                 {rec.allegati_descrizione && <Campo label={t('protCampoAllegati')} value={rec.allegati_descrizione} />}
               </div>

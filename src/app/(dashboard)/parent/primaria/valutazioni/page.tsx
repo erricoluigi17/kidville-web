@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
+import { useDateFormat } from '@/lib/i18n/date';
 
 interface ValBreve {
   id: string; tipo: string; modalita: string;
@@ -33,6 +34,7 @@ const giudizioCls = (g: string | null) =>
 
 function ValutazioniGenitore() {
   const { parentId, studentId, ready } = useParentIdentity();
+  const f = useDateFormat();
   const [materie, setMaterie] = useState<MateriaVoce[]>([]);
   const [loading, setLoading] = useState(true);
   const [aperta, setAperta] = useState<string | null>(null);
@@ -102,7 +104,7 @@ function ValutazioniGenitore() {
                         )}
                         <span className="font-maven text-xs capitalize text-kidville-muted">{v.tipo}</span>
                         <span className="font-maven text-xs text-kidville-muted ml-auto">
-                          {new Date(v.creato_il).toLocaleDateString('it-IT')}
+                          {f.dataBreve(v.creato_il)}
                         </span>
                       </div>
                       {v.argomento && <p className="font-maven text-xs text-kidville-muted">{v.argomento}</p>}

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useTranslations } from 'next-intl';
+import { useDateFormat } from '@/lib/i18n/date';
 import { Search, Filter, AlertTriangle, CheckCircle2, Clock, RefreshCw, Plus, Pencil, Layers, Eye, FileText, Download, X } from 'lucide-react';
 import { RegistraIncassoModal, PagamentoRow } from './RegistraIncassoModal';
 import { FatturaButton } from './FatturaButton';
@@ -50,13 +51,20 @@ interface Alunno {
     stato?: string; importo_retta_mensile?: number | null;
 }
 
-const MESI_IT = ['', 'Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic'];
+// Mese abbreviato localizzato con iniziale maiuscola. In IT riproduce ESATTAMENTE
+// il vecchio array hardcoded (Gen, Feb, … Dic); in EN diventa Jan, Feb, … Dec.
+function meseCorto(mese1a12: number, locale: string): string {
+    const s = new Intl.DateTimeFormat(locale, { month: 'short', timeZone: 'UTC' }).format(
+        new Date(Date.UTC(2020, mese1a12 - 1, 15)),
+    );
+    return s.charAt(0).toUpperCase() + s.slice(1);
+}
 
 // I 10 periodi (primo del mese) dell'anno scolastico set(annoInizio) -> giu(annoInizio+1)
-function periodiAnno(annoInizio: number): { periodo: string; label: string }[] {
+function periodiAnno(annoInizio: number, locale: string): { periodo: string; label: string }[] {
     const out: { periodo: string; label: string }[] = [];
-    for (let m = 9; m <= 12; m++) out.push({ periodo: `${annoInizio}-${String(m).padStart(2, '0')}-01`, label: `${MESI_IT[m]} ${annoInizio}` });
-    for (let m = 1; m <= 6; m++) out.push({ periodo: `${annoInizio + 1}-${String(m).padStart(2, '0')}-01`, label: `${MESI_IT[m]} ${annoInizio + 1}` });
+    for (let m = 9; m <= 12; m++) out.push({ periodo: `${annoInizio}-${String(m).padStart(2, '0')}-01`, label: `${meseCorto(m, locale)} ${annoInizio}` });
+    for (let m = 1; m <= 6; m++) out.push({ periodo: `${annoInizio + 1}-${String(m).padStart(2, '0')}-01`, label: `${meseCorto(m, locale)} ${annoInizio + 1}` });
     return out;
 }
 
@@ -64,6 +72,7 @@ interface Props { userId: string; scuolaId: string }
 
 export function PaymentsDashboard({ userId, scuolaId }: Props) {
     const t = useTranslations('adminContabilita');
+    const f = useDateFormat();
     const agingLabel = useAgingLabel();
     const [pagamenti, setPagamenti] = useState<Pagamento[]>([]);
     const [alunni, setAlunni] = useState<Alunno[]>([]);
@@ -88,10 +97,10 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
     const oggiStr = now.toISOString().slice(0, 10);
     const annoScolasticoCorrente = now.getMonth() + 1 >= 9 ? now.getFullYear() : now.getFullYear() - 1;
     const [annoScolastico, setAnnoScolastico] = useState<number>(annoScolasticoCorrente);
-    const periodi = useMemo(() => periodiAnno(annoScolastico), [annoScolastico]);
+    const periodi = useMemo(() => periodiAnno(annoScolastico, f.locale), [annoScolastico, f.locale]);
     const [mese, setMese] = useState<string>(() => {
         const cur = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
-        return periodiAnno(annoScolasticoCorrente).some((p) => p.periodo === cur) ? cur : `${annoScolasticoCorrente}-09-01`;
+        return periodiAnno(annoScolasticoCorrente, f.locale).some((p) => p.periodo === cur) ? cur : `${annoScolasticoCorrente}-09-01`;
     });
 
     // NB: niente setLoading(true) sincrono qui dentro (react-hooks/set-state-in-effect):
@@ -362,7 +371,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                         <tr key={p.id} className={TROW}>
                                             <td className={cx(TD, 'font-semibold text-kidville-green')}>{p.alunni?.nome} {p.alunni?.cognome}</td>
                                             <td className={cx(TD, 'text-kidville-ink')}>{p.descrizione}</td>
-                                            <td className={cx(TD, 'text-kidville-muted')}>{p.scadenza ? new Date(p.scadenza).toLocaleDateString('it-IT') : '—'}</td>
+                                            <td className={cx(TD, 'text-kidville-muted')}>{p.scadenza ? f.dataBreve(p.scadenza) : '—'}</td>
                                             <td className={cx(TD, 'text-right font-bold text-kidville-green')}>€ {residuo.toFixed(2)}</td>
                                             <td className={TD}>
                                                 <Badge tone={st.tone}>{st.label}</Badge>
@@ -538,7 +547,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                             )}
                                         </td>
                                         <td className={cx(TD, 'text-kidville-ink')}>{p.descrizione}</td>
-                                        <td className={cx(TD, 'text-kidville-muted')}>{p.scadenza ? new Date(p.scadenza).toLocaleDateString('it-IT') : '—'}</td>
+                                        <td className={cx(TD, 'text-kidville-muted')}>{p.scadenza ? f.dataBreve(p.scadenza) : '—'}</td>
                                         <td className={cx(TD, 'text-right text-kidville-green')}>€ {Number(p.importo).toFixed(2)}</td>
                                         <td className={cx(TD, 'text-right text-kidville-muted')}>{acconto > 0 ? `€ ${acconto.toFixed(2)}` : '—'}</td>
                                         <td className={TD}>

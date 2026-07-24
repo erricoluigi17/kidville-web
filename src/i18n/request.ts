@@ -22,6 +22,13 @@ export default getRequestConfig(async () => {
     mensa: (await import(`../../messages/${locale}/mensa.json`)).default,
     pagamenti: (await import(`../../messages/${locale}/pagamenti.json`)).default,
     profilo: (await import(`../../messages/${locale}/profilo.json`)).default,
+    teacherNav: (await import(`../../messages/${locale}/teacherNav.json`)).default,
+    teacherDiario: (await import(`../../messages/${locale}/teacherDiario.json`)).default,
+    teacherPresenze: (await import(`../../messages/${locale}/teacherPresenze.json`)).default,
+    teacherComunicazioni: (await import(`../../messages/${locale}/teacherComunicazioni.json`)).default,
+    teacherPrimaria: (await import(`../../messages/${locale}/teacherPrimaria.json`)).default,
+    teacherTasks: (await import(`../../messages/${locale}/teacherTasks.json`)).default,
+    teacherServizi: (await import(`../../messages/${locale}/teacherServizi.json`)).default,
   };
 
   return { locale, messages };

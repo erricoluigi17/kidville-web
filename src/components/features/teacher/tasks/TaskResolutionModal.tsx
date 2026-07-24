@@ -1,6 +1,7 @@
 'use client';
 
 import type { FormEvent } from 'react';
+import { useTranslations } from 'next-intl';
 import { motion } from 'framer-motion';
 import { CheckCircle, X, Paperclip } from 'lucide-react';
 import { Task } from '@/components/features/teacher/tasks/TaskCard';
@@ -20,6 +21,7 @@ interface Props {
 }
 
 export function TaskResolutionModal({ task, notes, onNotesChange, files, onFilesChange, isSaving, onConfirm, onClose }: Props) {
+  const t = useTranslations('teacherTasks');
   return (
     <>
       <motion.div
@@ -37,7 +39,7 @@ export function TaskResolutionModal({ task, notes, onNotesChange, files, onFiles
           <div className="flex items-center gap-2">
             <CheckCircle className="text-kidville-success" size={20} />
             <h2 className="font-barlow font-black text-lg text-kidville-green uppercase tracking-wide">
-              Risolvi attività
+              {t('risolviAttivita')}
             </h2>
           </div>
           <button
@@ -51,21 +53,21 @@ export function TaskResolutionModal({ task, notes, onNotesChange, files, onFiles
         <form onSubmit={onConfirm} className="p-6 space-y-4 overflow-y-auto text-left">
           <div>
             <p className="font-barlow font-bold text-sm text-kidville-green uppercase tracking-wide">
-              Attività: {task.titolo}
+              {t('attivitaTitolo', { titolo: task.titolo })}
             </p>
             <p className="font-maven text-xs text-kidville-muted mt-1">
-              Per completare, spiega brevemente cosa hai fatto e come l&apos;hai risolto. Puoi allegare anche dei file.
+              {t('risolviDescrizione')}
             </p>
           </div>
 
           <div className="space-y-1">
             <label className="block text-xs font-bold text-kidville-green uppercase tracking-wider mb-1">
-              Note di Risoluzione *
+              {t('noteRisoluzione')}
             </label>
             <textarea
               required
               rows={3}
-              placeholder="Spiega cosa hai fatto per risolvere l'attività..."
+              placeholder={t('placeholderNoteRisoluzione')}
               value={notes}
               onChange={e => onNotesChange(e.target.value)}
               className="w-full border-2 border-kidville-line rounded-xl px-4 py-2.5 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:ring-2 focus:ring-kidville-green focus:border-transparent transition-all"
@@ -75,11 +77,11 @@ export function TaskResolutionModal({ task, notes, onNotesChange, files, onFiles
           {/* Uploader per il task principale */}
           <div className="space-y-1.5">
             <label className="block text-xs font-bold text-kidville-green uppercase tracking-wider">
-              Carica File / Allegati (Opzionale)
+              {t('caricaFileAllegati')}
             </label>
             <div className="flex flex-wrap gap-2 items-center">
               <label className="flex items-center gap-1.5 px-3.5 py-2 border border-dashed border-kidville-line hover:border-kidville-green hover:bg-kidville-cream rounded-2xl cursor-pointer font-maven text-xs text-kidville-muted hover:text-kidville-green transition-all uppercase font-semibold">
-                <Paperclip size={13} /> Scegli file
+                <Paperclip size={13} /> {t('scegliFile')}
                 <input
                   type="file"
                   multiple
@@ -114,14 +116,14 @@ export function TaskResolutionModal({ task, notes, onNotesChange, files, onFiles
               onClick={onClose}
               className="flex-1 py-3 border-2 border-kidville-line hover:bg-kidville-cream rounded-2xl font-barlow font-black uppercase text-sm text-kidville-muted tracking-wider transition-all"
             >
-              Annulla
+              {t('annulla')}
             </button>
             <button
               type="submit"
               disabled={isSaving}
               className="flex-1 py-3 bg-kidville-success text-white hover:opacity-90 rounded-2xl font-barlow font-black uppercase text-sm tracking-wider transition-all disabled:opacity-50 flex items-center justify-center gap-2"
             >
-              {isSaving ? 'Salvataggio...' : 'Conferma Risolto'}
+              {isSaving ? t('salvataggio') : t('confermaRisolto')}
             </button>
           </div>
         </form>

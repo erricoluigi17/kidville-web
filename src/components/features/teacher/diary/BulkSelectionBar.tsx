@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import { X, Zap } from 'lucide-react';
 import { DiaryEventType } from '@/lib/offline/db';
 import { EVENT_CONFIG } from './eventConfig';
@@ -13,6 +14,7 @@ interface BulkSelectionBarProps {
 const QUICK_EVENTS: DiaryEventType[] = ['pranzo', 'merenda', 'nanna_inizio', 'nanna_fine', 'bagno'];
 
 export function BulkSelectionBar({ selectedCount, onClearSelection, onEventSelect }: BulkSelectionBarProps) {
+    const t = useTranslations('teacherDiario');
     if (selectedCount === 0) return null;
 
     return (
@@ -25,13 +27,13 @@ export function BulkSelectionBar({ selectedCount, onClearSelection, onEventSelec
                             <Zap size={14} className="text-kidville-green" />
                         </div>
                         <span className="font-barlow font-bold text-white text-lg uppercase tracking-wide">
-                            {selectedCount} {selectedCount === 1 ? 'bambino' : 'bambini'} selezionati
+                            {t('bambiniSelezionati', { count: selectedCount })}
                         </span>
                     </div>
                     <button
                         onClick={onClearSelection}
                         className="w-8 h-8 flex items-center justify-center rounded-full bg-white/20 hover:bg-white/30 transition-colors text-white"
-                        aria-label="Deseleziona tutti"
+                        aria-label={t('deselezionaTutti')}
                     >
                         <X size={16} />
                     </button>
@@ -55,7 +57,7 @@ export function BulkSelectionBar({ selectedCount, onClearSelection, onEventSelec
                 </div>
 
                 <p className="font-maven text-white/60 text-xs mt-2 text-center">
-                    L&apos;azione verrà applicata a tutti i bambini selezionati
+                    {t('azioneApplicata')}
                 </p>
             </div>
         </div>

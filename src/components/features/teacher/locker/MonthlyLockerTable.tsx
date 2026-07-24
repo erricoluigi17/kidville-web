@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useMemo } from 'react';
+import { useTranslations } from 'next-intl';
 import { CheckCircle2, XCircle, ChevronDown, CalendarDays } from 'lucide-react';
 
 // ─── Tipi ────────────────────────────────────────────────────────────────────
@@ -53,6 +54,7 @@ export function MonthlyLockerTable({
     month,
     hideStudentColumn = false,
 }: MonthlyLockerTableProps) {
+    const t = useTranslations('teacherServizi');
     const days = useMemo(() => getDaysInMonth(month), [month]);
 
     // Raccoglie tutti i materiali unici presenti nei dati
@@ -97,7 +99,7 @@ export function MonthlyLockerTable({
         return (
             <div className="flex flex-col items-center justify-center py-16 text-kidville-muted">
                 <CalendarDays className="w-12 h-12 mb-3 opacity-30" />
-                <p className="text-sm">Nessun dato disponibile per {formatMonthLabel(month)}</p>
+                <p className="text-sm">{t('lockerTableNessunDato', { mese: formatMonthLabel(month) })}</p>
             </div>
         );
     }
@@ -124,7 +126,7 @@ export function MonthlyLockerTable({
                                    transition-all duration-300 min-w-[180px]"
                     >
                         <span className="flex-1 text-left">
-                            {selectedMaterial === 'Tutti' ? 'Tutti i materiali' : selectedMaterial}
+                            {selectedMaterial === 'Tutti' ? t('lockerTableTuttiMateriali') : selectedMaterial}
                         </span>
                         <ChevronDown
                             className={`w-4 h-4 text-kidville-muted transition-transform duration-300 ${dropdownOpen ? 'rotate-180' : ''}`}
@@ -152,7 +154,7 @@ export function MonthlyLockerTable({
                                                     : 'text-kidville-green/80 hover:bg-kidville-cream'
                                                 }`}
                                 >
-                                    {mat === 'Tutti' ? '— Tutti i materiali —' : mat}
+                                    {mat === 'Tutti' ? t('lockerTableTuttiMaterialiDash') : mat}
                                 </button>
                             ))}
                         </div>
@@ -173,12 +175,12 @@ export function MonthlyLockerTable({
                                     <th className="sticky left-0 z-10 bg-white/80 backdrop-blur-sm
                                                    text-left px-4 py-3 text-xs font-semibold
                                                    text-kidville-muted uppercase tracking-wider whitespace-nowrap">
-                                        Studente
+                                        {t('lockerTableStudente')}
                                     </th>
                                 )}
                                 <th className="px-4 py-3 text-left text-xs font-semibold
                                                text-kidville-muted uppercase tracking-wider whitespace-nowrap">
-                                    Materiale
+                                    {t('lockerTableMateriale')}
                                 </th>
                                 {days.map(d => (
                                     <th
@@ -265,15 +267,15 @@ export function MonthlyLockerTable({
                 <div className="flex items-center gap-6 px-4 py-3 border-t border-white/5">
                     <div className="flex items-center gap-1.5">
                         <CheckCircle2 className="w-4 h-4 text-kidville-success/90 drop-shadow-[0_0_6px_rgba(52,211,153,0.5)]" />
-                        <span className="text-xs text-kidville-muted">Portato</span>
+                        <span className="text-xs text-kidville-muted">{t('lockerTablePortato')}</span>
                     </div>
                     <div className="flex items-center gap-1.5">
                         <XCircle className="w-4 h-4 text-kidville-error/90 drop-shadow-[0_0_6px_rgba(244,63,94,0.5)]" />
-                        <span className="text-xs text-kidville-muted">Non portato</span>
+                        <span className="text-xs text-kidville-muted">{t('lockerTableNonPortato')}</span>
                     </div>
                     <div className="flex items-center gap-1.5">
                         <span className="text-kidville-muted text-xs font-mono">—</span>
-                        <span className="text-xs text-kidville-muted">Nessun dato</span>
+                        <span className="text-xs text-kidville-muted">{t('lockerTableNessunDatoLegenda')}</span>
                     </div>
                 </div>
             </div>

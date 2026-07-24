@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { motion } from 'framer-motion';
 import { X, Tag, Shield, Calendar, Users, FileText, AlertTriangle } from 'lucide-react';
 
@@ -51,6 +52,7 @@ export function TaskForm({
     currentUserRole = 'educator',
     currentUserClasses = []
 }: TaskFormProps) {
+    const t = useTranslations('teacherTasks');
     const isAdmin = currentUserRole === 'admin';
     const isCoordinator = currentUserRole === 'coordinator';
     const isEducator = currentUserRole === 'educator';
@@ -110,7 +112,7 @@ export function TaskForm({
     const handleFormSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!titolo.trim() || !contenuto.trim()) {
-            alert('Titolo e contenuto sono richiesti!');
+            alert(t('titoloContenutoRichiesti'));
             return;
         }
 
@@ -137,13 +139,13 @@ export function TaskForm({
             if (targetScope === 'single') {
                 if (isSubdivided) {
                     if (compitiList.length === 0) {
-                        alert('Aggiungi almeno un compito!');
+                        alert(t('aggiungiAlmenoUnCompito'));
                         setIsSaving(false);
                         return;
                     }
                     const hasInvalid = compitiList.some(c => !c.titolo.trim() || !c.assigned_to);
                     if (hasInvalid) {
-                        alert('Compila tutti i campi descrizione e destinatario dei compiti!');
+                        alert(t('compilaCompiti'));
                         setIsSaving(false);
                         return;
                     }
@@ -156,7 +158,7 @@ export function TaskForm({
                     data.assigned_to = null;
                 } else {
                     if (selectedAssignees.length === 0) {
-                        alert('Seleziona almeno un destinatario!');
+                        alert(t('selezionaDestinatario'));
                         setIsSaving(false);
                         return;
                     }
@@ -173,7 +175,7 @@ export function TaskForm({
             onClose();
         } catch (err) {
             console.error('Errore creazione task:', err);
-            alert('Errore durante la creazione del task');
+            alert(t('erroreCreazione'));
         } finally {
             setIsSaving(false);
         }
@@ -202,7 +204,7 @@ export function TaskForm({
                     <div className="flex items-center gap-2">
                         <FileText className="text-kidville-green" size={20} />
                         <h2 className="font-barlow font-black text-lg text-kidville-green uppercase tracking-wide">
-                            Nuovo Task Staff
+                            {t('nuovoTaskStaff')}
                         </h2>
                     </div>
                     <button
@@ -218,12 +220,12 @@ export function TaskForm({
                     {/* Titolo */}
                     <div>
                         <label className="block text-xs font-bold text-kidville-green uppercase tracking-wider mb-1">
-                            Titolo del Task *
+                            {t('titoloTask')}
                         </label>
                         <input
                             type="text"
                             required
-                            placeholder="Es. Richiesta modulo firmato per Sofia Rossi"
+                            placeholder={t('placeholderTitolo')}
                             value={titolo}
                             onChange={e => setTitolo(e.target.value)}
                             className="w-full border-2 border-kidville-line rounded-xl px-4 py-2.5 font-maven text-sm text-kidville-green bg-white/60 focus:outline-none focus:ring-2 focus:ring-kidville-green focus:border-transparent transition-all"
@@ -233,12 +235,12 @@ export function TaskForm({
                     {/* Contenuto */}
                     <div>
                         <label className="block text-xs font-bold text-kidville-green uppercase tracking-wider mb-1">
-                            Descrizione / Contenuto *
+                            {t('descrizioneContenuto')}
                         </label>
                         <textarea
                             required
                             rows={3}
-                            placeholder="Descrivi in dettaglio l'attività da svolgere..."
+                            placeholder={t('placeholderDescrizione')}
                             value={contenuto}
                             onChange={e => setContenuto(e.target.value)}
                             className="w-full border-2 border-kidville-line rounded-xl px-4 py-2.5 font-maven text-sm text-kidville-green bg-white/60 focus:outline-none focus:ring-2 focus:ring-kidville-green focus:border-transparent transition-all"
@@ -249,35 +251,35 @@ export function TaskForm({
                     <div className="grid grid-cols-2 gap-3">
                         <div>
                             <label className="block text-xs font-bold text-kidville-green uppercase tracking-wider mb-1 flex items-center gap-1">
-                                <Tag size={12} /> Categoria
+                                <Tag size={12} /> {t('categoria')}
                             </label>
                             <select
                                 value={category}
                                 onChange={e => setCategory(e.target.value)}
                                 className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white/60 focus:outline-none focus:ring-2 focus:ring-kidville-green transition-all"
                             >
-                                <option value="generale">Generale</option>
-                                <option value="genitore">Messaggio Genitore</option>
-                                <option value="amministrativo">Amministrativo</option>
-                                <option value="servizio">Nota di Servizio</option>
-                                <option value="manutenzione">Manutenzione</option>
-                                <option value="didattico">Didattico</option>
-                                <option value="reclamo">Reclamo / Segnalazione</option>
+                                <option value="generale">{t('catGenerale')}</option>
+                                <option value="genitore">{t('catGenitore')}</option>
+                                <option value="amministrativo">{t('catAmministrativo')}</option>
+                                <option value="servizio">{t('catServizio')}</option>
+                                <option value="manutenzione">{t('catManutenzione')}</option>
+                                <option value="didattico">{t('catDidattico')}</option>
+                                <option value="reclamo">{t('catReclamo')}</option>
                             </select>
                         </div>
                         <div>
                             <label className="block text-xs font-bold text-kidville-green uppercase tracking-wider mb-1 flex items-center gap-1">
-                                <AlertTriangle size={12} /> Priorità
+                                <AlertTriangle size={12} /> {t('priorita')}
                             </label>
                             <select
                                 value={priority}
                                 onChange={e => setPriority(e.target.value as 'low' | 'medium' | 'high' | 'urgent')}
                                 className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white/60 focus:outline-none focus:ring-2 focus:ring-kidville-green transition-all"
                             >
-                                <option value="low">Bassa</option>
-                                <option value="medium">Media</option>
-                                <option value="high">Alta</option>
-                                <option value="urgent">🚨 Urgente</option>
+                                <option value="low">{t('priorityLow')}</option>
+                                <option value="medium">{t('priorityMedium')}</option>
+                                <option value="high">{t('priorityHigh')}</option>
+                                <option value="urgent">{t('priorityUrgentOpt')}</option>
                             </select>
                         </div>
                     </div>
@@ -285,16 +287,16 @@ export function TaskForm({
                     {/* Scope del Destinatario */}
                     <div>
                         <label className="block text-xs font-bold text-kidville-green uppercase tracking-wider mb-1 flex items-center gap-1">
-                            <Users size={12} /> Destinatari del Task
+                            <Users size={12} /> {t('destinatariTask')}
                         </label>
                         <div className={`grid gap-1.5 bg-kidville-cream p-1 rounded-2xl border border-kidville-line`}
                             style={{ gridTemplateColumns: `repeat(${allowedScopes.length}, 1fr)` }}
                         >
                             {([
-                                { key: 'single', label: 'Persona' },
-                                { key: 'class', label: 'Classe' },
-                                { key: 'role', label: 'Ruolo' },
-                                { key: 'global', label: 'Tutti' }
+                                { key: 'single', label: t('scopePersona') },
+                                { key: 'class', label: t('scopeClasse') },
+                                { key: 'role', label: t('scopeRuolo') },
+                                { key: 'global', label: t('scopeTutti') }
                             ] as const).filter(({ key }) => allowedScopes.includes(key)).map(({ key, label }) => (
                                 <button
                                     key={key}
@@ -311,7 +313,7 @@ export function TaskForm({
                         </div>
                         {isEducator && (
                             <p className="text-[10px] text-kidville-muted mt-1.5 font-maven pl-1">
-                                🔒 Puoi assegnare task a singole persone o alle tue classi.
+                                {t('notaEducator')}
                             </p>
                         )}
                     </div>
@@ -323,10 +325,10 @@ export function TaskForm({
                             <div className="flex items-center justify-between p-3 bg-kidville-cream rounded-2xl border border-kidville-line">
                                 <div className="pr-2">
                                     <span className="block text-xs font-bold text-kidville-green uppercase tracking-wide">
-                                        Suddividi in Compiti
+                                        {t('suddividiInCompiti')}
                                     </span>
                                     <span className="text-[10px] text-kidville-muted font-maven block mt-0.5">
-                                        Crea più compiti da assegnare a persone diverse all&apos;interno di questo task.
+                                        {t('suddividiDescrizione')}
                                     </span>
                                 </div>
                                 <label className="relative inline-flex items-center cursor-pointer">
@@ -349,7 +351,7 @@ export function TaskForm({
                             {!isSubdivided && (
                                 <div>
                                     <label className="block text-xs font-bold text-kidville-green uppercase tracking-wider mb-2">
-                                        Assegna a uno o più destinatari:
+                                        {t('assegnaDestinatari')}
                                     </label>
                                     <div className="grid grid-cols-2 gap-2 max-h-[150px] overflow-y-auto p-2 bg-kidville-cream border border-kidville-line/50 rounded-2xl">
                                         {staffMembers.map(member => {
@@ -382,7 +384,7 @@ export function TaskForm({
                                         })}
                                     </div>
                                     <p className="text-[10px] text-kidville-muted mt-1.5 font-maven pl-1">
-                                        💡 Se selezioni più destinatari, verrà creata una copia indipendente del task per ciascuno di essi.
+                                        {t('notaCopie')}
                                     </p>
                                 </div>
                             )}
@@ -392,14 +394,14 @@ export function TaskForm({
                                 <div className="space-y-3">
                                     <div className="flex items-center justify-between">
                                         <label className="block text-xs font-bold text-kidville-green uppercase tracking-wider">
-                                            Elenco Compiti
+                                            {t('elencoCompiti')}
                                         </label>
                                         <button
                                             type="button"
                                             onClick={() => setCompitiList(prev => [...prev, { id: crypto.randomUUID(), titolo: '', assigned_to: '' }])}
                                             className="text-xs font-bold text-kidville-green hover:underline flex items-center gap-1"
                                         >
-                                            + Aggiungi compito
+                                            {t('aggiungiCompito')}
                                         </button>
                                     </div>
 
@@ -409,7 +411,7 @@ export function TaskForm({
                                                 <div className="flex-1 space-y-2">
                                                     <input
                                                         type="text"
-                                                        placeholder="Cosa fare? (es. Preparare pannolini)"
+                                                        placeholder={t('placeholderCompitoTitolo')}
                                                         value={compito.titolo}
                                                         onChange={e => {
                                                             const newTitle = e.target.value;
@@ -425,7 +427,7 @@ export function TaskForm({
                                                         }}
                                                         className="w-full border border-kidville-line rounded-xl px-2 py-1.5 font-maven text-xs text-kidville-green bg-white focus:outline-none"
                                                     >
-                                                        <option value="">Assegna a...</option>
+                                                        <option value="">{t('assegnaA')}</option>
                                                         {staffMembers.map(member => (
                                                             <option key={member.id} value={member.id}>
                                                                 {member.first_name} {member.last_name}
@@ -453,14 +455,14 @@ export function TaskForm({
                     {targetScope === 'class' && (
                         <div>
                             <label className="block text-xs font-bold text-kidville-green uppercase tracking-wider mb-1">
-                                Seleziona Classe / Sezione
+                                {t('selezionaClasse')}
                             </label>
                             <select
                                 value={targetClass}
                                 onChange={e => setTargetClass(e.target.value)}
                                 className="w-full border-2 border-kidville-line rounded-xl px-3 py-2.5 font-maven text-sm text-kidville-green bg-white/60 focus:outline-none focus:ring-2 focus:ring-kidville-green transition-all"
                             >
-                                <option value="">-- Seleziona --</option>
+                                <option value="">{t('optSeleziona')}</option>
                                 {visibleClasses.map(cls => (
                                     <option key={cls} value={cls}>{cls}</option>
                                 ))}
@@ -471,16 +473,16 @@ export function TaskForm({
                     {targetScope === 'role' && (
                         <div>
                             <label className="block text-xs font-bold text-kidville-green uppercase tracking-wider mb-1 flex items-center gap-1">
-                                <Shield size={12} /> Seleziona Ruolo Destinatario
+                                <Shield size={12} /> {t('selezionaRuolo')}
                             </label>
                             <select
                                 value={targetRole}
                                 onChange={e => setTargetRole(e.target.value)}
                                 className="w-full border-2 border-kidville-line rounded-xl px-3 py-2.5 font-maven text-sm text-kidville-green bg-white/60 focus:outline-none focus:ring-2 focus:ring-kidville-green transition-all"
                             >
-                                <option value="educator">Insegnante (Educator)</option>
-                                <option value="coordinator">Coordinatore (Coordinator)</option>
-                                <option value="admin">Segreteria/Direzione (Admin)</option>
+                                <option value="educator">{t('ruoloInsegnante')}</option>
+                                <option value="coordinator">{t('ruoloCoordinatore')}</option>
+                                <option value="admin">{t('ruoloSegreteria')}</option>
                             </select>
                         </div>
                     )}
@@ -488,14 +490,14 @@ export function TaskForm({
                     {/* Associazione Alunno (Opzionale) */}
                     <div>
                         <label className="block text-xs font-bold text-kidville-green uppercase tracking-wider mb-1">
-                            Associa ad un Alunno (Opzionale)
+                            {t('associaAlunno')}
                         </label>
                         <select
                             value={studentId}
                             onChange={e => setStudentId(e.target.value)}
                             className="w-full border-2 border-kidville-line rounded-xl px-3 py-2.5 font-maven text-sm text-kidville-green bg-white/60 focus:outline-none focus:ring-2 focus:ring-kidville-green transition-all"
                         >
-                            <option value="">-- Nessuno --</option>
+                            <option value="">{t('optNessuno')}</option>
                             {students.map(student => (
                                 <option key={student.id} value={student.id}>
                                     {student.nome} {student.cognome} ({student.classe_sezione})
@@ -507,7 +509,7 @@ export function TaskForm({
                     {/* Scadenza (Opzionale) */}
                     <div>
                         <label className="block text-xs font-bold text-kidville-green uppercase tracking-wider mb-1 flex items-center gap-1">
-                            <Calendar size={12} /> Scadenza (Opzionale)
+                            <Calendar size={12} /> {t('scadenzaOpzionale')}
                         </label>
                         <div className="grid grid-cols-2 gap-2">
                             <input
@@ -532,14 +534,14 @@ export function TaskForm({
                             onClick={onClose}
                             className="flex-1 py-3 border-2 border-kidville-line hover:bg-kidville-cream rounded-2xl font-barlow font-black uppercase text-sm text-kidville-muted tracking-wider transition-all"
                         >
-                            Annulla
+                            {t('annulla')}
                         </button>
                         <button
                             type="submit"
                             disabled={isSaving}
                             className="flex-1 py-3 bg-kidville-green text-kidville-yellow hover:opacity-90 rounded-2xl font-barlow font-black uppercase text-sm tracking-wider transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-kidville-green/20"
                         >
-                            {isSaving ? 'Creazione...' : 'Crea Task'}
+                            {isSaving ? t('creazione') : t('creaTask')}
                         </button>
                     </div>
                 </form>

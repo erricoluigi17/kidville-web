@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { motion } from 'framer-motion';
 import { X, FileText, Tag, AlertTriangle, Calendar, Save, CheckSquare } from 'lucide-react';
 import { Task } from './TaskCard';
@@ -32,6 +33,7 @@ interface TaskEditModalProps {
 }
 
 export function TaskEditModal({ task, open, onClose, onSave, currentUserId }: TaskEditModalProps) {
+    const t = useTranslations('teacherTasks');
     // Il form si inizializza dal task al mount: il parent monta la modale
     // solo quando c'è un task in modifica, quindi equivale alla vecchia
     // useEffect di init (rimossa per la regola set-state-in-effect).
@@ -75,16 +77,16 @@ export function TaskEditModal({ task, open, onClose, onSave, currentUserId }: Ta
             onClose();
         } catch (err) {
             console.error('Errore modifica task:', err);
-            alert('Errore durante il salvataggio');
+            alert(t('erroreSalvataggio'));
         } finally {
             setIsSaving(false);
         }
     };
 
     const statusOptions = [
-        { value: 'todo', label: 'Da Fare', color: 'text-kidville-ink' },
-        { value: 'in_progress', label: 'In Corso', color: 'text-kidville-warn' },
-        { value: 'completed', label: 'Completato', color: 'text-kidville-success' },
+        { value: 'todo', label: t('statusTodo'), color: 'text-kidville-ink' },
+        { value: 'in_progress', label: t('statusInProgress'), color: 'text-kidville-warn' },
+        { value: 'completed', label: t('statoCompletato'), color: 'text-kidville-success' },
     ];
 
     return (
@@ -107,7 +109,7 @@ export function TaskEditModal({ task, open, onClose, onSave, currentUserId }: Ta
                     <div className="flex items-center gap-2">
                         <FileText className="text-kidville-green" size={18} />
                         <h2 className="font-barlow font-black text-lg text-kidville-green uppercase tracking-wide">
-                            Modifica Task
+                            {t('modificaTaskTitolo')}
                         </h2>
                     </div>
                     <button
@@ -122,7 +124,7 @@ export function TaskEditModal({ task, open, onClose, onSave, currentUserId }: Ta
                     {/* Status */}
                     <div>
                         <label className="block text-xs font-bold text-kidville-green uppercase tracking-wider mb-2 flex items-center gap-1">
-                            <CheckSquare size={12} /> Stato del Task
+                            <CheckSquare size={12} /> {t('statoDelTask')}
                         </label>
                         <div className="flex gap-2">
                             {statusOptions.map(opt => (
@@ -146,7 +148,7 @@ export function TaskEditModal({ task, open, onClose, onSave, currentUserId }: Ta
                     {/* Titolo */}
                     <div>
                         <label className="block text-xs font-bold text-kidville-green uppercase tracking-wider mb-1">
-                            Titolo
+                            {t('titolo')}
                         </label>
                         <input
                             type="text"
@@ -160,7 +162,7 @@ export function TaskEditModal({ task, open, onClose, onSave, currentUserId }: Ta
                     {/* Contenuto */}
                     <div>
                         <label className="block text-xs font-bold text-kidville-green uppercase tracking-wider mb-1">
-                            Istruzioni / Descrizione
+                            {t('istruzioniDescrizione')}
                         </label>
                         <textarea
                             rows={3}
@@ -174,34 +176,34 @@ export function TaskEditModal({ task, open, onClose, onSave, currentUserId }: Ta
                     <div className="grid grid-cols-2 gap-3">
                         <div>
                             <label className="block text-xs font-bold text-kidville-green uppercase tracking-wider mb-1 flex items-center gap-1">
-                                <Tag size={11} /> Categoria
+                                <Tag size={11} /> {t('categoria')}
                             </label>
                             <select
                                 value={category}
                                 onChange={e => setCategory(e.target.value)}
                                 className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white/60 focus:outline-none focus:ring-2 focus:ring-kidville-green transition-all"
                             >
-                                <option value="generale">Generale</option>
-                                <option value="genitore">Messaggio Genitore</option>
-                                <option value="amministrativo">Amministrativo</option>
-                                <option value="servizio">Nota di Servizio</option>
-                                <option value="manutenzione">Manutenzione</option>
-                                <option value="didattico">Didattico</option>
+                                <option value="generale">{t('catGenerale')}</option>
+                                <option value="genitore">{t('catGenitore')}</option>
+                                <option value="amministrativo">{t('catAmministrativo')}</option>
+                                <option value="servizio">{t('catServizio')}</option>
+                                <option value="manutenzione">{t('catManutenzione')}</option>
+                                <option value="didattico">{t('catDidattico')}</option>
                             </select>
                         </div>
                         <div>
                             <label className="block text-xs font-bold text-kidville-green uppercase tracking-wider mb-1 flex items-center gap-1">
-                                <AlertTriangle size={11} /> Priorità
+                                <AlertTriangle size={11} /> {t('priorita')}
                             </label>
                             <select
                                 value={priority}
                                 onChange={e => setPriority(e.target.value)}
                                 className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white/60 focus:outline-none focus:ring-2 focus:ring-kidville-green transition-all"
                             >
-                                <option value="low">Bassa</option>
-                                <option value="medium">Media</option>
-                                <option value="high">Alta</option>
-                                <option value="urgent">🚨 Urgente</option>
+                                <option value="low">{t('priorityLow')}</option>
+                                <option value="medium">{t('priorityMedium')}</option>
+                                <option value="high">{t('priorityHigh')}</option>
+                                <option value="urgent">{t('priorityUrgentOpt')}</option>
                             </select>
                         </div>
                     </div>
@@ -209,7 +211,7 @@ export function TaskEditModal({ task, open, onClose, onSave, currentUserId }: Ta
                     {/* Scadenza */}
                     <div>
                         <label className="block text-xs font-bold text-kidville-green uppercase tracking-wider mb-1 flex items-center gap-1">
-                            <Calendar size={11} /> Scadenza
+                            <Calendar size={11} /> {t('scadenza')}
                         </label>
                         <div className="grid grid-cols-2 gap-2">
                             <input
@@ -231,11 +233,11 @@ export function TaskEditModal({ task, open, onClose, onSave, currentUserId }: Ta
                     {status === 'completed' && (
                         <div className="p-4 bg-kidville-success-soft/30 rounded-2xl border border-kidville-success/30">
                             <label className="block text-xs font-bold text-kidville-success uppercase tracking-wider mb-2">
-                                ✅ Note di Verifica / Completamento
+                                {t('noteVerifica')}
                             </label>
                             <textarea
                                 rows={3}
-                                placeholder="Indica come è stato risolto il task o le note di verifica..."
+                                placeholder={t('placeholderNoteVerifica')}
                                 value={resolutionNotes}
                                 onChange={e => setResolutionNotes(e.target.value)}
                                 className="w-full border border-kidville-success/30 rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:ring-2 focus:ring-kidville-success transition-all"
@@ -250,7 +252,7 @@ export function TaskEditModal({ task, open, onClose, onSave, currentUserId }: Ta
                             onClick={onClose}
                             className="flex-1 py-3 border-2 border-kidville-line hover:bg-kidville-cream rounded-2xl font-barlow font-black uppercase text-sm text-kidville-muted tracking-wider transition-all"
                         >
-                            Annulla
+                            {t('annulla')}
                         </button>
                         <button
                             type="submit"
@@ -258,7 +260,7 @@ export function TaskEditModal({ task, open, onClose, onSave, currentUserId }: Ta
                             className="flex-1 py-3 bg-kidville-green text-kidville-yellow hover:opacity-90 rounded-2xl font-barlow font-black uppercase text-sm tracking-wider transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-kidville-green/20"
                         >
                             <Save size={14} />
-                            {isSaving ? 'Salvataggio...' : 'Salva Modifiche'}
+                            {isSaving ? t('salvataggio') : t('salvaModifiche')}
                         </button>
                     </div>
                 </form>

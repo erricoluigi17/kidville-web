@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { AlertTriangle, BarChart3 } from 'lucide-react';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 
@@ -12,6 +13,7 @@ interface GruppoObiettivo { obiettivo: { id: string; codice: string | null; desc
 interface PanoramicaVoce { materiaId: string; nome: string; media: number | null; nValutazioni: number }
 
 export default function ProspettoPage() {
+  const t = useTranslations('teacherPrimaria');
   const params = useParams();
   const search = useSearchParams();
   const sectionId = params?.sectionId as string;
@@ -31,9 +33,9 @@ export default function ProspettoPage() {
       .then((r) => r.json())
       .then((d) => {
         if (d.success) { setAlunni(d.data.alunni ?? []); setMaterie(d.data.materie ?? []); setApiError(null); }
-        else setApiError(d.error ?? 'Impossibile caricare gli alunni');
+        else setApiError(d.error ?? t('comuneImpossibileCaricareAlunni'));
       });
-  }, [sectionId, userId]);
+  }, [sectionId, userId, t]);
 
   const load = useCallback(async () => {
     try {
@@ -56,17 +58,17 @@ export default function ProspettoPage() {
   return (
     <div className="rounded-card bg-white p-5 shadow-sm">
       <h2 className="font-barlow text-lg font-bold text-kidville-ink mb-1 flex items-center gap-2">
-        <BarChart3 size={18} className="text-kidville-green" /> Prospetto valutazioni
+        <BarChart3 size={18} className="text-kidville-green" /> {t('prospettoTitolo')}
       </h2>
       <p className="font-maven text-xs text-kidville-muted mb-3">
-        Seleziona solo l&apos;alunno per vedere la panoramica di tutte le materie. Seleziona anche la materia per il dettaglio per obiettivo.
+        {t('prospettoSub')}
       </p>
 
       {/* Banner conformità: la media è uno strumento docente, non ufficiale (DR) */}
       <div className="mb-4 flex items-start gap-2.5 rounded-xl border border-kidville-info/20 bg-kidville-info-soft px-3.5 py-3">
         <BarChart3 size={15} className="mt-0.5 shrink-0 text-kidville-info" />
         <span className="font-maven text-[11.5px] leading-snug text-kidville-info">
-          <strong>Strumento di lavoro del docente.</strong> La media è indicativa e non ufficiale: non compare in pagella né nelle viste delle famiglie (O.M. 3/2025).
+          {t.rich('prospettoBanner', { strong: (c) => <strong>{c}</strong> })}
         </span>
       </div>
 
@@ -78,11 +80,11 @@ export default function ProspettoPage() {
 
       <div className="grid grid-cols-2 gap-2 mb-4">
         <select value={alunnoId} onChange={(e) => { setAlunnoId(e.target.value); setMateriaId(''); if (!e.target.value) { setGruppi([]); setMedia(null); setPanoramica(null); } }} className="font-maven rounded-pill border border-kidville-line px-3 py-2 text-sm">
-          <option value="">Alunno…</option>
+          <option value="">{t('comuneAlunnoPlaceholder')}</option>
           {alunni.map((a) => <option key={a.id} value={a.id}>{a.cognome} {a.nome}</option>)}
         </select>
         <select value={materiaId} onChange={(e) => setMateriaId(e.target.value)} className="font-maven rounded-pill border border-kidville-line px-3 py-2 text-sm" disabled={!alunnoId}>
-          <option value="">Tutte le materie</option>
+          <option value="">{t('prospettoTutteMaterie')}</option>
           {materie.map((m) => <option key={m.id} value={m.id}>{m.nome}</option>)}
         </select>
       </div>
@@ -90,16 +92,16 @@ export default function ProspettoPage() {
       {/* ── Panoramica medie per tutte le materie ───────────── */}
       {alunnoId && !materiaId && panoramica && (
         panoramica.length === 0 ? (
-          <p className="font-maven text-sm text-kidville-muted">Nessuna valutazione registrata.</p>
+          <p className="font-maven text-sm text-kidville-muted">{t('prospettoNessunaValutazione')}</p>
         ) : (
           <div>
-            <p className="font-maven text-xs font-semibold text-kidville-muted mb-2 uppercase tracking-wide">Media per materia</p>
+            <p className="font-maven text-xs font-semibold text-kidville-muted mb-2 uppercase tracking-wide">{t('prospettoMediaPerMateria')}</p>
             <table className="w-full font-maven text-sm">
               <thead>
                 <tr className="border-b border-kidville-line">
-                  <th className="text-left py-1.5 text-xs font-semibold text-kidville-muted">Materia</th>
-                  <th className="text-center py-1.5 text-xs font-semibold text-kidville-muted">Media</th>
-                  <th className="text-right py-1.5 text-xs font-semibold text-kidville-muted">Valutazioni</th>
+                  <th className="text-left py-1.5 text-xs font-semibold text-kidville-muted">{t('prospettoMateria')}</th>
+                  <th className="text-center py-1.5 text-xs font-semibold text-kidville-muted">{t('prospettoMedia')}</th>
+                  <th className="text-right py-1.5 text-xs font-semibold text-kidville-muted">{t('prospettoValutazioni')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -117,7 +119,7 @@ export default function ProspettoPage() {
                 ))}
               </tbody>
             </table>
-            <p className="font-maven text-[10px] text-kidville-muted mt-2">Tocca una riga per vedere il dettaglio per obiettivo.</p>
+            <p className="font-maven text-[10px] text-kidville-muted mt-2">{t('prospettoToccaRiga')}</p>
           </div>
         )
       )}
@@ -125,12 +127,12 @@ export default function ProspettoPage() {
       {/* ── Dettaglio singola materia ────────────────────────── */}
       {alunnoId && materiaId && (
         gruppi.length === 0 ? (
-          <p className="font-maven text-sm text-kidville-muted">Nessuna valutazione registrata per questa materia.</p>
+          <p className="font-maven text-sm text-kidville-muted">{t('prospettoNessunaValutazioneMateria')}</p>
         ) : (
           <div className="space-y-4">
             {media !== null && (
               <div className="flex items-center justify-between rounded-card bg-kidville-green/5 border border-kidville-green/20 px-4 py-3">
-                <span className="font-maven text-sm text-kidville-ink">Media matematica (giudizi sintetici)</span>
+                <span className="font-maven text-sm text-kidville-ink">{t('prospettoMediaMatematica')}</span>
                 <span className="font-barlow text-2xl font-bold text-kidville-green">{media.toFixed(2)}</span>
               </div>
             )}
@@ -144,7 +146,7 @@ export default function ProspettoPage() {
                   {g.valutazioni.map((v) => (
                     <li key={v.id} className="flex items-center gap-2 font-maven text-xs text-kidville-muted">
                       <span className="rounded-pill bg-kidville-green/10 px-2 py-0.5 text-kidville-green">
-                        {v.giudizio_sintetico || 'descrittivo'}
+                        {v.giudizio_sintetico || t('prospettoDescrittivo')}
                       </span>
                       <span className="capitalize">{v.tipo}</span>
                       <span className="text-kidville-muted">{new Date(v.creato_il).toLocaleDateString('it-IT')}</span>
@@ -158,7 +160,7 @@ export default function ProspettoPage() {
         )
       )}
 
-      {!alunnoId && <p className="font-maven text-sm text-kidville-muted">Seleziona un alunno.</p>}
+      {!alunnoId && <p className="font-maven text-sm text-kidville-muted">{t('comuneSelezionaAlunno')}</p>}
     </div>
   );
 }

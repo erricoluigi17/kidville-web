@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { Check, X, Clock, LogOut, Users, BarChart2 } from 'lucide-react';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { saveLocalAppello, syncPendingAppello } from '@/lib/offline/syncEngine';
@@ -40,11 +41,13 @@ function oraCorrente(): string {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
-const STATI: { key: Stato; label: string; icon: React.ReactNode; cls: string }[] = [
-  { key: 'presente', label: 'Presente', icon: <Check size={14} />, cls: 'bg-kidville-success text-white' },
-  { key: 'assente', label: 'Assente', icon: <X size={14} />, cls: 'bg-kidville-error text-white' },
-  { key: 'ritardo', label: 'Ritardo', icon: <Clock size={14} />, cls: 'bg-kidville-warn text-white' },
-  { key: 'uscita_anticipata', label: 'Uscita', icon: <LogOut size={14} />, cls: 'bg-kidville-info text-white' },
+// L'etichetta di stato è tradotta al render via t(`appelloStato_${key}`): l'array
+// tiene solo la chiave (valore di stato lato API), l'icona e lo stile.
+const STATI: { key: Stato; icon: React.ReactNode; cls: string }[] = [
+  { key: 'presente', icon: <Check size={14} />, cls: 'bg-kidville-success text-white' },
+  { key: 'assente', icon: <X size={14} />, cls: 'bg-kidville-error text-white' },
+  { key: 'ritardo', icon: <Clock size={14} />, cls: 'bg-kidville-warn text-white' },
+  { key: 'uscita_anticipata', icon: <LogOut size={14} />, cls: 'bg-kidville-info text-white' },
 ];
 
 function oggiIso() {
@@ -52,6 +55,7 @@ function oggiIso() {
 }
 
 export default function AppelloPage() {
+  const t = useTranslations('teacherPrimaria');
   const params = useParams();
   const search = useSearchParams();
   const sectionId = params?.sectionId as string;
@@ -185,12 +189,12 @@ export default function AppelloPage() {
     <div className="space-y-4">
     <div className="rounded-card bg-white p-5 shadow-sm">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <h2 className="font-barlow text-lg font-bold text-kidville-ink">Appello</h2>
+        <h2 className="font-barlow text-lg font-bold text-kidville-ink">{t('appelloTitolo')}</h2>
         <div className="flex items-center gap-2">
           <DateField
             value={data}
             onChange={setData}
-            aria-label="Data dell'appello"
+            aria-label={t('appelloDataAria')}
             className="font-maven rounded-pill border border-kidville-line px-3 py-1.5 text-sm"
           />
           <button
@@ -198,13 +202,13 @@ export default function AppelloPage() {
             disabled={saving || righe.length === 0}
             className="font-maven inline-flex items-center gap-1.5 rounded-pill bg-kidville-green px-4 py-1.5 text-sm text-kidville-yellow disabled:opacity-50"
           >
-            <Users size={14} /> Tutti presenti
+            <Users size={14} /> {t('appelloTuttiPresenti')}
           </button>
         </div>
       </div>
 
       {loading ? (
-        <p className="font-maven text-kidville-muted text-sm">Caricamento…</p>
+        <p className="font-maven text-kidville-muted text-sm">{t('comuneCaricamento')}</p>
       ) : (
         <ul className="divide-y divide-kidville-line">
           {righe.map((r) => (
@@ -215,19 +219,19 @@ export default function AppelloPage() {
                   <button
                     key={s.key}
                     onClick={() => setStato(r.id, s.key)}
-                    title={s.label}
+                    title={t(`appelloStato_${s.key}`)}
                     className={`font-maven inline-flex items-center gap-1 rounded-pill px-2.5 py-1 text-xs transition ${
                       r.stato === s.key ? s.cls : 'bg-kidville-cream text-kidville-muted hover:bg-kidville-cream-dark'
                     }`}
                   >
                     {s.icon}
-                    <span className="hidden sm:inline">{s.label}</span>
+                    <span className="hidden sm:inline">{t(`appelloStato_${s.key}`)}</span>
                   </button>
                 ))}
                 {/* Orario di entrata (ritardo) / uscita (uscita anticipata). */}
                 {(r.stato === 'ritardo' || r.stato === 'uscita_anticipata') && (
                   <label className="font-maven inline-flex items-center gap-1 text-xs text-kidville-muted">
-                    {r.stato === 'ritardo' ? 'Entrata' : 'Uscita'}
+                    {r.stato === 'ritardo' ? t('appelloOrarioEntrata') : t('appelloOrarioUscita')}
                     <input
                       type="time"
                       value={oraDaTs(r.stato === 'ritardo' ? r.orario_entrata : r.orario_uscita)}
@@ -239,21 +243,21 @@ export default function AppelloPage() {
                 {/* Stato giustificazione genitore + presa visione del docente. */}
                 {r.giustificata && (
                   r.giust_vista_il ? (
-                    <span className="font-maven text-[11px] text-kidville-success" title={r.giustificazione_testo ?? undefined}>✓ giustif. vista</span>
+                    <span className="font-maven text-[11px] text-kidville-success" title={r.giustificazione_testo ?? undefined}>{t('appelloGiustVista')}</span>
                   ) : (
                     <button
                       onClick={() => r.presenza_id && presaVisione(r.presenza_id)}
-                      title={r.giustificazione_testo ?? 'Giustificata dal genitore'}
+                      title={r.giustificazione_testo ?? t('appelloGiustificataDalGenitore')}
                       className="font-maven rounded-pill bg-kidville-warn-soft px-2.5 py-1 text-[11px] text-kidville-warn"
                     >
-                      Giustificata · presa visione
+                      {t('appelloGiustificataPresaVisione')}
                     </button>
                   )
                 )}
               </div>
             </li>
           ))}
-          {righe.length === 0 && <li className="py-3 font-maven text-kidville-muted text-sm">Nessun alunno nella classe.</li>}
+          {righe.length === 0 && <li className="py-3 font-maven text-kidville-muted text-sm">{t('appelloNessunAlunno')}</li>}
         </ul>
       )}
     </div>
@@ -261,9 +265,9 @@ export default function AppelloPage() {
     {/* ── Riepilogo ore assenze per materia ───────────────────────── */}
     <div className="rounded-card bg-white p-5 shadow-sm">
       <h3 className="font-barlow text-base font-bold text-kidville-ink mb-1 flex items-center gap-2">
-        <BarChart2 size={16} className="text-kidville-green" /> Riepilogo ore assenze
+        <BarChart2 size={16} className="text-kidville-green" /> {t('appelloRiepilogoTitolo')}
       </h3>
-      <p className="font-maven text-xs text-kidville-muted mb-3">Monte ore mancate totali e per materia, in base all&apos;orario settimanale.</p>
+      <p className="font-maven text-xs text-kidville-muted mb-3">{t('appelloRiepilogoSub')}</p>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-3">
         <select
@@ -271,30 +275,30 @@ export default function AppelloPage() {
           onChange={(e) => setRiepilogoAlunnoId(e.target.value)}
           className="font-maven rounded-pill border border-kidville-line px-3 py-2 text-sm"
         >
-          <option value="">Alunno…</option>
+          <option value="">{t('comuneAlunnoPlaceholder')}</option>
           {alunniList.map((a) => <option key={a.id} value={a.id}>{a.cognome} {a.nome}</option>)}
         </select>
-        <DateField value={riepilogoDal} onChange={setRiepilogoDal} aria-label="Riepilogo assenze: data di inizio"
+        <DateField value={riepilogoDal} onChange={setRiepilogoDal} aria-label={t('appelloRiepilogoDalAria')}
           className="font-maven rounded-pill border border-kidville-line px-3 py-2 text-sm" />
-        <DateField value={riepilogoAl} onChange={setRiepilogoAl} aria-label="Riepilogo assenze: data di fine"
+        <DateField value={riepilogoAl} onChange={setRiepilogoAl} aria-label={t('appelloRiepilogoAlAria')}
           className="font-maven rounded-pill border border-kidville-line px-3 py-2 text-sm" />
       </div>
 
       {!riepilogoAlunnoId ? (
-        <p className="font-maven text-sm text-kidville-muted">Seleziona un alunno.</p>
+        <p className="font-maven text-sm text-kidville-muted">{t('comuneSelezionaAlunno')}</p>
       ) : riepilogoLoading ? (
-        <p className="font-maven text-sm text-kidville-muted">Calcolo in corso…</p>
+        <p className="font-maven text-sm text-kidville-muted">{t('appelloCalcoloInCorso')}</p>
       ) : !riepilogo ? (
-        <p className="font-maven text-sm text-kidville-muted">Nessuna assenza registrata nel periodo.</p>
+        <p className="font-maven text-sm text-kidville-muted">{t('appelloNessunaAssenza')}</p>
       ) : (
         <div className="space-y-3">
           {/* Totale */}
           <div className="grid grid-cols-4 gap-2">
             {[
-              { label: 'Ore assenze', val: riepilogo.oreAssenza },
-              { label: 'Ore ritardi', val: riepilogo.oreRitardo },
-              { label: 'Ore permessi', val: riepilogo.orePermesso },
-              { label: 'Totale ore', val: riepilogo.oreTotali },
+              { label: t('appelloOreAssenze'), val: riepilogo.oreAssenza },
+              { label: t('appelloOreRitardi'), val: riepilogo.oreRitardo },
+              { label: t('appelloOrePermessi'), val: riepilogo.orePermesso },
+              { label: t('appelloTotaleOre'), val: riepilogo.oreTotali },
             ].map((s) => (
               <div key={s.label} className="rounded-card bg-kidville-green/5 border border-kidville-green/20 px-3 py-2 text-center">
                 <p className="font-maven text-[10px] text-kidville-muted mb-0.5">{s.label}</p>
@@ -307,8 +311,8 @@ export default function AppelloPage() {
             <table className="w-full font-maven text-sm">
               <thead>
                 <tr className="border-b border-kidville-line">
-                  <th className="text-left py-1.5 text-xs font-semibold text-kidville-muted">Materia</th>
-                  <th className="text-right py-1.5 text-xs font-semibold text-kidville-muted">Ore mancate</th>
+                  <th className="text-left py-1.5 text-xs font-semibold text-kidville-muted">{t('appelloMateria')}</th>
+                  <th className="text-right py-1.5 text-xs font-semibold text-kidville-muted">{t('appelloOreMancate')}</th>
                 </tr>
               </thead>
               <tbody>

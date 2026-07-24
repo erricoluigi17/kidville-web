@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useCallback } from 'react';
+import { useTranslations } from 'next-intl';
 import { Send, Paperclip, X } from 'lucide-react';
 import { ScattaFotoButton } from '@/components/features/native/ScattaFotoButton';
 
@@ -11,6 +12,7 @@ interface Props {
 }
 
 export function ChatInput({ onSend, disabled, placeholder }: Props) {
+    const t = useTranslations('teacherComunicazioni');
     const [text, setText] = useState('');
     const [attachment, setAttachment] = useState<{ name: string; url: string; type: string } | null>(null);
     const [uploading, setUploading] = useState(false);
@@ -63,12 +65,12 @@ export function ChatInput({ onSend, disabled, placeholder }: Props) {
             if (res?.ok && data?.url) {
                 setAttachment({ name: data.name ?? file.name, url: data.url, type: data.attachment_type ?? 'document' });
             } else {
-                setUploadError(data?.error ?? 'Caricamento non riuscito. Riprova.');
+                setUploadError(data?.error ?? t('chatInputUploadErrore'));
             }
         } finally {
             setUploading(false);
         }
-    }, []);
+    }, [t]);
 
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -119,7 +121,7 @@ export function ChatInput({ onSend, disabled, placeholder }: Props) {
                     onClick={handleAttachClick}
                     disabled={disabled || uploading}
                     className="w-10 h-10 rounded-full flex-shrink-0 flex items-center justify-center bg-kidville-green-soft text-kidville-green transition-transform active:scale-95 disabled:opacity-50"
-                    aria-label={uploading ? 'Caricamento in corso' : 'Allega file'}
+                    aria-label={uploading ? t('chatInputAriaCaricamento') : t('chatInputAriaAllega')}
                 >
                     {uploading
                         ? <span className="w-4 h-4 border-2 border-kidville-green/30 border-t-kidville-green rounded-full animate-spin" />
@@ -143,7 +145,7 @@ export function ChatInput({ onSend, disabled, placeholder }: Props) {
                         onKeyDown={handleKeyDown}
                         disabled={disabled}
                         rows={1}
-                        placeholder={placeholder ?? 'Scrivi un messaggio...'}
+                        placeholder={placeholder ?? t('chatInputPlaceholder')}
                         className="w-full resize-none rounded-[22px] border border-kidville-line bg-white px-4 py-2.5 font-maven text-[13.5px] text-kidville-ink placeholder:text-kidville-muted focus:border-kidville-green focus:outline-none focus:ring-[3px] focus:ring-kidville-green/12 transition-all disabled:opacity-50 max-h-32 overflow-y-auto"
                         style={{ minHeight: '44px' }}
                     />
@@ -156,7 +158,7 @@ export function ChatInput({ onSend, disabled, placeholder }: Props) {
                     disabled={disabled || uploading || (!text.trim() && !attachment)}
                     className="w-11 h-11 rounded-full flex-shrink-0 flex items-center justify-center bg-kidville-green text-kidville-yellow hover:bg-kidville-green-dark active:scale-95 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
                     style={{ boxShadow: '0 8px 18px -10px rgba(0,84,75,.8)' }}
-                    aria-label="Invia messaggio"
+                    aria-label={t('chatInputAriaInvia')}
                 >
                     <Send size={19} strokeWidth={2} />
                 </button>

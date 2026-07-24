@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo, Suspense } from 'react';
+import { useTranslations, useLocale } from 'next-intl';
 import { motion, AnimatePresence } from 'framer-motion';
 import { LayoutGrid, CalendarDays, Loader2, WifiOff, Users, RefreshCw, ChevronLeft, ChevronRight, Calendar, Check } from 'lucide-react';
 import { LocalDelegate } from '@/lib/offline/db';
@@ -13,11 +14,13 @@ import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 
 // ─── Scala stati (token brand DR) ──────────────────────────────────────────────
 
-const STATI: Record<string, { label: string; tint: string; soft: string }> = {
-    presente: { label: 'Presenti', tint: 'var(--color-kidville-success)', soft: 'var(--color-kidville-success-soft)' },
-    ritardo: { label: 'Ritardo', tint: 'var(--color-kidville-warn)', soft: 'var(--color-kidville-warn-soft)' },
-    uscita_anticipata: { label: 'Uscita', tint: 'var(--color-kidville-info)', soft: 'var(--color-kidville-info-soft)' },
-    assente: { label: 'Assenti', tint: 'var(--color-kidville-neutral)', soft: 'var(--color-kidville-neutral-soft)' },
+// Solo i token cromatici di ciascuno stato; le etichette testuali vengono dal
+// namespace i18n (nelle chip di Summary), non da qui.
+const STATI: Record<string, { tint: string; soft: string }> = {
+    presente: { tint: 'var(--color-kidville-success)', soft: 'var(--color-kidville-success-soft)' },
+    ritardo: { tint: 'var(--color-kidville-warn)', soft: 'var(--color-kidville-warn-soft)' },
+    uscita_anticipata: { tint: 'var(--color-kidville-info)', soft: 'var(--color-kidville-info-soft)' },
+    assente: { tint: 'var(--color-kidville-neutral)', soft: 'var(--color-kidville-neutral-soft)' },
 };
 
 // ─── Tipi ─────────────────────────────────────────────────────────────────────
@@ -34,9 +37,11 @@ type FilterKey = 'tutti' | 'todo' | AttendanceStato;
 
 type Tab = 'oggi' | 'mese';
 
-const TABS: { id: Tab; label: string; icon: typeof LayoutGrid }[] = [
-    { id: 'oggi', label: 'Oggi', icon: LayoutGrid },
-    { id: 'mese', label: 'Mese', icon: CalendarDays },
+// La label di ogni tab arriva dal namespace i18n: `id` coincide con la chiave
+// di traduzione (t('oggi') / t('mese')).
+const TABS: { id: Tab; icon: typeof LayoutGrid }[] = [
+    { id: 'oggi', icon: LayoutGrid },
+    { id: 'mese', icon: CalendarDays },
 ];
 
 const tabContentVariants = {
@@ -57,14 +62,15 @@ function addDays(iso: string, n: number): string {
     return toISO(d);
 }
 
-function formatDateIT(iso: string): string {
+function formatDataLunga(iso: string, locale: string): string {
     const d = new Date(iso + 'T12:00:00');
-    return d.toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    return d.toLocaleDateString(locale, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 }
 
 // ─── Navigatore Data ─────────────────────────────────────────────────────────
 
 function DateNavigator({ date, onChange }: { date: string; onChange: (d: string) => void }) {
+    const t = useTranslations('teacherPresenze');
     const todayISO = toISO(new Date());
     const isToday = date === todayISO;
 
@@ -73,7 +79,7 @@ function DateNavigator({ date, onChange }: { date: string; onChange: (d: string)
             <button
                 onClick={() => onChange(addDays(date, -1))}
                 className="flex h-8 w-8 items-center justify-center rounded-xl bg-white text-kidville-green shadow-sm"
-                title="Giorno precedente"
+                title={t('giornoPrecedente')}
             >
                 <ChevronLeft size={15} />
             </button>
@@ -93,7 +99,7 @@ function DateNavigator({ date, onChange }: { date: string; onChange: (d: string)
                 onClick={() => !isToday && onChange(addDays(date, 1))}
                 disabled={isToday}
                 className="flex h-8 w-8 items-center justify-center rounded-xl bg-white text-kidville-green shadow-sm disabled:cursor-not-allowed disabled:opacity-30"
-                title="Giorno successivo"
+                title={t('giornoSuccessivo')}
             >
                 <ChevronRight size={15} />
             </button>
@@ -103,7 +109,7 @@ function DateNavigator({ date, onChange }: { date: string; onChange: (d: string)
                     onClick={() => onChange(todayISO)}
                     className="rounded-pill bg-kidville-green px-3 py-1.5 font-maven text-xs font-semibold text-kidville-yellow"
                 >
-                    Oggi
+                    {t('oggi')}
                 </button>
             )}
         </div>
@@ -121,15 +127,16 @@ function Summary({
     onFilter: (f: FilterKey) => void;
     sezione: string;
 }) {
+    const t = useTranslations('teacherPresenze');
     const reg = (counts.presente ?? 0) + (counts.ritardo ?? 0) + (counts.uscita_anticipata ?? 0) + (counts.assente ?? 0);
     const safeTot = total || 1;
     const chips: { key: FilterKey; label: string; n: number; tint: string; soft: string }[] = [
-        { key: 'tutti', label: 'Tutti', n: total, tint: 'var(--color-kidville-green)', soft: 'var(--color-kidville-green-soft)' },
-        { key: 'presente', label: 'Presenti', n: counts.presente ?? 0, tint: STATI.presente.tint, soft: STATI.presente.soft },
-        { key: 'ritardo', label: 'Ritardo', n: counts.ritardo ?? 0, tint: STATI.ritardo.tint, soft: STATI.ritardo.soft },
-        { key: 'uscita_anticipata', label: 'Uscita', n: counts.uscita_anticipata ?? 0, tint: STATI.uscita_anticipata.tint, soft: STATI.uscita_anticipata.soft },
-        { key: 'assente', label: 'Assenti', n: counts.assente ?? 0, tint: STATI.assente.tint, soft: STATI.assente.soft },
-        { key: 'todo', label: 'Da registrare', n: total - reg, tint: 'var(--color-kidville-yellow-dark)', soft: 'var(--color-kidville-yellow-soft)' },
+        { key: 'tutti', label: t('tutti'), n: total, tint: 'var(--color-kidville-green)', soft: 'var(--color-kidville-green-soft)' },
+        { key: 'presente', label: t('presenti'), n: counts.presente ?? 0, tint: STATI.presente.tint, soft: STATI.presente.soft },
+        { key: 'ritardo', label: t('ritardo'), n: counts.ritardo ?? 0, tint: STATI.ritardo.tint, soft: STATI.ritardo.soft },
+        { key: 'uscita_anticipata', label: t('uscita'), n: counts.uscita_anticipata ?? 0, tint: STATI.uscita_anticipata.tint, soft: STATI.uscita_anticipata.soft },
+        { key: 'assente', label: t('assenti'), n: counts.assente ?? 0, tint: STATI.assente.tint, soft: STATI.assente.soft },
+        { key: 'todo', label: t('daRegistrare'), n: total - reg, tint: 'var(--color-kidville-yellow-dark)', soft: 'var(--color-kidville-yellow-soft)' },
     ];
 
     return (
@@ -137,17 +144,17 @@ function Summary({
             <div className="rounded-[20px] bg-white p-4" style={{ boxShadow: '0 1px 2px rgba(0,84,75,.05), 0 10px 28px -20px rgba(0,84,75,.4)' }}>
                 <div className="flex items-end justify-between gap-3">
                     <div>
-                        <div className="font-barlow text-[11px] font-bold uppercase tracking-[0.12em] text-kidville-yellow-dark">Sezione {sezione}</div>
+                        <div className="font-barlow text-[11px] font-bold uppercase tracking-[0.12em] text-kidville-yellow-dark">{t('sezioneCon', { sezione })}</div>
                         <div className="mt-0.5 flex items-baseline gap-1.5">
                             <span className="font-barlow text-[34px] font-black leading-none text-kidville-green">{reg}</span>
                             <span className="font-barlow text-lg font-extrabold text-kidville-muted">/ {total}</span>
-                            <span className="ml-0.5 font-maven text-xs text-kidville-ink">registrati</span>
+                            <span className="ml-0.5 font-maven text-xs text-kidville-ink">{t('registrati')}</span>
                         </div>
                     </div>
                     {reg === total && total > 0 ? (
-                        <span className="inline-flex items-center gap-1 rounded-pill bg-kidville-success-soft px-2.5 py-1 font-barlow text-[10.5px] font-extrabold uppercase text-kidville-success"><Check size={11} strokeWidth={2.8} /> Completo</span>
+                        <span className="inline-flex items-center gap-1 rounded-pill bg-kidville-success-soft px-2.5 py-1 font-barlow text-[10.5px] font-extrabold uppercase text-kidville-success"><Check size={11} strokeWidth={2.8} /> {t('completo')}</span>
                     ) : (
-                        <span className="rounded-pill bg-kidville-yellow-soft px-2.5 py-1 font-barlow text-[10.5px] font-extrabold uppercase text-kidville-yellow-dark">{total - reg} mancanti</span>
+                        <span className="rounded-pill bg-kidville-yellow-soft px-2.5 py-1 font-barlow text-[10.5px] font-extrabold uppercase text-kidville-yellow-dark">{t('mancanti', { n: total - reg })}</span>
                     )}
                 </div>
                 <div className="mt-3 flex h-2 overflow-hidden rounded-full bg-kidville-cream-dark">
@@ -180,6 +187,8 @@ function Summary({
 // ─── Vista Oggi ───────────────────────────────────────────────────────────────
 
 function TodayView({ sezione }: { sezione: string }) {
+    const t = useTranslations('teacherPresenze');
+    const locale = useLocale();
     const [selectedDate, setSelectedDate] = useState(toISO(new Date()));
 
     const [students, setStudents] = useState<Student[]>([]);
@@ -258,12 +267,12 @@ function TodayView({ sezione }: { sezione: string }) {
                 setStudents(studs);
                 setError(null);
             } else {
-                setError('Errore caricamento alunni');
+                setError(t('erroreCaricamentoAlunni'));
             }
         } finally {
             setIsLoading(false);
         }
-    }, [fetchStudents, fetchTodayRecords, fetchDelegates]);
+    }, [fetchStudents, fetchTodayRecords, fetchDelegates, t]);
 
     useEffect(() => {
         loadAll();
@@ -324,13 +333,13 @@ function TodayView({ sezione }: { sezione: string }) {
                 body: JSON.stringify({ alunnoId: selectedCheckout }),
             });
             if (res.ok) {
-                alert('ALLARME INVIATO CON SUCCESSO!');
+                alert(t('allarmeInviato'));
                 setSelectedCheckout(null);
             } else {
-                alert('Errore invio allarme.');
+                alert(t('erroreInvioAllarme'));
             }
         } catch {
-            alert('Errore di rete. Allarme non inviato.');
+            alert(t('erroreReteAllarme'));
         }
     };
 
@@ -361,7 +370,7 @@ function TodayView({ sezione }: { sezione: string }) {
         return (
             <div className="flex flex-col items-center justify-center gap-4 py-20">
                 <Loader2 size={32} className="animate-spin text-kidville-green" />
-                <p className="font-maven text-sm text-kidville-muted">Caricamento alunni da anagrafica…</p>
+                <p className="font-maven text-sm text-kidville-muted">{t('caricamentoAlunni')}</p>
             </div>
         );
     }
@@ -374,7 +383,7 @@ function TodayView({ sezione }: { sezione: string }) {
                     onClick={loadAll}
                     className="flex items-center gap-2 rounded-pill bg-kidville-green px-4 py-2 font-maven text-sm text-kidville-yellow"
                 >
-                    <RefreshCw size={14} /> Riprova
+                    <RefreshCw size={14} /> {t('riprova')}
                 </button>
             </div>
         );
@@ -385,8 +394,8 @@ function TodayView({ sezione }: { sezione: string }) {
             <div className="flex flex-col items-center justify-center gap-4 py-20">
                 <span className="text-5xl opacity-30">👶</span>
                 <p className="text-center font-maven text-sm text-kidville-muted">
-                    Nessun alunno nella sezione <strong>{sezione}</strong>.<br />
-                    Verifica che gli alunni abbiano la sezione corretta in anagrafica.
+                    {t('nessunAlunnoPre')} <strong>{sezione}</strong>.<br />
+                    {t('nessunAlunnoAiuto')}
                 </p>
             </div>
         );
@@ -397,16 +406,16 @@ function TodayView({ sezione }: { sezione: string }) {
             {/* Navigatore data + intestazione */}
             <div className="flex flex-col gap-3 rounded-2xl border border-kidville-line bg-white p-4 shadow-sm">
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                    <p className="font-maven text-sm capitalize text-kidville-muted">{formatDateIT(selectedDate)}</p>
+                    <p className="font-maven text-sm capitalize text-kidville-muted">{formatDataLunga(selectedDate, locale)}</p>
                     <div className="flex items-center gap-2">
                         {isOffline && (
                             <div className="flex items-center gap-1.5 rounded-pill border border-kidville-warn/30 bg-kidville-warn-soft px-3 py-1.5 font-maven text-xs text-kidville-warn">
-                                <WifiOff size={12} /> Offline
+                                <WifiOff size={12} /> {t('offline')}
                             </div>
                         )}
                         <button
                             onClick={fetchTodayRecords}
-                            title="Aggiorna presenze"
+                            title={t('aggiornaPresenze')}
                             className="flex h-8 w-8 items-center justify-center rounded-xl bg-kidville-cream text-kidville-muted transition-colors hover:text-kidville-green"
                         >
                             <RefreshCw size={14} />
@@ -433,7 +442,7 @@ function TodayView({ sezione }: { sezione: string }) {
                 ))}
                 {visibleStudents.length === 0 && (
                     <div className="rounded-2xl border border-dashed border-kidville-line bg-white/60 p-6 text-center font-maven text-sm text-kidville-muted">
-                        Nessun alunno per questo filtro.
+                        {t('nessunAlunnoFiltro')}
                     </div>
                 )}
             </div>
@@ -455,6 +464,7 @@ function TodayView({ sezione }: { sezione: string }) {
 // ─── Pagina Principale ────────────────────────────────────────────────────────
 
 function TeacherAttendanceContent() {
+    const t = useTranslations('teacherPresenze');
     const { userId: teacherId } = useSessionIdentity();
     const [activeTab, setActiveTab] = useState<Tab>('oggi');
     const [prevTab, setPrevTab] = useState<Tab>('oggi');
@@ -489,11 +499,11 @@ function TeacherAttendanceContent() {
         <div className="mx-auto max-w-[460px] px-4 pt-5">
             {/* ── Header verde (DR) ── */}
             <PageHeaderCard
-                eyebrow="Registro"
-                title="Appello"
+                eyebrow={t('eyebrowRegistro')}
+                title={t('appello')}
                 subtitle={
                     <span className="inline-flex items-center gap-1.5 rounded-pill bg-white/15 px-2.5 py-1 font-maven text-xs font-semibold text-white backdrop-blur">
-                        <Users size={13} /> Sezione {sezione || '…'}
+                        <Users size={13} /> {t('sezioneCon', { sezione: sezione || '…' })}
                     </span>
                 }
             />
@@ -501,7 +511,7 @@ function TeacherAttendanceContent() {
             {/* ── Selettore sezione (solo se il docente ne ha più d'una) ── */}
             {availableSections.length > 1 && (
                 <div className="mt-3 flex items-center gap-2">
-                    <label htmlFor="att-section-select" className="font-barlow text-xs font-bold uppercase tracking-wide text-kidville-muted">Sezione:</label>
+                    <label htmlFor="att-section-select" className="font-barlow text-xs font-bold uppercase tracking-wide text-kidville-muted">{t('sezioneSelettore')}</label>
                     <select
                         id="att-section-select"
                         value={sezione}
@@ -534,7 +544,7 @@ function TeacherAttendanceContent() {
                                 />
                             )}
                             <Icon size={15} className="relative z-10" />
-                            <span className="relative z-10">{tab.label}</span>
+                            <span className="relative z-10">{t(tab.id)}</span>
                         </button>
                     );
                 })}
@@ -546,7 +556,7 @@ function TeacherAttendanceContent() {
                     <div className="flex flex-col items-center justify-center gap-4 py-20">
                         {sectionsLoaded ? (
                             <p className="text-center font-maven text-sm text-kidville-muted">
-                                Nessuna sezione assegnata al tuo profilo.
+                                {t('nessunaSezioneProfilo')}
                             </p>
                         ) : (
                             <Loader2 size={32} className="animate-spin text-kidville-green" />

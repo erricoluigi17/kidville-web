@@ -6,6 +6,7 @@
 // La gestione delle prenotazioni resta a genitori/segreteria.
 
 import { Suspense, useEffect, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { useSearchParams } from 'next/navigation';
 import { AlertTriangle, RefreshCw, CalendarDays, UtensilsCrossed } from 'lucide-react';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
@@ -19,6 +20,7 @@ interface Report { data: string; totale: number; perClasse: ClasseReport[]; alte
 interface AltManuale { id: string; alunno_id: string; nome: string; classe: string; richiesta: string; origine: string; created_at: string }
 
 function MensaDocente() {
+  const t = useTranslations('teacherServizi');
   const search = useSearchParams();
   const userId = getCurrentTeacherId(search);
 
@@ -60,7 +62,7 @@ function MensaDocente() {
         const r = await fetch(`/api/mensa/report?${qs}`);
         const j = await r.json();
         if (j.success) rep = j.data;
-        else err = j.error || 'Errore nel caricamento';
+        else err = j.error || t('mensaErrCaricamento');
         // Alternative manuali del giorno (sola lettura): best-effort, non bloccano il report.
         try {
           const ra = await fetch(`/api/mensa/alternative?${qs}`);
@@ -70,14 +72,14 @@ function MensaDocente() {
           // rete assente: il report resta comunque leggibile
         }
       } catch {
-        err = 'Errore di rete';
+        err = t('mensaErrRete');
       } finally {
         if (!cancelled) { setReport(rep); setAlternative(alts); setError(err); setLoading(false); }
       }
     };
     void run();
     return () => { cancelled = true; };
-  }, [userId, sezione, data, reloadKey]);
+  }, [userId, sezione, data, reloadKey, t]);
 
   const cambiaSezione = (s: string) => { setSezione(s); setLoading(true); };
   const cambiaData = (v: string) => { setData(v); setLoading(true); };
@@ -87,9 +89,9 @@ function MensaDocente() {
     <div className="mx-auto max-w-[460px] px-4 pt-6">
       {/* Header verde (DR) */}
       <PageHeaderCard
-        eyebrow="Vita scolastica"
-        title="Mensa"
-        subtitle="Prenotazioni pranzo della classe (sola lettura)."
+        eyebrow={t('mensaEyebrow')}
+        title={t('mensaTitolo')}
+        subtitle={t('mensaSottotitolo')}
         className="mb-4"
       />
 
@@ -110,7 +112,7 @@ function MensaDocente() {
         )}
         <div className="flex items-center gap-2">
           <label className="inline-flex items-center gap-1.5 font-maven text-xs text-kidville-muted">
-            <CalendarDays size={14} /> Giorno
+            <CalendarDays size={14} /> {t('mensaGiorno')}
           </label>
           <input
             type="date"
@@ -121,7 +123,7 @@ function MensaDocente() {
           <button
             onClick={aggiorna}
             disabled={loading}
-            title="Aggiorna"
+            title={t('mensaAggiorna')}
             className="w-8 h-8 rounded-full bg-white border-2 border-gray-200 flex items-center justify-center text-kidville-green disabled:opacity-40"
           >
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
@@ -138,14 +140,18 @@ function MensaDocente() {
           <div className="w-7 h-7 border-[3px] border-kidville-green/20 border-t-kidville-green rounded-full animate-spin" />
         </div>
       ) : sezioniPronte && sezioni.length === 0 ? (
-        <p className="font-maven text-sm text-kidville-muted text-center py-10">Nessuna classe assegnata.</p>
+        <p className="font-maven text-sm text-kidville-muted text-center py-10">{t('mensaNessunaClasse')}</p>
       ) : !report || report.totale === 0 ? (
-        <p className="font-maven text-sm text-kidville-muted text-center py-10">Nessuna prenotazione pranzo per questa data.</p>
+        <p className="font-maven text-sm text-kidville-muted text-center py-10">{t('mensaNessunaPrenotazione')}</p>
       ) : (
         <div className="space-y-4">
           <div className="rounded-2xl bg-kidville-green-soft border border-kidville-green/20 px-4 py-3">
             <p className="font-maven text-sm text-kidville-green">
-              <strong>{report.totale}</strong> {report.totale === 1 ? 'pranzo prenotato' : 'pranzi prenotati'} il {new Date(`${report.data}T00:00:00`).toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' })}
+              {t.rich('mensaPranziPrenotati', {
+                count: report.totale,
+                data: new Date(`${report.data}T00:00:00`).toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' }),
+                strong: (c) => <strong>{c}</strong>,
+              })}
             </p>
           </div>
 
@@ -154,14 +160,19 @@ function MensaDocente() {
             <div className="rounded-2xl border border-kidville-line bg-white overflow-hidden">
               <div className="flex items-center gap-1.5 px-4 py-2.5 border-b border-kidville-line bg-kidville-cream/40">
                 <UtensilsCrossed size={13} className="text-kidville-green" />
-                <span className="font-barlow font-bold uppercase text-sm text-kidville-green">Alternative del giorno</span>
+                <span className="font-barlow font-bold uppercase text-sm text-kidville-green">{t('mensaAlternativeTitolo')}</span>
               </div>
               <ul className="divide-y divide-kidville-line">
                 {(report.alternative_automatiche ?? []).map((a) => (
                   <li key={`auto-${a.alunno_id}`} className="px-4 py-2.5 flex items-start gap-2 bg-kidville-error-soft/50">
                     <AlertTriangle size={14} className="text-kidville-error shrink-0 mt-0.5" />
                     <span className="font-maven text-sm text-kidville-error">
-                      <strong>Alternativa per allergia</strong> per {a.nome} ({a.classe}) — allergeni: {(a.allergeni_label.length ? a.allergeni_label : a.allergeni.map(allergeneLabel)).join(', ')}
+                      {t.rich('mensaAltAllergia', {
+                        nome: a.nome,
+                        classe: a.classe,
+                        allergeni: (a.allergeni_label.length ? a.allergeni_label : a.allergeni.map(allergeneLabel)).join(', '),
+                        strong: (c) => <strong>{c}</strong>,
+                      })}
                     </span>
                   </li>
                 ))}
@@ -169,8 +180,12 @@ function MensaDocente() {
                   <li key={a.id} className="px-4 py-2.5 flex items-start gap-2">
                     <UtensilsCrossed size={14} className="text-kidville-green shrink-0 mt-0.5" />
                     <span className="font-maven text-sm text-kidville-ink">
-                      <strong>Alternativa richiesta</strong> per {a.nome}: {a.richiesta}
-                      {a.origine === 'genitore' && <span className="ml-1 text-[11px] text-kidville-muted">(richiesta dal genitore)</span>}
+                      {t.rich('mensaAltRichiesta', {
+                        nome: a.nome,
+                        richiesta: a.richiesta,
+                        strong: (c) => <strong>{c}</strong>,
+                      })}
+                      {a.origine === 'genitore' && <span className="ml-1 text-[11px] text-kidville-muted">{t('mensaRichiestaGenitore')}</span>}
                     </span>
                   </li>
                 ))}
@@ -182,7 +197,7 @@ function MensaDocente() {
             <div key={c.classe} className="rounded-2xl border border-kidville-line bg-white overflow-hidden">
               <div className="flex items-center justify-between px-4 py-2.5 border-b border-kidville-line bg-kidville-cream/40">
                 <span className="font-barlow font-bold uppercase text-sm text-kidville-green">{c.classe}</span>
-                <span className="font-maven text-xs text-kidville-muted">{c.conteggio} {c.conteggio === 1 ? 'bambino' : 'bambini'}</span>
+                <span className="font-maven text-xs text-kidville-muted">{t('mensaBambini', { count: c.conteggio })}</span>
               </div>
               <ul className="divide-y divide-kidville-line">
                 {c.alunni.map((a) => {
@@ -193,7 +208,7 @@ function MensaDocente() {
                         <span className="font-maven text-sm text-kidville-ink flex-1">{a.nome}</span>
                         {inConflitto && (
                           <span className="inline-flex items-center gap-1 rounded-pill bg-kidville-error-soft px-2 py-0.5 font-maven text-[10px] font-bold text-kidville-error">
-                            <AlertTriangle size={11} /> allergene nel menu
+                            <AlertTriangle size={11} /> {t('mensaAllergeneMenu')}
                           </span>
                         )}
                       </div>
@@ -220,8 +235,9 @@ function MensaDocente() {
 }
 
 export default function MensaDocentePage() {
+  const t = useTranslations('teacherServizi');
   return (
-    <Suspense fallback={<div className="p-8 font-maven text-kidville-muted">Caricamento…</div>}>
+    <Suspense fallback={<div className="p-8 font-maven text-kidville-muted">{t('mensaCaricamento')}</div>}>
       <MensaDocente />
     </Suspense>
   );

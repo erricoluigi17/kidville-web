@@ -18,6 +18,13 @@ vi.mock('next-intl', async () => {
     mensa: (await import('../messages/it/mensa.json')).default,
     pagamenti: (await import('../messages/it/pagamenti.json')).default,
     profilo: (await import('../messages/it/profilo.json')).default,
+    teacherNav: (await import('../messages/it/teacherNav.json')).default,
+    teacherDiario: (await import('../messages/it/teacherDiario.json')).default,
+    teacherPresenze: (await import('../messages/it/teacherPresenze.json')).default,
+    teacherComunicazioni: (await import('../messages/it/teacherComunicazioni.json')).default,
+    teacherPrimaria: (await import('../messages/it/teacherPrimaria.json')).default,
+    teacherTasks: (await import('../messages/it/teacherTasks.json')).default,
+    teacherServizi: (await import('../messages/it/teacherServizi.json')).default,
   };
   const resolve = (ns: string | undefined, key: string): string => {
     const gruppo = ns ? it[ns] : undefined;

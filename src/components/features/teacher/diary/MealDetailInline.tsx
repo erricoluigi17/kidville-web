@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
+import { useTranslations } from 'next-intl';
 import { motion } from 'framer-motion';
 import { AlertTriangle, UtensilsCrossed } from 'lucide-react';
 import { MEAL_QUANTITIES } from './eventConfig';
@@ -33,6 +34,7 @@ export function useDailyMenu(date: string): {
     courses: DailyMenuItem[];
     isLoading: boolean;
 } {
+    const t = useTranslations('teacherDiario');
     const [isLoading, setIsLoading] = useState(true);
     const [menu, setMenu] = useState<DailyMenu>(EMPTY_MENU);
 
@@ -54,11 +56,11 @@ export function useDailyMenu(date: string): {
     // Manteniamo sempre i 4 slot portata (il maestro registra le quantità anche
     // senza menu pubblicato); il nome resta vuoto se non configurato.
     const courses: DailyMenuItem[] = useMemo(() => ([
-        { id: 'primo',    nome: menu.primo,    portata: 'Primo piatto', icon: '🍝' },
-        { id: 'secondo',  nome: menu.secondo,  portata: 'Secondo piatto', icon: '🍖' },
-        { id: 'contorno', nome: menu.contorno,  portata: 'Contorno', icon: '🥗' },
-        { id: 'frutta',   nome: menu.frutta,    portata: 'Frutta', icon: '🍎' },
-    ]), [menu]);
+        { id: 'primo',    nome: menu.primo,    portata: t('portataPrimo'), icon: '🍝' },
+        { id: 'secondo',  nome: menu.secondo,  portata: t('portataSecondo'), icon: '🍖' },
+        { id: 'contorno', nome: menu.contorno,  portata: t('portataContorno'), icon: '🥗' },
+        { id: 'frutta',   nome: menu.frutta,    portata: t('portataFrutta'), icon: '🍎' },
+    ]), [menu, t]);
 
     return { menu, courses, isLoading };
 }
@@ -102,9 +104,10 @@ export function MealDetailInline({
     savedStudentIds,
     isMerenda = false,
 }: MealDetailInlineProps) {
+    const t = useTranslations('teacherDiario');
     const { courses, isLoading } = useDailyMenu(date);
 
-    const merendaCourse = [{ id: 'merenda', nome: 'Merenda', portata: 'Merenda', icon: '🍎' }];
+    const merendaCourse = [{ id: 'merenda', nome: t('merenda'), portata: t('merenda'), icon: '🍎' }];
     const activeCourses = isMerenda ? merendaCourse : courses;
 
     // Pre-populate: quando il menu del giorno arriva, inizializza gli slot vuoti
@@ -128,7 +131,7 @@ export function MealDetailInline({
                     <div className="flex items-start gap-2">
                         <AlertTriangle size={14} className="text-kidville-error flex-shrink-0 mt-0.5" strokeWidth={1.5} />
                         <div>
-                            <p className="font-barlow font-bold text-kidville-error uppercase text-xs tracking-wide">Allergie</p>
+                            <p className="font-barlow font-bold text-kidville-error uppercase text-xs tracking-wide">{t('allergie')}</p>
                             <p className="font-maven text-xs text-kidville-error mt-0.5">
                                 {studentsWithAllergies.map(s => `${s.firstName}: ${s.allergie!.join(', ')}`).join(' • ')}
                             </p>
@@ -146,7 +149,7 @@ export function MealDetailInline({
                 >
                     <UtensilsCrossed size={14} className="text-kidville-success flex-shrink-0" strokeWidth={1.5} />
                     <div className="flex-1">
-                        <p className="font-barlow font-bold text-kidville-success uppercase text-[10px] tracking-wider">Menu del giorno</p>
+                        <p className="font-barlow font-bold text-kidville-success uppercase text-[10px] tracking-wider">{t('menuDelGiorno')}</p>
                         <p className="font-maven text-xs text-kidville-success mt-0.5">
                             {courses.filter(c => c.nome.trim().length > 0).map(c => `${c.icon} ${c.nome}`).join('  •  ')}
                         </p>

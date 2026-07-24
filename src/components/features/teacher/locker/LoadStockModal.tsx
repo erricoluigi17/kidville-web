@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useTranslations } from 'next-intl';
 import { X, Plus, Minus, Settings } from 'lucide-react';
 import Link from 'next/link';
 
@@ -40,6 +41,7 @@ export function LoadStockModal({
     onConfirm,
     onConfirmBulk,
 }: Props) {
+    const t = useTranslations('teacherServizi');
     const [selectedStudent,   setSelectedStudent]   = useState(preselectedStudent ?? '');
     const [selectedMateriale, setSelectedMateriale] = useState(preselectedMateriale ?? '');
     const [quantity,          setQuantity]          = useState(10);
@@ -79,10 +81,10 @@ export function LoadStockModal({
     const bulkMode = tuttaLaSezione && !!onConfirmBulk;
 
     const handleConfirm = async () => {
-        if (!bulkMode && !selectedStudent) { setError('Seleziona un alunno'); return; }
-        if (bulkMode && students.length === 0) { setError('Nessun alunno nella sezione'); return; }
-        if (!selectedMateriale) { setError('Seleziona un materiale'); return; }
-        if (quantity <= 0)       { setError('Inserisci una quantità valida'); return; }
+        if (!bulkMode && !selectedStudent) { setError(t('lockerModalErrAlunno')); return; }
+        if (bulkMode && students.length === 0) { setError(t('lockerModalErrNessunAlunno')); return; }
+        if (!selectedMateriale) { setError(t('lockerModalErrMateriale')); return; }
+        if (quantity <= 0)       { setError(t('lockerModalErrQuantita')); return; }
 
         setIsSaving(true);
         setError('');
@@ -96,7 +98,7 @@ export function LoadStockModal({
             setQuantity(10);
             setTuttaLaSezione(false);
         } catch (e) {
-            setError((e as { message?: string }).message ?? 'Errore durante il salvataggio');
+            setError((e as { message?: string }).message ?? t('lockerModalErrSalvataggio'));
         } finally {
             setIsSaving(false);
         }
@@ -110,11 +112,11 @@ export function LoadStockModal({
                 {/* Header */}
                 <div className="flex items-center justify-between mb-6">
                     <h2 className="font-barlow font-black text-xl text-kidville-green uppercase">
-                        Registra Carico
+                        {t('lockerModalTitolo')}
                     </h2>
                     <div className="flex items-center gap-2">
                         <Link href="/teacher/settings/locker" onClick={onClose}
-                            title="Configura materiali"
+                            title={t('lockerModalConfiguraMateriali')}
                             className="p-1.5 text-kidville-muted hover:text-kidville-muted transition-colors">
                             <Settings size={16} />
                         </Link>
@@ -126,14 +128,14 @@ export function LoadStockModal({
 
                 {/* Alunno */}
                 <div className="mb-4">
-                    <label className="text-xs font-bold text-kidville-green mb-1 block">Alunno</label>
+                    <label className="text-xs font-bold text-kidville-green mb-1 block">{t('lockerModalAlunno')}</label>
                     <select
                         value={selectedStudent}
                         onChange={e => setSelectedStudent(e.target.value)}
                         disabled={bulkMode}
                         className="w-full border-2 border-kidville-line rounded-xl p-2.5 text-sm focus:border-kidville-green outline-none disabled:opacity-50"
                     >
-                        <option value="">Seleziona...</option>
+                        <option value="">{t('lockerModalSeleziona')}</option>
                         {students.map(s => (
                             <option key={s.id} value={s.id}>{s.nome} {s.cognome}</option>
                         ))}
@@ -141,14 +143,14 @@ export function LoadStockModal({
                     {onConfirmBulk && (
                         <label className="mt-2 flex items-center gap-2 text-xs font-semibold text-kidville-green cursor-pointer">
                             <input type="checkbox" checked={tuttaLaSezione} onChange={e => setTuttaLaSezione(e.target.checked)} />
-                            Assegna a tutta la sezione ({students.length} alunni)
+                            {t('lockerModalTuttaSezione', { count: students.length })}
                         </label>
                     )}
                 </div>
 
                 {/* Materiale */}
                 <div className="mb-4">
-                    <label className="text-xs font-bold text-kidville-green mb-2 block">Materiale</label>
+                    <label className="text-xs font-bold text-kidville-green mb-2 block">{t('lockerModalMateriale')}</label>
                     <div className="grid grid-cols-2 gap-2">
                         {materiali.map(m => (
                             <button
@@ -167,11 +169,11 @@ export function LoadStockModal({
 
                 {/* Quantità */}
                 <div className="mb-5">
-                    <label htmlFor="locker-quantita" className="text-xs font-bold text-kidville-green mb-1 block text-center">Quantità da caricare</label>
+                    <label htmlFor="locker-quantita" className="text-xs font-bold text-kidville-green mb-1 block text-center">{t('lockerModalQuantityLabel')}</label>
                     <div className="flex items-center justify-center gap-4">
                         <button
                             type="button"
-                            aria-label="Diminuisci quantità"
+                            aria-label={t('lockerModalDiminuisci')}
                             onClick={() => setQuantity(q => Math.max(1, q - 1))}
                             className="w-11 h-11 rounded-xl border-2 border-kidville-line flex items-center justify-center hover:border-kidville-green active:scale-95 transition-all"
                         >
@@ -195,7 +197,7 @@ export function LoadStockModal({
                         />
                         <button
                             type="button"
-                            aria-label="Aumenta quantità"
+                            aria-label={t('lockerModalAumenta')}
                             onClick={() => setQuantity(q => q + 1)}
                             className="w-11 h-11 rounded-xl border-2 border-kidville-line flex items-center justify-center hover:border-kidville-green active:scale-95 transition-all"
                         >
@@ -217,7 +219,7 @@ export function LoadStockModal({
                     disabled={isSaving}
                     className="w-full bg-kidville-green text-kidville-yellow py-3.5 rounded-2xl font-black uppercase tracking-widest shadow-lg hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50"
                 >
-                    {isSaving ? 'Salvataggio...' : '✓ Conferma Carico'}
+                    {isSaving ? t('lockerModalSalvataggio') : t('lockerModalConfirmLoad')}
                 </button>
             </div>
         </>

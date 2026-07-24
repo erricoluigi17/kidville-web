@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, Suspense } from 'react';
+import { useTranslations } from 'next-intl';
 import { useSearchParams } from 'next/navigation';
 import { Users, WifiOff } from 'lucide-react';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
@@ -11,6 +12,7 @@ import { useDiaryDay, DiaryEventEditor } from '@/components/features/teacher/dia
 // alla compilazione condivisa in DiaryEventEditor (usata anche da /admin/diary).
 
 function TeacherDiaryInner() {
+    const t = useTranslations('teacherDiario');
     const search = useSearchParams();
     const userId = getCurrentTeacherId(search);
 
@@ -69,14 +71,12 @@ function TeacherDiaryInner() {
     if (sezioniLoaded && !sezione) {
         return (
             <div className="mx-auto max-w-[460px] px-4 pt-5">
-                <PageHeaderCard eyebrow="In sezione" title="Diario del giorno" />
+                <PageHeaderCard eyebrow={t('inSezione')} title={t('diarioDelGiorno')} />
                 <div className="mt-4 rounded-3xl border border-kidville-line bg-white p-8 text-center shadow-sm">
                     <p className="font-maven text-sm text-kidville-muted">
-                        {soloPrimariaNascosta ? (
-                            <>Il diario 0-6 non è attivo per la primaria.<br />Per la tua classe usa il <strong>Registro</strong>.</>
-                        ) : (
-                            <>Nessuna sezione assegnata al tuo profilo.<br />Chiedi alla segreteria di abbinarti alla tua sezione.</>
-                        )}
+                        {soloPrimariaNascosta
+                            ? t.rich('emptyPrimaria', { br: () => <br />, strong: (chunks) => <strong>{chunks}</strong> })
+                            : t.rich('emptyNessunaSezione', { br: () => <br /> })}
                     </p>
                 </div>
             </div>
@@ -87,7 +87,7 @@ function TeacherDiaryInner() {
         return (
             <div className="max-w-2xl mx-auto p-4 sm:p-6 flex flex-col items-center justify-center min-h-[60vh] gap-4">
                 <div className="w-10 h-10 border-4 border-kidville-green/30 border-t-kidville-green rounded-full animate-spin" />
-                <p className="font-maven text-kidville-muted">In caricamento…</p>
+                <p className="font-maven text-kidville-muted">{t('inCaricamento')}</p>
             </div>
         );
     }
@@ -97,11 +97,14 @@ function TeacherDiaryInner() {
 
             {/* Header verde (DR) */}
             <PageHeaderCard
-                eyebrow="In sezione"
-                title="Diario del giorno"
+                eyebrow={t('inSezione')}
+                title={t('diarioDelGiorno')}
                 subtitle={
                     <span className="capitalize">
-                        Sezione {sezione} • {new Date().toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' })}
+                        {t('sottotitoloSezione', {
+                            sezione: sezione ?? '',
+                            data: new Date().toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' }),
+                        })}
                     </span>
                 }
             />
@@ -135,13 +138,13 @@ function TeacherDiaryInner() {
                             ? 'border-kidville-line bg-white text-kidville-muted'
                             : 'border-kidville-green/20 bg-kidville-green-soft text-kidville-green'
                     }`}
-                    title={day.showAll ? 'Sto mostrando tutti i bambini' : 'Sto mostrando solo i presenti'}
+                    title={day.showAll ? t('titleTutti') : t('titlePresenti')}
                 >
-                    <Users size={12} strokeWidth={1.5} /> {day.showAll ? 'Tutti' : 'Solo presenti'}
+                    <Users size={12} strokeWidth={1.5} /> {day.showAll ? t('filtroTutti') : t('filtroPresenti')}
                 </button>
                 {isOffline && (
                     <div className="flex items-center gap-1.5 rounded-pill border border-kidville-warn/30 bg-kidville-warn-soft px-3 py-1.5 font-maven text-xs text-kidville-warn">
-                        <WifiOff size={12} strokeWidth={1.5} /> Offline
+                        <WifiOff size={12} strokeWidth={1.5} /> {t('offline')}
                     </div>
                 )}
             </div>

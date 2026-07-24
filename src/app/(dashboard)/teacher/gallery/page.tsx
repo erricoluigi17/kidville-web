@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, Suspense } from 'react';
+import { useTranslations } from 'next-intl';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Upload, Tag, WifiOff } from 'lucide-react';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
@@ -26,6 +27,7 @@ interface Student {
 type Step = 'gallery' | 'upload' | 'tag';
 
 function TeacherGalleryContent() {
+    const t = useTranslations('teacherServizi');
     const { userId: teacherId } = useSessionIdentity();
 
     const [media, setMedia] = useState<MediaItem[]>([]);
@@ -205,7 +207,7 @@ function TeacherGalleryContent() {
             tag_students: [...active.tag_students],
             is_broadcast: active.is_broadcast
         })));
-        alert('Configurazione applicata a tutte le foto del caricamento!');
+        alert(t('galleryAlertApplicataATutte'));
     };
 
     const activeFile = uploadedFiles[activeFileIndex] || null;
@@ -236,7 +238,7 @@ function TeacherGalleryContent() {
                         // Un video da convertire NON si accoda mai alla coda offline: la conversione
                         // richiede il dispositivo attivo e il server ne verifica il codec al caricamento.
                         if (offlineMode) {
-                            alert(`Il video "${f.file.name}" richiede una conversione e non può essere salvato offline. Riprova quando sei di nuovo online.`);
+                            alert(t('galleryAlertVideoOffline', { nome: f.file.name }));
                             continue;
                         }
 
@@ -264,7 +266,10 @@ function TeacherGalleryContent() {
                         // Già riproducibile (H.264/webm): watermark + compressione, con fallback
                         // all'originale ammesso (il codec è già compatibile).
                         if (f.file.size > MAX_SIZE) {
-                            alert(`Il video "${f.file.name}" supera i 50 MB (attuale: ${(f.file.size / (1024 * 1024)).toLocaleString('it-IT', { maximumFractionDigits: 1 })} MB). Verrà elaborato e compresso automaticamente per ridurne il peso prima del caricamento.`);
+                            alert(t('galleryAlertVideoTroppoGrande', {
+                                nome: f.file.name,
+                                dimensione: (f.file.size / (1024 * 1024)).toLocaleString('it-IT', { maximumFractionDigits: 1 }),
+                            }));
                         }
                         setConvertingIndex(i);
                         let videoFile: File;
@@ -319,7 +324,7 @@ function TeacherGalleryContent() {
 
                     if (!uploadRes.ok) {
                         const uploadErrData = await uploadRes.json().catch(() => ({} as Record<string, unknown>));
-                        throw new Error(`«${f.file.name}»: ${uploadErrData.error || 'Errore durante il caricamento del file'}`);
+                        throw new Error(`«${f.file.name}»: ${uploadErrData.error || t('galleryErrCaricamentoFile')}`);
                     }
 
                     const { fileUrl } = await uploadRes.json();
@@ -344,15 +349,15 @@ function TeacherGalleryContent() {
                         // Il 422 del Privacy Lock porta `nomi` (bambini senza liberatoria):
                         // mostriamoli così l'insegnante sa chi togliere dai tag.
                         const dettagli = Array.isArray(errData.nomi) && errData.nomi.length > 0 ? ` (${(errData.nomi as string[]).join(', ')})` : '';
-                        throw new Error(`«${f.file.name}»: ${errData.error || 'Errore durante il salvataggio'}${dettagli}`);
+                        throw new Error(`«${f.file.name}»: ${errData.error || t('galleryErrSalvataggio')}${dettagli}`);
                     }
                 }
             }
 
             if (offlineMode) {
-                alert('Dispositivo offline: i media sono stati salvati in locale e verranno caricati automaticamente non appena tornerai online.');
+                alert(t('galleryAlertOffline'));
             } else {
-                alert('File caricati e pubblicati con successo!');
+                alert(t('galleryAlertPubblicati'));
             }
 
             await loadMedia();
@@ -361,7 +366,7 @@ function TeacherGalleryContent() {
             setActiveFileIndex(0);
         } catch (err) {
             console.error('Errore durante l\'upload:', err);
-            alert(err instanceof Error && err.message ? err.message : 'Si è verificato un errore durante il caricamento.');
+            alert(err instanceof Error && err.message ? err.message : t('galleryErrCaricamentoGenerico'));
         } finally {
             setUploading(false);
         }
@@ -369,21 +374,21 @@ function TeacherGalleryContent() {
 
     const handleDeleteMedia = async (id: string) => {
         if (!teacherId) return;
-        if (!confirm('Sei sicuro di voler eliminare questo media?')) return;
+        if (!confirm(t('galleryConfermaElimina'))) return;
         try {
             const res = await fetch(`/api/gallery?id=${id}&userId=${teacherId}`, {
                 method: 'DELETE'
             });
             if (res.ok) {
-                alert('Media eliminato con successo!');
+                alert(t('galleryAlertEliminato'));
                 await loadMedia();
             } else {
                 const errData = await res.json();
-                alert(errData.error || 'Errore durante l\'eliminazione.');
+                alert(errData.error || t('galleryErrEliminazione'));
             }
         } catch (err) {
             console.error('Errore DELETE:', err);
-            alert('Errore di rete durante l\'eliminazione.');
+            alert(t('galleryErrReteEliminazione'));
         }
     };
 
@@ -400,15 +405,15 @@ function TeacherGalleryContent() {
                 })
             });
             if (res.ok) {
-                alert('Tag aggiornati con successo!');
+                alert(t('galleryAlertTagAggiornati'));
                 await loadMedia();
             } else {
                 const errData = await res.json();
-                alert(errData.error || 'Errore durante l\'aggiornamento dei tag.');
+                alert(errData.error || t('galleryErrTag'));
             }
         } catch (err) {
             console.error('Errore update tags:', err);
-            alert('Errore di rete durante l\'aggiornamento dei tag.');
+            alert(t('galleryErrReteTag'));
         }
     };
 
@@ -418,15 +423,15 @@ function TeacherGalleryContent() {
             {!isOnline && (
                 <div className="flex items-center gap-2 mb-4 p-3 bg-kidville-warn-soft border border-kidville-warn/30 text-kidville-warn rounded-2xl text-xs font-medium">
                     <WifiOff size={14} className="text-kidville-warn flex-shrink-0" />
-                    <span>Sei offline. Puoi comunque caricare foto: verranno salvate in locale e caricate appena tornerai online.</span>
+                    <span>{t('galleryOffline')}</span>
                 </div>
             )}
 
             {/* Header verde (DR) */}
             <PageHeaderCard
-                eyebrow="Momenti"
-                title="Galleria"
-                subtitle={<>Foto e video della sezione {sezione || '…'}</>}
+                eyebrow={t('galleryEyebrow')}
+                title={t('galleryTitolo')}
+                subtitle={t('gallerySottotitolo', { sezione: sezione || '…' })}
             />
 
             {/* Controlli (sezione + step) */}
@@ -434,7 +439,7 @@ function TeacherGalleryContent() {
                 {availableSections.length > 1 && (
                     <div className="flex items-center gap-2">
                         <label htmlFor="section-select" className="font-barlow font-bold text-xs text-kidville-muted uppercase tracking-wide">
-                            Sezione:
+                            {t('gallerySezioneLabel')}
                         </label>
                         <select
                             id="section-select"
@@ -452,12 +457,12 @@ function TeacherGalleryContent() {
                 <div className="ml-auto flex items-center gap-2">
                     {step === 'gallery' && (
                         <Btn variant="primary" size="sm" onClick={() => setStep('upload')}>
-                            <Upload size={16} strokeWidth={1.5} /> Carica
+                            <Upload size={16} strokeWidth={1.5} /> {t('galleryCarica')}
                         </Btn>
                     )}
                     {step !== 'gallery' && (
                         <Btn variant="ghost" size="sm" onClick={() => { setStep('gallery'); setUploadedFiles([]); setActiveFileIndex(0); }}>
-                            Annulla
+                            {t('galleryAnnulla')}
                         </Btn>
                     )}
                 </div>
@@ -470,7 +475,7 @@ function TeacherGalleryContent() {
                         {loading ? (
                             <div className="flex flex-col items-center justify-center py-20 gap-3">
                                 <div className="w-7 h-7 border-[3px] border-kidville-green/20 border-t-kidville-green rounded-full animate-spin" />
-                                <p className="font-maven text-sm text-kidville-muted">Caricamento galleria...</p>
+                                <p className="font-maven text-sm text-kidville-muted">{t('galleryCaricamento')}</p>
                             </div>
                         ) : (
                             <MediaGrid items={media} onDelete={handleDeleteMedia} students={students} onUpdateTags={handleUpdateTags} />
@@ -483,7 +488,7 @@ function TeacherGalleryContent() {
                     <motion.div key="upload" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
                         className="mt-5 rounded-3xl border border-kidville-line bg-white shadow-sm p-5">
                         <h2 className="font-barlow font-bold text-base text-kidville-green uppercase tracking-wide mb-4">
-                            1. Seleziona foto e video
+                            {t('galleryStep1')}
                         </h2>
                         <MediaUploader onUpload={handleUploadFiles} />
                     </motion.div>
@@ -498,7 +503,7 @@ function TeacherGalleryContent() {
                             <div className="flex items-center gap-2 mb-3">
                                 <Tag size={14} className="text-kidville-green" strokeWidth={1.5} />
                                 <h2 className="font-barlow font-bold text-base text-kidville-green uppercase tracking-wide">
-                                    2. Configura Tag e Privacy
+                                    {t('galleryStep2')}
                                 </h2>
                             </div>
                             
@@ -521,7 +526,7 @@ function TeacherGalleryContent() {
                                         {convertingIndex === i && (
                                             <div className="absolute inset-0 bg-kidville-green/70 flex flex-col items-center justify-center gap-1" role="status" aria-live="polite">
                                                 <div className="w-5 h-5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                                                <span className="text-white text-[8px] font-bold uppercase tracking-wide">Converto…</span>
+                                                <span className="text-white text-[8px] font-bold uppercase tracking-wide">{t('galleryConverto')}</span>
                                             </div>
                                         )}
 
@@ -551,7 +556,7 @@ function TeacherGalleryContent() {
                                         </div>
                                         <div className="min-w-0">
                                             <p className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide">
-                                                Foto {activeFileIndex + 1} di {uploadedFiles.length}
+                                                {t('galleryFotoNofM', { index: activeFileIndex + 1, totale: uploadedFiles.length })}
                                             </p>
                                             <p className="font-maven text-[10px] text-kidville-muted truncate">
                                                 {activeFile.file.name}
@@ -565,7 +570,7 @@ function TeacherGalleryContent() {
                                             onClick={handleApplyToAll}
                                             className="px-3.5 py-1.5 bg-kidville-yellow/20 hover:bg-kidville-yellow hover:scale-[1.02] text-kidville-green font-barlow font-bold text-[10px] uppercase rounded-full tracking-wide transition-all shadow-sm flex-shrink-0 cursor-pointer"
                                         >
-                                            ✨ Applica a tutte
+                                            {t('galleryApplicaTutte')}
                                         </button>
                                     )}
                                 </div>
@@ -582,14 +587,14 @@ function TeacherGalleryContent() {
                                         className="w-4 h-4 text-kidville-green focus:ring-kidville-green rounded border-kidville-line"
                                     />
                                     <label htmlFor="broadcast" className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide cursor-pointer select-none">
-                                        Caricamento in Broadcast (invia a tutta la classe)
+                                        {t('galleryBroadcastLabel')}
                                     </label>
                                 </div>
                             )}
 
                             {activeIsBroadcast ? (
                                 <div className="p-4 bg-kidville-cream/50 rounded-2xl text-xs text-kidville-green leading-relaxed">
-                                    📢 <strong>Caricamento Generale:</strong> I media saranno mostrati in bacheca a tutti i genitori degli alunni iscritti nella sezione <strong>{sezione}</strong>, senza tag individuali.
+                                    {t.rich('galleryBroadcastInfo', { sezione, strong: (c) => <strong>{c}</strong> })}
                                 </div>
                             ) : (
                                 <StudentTagger 
@@ -608,8 +613,8 @@ function TeacherGalleryContent() {
                             disabled={uploading || uploadedFiles.some(f => !f.is_broadcast && f.tag_students.length === 0)}
                             className="w-full py-3.5 rounded-2xl bg-kidville-green text-kidville-yellow font-barlow font-black text-lg uppercase tracking-wide hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-kidville-green/20"
                         >
-                            {uploading ? <><div className="w-5 h-5 border-2 border-kidville-yellow/40 border-t-kidville-yellow rounded-full animate-spin" /> {convertingIndex !== null ? 'Conversione video…' : 'Caricamento...'}</>
-                                : <><Upload size={16} strokeWidth={1.5} /> Pubblica {uploadedFiles.length} {uploadedFiles.length === 1 ? 'file' : 'file'}</>}
+                            {uploading ? <><div className="w-5 h-5 border-2 border-kidville-yellow/40 border-t-kidville-yellow rounded-full animate-spin" /> {convertingIndex !== null ? t('galleryConversioneVideo') : t('galleryCaricamentoUpload')}</>
+                                : <><Upload size={16} strokeWidth={1.5} /> {t('galleryPubblica', { count: uploadedFiles.length })}</>}
                         </button>
                     </motion.div>
                 )}

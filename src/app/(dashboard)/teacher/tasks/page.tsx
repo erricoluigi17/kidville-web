@@ -1,6 +1,7 @@
 'use client';
 
 import { Suspense } from 'react';
+import { useTranslations } from 'next-intl';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Plus, ListTodo, CheckSquare, History, CheckCircle, Eye } from 'lucide-react';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
@@ -12,6 +13,7 @@ import { TaskResolutionModal } from '@/components/features/teacher/tasks/TaskRes
 import { useTasks, type TasksTab } from '@/components/features/teacher/tasks/useTasks';
 
 function TeacherTasksContent() {
+    const tr = useTranslations('teacherTasks');
     const t = useTasks();
     const {
         teacherId, tasks, loading, staff, students, classes, userRole, userClasses,
@@ -28,8 +30,8 @@ function TeacherTasksContent() {
         <div className="mx-auto max-w-[460px] px-4 pt-5">
             {/* Header verde (DR) */}
             <PageHeaderCard
-                eyebrow="Strumenti staff"
-                title="Attività"
+                eyebrow={tr('pageEyebrow')}
+                title={tr('pageTitle')}
                 badge={pendingCount > 0 && activeTab !== 'archive' && (
                     <span className="inline-flex h-6 min-w-[24px] items-center justify-center rounded-full bg-kidville-yellow px-2 font-barlow text-xs font-bold text-kidville-green">
                         {pendingCount}
@@ -39,13 +41,13 @@ function TeacherTasksContent() {
                     <span className="flex flex-wrap items-center gap-1.5">
                         <span>👤 {currentUserName}</span>
                         <span className="rounded-pill bg-white/15 px-2 py-0.5 text-[10px] font-bold uppercase text-white">
-                            {userRole === 'admin' ? 'Direzione' : userRole === 'coordinator' ? 'Coordinatore' : 'Insegnante'}
+                            {userRole === 'admin' ? tr('roleAdmin') : userRole === 'coordinator' ? tr('roleCoordinator') : tr('roleTeacher')}
                         </span>
                     </span>
                 }
                 action={
                     <Btn variant="secondary" size="sm" onClick={() => setShowCreateModal(true)}>
-                        <Plus size={16} strokeWidth={1.8} /> Nuovo
+                        <Plus size={16} strokeWidth={1.8} /> {tr('nuovo')}
                     </Btn>
                 }
             />
@@ -53,13 +55,13 @@ function TeacherTasksContent() {
             {/* Tabs — riga scrollabile orizzontalmente (affordance di scroll, niente troncamento) */}
             <div className="mt-5 mb-6 flex gap-1 overflow-x-auto rounded-2xl border border-kidville-line bg-white p-1.5">
                 {[
-                    { key: 'assigned', icon: <ListTodo size={14} />, label: 'Assegnati a me' },
-                    { key: 'created', icon: <CheckSquare size={14} />, label: 'Creati da me' },
+                    { key: 'assigned', icon: <ListTodo size={14} />, label: tr('tabAssigned') },
+                    { key: 'created', icon: <CheckSquare size={14} />, label: tr('tabCreated') },
                     ...(isManager ? [
-                        { key: 'to_review', icon: <CheckCircle size={14} />, label: 'Da Controllare' },
-                        { key: 'all', icon: <Eye size={14} />, label: 'Tutte le attività' }
+                        { key: 'to_review', icon: <CheckCircle size={14} />, label: tr('tabToReview') },
+                        { key: 'all', icon: <Eye size={14} />, label: tr('tabAll') }
                     ] : []),
-                    { key: 'archive', icon: <History size={14} />, label: 'Archivio' }
+                    { key: 'archive', icon: <History size={14} />, label: tr('tabArchive') }
                 ].map(({ key, icon, label }) => (
                     <button
                         key={key}
@@ -84,7 +86,7 @@ function TeacherTasksContent() {
             {loading && (
                 <div className="flex flex-col items-center justify-center py-20 gap-3">
                     <div className="w-8 h-8 border-[3px] border-kidville-green/20 border-t-kidville-green rounded-full animate-spin" />
-                    <p className="font-maven text-sm text-kidville-muted">Caricamento attività...</p>
+                    <p className="font-maven text-sm text-kidville-muted">{tr('caricamento')}</p>
                 </div>
             )}
 
@@ -95,12 +97,12 @@ function TeacherTasksContent() {
                         {activeTab === 'archive' ? '📂' : '✏️'}
                     </div>
                     <h2 className="font-barlow font-bold text-xl text-kidville-green uppercase mb-2">
-                        {activeTab === 'archive' ? 'Archivio vuoto' : 'Nessuna attività attiva'}
+                        {activeTab === 'archive' ? tr('vuotoArchivioTitolo') : tr('vuotoAttiveTitolo')}
                     </h2>
                     <p className="font-maven text-kidville-muted text-sm max-w-xs leading-relaxed">
-                        {activeTab === 'assigned' && 'Non hai attività in sospeso da svolgere al momento.'}
-                        {activeTab === 'created' && 'Non hai creato alcuna attività per lo staff recentemente.'}
-                        {activeTab === 'archive' && 'Non ci sono attività completate in archivio.'}
+                        {activeTab === 'assigned' && tr('vuotoAssigned')}
+                        {activeTab === 'created' && tr('vuotoCreated')}
+                        {activeTab === 'archive' && tr('vuotoArchivio')}
                     </p>
                 </div>
             )}

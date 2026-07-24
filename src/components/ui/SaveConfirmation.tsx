@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo } from 'react';
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
+import { useTranslations } from 'next-intl';
 
 // =============================================================================
 // Conferme di salvataggio riutilizzabili, senza dipendenze nuove (solo
@@ -17,10 +18,11 @@ import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 /** Spunta animata (cerchio + check) che si disegna con lo stroke. Eredita il
  *  colore dal testo (`currentColor`): avvolgila in un `text-kidville-success`. */
 export function SaveCheck({ size = 20, stroke = 2.4, className }: { size?: number; stroke?: number; className?: string }) {
+  const t = useTranslations('shared');
   const reduce = useReducedMotion();
   const drawn = { pathLength: 1, opacity: 1 };
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className} role="img" aria-label="Salvato">
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className} role="img" aria-label={t('salvato')}>
       <motion.circle
         cx={12} cy={12} r={10} stroke="currentColor" strokeWidth={stroke} strokeOpacity={0.25}
         initial={reduce ? false : { pathLength: 0, opacity: 0 }}
@@ -45,10 +47,13 @@ const CONFETTI = ['var(--kv-green, #006A5F)', '#FDC400', '#43A047', '#2A6FDB', '
 export function SaveCelebration({
   show,
   onDone,
-  message = 'Fatto!',
+  message,
   durationMs = 1600,
 }: { show: boolean; onDone: () => void; message?: string; durationMs?: number }) {
+  const t = useTranslations('shared');
   const reduce = useReducedMotion();
+  // Messaggio di default localizzato («Fatto!»); i chiamanti possono passarne uno proprio.
+  const testo = message ?? t('fatto');
 
   useEffect(() => {
     if (!show) return;
@@ -99,7 +104,7 @@ export function SaveCelebration({
               transition={{ type: reduce ? 'tween' : 'spring', stiffness: 320, damping: 18 }}
             >
               <span className="text-kidville-success"><SaveCheck size={46} stroke={2.6} /></span>
-              <span className="font-barlow text-base font-black uppercase tracking-wide text-kidville-green">{message}</span>
+              <span className="font-barlow text-base font-black uppercase tracking-wide text-kidville-green">{testo}</span>
             </motion.div>
           </div>
         </motion.div>

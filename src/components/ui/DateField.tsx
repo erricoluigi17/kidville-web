@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { isoToIt, itToIso, maskItDate } from '@/lib/format/data';
 
 interface DateFieldProps {
@@ -28,10 +29,11 @@ interface DateFieldProps {
 export function DateField({
   value,
   onChange,
-  placeholder = 'gg/mm/aaaa',
+  placeholder,
   className,
   ...rest
 }: DateFieldProps) {
+  const t = useTranslations('shared');
   const [text, setText] = useState<string>(() => isoToIt(value));
   const [lastValue, setLastValue] = useState<string>(value);
 
@@ -56,7 +58,7 @@ export function DateField({
       type="text"
       inputMode="numeric"
       autoComplete="off"
-      placeholder={placeholder}
+      placeholder={placeholder ?? t('formatoData')}
       value={text}
       onChange={handleChange}
       className={className}

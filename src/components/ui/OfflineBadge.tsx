@@ -1,4 +1,5 @@
 import { CloudOff } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 
 /**
  * Indicatore non invasivo mostrato quando i dati in schermata provengono dalla
@@ -10,13 +11,14 @@ import { CloudOff } from 'lucide-react';
  * grigio/neutro richiesto.
  */
 export function OfflineBadge({ className = '' }: { className?: string }) {
+    const t = useTranslations('shared');
     return (
         <div
             role="status"
             className={`inline-flex items-center gap-1.5 rounded-full bg-kidville-neutral-soft px-2.5 py-1 font-maven text-[11px] font-semibold text-kidville-sub ${className}`}
         >
             <CloudOff size={12} className="flex-shrink-0" aria-hidden="true" />
-            <span>Dati non aggiornati — offline</span>
+            <span>{t('datiNonAggiornati')}</span>
         </div>
     );
 }

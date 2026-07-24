@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { ArrowLeft } from 'lucide-react';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { NotificationsPanel } from './NotificationsPanel';
@@ -38,6 +39,7 @@ function backTarget(pathname: string, root: string): string | null {
  * docente, rotte nude lato genitore (risolte da localStorage).
  */
 export function AppBar({ area }: AppBarProps) {
+  const t = useTranslations('shared');
   const pathname = usePathname();
   const { userId } = useSessionIdentity();
 
@@ -61,13 +63,13 @@ export function AppBar({ area }: AppBarProps) {
         {back && (
           <Link
             href={withUser(back)}
-            aria-label="Indietro"
+            aria-label={t('indietro')}
             className="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-full bg-white/15 text-white transition-transform active:scale-95"
           >
             <ArrowLeft size={20} strokeWidth={2.2} />
           </Link>
         )}
-        <Link href={withUser(root)} aria-label="Home Kidville" className="mr-auto">
+        <Link href={withUser(root)} aria-label={t('homeKidville')} className="mr-auto">
           <Image
             src="/logo-light.png"
             alt="Kidville"

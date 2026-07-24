@@ -10,6 +10,7 @@
  * `tone` mappata sui token semantici (green/info/warn/error/success/neutral/yellow).
  */
 import { useEffect, useRef, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import type { LucideIcon } from 'lucide-react';
 import { Search, X, ChevronDown, Check } from 'lucide-react';
 import { cx } from '@/lib/ui/cx';
@@ -63,10 +64,11 @@ export function IconChip({ icon: Icon, tone = 'green', size = 44, radius = 12, s
  * scelto). L'<h1> resta il `title` passato, invariato (vincolo e2e).
  */
 export function PageHeader({ icon, title, subtitle, actions, eyebrow }: { icon?: LucideIcon; title: string; subtitle?: React.ReactNode; actions?: React.ReactNode; eyebrow?: React.ReactNode }) {
+  const t = useTranslations('shared');
   return (
     <div className="mb-6">
       <PageHeaderCard
-        eyebrow={typeof eyebrow === 'string' ? eyebrow : 'Direzione & Segreteria'}
+        eyebrow={typeof eyebrow === 'string' ? eyebrow : t('direzioneSegreteria')}
         title={title}
         icon={icon}
         subtitle={subtitle}
@@ -168,7 +170,8 @@ export function Tabs({ value, options, onChange, className }: { value: string; o
 }
 
 /** Toolbar: ricerca (opzionale) + filtri/azioni a destra. */
-export function Toolbar({ search, onSearch, placeholder = 'Cerca…', children }: { search?: string; onSearch?: (v: string) => void; placeholder?: string; children?: React.ReactNode }) {
+export function Toolbar({ search, onSearch, placeholder, children }: { search?: string; onSearch?: (v: string) => void; placeholder?: string; children?: React.ReactNode }) {
+  const t = useTranslations('shared');
   return (
     <div className="mb-4 flex flex-wrap items-center gap-3">
       {onSearch && (
@@ -177,7 +180,7 @@ export function Toolbar({ search, onSearch, placeholder = 'Cerca…', children }
           <input
             value={search ?? ''}
             onChange={(e) => onSearch(e.target.value)}
-            placeholder={placeholder}
+            placeholder={placeholder ?? t('cerca')}
             className="h-[42px] w-full rounded-input border-[1.5px] border-kidville-line bg-kidville-white pl-10 pr-3.5 font-maven text-sm text-kidville-ink outline-none transition-colors focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15"
           />
         </div>
@@ -233,11 +236,12 @@ export function Donut({ value, max, size = 116, stroke = 12, label, sub, tone = 
 }
 
 /** Indicatore "Live" con pallino pulsante. */
-export function Live({ label = 'Live' }: { label?: string }) {
+export function Live({ label }: { label?: string }) {
+  const t = useTranslations('shared');
   return (
     <span className="inline-flex items-center gap-1.5 font-maven text-xs font-semibold text-kidville-success">
       <span className="h-2 w-2 animate-pulse rounded-pill bg-kidville-success" />
-      {label}
+      {label ?? t('live')}
     </span>
   );
 }
@@ -267,6 +271,7 @@ export const TROW = 'transition-colors hover:bg-kidville-cream';
 
 /** Drawer / slide-over destro con scrim. */
 export function Drawer({ open, onClose, title, subtitle, children, footer, width = 460 }: { open: boolean; onClose: () => void; title?: React.ReactNode; subtitle?: React.ReactNode; children: React.ReactNode; footer?: React.ReactNode; width?: number }) {
+  const t = useTranslations('shared');
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-[95]" role="dialog" aria-modal="true">
@@ -281,7 +286,7 @@ export function Drawer({ open, onClose, title, subtitle, children, footer, width
               {typeof title === 'string' ? <h2 className="font-barlow text-2xl font-black uppercase leading-none text-kidville-green">{title}</h2> : title}
               {subtitle && <div className="mt-1 font-maven text-[13px] text-kidville-muted">{subtitle}</div>}
             </div>
-            <button type="button" onClick={onClose} aria-label="Chiudi" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-kidville-cream text-kidville-green outline-none transition-colors hover:bg-kidville-green-soft focus-visible:ring-2 focus-visible:ring-kidville-green">
+            <button type="button" onClick={onClose} aria-label={t('chiudi')} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-kidville-cream text-kidville-green outline-none transition-colors hover:bg-kidville-green-soft focus-visible:ring-2 focus-visible:ring-kidville-green">
               <X size={19} />
             </button>
           </div>
@@ -301,6 +306,7 @@ export function Drawer({ open, onClose, title, subtitle, children, footer, width
  * azzera il filtro. Con una sola sede accessibile il toggle è inerte (già "tutte").
  */
 export function SedeSelector({ userId }: { userId?: string | null }) {
+  const t = useTranslations('shared');
   const { sedi, effettive, toggle, tutte } = useSediAttive();
   const [open, setOpen] = useState(false);
   const [totAlunni, setTotAlunni] = useState<number | null>(null);
@@ -324,13 +330,13 @@ export function SedeSelector({ userId }: { userId?: string | null }) {
 
   const sel = new Set(effettive);
   const tutteAttive = effettive.length === sedi.length; // include il caso "cookie vuoto"
-  const strutture = (n: number) => `${n} struttur${n === 1 ? 'a' : 'e'}`;
+  const strutture = (n: number) => t('strutturePlurale', { n });
   const nome = tutteAttive
-    ? 'Tutte le sedi'
+    ? t('tutteLeSedi')
     : effettive.length === 1
-      ? (sedi.find((s) => s.id === effettive[0])?.nome ?? '1 sede')
-      : `${effettive.length} sedi`;
-  const meta = `${totAlunni != null ? `${totAlunni} alunni · ` : ''}${strutture(tutteAttive ? sedi.length : effettive.length)}`;
+      ? (sedi.find((s) => s.id === effettive[0])?.nome ?? t('sediPlurale', { n: 1 }))
+      : t('sediPlurale', { n: effettive.length });
+  const meta = `${totAlunni != null ? `${t('alunniPlurale', { n: totAlunni })} · ` : ''}${strutture(tutteAttive ? sedi.length : effettive.length)}`;
 
   return (
     <div ref={ref} className="relative">
@@ -344,7 +350,7 @@ export function SedeSelector({ userId }: { userId?: string | null }) {
       </button>
       {open && (
         <div className="absolute left-0 top-[calc(100%+8px)] z-[60] w-[264px] rounded-[14px] bg-kidville-white p-1.5" style={{ boxShadow: SHADOW_FLOAT }}>
-          <SedeRow active={tutteAttive} nome="Tutte le sedi" meta={`${sedi.length} ${sedi.length === 1 ? 'struttura' : 'strutture'}`} onClick={() => { tutte(); }} />
+          <SedeRow active={tutteAttive} nome={t('tutteLeSedi')} meta={t('strutturePlurale', { n: sedi.length })} onClick={() => { tutte(); }} />
           {sedi.map((s) => (
             <SedeRow key={s.id} active={!tutteAttive && sel.has(s.id)} nome={s.nome} meta="" onClick={() => { toggle(s.id); }} />
           ))}

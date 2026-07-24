@@ -38,6 +38,7 @@ export default getRequestConfig(async () => {
     adminPrimaria: (await import(`../../messages/${locale}/adminPrimaria.json`)).default,
     adminSettings: (await import(`../../messages/${locale}/adminSettings.json`)).default,
     adminAltro: (await import(`../../messages/${locale}/adminAltro.json`)).default,
+    shared: (await import(`../../messages/${locale}/shared.json`)).default,
   };
 
   return { locale, messages };

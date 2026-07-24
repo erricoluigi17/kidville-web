@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { ChevronDown, LogOut } from 'lucide-react';
 import { doLogout } from '@/lib/auth/logout';
 import { ContrastMenuButton } from '@/components/ui/ContrastMenuButton';
@@ -11,6 +12,7 @@ import { ContrastMenuButton } from '@/components/ui/ContrastMenuButton';
 // menu/menuitem, chiusura su Escape e click-fuori.
 
 export function UserMenu({ ruoloLabel }: { ruoloLabel: string }) {
+  const t = useTranslations('shared');
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -41,7 +43,7 @@ export function UserMenu({ ruoloLabel }: { ruoloLabel: string }) {
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label="Menu account"
+        aria-label={t('menuAccount')}
         className="flex items-center gap-2.5 rounded-full p-0.5 pr-1.5 transition-colors hover:bg-kidville-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-kidville-yellow"
       >
         <span className="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-full bg-kidville-yellow font-barlow text-[15px] font-extrabold uppercase text-kidville-green">
@@ -61,7 +63,7 @@ export function UserMenu({ ruoloLabel }: { ruoloLabel: string }) {
       {open && (
         <div
           role="menu"
-          aria-label="Account"
+          aria-label={t('account')}
           className="absolute right-0 top-[calc(100%+8px)] z-50 w-52 overflow-hidden rounded-2xl border border-kidville-line bg-kidville-white py-1 shadow-2xl"
         >
           <ContrastMenuButton
@@ -76,7 +78,7 @@ export function UserMenu({ ruoloLabel }: { ruoloLabel: string }) {
             className="flex w-full items-center gap-2.5 px-4 py-2.5 font-maven text-sm font-semibold text-kidville-error transition-colors hover:bg-kidville-error-soft disabled:opacity-60"
           >
             <LogOut size={17} strokeWidth={2.2} />
-            {busy ? 'Uscita…' : 'Esci'}
+            {busy ? t('uscita') : t('esci')}
           </button>
         </div>
       )}

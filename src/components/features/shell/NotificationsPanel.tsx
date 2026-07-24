@@ -12,6 +12,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { Bell, BellOff } from 'lucide-react';
 import { SHADOW_FLOAT } from '@/components/ui/Card';
@@ -34,6 +35,7 @@ function quando(iso: string): string {
 }
 
 export function NotificationsPanel({ area, userId }: { area: 'teacher' | 'parent'; userId: string | null }) {
+  const t = useTranslations('shared');
   const router = useRouter();
   const ref = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
@@ -111,7 +113,7 @@ export function NotificationsPanel({ area, userId }: { area: 'teacher' | 'parent
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        aria-label={nonLette > 0 ? `Notifiche (${nonLette} non lette)` : 'Notifiche'}
+        aria-label={nonLette > 0 ? t('notificheAria', { count: nonLette }) : t('notifiche')}
         className="relative flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-full bg-white/15 text-white transition-transform active:scale-95"
       >
         <Bell size={19} />
@@ -132,7 +134,7 @@ export function NotificationsPanel({ area, userId }: { area: 'teacher' | 'parent
         >
           <div className="flex items-center justify-between gap-2 px-2.5 pb-1.5 pt-2">
             <span className="font-barlow text-[13px] font-extrabold uppercase tracking-[0.02em] text-kidville-green">
-              Notifiche
+              {t('notifiche')}
             </span>
             {nonLette > 0 && (
               <button
@@ -140,16 +142,16 @@ export function NotificationsPanel({ area, userId }: { area: 'teacher' | 'parent
                 onClick={() => { void segnaTutte(); }}
                 className="font-maven text-[11.5px] font-semibold text-kidville-green hover:underline"
               >
-                Segna tutte lette
+                {t('segnaTutteLette')}
               </button>
             )}
           </div>
 
           {!ready ? (
-            <div className="px-3 py-4 font-maven text-[12.5px] text-kidville-muted">Caricamento…</div>
+            <div className="px-3 py-4 font-maven text-[12.5px] text-kidville-muted">{t('caricamentoPuntini')}</div>
           ) : items.length === 0 ? (
             <div className="flex items-center gap-2 px-3 py-4 font-maven text-[12.5px] text-kidville-muted">
-              <BellOff size={15} /> Nessuna notifica
+              <BellOff size={15} /> {t('nessunaNotifica')}
             </div>
           ) : (
             <div className="max-h-[380px] overflow-y-auto">
@@ -163,7 +165,7 @@ export function NotificationsPanel({ area, userId }: { area: 'teacher' | 'parent
                   <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-pill ${n.letta_il ? 'bg-kidville-line' : 'bg-kidville-yellow ring-2 ring-kidville-green'}`} />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate font-maven text-[13px] font-semibold text-kidville-ink">
-                      {n.titolo || 'Notifica'}
+                      {n.titolo || t('notificaFallback')}
                     </span>
                     {n.corpo && (
                       <span className="block truncate font-maven text-[11.5px] text-kidville-muted">{n.corpo}</span>
@@ -181,7 +183,7 @@ export function NotificationsPanel({ area, userId }: { area: 'teacher' | 'parent
               onClick={() => setOpen(false)}
               className="font-maven text-[12px] font-semibold text-kidville-green hover:underline"
             >
-              Tutti gli avvisi →
+              {t('tuttiGliAvvisi')} →
             </Link>
           </div>
         </div>

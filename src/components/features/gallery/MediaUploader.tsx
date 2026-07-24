@@ -2,6 +2,7 @@
 
 import { useState, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useTranslations } from 'next-intl';
 import { Upload, X, Image as ImageIcon, Images } from 'lucide-react';
 import { useImagePicker } from '@/lib/native/use-image-picker';
 import { fotocameraNativaDisponibile } from '@/lib/native/camera';
@@ -13,6 +14,7 @@ interface Props {
 }
 
 export function MediaUploader({ onUpload, uploading }: Props) {
+    const t = useTranslations('shared');
     const [previews, setPreviews] = useState<{ file: File; preview: string }[]>([]);
     const [dragOver, setDragOver] = useState(false);
     const inputRef = useRef<HTMLInputElement>(null);
@@ -67,9 +69,9 @@ export function MediaUploader({ onUpload, uploading }: Props) {
                     </div>
                     <div>
                         <p className="font-barlow font-bold text-sm text-kidville-green uppercase">
-                            {dragOver ? 'Rilascia qui' : 'Trascina foto o video'}
+                            {dragOver ? t('mediaRilasciaQui') : t('mediaTrascinaFotoVideo')}
                         </p>
-                        <p className="font-maven text-xs text-gray-400 mt-1">oppure clicca per selezionare</p>
+                        <p className="font-maven text-xs text-gray-400 mt-1">{t('mediaOppureClicca')}</p>
                     </div>
                 </div>
             </div>
@@ -83,7 +85,7 @@ export function MediaUploader({ onUpload, uploading }: Props) {
                     className="mx-auto flex items-center gap-2 rounded-pill px-4 py-2 font-maven text-xs font-bold text-kidville-green underline underline-offset-2 transition-opacity hover:opacity-80"
                 >
                     <Images size={15} strokeWidth={1.75} aria-hidden="true" />
-                    Carica foto o video dalla galleria
+                    {t('mediaCaricaDaGalleria')}
                 </button>
             )}
 
@@ -107,8 +109,8 @@ export function MediaUploader({ onUpload, uploading }: Props) {
 
                         <button onClick={handleSubmit} disabled={uploading}
                             className="mt-4 w-full py-3 rounded-2xl bg-kidville-green text-kidville-yellow font-barlow font-black text-base uppercase tracking-wide hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-kidville-green/20">
-                            {uploading ? <><div className="w-5 h-5 border-2 border-kidville-yellow/40 border-t-kidville-yellow rounded-full animate-spin" /> Caricamento...</>
-                                : <><Upload size={16} strokeWidth={1.5} /> Carica {previews.length} {previews.length === 1 ? 'file' : 'file'}</>}
+                            {uploading ? <><div className="w-5 h-5 border-2 border-kidville-yellow/40 border-t-kidville-yellow rounded-full animate-spin" /> {t('mediaCaricamentoInCorso')}</>
+                                : <><Upload size={16} strokeWidth={1.5} /> {t('mediaCaricaVerbo')} {previews.length} {previews.length === 1 ? t('mediaFileSingolare') : t('mediaFilePlurale')}</>}
                         </button>
                     </motion.div>
                 )}

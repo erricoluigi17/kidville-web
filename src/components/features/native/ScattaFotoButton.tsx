@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import { Camera } from 'lucide-react';
 import { fotocameraNativaDisponibile, scegliFotoNativa } from '@/lib/native/camera';
 import { useClientValue } from '@/lib/hooks/use-client-value';
@@ -42,6 +43,7 @@ export function ScattaFotoButton({
   disabled = false,
   multiplo = false,
 }: Props) {
+  const t = useTranslations('shared');
   const nativo = useClientValue(() => fotocameraNativaDisponibile(), false);
   if (!nativo) return null;
 
@@ -53,8 +55,8 @@ export function ScattaFotoButton({
   return (
     <button
       type="button"
-      aria-label="Scatta foto"
-      title="Scatta foto"
+      aria-label={t('scattaFoto')}
+      title={t('scattaFoto')}
       disabled={disabled}
       onClick={() => { void scatta(); }}
       className={className}

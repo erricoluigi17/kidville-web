@@ -17,6 +17,7 @@ import { cx } from '@/lib/ui/cx';
 import { formatEuro } from '@/lib/format/valuta';
 import { oggiFiscaleISO } from '@/lib/format/fiscal-date';
 import { logClient } from '@/lib/logging/client';
+import { ScattaFotoButton } from '@/components/features/native/ScattaFotoButton';
 import type { CassaCategoria, CassaMetodo } from '@/lib/cassa/tipi';
 
 interface Props {
@@ -270,13 +271,22 @@ export function CassaMovimentoModal({ userId, scuolaId, tipoIniziale, onClose, o
 
         <div>
           <label htmlFor="cassa-mov-foto" className="mb-1 block font-maven text-xs text-kidville-sub">Foto del giustificativo (facoltativa)</label>
-          <input
-            id="cassa-mov-foto"
-            type="file"
-            accept={FOTO_MIME.join(',')}
-            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-            className="block w-full font-maven text-xs text-kidville-ink file:mr-3 file:rounded-pill file:border-0 file:bg-kidville-green-soft file:px-3 file:py-1.5 file:font-barlow file:text-xs file:font-bold file:uppercase file:text-kidville-green hover:file:bg-kidville-green/20"
-          />
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              id="cassa-mov-foto"
+              type="file"
+              accept={FOTO_MIME.join(',')}
+              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+              className="block flex-1 min-w-[12rem] font-maven text-xs text-kidville-ink file:mr-3 file:rounded-pill file:border-0 file:bg-kidville-green-soft file:px-3 file:py-1.5 file:font-barlow file:text-xs file:font-bold file:uppercase file:text-kidville-green hover:file:bg-kidville-green/20"
+            />
+            {/* Nativo: scatta la foto dello scontrino/ricevuta. Su web non compare. */}
+            <ScattaFotoButton
+              onFile={setFile}
+              label="Scatta foto"
+              className="inline-flex items-center gap-1.5 rounded-pill bg-kidville-green-soft px-3 py-1.5 font-barlow text-xs font-bold uppercase text-kidville-green transition-colors hover:bg-kidville-green/20"
+            />
+          </div>
+          {file && <p className="mt-1 font-maven text-[11px] text-kidville-green">📷 {file.name}</p>}
           <p className="mt-1 font-maven text-[11px] text-kidville-sub">Scontrino o ricevuta. JPG, PNG, WebP o PDF, max {FOTO_MAX_MB} MB.</p>
         </div>
 

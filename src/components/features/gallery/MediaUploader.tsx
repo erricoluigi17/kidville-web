@@ -2,8 +2,10 @@
 
 import { useState, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Upload, X, Image as ImageIcon } from 'lucide-react';
+import { Upload, X, Image as ImageIcon, Images } from 'lucide-react';
 import { useImagePicker } from '@/lib/native/use-image-picker';
+import { fotocameraNativaDisponibile } from '@/lib/native/camera';
+import { useClientValue } from '@/lib/hooks/use-client-value';
 
 interface Props {
     onUpload: (files: { file: File; preview: string }[]) => void;
@@ -25,6 +27,13 @@ export function MediaUploader({ onUpload, uploading }: Props) {
     // Nativo: la foto arriva dalla fotocamera Capacitor; web: click sull'input.
     // In entrambi i casi i file confluiscono in addFiles → flusso identico.
     const { apri } = useImagePicker({ inputRef, onFiles: addFiles, multiplo: true });
+
+    // Su nativo il drop-zone apre la fotocamera (solo scatto foto). Per caricare un
+    // VIDEO (o scegliere dalla libreria) serve l'<input> — che accetta già
+    // image+video e, nella WebView, offre la galleria coi video. Affordance
+    // secondaria native-only che clicca direttamente l'input. Web-safe/SSR-safe via
+    // useClientValue (nessun hydration mismatch: false finché non idrata il client).
+    const nativo = useClientValue(() => fotocameraNativaDisponibile(), false);
 
     const removeFile = (idx: number) => {
         setPreviews(prev => {
@@ -64,6 +73,19 @@ export function MediaUploader({ onUpload, uploading }: Props) {
                     </div>
                 </div>
             </div>
+
+            {/* Nativo: link secondario per aprire la galleria (foto E video). Su web
+                non compare — il drop-zone apre già l'input. */}
+            {nativo && (
+                <button
+                    type="button"
+                    onClick={() => inputRef.current?.click()}
+                    className="mx-auto flex items-center gap-2 rounded-pill px-4 py-2 font-maven text-xs font-bold text-kidville-green underline underline-offset-2 transition-opacity hover:opacity-80"
+                >
+                    <Images size={15} strokeWidth={1.75} aria-hidden="true" />
+                    Carica foto o video dalla galleria
+                </button>
+            )}
 
             {/* Preview grid */}
             <AnimatePresence>

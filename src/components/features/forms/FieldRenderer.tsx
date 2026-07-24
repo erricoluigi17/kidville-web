@@ -14,6 +14,7 @@ import type { FormField } from '@/types/database.types'
 import { validateField, isProvinceField } from '@/lib/forms/validate-fields'
 import { normalizzaProvincia } from '@/lib/anagrafiche/province'
 import { logClient } from '@/lib/logging/client'
+import { ScattaFotoButton } from '@/components/features/native/ScattaFotoButton'
 
 export const FIELD_BASE =
   'w-full px-4 py-3 rounded-xl bg-white border border-kidville-green/15 text-kidville-green placeholder-kidville-green/40 ' +
@@ -322,9 +323,19 @@ export function FileField({
   const [fileName, setFileName] = useState('')
   const [uploadError, setUploadError] = useState<string | null>(null)
 
+  // Accept dinamico: mostra «Scatta foto» solo se il campo ammette immagini
+  // (la fotocamera produce un JPG) — così non si aggiunge un trigger foto a un
+  // input che accetta solo PDF/doc.
+  const acceptEff = accept || '.pdf,.jpg,.jpeg,.png'
+  const consenteImmagini = /image\/|\*|\.jpe?g|\.png|\.webp|\.gif|\.heic/i.test(acceptEff)
+
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
+    await processaFile(file)
+  }
+
+  async function processaFile(file: File) {
     setUploading(true)
     setUploadError(null)
     setFileName(file.name)
@@ -384,12 +395,22 @@ export function FileField({
         </span>
         <input
           type="file"
-          accept={accept || '.pdf,.jpg,.jpeg,.png'}
+          accept={acceptEff}
           className="hidden"
           disabled={uploading}
           onChange={handleFile}
         />
       </label>
+      {/* Nativo: scatta la foto dell'allegato (solo se il campo ammette immagini).
+          Fuori dalla <label> per non riaprire il file picker. Su web non compare. */}
+      {consenteImmagini && (
+        <ScattaFotoButton
+          onFile={processaFile}
+          label="Scatta foto"
+          disabled={uploading}
+          className="mt-2 inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-dashed border-kidville-green/30 text-sm font-medium text-kidville-green hover:border-kidville-green transition-colors disabled:opacity-50"
+        />
+      )}
       {uploadError && (
         <p className="flex items-center gap-1.5 text-xs text-kidville-error mt-1.5">
           <AlertCircle className="w-3.5 h-3.5" />

@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
+import { ScattaFotoButton } from '@/components/features/native/ScattaFotoButton';
 
 interface StudentSemaforo {
   student_id: string;
@@ -390,19 +391,27 @@ export default function TeacherModulisticaPage() {
                   <button onClick={() => { setProxyFileName(''); setProxyFile(null); }} className="text-kidville-muted hover:text-kidville-error">✕</button>
                 </div>
               ) : (
-                <label className="w-full h-12 border-2 border-dashed border-kidville-line hover:border-kidville-green rounded-xl flex items-center justify-center gap-1.5 cursor-pointer text-xs font-semibold text-kidville-ink transition-colors">
-                  <Upload size={14} /> Carica File
-                  <input
-                    type="file"
-                    accept="image/*,.pdf"
-                    className="hidden"
-                    onChange={e => {
-                      const f = e.target.files?.[0] ?? null;
-                      setProxyFile(f);
-                      setProxyFileName(f?.name ?? '');
-                    }}
+                <div className="flex flex-col gap-1.5">
+                  <label className="w-full h-12 border-2 border-dashed border-kidville-line hover:border-kidville-green rounded-xl flex items-center justify-center gap-1.5 cursor-pointer text-xs font-semibold text-kidville-ink transition-colors">
+                    <Upload size={14} /> Carica File
+                    <input
+                      type="file"
+                      accept="image/*,.pdf"
+                      className="hidden"
+                      onChange={e => {
+                        const f = e.target.files?.[0] ?? null;
+                        setProxyFile(f);
+                        setProxyFileName(f?.name ?? '');
+                      }}
+                    />
+                  </label>
+                  {/* Nativo: scatta la foto del modulo cartaceo firmato. Su web non compare. */}
+                  <ScattaFotoButton
+                    onFile={(f) => { setProxyFile(f); setProxyFileName(f.name); }}
+                    label="Scatta foto"
+                    className="w-full h-12 flex items-center justify-center gap-1.5 border-2 border-dashed border-kidville-line hover:border-kidville-green rounded-xl text-xs font-semibold text-kidville-green transition-colors"
                   />
-                </label>
+                </div>
               )}
             </div>
 

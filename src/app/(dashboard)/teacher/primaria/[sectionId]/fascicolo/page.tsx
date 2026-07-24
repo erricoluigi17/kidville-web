@@ -5,6 +5,7 @@ import { useParams, useSearchParams } from 'next/navigation';
 import { FolderLock, Upload, Download, ShieldAlert, FileText, ChevronDown, ChevronRight } from 'lucide-react';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { DateField } from '@/components/ui/DateField';
+import { ScattaFotoButton } from '@/components/features/native/ScattaFotoButton';
 
 interface Alunno { id: string; nome: string; cognome: string }
 interface Documento {
@@ -42,6 +43,10 @@ export default function FascicoloPage() {
   const [finalita, setFinalita] = useState('');
   const finalitaRef = useRef('');
   const fileRef = useRef<HTMLInputElement>(null);
+  // Foto scattata con la fotocamera nativa (additiva all'<input> che accetta anche
+  // PDF). Se presente vince sul file dell'input in `carica`; l'input la azzera se
+  // l'utente sceglie invece un file dal dispositivo.
+  const [fotoScattata, setFotoScattata] = useState<File | null>(null);
 
   // Pagelle
   const [anniPagelle, setAnniPagelle] = useState<AnnoPagelle[]>([]);
@@ -93,7 +98,7 @@ export default function FascicoloPage() {
 
   const carica = async () => {
     setMsg('');
-    const file = fileRef.current?.files?.[0];
+    const file = fotoScattata ?? fileRef.current?.files?.[0];
     if (!alunnoId) { setMsg('Seleziona un alunno'); return; }
     if (!file) { setMsg('Seleziona un file'); return; }
     if (!userId) { setMsg('Identità non risolta: riapri la pagina dal registro.'); return; }
@@ -113,6 +118,7 @@ export default function FascicoloPage() {
     setMsg('Documento caricato ✓');
     setDescrizione(''); setExpiry('');
     if (fileRef.current) fileRef.current.value = '';
+    setFotoScattata(null);
     loadDocs();
   };
 
@@ -225,7 +231,16 @@ export default function FascicoloPage() {
               <DateField value={expiry} onChange={setExpiry} aria-label="Data di scadenza del documento" className="font-maven rounded-pill border border-kidville-line px-3 py-2 text-sm" />
             </div>
             <input value={descrizione} onChange={(e) => setDescrizione(e.target.value)} placeholder="Descrizione (facoltativa)" className="font-maven mt-2 w-full rounded-pill border border-kidville-line px-3 py-2 text-sm" />
-            <input ref={fileRef} type="file" accept="application/pdf,image/*" className="font-maven mt-2 block w-full text-sm text-kidville-ink file:mr-3 file:rounded-pill file:border-0 file:bg-kidville-green/10 file:px-4 file:py-1.5 file:text-kidville-green" />
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <input ref={fileRef} type="file" accept="application/pdf,image/*" onChange={() => setFotoScattata(null)} className="font-maven block flex-1 min-w-[12rem] text-sm text-kidville-ink file:mr-3 file:rounded-pill file:border-0 file:bg-kidville-green/10 file:px-4 file:py-1.5 file:text-kidville-green" />
+              {/* Nativo: scatta la foto del documento cartaceo. Su web non compare. */}
+              <ScattaFotoButton
+                onFile={setFotoScattata}
+                label="Scatta foto"
+                className="inline-flex items-center gap-1.5 rounded-pill border border-kidville-line px-4 py-2 font-maven text-sm font-semibold text-kidville-green transition-colors hover:border-kidville-green"
+              />
+            </div>
+            {fotoScattata && <p className="font-maven text-xs mt-1.5 text-kidville-green">📷 {fotoScattata.name}</p>}
             {msg && <p className={`font-maven text-sm mt-2 ${msg.includes('✓') ? 'text-kidville-success' : 'text-kidville-error'}`}>{msg}</p>}
             <button onClick={carica} disabled={uploading} className="mt-3 font-maven inline-flex items-center gap-1.5 rounded-pill bg-kidville-green px-5 py-2 text-sm text-kidville-yellow disabled:opacity-50">
               <Upload size={15} /> {uploading ? 'Caricamento…' : 'Carica'}

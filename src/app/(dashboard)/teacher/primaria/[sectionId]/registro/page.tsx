@@ -7,6 +7,7 @@ import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { saveLocalRegistro, syncPendingRegistro } from '@/lib/offline/syncEngine';
 import { nomeCompleto } from '@/lib/format/nome';
 import { DateField } from '@/components/ui/DateField';
+import { ScattaFotoButton } from '@/components/features/native/ScattaFotoButton';
 
 interface Campanella { id: string; ordine: number; ora_inizio: string; ora_fine: string; tipo: string }
 interface OrarioCella { campanella_id: string; materia_id: string | null; materie?: { nome: string } | null }
@@ -191,15 +192,24 @@ export default function RegistroPage() {
                       </div>
                     )}
                     {riga && (
-                      <label className="mt-1.5 inline-flex cursor-pointer items-center gap-1 text-[11px] text-kidville-green">
-                        <Paperclip size={11} /> Allega
-                        <input
-                          type="file"
-                          accept="application/pdf,image/*"
-                          className="hidden"
-                          onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadAllegato(riga.id, f); }}
+                      <div className="mt-1.5 flex items-center gap-3">
+                        <label className="inline-flex cursor-pointer items-center gap-1 text-[11px] text-kidville-green">
+                          <Paperclip size={11} /> Allega
+                          <input
+                            type="file"
+                            accept="application/pdf,image/*"
+                            className="hidden"
+                            onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadAllegato(riga.id, f); }}
+                          />
+                        </label>
+                        {/* Nativo: scatta la foto (compito/documento) come allegato. Su web non compare. */}
+                        <ScattaFotoButton
+                          onFile={(f) => uploadAllegato(riga.id, f)}
+                          label="Scatta foto"
+                          iconSize={11}
+                          className="inline-flex items-center gap-1 text-[11px] text-kidville-green"
                         />
-                      </label>
+                      </div>
                     )}
                   </div>
                   <button

@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { X, Send, Upload, Link } from 'lucide-react';
 import { Avviso } from './AvvisoCard';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
+import { ScattaFotoButton } from '@/components/features/native/ScattaFotoButton';
 
 interface Props {
     open: boolean;
@@ -97,10 +98,15 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
         setSelectedClasses(prev => prev.includes(c) ? prev.filter(x => x !== c) : [...prev, c]);
     };
 
-    const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (!file) return;
+        void processaFile(file);
+    };
 
+    // Punto d'ingresso unico dell'upload: lo usano sia l'<input> (che accetta anche
+    // PDF/doc) sia il bottone «Scatta foto» nativo → stesso flusso, PDF intatto.
+    const processaFile = async (file: File) => {
         setFileUploading(true);
         setFileName(file.name);
         try {
@@ -245,7 +251,15 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
                                     >
                                         <Upload size={14} /> {fileUploading ? 'Caricamento...' : 'Carica File (PDF, Immagini)'}
                                     </button>
-                                    
+
+                                    {/* Nativo: scatta la foto dell'allegato. Su web non compare. */}
+                                    <ScattaFotoButton
+                                        onFile={processaFile}
+                                        label="Scatta foto"
+                                        disabled={fileUploading}
+                                        className="flex items-center gap-2 px-4 py-2.5 border-2 border-dashed border-kidville-line rounded-2xl font-maven text-xs font-semibold text-kidville-green hover:border-kidville-green transition-colors disabled:opacity-50"
+                                    />
+
                                     {fileName && (
                                         <div className="flex items-center gap-2 bg-kidville-cream border border-kidville-line rounded-xl px-3 py-1.5 max-w-[200px] truncate text-xs font-maven text-kidville-green">
                                             <span className="truncate flex-1">{fileName}</span>

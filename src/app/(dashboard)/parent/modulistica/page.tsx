@@ -9,6 +9,7 @@ import { OtpEmailModal } from '@/components/features/parent/forms/OtpEmailModal'
 import { DateField } from '@/components/ui/DateField';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { Btn } from '@/components/ui/Btn';
+import { ScattaFotoButton } from '@/components/features/native/ScattaFotoButton';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { annoScolasticoCorrente } from '@/lib/anno-scolastico';
 import { buildCertificatoBody, buildIntestazioneSede, rigaLuogoData } from '@/lib/certificati/self-service';
@@ -463,6 +464,14 @@ export default function ParentModulisticaPage() {
     }, 1000);
   };
 
+  // Punto d'ingresso unico per il file del certificato: lo usano sia l'<input>
+  // (che accetta anche PDF) sia il bottone «Scatta foto» nativo. Il documento può
+  // essere un PDF o una foto → il supporto PDF resta intatto.
+  const processaCertFile = (f: File | null) => {
+    setCertFile(f);
+    setCertFileName(f?.name ?? '');
+  };
+
   // Submit Medical Certificate
   const handleUploadMedicalCert = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -846,15 +855,23 @@ export default function ParentModulisticaPage() {
                         <button type="button" onClick={() => { setCertFileName(''); setCertFile(null); }} className="text-kidville-muted hover:text-kidville-error">✕</button>
                       </div>
                     ) : (
-                      <label className="w-full h-10 border-2 border-dashed border-kidville-line hover:border-kidville-green rounded-xl flex items-center justify-center gap-1.5 cursor-pointer text-xs font-semibold text-kidville-sub transition-colors">
-                        <Upload size={14} /> Carica Certificato
-                        <input
-                          type="file"
-                          accept=".pdf,image/*"
-                          className="hidden"
-                          onChange={e => { const f = e.target.files?.[0] ?? null; setCertFile(f); setCertFileName(f?.name || ''); }}
+                      <div className="flex flex-col gap-1.5">
+                        <label className="w-full h-10 border-2 border-dashed border-kidville-line hover:border-kidville-green rounded-xl flex items-center justify-center gap-1.5 cursor-pointer text-xs font-semibold text-kidville-sub transition-colors">
+                          <Upload size={14} /> Carica Certificato
+                          <input
+                            type="file"
+                            accept=".pdf,image/*"
+                            className="hidden"
+                            onChange={e => processaCertFile(e.target.files?.[0] ?? null)}
+                          />
+                        </label>
+                        {/* Nativo: scatta la foto del certificato cartaceo. Su web non compare. */}
+                        <ScattaFotoButton
+                          onFile={processaCertFile}
+                          label="Scatta foto"
+                          className="h-10 w-full flex items-center justify-center gap-1.5 border-2 border-dashed border-kidville-line hover:border-kidville-green rounded-xl text-xs font-semibold text-kidville-green transition-colors"
                         />
-                      </label>
+                      </div>
                     )}
                   </div>
                 </div>

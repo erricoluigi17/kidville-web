@@ -2,6 +2,7 @@
 
 import { useState, useRef, useCallback } from 'react';
 import { Send, Paperclip, X } from 'lucide-react';
+import { ScattaFotoButton } from '@/components/features/native/ScattaFotoButton';
 
 interface Props {
     onSend: (content: string, attachmentUrl?: string, attachmentType?: string) => void;
@@ -49,10 +50,9 @@ export function ChatInput({ onSend, disabled, placeholder }: Props) {
         fileRef.current?.click();
     };
 
-    const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        e.target.value = ''; // permette di riselezionare lo stesso file
-        if (!file) return;
+    // Punto d'ingresso unico dell'upload: lo usano sia l'<input> (che accetta anche
+    // PDF) sia il bottone «Scatta foto» nativo → stesso flusso, supporto PDF intatto.
+    const processaFile = useCallback(async (file: File) => {
         setUploading(true);
         setUploadError('');
         try {
@@ -68,6 +68,13 @@ export function ChatInput({ onSend, disabled, placeholder }: Props) {
         } finally {
             setUploading(false);
         }
+    }, []);
+
+    const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        e.target.value = ''; // permette di riselezionare lo stesso file
+        if (!file) return;
+        void processaFile(file);
     };
 
     return (
@@ -118,6 +125,14 @@ export function ChatInput({ onSend, disabled, placeholder }: Props) {
                         ? <span className="w-4 h-4 border-2 border-kidville-green/30 border-t-kidville-green rounded-full animate-spin" />
                         : <Paperclip size={18} strokeWidth={1.5} />}
                 </button>
+
+                {/* Nativo: scatta una foto da inviare in chat. Su web non compare. */}
+                <ScattaFotoButton
+                    onFile={processaFile}
+                    iconSize={18}
+                    disabled={disabled || uploading}
+                    className="w-10 h-10 rounded-full flex-shrink-0 flex items-center justify-center bg-kidville-green-soft text-kidville-green transition-transform active:scale-95 disabled:opacity-50"
+                />
 
                 {/* Text input */}
                 <div className="flex-1 relative">

@@ -75,7 +75,9 @@ Seconda fase della preparazione allo store: **funzioni native**. Primo tassello,
 - **Badge icona** (`@capawesome/capacitor-badge`) = numero di notifiche non lette (dal Centro Notifiche). **Condivisione nativa** (`@capacitor/share`, fallback Web Share/clipboard): pulsanti «Condividi» su news e avvisi.
 - **Gate** verde: eslint 0 · tsc 0 · vitest 341 file / 2809 test · build ok. Nuovi test: read-cache, ServiceWorkerRegister, camera, use-image-picker, share, biometric.
 
-> ⚠️ **Non ancora in produzione.** Tutte e 4 le funzioni native della Fase 2 sono implementate e passano il gate web, ma il comportamento runtime (Service Worker nella WebView, scatto foto, prompt biometrico, badge sull'icona, foglio di condivisione) **va verificato su dispositivo/simulatore** (`npx cap sync` + build nativa) prima del deploy. Nota di prodotto aperta: sul nativo il caricamento **video** dalla galleria va ripristinato con un pulsante dedicato se serve. Fase 3 (i18n EN completo) da avviare.
+- **Rifinitura nativa** (bottone condiviso `ScattaFotoButton`): ripristinato il caricamento **foto/video dalla galleria** sul nativo in galleria; aggiunto il bottone additivo **«Scatta foto»** accanto agli input che accettano anche PDF (8 punti: certificato medico, fascicolo, registro, giustificativo cassa, chat, avvisi, moduli, modulistica docente) — l'allegato PDF resta intatto, il bottone appare solo su nativo dove `accept` ammette immagini. Scoperto solo `TaskCard` (aggancio fragile, rimandato).
+
+> ⚠️ **Non ancora in produzione.** Tutte e 4 le funzioni native della Fase 2 sono implementate e passano il gate web (eslint 0 · tsc 0 · vitest 343 file / 2815 test · build ok), ma il comportamento runtime (Service Worker nella WebView, scatto foto, prompt biometrico, badge sull'icona, foglio di condivisione) **va verificato su dispositivo/simulatore** (`npx cap sync` + build nativa) prima del deploy. Fase 3 (i18n EN completo) da avviare.
 
 ## 🗓️ Changelog — App Store & Play readiness (Fase 1): stringhe d'uso iOS, cancellazione account, pagine legali, privacy manifest, cleartext Android 2026-07-24 (branch `feat/app-store-readiness`)
 

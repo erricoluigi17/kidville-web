@@ -3,7 +3,9 @@
 import { useState, useEffect, useCallback, Suspense } from 'react';
 import { AvvisoCard, Avviso } from '@/components/features/avvisi/AvvisoCard';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
+import { OfflineBadge } from '@/components/ui/OfflineBadge';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
+import { fetchConCache } from '@/lib/offline/read-cache';
 import { logClient } from '@/lib/logging/client';
 
 // m3: ogni avviso porta l'elenco dei FIGLI cui si riferisce (nome + student_id),
@@ -21,6 +23,8 @@ function ParentAvvisiContent() {
 
     const [avvisi, setAvvisi] = useState<AvvisoConFigli[]>([]);
     const [loading, setLoading] = useState(true);
+    // true quando gli avvisi mostrati arrivano dalla cache offline (rete assente).
+    const [offline, setOffline] = useState(false);
 
     // Feed UNIFICATO server-derived (G3): niente più parentId/classe/studentId nella
     // query — il server ricava figli, classi e plesso dalla sessione. Si passa solo
@@ -28,11 +32,18 @@ function ParentAvvisiContent() {
     // try/finally (NON try/catch): dentro un effect il catch farebbe scattare
     // react-hooks/set-state-in-effect. I fallimenti di rete/!res.ok sono comunque
     // registrati dal fetch strumentato globale (logClient) — l'osservabilità c'è.
+    // fetchConCache serve l'ultima copia salvata quando la rete manca (offline=true);
+    // se non c'è né rete né cache rilancia e il flusso resta identico a prima.
     const loadAvvisi = useCallback(async () => {
         if (!ready || !parentId) return;
         try {
-            const res = await fetch('/api/avvisi', { headers: { 'x-user-id': parentId } });
-            if (res.ok) setAvvisi(await res.json());
+            const { data, offline: off } = await fetchConCache<AvvisoConFigli[]>(
+                `avvisi:${parentId}`,
+                '/api/avvisi',
+                { headers: { 'x-user-id': parentId } },
+            );
+            setAvvisi(data);
+            setOffline(off);
         } finally {
             setLoading(false);
         }
@@ -104,6 +115,13 @@ function ParentAvvisiContent() {
                 subtitle={loading ? 'Comunicazioni dalla scuola' : daGestire > 0 ? `${daGestire} da gestire` : 'Tutto in regola ✓'}
                 className="mb-6"
             />
+
+            {/* Indicatore offline: i dati vengono dall'ultima copia in cache */}
+            {offline && !loading && (
+                <div className="mb-4 flex justify-center">
+                    <OfflineBadge />
+                </div>
+            )}
 
             {/* Loading */}
             {loading && (

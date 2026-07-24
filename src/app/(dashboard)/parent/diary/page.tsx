@@ -6,6 +6,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronLeft, ChevronRight, Camera, ChevronDown, GraduationCap } from 'lucide-react';
 import { getEventConfig } from '@/components/features/teacher/diary/eventConfig';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
+import { OfflineBadge } from '@/components/ui/OfflineBadge';
+import { fetchConCache } from '@/lib/offline/read-cache';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 import { useChildSchoolType } from '@/lib/auth/use-child-school-type';
 import { UMORE_CONFIG, umoreFromDettagli, umoreNarrative } from '@/lib/diary/umore';
@@ -324,6 +326,8 @@ function ParentDiaryContent() {
 
     const [dateKey, setDateKey] = useState<string>(toDateKey(new Date()));
     const [entries, setEntries] = useState<DiaryEntry[]>([]);
+    // true quando il diario del giorno viene dalla cache offline (rete assente).
+    const [offline, setOffline] = useState(false);
     const [photos, setPhotos] = useState<MediaItem[]>([]);
     // Il giorno di cui abbiamo completato il caricamento: lo spinner è derivato
     // (loading = giorno richiesto ≠ giorno caricato), niente setState sincroni.
@@ -349,14 +353,24 @@ function ParentDiaryContent() {
     const load = useCallback(async (dk: string) => {
         if (!ready || !alunnoId) return; // identità non risolta: lo spinner resta
         try {
-            // Carica eventi diario (errore di rete ⇒ stato vuoto, come prima)
-            const res = await fetch(`/api/diary/entries?alunno_id=${alunnoId}&from=${dk}&to=${dk}`).catch(() => null);
-            if (res?.ok) {
-                const data: DiaryEntry[] = await res.json();
-                setEntries(deduplicateAndSort(data));
-            } else {
-                setEntries([]);
+            // Carica eventi diario con cache offline. Il fallback serve l'ultima copia
+            // salvata (entriesOffline=true); rete giù e nessuna cache ⇒ stato vuoto,
+            // come prima. La cache viene isolata in un try/catch interno così un
+            // fallimento totale NON salta le fetch successive (checkin, foto).
+            let entriesData: DiaryEntry[] | null = null;
+            let entriesOffline = false;
+            try {
+                const r = await fetchConCache<DiaryEntry[]>(
+                    `diario:${alunnoId}:${dk}:${dk}`,
+                    `/api/diary/entries?alunno_id=${alunnoId}&from=${dk}&to=${dk}`,
+                );
+                entriesData = r.data;
+                entriesOffline = r.offline;
+            } catch {
+                // Rete assente e nessuna copia in cache: nessuna voce, come prima.
             }
+            setEntries(entriesData ? deduplicateAndSort(entriesData) : []);
+            setOffline(entriesOffline);
 
             // "Entrata" dal modulo Presenze (orario di check-in del giorno)
             const ciRes = await fetch(`/api/diary/checkin?alunno_id=${alunnoId}&date=${dk}`).catch(() => null);
@@ -452,6 +466,13 @@ function ParentDiaryContent() {
                     </div>
                 }
             />
+
+            {/* Indicatore offline: il diario del giorno viene dalla cache */}
+            {offline && !loading && (
+                <div className="mb-4 flex justify-center">
+                    <OfflineBadge />
+                </div>
+            )}
 
             {/* Navigazione giorno */}
             <div className="flex items-center justify-between mb-5 bg-white rounded-2xl border border-kidville-line shadow-sm px-4 py-3">

@@ -5,7 +5,9 @@ import { motion } from 'framer-motion';
 import { Ticket, ChevronLeft, ChevronRight, Check, X, Lock, CalendarOff, UtensilsCrossed, RefreshCw, AlertTriangle, Clock, LogIn } from 'lucide-react';
 import { allergeniDelGiorno, allergeneLabel, allergeneEmoji, type AllergeniPortate } from '@/lib/mensa/allergeni';
 import { SaveCelebration } from '@/components/ui/SaveConfirmation';
+import { OfflineBadge } from '@/components/ui/OfflineBadge';
 import { logClient } from '@/lib/logging/client';
+import { fetchConCache } from '@/lib/offline/read-cache';
 import { fetchFigliIds } from '@/lib/auth/use-parent-identity';
 
 interface Props { userId: string; studentId: string }
@@ -35,6 +37,8 @@ export function decidiAzioneMensaAuth(status: number, recuperoGiaTentato: boolea
 interface Portate { primo?: string; secondo?: string; contorno?: string; frutta?: string }
 interface MenuGiorno { data: string; attivo: boolean; chiuso: boolean; portate: Portate | null; ingredienti?: Portate | null; allergeni?: AllergeniPortate | null; note?: string | null }
 interface Prenotazione { data: string; stato: string; origine: string }
+/** Forma della risposta di GET /api/mensa/menu (per la cache offline tipizzata). */
+interface MenuResponse { success: boolean; data: MenuGiorno[]; meta?: { menuNome?: string | null } | null }
 
 const hdr = (u: string) => ({ 'Content-Type': 'application/json', 'x-user-id': u });
 const GIORNI = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab', 'Dom'];
@@ -70,6 +74,8 @@ export function MensaCalendar({ userId, studentId }: Props) {
   const [msg, setMsg] = useState<string | null>(null);
   const [authError, setAuthError] = useState<AuthError | null>(null);
   const [menuNome, setMenuNome] = useState<string | null>(null);
+  // true quando il menu mostrato viene dalla cache offline (rete assente).
+  const [menuOffline, setMenuOffline] = useState(false);
   // Orario limite (cutoff) per prenotare/disdire "oggi" (dalla config scuola).
   const [cutoffOra, setCutoffOra] = useState<string | null>(null);
   // Celebrazione festosa (spunta + coriandoli) su prenota/disdici riuscita.
@@ -90,14 +96,24 @@ export function MensaCalendar({ userId, studentId }: Props) {
 
   const load = useCallback(async () => {
     try {
+      // Menu con cache offline: la chiave è per-alunno/settimana. In fallback offline
+      // serve l'ultima copia salvata (menuOff=true). Il .catch(() => null) tiene la
+      // Promise.all resiliente se manca rete E cache (nessun menu, come prima). Le
+      // prenotazioni (saldo/ticket) NON si cachano: sono stato mutabile, non contenuto.
+      let menuOff = false;
+      const menuChiave = `menu:${activeStudent}:${from}:${to}`;
+      const menuUrl = `/api/mensa/menu?userId=${userId}&from=${from}&to=${to}&alunno_id=${activeStudent}`;
       const [mRes, pRaw] = await Promise.all([
-        fetch(`/api/mensa/menu?userId=${userId}&from=${from}&to=${to}&alunno_id=${activeStudent}`, { headers: hdr(userId) }).then(r => r.json()).catch(() => null),
+        fetchConCache<MenuResponse>(menuChiave, menuUrl, { headers: hdr(userId) })
+          .then(r => { menuOff = r.offline; return r.data; })
+          .catch(() => null),
         fetch(`/api/mensa/prenotazioni?userId=${userId}&alunno_id=${activeStudent}&from=${from}&to=${to}`, { headers: hdr(userId) }).then(async r => ({ status: r.status, data: await r.json() })).catch(() => null),
       ]);
       if (mRes?.success) {
         setMenu(mRes.data);
         setMenuNome(mRes.meta?.menuNome ?? null);
       }
+      setMenuOffline(menuOff);
 
       const azione = pRaw ? decidiAzioneMensaAuth(pRaw.status, recuperoTentato.current) : ({ tipo: 'ok' } as const);
 
@@ -223,6 +239,12 @@ export function MensaCalendar({ userId, studentId }: Props) {
           </button>
         </div>
       </div>
+
+      {menuOffline && !loading && (
+        <div className="mb-3 flex">
+          <OfflineBadge />
+        </div>
+      )}
 
       {cutoffOra && !authError && (
         <div className="mb-3 px-3 py-2 rounded-xl bg-kidville-info-soft border border-kidville-info/20 font-maven text-xs text-kidville-info flex items-center gap-2">

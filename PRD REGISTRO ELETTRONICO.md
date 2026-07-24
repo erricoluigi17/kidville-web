@@ -64,6 +64,16 @@
 
 ---
 
+## 🗓️ Changelog — Fase 2 native (in corso): cache offline lato genitore (avvisi · diario · menu) 2026-07-24 (branch `feat/native-fase2`)
+
+Seconda fase della preparazione allo store: **funzioni native**. Primo tassello, l'**offline** (l'unico pienamente verificabile col gate web; le altre native — fotocamera, biometria, badge — seguono e richiedono verifica su dispositivo).
+
+- **Service Worker con caching del guscio** (`public/sw.js`, prima solo Web Push): `install`/`activate`/`fetch` — asset statici cache-first, navigazioni network-first con fallback alla cache (l'app si apre anche senza rete), `/api/` sempre in rete (mai dati stale). Registrato ora su web **e** nativo (`ServiceWorkerRegister` in `RootProviders`).
+- **Cache dati con Dexie** (riuso di `KidvilleOfflineDB`, nuova `version(11)` con store `cache_read`): helper `fetchConCache` (`src/lib/offline/read-cache.ts`) che serve l'ultima copia salvata quando la rete manca. Agganciato a **avvisi**, **diario** (entries) e **menu mensa**; indicatore «Dati non aggiornati — offline» (`OfflineBadge`). Saldo ticket e prenotazioni NON cachati (stato mutabile).
+- **Gate** verde: eslint 0 · tsc 0 · vitest 336 file / 2789 test · build ok. Nuovi test `read-cache` (7 casi) e `ServiceWorkerRegister`.
+
+> ⚠️ **Non ancora in produzione**: la Fase 2 va provata su dispositivo/simulatore (comportamento del Service Worker nella WebView, plugin nativi) prima del deploy. Restano da fare in Fase 2: fotocamera nativa, login biometrico, badge icona/condivisione.
+
 ## 🗓️ Changelog — App Store & Play readiness (Fase 1): stringhe d'uso iOS, cancellazione account, pagine legali, privacy manifest, cleartext Android 2026-07-24 (branch `feat/app-store-readiness`)
 
 Prima fase di preparazione alla pubblicazione su App Store/Google Play (a valle di una review simulata «nei panni di Apple App Review»). Corregge i motivi di rigetto bloccanti e le carenze di privacy, senza toccare le fasi 2 (funzioni native) e 3 (i18n inglese completo), previste in cicli successivi.

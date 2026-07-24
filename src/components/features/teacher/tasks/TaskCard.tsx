@@ -9,6 +9,7 @@ import {
     Paperclip, MessageSquare, Send, ExternalLink,
     CheckSquare, EyeOff
 } from 'lucide-react';
+import { ScattaFotoButton } from '@/components/features/native/ScattaFotoButton';
 
 interface TaskAttachment {
     name: string;
@@ -646,6 +647,13 @@ export function TaskCard({
                                                                             accept="image/*,.pdf,.doc,.docx"
                                                                         />
                                                                     </label>
+                                                                    <ScattaFotoButton
+                                                                        multiplo
+                                                                        onFile={(f) => setSelectedFiles(prev => [...prev, f])}
+                                                                        label="Scatta foto"
+                                                                        iconSize={11}
+                                                                        className="flex items-center gap-1 px-2.5 py-1.5 border border-dashed border-kidville-line hover:border-kidville-green rounded-xl cursor-pointer font-maven text-[10px] font-bold text-kidville-muted hover:text-kidville-green transition-all uppercase"
+                                                                    />
                                                                     {selectedFiles.map((file, fIdx) => (
                                                                         <span key={fIdx} className="inline-flex items-center gap-0.5 px-2 py-1 bg-kidville-cream border border-kidville-line rounded-lg text-[9px] text-kidville-muted">
                                                                             {file.name.substring(0, 15)}...

@@ -232,6 +232,12 @@ export const TIPI_NOTIFICA: Record<string, TipoNotifica> = {
     gruppo: 'staff',
     descrizione: 'Quando un genitore completa la registrazione iniziale',
   },
+  richiesta_cancellazione_account: {
+    label: 'Richiesta cancellazione account',
+    gruppo: 'staff',
+    descrizione: 'Quando un genitore richiede la cancellazione del proprio account (da evadere in Privacy & Oblio)',
+    sicurezza: true,
+  },
   fattura_scartata: {
     label: 'Fattura scartata (SDI)',
     gruppo: 'staff',

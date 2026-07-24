@@ -147,3 +147,28 @@ Gli APK/`.app` sono artefatti di build (gitignorati), non committati: i progetti
 pubblicazione su App Store / Google Play, invio push reale FCM/APNs, e l'URL
 HTTPS pubblico di produzione per `CAP_SERVER_URL` (dipende dal deploy Vercel —
 vedi `docs/cicd.md`).
+
+### Prima della build per lo store — checklist obbligatoria
+
+⚠️ I `capacitor.config.json` **committati puntano al DEV**, non alla produzione:
+iOS → `http://localhost:3000`, Android → `http://10.0.2.2:3000`. Una build store
+generata così caricherebbe un dev server irraggiungibile dal device. Perciò,
+**prima di ogni Archive/`.aab` destinato agli store**:
+
+1. **Rigenera i config con l'URL HTTPS di produzione** e ri-sincronizza i progetti
+   nativi:
+
+   ```bash
+   CAP_SERVER_URL="https://<url-prod>" npx cap sync
+   ```
+
+   Verifica poi che `ios/App/App/capacitor.config.json` e
+   `android/app/src/main/assets/capacitor.config.json` riportino il `server.url`
+   HTTPS di produzione (non più `localhost` / `10.0.2.2`).
+
+2. **iOS — controlla l'entitlement APNs nell'export dell'Archive.** Il sorgente
+   `ios/App/App/App.entitlements` ha `aps-environment` = `development`; con la
+   firma **Automatic** Xcode lo promuove a `production` nella distribuzione.
+   Nell'export dell'Archive verifica che l'entitlement `aps-environment` risulti
+   effettivamente **`production`**: altrimenti le push native non arrivano in
+   produzione.

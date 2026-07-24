@@ -19,6 +19,10 @@ describe('middleware-rules', () => {
         '/m/abc-token',
         '/api/public/forms/xyz',
         '/api/public/forms/xyz/submit',
+        // Pagine legali/di supporto pubbliche (Privacy Policy URL / Support URL per lo store)
+        '/privacy',
+        '/termini',
+        '/assistenza',
       ]) {
         expect(isPublicPath(p), p).toBe(true);
       }
@@ -36,6 +40,9 @@ describe('middleware-rules', () => {
       expect(isPublicPath('/authentication')).toBe(false);
       expect(isPublicPath('/mx')).toBe(false);
       expect(isPublicPath('/models')).toBe(false);
+      expect(isPublicPath('/privacyfoo')).toBe(false);
+      expect(isPublicPath('/terminifoo')).toBe(false);
+      expect(isPublicPath('/assistenzafoo')).toBe(false);
     });
   });
 

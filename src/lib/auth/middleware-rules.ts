@@ -24,6 +24,9 @@ const PUBLIC_PREFIXES = [
   '/m', // link pubblico dei modelli pubblicati (DL-030)
   '/api/public', // API token-scoped per i form pubblicati (DL-030)
   '/onboarding',
+  '/privacy', // informativa GDPR pubblica (Privacy Policy URL per lo store)
+  '/termini', // termini di servizio pubblici
+  '/assistenza', // pagina di supporto pubblica (Support URL per lo store)
 ];
 
 export function isPublicPath(pathname: string): boolean {

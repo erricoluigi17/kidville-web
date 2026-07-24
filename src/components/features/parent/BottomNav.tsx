@@ -84,7 +84,7 @@ export default function BottomNav() {
       label: 'Documenti',
       items: [
         { id: 'modulistica', label: 'Modulistica', sub: 'Firme e certificati', icon: FileText, href: '/parent/modulistica', tint: '#B5651D', grado: 'comune' },
-        { id: 'profilo', label: 'Profilo e deleghe', sub: 'Anagrafica e ritiro', icon: IdCard, href: null, tint: '#475569', grado: 'comune', soon: true },
+        { id: 'profilo', label: 'Profilo e deleghe', sub: 'Account, privacy e cancellazione', icon: IdCard, href: '/parent/profilo', tint: '#475569', grado: 'comune' },
       ],
     },
   ];

@@ -4,6 +4,7 @@ import { Suspense } from 'react';
 import { ShieldAlert } from 'lucide-react';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { OblioPanel } from '@/components/features/admin/settings/OblioPanel';
+import { RichiesteCancellazionePanel } from '@/components/features/admin/settings/RichiesteCancellazionePanel';
 import { CockpitPage, PageHeader } from '@/components/ui/cockpit';
 
 function GdprInner() {
@@ -16,7 +17,12 @@ function GdprInner() {
         title="Privacy & Diritto all'Oblio"
         subtitle="Cancellazione (anonimizzazione) dei dati personali degli alunni non iscritti. Azione riservata alla Direzione."
       />
-      {userId && <OblioPanel userId={userId} />}
+      {userId && (
+        <div className="space-y-8">
+          <RichiesteCancellazionePanel userId={userId} />
+          <OblioPanel userId={userId} />
+        </div>
+      )}
     </CockpitPage>
   );
 }

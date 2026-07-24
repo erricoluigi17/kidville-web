@@ -29,6 +29,7 @@
 > | `pagamenti_transazioni` | Contenitore «incasso unico di famiglia»: un versamento → più voci di più figli + ricariche mensa (pagante = `parents.id`, metodo, riferimento/CRO, data valuta, note, annullo tracciato) | ✅ RLS + policy service_role |
 > | `crediti_famiglia` | Ledger del credito di famiglia (causali eccedenza/utilizzo/rettifica/storno con `saldo_dopo`, ancorato a `parents.id`) — visibile **solo alla segreteria** | ✅ RLS + policy service_role |
 > | `cassa_movimenti` (+ `cassa_categorie`, `cassa_chiusure`, `admin_settings.cassa_config`) | Registro di cassa contanti per sede: ledger **immutabile** (entrata/uscita/prelievo/rettifica, solo storno tracciato), entrate auto dagli incassi contanti calcolate a query-time, svuotamento con differenza + prelievo (RPC atomica `registra_chiusura_cassa`), categorie di uscita con seed («Versamento in banca» `is_sistema`), giustificativo su Storage **privato**. Saldo/«entrato oggi»/totali/report/svuotamento **solo admin** | ✅ RLS service_role (RPC SECURITY DEFINER, REVOKE anon/authenticated) |
+> | `richieste_cancellazione` | Richieste self-service di cancellazione account genitore (App Store 5.1.1(v) + GDPR art. 17): il genitore avvia in-app, la Direzione evade via anonimizzazione. Solo `parent_id`/stato/timestamp/conteggi, **nessuna PII** | ✅ RLS abilitata **senza policy** (solo `service_role`) |
 >
 > ### Moduli Implementati
 > | Modulo | Stato | Pagine | API Routes |
@@ -62,6 +63,19 @@
 > | **Accessibilità AgID / Legge Stanca** | 🔶 Baseline (P1, DL-008) | Trasversale | Fatto: alto contrasto globale persistito, focus-ring, reduced-motion, Modal accessibile, landmark/skip-link/aria-current, smoke jest-axe. WCAG-AA = definition-of-done; audit AA per-pagina incrementale |
 
 ---
+
+## 🗓️ Changelog — App Store & Play readiness (Fase 1): stringhe d'uso iOS, cancellazione account, pagine legali, privacy manifest, cleartext Android 2026-07-24 (branch `feat/app-store-readiness`)
+
+Prima fase di preparazione alla pubblicazione su App Store/Google Play (a valle di una review simulata «nei panni di Apple App Review»). Corregge i motivi di rigetto bloccanti e le carenze di privacy, senza toccare le fasi 2 (funzioni native) e 3 (i18n inglese completo), previste in cicli successivi.
+
+- **Crash foto iOS (Guideline 2.1)** — aggiunte in `ios/App/App/Info.plist` le stringhe d'uso `NSCameraUsageDescription`, `NSPhotoLibraryUsageDescription`, `NSMicrophoneUsageDescription`. Senza, iOS terminava l'app al primo accesso a fotocamera/foto (upload in galleria, chat, diario, moduli).
+- **Cancellazione account self-service (Guideline 5.1.1(v) + GDPR art. 17)** — nuova pagina genitore `/parent/profilo` («Profilo e deleghe», prima placeholder «in arrivo»): il genitore avvia la richiesta con doppia conferma (digita `ELIMINA`), revocabile finché «in lavorazione». Nuove route `GET/POST/DELETE /api/parent/account/richiesta-cancellazione` (`withRoute` + `requireUser` + zod). La Direzione la evade dal pannello **Privacy & Diritto all'Oblio** (`/admin/gdpr`, nuova route `admin/gdpr/richieste`): anonimizza il genitore (`patchParent`) e i figli **non iscritti** (`patchAlunno` + bonifica finanziaria), mantenendo audit e documenti fiscali. Notifica alla Direzione via Centro Notifiche (nuovo tipo `richiesta_cancellazione_account`). Nuova tabella `richieste_cancellazione` (solo `service_role`) + libreria riusabile `src/lib/gdpr/esegui.ts`; l'oblio admin esistente resta invariato.
+- **Informativa privacy inesistente (Guideline 5.1.1/5.1.2 + GDPR)** — nuove pagine pubbliche `/privacy`, `/termini`, `/assistenza` (server component; `PUBLIC_PREFIXES` aggiornata in `src/lib/auth/middleware-rules.ts`). Il consenso in onboarding ora **linka** l'informativa (prima rimandava a un documento inesistente). Testi bozza con segnaposto `[...]` per i dati dell'ente e l'email di supporto: **da far validare da un legale** e completare prima del lancio.
+- **Metadati/config iOS** — `CFBundleDevelopmentRegion=it` + `CFBundleLocalizations [it,en]`; orientamento **solo verticale** su iPhone; rimossa la capability obsoleta `armv7`. `aps-environment` resta gestito da Xcode (Automatic), da verificare `production` in Archive. Aggiunto il **privacy manifest** `ios/App/App/PrivacyInfo.xcprivacy`.
+- **Android/Play** — nuovo `network_security_config.xml`: HTTP in chiaro **bloccato in release**, riaperto solo verso gli host locali di sviluppo (10.0.2.2/localhost/127.0.0.1). Nota di build in `docs/mobile.md` (rigenerare i config con `CAP_SERVER_URL` HTTPS prima dello store).
+- **Gate** — `eslint`/`tsc`/`vitest` (334 file, 2780 test, inclusi i lock logging/zod)/`build` verdi. Nuovo test `__tests__/lib/gdpr-esegui.test.ts`; gruppo `parent/account` aggiunto al lock `zod-coverage`.
+
+> ⚠️ **Da completare prima della submission**: email di supporto reale nelle pagine legali; validazione legale di informativa e termini; account demo pre-onboardato nelle note di review Apple; App Privacy nutrition labels (dati di minori + Firebase/FCM). **Fasi 2 (funzioni native) e 3 (i18n EN) in cicli successivi.**
 
 ## 🗓️ Changelog — Sezione «News»: blog rich-text, embed Instagram, comunicati, digest mensile email 2026-07-20 (branch `feat/news`)
 

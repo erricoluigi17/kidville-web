@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { Ban, RotateCcw, Loader2, X } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
 
@@ -20,6 +21,7 @@ export function SospensioneToggle({
     sospeso: boolean;
     onChange?: () => void;
 }) {
+    const t = useTranslations('adminContabilita');
     const [busy, setBusy] = useState(false);
     const [open, setOpen] = useState(false);
     const [figli, setFigli] = useState<Figlio[]>([]);
@@ -37,7 +39,7 @@ export function SospensioneToggle({
         setMotivo('');
         try {
             const res = await fetch(`/api/admin/pagamenti/sospensione?alunno_id=${alunnoId}`, { headers: { 'x-user-id': userId } });
-            if (res.status === 403) { alert('Azione riservata alla Direzione.'); setOpen(false); return; }
+            if (res.status === 403) { alert(t('sosp_riservata')); setOpen(false); return; }
             const j = await res.json();
             if (j?.success) {
                 setFigli((j.data.figli as Figlio[]) ?? []);
@@ -60,10 +62,10 @@ export function SospensioneToggle({
                 ? { parent_account_id: parentAccountId, sospeso: true, causa, motivo }
                 : { alunno_id: alunnoId, sospeso: true, causa, motivo };
             const res = await fetch('/api/admin/pagamenti/sospensione', { method: 'POST', headers, body: JSON.stringify(body) });
-            if (res.status === 403) { alert('Azione riservata alla Direzione.'); return; }
+            if (res.status === 403) { alert(t('sosp_riservata')); return; }
             if (!res.ok) {
                 const j = await res.json().catch(() => ({}));
-                alert(j.error || 'Errore durante la sospensione.');
+                alert(j.error || t('sosp_err_sospensione'));
                 return;
             }
             setOpen(false);
@@ -74,16 +76,16 @@ export function SospensioneToggle({
     };
 
     const riattiva = async () => {
-        if (!window.confirm('Riattivare l’account dell’alunno?')) return;
+        if (!window.confirm(t('sosp_conferma_riattiva'))) return;
         setBusy(true);
         try {
             const res = await fetch('/api/admin/pagamenti/sospensione', {
                 method: 'POST', headers, body: JSON.stringify({ alunno_id: alunnoId, sospeso: false }),
             });
-            if (res.status === 403) { alert('Azione riservata alla Direzione.'); return; }
+            if (res.status === 403) { alert(t('sosp_riservata')); return; }
             if (!res.ok) {
                 const j = await res.json().catch(() => ({}));
-                alert(j.error || 'Errore durante la riattivazione.');
+                alert(j.error || t('sosp_err_riattivazione'));
                 return;
             }
             onChange?.();
@@ -97,7 +99,7 @@ export function SospensioneToggle({
             <button
                 onClick={() => (sospeso ? void riattiva() : void apriModaleSospensione())}
                 disabled={busy}
-                title={sospeso ? 'Riattiva account' : 'Sospendi per morosità'}
+                title={sospeso ? t('sosp_title_riattiva') : t('sosp_title_sospendi')}
                 className={`${sospeso ? 'text-kidville-error hover:text-kidville-success' : 'text-kidville-muted hover:text-kidville-error'} disabled:opacity-50`}
             >
                 {busy && !open ? <Loader2 size={15} className="animate-spin" /> : sospeso ? <RotateCcw size={15} /> : <Ban size={15} />}
@@ -106,40 +108,40 @@ export function SospensioneToggle({
             <Modal
                 open={open}
                 onClose={() => { if (!busy) setOpen(false); }}
-                title="Sospensione morosità"
+                title={t('sosp_modal_title')}
                 labelledBy="sosp-title"
                 className="w-full max-w-md rounded-[22px] bg-kidville-white p-5 shadow-xl"
             >
                 <div className="mb-3 flex items-center justify-between">
-                    <h2 id="sosp-title" className="font-barlow text-lg font-black uppercase text-kidville-error-strong">Sospensione morosità</h2>
-                    <button onClick={() => { if (!busy) setOpen(false); }} className="text-kidville-muted hover:text-kidville-error" aria-label="Chiudi">
+                    <h2 id="sosp-title" className="font-barlow text-lg font-black uppercase text-kidville-error-strong">{t('sosp_modal_title')}</h2>
+                    <button onClick={() => { if (!busy) setOpen(false); }} className="text-kidville-muted hover:text-kidville-error" aria-label={t('sosp_chiudi')}>
                         <X size={18} />
                     </button>
                 </div>
 
                 <p className="mb-2 font-maven text-[12.5px] text-kidville-sub">
-                    La sospensione vale per l’intera famiglia. Verranno coinvolti:
+                    {t('sosp_coinvolti')}
                 </p>
                 <div className="mb-4 rounded-[14px] bg-kidville-cream px-3 py-2">
                     {caricando ? (
                         <div className="flex items-center gap-2 py-1 font-maven text-[12px] text-kidville-sub">
-                            <Loader2 size={13} className="animate-spin" /> Caricamento figli…
+                            <Loader2 size={13} className="animate-spin" /> {t('sosp_caricamento_figli')}
                         </div>
                     ) : figli.length > 0 ? (
                         <ul className="space-y-1">
                             {figli.map((f) => (
                                 <li key={f.id} className="flex items-center justify-between font-maven text-[13px] text-kidville-green">
-                                    <span>{[f.nome, f.cognome].filter(Boolean).join(' ') || 'Alunno'}</span>
-                                    {f.sospeso && <span className="font-barlow text-[10px] font-bold uppercase text-kidville-error-strong">già sospeso</span>}
+                                    <span>{[f.nome, f.cognome].filter(Boolean).join(' ') || t('sosp_alunno')}</span>
+                                    {f.sospeso && <span className="font-barlow text-[10px] font-bold uppercase text-kidville-error-strong">{t('sosp_gia_sospeso')}</span>}
                                 </li>
                             ))}
                         </ul>
                     ) : (
-                        <p className="py-1 font-maven text-[12px] text-kidville-sub">Solo questo alunno (nessun altro figlio collegato).</p>
+                        <p className="py-1 font-maven text-[12px] text-kidville-sub">{t('sosp_solo_alunno')}</p>
                     )}
                 </div>
 
-                <span id="sosp-causa-label" className="mb-1 block font-barlow text-[11px] font-bold uppercase tracking-wide text-kidville-green">Causa</span>
+                <span id="sosp-causa-label" className="mb-1 block font-barlow text-[11px] font-bold uppercase tracking-wide text-kidville-green">{t('sosp_causa')}</span>
                 <div role="group" aria-labelledby="sosp-causa-label" className="mb-4 flex gap-2">
                     {(['morosita', 'altro'] as const).map((c) => (
                         <button
@@ -150,26 +152,26 @@ export function SospensioneToggle({
                             className={`flex flex-1 items-center justify-center gap-1.5 rounded-[12px] px-3 py-2 font-maven text-[13px] font-semibold ${causa === c ? 'bg-kidville-green text-kidville-white' : 'bg-kidville-cream text-kidville-green'}`}
                         >
                             <span aria-hidden="true">{causa === c ? '◉' : '○'}</span>
-                            {c === 'morosita' ? 'Morosità (revoca automatica)' : 'Altro (revoca manuale)'}
+                            {c === 'morosita' ? t('sosp_morosita') : t('sosp_altro')}
                         </button>
                     ))}
                 </div>
 
-                <label htmlFor="sosp-motivo" className="mb-1 block font-barlow text-[11px] font-bold uppercase tracking-wide text-kidville-green">Motivo</label>
+                <label htmlFor="sosp-motivo" className="mb-1 block font-barlow text-[11px] font-bold uppercase tracking-wide text-kidville-green">{t('sosp_motivo_label')}</label>
                 <input
                     id="sosp-motivo"
                     value={motivo}
                     onChange={(e) => setMotivo(e.target.value)}
-                    placeholder="es. 3 rette scadute non saldate"
+                    placeholder={t('sosp_motivo_ph')}
                     className="mb-4 w-full rounded-[12px] border border-kidville-cream bg-kidville-white px-3 py-2 font-maven text-[13px] text-kidville-green outline-none focus:border-kidville-green"
                 />
 
                 <div className="flex justify-end gap-2">
                     <button onClick={() => setOpen(false)} disabled={busy} className="rounded-[12px] px-4 py-2 font-maven text-[13px] font-semibold text-kidville-sub disabled:opacity-50">
-                        Annulla
+                        {t('sosp_annulla')}
                     </button>
                     <button onClick={() => void confermaSospensione()} disabled={busy || caricando} className="flex items-center gap-2 rounded-[12px] bg-kidville-error px-4 py-2 font-maven text-[13px] font-semibold text-kidville-white disabled:opacity-50">
-                        {busy && <Loader2 size={13} className="animate-spin" />} Sospendi la famiglia
+                        {busy && <Loader2 size={13} className="animate-spin" />} {t('sosp_sospendi_famiglia')}
                     </button>
                 </div>
             </Modal>

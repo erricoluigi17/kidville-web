@@ -10,6 +10,7 @@ import { hdr } from '@/components/features/admin/settings/ui';
 import { INPUT, BTN_PRIMARY_AA, BTN_SECONDARY } from '@/components/features/admin/pagamenti/ui';
 import { logClient } from '@/lib/logging/client';
 import { cx } from '@/lib/ui/cx';
+import { useTranslations } from 'next-intl';
 import type { NewsPost } from '@/lib/news/tipi';
 
 const testoErrore = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -20,6 +21,7 @@ interface Props {
 }
 
 export function NewsPropostePanel({ userId }: Props) {
+  const t = useTranslations('adminComunicazioni');
   const [proposte, setProposte] = useState<NewsPost[]>([]);
   const [loading, setLoading] = useState(true);
   const [disponibile, setDisponibile] = useState(true);
@@ -71,13 +73,13 @@ export function NewsPropostePanel({ userId }: Props) {
     );
   }
   if (!disponibile) {
-    return <p className="rounded-card bg-kidville-cream-dark px-4 py-8 text-center font-maven text-sm text-kidville-sub">Le News non sono ancora disponibili su questo ambiente.</p>;
+    return <p className="rounded-card bg-kidville-cream-dark px-4 py-8 text-center font-maven text-sm text-kidville-sub">{t('newsNonDisponibili')}</p>;
   }
   if (proposte.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-12 text-center">
         <Inbox size={40} className="mb-3 text-kidville-green/40" strokeWidth={1.6} />
-        <p className="font-maven text-sm text-kidville-sub">Nessuna proposta in attesa.</p>
+        <p className="font-maven text-sm text-kidville-sub">{t('proposteVuoto')}</p>
       </div>
     );
   }
@@ -91,27 +93,27 @@ export function NewsPropostePanel({ userId }: Props) {
 
           {rifiutaId === p.id ? (
             <div className="mt-3 space-y-2">
-              <label htmlFor={`motivo-${p.id}`} className="block font-maven text-xs font-bold uppercase tracking-wide text-kidville-sub">Motivo del rifiuto</label>
-              <textarea id={`motivo-${p.id}`} value={motivo} onChange={(e) => setMotivo(e.target.value)} rows={2} className={cx(INPUT, 'resize-y')} placeholder="Es. Rivedere il testo…" />
+              <label htmlFor={`motivo-${p.id}`} className="block font-maven text-xs font-bold uppercase tracking-wide text-kidville-sub">{t('proposteMotivoRifiuto')}</label>
+              <textarea id={`motivo-${p.id}`} value={motivo} onChange={(e) => setMotivo(e.target.value)} rows={2} className={cx(INPUT, 'resize-y')} placeholder={t('proposteMotivoPlaceholder')} />
               <div className="flex gap-2">
-                <button type="button" onClick={() => void invia(p.id, { esito: 'rifiuta', motivo: motivo.trim() || undefined })} className={cx(BTN_SECONDARY, 'text-kidville-error-strong')}><X size={14} /> Conferma rifiuto</button>
-                <button type="button" onClick={() => { setRifiutaId(null); setMotivo(''); }} className={BTN_SECONDARY}>Annulla</button>
+                <button type="button" onClick={() => void invia(p.id, { esito: 'rifiuta', motivo: motivo.trim() || undefined })} className={cx(BTN_SECONDARY, 'text-kidville-error-strong')}><X size={14} /> {t('proposteConfermaRifiuto')}</button>
+                <button type="button" onClick={() => { setRifiutaId(null); setMotivo(''); }} className={BTN_SECONDARY}>{t('annulla')}</button>
               </div>
             </div>
           ) : programmaId === p.id ? (
             <div className="mt-3 space-y-2">
-              <label htmlFor={`quando-${p.id}`} className="block font-maven text-xs font-bold uppercase tracking-wide text-kidville-sub">Programma per</label>
+              <label htmlFor={`quando-${p.id}`} className="block font-maven text-xs font-bold uppercase tracking-wide text-kidville-sub">{t('proposteProgrammaPer')}</label>
               <input id={`quando-${p.id}`} type="datetime-local" value={quando} onChange={(e) => setQuando(e.target.value)} className={cx(INPUT, 'max-w-xs')} />
               <div className="flex gap-2">
-                <button type="button" disabled={!quando} onClick={() => void invia(p.id, { esito: 'approva', programmata_il: new Date(quando).toISOString() })} className={BTN_PRIMARY_AA}><CalendarClock size={14} /> Approva e programma</button>
-                <button type="button" onClick={() => { setProgrammaId(null); setQuando(''); }} className={BTN_SECONDARY}>Annulla</button>
+                <button type="button" disabled={!quando} onClick={() => void invia(p.id, { esito: 'approva', programmata_il: new Date(quando).toISOString() })} className={BTN_PRIMARY_AA}><CalendarClock size={14} /> {t('proposteApprovaProgramma')}</button>
+                <button type="button" onClick={() => { setProgrammaId(null); setQuando(''); }} className={BTN_SECONDARY}>{t('annulla')}</button>
               </div>
             </div>
           ) : (
             <div className="mt-3 flex flex-wrap gap-2 border-t border-kidville-line pt-3">
-              <button type="button" onClick={() => void invia(p.id, { esito: 'approva', pubblica_subito: true })} className={BTN_PRIMARY_AA}><Check size={14} /> Approva e pubblica</button>
-              <button type="button" onClick={() => setProgrammaId(p.id)} className={BTN_SECONDARY}><CalendarClock size={14} /> Approva e programma</button>
-              <button type="button" onClick={() => setRifiutaId(p.id)} className={cx(BTN_SECONDARY, 'text-kidville-error-strong')}><X size={14} /> Rifiuta</button>
+              <button type="button" onClick={() => void invia(p.id, { esito: 'approva', pubblica_subito: true })} className={BTN_PRIMARY_AA}><Check size={14} /> {t('proposteApprovaPubblica')}</button>
+              <button type="button" onClick={() => setProgrammaId(p.id)} className={BTN_SECONDARY}><CalendarClock size={14} /> {t('proposteApprovaProgramma')}</button>
+              <button type="button" onClick={() => setRifiutaId(p.id)} className={cx(BTN_SECONDARY, 'text-kidville-error-strong')}><X size={14} /> {t('proposteRifiuta')}</button>
             </div>
           )}
         </div>

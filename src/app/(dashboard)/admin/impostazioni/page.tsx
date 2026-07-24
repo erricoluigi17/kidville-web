@@ -1,6 +1,7 @@
 'use client';
 
 import { Suspense, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
     Settings, CreditCard, GraduationCap, LayoutGrid, NotebookPen, CalendarCheck,
@@ -33,46 +34,48 @@ type Sezione =
     | 'mensa' | 'armadietto'
     | 'avvisi' | 'chat' | 'galleria' | 'notifiche';
 
-interface Voce { id: Sezione; label: string; icon: React.ReactNode }
-interface Gruppo { label: string; voci: Voce[] }
+// `labelKey`/`gruppoKey` sono chiavi i18n del namespace adminSettings, tradotte
+// al render (l'ordine e le icone restano dati, non testo utente).
+interface Voce { id: Sezione; labelKey: string; icon: React.ReactNode }
+interface Gruppo { gruppoKey: string; voci: Voce[] }
 
 const GRUPPI: Gruppo[] = [
     {
-        label: 'Generale',
-        voci: [{ id: 'moduli', label: 'Funzioni & moduli', icon: <LayoutGrid size={15} /> }],
+        gruppoKey: 'gruppoGenerale',
+        voci: [{ id: 'moduli', labelKey: 'voceFunzioniModuli', icon: <LayoutGrid size={15} /> }],
     },
     {
-        label: 'Amministrazione',
+        gruppoKey: 'gruppoAmministrazione',
         voci: [
-            { id: 'pagamenti', label: 'Pagamenti & Fatturazione', icon: <CreditCard size={15} /> },
-            { id: 'rette', label: 'Rette & Sconti', icon: <Percent size={15} /> },
-            { id: 'modulistica', label: 'Modulistica', icon: <FileSignature size={15} /> },
+            { id: 'pagamenti', labelKey: 'vocePagamenti', icon: <CreditCard size={15} /> },
+            { id: 'rette', labelKey: 'voceRette', icon: <Percent size={15} /> },
+            { id: 'modulistica', labelKey: 'voceModulistica', icon: <FileSignature size={15} /> },
         ],
     },
     {
-        label: 'Didattica',
+        gruppoKey: 'gruppoDidattica',
         voci: [
-            { id: 'didattica', label: 'Didattica primaria', icon: <GraduationCap size={15} /> },
-            { id: 'pagelle', label: 'Pagelle & Scrutinio', icon: <BookOpenCheck size={15} /> },
-            { id: 'diario', label: 'Diario', icon: <NotebookPen size={15} /> },
-            { id: 'presenze', label: 'Presenze & Giustifiche', icon: <CalendarCheck size={15} /> },
-            { id: 'note', label: 'Note disciplinari', icon: <StickyNote size={15} /> },
+            { id: 'didattica', labelKey: 'voceDidattica', icon: <GraduationCap size={15} /> },
+            { id: 'pagelle', labelKey: 'vocePagelle', icon: <BookOpenCheck size={15} /> },
+            { id: 'diario', labelKey: 'voceDiario', icon: <NotebookPen size={15} /> },
+            { id: 'presenze', labelKey: 'vocePresenze', icon: <CalendarCheck size={15} /> },
+            { id: 'note', labelKey: 'voceNote', icon: <StickyNote size={15} /> },
         ],
     },
     {
-        label: 'Servizi',
+        gruppoKey: 'gruppoServizi',
         voci: [
-            { id: 'mensa', label: 'Mensa', icon: <UtensilsCrossed size={15} /> },
-            { id: 'armadietto', label: 'Armadietto', icon: <Package size={15} /> },
+            { id: 'mensa', labelKey: 'voceMensa', icon: <UtensilsCrossed size={15} /> },
+            { id: 'armadietto', labelKey: 'voceArmadietto', icon: <Package size={15} /> },
         ],
     },
     {
-        label: 'Comunicazione',
+        gruppoKey: 'gruppoComunicazione',
         voci: [
-            { id: 'avvisi', label: 'Avvisi', icon: <Megaphone size={15} /> },
-            { id: 'chat', label: 'Chat', icon: <MessageCircle size={15} /> },
-            { id: 'galleria', label: 'Galleria', icon: <Images size={15} /> },
-            { id: 'notifiche', label: 'Notifiche', icon: <BellRing size={15} /> },
+            { id: 'avvisi', labelKey: 'voceAvvisi', icon: <Megaphone size={15} /> },
+            { id: 'chat', labelKey: 'voceChat', icon: <MessageCircle size={15} /> },
+            { id: 'galleria', labelKey: 'voceGalleria', icon: <Images size={15} /> },
+            { id: 'notifiche', labelKey: 'voceNotifiche', icon: <BellRing size={15} /> },
         ],
     },
 ];
@@ -80,6 +83,7 @@ const GRUPPI: Gruppo[] = [
 const SEZIONI_VALIDE = new Set<string>(GRUPPI.flatMap((g) => g.voci.map((v) => v.id)));
 
 function Inner() {
+    const t = useTranslations('adminSettings');
     const params = useSearchParams();
     const router = useRouter();
     const { userId } = useSessionIdentity();
@@ -100,17 +104,17 @@ function Inner() {
         <div className="min-h-screen bg-kidville-cream/40 p-4 md:p-8">
             <div className="max-w-6xl mx-auto">
                 <PageHeader
-                    eyebrow="Sistema"
+                    eyebrow={t('sistemaEyebrow')}
                     icon={Settings}
-                    title="Impostazioni"
-                    subtitle="Configurazione completa della scuola: moduli, didattica, servizi e comunicazione."
+                    title={t('impostazioniTitolo')}
+                    subtitle={t('impostazioniSottotitolo')}
                 />
 
                 {/* Nav mobile: pills scrollabili raggruppate */}
                 <nav className="mb-6 md:hidden -mx-4 px-4 overflow-x-auto">
                     <div className="flex gap-2 w-max">
                         {GRUPPI.map((g, gi) => (
-                            <div key={g.label} className={`flex gap-2 ${gi > 0 ? 'border-l border-kidville-line pl-2' : ''}`}>
+                            <div key={g.gruppoKey} className={`flex gap-2 ${gi > 0 ? 'border-l border-kidville-line pl-2' : ''}`}>
                                 {g.voci.map((v) => (
                                     <button
                                         key={v.id}
@@ -123,7 +127,7 @@ function Inner() {
                                         }`}
                                     >
                                         {v.icon}
-                                        {v.label}
+                                        {t(v.labelKey)}
                                     </button>
                                 ))}
                             </div>
@@ -135,9 +139,9 @@ function Inner() {
                     {/* Sidebar desktop */}
                     <aside className="hidden md:block w-56 shrink-0 sticky top-6 bg-kidville-white rounded-2xl shadow-sm p-4">
                         {GRUPPI.map((g) => (
-                            <div key={g.label} className="mb-4 last:mb-0">
+                            <div key={g.gruppoKey} className="mb-4 last:mb-0">
                                 <p className="font-barlow font-bold text-[11px] text-kidville-muted uppercase tracking-wider mb-1 px-2">
-                                    {g.label}
+                                    {t(g.gruppoKey)}
                                 </p>
                                 <div className="space-y-0.5">
                                     {g.voci.map((v) => (
@@ -152,7 +156,7 @@ function Inner() {
                                             }`}
                                         >
                                             {v.icon}
-                                            {v.label}
+                                            {t(v.labelKey)}
                                         </button>
                                     ))}
                                 </div>
@@ -163,18 +167,18 @@ function Inner() {
                     {/* Contenuto */}
                     <main className="flex-1 min-w-0">
                         <h2 className="md:hidden font-barlow font-black text-lg text-kidville-green uppercase tracking-wide mb-3 flex items-center gap-2">
-                            {voceAttiva?.icon} {voceAttiva?.label}
+                            {voceAttiva?.icon} {voceAttiva ? t(voceAttiva.labelKey) : null}
                         </h2>
                         {userId && sezione === 'moduli' && <FunzioniMatricePanel userId={userId} />}
-                        {userId && sezione === 'pagamenti' && <SedeRequired cosa="pagamenti & fatturazione">{(sid) => <SettingsPanel userId={userId} scuolaId={sid} />}</SedeRequired>}
-                        {userId && sezione === 'rette' && <SedeRequired cosa="rette & sconti">{(sid) => <RetteSettings userId={userId} scuolaId={sid} />}</SedeRequired>}
+                        {userId && sezione === 'pagamenti' && <SedeRequired cosa={t('sedeRequiredPagamenti')}>{(sid) => <SettingsPanel userId={userId} scuolaId={sid} />}</SedeRequired>}
+                        {userId && sezione === 'rette' && <SedeRequired cosa={t('sedeRequiredRette')}>{(sid) => <RetteSettings userId={userId} scuolaId={sid} />}</SedeRequired>}
                         {userId && sezione === 'modulistica' && <ModulisticaSettings userId={userId} />}
-                        {userId && sezione === 'didattica' && <SedeRequired cosa="la didattica primaria">{(sid) => <DidatticaPrimariaPanel scuolaId={sid} userId={userId} />}</SedeRequired>}
-                        {userId && sezione === 'pagelle' && <SedeRequired cosa="pagelle & scrutinio">{(sid) => <PagelleScrutinioPanel scuolaId={sid} userId={userId} />}</SedeRequired>}
+                        {userId && sezione === 'didattica' && <SedeRequired cosa={t('sedeRequiredDidattica')}>{(sid) => <DidatticaPrimariaPanel scuolaId={sid} userId={userId} />}</SedeRequired>}
+                        {userId && sezione === 'pagelle' && <SedeRequired cosa={t('sedeRequiredPagelle')}>{(sid) => <PagelleScrutinioPanel scuolaId={sid} userId={userId} />}</SedeRequired>}
                         {userId && sezione === 'diario' && <DiarioSettings userId={userId} />}
                         {userId && sezione === 'presenze' && <PresenzeSettings userId={userId} />}
                         {userId && sezione === 'note' && <NoteSettings userId={userId} />}
-                        {userId && sezione === 'mensa' && <SedeRequired cosa="la mensa">{(sid) => <MensaSettings userId={userId} scuolaId={sid} />}</SedeRequired>}
+                        {userId && sezione === 'mensa' && <SedeRequired cosa={t('sedeRequiredMensa')}>{(sid) => <MensaSettings userId={userId} scuolaId={sid} />}</SedeRequired>}
                         {userId && sezione === 'armadietto' && <ArmadiettoSettings userId={userId} />}
                         {userId && sezione === 'avvisi' && <AvvisiSettings userId={userId} />}
                         {userId && sezione === 'chat' && <ChatSettings userId={userId} />}
@@ -187,10 +191,14 @@ function Inner() {
     );
 }
 
+function ImpostazioniFallback() {
+    const t = useTranslations('adminSettings');
+    return <div className="p-8 font-maven text-kidville-muted">{t('caricamento')}</div>;
+}
+
 export default function AdminImpostazioniPage() {
     return (
-        <Suspense fallback={<div className="p-8 font-maven text-kidville-muted">Caricamento…</div>}>
-
+        <Suspense fallback={<ImpostazioniFallback />}>
             <Inner />
         </Suspense>
     );

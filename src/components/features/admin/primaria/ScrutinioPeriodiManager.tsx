@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { Plus, Trash2, GraduationCap } from 'lucide-react';
 import { DateField } from '@/components/ui/DateField';
 
@@ -18,6 +19,7 @@ const annoCorrente = () => {
 };
 
 export function ScrutinioPeriodiManager({ userId }: { scuolaId: string; userId: string }) {
+  const t = useTranslations('adminPrimaria');
   const [periodi, setPeriodi] = useState<Periodo[]>([]);
   const [anno, setAnno] = useState(annoCorrente);
   const [nome, setNome] = useState('');
@@ -40,20 +42,20 @@ export function ScrutinioPeriodiManager({ userId }: { scuolaId: string; userId: 
 
   const aggiungi = async () => {
     setMsg('');
-    if (!nome.trim()) { setMsg('Inserisci il nome del periodo'); return; }
+    if (!nome.trim()) { setMsg(t('periodiInserisciNome')); return; }
     const r = await fetch(`/api/admin/primaria/scrutinio-periodi?userId=${userId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
       body: JSON.stringify({ annoScolastico: anno, nome: nome.trim(), ordine: periodi.length + 1, dataInizio: dataInizio || null, dataFine: dataFine || null }),
     });
     const d = await r.json();
-    if (!r.ok) { setMsg(d.error || 'Errore'); return; }
+    if (!r.ok) { setMsg(d.error || t('comuneErrore')); return; }
     setNome(''); setDataInizio(''); setDataFine('');
     load();
   };
 
   const rimuovi = async (id: string) => {
-    if (!confirm('Eliminare il periodo? Verranno rimossi anche gli scrutini collegati.')) return;
+    if (!confirm(t('periodiConfermaElimina'))) return;
     await fetch(`/api/admin/primaria/scrutinio-periodi?id=${id}&userId=${userId}`, { method: 'DELETE', headers: { 'x-user-id': userId } });
     load();
   };
@@ -70,17 +72,17 @@ export function ScrutinioPeriodiManager({ userId }: { scuolaId: string; userId: 
   return (
     <div>
       <h3 className="font-barlow text-base font-bold text-kidville-ink mb-1 flex items-center gap-2">
-        <GraduationCap size={16} className="text-kidville-green" /> Periodi di scrutinio
+        <GraduationCap size={16} className="text-kidville-green" /> {t('periodiTitolo')}
       </h3>
-      <p className="font-maven text-xs text-kidville-muted mb-4">Definisci i periodi (es. 1° Quadrimestre, Scrutinio finale). I docenti li selezioneranno nella sezione Scrutinio.</p>
+      <p className="font-maven text-xs text-kidville-muted mb-4">{t('periodiSottotitolo')}</p>
 
       <div className="mb-4 flex items-center gap-2">
-        <label className="font-maven text-sm text-kidville-ink">Anno scolastico:</label>
+        <label className="font-maven text-sm text-kidville-ink">{t('periodiAnnoScolastico')}</label>
         <input value={anno} onChange={(e) => setAnno(e.target.value)} className="font-maven rounded-pill border border-kidville-line px-3 py-1.5 text-sm w-28" />
       </div>
 
       <ul className="divide-y divide-kidville-line mb-4">
-        {periodi.length === 0 && <li className="py-2 font-maven text-sm text-kidville-muted">Nessun periodo per quest&apos;anno.</li>}
+        {periodi.length === 0 && <li className="py-2 font-maven text-sm text-kidville-muted">{t('periodiNessuno')}</li>}
         {periodi.map((p) => (
           <li key={p.id} className="flex items-center justify-between gap-2 py-2.5">
             <div>
@@ -93,7 +95,7 @@ export function ScrutinioPeriodiManager({ userId }: { scuolaId: string; userId: 
             </div>
             <div className="flex items-center gap-2">
               <button onClick={() => toggleAttivo(p)} className={`font-maven rounded-pill px-2.5 py-0.5 text-[11px] ${p.attivo ? 'bg-kidville-success-soft text-kidville-success' : 'bg-kidville-line text-kidville-muted'}`}>
-                {p.attivo ? 'attivo' : 'disattivo'}
+                {p.attivo ? t('periodiAttivo') : t('periodiDisattivo')}
               </button>
               <button onClick={() => rimuovi(p.id)} className="text-kidville-muted hover:text-kidville-error"><Trash2 size={15} /></button>
             </div>
@@ -102,15 +104,15 @@ export function ScrutinioPeriodiManager({ userId }: { scuolaId: string; userId: 
       </ul>
 
       <div className="rounded-card bg-kidville-cream/40 p-3">
-        <p className="font-maven text-xs text-kidville-muted mb-2">Nuovo periodo</p>
+        <p className="font-maven text-xs text-kidville-muted mb-2">{t('periodiNuovoTitolo')}</p>
         <div className="grid gap-2 md:grid-cols-3">
-          <input value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Nome (es. Scrutinio finale)" className="font-maven rounded-pill border border-kidville-line px-3 py-1.5 text-sm" />
-          <DateField value={dataInizio} onChange={setDataInizio} aria-label="Data inizio periodo" className="font-maven rounded-pill border border-kidville-line px-3 py-1.5 text-sm" />
-          <DateField value={dataFine} onChange={setDataFine} aria-label="Data fine periodo" className="font-maven rounded-pill border border-kidville-line px-3 py-1.5 text-sm" />
+          <input value={nome} onChange={(e) => setNome(e.target.value)} placeholder={t('periodiPlaceholderNome')} className="font-maven rounded-pill border border-kidville-line px-3 py-1.5 text-sm" />
+          <DateField value={dataInizio} onChange={setDataInizio} aria-label={t('periodiAriaDataInizio')} className="font-maven rounded-pill border border-kidville-line px-3 py-1.5 text-sm" />
+          <DateField value={dataFine} onChange={setDataFine} aria-label={t('periodiAriaDataFine')} className="font-maven rounded-pill border border-kidville-line px-3 py-1.5 text-sm" />
         </div>
         {msg && <p className="font-maven text-xs text-kidville-error mt-2">{msg}</p>}
         <button onClick={aggiungi} className="font-maven mt-2 inline-flex items-center gap-1.5 rounded-pill bg-kidville-green px-4 py-1.5 text-sm text-kidville-yellow">
-          <Plus size={14} /> Aggiungi periodo
+          <Plus size={14} /> {t('periodiAggiungiPeriodo')}
         </button>
       </div>
     </div>

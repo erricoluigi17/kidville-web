@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { Loader2 } from 'lucide-react';
 
 // Selettore multiplo di sezioni reale, alimentato da /api/admin/sections/scoped
@@ -25,6 +26,7 @@ export function SezioniMultiSelect({
   // (Nido/Infanzia/Primaria) lato client. Usata da mensa e armadietto.
   withLivelloFilter?: boolean;
 }) {
+  const t = useTranslations('adminStudents');
   const [gruppi, setGruppi] = useState<Gruppo[]>([]);
   const [loading, setLoading] = useState(true);
   const [livello, setLivello] = useState('');
@@ -44,16 +46,16 @@ export function SezioniMultiSelect({
   if (loading) {
     return (
       <span className="inline-flex items-center gap-2 font-maven text-sm text-kidville-muted">
-        <Loader2 size={14} className="animate-spin" /> Caricamento sezioni…
+        <Loader2 size={14} className="animate-spin" /> {t('multiCaricamento')}
       </span>
     );
   }
 
   const LIVELLI = [
-    { v: '', l: 'Tutti i livelli' },
-    { v: 'nido', l: 'Nido' },
-    { v: 'infanzia', l: 'Infanzia' },
-    { v: 'primaria', l: 'Primaria' },
+    { v: '', l: t('multiTuttiLivelli') },
+    { v: 'nido', l: t('secTipoNido') },
+    { v: 'infanzia', l: t('secTipoInfanzia') },
+    { v: 'primaria', l: t('secTipoPrimaria') },
   ];
   const gruppiPieni = gruppi
     .map((g) => ({ ...g, sezioni: livello ? g.sezioni.filter((s) => s.school_type === livello) : g.sezioni }))
@@ -64,7 +66,7 @@ export function SezioniMultiSelect({
     <div className="space-y-3">
       {withLivelloFilter && (
         <div className="flex items-center gap-2">
-          <label className="font-maven text-[11px] uppercase tracking-wider text-kidville-muted">Livello (classe)</label>
+          <label className="font-maven text-[11px] uppercase tracking-wider text-kidville-muted">{t('multiLivelloClasse')}</label>
           <select
             value={livello}
             onChange={(e) => setLivello(e.target.value)}
@@ -77,7 +79,7 @@ export function SezioniMultiSelect({
         </div>
       )}
       {gruppiPieni.length === 0 ? (
-        <p className="font-maven text-sm text-kidville-muted">{emptyHint ?? 'Nessuna sezione disponibile.'}</p>
+        <p className="font-maven text-sm text-kidville-muted">{emptyHint ?? t('multiNessunaDisp')}</p>
       ) : (
         gruppiPieni.map((g) => (
           <div key={g.scuolaId}>

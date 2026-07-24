@@ -1,6 +1,7 @@
 'use client';
 
 import { Suspense, useEffect, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { ClipboardList, CalendarDays, FolderLock, GraduationCap } from 'lucide-react';
 import { RegistriClassePanel } from '@/components/features/admin/primaria/RegistriClassePanel';
 import { OrarioManager } from '@/components/features/admin/primaria/OrarioManager';
@@ -19,6 +20,7 @@ interface Section {
 }
 
 function PrimariaAdminInner() {
+  const t = useTranslations('adminPrimaria');
   const { userId } = useSessionIdentity();
   const { sedeCorrente } = useSediAttive();
   const [tab, setTab] = useState<Tab>('registri');
@@ -42,22 +44,22 @@ function PrimariaAdminInner() {
   return (
     <CockpitPage max={1100}>
       <PageHeader
-        eyebrow="Didattica"
+        eyebrow={t('hubEyebrow')}
         icon={GraduationCap}
-        title="Scuola Primaria"
-        subtitle="Area operativa: registri di classe, orario e registro accessi ai fascicoli. La configurazione (materie, docenti, obiettivi, giudizi, scrutinio) è in Impostazioni → Didattica primaria."
+        title={t('hubTitolo')}
+        subtitle={t('hubSottotitolo')}
       />
 
       {/* Selettore sezione (per Orario) */}
       {(tab === 'orario') && (
         <div className="mb-4 flex items-center gap-3">
-          <label className="font-maven text-sm text-kidville-ink/70">Classe/Sezione:</label>
+          <label className="font-maven text-sm text-kidville-ink/70">{t('comuneClasseSezione')}</label>
           <select
             value={sezioneId}
             onChange={(e) => setSezioneId(e.target.value)}
             className="font-maven rounded-pill border border-kidville-line bg-kidville-white px-4 py-2 text-sm"
           >
-            {sezioni.length === 0 && <option value="">Nessuna sezione primaria</option>}
+            {sezioni.length === 0 && <option value="">{t('comuneNessunaSezione')}</option>}
             {sezioni.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.name} {s.scholastic_year ? `(${s.scholastic_year})` : ''}
@@ -71,12 +73,15 @@ function PrimariaAdminInner() {
         value={tab}
         onChange={(id) => setTab(id as Tab)}
         options={[
-          { id: 'registri', label: 'Registri di classe', icon: ClipboardList },
-          { id: 'orario', label: 'Orario', icon: CalendarDays },
-          { id: 'fascicoli', label: 'Fascicoli/Accessi', icon: FolderLock },
+          { id: 'registri', label: t('hubTabRegistri'), icon: ClipboardList },
+          { id: 'orario', label: t('hubTabOrario'), icon: CalendarDays },
+          { id: 'fascicoli', label: t('hubTabFascicoli'), icon: FolderLock },
         ]}
       />
 
+      {/* `cosa` completa la frase "…per gestire {cosa}." di SedeNotice (componente
+          condiviso, non ancora migrato): resta in italiano per non spezzare la
+          concordanza col testo circostante non tradotto. */}
       <SedeRequired cosa="la primaria">
         {(scuolaId) => (
           <div className="rounded-card bg-kidville-white p-4 md:p-6 shadow-sm">
@@ -93,8 +98,9 @@ function PrimariaAdminInner() {
 }
 
 export default function PrimariaAdminPage() {
+  const t = useTranslations('adminPrimaria');
   return (
-    <Suspense fallback={<div className="p-8 font-maven text-kidville-muted">Caricamento…</div>}>
+    <Suspense fallback={<div className="p-8 font-maven text-kidville-muted">{t('comuneCaricamento')}</div>}>
       <PrimariaAdminInner />
     </Suspense>
   );

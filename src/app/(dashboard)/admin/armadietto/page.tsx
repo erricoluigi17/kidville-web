@@ -1,6 +1,7 @@
 'use client';
 
 import { Suspense, useEffect, useMemo, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { Package, Users, Boxes, Truck, PlusCircle, ChevronLeft, ChevronRight } from 'lucide-react';
 import {
   CockpitPage, HEADER_BTN, PageHeader, StatCard, CockpitSelect, Tabs,
@@ -37,6 +38,7 @@ function todayISO() {
 }
 
 function AdminArmadiettoInner() {
+  const t = useTranslations('adminMensa');
   const { userId } = useSessionIdentity();
   const [scuole, setScuole] = useState<ScuolaScoped[]>([]);
   const [scuolaId, setScuolaId] = useState('');
@@ -149,7 +151,7 @@ function AdminArmadiettoInner() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || 'Errore salvataggio'); }
+    if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || t('erroreSalvataggio')); }
     loadGiornata(sezione, userId);
     if (tab === 'mensile') loadMensile(sezione, userId, month);
   };
@@ -162,7 +164,7 @@ function AdminArmadiettoInner() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ alunno_id, materiale: body.materiale, quantita: body.quantita }),
       });
-      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || 'Errore salvataggio'); }
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || t('erroreSalvataggio')); }
     }
     loadGiornata(sezione, userId);
     if (tab === 'mensile') loadMensile(sezione, userId, month);
@@ -175,17 +177,17 @@ function AdminArmadiettoInner() {
   return (
     <CockpitPage max={1200}>
       <PageHeader
-        eyebrow="Operativo"
+        eyebrow={t('eyebrowOperativo')}
         icon={Package}
-        title="Armadietto"
-        subtitle="Scorte e consegne dei materiali nido/infanzia. Il consumo giornaliero resta alle maestre."
+        title={t('armadiettoTitolo')}
+        subtitle={t('armadiettoSottotitolo')}
         actions={
           <button
             onClick={() => { setPreStudent(''); setShowModal(true); }}
             disabled={!sezione}
             className={HEADER_BTN}
           >
-            <PlusCircle size={16} strokeWidth={1.8} /> Registra carico
+            <PlusCircle size={16} strokeWidth={1.8} /> {t('registraCarico')}
           </button>
         }
       />
@@ -194,8 +196,7 @@ function AdminArmadiettoInner() {
         <div className="rounded-card bg-kidville-white p-8 text-center shadow-sm">
           <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-kidville-cream text-3xl">📦</div>
           <p className="font-maven text-sm text-kidville-muted">
-            Nessuna sezione nido/infanzia nei tuoi plessi. Se non è quello che ti aspetti,
-            verifica che il tuo profilo utente abbia una sede associata (Anagrafica → Staff).
+            {t('nessunaSezioneNidoInfanzia')}
           </p>
         </div>
       ) : (
@@ -204,7 +205,7 @@ function AdminArmadiettoInner() {
           <div className="mb-4 flex flex-wrap items-center gap-3">
             {scuole.length > 1 && (
               <label className="flex items-center gap-2">
-                <span className="font-maven text-sm text-kidville-ink/70">Sede:</span>
+                <span className="font-maven text-sm text-kidville-ink/70">{t('sedeConDuepunti')}</span>
                 <CockpitSelect
                   value={scuolaId}
                   onChange={pickScuola}
@@ -213,7 +214,7 @@ function AdminArmadiettoInner() {
               </label>
             )}
             <label className="flex items-center gap-2">
-              <span className="font-maven text-sm text-kidville-ink/70">Sezione:</span>
+              <span className="font-maven text-sm text-kidville-ink/70">{t('sezioneConDuepunti')}</span>
               <CockpitSelect
                 value={sezione ?? ''}
                 onChange={pickSezione}
@@ -224,17 +225,17 @@ function AdminArmadiettoInner() {
 
           {/* Stat del giorno */}
           <div className="mb-5 grid gap-3 sm:grid-cols-3 lg:max-w-[720px]">
-            <StatCard icon={Users} label="Alunni sezione" value={dayLoading ? '…' : stock.length} />
-            <StatCard icon={Boxes} label="Pezzi in stock" value={dayLoading ? '…' : pezziInStock} tone="info" />
-            <StatCard icon={Truck} label="Consegne oggi" value={dayLoading ? '…' : consegneOggi} tone="yellow" sub="portate" />
+            <StatCard icon={Users} label={t('statAlunniSezione')} value={dayLoading ? '…' : stock.length} />
+            <StatCard icon={Boxes} label={t('statPezziInStock')} value={dayLoading ? '…' : pezziInStock} tone="info" />
+            <StatCard icon={Truck} label={t('statConsegneOggi')} value={dayLoading ? '…' : consegneOggi} tone="yellow" sub={t('statConsegneSub')} />
           </div>
 
           <Tabs
             value={tab}
             onChange={(v) => setTab(v as 'giornata' | 'mensile')}
             options={[
-              { id: 'giornata', label: 'Giornata', icon: Truck },
-              { id: 'mensile', label: 'Mensile', icon: Package },
+              { id: 'giornata', label: t('tabGiornata'), icon: Truck },
+              { id: 'mensile', label: t('tabMensile'), icon: Package },
             ]}
           />
 
@@ -242,22 +243,22 @@ function AdminArmadiettoInner() {
             dayLoading ? (
               <div className="flex items-center gap-3 rounded-card bg-kidville-white p-6 shadow-sm">
                 <div className="h-6 w-6 animate-spin rounded-full border-[3px] border-kidville-green/20 border-t-kidville-green" />
-                <p className="font-maven text-sm text-kidville-muted">Caricamento scorte…</p>
+                <p className="font-maven text-sm text-kidville-muted">{t('caricamentoScorte')}</p>
               </div>
             ) : (
               <div className="grid gap-4 lg:grid-cols-2">
                 {/* Scorte attuali */}
                 <div className="rounded-card bg-kidville-white p-4 shadow-sm">
-                  <p className="font-barlow mb-3 text-xs font-bold uppercase tracking-wide text-kidville-green">Scorte attuali</p>
+                  <p className="font-barlow mb-3 text-xs font-bold uppercase tracking-wide text-kidville-green">{t('scorteAttuali')}</p>
                   {stock.length === 0 ? (
-                    <p className="font-maven text-sm text-kidville-muted">Nessun alunno in questa sezione.</p>
+                    <p className="font-maven text-sm text-kidville-muted">{t('nessunAlunnoSezione')}</p>
                   ) : (
                     <div className={TABLE_WRAP}>
                       <table className={TABLE}>
                         <thead>
                           <tr>
-                            <th className={TH}>Alunno</th>
-                            <th className={TH}>Materiali in giacenza</th>
+                            <th className={TH}>{t('thAlunno')}</th>
+                            <th className={TH}>{t('thMaterialiGiacenza')}</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -270,7 +271,7 @@ function AdminArmadiettoInner() {
                                 </td>
                                 <td className={TD}>
                                   {attivi.length === 0 ? (
-                                    <span className="font-maven text-xs text-kidville-muted">— esaurito</span>
+                                    <span className="font-maven text-xs text-kidville-muted">{t('esaurito')}</span>
                                   ) : (
                                     <div className="flex flex-wrap gap-1.5">
                                       {attivi.map(i => (
@@ -292,10 +293,10 @@ function AdminArmadiettoInner() {
 
                 {/* Consegne di oggi */}
                 <div className="rounded-card bg-kidville-white p-4 shadow-sm">
-                  <p className="font-barlow mb-3 text-xs font-bold uppercase tracking-wide text-kidville-warn">Consegnato oggi</p>
+                  <p className="font-barlow mb-3 text-xs font-bold uppercase tracking-wide text-kidville-warn">{t('consegnatoOggi')}</p>
                   {consegneOggi === 0 ? (
                     <p className="font-maven text-sm text-kidville-muted">
-                      Nessuna consegna registrata oggi. Usa «Registra carico» per annotare i materiali portati dalle famiglie.
+                      {t('nessunaConsegnaOggi')}
                     </p>
                   ) : (
                     <div className="space-y-2.5">
@@ -313,7 +314,7 @@ function AdminArmadiettoInner() {
                             onClick={() => { setPreStudent(s.id); setShowModal(true); }}
                             className="mt-2 font-maven text-xs font-semibold text-kidville-green hover:underline"
                           >
-                            + Aggiungi carico
+                            {t('aggiungiCarico')}
                           </button>
                         </div>
                       ))}
@@ -328,15 +329,15 @@ function AdminArmadiettoInner() {
                 <button
                   onClick={() => setMonth(m => shiftMonth(m, -1))}
                   className="flex h-9 w-9 items-center justify-center rounded-[10px] bg-kidville-cream text-kidville-green transition-colors hover:bg-kidville-green-soft"
-                  aria-label="Mese precedente"
+                  aria-label={t('mesePrecedente')}
                 >
                   <ChevronLeft size={18} />
                 </button>
-                <span className="font-barlow text-sm font-bold uppercase text-kidville-green">Consegne mensili</span>
+                <span className="font-barlow text-sm font-bold uppercase text-kidville-green">{t('consegneMensili')}</span>
                 <button
                   onClick={() => setMonth(m => shiftMonth(m, 1))}
                   className="flex h-9 w-9 items-center justify-center rounded-[10px] bg-kidville-cream text-kidville-green transition-colors hover:bg-kidville-green-soft"
-                  aria-label="Mese successivo"
+                  aria-label={t('meseSuccessivo')}
                 >
                   <ChevronRight size={18} />
                 </button>
@@ -344,7 +345,7 @@ function AdminArmadiettoInner() {
               {mensileLoading ? (
                 <div className="flex items-center justify-center gap-3 py-12">
                   <div className="h-5 w-5 animate-spin rounded-full border-2 border-kidville-green/30 border-t-kidville-green" />
-                  <span className="font-maven text-sm text-kidville-muted">Caricamento…</span>
+                  <span className="font-maven text-sm text-kidville-muted">{t('caricamento')}</span>
                 </div>
               ) : (
                 <MonthlyLockerTable students={mensile} month={month} hideStudentColumn={false} />
@@ -369,8 +370,9 @@ function AdminArmadiettoInner() {
 }
 
 export default function AdminArmadiettoPage() {
+  const t = useTranslations('adminMensa');
   return (
-    <Suspense fallback={<div className="p-8 font-maven text-kidville-muted">Caricamento…</div>}>
+    <Suspense fallback={<div className="p-8 font-maven text-kidville-muted">{t('caricamento')}</div>}>
       <AdminArmadiettoInner />
     </Suspense>
   );

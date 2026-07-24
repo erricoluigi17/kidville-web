@@ -2,6 +2,7 @@
 
 import { useDroppable } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
+import { useTranslations } from 'next-intl'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Plus, MousePointerClick, Layers } from 'lucide-react'
 import { DraggableField } from './DraggableField'
@@ -26,6 +27,7 @@ export function FormBuilderCanvas({
   onAddPage,
   onDeleteField,
 }: Props) {
+  const t = useTranslations('adminModulistica')
   const { setNodeRef, isOver } = useDroppable({ id: 'canvas-droppable' })
 
   const currentPage = schema.pages[activePage]
@@ -59,11 +61,11 @@ export function FormBuilderCanvas({
         ))}
         <button
           onClick={onAddPage}
-          title="Aggiungi pagina"
+          title={t('cnvAggiungiPagina')}
           className="flex items-center gap-1 px-3 py-2 text-xs text-kidville-muted hover:text-kidville-green hover:bg-kidville-green-dark/10 rounded-t-lg transition-all"
         >
           <Plus className="w-3.5 h-3.5" />
-          Aggiungi pagina
+          {t('cnvAggiungiPagina')}
         </button>
       </div>
 
@@ -74,7 +76,7 @@ export function FormBuilderCanvas({
           <div className="flex items-center gap-2 mb-1">
             <div className="w-1.5 h-1.5 rounded-full bg-kidville-green" />
             <span className="text-[10px] font-bold text-kidville-muted uppercase tracking-widest">
-              Step {activePage + 1} / {schema.pages.length}
+              {t('cnvStep', { n: activePage + 1, tot: schema.pages.length })}
             </span>
           </div>
           <h2 className="text-lg font-semibold text-kidville-green">{currentPage?.title}</h2>
@@ -107,9 +109,9 @@ export function FormBuilderCanvas({
                 <MousePointerClick className="w-5 h-5 text-kidville-green/60" />
               </div>
               <div>
-                <p className="text-sm font-medium text-kidville-muted">Canvas vuoto</p>
+                <p className="text-sm font-medium text-kidville-muted">{t('cnvCanvasVuoto')}</p>
                 <p className="text-xs text-kidville-muted mt-1">
-                  Trascina i campi dalla libreria a sinistra per iniziare.
+                  {t('cnvCanvasVuotoDesc')}
                 </p>
               </div>
             </motion.div>
@@ -137,7 +139,7 @@ export function FormBuilderCanvas({
               className="flex items-center gap-2 px-3 py-2 rounded-xl border border-dashed border-kidville-green/40 bg-kidville-green/5"
             >
               <div className="w-1 h-6 rounded-full bg-kidville-green" />
-              <span className="text-xs text-kidville-green/70">Rilascia qui per aggiungere</span>
+              <span className="text-xs text-kidville-green/70">{t('cnvRilasciaQui')}</span>
             </motion.div>
           )}
         </div>
@@ -145,7 +147,7 @@ export function FormBuilderCanvas({
         {/* Field count summary */}
         {fieldIds.length > 0 && (
           <p className="mt-3 text-[10px] text-kidville-muted text-center">
-            {fieldIds.length} {fieldIds.length === 1 ? 'campo' : 'campi'} in questa pagina · Trascina per riordinare
+            {t('cnvCampiInPagina', { count: fieldIds.length })}
           </p>
         )}
       </div>

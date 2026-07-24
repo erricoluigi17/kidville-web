@@ -1,6 +1,7 @@
 'use client';
 
 import { Suspense, useEffect, useMemo, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { BookOpen, CheckCircle2, Users } from 'lucide-react';
 import { CockpitPage, PageHeader, StatCard, CockpitSelect } from '@/components/ui/cockpit';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
@@ -18,6 +19,7 @@ function todayISO() {
 }
 
 function AdminDiaryInner() {
+  const t = useTranslations('adminAltro');
   const { userId } = useSessionIdentity();
   const [scuole, setScuole] = useState<ScuolaScoped[]>([]);
   const [scuolaId, setScuolaId] = useState('');
@@ -80,17 +82,16 @@ function AdminDiaryInner() {
   return (
     <CockpitPage max={1100}>
       <PageHeader
-        eyebrow="Didattica"
+        eyebrow={t('diaryEyebrow')}
         icon={BookOpen}
-        title="Diario 0-6"
-        subtitle="Presenze del giorno in consultazione (l'appello resta alle maestre) e compilazione/aggiornamento del diario di sezione."
+        title={t('diaryTitle')}
+        subtitle={t('diarySubtitle')}
       />
 
       {scopedLoaded && scuole.length === 0 ? (
         <div className="rounded-card bg-kidville-white p-8 text-center shadow-sm">
           <p className="font-maven text-sm text-kidville-muted">
-            Nessuna sezione nido/infanzia nei tuoi plessi. Se non è quello che ti aspetti,
-            verifica che il tuo profilo utente abbia una sede associata (Anagrafica → Staff).
+            {t('diaryNessunaSezione')}
           </p>
         </div>
       ) : (
@@ -99,7 +100,7 @@ function AdminDiaryInner() {
           <div className="mb-4 flex flex-wrap items-center gap-3">
             {scuole.length > 1 && (
               <label className="flex items-center gap-2">
-                <span className="font-maven text-sm text-kidville-ink/70">Sede:</span>
+                <span className="font-maven text-sm text-kidville-ink/70">{t('diaryLabelSede')}</span>
                 <CockpitSelect
                   value={scuolaId}
                   onChange={pickScuola}
@@ -108,7 +109,7 @@ function AdminDiaryInner() {
               </label>
             )}
             <label className="flex items-center gap-2">
-              <span className="font-maven text-sm text-kidville-ink/70">Sezione:</span>
+              <span className="font-maven text-sm text-kidville-ink/70">{t('diaryLabelSezione')}</span>
               <CockpitSelect
                 value={sezione ?? ''}
                 onChange={pickSezione}
@@ -122,9 +123,9 @@ function AdminDiaryInner() {
                   ? 'border-kidville-line bg-white text-kidville-muted'
                   : 'border-kidville-green/20 bg-kidville-green-soft text-kidville-green'
               }`}
-              title={day.showAll ? 'Sto mostrando tutti i bambini' : 'Sto mostrando solo i presenti'}
+              title={day.showAll ? t('diaryToggleTitleTutti') : t('diaryToggleTitlePresenti')}
             >
-              <Users size={12} strokeWidth={1.5} /> {day.showAll ? 'Tutti' : 'Solo presenti'}
+              <Users size={12} strokeWidth={1.5} /> {day.showAll ? t('diaryToggleTutti') : t('diaryToggleSoloPresenti')}
             </button>
           </div>
 
@@ -132,15 +133,15 @@ function AdminDiaryInner() {
           <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:max-w-[560px]">
             <StatCard
               icon={Users}
-              label={day.showAll ? 'Alunni (tutti)' : 'Presenti oggi'}
+              label={day.showAll ? t('diaryStatAlunniTutti') : t('diaryStatPresentiOggi')}
               value={day.isLoading ? '…' : day.students.length}
-              sub={sezione ? `Sezione ${sezione}` : undefined}
+              sub={sezione ? t('diarySezioneSub', { sezione }) : undefined}
             />
             <StatCard
               icon={CheckCircle2}
-              label="Con diario compilato"
+              label={t('diaryStatCompilato')}
               value={compilati ?? '…'}
-              sub="oggi"
+              sub={t('diaryOggi')}
               tone="yellow"
             />
           </div>
@@ -149,13 +150,13 @@ function AdminDiaryInner() {
           {!day.isLoading && (
             <div className="rounded-card bg-kidville-white p-4 shadow-sm">
               <p className="font-barlow mb-2 text-xs font-bold uppercase tracking-wide text-kidville-green">
-                {day.showAll ? 'Alunni della sezione' : 'Presenti oggi'}
+                {day.showAll ? t('diaryHeadingAlunni') : t('diaryStatPresentiOggi')}
               </p>
               {day.students.length === 0 ? (
                 <p className="font-maven text-sm text-kidville-muted">
                   {day.showAll
-                    ? 'Nessun alunno in questa sezione.'
-                    : 'Nessuna presenza registrata oggi: l’appello non è ancora stato fatto (passa a "Tutti" per vedere comunque la sezione).'}
+                    ? t('diaryVuotoTutti')
+                    : t('diaryVuotoPresenti')}
                 </p>
               ) : (
                 <div className="flex flex-wrap gap-1.5">
@@ -174,7 +175,7 @@ function AdminDiaryInner() {
             {sezione && day.isLoading ? (
               <div className="mt-4 flex items-center gap-3 rounded-card bg-kidville-white p-6 shadow-sm">
                 <div className="h-6 w-6 animate-spin rounded-full border-[3px] border-kidville-green/20 border-t-kidville-green" />
-                <p className="font-maven text-sm text-kidville-muted">Caricamento alunni…</p>
+                <p className="font-maven text-sm text-kidville-muted">{t('diaryCaricamentoAlunni')}</p>
               </div>
             ) : (
               <DiaryEventEditor day={day} sezione={sezione} />
@@ -186,9 +187,14 @@ function AdminDiaryInner() {
   );
 }
 
+function DiaryFallback() {
+  const t = useTranslations('adminAltro');
+  return <div className="p-8 font-maven text-kidville-muted">{t('caricamento')}</div>;
+}
+
 export default function AdminDiaryPage() {
   return (
-    <Suspense fallback={<div className="p-8 font-maven text-kidville-muted">Caricamento…</div>}>
+    <Suspense fallback={<DiaryFallback />}>
       <AdminDiaryInner />
     </Suspense>
   );

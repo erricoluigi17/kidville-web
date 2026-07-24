@@ -29,6 +29,15 @@ export default getRequestConfig(async () => {
     teacherPrimaria: (await import(`../../messages/${locale}/teacherPrimaria.json`)).default,
     teacherTasks: (await import(`../../messages/${locale}/teacherTasks.json`)).default,
     teacherServizi: (await import(`../../messages/${locale}/teacherServizi.json`)).default,
+    adminNav: (await import(`../../messages/${locale}/adminNav.json`)).default,
+    adminStudents: (await import(`../../messages/${locale}/adminStudents.json`)).default,
+    adminContabilita: (await import(`../../messages/${locale}/adminContabilita.json`)).default,
+    adminMensa: (await import(`../../messages/${locale}/adminMensa.json`)).default,
+    adminModulistica: (await import(`../../messages/${locale}/adminModulistica.json`)).default,
+    adminComunicazioni: (await import(`../../messages/${locale}/adminComunicazioni.json`)).default,
+    adminPrimaria: (await import(`../../messages/${locale}/adminPrimaria.json`)).default,
+    adminSettings: (await import(`../../messages/${locale}/adminSettings.json`)).default,
+    adminAltro: (await import(`../../messages/${locale}/adminAltro.json`)).default,
   };
 
   return { locale, messages };

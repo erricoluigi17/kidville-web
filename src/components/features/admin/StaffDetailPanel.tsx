@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { X, Pencil, Check, KeyRound, Loader2, ShieldCheck } from 'lucide-react';
 import { RUOLI_ASSEGNABILI, labelRuolo } from '@/lib/auth/ruoli';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
@@ -29,6 +30,7 @@ interface Props {
 }
 
 export function StaffDetailPanel({ staffId, onClose }: Props) {
+  const t = useTranslations('adminStudents');
   const { userId, role, ready } = useSessionIdentity();
   const canEdit = role === 'admin' || role === 'coordinator';
 
@@ -52,14 +54,14 @@ export function StaffDetailPanel({ staffId, onClose }: Props) {
       // fetch chiamata da useEffect (react-hooks/set-state-in-effect): try/finally.
       const res = await fetch('/api/admin/staff', { headers: userId ? { 'x-user-id': userId } : undefined }).catch(() => null);
       if (!res) {
-        setErrore('Errore di rete: impossibile caricare la scheda staff.');
+        setErrore(t('staffDErrRete'));
         setMember(null);
         return;
       }
       const j = await res.json().catch(() => null);
       // Mai un vuoto muto: se il fetch non riesce, si mostra il motivo.
       if (!res.ok || !j?.success) {
-        setErrore(j?.error || 'Errore nel caricamento dello staff');
+        setErrore(j?.error || t('staffErrCaricamento'));
         setMember(null);
         return;
       }
@@ -71,7 +73,7 @@ export function StaffDetailPanel({ staffId, onClose }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [staffId, userId]);
+  }, [staffId, userId, t]);
 
   useEffect(() => {
     // Attendo la risoluzione dell'identità (per l'header x-user-id) prima di caricare:
@@ -98,8 +100,8 @@ export function StaffDetailPanel({ staffId, onClose }: Props) {
         headers: { 'Content-Type': 'application/json', ...(userId ? { 'x-user-id': userId } : {}) },
         body: JSON.stringify({ id: staffId, ruolo: draft.ruolo, scuola_id: draft.scuola_id || undefined, section_ids: draft.section_ids }),
       });
-      if (res.status === 403) { alert('Azione riservata alla Direzione, oppure non puoi modificare il tuo stesso ruolo.'); return; }
-      if (!res.ok) { const j = await res.json().catch(() => ({})); alert((j as { error?: string }).error || 'Errore nel salvataggio'); return; }
+      if (res.status === 403) { alert(t('staffDAzioneRiservata')); return; }
+      if (!res.ok) { const j = await res.json().catch(() => ({})); alert((j as { error?: string }).error || t('erroreSalvataggio')); return; }
       setEditMode(false);
       await load();
     } finally {
@@ -109,7 +111,7 @@ export function StaffDetailPanel({ staffId, onClose }: Props) {
 
   const rigenera = async () => {
     if (!member) return;
-    if (!confirm(`Rigenerare le credenziali di ${member.cognome ?? ''} ${member.nome ?? ''}? La password precedente non sarà più valida.`)) return;
+    if (!confirm(t('staffDConfermaRigenera', { nome: `${member.cognome ?? ''} ${member.nome ?? ''}`.trim() }))) return;
     setRegenBusy(true);
     try {
       const res = await fetch('/api/admin/regenerate-credentials', {
@@ -118,11 +120,11 @@ export function StaffDetailPanel({ staffId, onClose }: Props) {
         body: JSON.stringify({ targetKind: 'staff', targetId: staffId }),
       });
       const body = await res.json().catch(() => ({}));
-      if (!res.ok) { alert((body as { error?: string }).error || 'Errore'); return; }
+      if (!res.ok) { alert((body as { error?: string }).error || t('errore')); return; }
       const b = body as { pdf_notifica?: boolean; email_inviata?: boolean; warning?: string };
       alert(b.pdf_notifica
-        ? 'Fatto: email inviata e PDF disponibile nel centro notifiche.'
-        : b.email_inviata ? 'Fatto: email con le credenziali inviata.' : (b.warning || 'Credenziali rigenerate.'));
+        ? t('credEmailPdf')
+        : b.email_inviata ? t('credEmailInviata') : (b.warning || t('credRigenerate')));
     } finally {
       setRegenBusy(false);
     }
@@ -151,8 +153,8 @@ export function StaffDetailPanel({ staffId, onClose }: Props) {
   if (!member) {
     return (
       <div className="rounded-card bg-kidville-white p-10 text-center shadow-sm">
-        <h2 className="font-barlow text-lg font-bold uppercase text-kidville-green">Membro dello staff non trovato</h2>
-        <p className="mt-1 font-maven text-sm text-kidville-muted">Questo utente non è nell&apos;elenco del personale.</p>
+        <h2 className="font-barlow text-lg font-bold uppercase text-kidville-green">{t('staffDMembroNonTrovato')}</h2>
+        <p className="mt-1 font-maven text-sm text-kidville-muted">{t('staffDMembroNonTrovatoHint')}</p>
       </div>
     );
   }
@@ -183,7 +185,7 @@ export function StaffDetailPanel({ staffId, onClose }: Props) {
         <button
           onClick={onClose}
           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-kidville-line text-kidville-muted hover:text-kidville-ink"
-          title="Chiudi"
+          title={t('chiudi')}
         >
           <X size={16} />
         </button>
@@ -192,36 +194,36 @@ export function StaffDetailPanel({ staffId, onClose }: Props) {
       <div className="space-y-5 p-5 md:p-6">
         {/* Contatti */}
         <section>
-          <h3 className="mb-2 font-barlow text-xs font-bold uppercase tracking-wide text-kidville-green">Contatti</h3>
-          <label className="mb-1 block font-maven text-xs text-kidville-muted">Email</label>
+          <h3 className="mb-2 font-barlow text-xs font-bold uppercase tracking-wide text-kidville-green">{t('staffDContatti')}</h3>
+          <label className="mb-1 block font-maven text-xs text-kidville-muted">{t('campoEmail')}</label>
           <p className="break-all font-maven text-sm text-kidville-green">{member.email || '—'}</p>
         </section>
 
         {/* Ruolo e Sede */}
         <section>
-          <h3 className="mb-2 font-barlow text-xs font-bold uppercase tracking-wide text-kidville-green">Ruolo e Sede</h3>
+          <h3 className="mb-2 font-barlow text-xs font-bold uppercase tracking-wide text-kidville-green">{t('staffDRuoloSede')}</h3>
           {!editMode ? (
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="mb-1 block font-maven text-xs text-kidville-muted">Ruolo</label>
+                <label className="mb-1 block font-maven text-xs text-kidville-muted">{t('campoRuolo')}</label>
                 <span className="inline-block rounded-full bg-kidville-cream px-2.5 py-1 font-maven text-xs font-bold text-kidville-green">{labelRuolo(member.ruolo)}</span>
               </div>
               <div>
-                <label className="mb-1 block font-maven text-xs text-kidville-muted">Sede</label>
+                <label className="mb-1 block font-maven text-xs text-kidville-muted">{t('campoSede')}</label>
                 <p className="font-maven text-sm text-kidville-green">{sedeNome}</p>
               </div>
             </div>
           ) : (
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
-                <label className="mb-1 block font-maven text-xs text-kidville-muted">Ruolo</label>
+                <label className="mb-1 block font-maven text-xs text-kidville-muted">{t('campoRuolo')}</label>
                 <select value={draft.ruolo} onChange={(e) => setDraft({ ...draft, ruolo: e.target.value })}
                   className="w-full rounded-lg border-2 border-kidville-line px-2 py-1.5 text-sm text-kidville-green focus:border-kidville-green focus:outline-none">
                   {RUOLI_ASSEGNABILI.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
                 </select>
               </div>
               <div>
-                <label className="mb-1 block font-maven text-xs text-kidville-muted">Sede</label>
+                <label className="mb-1 block font-maven text-xs text-kidville-muted">{t('campoSede')}</label>
                 <select value={draft.scuola_id} onChange={(e) => setDraft({ ...draft, scuola_id: e.target.value })}
                   className="w-full rounded-lg border-2 border-kidville-line px-2 py-1.5 text-sm text-kidville-green focus:border-kidville-green focus:outline-none">
                   <option value="">—</option>
@@ -235,7 +237,7 @@ export function StaffDetailPanel({ staffId, onClose }: Props) {
         {/* Gradi (sola lettura, se presenti) */}
         {member.gradi && member.gradi.length > 0 && (
           <section>
-            <h3 className="mb-2 font-barlow text-xs font-bold uppercase tracking-wide text-kidville-green">Gradi</h3>
+            <h3 className="mb-2 font-barlow text-xs font-bold uppercase tracking-wide text-kidville-green">{t('staffDGradi')}</h3>
             <div className="flex flex-wrap gap-1.5">
               {member.gradi.map((g) => (
                 <span key={g} className="rounded-full border border-kidville-line bg-kidville-white px-2 py-1 font-maven text-[11px] font-bold capitalize text-kidville-muted">{g}</span>
@@ -246,7 +248,7 @@ export function StaffDetailPanel({ staffId, onClose }: Props) {
 
         {/* Classi assegnate */}
         <section>
-          <h3 className="mb-2 font-barlow text-xs font-bold uppercase tracking-wide text-kidville-green">Classi assegnate</h3>
+          <h3 className="mb-2 font-barlow text-xs font-bold uppercase tracking-wide text-kidville-green">{t('staffDClassiAssegnate')}</h3>
           {!editMode ? (
             classiAssegnate.length > 0 ? (
               <div className="flex flex-wrap gap-1.5">
@@ -255,11 +257,11 @@ export function StaffDetailPanel({ staffId, onClose }: Props) {
                 ))}
               </div>
             ) : (
-              <p className="font-maven text-sm text-kidville-muted">Nessuna classe assegnata</p>
+              <p className="font-maven text-sm text-kidville-muted">{t('staffDNessunaClasse')}</p>
             )
           ) : (
             <div className="flex flex-wrap gap-1.5">
-              {sezioniPerSede.length === 0 && <span className="font-maven text-xs text-kidville-muted">Nessuna classe per questa sede.</span>}
+              {sezioniPerSede.length === 0 && <span className="font-maven text-xs text-kidville-muted">{t('staffDNessunaClassePerSede')}</span>}
               {sezioniPerSede.map((s) => {
                 const on = draft.section_ids.includes(s.id);
                 return (
@@ -281,29 +283,29 @@ export function StaffDetailPanel({ staffId, onClose }: Props) {
             <>
               <button onClick={apri}
                 className="flex h-11 w-full items-center justify-center gap-2 rounded-pill bg-kidville-green font-barlow text-sm font-black uppercase tracking-wide text-kidville-yellow transition-all hover:opacity-90 active:scale-[0.98]">
-                <Pencil size={15} /> Modifica
+                <Pencil size={15} /> {t('staffDModifica')}
               </button>
               <button onClick={rigenera} disabled={regenBusy}
                 className="flex h-11 w-full items-center justify-center gap-2 rounded-pill border-2 border-kidville-green/40 font-barlow text-sm font-bold uppercase text-kidville-green transition-all hover:bg-kidville-green/5 disabled:opacity-50">
-                {regenBusy ? <Loader2 size={15} className="animate-spin" /> : <KeyRound size={15} />} Rigenera credenziali
+                {regenBusy ? <Loader2 size={15} className="animate-spin" /> : <KeyRound size={15} />} {t('rigeneraCredenziali')}
               </button>
             </>
           ) : (
             <div className="flex gap-2">
               <button onClick={salva} disabled={saving}
                 className="flex h-11 flex-1 items-center justify-center gap-2 rounded-pill bg-kidville-green font-barlow text-sm font-black uppercase tracking-wide text-kidville-yellow transition-all hover:opacity-90 disabled:opacity-50">
-                {saving ? <Loader2 size={16} className="animate-spin" /> : <><Check size={16} /> Salva</>}
+                {saving ? <Loader2 size={16} className="animate-spin" /> : <><Check size={16} /> {t('salva')}</>}
               </button>
               <button onClick={() => setEditMode(false)} disabled={saving}
                 className="flex h-11 flex-1 items-center justify-center gap-2 rounded-pill border-2 border-kidville-line font-barlow text-sm font-bold uppercase text-kidville-muted transition-all hover:border-kidville-error hover:text-kidville-error disabled:opacity-50">
-                <X size={16} /> Annulla
+                <X size={16} /> {t('annulla')}
               </button>
             </div>
           )}
         </div>
       ) : (
         <div className="flex items-center gap-1.5 border-t border-kidville-line px-5 py-3 font-maven text-[11px] text-kidville-muted">
-          <ShieldCheck size={12} /> Modifiche riservate alla Direzione
+          <ShieldCheck size={12} /> {t('staffDRiservate')}
         </div>
       )}
     </div>

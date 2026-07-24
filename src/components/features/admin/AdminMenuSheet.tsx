@@ -24,6 +24,7 @@
 
 import { useEffect, useRef } from 'react';
 import Link from 'next/link';
+import { useTranslations } from 'next-intl';
 import { X, Users, ChevronRight } from 'lucide-react';
 import { LogoutMenuButton } from '@/components/ui/LogoutMenuButton';
 import { ContrastMenuButton } from '@/components/ui/ContrastMenuButton';
@@ -59,6 +60,7 @@ const FOOTER_BTN_CLS =
   'flex w-full items-center gap-3 min-h-[44px] px-3 py-2.5 rounded-xl font-maven text-sm font-semibold transition-colors';
 
 export function AdminMenuSheet({ open, onClose, withUser, ruolo, returnFocusRef }: AdminMenuSheetProps) {
+  const t = useTranslations('adminNav');
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeBtnRef = useRef<HTMLButtonElement>(null);
 
@@ -129,20 +131,20 @@ export function AdminMenuSheet({ open, onClose, withUser, ruolo, returnFocusRef 
         <div className="flex items-center justify-between mb-3 px-1">
           <div>
             <p className="font-barlow font-bold text-[10px] uppercase tracking-[0.14em] text-kidville-sub">
-              Tutte le sezioni
+              {t('menuEyebrow')}
             </p>
             <h2
               id="admin-menu-sheet-title"
               className="font-barlow font-black text-xl text-kidville-green uppercase tracking-wide leading-none"
             >
-              Menu
+              {t('menuTitolo')}
             </h2>
           </div>
           <button
             ref={closeBtnRef}
             type="button"
             onClick={onClose}
-            aria-label="Chiudi"
+            aria-label={t('chiudi')}
             className="w-11 h-11 rounded-full bg-kidville-cream-dark flex items-center justify-center text-kidville-green"
           >
             <X className="w-4 h-4" strokeWidth={2.4} />
@@ -157,10 +159,10 @@ export function AdminMenuSheet({ open, onClose, withUser, ruolo, returnFocusRef 
           </span>
           <span className="min-w-0 flex-1">
             <span className="block font-barlow font-extrabold text-base uppercase leading-none text-kidville-green">
-              Anagrafica
+              {t('anagrafica')}
             </span>
             <span className="block font-maven text-xs text-kidville-muted mt-0.5">
-              Alunni, famiglie e personale
+              {t('anagraficaSub')}
             </span>
           </span>
           <ChevronRight size={16} className="text-kidville-muted shrink-0" strokeWidth={2} />

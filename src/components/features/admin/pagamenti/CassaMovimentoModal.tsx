@@ -10,6 +10,7 @@
 // assente su ambiente non migrato). Solo token `kidville-*`, mai hex.
 
 import { useEffect, useRef, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { X, Wallet, TrendingDown, TrendingUp } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
 import { MODAL_CARD, MODAL_SHADOW, INPUT, SELECT, BTN_PRIMARY_AA, BTN_SECONDARY } from './ui';
@@ -31,37 +32,39 @@ interface Props {
   returnFocusRef?: React.RefObject<HTMLButtonElement | null>;
 }
 
+type Traduttore = ReturnType<typeof useTranslations>;
+
 const hdr = (u: string) => ({ 'Content-Type': 'application/json', 'x-user-id': u });
 const testoErrore = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 const ERRORE_ID = 'cassa-mov-errore';
 
-/** Nome italiano dei campi del form, per un 400 azionabile (RC1/E3.2). */
-const CAMPO_LABEL: Record<string, string> = {
-  importo: 'Importo',
-  categoria_id: 'Categoria',
-  metodo: 'Metodo',
-  data: 'Data',
-  descrizione: 'Descrizione',
-  note: 'Note',
-  allegato_path: 'Foto del giustificativo',
-  scuola_id: 'Sede',
-  tipo: 'Tipo di movimento',
+/** Chiave i18n del nome italiano dei campi del form, per un 400 azionabile (RC1/E3.2). */
+const CAMPO_LABEL_KEY: Record<string, string> = {
+  importo: 'cassaMovCampoImporto',
+  categoria_id: 'cassaMovCampoCategoria',
+  metodo: 'cassaMovCampoMetodo',
+  data: 'cassaMovCampoData',
+  descrizione: 'cassaMovCampoDescrizione',
+  note: 'cassaMovCampoNote',
+  allegato_path: 'cassaMovCampoAllegato',
+  scuola_id: 'cassaMovCampoSede',
+  tipo: 'cassaMovCampoTipo',
 };
 
 /** Costruisce un messaggio che NOMINA i campi rifiutati dal server. */
-function messaggioValidazione(errore: string | undefined, campi: string[]): string {
-  if (campi.length === 0) return errore ?? 'Errore nel salvataggio del movimento.';
-  const nomi = campi.map((c) => CAMPO_LABEL[c] ?? c);
-  return `Controlla ${campi.length === 1 ? 'il campo' : 'i campi'}: ${nomi.join(', ')}.`;
+function messaggioValidazione(errore: string | undefined, campi: string[], t: Traduttore): string {
+  if (campi.length === 0) return errore ?? t('cassaMovErrDefault');
+  const nomi = campi.map((c) => { const k = CAMPO_LABEL_KEY[c]; return k ? t(k) : c; });
+  return `${t('cassaMovControlla')} ${campi.length === 1 ? t('cassaMovIlCampo') : t('cassaMovICampi')}: ${nomi.join(', ')}.`;
 }
 
-/** Metodi di pagamento del movimento cassa (contratto §3.1). */
+/** Metodi di pagamento del movimento cassa (contratto §3.1); `l` = chiave i18n. */
 const METODI: { v: CassaMetodo; l: string }[] = [
-  { v: 'contanti', l: 'Contanti' },
-  { v: 'bonifico', l: 'Bonifico' },
-  { v: 'carta', l: 'Carta' },
-  { v: 'altro', l: 'Altro' },
+  { v: 'contanti', l: 'cassaMovMetodoContanti' },
+  { v: 'bonifico', l: 'cassaMovMetodoBonifico' },
+  { v: 'carta', l: 'cassaMovMetodoCarta' },
+  { v: 'altro', l: 'cassaMovMetodoAltro' },
 ];
 
 /** Vincoli del giustificativo (specchio di `@/lib/cassa/store`, ri-validati dal server). */
@@ -71,9 +74,9 @@ const FOTO_MAX_MB = 10;
 const TITLE_ID = 'cassa-mov-title';
 
 /** Carica il giustificativo su Storage privato (upload-url firmato → PUT). */
-async function caricaAllegato(userId: string, scuolaId: string, file: File): Promise<{ path: string } | { error: string }> {
-  if (!FOTO_MIME.includes(file.type)) return { error: 'formato non ammesso (JPG, PNG, WebP o PDF)' };
-  if (file.size > FOTO_MAX_MB * 1024 * 1024) return { error: `file troppo grande (max ${FOTO_MAX_MB} MB)` };
+async function caricaAllegato(userId: string, scuolaId: string, file: File, t: Traduttore): Promise<{ path: string } | { error: string }> {
+  if (!FOTO_MIME.includes(file.type)) return { error: t('cassaMovFotoFormato') };
+  if (file.size > FOTO_MAX_MB * 1024 * 1024) return { error: `${t('cassaMovFotoGrandePre')}${FOTO_MAX_MB}${t('cassaMovFotoGrandePost')}` };
   try {
     const res = await fetch(`/api/pagamenti/cassa/allegato/upload-url?userId=${userId}`, {
       method: 'POST',
@@ -82,17 +85,18 @@ async function caricaAllegato(userId: string, scuolaId: string, file: File): Pro
     });
     const j = (await res.json()) as { error?: string; data?: { signedUrl?: string; path?: string }; signedUrl?: string; path?: string };
     const payload = j.data ?? j;
-    if (!res.ok || !payload.signedUrl || !payload.path) return { error: j.error ?? 'preparazione non riuscita' };
+    if (!res.ok || !payload.signedUrl || !payload.path) return { error: j.error ?? t('cassaMovFotoPrep') };
     const put = await fetch(payload.signedUrl, { method: 'PUT', headers: { 'content-type': file.type, 'x-upsert': 'false' }, body: file });
-    if (!put.ok) return { error: `caricamento non riuscito (HTTP ${put.status})` };
+    if (!put.ok) return { error: `${t('cassaMovFotoHttpPre')}${put.status}${t('cassaMovFotoHttpPost')}` };
     return { path: payload.path };
   } catch (err) {
     logClient({ livello: 'error', evento: 'fetch', messaggio: `upload allegato cassa — ${testoErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
-    return { error: 'caricamento non riuscito (rete)' };
+    return { error: t('cassaMovFotoRete') };
   }
 }
 
 export function CassaMovimentoModal({ userId, scuolaId, tipoIniziale, onClose, onDone, returnFocusRef }: Props) {
+  const t = useTranslations('adminContabilita');
   const [tipo, setTipo] = useState<'uscita' | 'entrata'>(tipoIniziale);
   const [importo, setImporto] = useState<number>(0);
   const [categoriaId, setCategoriaId] = useState('');
@@ -138,14 +142,14 @@ export function CassaMovimentoModal({ userId, scuolaId, tipoIniziale, onClose, o
     setError(null);
     setCampiErrati(new Set());
     setWarnFoto(null);
-    if (!importo || importo <= 0) { setError('Inserisci un importo maggiore di zero.'); setCampiErrati(new Set(['importo'])); return; }
-    if (tipo === 'uscita' && !categoriaId) { setError('Seleziona una categoria per l\'uscita.'); setCampiErrati(new Set(['categoria_id'])); return; }
+    if (!importo || importo <= 0) { setError(t('cassaMovImportoZero')); setCampiErrati(new Set(['importo'])); return; }
+    if (tipo === 'uscita' && !categoriaId) { setError(t('cassaMovCategoriaUscita')); setCampiErrati(new Set(['categoria_id'])); return; }
     setSaving(true);
     let allegatoPath: string | null = null;
     try {
       if (file) {
-        const up = await caricaAllegato(userId, scuolaId, file);
-        if ('error' in up) setWarnFoto(`Foto non caricata (${up.error}): il movimento è stato salvato senza giustificativo.`);
+        const up = await caricaAllegato(userId, scuolaId, file, t);
+        if ('error' in up) setWarnFoto(`${t('cassaMovFotoNonCaricataPre')}${up.error}${t('cassaMovFotoNonCaricataPost')}`);
         else allegatoPath = up.path;
       }
       const body: Record<string, unknown> = {
@@ -165,18 +169,18 @@ export function CassaMovimentoModal({ userId, scuolaId, tipoIniziale, onClose, o
         headers: hdr(userId),
         body: JSON.stringify(body),
       });
-      if (res.status === 503) { setError('Il modulo cassa non è ancora attivo su questo ambiente.'); return; }
+      if (res.status === 503) { setError(t('cassaMovNonAttivo503')); return; }
       const j = (await res.json()) as { error?: string; details?: { path?: string }[] };
       if (!res.ok) {
         const campi = (j.details ?? []).map((d) => d.path).filter((p): p is string => typeof p === 'string' && p.length > 0);
         setCampiErrati(new Set(campi));
-        setError(messaggioValidazione(j.error, campi));
+        setError(messaggioValidazione(j.error, campi, t));
         return;
       }
       onDone();
     } catch (err) {
       logClient({ livello: 'error', evento: 'fetch', messaggio: `POST movimento cassa — ${testoErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
-      setError('Errore di rete: riprova.');
+      setError(t('cassaMovErroreRete'));
     } finally {
       setSaving(false);
     }
@@ -188,7 +192,7 @@ export function CassaMovimentoModal({ userId, scuolaId, tipoIniziale, onClose, o
     <Modal
       open
       onClose={onClose}
-      title={isUscita ? 'Registra uscita' : 'Entrata manuale'}
+      title={isUscita ? t('cassaMovRegistraUscita') : t('cassaMovEntrataManuale')}
       labelledBy={TITLE_ID}
       className={MODAL_CARD}
       style={{ boxShadow: MODAL_SHADOW }}
@@ -196,14 +200,14 @@ export function CassaMovimentoModal({ userId, scuolaId, tipoIniziale, onClose, o
     >
       <div className="mb-4 flex items-center justify-between">
         <h3 id={TITLE_ID} className="flex items-center gap-2 font-barlow text-lg font-black uppercase text-kidville-green">
-          <Wallet size={18} /> {isUscita ? 'Registra uscita' : 'Entrata manuale'}
+          <Wallet size={18} /> {isUscita ? t('cassaMovRegistraUscita') : t('cassaMovEntrataManuale')}
         </h3>
-        <button onClick={onClose} aria-label="Chiudi" className="-mr-2 flex h-10 w-10 items-center justify-center rounded-pill text-kidville-sub hover:text-kidville-ink"><X size={20} /></button>
+        <button onClick={onClose} aria-label={t('cassaMovChiudi')} className="-mr-2 flex h-10 w-10 items-center justify-center rounded-pill text-kidville-sub hover:text-kidville-ink"><X size={20} /></button>
       </div>
 
       <div className="space-y-3">
         <div>
-          <label htmlFor="cassa-mov-tipo" className="mb-1 block font-maven text-xs text-kidville-sub">Tipo di movimento</label>
+          <label htmlFor="cassa-mov-tipo" className="mb-1 block font-maven text-xs text-kidville-sub">{t('cassaMovLabelTipo')}</label>
           <select
             id="cassa-mov-tipo"
             value={tipo}
@@ -211,13 +215,13 @@ export function CassaMovimentoModal({ userId, scuolaId, tipoIniziale, onClose, o
             className={SELECT}
             {...ariaCampo('tipo')}
           >
-            <option value="uscita">Uscita (spesa)</option>
-            <option value="entrata">Entrata manuale</option>
+            <option value="uscita">{t('cassaMovOptUscita')}</option>
+            <option value="entrata">{t('cassaMovOptEntrata')}</option>
           </select>
         </div>
 
         <div>
-          <label htmlFor="cassa-mov-importo" className="mb-1 block font-maven text-xs text-kidville-sub">Importo (€)</label>
+          <label htmlFor="cassa-mov-importo" className="mb-1 block font-maven text-xs text-kidville-sub">{t('cassaMovLabelImporto')}</label>
           <input
             id="cassa-mov-importo"
             type="number" min="0.01" step="0.01" value={importo || ''}
@@ -229,9 +233,9 @@ export function CassaMovimentoModal({ userId, scuolaId, tipoIniziale, onClose, o
 
         {isUscita && (
           <div>
-            <label htmlFor="cassa-mov-categoria" className="mb-1 block font-maven text-xs text-kidville-sub">Categoria</label>
+            <label htmlFor="cassa-mov-categoria" className="mb-1 block font-maven text-xs text-kidville-sub">{t('cassaMovLabelCategoria')}</label>
             <select id="cassa-mov-categoria" value={categoriaId} onChange={(e) => setCategoriaId(e.target.value)} className={SELECT} {...ariaCampo('categoria_id')}>
-              <option value="">— Seleziona una categoria —</option>
+              <option value="">{t('cassaMovSelezionaCategoria')}</option>
               {categorie.map((c) => (
                 <option key={c.id} value={c.id}>{c.icona ? `${c.icona} ` : ''}{c.nome}</option>
               ))}
@@ -241,36 +245,36 @@ export function CassaMovimentoModal({ userId, scuolaId, tipoIniziale, onClose, o
 
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label htmlFor="cassa-mov-metodo" className="mb-1 block font-maven text-xs text-kidville-sub">Metodo</label>
+            <label htmlFor="cassa-mov-metodo" className="mb-1 block font-maven text-xs text-kidville-sub">{t('cassaMovLabelMetodo')}</label>
             <select id="cassa-mov-metodo" value={metodo} onChange={(e) => setMetodo(e.target.value as CassaMetodo)} className={SELECT} {...ariaCampo('metodo')}>
-              {METODI.map((m) => <option key={m.v} value={m.v}>{m.l}</option>)}
+              {METODI.map((m) => <option key={m.v} value={m.v}>{t(m.l)}</option>)}
             </select>
           </div>
           <div>
-            <label htmlFor="cassa-mov-data" className="mb-1 block font-maven text-xs text-kidville-sub">Data</label>
+            <label htmlFor="cassa-mov-data" className="mb-1 block font-maven text-xs text-kidville-sub">{t('cassaMovLabelData')}</label>
             <input id="cassa-mov-data" type="date" value={data} onChange={(e) => setData(e.target.value)} className={INPUT} {...ariaCampo('data')} />
           </div>
         </div>
 
         {metodo !== 'contanti' && (
           <p className="rounded-card bg-kidville-warn-soft px-3 py-2 font-maven text-[11px] leading-snug text-kidville-warn-strong">
-            Solo i contanti muovono il saldo cassa: questo movimento resterà nei report ma non cambierà il contante atteso nel cassetto.
+            {t('cassaMovWarnContanti')}
           </p>
         )}
 
         <div>
-          <label htmlFor="cassa-mov-descrizione" className="mb-1 block font-maven text-xs text-kidville-sub">Descrizione (facoltativa)</label>
+          <label htmlFor="cassa-mov-descrizione" className="mb-1 block font-maven text-xs text-kidville-sub">{t('cassaMovLabelDescrizione')}</label>
           <input id="cassa-mov-descrizione" type="text" value={descrizione} onChange={(e) => setDescrizione(e.target.value)} className={INPUT} maxLength={300} {...ariaCampo('descrizione')} />
-          <p className="mt-1 font-maven text-[11px] text-kidville-sub">Scrivi la causale della spesa (es. «detersivi»), non nomi di bambini o famiglie.</p>
+          <p className="mt-1 font-maven text-[11px] text-kidville-sub">{t('cassaMovHintDescrizione')}</p>
         </div>
 
         <div>
-          <label htmlFor="cassa-mov-note" className="mb-1 block font-maven text-xs text-kidville-sub">Note / riferimento (facoltativo)</label>
+          <label htmlFor="cassa-mov-note" className="mb-1 block font-maven text-xs text-kidville-sub">{t('cassaMovLabelNote')}</label>
           <input id="cassa-mov-note" type="text" value={note} onChange={(e) => setNote(e.target.value)} className={INPUT} maxLength={500} {...ariaCampo('note')} />
         </div>
 
         <div>
-          <label htmlFor="cassa-mov-foto" className="mb-1 block font-maven text-xs text-kidville-sub">Foto del giustificativo (facoltativa)</label>
+          <label htmlFor="cassa-mov-foto" className="mb-1 block font-maven text-xs text-kidville-sub">{t('cassaMovLabelFoto')}</label>
           <div className="flex flex-wrap items-center gap-2">
             <input
               id="cassa-mov-foto"
@@ -287,7 +291,7 @@ export function CassaMovimentoModal({ userId, scuolaId, tipoIniziale, onClose, o
             />
           </div>
           {file && <p className="mt-1 font-maven text-[11px] text-kidville-green">📷 {file.name}</p>}
-          <p className="mt-1 font-maven text-[11px] text-kidville-sub">Scontrino o ricevuta. JPG, PNG, WebP o PDF, max {FOTO_MAX_MB} MB.</p>
+          <p className="mt-1 font-maven text-[11px] text-kidville-sub">{t('cassaMovHintFotoPre')}{FOTO_MAX_MB}{t('cassaMovHintFotoPost')}</p>
         </div>
 
         {warnFoto && <p role="status" className="rounded-card bg-kidville-warn-soft px-3 py-2 font-maven text-xs text-kidville-warn-strong">{warnFoto}</p>}
@@ -295,10 +299,10 @@ export function CassaMovimentoModal({ userId, scuolaId, tipoIniziale, onClose, o
       </div>
 
       <div className="mt-5 flex gap-2">
-        <button onClick={onClose} className={cx(BTN_SECONDARY, 'flex-1')}>Annulla</button>
+        <button onClick={onClose} className={cx(BTN_SECONDARY, 'flex-1')}>{t('cassaMovAnnulla')}</button>
         <button ref={salvaBtnRef} onClick={submit} disabled={saving} className={cx(BTN_PRIMARY_AA, 'flex-1')}>
           {isUscita ? <TrendingDown size={15} /> : <TrendingUp size={15} />}
-          {saving ? 'Salvataggio…' : `Salva ${formatEuro(importo || 0)}`}
+          {saving ? t('cassaMovSalvataggio') : `${t('cassaMovSalva')} ${formatEuro(importo || 0)}`}
         </button>
       </div>
     </Modal>

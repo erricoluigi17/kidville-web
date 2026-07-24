@@ -7,6 +7,7 @@
 
 import { Suspense, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { Newspaper, Megaphone } from 'lucide-react';
@@ -17,19 +18,25 @@ import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { SedeRequired } from '@/lib/context/sede-context';
 import type { NewsPost } from '@/lib/news/tipi';
 
-const caricamento = () => <p className="py-8 text-center font-maven text-sm text-kidville-muted">Caricamento…</p>;
-const NewsElencoPanel = dynamic(() => import('@/components/features/admin/news/NewsElencoPanel').then((m) => m.NewsElencoPanel), { loading: caricamento });
-const NewsPropostePanel = dynamic(() => import('@/components/features/admin/news/NewsPropostePanel').then((m) => m.NewsPropostePanel), { loading: caricamento });
-const NewsCategoriePanel = dynamic(() => import('@/components/features/admin/news/NewsCategoriePanel').then((m) => m.NewsCategoriePanel), { loading: caricamento });
-const NewsDigestPanel = dynamic(() => import('@/components/features/admin/news/NewsDigestPanel').then((m) => m.NewsDigestPanel), { loading: caricamento });
+// Loader dei pannelli lazy: componente (non funzione minuscola) così può usare
+// l'hook di traduzione senza violare le regole react-hooks.
+function Caricamento() {
+  const t = useTranslations('adminComunicazioni');
+  return <p className="py-8 text-center font-maven text-sm text-kidville-muted">{t('caricamento')}</p>;
+}
+const NewsElencoPanel = dynamic(() => import('@/components/features/admin/news/NewsElencoPanel').then((m) => m.NewsElencoPanel), { loading: Caricamento });
+const NewsPropostePanel = dynamic(() => import('@/components/features/admin/news/NewsPropostePanel').then((m) => m.NewsPropostePanel), { loading: Caricamento });
+const NewsCategoriePanel = dynamic(() => import('@/components/features/admin/news/NewsCategoriePanel').then((m) => m.NewsCategoriePanel), { loading: Caricamento });
+const NewsDigestPanel = dynamic(() => import('@/components/features/admin/news/NewsDigestPanel').then((m) => m.NewsDigestPanel), { loading: Caricamento });
 // TipTap non è SSR-safe → ssr:false.
-const NewsEditorPanel = dynamic(() => import('@/components/features/admin/news/NewsEditorPanel').then((m) => m.NewsEditorPanel), { ssr: false, loading: caricamento });
+const NewsEditorPanel = dynamic(() => import('@/components/features/admin/news/NewsEditorPanel').then((m) => m.NewsEditorPanel), { ssr: false, loading: Caricamento });
 
 const isVista = (v: string | null): v is VistaNews => !!v && VISTE_NEWS.some((o) => o.id === v);
 
 const linkCls = 'inline-flex h-[40px] items-center gap-1.5 rounded-pill border border-kidville-line bg-kidville-white px-4 font-barlow text-[13px] font-extrabold uppercase tracking-[0.03em] text-kidville-green transition-colors hover:border-kidville-green';
 
 function NewsInner() {
+  const t = useTranslations('adminComunicazioni');
   const { userId, role } = useSessionIdentity();
   const router = useRouter();
   const params = useSearchParams();
@@ -54,15 +61,15 @@ function NewsInner() {
     <CockpitPage max={1152}>
       <PageHeader
         icon={Newspaper}
-        eyebrow="Comunicazione"
-        title="News"
-        subtitle="Blog, comunicati, post Instagram e digest mensile alle famiglie."
-        actions={<Link href={withUser('/admin/avvisi')} className={linkCls}><Megaphone size={15} /> Avvisi</Link>}
+        eyebrow={t('eyebrow')}
+        title={t('newsTitolo')}
+        subtitle={t('newsSottotitolo')}
+        actions={<Link href={withUser('/admin/avvisi')} className={linkCls}><Megaphone size={15} /> {t('newsLinkAvvisi')}</Link>}
       />
 
       <NewsNav value={vista} onChange={cambiaVista} />
 
-      <SedeRequired cosa="le news">
+      <SedeRequired cosa={t('newsSedeCosa')}>
         {(scuolaId) => (
           <Card className="p-4 md:p-6">
             {vista === 'elenco' && userId && <NewsElencoPanel userId={userId} scuolaId={scuolaId} onModifica={modifica} />}
@@ -88,9 +95,14 @@ function NewsInner() {
   );
 }
 
+function NewsFallback() {
+  const t = useTranslations('adminComunicazioni');
+  return <div className="p-8 font-maven text-kidville-muted">{t('caricamento')}</div>;
+}
+
 export default function AdminNewsPage() {
   return (
-    <Suspense fallback={<div className="p-8 font-maven text-kidville-muted">Caricamento…</div>}>
+    <Suspense fallback={<NewsFallback />}>
       <NewsInner />
     </Suspense>
   );

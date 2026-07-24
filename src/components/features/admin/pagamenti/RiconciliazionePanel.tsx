@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { ChevronRight, Landmark, RefreshCw, Upload } from 'lucide-react';
 import { SectionTitle } from '@/components/ui/cockpit';
 import { SaveCheck } from '@/components/ui/SaveConfirmation';
@@ -45,6 +46,7 @@ const testoErrore = (e: unknown) => (e instanceof Error ? e.message : String(e))
  * manuale, conferma/ignora/riapri e — a saldo avvenuto — ricevuta/fattura.
  */
 export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props) {
+  const t = useTranslations('adminContabilita');
   const [movimenti, setMovimenti] = useState<MovimentoUi[]>([]);
   const [aperti, setAperti] = useState<PagamentoApertoUi[]>([]);
   const [disponibile, setDisponibile] = useState(true);
@@ -83,7 +85,7 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
         setMovimenti((movRes.data ?? []) as MovimentoUi[]);
         setDisponibile(movRes.disponibile !== false);
       } else if (movRes === null) {
-        setError('Errore di rete nel caricamento dei movimenti');
+        setError(t('reconErroreReteMovimenti'));
       }
       if (apRes?.success) {
         setAperti(((apRes.data ?? []) as PagamentoApertoUi[]).filter((p) => p.tipo !== 'padre'));
@@ -91,7 +93,7 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
     } finally {
       setLoading(false);
     }
-  }, [userId, scuolaId, filtro]);
+  }, [userId, scuolaId, filtro, t]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -113,12 +115,12 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
         body: JSON.stringify({ filename: file.name, contenuto, scuola_id: scuolaId }),
       });
       const j = await r.json();
-      if (!r.ok || !j.success) { setError(j.error || "Errore nell'import"); return; }
+      if (!r.ok || !j.success) { setError(j.error || t('reconErroreImport')); return; }
       setEsito(j.data as EsitoImport);
       await load();
     } catch (err) {
       logClient({ livello: 'error', evento: 'fetch', messaggio: `POST riconciliazione import — ${testoErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
-      setError('Errore di lettura del file');
+      setError(t('reconErroreLetturaFile'));
     } finally {
       setBusy(false);
     }
@@ -154,10 +156,10 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
 
   return (
     <div>
-      <SectionTitle icon={Landmark} title="Riconciliazione bancaria"
-        sub="Importa l'estratto conto (CSV): ogni movimento è una riga a semaforo, la conferma è sempre tua."
+      <SectionTitle icon={Landmark} title={t('reconTitolo')}
+        sub={t('reconSottotitolo')}
         action={
-          <button onClick={() => { setLoading(true); load(); }} aria-label="Aggiorna"
+          <button onClick={() => { setLoading(true); load(); }} aria-label={t('reconAggiorna')}
             className="rounded-pill border-[1.5px] border-kidville-line p-2 text-kidville-muted transition-colors hover:border-kidville-green hover:text-kidville-green">
             <RefreshCw size={14} />
           </button>
@@ -168,12 +170,12 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
           fuori dal focus (aria-hidden + tabIndex -1) ma resta cliccabile via ref.
           A5: CTA bianco-su-verde (BTN_PRIMARY_AA, ≈6,5:1) invece del giallo (~4:1). */}
       <button type="button" onClick={() => fileInputRef.current?.click()} disabled={busy} className={BTN_PRIMARY_AA}>
-        <Upload size={14} /> {busy ? 'Elaboro…' : 'Importa CSV estratto conto'}
+        <Upload size={14} /> {busy ? t('reconElaboro') : t('reconImportaCsv')}
       </button>
       <input ref={fileInputRef} type="file" accept=".csv,text/csv" className="sr-only" tabIndex={-1} aria-hidden="true" disabled={busy}
         onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(f); e.target.value = ''; }} />
       <p className="mt-1 font-maven text-[11px] text-kidville-sub">
-        Colonne riconosciute automaticamente (Data/Valuta · Importo/Entrate/Accrediti · Causale/Descrizione · Ordinante). Solo gli accrediti. Il file non viene salvato.
+        {t('reconColonne')}
       </p>
 
       {esito && (
@@ -185,7 +187,7 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
       {error && <p role="alert" className="mt-3 font-maven text-xs text-kidville-error-strong">{error}</p>}
 
       {/* Filtri per stato (sul GET via ?stato=) */}
-      <div className="mt-4 flex flex-wrap gap-1.5" role="group" aria-label="Filtra per stato">
+      <div className="mt-4 flex flex-wrap gap-1.5" role="group" aria-label={t('reconFiltraPerStato')}>
         {FILTRI.map((f) => {
           const attivo = f.id === filtro;
           return (
@@ -201,12 +203,12 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
       </div>
 
       {loading ? (
-        <p className="py-8 text-center font-maven text-sm text-kidville-sub">Caricamento…</p>
+        <p className="py-8 text-center font-maven text-sm text-kidville-sub">{t('reconCaricamento')}</p>
       ) : !disponibile ? (
-        <p className="py-8 text-center font-maven text-sm text-kidville-sub">Riconciliazione non ancora disponibile.</p>
+        <p className="py-8 text-center font-maven text-sm text-kidville-sub">{t('reconNonDisponibile')}</p>
       ) : vuoto ? (
         <p className="py-8 text-center font-maven text-sm text-kidville-sub">
-          {filtro ? 'Nessun movimento in questo stato.' : 'Nessun movimento: importa un estratto conto per iniziare.'}
+          {filtro ? t('reconVuotoFiltro') : t('reconVuoto')}
         </p>
       ) : (
         <ul className="mt-3 space-y-2">
@@ -226,13 +228,13 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
                         {formatEuro(m.importo)} · {dataIt(m.data_operazione)}
                       </span>
                       <span className={cx('mt-0.5 block truncate font-maven text-xs', s.sub)} title={m.causale ?? ''}>
-                        {m.causale || 'Nessuna causale'}{m.controparte ? ` · ${m.controparte}` : ''}
+                        {m.causale || t('reconNessunaCausale')}{m.controparte ? ` · ${m.controparte}` : ''}
                       </span>
                     </span>
                     <span className="flex shrink-0 items-center gap-2">
                       {cf && (
                         <span className="inline-flex items-center rounded-pill bg-kidville-white px-1.5 py-0.5 font-barlow text-[10px] font-extrabold uppercase leading-none text-kidville-green ring-[1.5px] ring-inset ring-kidville-green">
-                          CF
+                          {t('reconBadgeCf')}
                         </span>
                       )}
                       <span className={cx('font-barlow text-[11px] font-extrabold uppercase tracking-wide', s.testo)}>{s.label}</span>

@@ -56,7 +56,7 @@ describe('W6 Sistema — pannelli Impostazioni senza bianco nudo', () => {
     });
 });
 
-describe('W6 Sistema — header con eyebrow "Sistema"', () => {
+describe('W6 Sistema — header con eyebrow "Sistema" (letterale o via i18n)', () => {
     const PAGES = [
         path.join(ROOT, 'src', 'app', '(dashboard)', 'admin', 'impostazioni', 'page.tsx'),
         path.join(ROOT, 'src', 'app', '(dashboard)', 'admin', 'tools', 'page.tsx'),
@@ -64,8 +64,24 @@ describe('W6 Sistema — header con eyebrow "Sistema"', () => {
         path.join(ROOT, 'src', 'app', '(dashboard)', 'admin', 'sidi', 'page.tsx'),
     ];
 
-    it.each(PAGES)('%s dichiara eyebrow="Sistema"', (page) => {
+    // Dopo l'i18n (Fase 3) l'eyebrow può essere letterale `eyebrow="Sistema"` OPPURE
+    // `eyebrow={t('chiave')}`: in quel caso la garanzia si sposta sul CATALOGO, cioè la
+    // chiave deve risolvere a "Sistema" in italiano (lingua sorgente). Il lock resta
+    // valido: il gruppo "Sistema" mostra l'eyebrow "Sistema".
+    function eyebrowRisoltoIt(page: string): string | null {
         const src = fs.readFileSync(page, 'utf8');
-        expect(src).toMatch(/eyebrow=("|')Sistema\1/);
+        const lit = src.match(/eyebrow=("|')([^"']+)\1/);
+        if (lit) return lit[2];
+        const dyn = src.match(/eyebrow=\{\s*[a-zA-Z_$][\w$]*\(\s*['"]([^'"]+)['"]/);
+        if (!dyn) return null;
+        const key = dyn[1];
+        const nsMatch = src.match(/useTranslations\(\s*['"]([^'"]+)['"]\s*\)/);
+        if (!nsMatch) return null;
+        const cat = JSON.parse(fs.readFileSync(path.join(ROOT, 'messages', 'it', `${nsMatch[1]}.json`), 'utf8'));
+        return typeof cat[key] === 'string' ? cat[key] : null;
+    }
+
+    it.each(PAGES)('%s espone l\'eyebrow "Sistema" (letterale o chiave i18n)', (page) => {
+        expect(eyebrowRisoltoIt(page)).toBe('Sistema');
     });
 });

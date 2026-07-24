@@ -11,6 +11,7 @@
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { Bell, BellOff } from 'lucide-react';
 import { SHADOW_FLOAT } from '@/components/ui/Card';
 
@@ -46,6 +47,7 @@ export function AdminNotificationsPanel({
   attivoSu?: string;
 }) {
   const router = useRouter();
+  const t = useTranslations('adminNav');
   const ref = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<Notifica[]>([]);
@@ -138,7 +140,7 @@ export function AdminNotificationsPanel({
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        aria-label={nonLette > 0 ? `Notifiche (${nonLette} non lette)` : 'Notifiche'}
+        aria-label={nonLette > 0 ? t('notificheAria', { count: nonLette }) : t('notifiche')}
         className="relative flex h-11 w-11 items-center justify-center rounded-[11px] bg-kidville-white/[0.12] text-kidville-white"
       >
         <Bell size={19} />
@@ -154,7 +156,7 @@ export function AdminNotificationsPanel({
         >
           <div className="flex items-center justify-between gap-2 px-2.5 pb-1.5 pt-2">
             <span className="font-barlow text-[13px] font-extrabold uppercase tracking-[0.02em] text-kidville-green">
-              Notifiche
+              {t('notifiche')}
             </span>
             {nonLette > 0 && (
               <button
@@ -162,16 +164,16 @@ export function AdminNotificationsPanel({
                 onClick={() => { void segnaTutte(); }}
                 className="font-maven text-[11.5px] font-semibold text-kidville-green hover:underline"
               >
-                Segna tutte lette
+                {t('segnaTutteLette')}
               </button>
             )}
           </div>
 
           {!ready ? (
-            <div className="px-3 py-4 font-maven text-[12.5px] text-kidville-muted">Caricamento…</div>
+            <div className="px-3 py-4 font-maven text-[12.5px] text-kidville-muted">{t('caricamento')}</div>
           ) : items.length === 0 ? (
             <div className="flex items-center gap-2 px-3 py-4 font-maven text-[12.5px] text-kidville-muted">
-              <BellOff size={15} /> Nessuna notifica
+              <BellOff size={15} /> {t('nessunaNotifica')}
             </div>
           ) : (
             <div className="max-h-[380px] overflow-y-auto">
@@ -185,7 +187,7 @@ export function AdminNotificationsPanel({
                   <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-pill ${n.letta_il ? 'bg-kidville-line' : 'bg-kidville-yellow ring-2 ring-kidville-green'}`} />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate font-maven text-[13px] font-semibold text-kidville-ink">
-                      {n.titolo || 'Notifica'}
+                      {n.titolo || t('notificaFallback')}
                     </span>
                     {n.corpo && (
                       <span className="block truncate font-maven text-[11.5px] text-kidville-muted">{n.corpo}</span>

@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { Download, FileSpreadsheet, Receipt, RefreshCw } from 'lucide-react';
 import { SectionTitle, TABLE_WRAP, TABLE, TH, TD, TROW } from '@/components/ui/cockpit';
 import { Badge } from '@/components/ui/Badge';
@@ -28,6 +29,7 @@ const dataIt = (d?: string | null) => (d ? new Date(d).toLocaleDateString('it-IT
 
 /** Vista Fiscale: attestazioni annuali per alunno + registro delle ricevute numerate. */
 export function FiscalePanel({ userId, scuolaId }: Props) {
+    const t = useTranslations('adminContabilita');
     const annoCorrente = new Date().getFullYear();
     const [anno, setAnno] = useState(annoCorrente);
     const [ricevute, setRicevute] = useState<RicevutaRiga[]>([]);
@@ -72,8 +74,8 @@ export function FiscalePanel({ userId, scuolaId }: Props) {
     return (
         <div className="space-y-8">
             <div>
-                <SectionTitle icon={FileSpreadsheet} title="Attestazioni annuali"
-                    sub="PDF per il 730 (totale tracciabile detraibile) — emesso esclusivamente dalla segreteria su richiesta del genitore." />
+                <SectionTitle icon={FileSpreadsheet} title={t('fisc_att_title')}
+                    sub={t('fisc_att_sub')} />
                 <div className="flex flex-wrap items-center gap-2">
                     <select value={attAlunno} onChange={(e) => setAttAlunno(e.target.value)} className={`${selCls} min-w-[220px]`}>
                         {alunni.map((a) => (
@@ -86,61 +88,61 @@ export function FiscalePanel({ userId, scuolaId }: Props) {
                     {attAlunno ? (
                         <a href={`/api/pagamenti/attestazione?alunno_id=${attAlunno}&anno=${attAnno}&userId=${userId}`}
                             className="inline-flex items-center gap-1.5 rounded-pill bg-kidville-green px-4 py-2 font-maven text-sm font-bold text-kidville-yellow transition-colors hover:bg-kidville-green-dark">
-                            <Download size={14} /> Scarica attestazione
+                            <Download size={14} /> {t('fisc_scarica_att')}
                         </a>
                     ) : (
-                        <span className="font-maven text-xs text-kidville-muted">Nessun alunno iscritto.</span>
+                        <span className="font-maven text-xs text-kidville-muted">{t('fisc_nessun_alunno')}</span>
                     )}
                 </div>
             </div>
 
             <div>
-                <SectionTitle icon={FileSpreadsheet} title="Comunicazione spese AdE"
-                    sub="XLSX per il commercialista (invio entro il 16 marzo): solo quote tracciabili; opposizioni, contanti e categorie escluse motivati nel secondo foglio." />
+                <SectionTitle icon={FileSpreadsheet} title={t('fisc_ade_title')}
+                    sub={t('fisc_ade_sub')} />
                 <div className="flex flex-wrap items-center gap-2">
                     <select value={adeAnno} onChange={(e) => setAdeAnno(Number(e.target.value))} className={selCls}>
                         {anni.map((a) => <option key={a} value={a}>{a}</option>)}
                     </select>
                     <a href={`/api/pagamenti/export?tipo=ade&anno=${adeAnno}&userId=${userId}&scuola_id=${scuolaId}`}
                         className="inline-flex items-center gap-1.5 rounded-pill border-[1.5px] border-kidville-green px-4 py-2 font-maven text-sm font-bold text-kidville-green transition-colors hover:bg-kidville-green hover:text-kidville-yellow">
-                        <Download size={14} /> Esporta comunicazione {adeAnno}
+                        <Download size={14} /> {t('fisc_esporta_com')} {adeAnno}
                     </a>
                 </div>
             </div>
 
             <div>
-                <SectionTitle icon={Receipt} title="Registro ricevute"
-                    sub="Ricevute numerate emesse (incluse le annullate: il numero resta a registro)."
+                <SectionTitle icon={Receipt} title={t('fisc_reg_title')}
+                    sub={t('fisc_reg_sub')}
                     action={
                         <span className="flex items-center gap-2">
                             <select value={anno} onChange={(e) => { setAnno(Number(e.target.value)); setLoading(true); }} className={selCls}>
                                 {anni.map((a) => <option key={a} value={a}>{a}</option>)}
                             </select>
-                            <button onClick={() => { setLoading(true); loadRegistro(); }} aria-label="Aggiorna" title="Aggiorna"
+                            <button onClick={() => { setLoading(true); loadRegistro(); }} aria-label={t('fisc_aggiorna')} title={t('fisc_aggiorna')}
                                 className="rounded-pill border-[1.5px] border-kidville-line p-2 text-kidville-muted transition-colors hover:border-kidville-green hover:text-kidville-green">
                                 <RefreshCw size={14} />
                             </button>
                         </span>
                     } />
                 {loading ? (
-                    <p className="py-6 text-center font-maven text-sm text-kidville-muted">Caricamento…</p>
+                    <p className="py-6 text-center font-maven text-sm text-kidville-muted">{t('fisc_caricamento')}</p>
                 ) : !disponibile ? (
                     <p className="py-6 text-center font-maven text-sm text-kidville-muted">
-                        Registro non ancora disponibile.
+                        {t('fisc_non_disponibile')}
                     </p>
                 ) : ricevute.length === 0 ? (
-                    <p className="py-6 text-center font-maven text-sm text-kidville-muted">Nessuna ricevuta emessa nel {anno}.</p>
+                    <p className="py-6 text-center font-maven text-sm text-kidville-muted">{t('fisc_nessuna_ricevuta')} {anno}.</p>
                 ) : (
                     <>
                         <div className={cx('hidden lg:block', TABLE_WRAP)}>
                             <table className={TABLE}>
                                 <thead>
                                     <tr>
-                                        <th className={TH}>N.</th>
-                                        <th className={TH}>Data</th>
-                                        <th className={TH}>Alunno</th>
-                                        <th className={cx(TH, 'text-right')}>Importo</th>
-                                        <th className={TH}>Stato</th>
+                                        <th className={TH}>{t('fisc_th_n')}</th>
+                                        <th className={TH}>{t('fisc_th_data')}</th>
+                                        <th className={TH}>{t('fisc_th_alunno')}</th>
+                                        <th className={cx(TH, 'text-right')}>{t('fisc_th_importo')}</th>
+                                        <th className={TH}>{t('fisc_th_stato')}</th>
                                         <th className={TH}></th>
                                     </tr>
                                 </thead>
@@ -160,17 +162,19 @@ export function FiscalePanel({ userId, scuolaId }: Props) {
 }
 
 function ChipsRicevuta({ r }: { r: RicevutaRiga }) {
+    const t = useTranslations('adminContabilita');
     return (
         <span className="inline-flex flex-wrap items-center gap-1">
             {r.annullata_il
-                ? <Badge tone="error" title={r.annullo_motivo ?? undefined}>Annullata</Badge>
-                : <Badge tone={r.tracciabile ? 'success' : 'warn'}>{r.tracciabile ? 'Tracciabile' : 'Contanti'}</Badge>}
-            {r.bollo && <Badge tone="neutral">Bollo</Badge>}
+                ? <Badge tone="error" title={r.annullo_motivo ?? undefined}>{t('fisc_annullata')}</Badge>
+                : <Badge tone={r.tracciabile ? 'success' : 'warn'}>{r.tracciabile ? t('fisc_tracciabile') : t('fisc_contanti')}</Badge>}
+            {r.bollo && <Badge tone="neutral">{t('fisc_bollo')}</Badge>}
         </span>
     );
 }
 
 function RigaRegistro({ r, userId, mobile }: { r: RicevutaRiga; userId: string; mobile: boolean }) {
+    const t = useTranslations('adminContabilita');
     const alunno = `${r.alunni?.nome ?? ''} ${r.alunni?.cognome ?? ''}`.trim() || '—';
     const pdf = !r.annullata_il && (
         <a href={`/api/pagamenti/ricevuta?pagamento_id=${r.pagamento_id}&userId=${userId}`}
@@ -182,7 +186,7 @@ function RigaRegistro({ r, userId, mobile }: { r: RicevutaRiga; userId: string; 
         return (
             <div className="rounded-card border-[1.5px] border-kidville-line bg-kidville-white p-3">
                 <div className="flex items-center justify-between gap-2">
-                    <p className="font-maven text-sm font-bold text-kidville-green">n. {r.numero}/{r.anno} · {alunno}</p>
+                    <p className="font-maven text-sm font-bold text-kidville-green">{t('fisc_n_abbr')} {r.numero}/{r.anno} · {alunno}</p>
                     {pdf}
                 </div>
                 <div className="mt-1 flex items-center justify-between gap-2 font-maven text-xs text-kidville-muted">

@@ -2,6 +2,7 @@
 
 import { Suspense, useState, useEffect, useMemo, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { Search, Filter, UserPlus, Users, FileDown, CheckCircle2, GraduationCap, Briefcase, AlertTriangle } from 'lucide-react';
 import { StudentTable } from '@/components/features/admin/StudentTable';
 import { BulkAssignBar } from '@/components/features/admin/BulkAssignBar';
@@ -35,6 +36,7 @@ interface Student {
 
 
 function AdminStudentsInner() {
+  const t = useTranslations('adminStudents');
   // Tab iniziale dal query param (?tab=sections: back-link dal dettaglio sezione).
   const search = useSearchParams();
   const router = useRouter();
@@ -109,7 +111,7 @@ function AdminStudentsInner() {
       const j = await res.json().catch(() => null);
       if (!res.ok || !j?.success) {
         setStudents([]);
-        showToastMsg(`❌ ${(j && j.error) || 'Errore nel caricamento dello staff'}`);
+        showToastMsg(`❌ ${(j && j.error) || t('staffErrCaricamento')}`);
         return;
       }
       const sedi = new Map<string, string>((j.schools ?? []).map((s: { id: string; nome: string }) => [s.id, s.nome]));
@@ -130,7 +132,7 @@ function AdminStudentsInner() {
     } finally {
       setIsLoading(false);
     }
-  }, [reFetchKey, showToastMsg]);
+  }, [reFetchKey, showToastMsg, t]);
 
   // NB: lo spinner viene attivato dal cambio tab (onChange dei Tabs), non qui:
   // setState sincrono negli effect è vietato (react-hooks/set-state-in-effect).
@@ -211,14 +213,14 @@ function AdminStudentsInner() {
         }),
       });
       if (!res.ok) throw new Error('Errore bulk assign');
-      
-      showToastMsg(`✅ ${selectedIds.size} alunni assegnati a ${targetClass}`);
+
+      showToastMsg(`✅ ${t('toastAssegnati', { n: selectedIds.size, classe: targetClass })}`);
       fetchStudents();
       setSelectedIds(new Set());
       setTargetClass('');
     } catch (err) {
       console.error('Errore bulk assign:', err);
-      showToastMsg('❌ Errore nell\'assegnazione massiva');
+      showToastMsg(`❌ ${t('toastErrAssegnazione')}`);
     } finally {
       setIsAssigning(false);
     }
@@ -235,13 +237,13 @@ function AdminStudentsInner() {
       });
       if (!res.ok) throw new Error('Errore bulk mensa');
       const grp = mensaGroups.find(g => g.id === targetMensa);
-      showToastMsg(`✅ ${selectedIds.size} alunni assegnati al gruppo mensa ${grp?.nome ?? ''}`);
+      showToastMsg(`✅ ${t('toastAssegnatiMensa', { n: selectedIds.size, nome: grp?.nome ?? '' })}`);
       fetchStudents();
       setSelectedIds(new Set());
       setTargetMensa('');
     } catch (err) {
       console.error('Errore bulk mensa:', err);
-      showToastMsg('❌ Errore nell\'assegnazione gruppo mensa');
+      showToastMsg(`❌ ${t('toastErrMensa')}`);
     } finally {
       setIsAssigning(false);
     }
@@ -252,14 +254,14 @@ function AdminStudentsInner() {
   const csvCell = (v: string) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
   const handleExport = () => {
     const rows = filteredStudents;
-    if (rows.length === 0) { showToastMsg('Nessun dato da esportare'); return; }
+    if (rows.length === 0) { showToastMsg(t('exportVuoto')); return; }
     const isChild = viewType === 'child';
     const isStaff = viewType === 'staff';
     const headers = isChild
-      ? ['Cognome', 'Nome', 'Codice Fiscale', 'Classe', 'Stato']
+      ? [t('csvCognome'), t('csvNome'), t('csvCodiceFiscale'), t('csvClasse'), t('csvStato')]
       : isStaff
-        ? ['Cognome', 'Nome', 'Email', 'Ruolo', 'Sede']
-        : ['Cognome', 'Nome', 'Codice Fiscale', 'Email', 'Telefono'];
+        ? [t('csvCognome'), t('csvNome'), t('csvEmail'), t('csvRuolo'), t('csvSede')]
+        : [t('csvCognome'), t('csvNome'), t('csvCodiceFiscale'), t('csvEmail'), t('csvTelefono')];
     const lines = rows.map((s) => {
       const cognome = s.cognome ?? s.last_name ?? '';
       const nome = s.nome ?? s.first_name ?? '';
@@ -279,14 +281,14 @@ function AdminStudentsInner() {
     a.download = `anagrafica-${viewType}-${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     URL.revokeObjectURL(url);
-    showToastMsg(`✅ Esportati ${rows.length} record in CSV`);
+    showToastMsg(`✅ ${t('toastExport', { n: rows.length })}`);
   };
 
   if (isLoading) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center min-h-[60vh] gap-4">
         <div className="w-10 h-10 border-4 border-kidville-green/30 border-t-kidville-green rounded-full animate-spin" />
-        <p className="font-maven text-kidville-muted">Caricamento anagrafica...</p>
+        <p className="font-maven text-kidville-muted">{t('caricamentoAnagrafica')}</p>
       </div>
     );
   }
@@ -295,21 +297,21 @@ function AdminStudentsInner() {
     <CockpitPage max={1152} className="flex flex-col">
       <PageHeader
         icon={Users}
-        eyebrow="Anagrafica"
-        title="Anagrafica Generale"
-        subtitle="Gestione studenti, genitori e personale"
+        eyebrow={t('listEyebrow')}
+        title={t('listTitolo')}
+        subtitle={t('listSottotitolo')}
         actions={
           <>
             <button
               onClick={handleExport}
               className="inline-flex h-[46px] items-center gap-2 rounded-pill border border-kidville-line bg-kidville-white px-5 font-barlow text-sm font-extrabold uppercase tracking-[0.03em] text-kidville-green transition-colors hover:border-kidville-green"
             >
-              <FileDown size={16} /> Esporta
+              <FileDown size={16} /> {t('azioneEsporta')}
             </button>
             {/* Lo staff non si crea da qui (gestione RBAC dedicata): niente "Nuovo". */}
             {viewType !== 'staff' && (
               <button onClick={() => (window.location.href = '/admin/students/new')} className={HEADER_BTN}>
-                <UserPlus size={18} /> Nuovo {viewType === 'child' ? 'Alunno' : 'Genitore'}
+                <UserPlus size={18} /> {viewType === 'child' ? t('azioneNuovoAlunno') : t('azioneNuovoGenitore')}
               </button>
             )}
           </>
@@ -324,10 +326,10 @@ function AdminStudentsInner() {
           setViewType(id as 'child' | 'adult' | 'sections' | 'staff');
         }}
         options={[
-          { id: 'child', label: 'Alunni', icon: Users },
-          { id: 'adult', label: 'Genitori', icon: Users },
-          { id: 'sections', label: 'Sezioni', icon: GraduationCap },
-          { id: 'staff', label: 'Staff', icon: Briefcase },
+          { id: 'child', label: t('tabAlunni'), icon: Users },
+          { id: 'adult', label: t('tabGenitori'), icon: Users },
+          { id: 'sections', label: t('tabSezioni'), icon: GraduationCap },
+          { id: 'staff', label: t('tabStaff'), icon: Briefcase },
         ]}
       />
 
@@ -341,7 +343,7 @@ function AdminStudentsInner() {
             type="text"
             // Lo staff non ha codice fiscale in anagrafica: placeholder coerente
             // (il filtro resta lo stesso, cerca su nome/cognome).
-            placeholder={viewType === 'staff' ? 'Cerca per nome o cognome...' : 'Cerca per nome, cognome o codice fiscale...'}
+            placeholder={viewType === 'staff' ? t('cercaStaff') : t('cercaDefault')}
             value={searchTerm}
             onChange={e => setSearchTerm(e.target.value)}
             className="w-full pl-10 pr-4 py-2.5 border-2 border-kidville-line rounded-input font-maven text-sm transition-colors focus:outline-none focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15"
@@ -358,11 +360,11 @@ function AdminStudentsInner() {
                 onChange={e => setFilterClass(e.target.value)}
                 className="flex-1 md:w-40 border-2 border-kidville-line rounded-input px-3 py-2 font-maven text-sm text-kidville-ink/70 bg-kidville-white focus:outline-none focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15"
               >
-                <option value="all">Tutte le classi</option>
+                <option value="all">{t('filtroTutteClassi')}</option>
                 {availableSections.map(s => (
                   <option key={s.id} value={s.name}>{s.name}</option>
                 ))}
-                <option value="">Non assegnata</option>
+                <option value="">{t('filtroNonAssegnata')}</option>
               </select>
             </div>
 
@@ -372,10 +374,10 @@ function AdminStudentsInner() {
               onChange={e => setFilterStatus(e.target.value)}
               className="w-full md:w-40 border-2 border-kidville-line rounded-input px-3 py-2 font-maven text-sm text-kidville-ink/70 bg-kidville-white focus:outline-none focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15"
             >
-              <option value="all">Tutti gli stati</option>
-              <option value="iscritto">Iscritto</option>
-              <option value="ritirato">Ritirato</option>
-              <option value="sospeso">Sospeso</option>
+              <option value="all">{t('filtroTuttiStati')}</option>
+              <option value="iscritto">{t('statoIscritto')}</option>
+              <option value="ritirato">{t('statoRitirato')}</option>
+              <option value="sospeso">{t('statoSospeso')}</option>
             </select>
           </>
         )}
@@ -390,10 +392,10 @@ function AdminStudentsInner() {
           {/* Statistiche rapide — solo per alunni */}
           {viewType === 'child' && (
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-              <StatCard icon={Users} label="Totale (tutti gli stati)" value={students.length} tone="green" />
-              <StatCard icon={CheckCircle2} label="Iscritti" value={students.filter((s) => s.stato === 'iscritto').length} tone="success" />
-              <StatCard icon={GraduationCap} label="Con BES" value={students.filter((s) => s.bes).length} tone="warn" />
-              <StatCard icon={AlertTriangle} label="Con Allergie" value={students.filter((s) => s.note_mediche).length} tone="error" />
+              <StatCard icon={Users} label={t('statTotale')} value={students.length} tone="green" />
+              <StatCard icon={CheckCircle2} label={t('statIscritti')} value={students.filter((s) => s.stato === 'iscritto').length} tone="success" />
+              <StatCard icon={GraduationCap} label={t('statConBes')} value={students.filter((s) => s.bes).length} tone="warn" />
+              <StatCard icon={AlertTriangle} label={t('statConAllergie')} value={students.filter((s) => s.note_mediche).length} tone="error" />
             </div>
           )}
 
@@ -450,11 +452,12 @@ function AdminStudentsInner() {
 }
 
 export default function AdminStudentsPage() {
+  const t = useTranslations('adminStudents');
   return (
     <Suspense fallback={
       <div className="flex-1 flex flex-col items-center justify-center min-h-[60vh] gap-4">
         <div className="w-10 h-10 border-4 border-kidville-green/30 border-t-kidville-green rounded-full animate-spin" />
-        <p className="font-maven text-kidville-muted">Caricamento anagrafica...</p>
+        <p className="font-maven text-kidville-muted">{t('caricamentoAnagrafica')}</p>
       </div>
     }>
       <AdminStudentsInner />

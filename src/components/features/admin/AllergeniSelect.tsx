@@ -1,17 +1,19 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import { ALLERGENI } from '@/lib/mensa/allergeni';
 
 // Selettore degli allergeni strutturati (14 allergeni UE) di un alunno.
 // Usato in anagrafica accanto al testo libero `allergies`. Il valore è una
 // lista di chiavi canoniche, confrontata col menu mensa per gli alert.
 export function AllergeniSelect({ value, onChange }: { value: string[]; onChange: (next: string[]) => void }) {
+  const t = useTranslations('adminStudents');
   const toggle = (k: string) => {
     onChange(value.includes(k) ? value.filter(x => x !== k) : [...value, k]);
   };
   return (
     <div>
-      <p className="font-maven text-xs text-kidville-muted mb-1.5">Allergeni (per match automatico col menu mensa)</p>
+      <p className="font-maven text-xs text-kidville-muted mb-1.5">{t('allergSelectLabel')}</p>
       <div className="flex flex-wrap gap-1.5">
         {ALLERGENI.map(a => {
           const on = value.includes(a.key);

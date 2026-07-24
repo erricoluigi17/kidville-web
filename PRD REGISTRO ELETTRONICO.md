@@ -64,7 +64,7 @@
 
 ---
 
-## 🗓️ Changelog — Fase 3 i18n (in corso): fondazione next-intl + login + aree GENITORE e DOCENTE tradotte (IT/EN) 2026-07-24 (branch `feat/native-fase2`)
+## 🗓️ Changelog — Fase 3 i18n (in corso): fondazione next-intl + login + aree GENITORE, DOCENTE e ADMIN tradotte (IT/EN) 2026-07-24 (branch `feat/native-fase2`)
 
 Terza fase: internazionalizzazione (inglese). **Fondazione** posata e **pilota** tradotto; la migrazione a tappeto delle restanti pagine/componenti procede a lotti.
 
@@ -75,9 +75,10 @@ Terza fase: internazionalizzazione (inglese). **Fondazione** posata e **pilota**
 - **Test**: mock globale di `next-intl` in `test/setup.ts` (risolve le chiavi sui testi italiani reali) → i test che renderizzano componenti tradotti passano senza wrapper.
 - **Cataloghi per-namespace**: `messages/<locale>/<ns>.json` (un file per area), assemblati in `src/i18n/request.ts` — abilita la migrazione in parallelo (più agenti) senza conflitti sui file dei messaggi.
 - **Tutta l'area GENITORE tradotta** (7 namespace, ~374 chiavi): `nav` (BottomNav + ChildSwitcher), `home` (dashboard + card), `avvisi` (page + AvvisoCard/DetailsContent/Drawer), `diario`, `mensa`, `pagamenti` (summary/storico/causale/push), `profilo`.
-- **Tutta l'area DOCENTE tradotta** (7 namespace, ~874 chiavi): `teacherNav` (shell + home + agenda), `teacherDiario` (diario 0-6), `teacherPresenze` (presenze/registro/checkout, giorni via `Intl`), `teacherComunicazioni` (avvisi + chat + news), `teacherPrimaria` (10 pagine del registro primaria), `teacherTasks` (incarichi), `teacherServizi` (galleria/armadietto/mensa/modulistica). Cataloghi totali: **1248 chiavi/lingua**, parità IT/EN verificata. Gate verde: eslint 0 · tsc 0 · vitest 345 file / 2825 test · build ok.
+- **Tutta l'area DOCENTE tradotta** (7 namespace, ~874 chiavi): `teacherNav`, `teacherDiario`, `teacherPresenze` (giorni via `Intl`), `teacherComunicazioni`, `teacherPrimaria` (10 pagine), `teacherTasks`, `teacherServizi`.
+- **Tutta l'area ADMIN/SEGRETERIA tradotta** (9 namespace, ~2673 chiavi): `adminNav` (shell+dashboard), `adminStudents` (anagrafiche), `adminContabilita` (pagamenti/riconciliazione/cassa/merch — 835 chiavi), `adminMensa`, `adminModulistica` (moduli + form builder), `adminComunicazioni` (avvisi+news+messaggi), `adminPrimaria`, `adminSettings` (impostazioni+scuole+SIDI), `adminAltro` (GDPR+protocolli+iscrizioni). **Catalogo totale: 3921 chiavi/lingua su 25 namespace, parità IT/EN verificata.** Gate verde: eslint 0 · tsc 0 · vitest 345 file / 2825 test · build ok. Aggiornato il lock `settings-sistema-design` per accettare l'eyebrow via i18n.
 
-> ⚠️ **In corso.** Tradotte: **login + area genitore + area docente**. Resta da migrare **admin/segreteria**, i **componenti condivisi** (AppBar, shell, `ui/` come «Esci»/contrasto, lib: ruoli, config eventi diario `eventConfig`, allergeni, umore) e la **localizzazione dei formati data/ora** (molte schermate già locale-aware via `useLocale()`; restano date lunghe `it-IT` in alcuni punti). Non ancora in produzione.
+> ⚠️ **In corso.** Tradotte le **3 aree utente complete** (genitore + docente + admin/segreteria) + login. Resta: **componenti e config condivisi** (AppBar, shell, `ui/` «Esci»/Alto Contrasto, `admin-nav-config.ts`, `sede-context`, e le lib di etichette: ruoli, allergeni, eventi diario `eventConfig`, umore, tipi notifica, stati pagamento/aging, `MESI_IT`) + **localizzazione formati data/ora** (molte schermate già locale-aware via `Intl`/`useLocale`). Non ancora in produzione.
 
 ## 🗓️ Changelog — Fase 2 native: offline (avvisi·diario·menu) + fotocamera nativa + login biometrico + badge/condivisione 2026-07-24 (branch `feat/native-fase2`)
 

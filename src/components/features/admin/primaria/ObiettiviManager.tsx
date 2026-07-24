@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { Plus, Trash2 } from 'lucide-react';
 
 interface Obiettivo {
@@ -12,14 +13,16 @@ interface Obiettivo {
   attivo: boolean;
 }
 
+// Primo elemento = codice materia (valore persistito/confrontato); secondo = chiave i18n dell'etichetta.
 const MATERIE_STD = [
-  ['italiano', 'Italiano'], ['matematica', 'Matematica'], ['storia', 'Storia'],
-  ['geografia', 'Geografia'], ['scienze', 'Scienze'], ['inglese', 'Inglese'],
-  ['arte', 'Arte e Immagine'], ['musica', 'Musica'], ['ed_fisica', 'Educazione Fisica'],
-  ['tecnologia', 'Tecnologia'], ['religione', 'Religione/Alternativa'], ['ed_civica', 'Educazione Civica'],
+  ['italiano', 'obiettiviMateriaItaliano'], ['matematica', 'obiettiviMateriaMatematica'], ['storia', 'obiettiviMateriaStoria'],
+  ['geografia', 'obiettiviMateriaGeografia'], ['scienze', 'obiettiviMateriaScienze'], ['inglese', 'obiettiviMateriaInglese'],
+  ['arte', 'obiettiviMateriaArte'], ['musica', 'obiettiviMateriaMusica'], ['ed_fisica', 'obiettiviMateriaEdFisica'],
+  ['tecnologia', 'obiettiviMateriaTecnologia'], ['religione', 'obiettiviMateriaReligione'], ['ed_civica', 'obiettiviMateriaEdCivica'],
 ] as const;
 
 export function ObiettiviManager({ scuolaId, userId }: { scuolaId: string; userId: string }) {
+  const t = useTranslations('adminPrimaria');
   const [materiaCodice, setMateriaCodice] = useState('italiano');
   const [livello, setLivello] = useState(1);
   const [obiettivi, setObiettivi] = useState<Obiettivo[]>([]);
@@ -53,7 +56,7 @@ export function ObiettiviManager({ scuolaId, userId }: { scuolaId: string; userI
       body: JSON.stringify({ scuolaId, materiaCodice, livello, codice: nuovo.codice || null, descrizione: nuovo.descrizione }),
     });
     const d = await r.json();
-    if (!r.ok) setError(d.error || 'Errore');
+    if (!r.ok) setError(d.error || t('comuneErrore'));
     else {
       setNuovo({ codice: '', descrizione: '' });
       load();
@@ -78,8 +81,8 @@ export function ObiettiviManager({ scuolaId, userId }: { scuolaId: string; userI
           onChange={(e) => setMateriaCodice(e.target.value)}
           className="font-maven rounded-pill border border-kidville-line bg-white px-3 py-1.5 text-sm"
         >
-          {MATERIE_STD.map(([c, l]) => (
-            <option key={c} value={c}>{l}</option>
+          {MATERIE_STD.map(([c, labelKey]) => (
+            <option key={c} value={c}>{t(labelKey)}</option>
           ))}
         </select>
         <select
@@ -88,7 +91,7 @@ export function ObiettiviManager({ scuolaId, userId }: { scuolaId: string; userI
           className="font-maven rounded-pill border border-kidville-line bg-white px-3 py-1.5 text-sm"
         >
           {[1, 2, 3, 4, 5].map((l) => (
-            <option key={l} value={l}>{l}ª</option>
+            <option key={l} value={l}>{t('comuneLivelloOrdinale', { livello: l })}</option>
           ))}
         </select>
       </div>
@@ -105,33 +108,33 @@ export function ObiettiviManager({ scuolaId, userId }: { scuolaId: string; userI
             </button>
           </li>
         ))}
-        {obiettivi.length === 0 && <li className="py-3 font-maven text-kidville-muted text-sm">Nessun obiettivo per questa materia/livello.</li>}
+        {obiettivi.length === 0 && <li className="py-3 font-maven text-kidville-muted text-sm">{t('obiettiviNessuno')}</li>}
       </ul>
 
       <div className="flex flex-wrap items-end gap-2 border-t border-kidville-line pt-4">
         <div>
-          <label className="block font-maven text-xs text-kidville-muted">Codice (opz.)</label>
+          <label className="block font-maven text-xs text-kidville-muted">{t('obiettiviCodiceOpz')}</label>
           <input
             value={nuovo.codice}
             onChange={(e) => setNuovo((s) => ({ ...s, codice: e.target.value }))}
             className="font-maven w-24 rounded-pill border border-kidville-line px-3 py-1.5 text-sm"
-            placeholder="ITA-1"
+            placeholder={t('obiettiviPlaceholderCodice')}
           />
         </div>
         <div className="flex-1 min-w-[200px]">
-          <label className="block font-maven text-xs text-kidville-muted">Descrizione obiettivo</label>
+          <label className="block font-maven text-xs text-kidville-muted">{t('obiettiviDescrizione')}</label>
           <input
             value={nuovo.descrizione}
             onChange={(e) => setNuovo((s) => ({ ...s, descrizione: e.target.value }))}
             className="font-maven w-full rounded-pill border border-kidville-line px-3 py-1.5 text-sm"
-            placeholder="Es. Legge e comprende testi di vario tipo"
+            placeholder={t('obiettiviPlaceholderDescrizione')}
           />
         </div>
         <button
           onClick={add}
           className="font-maven inline-flex items-center gap-1.5 rounded-pill bg-kidville-green px-4 py-1.5 text-sm text-kidville-yellow"
         >
-          <Plus size={14} /> Aggiungi
+          <Plus size={14} /> {t('comuneAggiungi')}
         </button>
       </div>
     </div>

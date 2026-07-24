@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { useTranslations } from 'next-intl';
 import { CalendarRange, Save, Plus, Trash2, CalendarOff, UtensilsCrossed } from 'lucide-react';
 import { DateField } from '@/components/ui/DateField';
 import { SaveCheck } from '@/components/ui/SaveConfirmation';
@@ -10,11 +11,13 @@ import { SezioniMultiSelect } from '@/components/features/admin/SezioniMultiSele
 interface Props { userId: string; scuolaId: string }
 interface MenuConfig { id: string; nome: string; ordine: number }
 const hdr = (u: string) => ({ 'Content-Type': 'application/json', 'x-user-id': u });
+// `tk` è la chiave i18n (namespace adminMensa) risolta a runtime; `n`/`k` restano
+// i valori-dato usati come chiave nelle strutture (settimana-giorno, portata).
 const GIORNI_TUTTI = [
-  { n: 1, l: 'Lunedì' }, { n: 2, l: 'Martedì' }, { n: 3, l: 'Mercoledì' },
-  { n: 4, l: 'Giovedì' }, { n: 5, l: 'Venerdì' }, { n: 6, l: 'Sabato' }, { n: 7, l: 'Domenica' },
+  { n: 1, tk: 'giornoLunedi' }, { n: 2, tk: 'giornoMartedi' }, { n: 3, tk: 'giornoMercoledi' },
+  { n: 4, tk: 'giornoGiovedi' }, { n: 5, tk: 'giornoVenerdi' }, { n: 6, tk: 'giornoSabato' }, { n: 7, tk: 'giornoDomenica' },
 ];
-const PORTATE = [{ k: 'primo', l: 'Primo' }, { k: 'secondo', l: 'Secondo' }, { k: 'contorno', l: 'Contorno' }, { k: 'frutta', l: 'Frutta' }] as const;
+const PORTATE = [{ k: 'primo', tk: 'portataPrimo' }, { k: 'secondo', tk: 'portataSecondo' }, { k: 'contorno', tk: 'portataContorno' }, { k: 'frutta', tk: 'portataFrutta' }] as const;
 type PortataKey = typeof PORTATE[number]['k'];
 
 interface Portate { primo?: string; secondo?: string; contorno?: string; frutta?: string }
@@ -30,12 +33,13 @@ function PortataEditor({
   nome: string; ingredienti: string; allergeni: string[];
   onNome: (v: string) => void; onIngredienti: (v: string) => void; onToggleAllergene: (k: string) => void;
 }) {
+  const t = useTranslations('adminMensa');
   return (
     <div className="rounded-xl border border-kidville-line p-3 bg-white">
       <p className="font-barlow text-[11px] uppercase text-kidville-muted mb-1.5">{label}</p>
-      <input value={nome} onChange={e => onNome(e.target.value)} placeholder="Nome piatto"
+      <input value={nome} onChange={e => onNome(e.target.value)} placeholder={t('placeholderNomePiatto')}
         className="w-full border-2 border-kidville-line rounded-lg px-2 py-1 font-maven text-xs text-kidville-green focus:border-kidville-green focus:outline-none mb-1.5" />
-      <input value={ingredienti} onChange={e => onIngredienti(e.target.value)} placeholder="Ingredienti…"
+      <input value={ingredienti} onChange={e => onIngredienti(e.target.value)} placeholder={t('placeholderIngredienti')}
         className="w-full border-2 border-kidville-line rounded-lg px-2 py-1 font-maven text-[11px] text-kidville-ink focus:border-kidville-green focus:outline-none mb-2" />
       <div className="flex flex-wrap gap-1">
         {ALLERGENI.map(a => {
@@ -54,6 +58,7 @@ function PortataEditor({
 }
 
 export function MenuBuilder({ userId, scuolaId }: Props) {
+  const t = useTranslations('adminMensa');
   const [menus, setMenus] = useState<MenuConfig[]>([]);
   const [selectedMenuId, setSelectedMenuId] = useState<string | null>(null);
 
@@ -207,14 +212,14 @@ export function MenuBuilder({ userId, scuolaId }: Props) {
         <div>
           <div className="flex items-center gap-2 mb-1">
             <UtensilsCrossed size={14} className="text-kidville-green" />
-            <span className="font-barlow font-bold text-kidville-green uppercase text-sm">Menu</span>
+            <span className="font-barlow font-bold text-kidville-green uppercase text-sm">{t('menuLabel')}</span>
           </div>
           <div className="flex flex-wrap gap-2">
             <button
               onClick={() => setSelectedMenuId(null)}
               className={`px-3 py-1.5 rounded-full font-maven text-xs font-bold border-2 ${!selectedMenuId ? 'bg-kidville-green text-white border-kidville-green' : 'bg-white text-kidville-muted border-kidville-line'}`}
             >
-              Menu unico (legacy)
+              {t('menuUnicoLegacy')}
             </button>
             {menus.map(m => (
               <button
@@ -229,18 +234,18 @@ export function MenuBuilder({ userId, scuolaId }: Props) {
           {selectedMenuId && (
             <div className="mt-3 rounded-2xl bg-kidville-cream/40 p-3">
               <p className="font-barlow font-bold text-kidville-green uppercase text-xs mb-2 flex items-center gap-1">
-                <UtensilsCrossed size={12} /> Sezioni assegnate a «{menus.find(m => m.id === selectedMenuId)?.nome}»
+                <UtensilsCrossed size={12} /> {t('sezioniAssegnateA', { nome: menus.find(m => m.id === selectedMenuId)?.nome ?? '' })}
               </p>
               <SezioniMultiSelect
                 value={assegnaSezioni}
                 onChange={setAssegnaSezioni}
                 withLivelloFilter
-                emptyHint="Nessuna sezione: creale in Anagrafica → Sezioni."
+                emptyHint={t('sezioniEmptyHint')}
               />
               <button onClick={salvaSezioni} className="mt-3 px-3 py-1.5 rounded-full bg-kidville-green text-white font-maven font-bold text-xs flex items-center gap-1">
-                <Save size={13} /> Salva sezioni
+                <Save size={13} /> {t('salvaSezioni')}
               </button>
-              {assegnaSaved && <span className="ml-2 font-maven text-xs text-kidville-success inline-flex items-center gap-1"><SaveCheck size={13} /> Assegnazione salvata.</span>}
+              {assegnaSaved && <span className="ml-2 font-maven text-xs text-kidville-success inline-flex items-center gap-1"><SaveCheck size={13} /> {t('assegnazioneSalvata')}</span>}
             </div>
           )}
         </div>
@@ -249,9 +254,9 @@ export function MenuBuilder({ userId, scuolaId }: Props) {
       {/* ── Rotazione ── */}
       <div>
         <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-          <h3 className="font-barlow font-bold text-kidville-green uppercase text-sm flex items-center gap-2"><CalendarRange size={14} /> Menu a rotazione</h3>
+          <h3 className="font-barlow font-bold text-kidville-green uppercase text-sm flex items-center gap-2"><CalendarRange size={14} /> {t('menuRotazione')}</h3>
           <div className="flex items-center gap-1.5">
-            <span className="font-maven text-xs text-kidville-muted">Settimana</span>
+            <span className="font-maven text-xs text-kidville-muted">{t('settimana')}</span>
             {Array.from({ length: settimaneTot }, (_, i) => i + 1).map(n => (
               <button key={n} onClick={() => setSettimana(n)}
                 className={`w-8 h-8 rounded-full font-maven text-sm font-bold ${settimana === n ? 'bg-kidville-green text-white' : 'bg-white border border-kidville-line text-kidville-muted'}`}>
@@ -266,12 +271,12 @@ export function MenuBuilder({ userId, scuolaId }: Props) {
             const key = `${settimana}-${g.n}`;
             return (
               <div key={g.n} className="rounded-2xl bg-kidville-cream/40 p-3">
-                <p className="font-barlow font-bold text-kidville-green text-sm mb-2">{g.l}</p>
+                <p className="font-barlow font-bold text-kidville-green text-sm mb-2">{t(g.tk)}</p>
                 <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-2">
                   {PORTATE.map(p => (
                     <PortataEditor
                       key={p.k}
-                      label={p.l}
+                      label={t(p.tk)}
                       nome={rot[key]?.[p.k] ?? ''}
                       ingredienti={ing[key]?.[p.k] ?? ''}
                       allergeni={alg[key]?.[p.k] ?? []}
@@ -287,27 +292,27 @@ export function MenuBuilder({ userId, scuolaId }: Props) {
         </div>
 
         <button onClick={salvaRotazione} className="mt-3 px-4 py-2 rounded-full bg-kidville-green text-white font-maven font-bold text-sm flex items-center gap-1">
-          <Save size={15} /> Salva settimana {settimana}
+          <Save size={15} /> {t('salvaSettimana', { n: settimana })}
         </button>
-        {done && <span className="ml-2 font-maven text-xs text-kidville-success inline-flex items-center gap-1"><SaveCheck size={14} /> Salvato.</span>}
+        {done && <span className="ml-2 font-maven text-xs text-kidville-success inline-flex items-center gap-1"><SaveCheck size={14} /> {t('salvato')}</span>}
       </div>
 
       {/* ── Override per data ── */}
       <div>
-        <h3 className="font-barlow font-bold text-kidville-green uppercase text-sm mb-3 flex items-center gap-2"><CalendarOff size={14} /> Eccezioni per data (chiusure / menu speciali)</h3>
+        <h3 className="font-barlow font-bold text-kidville-green uppercase text-sm mb-3 flex items-center gap-2"><CalendarOff size={14} /> {t('eccezioniPerData')}</h3>
 
         <div className="bg-kidville-cream/50 rounded-xl p-3 mb-3 space-y-3">
           <div className="flex flex-wrap items-end gap-2">
             <div>
-              <label className="font-maven text-[11px] text-kidville-muted block mb-0.5">Data</label>
+              <label className="font-maven text-[11px] text-kidville-muted block mb-0.5">{t('dataLabel')}</label>
               <DateField value={ovData} onChange={setOvData}
                 className="border-2 border-kidville-line rounded-lg px-2 py-1 font-maven text-xs text-kidville-green" />
             </div>
             <label className="flex items-center gap-1.5 font-maven text-xs text-kidville-green py-1.5">
-              <input type="checkbox" checked={ovChiuso} onChange={e => setOvChiuso(e.target.checked)} /> Mensa chiusa
+              <input type="checkbox" checked={ovChiuso} onChange={e => setOvChiuso(e.target.checked)} /> {t('mensaChiusa')}
             </label>
             <button onClick={aggiungiOverride} className="px-3 py-1.5 rounded-full bg-kidville-green text-white font-maven font-bold text-xs flex items-center gap-1 ml-auto">
-              <Plus size={13} /> Aggiungi
+              <Plus size={13} /> {t('aggiungi')}
             </button>
           </div>
           {!ovChiuso && (
@@ -315,7 +320,7 @@ export function MenuBuilder({ userId, scuolaId }: Props) {
               {PORTATE.map(p => (
                 <PortataEditor
                   key={p.k}
-                  label={p.l}
+                  label={t(p.tk)}
                   nome={ovPortate[p.k] ?? ''}
                   ingredienti={ovIng[p.k] ?? ''}
                   allergeni={ovAlg[p.k] ?? []}
@@ -329,12 +334,12 @@ export function MenuBuilder({ userId, scuolaId }: Props) {
         </div>
 
         <div className="space-y-1.5">
-          {override.length === 0 && <p className="font-maven text-sm text-kidville-muted">Nessuna eccezione impostata.</p>}
+          {override.length === 0 && <p className="font-maven text-sm text-kidville-muted">{t('nessunaEccezione')}</p>}
           {override.map(o => (
             <div key={o.id} className="flex items-center justify-between px-3 py-2 rounded-xl bg-white border border-kidville-line">
               <div className="font-maven text-sm text-kidville-green">
                 <b>{new Date(`${o.data}T00:00:00Z`).toLocaleDateString('it-IT', { weekday: 'short', day: 'numeric', month: 'short' })}</b>
-                {o.chiuso ? <span className="ml-2 text-kidville-error">Chiusa</span> : (
+                {o.chiuso ? <span className="ml-2 text-kidville-error">{t('chiusa')}</span> : (
                   <span className="ml-2 text-kidville-muted text-xs">{[o.portate?.primo, o.portate?.secondo, o.portate?.contorno, o.portate?.frutta].filter(Boolean).join(' · ')}</span>
                 )}
               </div>

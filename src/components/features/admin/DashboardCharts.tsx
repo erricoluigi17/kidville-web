@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import {
   ResponsiveContainer,
   AreaChart,
@@ -50,6 +51,7 @@ interface ClassePoint {
 
 /** Andamento incassi ultimi 6 mesi — area che si disegna progressivamente. */
 export function TrendIncassiChart({ data }: { data: TrendPoint[] }) {
+  const t = useTranslations('adminNav');
   // Asse Y a tick uniformi: passo adattivo (~5 tick) e formato it-IT coerente,
   // così spariscono i tick disuniformi (450/900) e il formato misto 'k'/grezzo.
   const maxVal = Math.max(0, ...data.map((d) => d.incassato));
@@ -78,7 +80,7 @@ export function TrendIncassiChart({ data }: { data: TrendPoint[] }) {
           width={44}
         />
         <Tooltip
-          formatter={(v) => [euroFmt.format(Number(v)), 'Incassato']}
+          formatter={(v) => [euroFmt.format(Number(v)), t('chartIncassato')]}
           contentStyle={{ borderRadius: 12, border: `1px solid ${CHART_TOOLTIP_BORDER}`, fontFamily: 'inherit' }}
         />
         <Area
@@ -100,6 +102,7 @@ export function TrendIncassiChart({ data }: { data: TrendPoint[] }) {
 
 /** Distribuzione studenti per classe/sezione — barre con crescita animata. */
 export function StudentiPerClasseChart({ data }: { data: ClassePoint[] }) {
+  const t = useTranslations('adminNav');
   return (
     <ResponsiveContainer width="100%" height={240}>
       <BarChart data={data} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
@@ -108,7 +111,7 @@ export function StudentiPerClasseChart({ data }: { data: ClassePoint[] }) {
         <YAxis allowDecimals={false} tickLine={false} axisLine={false} fontSize={12} stroke={CHART_AXIS} width={28} />
         <Tooltip
           cursor={{ fill: 'rgba(0,106,95,0.05)' }}
-          formatter={(v) => [Number(v), 'Alunni']}
+          formatter={(v) => [Number(v), t('chartAlunni')]}
           contentStyle={{ borderRadius: 12, border: `1px solid ${CHART_TOOLTIP_BORDER}`, fontFamily: 'inherit' }}
         />
         <Bar dataKey="count" radius={[8, 8, 0, 0]} isAnimationActive animationDuration={1200} animationEasing="ease-out">

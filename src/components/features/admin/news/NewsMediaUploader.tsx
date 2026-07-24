@@ -10,6 +10,7 @@
 
 import { useRef, useState } from 'react';
 import { Upload, ShieldQuestion } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 import { Modal } from '@/components/ui/Modal';
 import { logClient } from '@/lib/logging/client';
 import { useImagePicker } from '@/lib/native/use-image-picker';
@@ -35,9 +36,10 @@ export function NewsMediaUploader({
   consensoFoto,
   onConsensoFoto,
   accept = 'image/jpeg,image/png,image/gif,image/webp',
-  label = 'Carica immagine',
+  label,
   disabled = false,
 }: Props) {
+  const t = useTranslations('adminComunicazioni');
   const inputRef = useRef<HTMLInputElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [busy, setBusy] = useState(false);
@@ -61,16 +63,16 @@ export function NewsMediaUploader({
         const j = (await res.json().catch(() => null)) as { fileUrl?: string; url?: string } | null;
         const url = j?.fileUrl ?? j?.url ?? null;
         if (url) onUploaded(url);
-        else setErrore('Caricamento riuscito ma URL mancante nella risposta.');
+        else setErrore(t('uploaderUrlMancante'));
       } else if (res.status === 404) {
-        setErrore('Caricamento non ancora disponibile su questo ambiente.');
+        setErrore(t('uploaderNonDisponibile'));
       } else {
         const j = (await res.json().catch(() => null)) as { error?: string } | null;
-        setErrore(j?.error ?? 'Impossibile caricare il file. Riprova.');
+        setErrore(j?.error ?? t('uploaderImpossibileCaricare'));
       }
     } catch (err) {
       logClient({ livello: 'error', evento: 'fetch', messaggio: `POST news/upload — ${testoErrore(err)}`, route: '/admin/news', stato: 0 });
-      setErrore('Errore di rete: riprova.');
+      setErrore(t('erroreReteRiprova'));
     } finally {
       setBusy(false);
       if (inputRef.current) inputRef.current.value = '';
@@ -126,7 +128,7 @@ export function NewsMediaUploader({
         disabled={disabled || busy}
         className="inline-flex items-center gap-2 rounded-pill border-[1.5px] border-dashed border-kidville-line bg-kidville-white px-4 py-2.5 font-maven text-sm font-bold text-kidville-green transition-colors hover:border-kidville-green disabled:opacity-50"
       >
-        <Upload size={15} strokeWidth={2} /> {busy ? 'Caricamento…' : label}
+        <Upload size={15} strokeWidth={2} /> {busy ? t('caricamento') : (label ?? t('uploaderCaricaImmagine'))}
       </button>
 
       {errore && <p role="alert" className="mt-2 font-maven text-xs text-kidville-error-strong">{errore}</p>}
@@ -134,7 +136,7 @@ export function NewsMediaUploader({
       <Modal
         open={pending !== null}
         onClose={annullaConsenso}
-        title="Consenso foto"
+        title={t('uploaderConsensoTitolo')}
         className={MODAL_CARD}
         style={{ boxShadow: MODAL_SHADOW }}
         returnFocusRef={triggerRef}
@@ -144,10 +146,9 @@ export function NewsMediaUploader({
             <ShieldQuestion size={18} strokeWidth={2} />
           </span>
           <div>
-            <h2 className="font-barlow text-base font-black uppercase tracking-wide text-kidville-green">Consenso foto</h2>
+            <h2 className="font-barlow text-base font-black uppercase tracking-wide text-kidville-green">{t('uploaderConsensoTitolo')}</h2>
             <p className="mt-1 font-maven text-sm text-kidville-sub">
-              Stai pubblicando una foto in cui potrebbero comparire bambini riconoscibili. La responsabilità
-              di avere il consenso è dell&apos;operatore che pubblica.
+              {t('uploaderConsensoTesto')}
             </p>
           </div>
         </div>
@@ -160,14 +161,14 @@ export function NewsMediaUploader({
             className="mt-0.5 h-4 w-4 shrink-0 rounded accent-kidville-green"
           />
           <span className="font-maven text-sm text-kidville-ink">
-            Confermo di avere il consenso foto per i bambini riconoscibili in questa immagine.
+            {t('uploaderConsensoCheckbox')}
           </span>
         </label>
 
         <div className="mt-5 flex justify-end gap-2">
-          <button type="button" onClick={annullaConsenso} className={BTN_SECONDARY}>Annulla</button>
+          <button type="button" onClick={annullaConsenso} className={BTN_SECONDARY}>{t('annulla')}</button>
           <button type="button" onClick={confermaConsenso} disabled={!spuntato} className={BTN_PRIMARY_AA}>
-            Conferma e carica
+            {t('uploaderConfermaCarica')}
           </button>
         </div>
       </Modal>

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { Package, Plus, Trash2 } from 'lucide-react';
 import { useAdminSettings } from './useAdminSettings';
 import { card, h3, hint, input, label } from './ui';
@@ -14,42 +15,43 @@ interface ArmadiettoConfig {
 }
 
 export function ArmadiettoSettings({ userId }: { userId: string }) {
+    const t = useTranslations('adminSettings');
     const { settings, save, saving, error } = useAdminSettings(userId);
     const [draft, setDraft] = useState<ArmadiettoConfig | null>(null);
     const [nuova, setNuova] = useState('');
     const [msg, setMsg] = useState('');
 
-    if (!settings) return <p className="font-maven text-sm text-kidville-muted">Caricamento…</p>;
+    if (!settings) return <p className="font-maven text-sm text-kidville-muted">{t('caricamento')}</p>;
     const cfg = draft ?? ((settings.armadietto_config ?? {}) as ArmadiettoConfig);
     const set = (patch: Partial<ArmadiettoConfig>) => { setMsg(''); setDraft({ ...cfg, ...patch }); };
     const extra = cfg.categorie_extra ?? [];
 
     const salva = async () => {
         const ok = await save({ armadietto_config: cfg });
-        setMsg(ok ? 'Salvato ✓' : '');
+        setMsg(ok ? t('salvato') : '');
     };
 
     return (
         <section className={card}>
-            <h3 className={h3}><Package size={16} /> Armadietto</h3>
+            <h3 className={h3}><Package size={16} /> {t('arTitolo')}</h3>
 
             <div className="grid grid-cols-2 gap-3">
                 <NumberField value={cfg.soglia_scorta_bassa ?? 2} min={0} max={20} onChange={(v) => set({ soglia_scorta_bassa: v })}>
-                    Soglia scorta bassa (pezzi)
+                    {t('arSogliaScortaBassa')}
                 </NumberField>
             </div>
 
             <div className="mt-4 space-y-2">
                 <CheckField checked={cfg.notifica_genitore_scorta_bassa ?? true} onChange={(v) => set({ notifica_genitore_scorta_bassa: v })}>
-                    <>Notifica al genitore quando la scorta è bassa <ComingSoonBadge /></>
+                    <>{t('arNotificaGenitore')} <ComingSoonBadge /></>
                 </CheckField>
                 <CheckField checked={cfg.richieste_materiale_abilitate ?? true} onChange={(v) => set({ richieste_materiale_abilitate: v })}>
-                    Richieste di materiale ai genitori abilitate
+                    {t('arRichiesteMateriale')}
                 </CheckField>
             </div>
 
             <div className="mt-4">
-                <label className={label}>Categorie materiale extra</label>
+                <label className={label}>{t('arCategorieExtra')}</label>
                 <div className="flex flex-wrap gap-2 mb-2">
                     {extra.map((c) => (
                         <span key={c} className="flex items-center gap-1 bg-kidville-cream rounded-full pl-3 pr-2 py-1 font-maven text-sm text-kidville-green capitalize">
@@ -59,18 +61,18 @@ export function ArmadiettoSettings({ userId }: { userId: string }) {
                     ))}
                 </div>
                 <div className="flex gap-2">
-                    <input value={nuova} onChange={(e) => setNuova(e.target.value)} placeholder="Nuova categoria…" className={`${input} flex-1`} />
+                    <input value={nuova} onChange={(e) => setNuova(e.target.value)} placeholder={t('nuovaCategoriaPlaceholder')} className={`${input} flex-1`} />
                     <button
                         onClick={() => { const v = nuova.trim().toLowerCase(); if (v && !extra.includes(v)) { set({ categorie_extra: [...extra, v] }); setNuova(''); } }}
                         className="px-3 py-2 rounded-full border-2 border-kidville-line font-maven text-sm text-kidville-muted flex items-center gap-1"
                     >
-                        <Plus size={14} /> Aggiungi
+                        <Plus size={14} /> {t('aggiungi')}
                     </button>
                 </div>
             </div>
 
             <SaveRow onSave={salva} saving={saving} msg={msg} error={error} />
-            <p className={hint}>Le categorie extra si aggiungono a quelle standard del materiale armadietto.</p>
+            <p className={hint}>{t('arHint')}</p>
         </section>
     );
 }

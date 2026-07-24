@@ -3,6 +3,7 @@
 import { Suspense, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { ArrowLeft, Paperclip } from 'lucide-react';
 import { CockpitPage } from '@/components/ui/cockpit';
 import { Avviso } from '@/components/features/avvisi/AvvisoCard';
@@ -17,6 +18,7 @@ interface ScuolaScoped { scuolaId: string; scuolaNome: string; sezioni: { id: st
 
 function AdminAvvisoDetailInner() {
     const params = useParams<{ id: string }>();
+    const t = useTranslations('adminComunicazioni');
     const { userId } = useSessionIdentity();
 
     const [avviso, setAvviso] = useState<Avviso | null>(null);
@@ -37,12 +39,12 @@ function AdminAvvisoDetailInner() {
             .then(({ ok, body }) => {
                 if (!active) return;
                 if (ok) setAvviso(body as Avviso);
-                else setErrore(body?.error ?? 'Avviso non trovato');
+                else setErrore(body?.error ?? t('avvisiDettaglioNonTrovato'));
             })
-            .catch(() => { if (active) setErrore('Errore di rete'); })
+            .catch(() => { if (active) setErrore(t('avvisiDettaglioErroreRete')); })
             .finally(() => { if (active) setLoading(false); });
         return () => { active = false; };
-    }, [userId, params?.id]);
+    }, [userId, params?.id, t]);
 
     useEffect(() => {
         if (!userId) return;
@@ -62,18 +64,18 @@ function AdminAvvisoDetailInner() {
                 href={backHref}
                 className="mb-4 inline-flex items-center gap-1.5 font-maven text-sm font-semibold text-kidville-green hover:underline"
             >
-                <ArrowLeft size={15} strokeWidth={2} /> Tutti gli avvisi
+                <ArrowLeft size={15} strokeWidth={2} /> {t('avvisiDettaglioTornaTutti')}
             </Link>
 
             {loading ? (
                 <div className="flex items-center gap-3 rounded-card bg-kidville-white p-6 shadow-sm">
                     <div className="h-6 w-6 animate-spin rounded-full border-[3px] border-kidville-green/20 border-t-kidville-green" />
-                    <p className="font-maven text-sm text-kidville-muted">Caricamento avviso…</p>
+                    <p className="font-maven text-sm text-kidville-muted">{t('avvisiDettaglioCaricamento')}</p>
                 </div>
             ) : errore || !avviso ? (
                 <div className="rounded-card bg-kidville-white p-10 text-center shadow-sm">
-                    <h2 className="font-barlow text-lg font-bold uppercase text-kidville-green">Avviso non disponibile</h2>
-                    <p className="font-maven mt-1 text-sm text-kidville-muted">{errore ?? 'Avviso non trovato.'}</p>
+                    <h2 className="font-barlow text-lg font-bold uppercase text-kidville-green">{t('avvisiDettaglioNonDisponibile')}</h2>
+                    <p className="font-maven mt-1 text-sm text-kidville-muted">{errore ?? t('avvisiDettaglioNonTrovato')}</p>
                 </div>
             ) : (
                 <>
@@ -81,16 +83,16 @@ function AdminAvvisoDetailInner() {
                     <div className="mb-5 rounded-card bg-kidville-white p-6 shadow-sm">
                         <div className="flex flex-wrap items-center gap-2">
                             <span className="rounded-pill bg-kidville-info-soft px-2.5 py-1 font-barlow text-[11px] font-bold uppercase tracking-wider text-kidville-info">
-                                {avviso.tipo === 'adesione' ? 'Adesione Interattiva' : 'Presa Visione'}
+                                {avviso.tipo === 'adesione' ? t('avvisiDettaglioTipoAdesione') : t('avvisiDettaglioTipoPresaVisione')}
                             </span>
                             <span className="font-maven text-xs text-kidville-muted">
                                 {avviso.author ? `${avviso.author.first_name} ${avviso.author.last_name}` : ''} · {new Date(avviso.created_at).toLocaleDateString('it-IT')}
-                                {avviso.scadenza ? ` · scadenza ${new Date(avviso.scadenza).toLocaleDateString('it-IT')}` : ''}
+                                {avviso.scadenza ? ` · ${t('avvisiDettaglioScadenzaEtichetta', { data: new Date(avviso.scadenza).toLocaleDateString('it-IT') })}` : ''}
                             </span>
                         </div>
                         <h1 className="font-barlow mt-2 text-3xl font-black uppercase leading-none text-kidville-green">{avviso.titolo}</h1>
                         <p className="font-maven mt-1 text-xs text-kidville-muted">
-                            Destinatari: {avviso.target_scope === 'globale' ? 'Tutto l\'istituto' : `Classi ${avviso.target_classes?.join(', ') || ''}`}
+                            {t('avvisiDettaglioDestinatari', { valore: avviso.target_scope === 'globale' ? t('avvisiTuttoIstituto') : t('avvisiDettaglioClassi', { classi: avviso.target_classes?.join(', ') || '' }) })}
                         </p>
                         <p className="font-maven mt-4 whitespace-pre-line text-sm leading-relaxed text-kidville-ink">{avviso.contenuto}</p>
                         {avviso.attachment_url && (
@@ -100,7 +102,7 @@ function AdminAvvisoDetailInner() {
                                 rel="noreferrer"
                                 className="mt-4 inline-flex items-center gap-1.5 rounded-pill bg-kidville-cream px-3 py-1.5 font-maven text-xs font-semibold text-kidville-green hover:bg-kidville-green-soft"
                             >
-                                <Paperclip size={13} strokeWidth={1.8} /> Allegato
+                                <Paperclip size={13} strokeWidth={1.8} /> {t('avvisiDettaglioAllegato')}
                             </a>
                         )}
                     </div>
@@ -115,9 +117,14 @@ function AdminAvvisoDetailInner() {
     );
 }
 
+function AvvisoDetailFallback() {
+    const t = useTranslations('adminComunicazioni');
+    return <div className="p-8 font-maven text-kidville-muted">{t('caricamento')}</div>;
+}
+
 export default function AdminAvvisoDetailPage() {
     return (
-        <Suspense fallback={<div className="p-8 font-maven text-kidville-muted">Caricamento…</div>}>
+        <Suspense fallback={<AvvisoDetailFallback />}>
             <AdminAvvisoDetailInner />
         </Suspense>
     );

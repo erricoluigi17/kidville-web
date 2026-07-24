@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useTranslations } from 'next-intl';
 import { Fingerprint, FileWarning, User, AlertTriangle, Loader2 } from 'lucide-react';
 import { fetchFiscalCode } from '@/lib/utils/fiscalCodeApi';
 import { z } from 'zod';
@@ -9,13 +10,15 @@ import { AllergeniSelect } from '@/components/features/admin/AllergeniSelect';
 import { useSediAttive } from '@/lib/context/sede-context';
 import { DateField } from '@/components/ui/DateField';
 
-const studentSchema = z.object({
-    nome: z.string().min(2, "Il nome deve avere almeno 2 caratteri"),
-    cognome: z.string().min(2, "Il cognome deve avere almeno 2 caratteri"),
+// I messaggi di validazione sono localizzati: lo schema è costruito con `t`
+// (la funzione di traduzione), così gli errori zod seguono la lingua attiva.
+const buildStudentSchema = (t: (k: string) => string) => z.object({
+    nome: z.string().min(2, t('valNomeMin')),
+    cognome: z.string().min(2, t('valCognomeMin')),
     sesso: z.enum(['M', 'F']),
-    data_nascita: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Data non valida"),
-    comune_nascita: z.string().min(2, "Comune non valido"),
-    provincia_nascita: z.string().length(2, "Sigla provincia deve essere 2 lettere"),
+    data_nascita: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, t('valDataNonValida')),
+    comune_nascita: z.string().min(2, t('valComuneNonValido')),
+    provincia_nascita: z.string().length(2, t('valProvincia2')),
     nazione_nascita: z.string().optional().or(z.literal('')),
     cittadinanza: z.string().optional().or(z.literal('')),
     codice_fiscale: z.string().optional().or(z.literal('')),
@@ -47,6 +50,7 @@ export interface StudentFormHandle {
 }
 
 export const ScrollableStudentForm = forwardRef<StudentFormHandle>(function ScrollableStudentForm(_props, ref) {
+    const t = useTranslations('adminStudents');
     const [formData, setFormData] = useState({
         nome: '',
         cognome: '',
@@ -163,7 +167,7 @@ export const ScrollableStudentForm = forwardRef<StudentFormHandle>(function Scro
         validate() {
             setErrors({});
             try {
-                const parsedData = studentSchema.parse(formData);
+                const parsedData = buildStudentSchema(t).parse(formData);
                 // scuola_id: sede scelta (default = sede attiva). Il server la valida
                 // via resolveScuolaScrittura contro le sedi accessibili.
                 return { ok: true as const, data: { ...parsedData, scuola_id: scuolaSelezionata } };
@@ -190,7 +194,7 @@ export const ScrollableStudentForm = forwardRef<StudentFormHandle>(function Scro
         <div className="text-kidville-green">
             <div className="flex items-center mb-8 border-b border-kidville-green/15 pb-4">
                 <h2 className="text-2xl font-bold text-kidville-green flex items-center gap-2">
-                    <User /> Compilazione Alunno
+                    <User /> {t('sFormCompilazioneAlunno')}
                 </h2>
             </div>
 
@@ -198,54 +202,54 @@ export const ScrollableStudentForm = forwardRef<StudentFormHandle>(function Scro
                 {/* Sezione 1: Dati Personali */}
                 <section>
                     <h3 className="text-lg font-bold text-kidville-green mb-4 flex items-center gap-2 border-l-4 border-kidville-green pl-3">
-                        Dati Personali
+                        {t('datiPersonali')}
                     </h3>
                     <div className="grid grid-cols-2 gap-6">
                         <div>
-                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Nome</label>
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">{t('campoNome')}</label>
                             <input name="nome" value={formData.nome} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none bg-kidville-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green ${errors.nome ? 'border-kidville-error shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} />
                             {errors.nome && <span className="text-xs text-kidville-error font-bold">{errors.nome}</span>}
                         </div>
                         <div>
-                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Cognome</label>
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">{t('campoCognome')}</label>
                             <input name="cognome" value={formData.cognome} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none bg-kidville-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green ${errors.cognome ? 'border-kidville-error shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} />
                             {errors.cognome && <span className="text-xs text-kidville-error font-bold">{errors.cognome}</span>}
                         </div>
                         <div>
-                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Sesso</label>
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">{t('campoSesso')}</label>
                             <select name="sesso" value={formData.sesso} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-kidville-white text-kidville-green outline-none focus:ring-2 focus:ring-kidville-green">
-                                <option value="M">Maschio</option>
-                                <option value="F">Femmina</option>
+                                <option value="M">{t('optMaschio')}</option>
+                                <option value="F">{t('optFemmina')}</option>
                             </select>
                         </div>
                         <div>
-                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Data di Nascita</label>
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">{t('campoDataNascita')}</label>
                             <DateField name="data_nascita" value={formData.data_nascita} onChange={(iso) => handleInputChange({ target: { name: 'data_nascita', value: iso, type: 'date' } } as unknown as React.ChangeEvent<HTMLInputElement>)} className={`w-full p-3 rounded-xl border outline-none bg-kidville-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green ${errors.data_nascita ? 'border-kidville-error shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} />
                             {errors.data_nascita && <span className="text-xs text-kidville-error font-bold">{errors.data_nascita}</span>}
                         </div>
                         <div>
-                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Comune di Nascita</label>
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">{t('campoComuneNascita')}</label>
                             <input name="comune_nascita" value={formData.comune_nascita} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none bg-kidville-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green ${errors.comune_nascita ? 'border-kidville-error shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} />
                             {errors.comune_nascita && <span className="text-xs text-kidville-error font-bold">{errors.comune_nascita}</span>}
                         </div>
                         <div>
-                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Prov. Nascita (Sigla)</label>
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">{t('campoProvNascita')}</label>
                             <input name="provincia_nascita" value={formData.provincia_nascita} onChange={handleInputChange} maxLength={2} className={`w-full p-3 rounded-xl border outline-none uppercase bg-kidville-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green ${errors.provincia_nascita ? 'border-kidville-error shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} />
                             {errors.provincia_nascita && <span className="text-xs text-kidville-error font-bold">{errors.provincia_nascita}</span>}
                         </div>
                         <div>
-                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Nazione di Nascita</label>
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">{t('campoNazioneNascita')}</label>
                             <input name="nazione_nascita" value={formData.nazione_nascita} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-kidville-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none" />
                         </div>
                         <div>
-                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Cittadinanza</label>
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">{t('campoCittadinanza')}</label>
                             <input name="cittadinanza" value={formData.cittadinanza} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-kidville-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none" />
                         </div>
                         <div className="col-span-2">
                             <label className="block text-sm font-bold text-kidville-green/80 mb-1 flex items-center gap-2">
-                                <Fingerprint size={16} /> Codice Fiscale
+                                <Fingerprint size={16} /> {t('campoCodiceFiscale')}
                                 {isCfLoading && <Loader2 size={14} className="animate-spin text-kidville-green" />}
-                                {isCfAutoCalculated && <span className="text-xs text-kidville-green font-normal">Autocalcolato! ✨</span>}
+                                {isCfAutoCalculated && <span className="text-xs text-kidville-green font-normal">{t('cfAutocalcolato')}</span>}
                             </label>
                             <input 
                                 name="codice_fiscale" 
@@ -261,11 +265,11 @@ export const ScrollableStudentForm = forwardRef<StudentFormHandle>(function Scro
                 {/* Sezione 1b: Sede e Sezione */}
                 <section>
                     <h3 className="text-lg font-bold text-kidville-green mb-4 flex items-center gap-2 border-l-4 border-kidville-info pl-3">
-                        Sede e Sezione
+                        {t('sFormSedeSezione')}
                     </h3>
                     <div className="grid grid-cols-2 gap-6">
                         <div>
-                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Sede</label>
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">{t('campoSede')}</label>
                             <select
                                 name="scuola_id"
                                 value={scuolaSelezionata}
@@ -273,21 +277,21 @@ export const ScrollableStudentForm = forwardRef<StudentFormHandle>(function Scro
                                 disabled={sedi.length <= 1}
                                 className="w-full p-3 rounded-xl border border-kidville-green/15 bg-kidville-white text-kidville-green outline-none focus:ring-2 focus:ring-kidville-green disabled:opacity-70"
                             >
-                                {sedi.length === 0 && <option value="">Nessuna sede disponibile</option>}
+                                {sedi.length === 0 && <option value="">{t('sFormNessunaSede')}</option>}
                                 {sedi.map(s => (
                                     <option key={s.id} value={s.id}>{s.nome}</option>
                                 ))}
                             </select>
                         </div>
                         <div>
-                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Sezione</label>
-                            <select 
-                                name="classe_sezione" 
-                                value={formData.classe_sezione} 
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">{t('campoSezione')}</label>
+                            <select
+                                name="classe_sezione"
+                                value={formData.classe_sezione}
                                 onChange={handleInputChange}
                                 className={`w-full p-3 rounded-xl border outline-none bg-kidville-white text-kidville-green focus:ring-2 focus:ring-kidville-green ${errors.classe_sezione ? 'border-kidville-error shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`}
                             >
-                                <option value="">— Seleziona sezione —</option>
+                                <option value="">{t('sFormSelezionaSezione')}</option>
                                 {sections.map(s => (
                                     <option key={s.id} value={s.name}>{s.name} ({s.school_type})</option>
                                 ))}
@@ -300,29 +304,29 @@ export const ScrollableStudentForm = forwardRef<StudentFormHandle>(function Scro
                 {/* Sezione 2: Residenza */}
                 <section>
                     <h3 className="text-lg font-bold text-kidville-green mb-4 flex items-center gap-2 border-l-4 border-kidville-info pl-3">
-                        Residenza
+                        {t('sezioneResidenza')}
                     </h3>
                     <div className="grid grid-cols-2 gap-6">
                         <div className="col-span-2">
-                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Indirizzo di Residenza</label>
-                            <input name="indirizzo_residenza" value={formData.indirizzo_residenza} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none bg-kidville-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green ${errors.indirizzo_residenza ? 'border-kidville-error shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} placeholder="Via Roma" />
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">{t('campoIndirizzoResidenza')}</label>
+                            <input name="indirizzo_residenza" value={formData.indirizzo_residenza} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none bg-kidville-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green ${errors.indirizzo_residenza ? 'border-kidville-error shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} placeholder={t('phVia')} />
                             {errors.indirizzo_residenza && <span className="text-xs text-kidville-error font-bold">{errors.indirizzo_residenza}</span>}
                         </div>
                         <div>
-                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Numero Civico</label>
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">{t('campoNumeroCivico')}</label>
                             <input name="civico" value={formData.civico} onChange={handleInputChange} maxLength={20} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-kidville-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none" placeholder="123" />
                         </div>
                         <div>
-                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Comune di Residenza</label>
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">{t('campoComuneResidenza')}</label>
                             <input name="comune_residenza" value={formData.comune_residenza} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none bg-kidville-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green ${errors.comune_residenza ? 'border-kidville-error shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} />
                             {errors.comune_residenza && <span className="text-xs text-kidville-error font-bold">{errors.comune_residenza}</span>}
                         </div>
                         <div>
-                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Prov. Residenza (Sigla)</label>
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">{t('campoProvResidenza')}</label>
                             <input name="provincia_residenza" value={formData.provincia_residenza} onChange={handleInputChange} maxLength={2} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-kidville-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none uppercase" />
                         </div>
                         <div>
-                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">CAP</label>
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">{t('campoCap')}</label>
                             <input name="cap" value={formData.cap} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none bg-kidville-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green ${errors.cap ? 'border-kidville-error shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} maxLength={5} />
                             {errors.cap && <span className="text-xs text-kidville-error font-bold">{errors.cap}</span>}
                         </div>
@@ -332,17 +336,17 @@ export const ScrollableStudentForm = forwardRef<StudentFormHandle>(function Scro
                 {/* Sezione 3: Medica / BES */}
                 <section>
                     <h3 className="text-lg font-bold text-kidville-green mb-4 flex items-center gap-2 border-l-4 border-kidville-error pl-3">
-                        Informazioni Mediche / BES
+                        {t('sFormInfoMediche')}
                     </h3>
                     <div className="space-y-6">
                         <div>
                             <label className="block text-sm font-bold text-kidville-green/80 mb-1 flex items-center gap-2">
-                                <AlertTriangle size={16} className="text-kidville-error" /> Allergie e Intolleranze
+                                <AlertTriangle size={16} className="text-kidville-error" /> {t('allergieIntolleranze')}
                             </label>
                             <AllergeniSelect value={formData.allergeni} onChange={next => setFormData(prev => ({ ...prev, allergeni: next }))} />
                             {formData.allergies?.trim() && (
                                 <p className="mt-2 rounded-xl bg-kidville-cream px-3 py-2 font-maven text-xs text-kidville-muted">
-                                    Testo storico (sola lettura): {formData.allergies}
+                                    {t('testoStorico', { testo: formData.allergies })}
                                 </p>
                             )}
                         </div>
@@ -351,7 +355,7 @@ export const ScrollableStudentForm = forwardRef<StudentFormHandle>(function Scro
                             <label className="flex items-center gap-3 cursor-pointer">
                                 <input type="checkbox" name="is_bes_dsa" checked={formData.is_bes_dsa} onChange={handleInputChange} className="w-5 h-5 rounded border-kidville-warn/50 bg-kidville-white text-kidville-warn focus:ring-kidville-warn" />
                                 <span className="font-bold text-kidville-warn flex items-center gap-2">
-                                    <FileWarning size={18} /> Studente BES / DSA
+                                    <FileWarning size={18} /> {t('studenteBesDsa')}
                                 </span>
                             </label>
 
@@ -363,9 +367,9 @@ export const ScrollableStudentForm = forwardRef<StudentFormHandle>(function Scro
                                         exit={{ opacity: 0, height: 0 }}
                                         className="mt-4 overflow-hidden"
                                     >
-                                        <label className="block text-sm font-bold text-kidville-warn mb-1">Note BES / DSA</label>
-                                        <textarea name="note_bes" value={formData.note_bes} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-warn bg-kidville-white text-kidville-green focus:ring-2 focus:ring-kidville-warn outline-none" rows={2} placeholder="Dettagli aggiuntivi..." />
-                                        <div className="mt-3 text-sm text-kidville-warn/80">I documenti (PEI, Diagnosi) potranno essere caricati nella scheda Documenti dopo il salvataggio.</div>
+                                        <label className="block text-sm font-bold text-kidville-warn mb-1">{t('noteBesDsa')}</label>
+                                        <textarea name="note_bes" value={formData.note_bes} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-warn bg-kidville-white text-kidville-green focus:ring-2 focus:ring-kidville-warn outline-none" rows={2} placeholder={t('phDettagliAggiuntivi')} />
+                                        <div className="mt-3 text-sm text-kidville-warn/80">{t('besDocumentiHint')}</div>
                                     </motion.div>
                                 )}
                             </AnimatePresence>
@@ -375,10 +379,10 @@ export const ScrollableStudentForm = forwardRef<StudentFormHandle>(function Scro
                             <label className="flex items-center gap-3 cursor-pointer">
                                 <input type="checkbox" name="usa_pannolino" checked={formData.usa_pannolino} onChange={handleInputChange} className="w-5 h-5 rounded border-kidville-info-soft/50 bg-kidville-white text-kidville-info focus:ring-kidville-info" />
                                 <span className="font-bold text-kidville-info flex items-center gap-2">
-                                    🧷 Usa pannolino
+                                    🧷 {t('sFormUsaPannolino')}
                                 </span>
                             </label>
-                            <p className="mt-2 text-sm text-kidville-info/80">Se attivo, ogni evento &quot;Bagno&quot; nel Diario 0-6 scala automaticamente 1 pannolino dall&apos;armadietto del bambino.</p>
+                            <p className="mt-2 text-sm text-kidville-info/80">{t('sFormPannolinoHint')}</p>
                         </div>
                     </div>
                 </section>
@@ -386,16 +390,16 @@ export const ScrollableStudentForm = forwardRef<StudentFormHandle>(function Scro
                 {/* Sezione 4: Amministrazione */}
                 <section>
                     <h3 className="text-lg font-bold text-kidville-green mb-4 flex items-center gap-2 border-l-4 border-kidville-info pl-3">
-                        Amministrazione & Fatturazione
+                        {t('sFormAmministrazione')}
                     </h3>
                     <div className="space-y-6">
                         <div>
-                            <label className="block text-sm font-bold text-kidville-green/80 mb-2">Intestatario Fattura</label>
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-2">{t('intestatarioFattura')}</label>
                             <div className="flex gap-4">
                                 {['mom', 'dad', 'other'].map(type => (
                                     <label key={type} className={`flex-1 flex items-center justify-center p-3 rounded-xl border cursor-pointer transition-all ${formData.invoice_holder_type === type ? 'border-kidville-green bg-kidville-green/20 text-kidville-green font-bold' : 'border-kidville-green/15 text-kidville-muted hover:bg-kidville-cream'}`}>
                                         <input type="radio" name="invoice_holder_type" value={type} checked={formData.invoice_holder_type === type} onChange={handleInputChange} className="hidden" />
-                                        {type === 'mom' ? 'Madre' : type === 'dad' ? 'Padre' : 'Altro Soggetto'}
+                                        {type === 'mom' ? t('ruoloMadre') : type === 'dad' ? t('ruoloPadre') : t('optAltroSoggetto')}
                                     </label>
                                 ))}
                             </div>
@@ -410,24 +414,24 @@ export const ScrollableStudentForm = forwardRef<StudentFormHandle>(function Scro
                                     className="p-6 border border-kidville-info/30 bg-kidville-info-soft0/5 rounded-2xl overflow-hidden mt-2"
                                 >
                                     <div className="flex items-center justify-between mb-4">
-                                        <h4 className="font-bold text-kidville-info">Dettagli Intestatario Fattura Alternativo</h4>
+                                        <h4 className="font-bold text-kidville-info">{t('sFormDettagliIntestatario')}</h4>
                                     </div>
-                                    
+
                                     <div className="grid grid-cols-2 gap-4">
                                         <div>
-                                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Nome</label>
+                                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">{t('campoNome')}</label>
                                             <input name="invoice_holder_details.nome" value={formData.invoice_holder_details.nome} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-kidville-white focus:ring-2 focus:ring-kidville-green outline-none" />
                                         </div>
                                         <div>
-                                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Cognome</label>
+                                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">{t('campoCognome')}</label>
                                             <input name="invoice_holder_details.cognome" value={formData.invoice_holder_details.cognome} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-kidville-white focus:ring-2 focus:ring-kidville-green outline-none" />
                                         </div>
                                         <div className="col-span-2">
-                                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Codice Fiscale Intestatario</label>
+                                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">{t('campoCodiceFiscaleIntestatario')}</label>
                                             <input name="invoice_holder_details.codice_fiscale" value={formData.invoice_holder_details.codice_fiscale} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-kidville-white focus:ring-2 focus:ring-kidville-green outline-none uppercase" />
                                         </div>
                                         <div className="col-span-2 text-xs text-kidville-muted mt-2">
-                                            Nota: Salvando l&apos;anagrafica, questo soggetto verrà registrato come intestatario della fattura per l&apos;alunno.
+                                            {t('sFormNotaIntestatario')}
                                         </div>
                                     </div>
                                 </motion.div>

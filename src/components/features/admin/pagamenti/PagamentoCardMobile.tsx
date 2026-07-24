@@ -1,6 +1,7 @@
 'use client';
 
 import { ChevronRight } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 import { FatturaChip } from './FatturaChip';
 import { STATI_PAGAMENTO } from './stati';
 import { Badge } from '@/components/ui/Badge';
@@ -18,6 +19,7 @@ interface Props {
 
 /** Card compatta per la lista pagamenti su mobile (sotto lg la tabella diventa card-list). */
 export function PagamentoCardMobile({ pagamento, alunnoLabel, sezioneLabel, sospeso, onIncassa, onApri }: Props) {
+    const t = useTranslations('adminContabilita');
     const st = STATI_PAGAMENTO[pagamento.stato] ?? STATI_PAGAMENTO.da_pagare;
     const residuo = Math.max(0, Number(pagamento.importo) - Number(pagamento.importo_pagato || 0));
     const saldato = pagamento.stato === 'pagato';
@@ -29,7 +31,7 @@ export function PagamentoCardMobile({ pagamento, alunnoLabel, sezioneLabel, sosp
                     <p className="truncate font-maven text-sm font-bold text-kidville-green">
                         {alunnoLabel}
                         {sospeso && (
-                            <Badge tone="error" className="ml-1 align-middle">sospeso</Badge>
+                            <Badge tone="error" className="ml-1 align-middle">{t('cardmSospeso')}</Badge>
                         )}
                     </p>
                     {sezioneLabel && <p className="font-maven text-xs text-kidville-muted">{sezioneLabel}</p>}
@@ -41,9 +43,9 @@ export function PagamentoCardMobile({ pagamento, alunnoLabel, sezioneLabel, sosp
 
             <div className="mt-2 flex items-center justify-between font-maven text-xs">
                 <span className="text-kidville-muted">
-                    Totale € {Number(pagamento.importo).toFixed(2)} · Pagato € {Number(pagamento.importo_pagato || 0).toFixed(2)}
+                    {t('cardmTotale')} € {Number(pagamento.importo).toFixed(2)} · {t('cardmPagato')} € {Number(pagamento.importo_pagato || 0).toFixed(2)}
                 </span>
-                {!saldato && <span className="font-bold text-kidville-green">Restano € {residuo.toFixed(2)}</span>}
+                {!saldato && <span className="font-bold text-kidville-green">{t('cardmRestano')} € {residuo.toFixed(2)}</span>}
             </div>
 
             <div className="mt-2 flex items-center justify-between gap-2">
@@ -52,12 +54,12 @@ export function PagamentoCardMobile({ pagamento, alunnoLabel, sezioneLabel, sosp
                     {!saldato && (
                         <button type="button" onClick={onIncassa}
                             className="inline-flex min-h-[44px] items-center justify-center rounded-pill bg-kidville-green px-3 py-1.5 font-maven text-xs font-bold text-kidville-yellow transition-colors hover:bg-kidville-green-dark">
-                            Incassa
+                            {t('cardmIncassa')}
                         </button>
                     )}
                     <button type="button" onClick={onApri}
                         className="inline-flex min-h-[44px] items-center justify-center gap-0.5 rounded-pill border-[1.5px] border-kidville-line px-3 py-1 font-maven text-xs font-bold text-kidville-muted transition-colors hover:border-kidville-green hover:text-kidville-green">
-                        Dettagli <ChevronRight size={13} />
+                        {t('cardmDettagli')} <ChevronRight size={13} />
                     </button>
                 </div>
             </div>

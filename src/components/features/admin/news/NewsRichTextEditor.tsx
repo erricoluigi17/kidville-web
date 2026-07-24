@@ -16,6 +16,7 @@ import {
   Bold, Italic, Underline as UnderlineIcon, Strikethrough, Heading2, Heading3,
   List, ListOrdered, Quote, LinkIcon, ImagePlus,
 } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 import { cx } from '@/lib/ui/cx';
 import { NewsMediaUploader } from './NewsMediaUploader';
 
@@ -54,12 +55,13 @@ function Btn({ onClick, attivo, etichetta, children }: { onClick: () => void; at
 // StarterKit v3 include già Link e Underline: NON li registro a parte (darebbe
 // «Duplicate extension names»). Aggiungo solo Image e Placeholder.
 export function NewsRichTextEditor({ userId, value, onChange, consensoFoto, onConsensoFoto, placeholder }: Props) {
+  const t = useTranslations('adminComunicazioni');
   const editor = useEditor({
     immediatelyRender: false,
     extensions: [
       StarterKit,
       Image,
-      Placeholder.configure({ placeholder: placeholder ?? 'Scrivi il contenuto…' }),
+      Placeholder.configure({ placeholder: placeholder ?? t('rtePlaceholder') }),
     ],
     content: value ?? undefined,
     editorProps: {
@@ -74,14 +76,14 @@ export function NewsRichTextEditor({ userId, value, onChange, consensoFoto, onCo
   const inserisciLink = useCallback(() => {
     if (!editor) return;
     const precedente = editor.getAttributes('link').href as string | undefined;
-    const url = window.prompt('Indirizzo del link (https://…, http://… o mailto:)', precedente ?? 'https://');
+    const url = window.prompt(t('rtePromptLink'), precedente ?? 'https://');
     if (url === null) return; // annullato
     if (url.trim() === '') {
       editor.chain().focus().extendMarkRange('link').unsetLink().run();
       return;
     }
     editor.chain().focus().extendMarkRange('link').setLink({ href: url.trim() }).run();
-  }, [editor]);
+  }, [editor, t]);
 
   if (!editor) {
     return <div className="min-h-[260px] animate-pulse rounded-input border-[1.5px] border-kidville-line bg-kidville-cream" aria-hidden="true" />;
@@ -90,18 +92,18 @@ export function NewsRichTextEditor({ userId, value, onChange, consensoFoto, onCo
   return (
     <div>
       <div className="mb-2 flex flex-wrap items-center gap-1.5">
-        <Btn etichetta="Grassetto" attivo={editor.isActive('bold')} onClick={() => editor.chain().focus().toggleBold().run()}><Bold size={15} /></Btn>
-        <Btn etichetta="Corsivo" attivo={editor.isActive('italic')} onClick={() => editor.chain().focus().toggleItalic().run()}><Italic size={15} /></Btn>
-        <Btn etichetta="Sottolineato" attivo={editor.isActive('underline')} onClick={() => editor.chain().focus().toggleUnderline().run()}><UnderlineIcon size={15} /></Btn>
-        <Btn etichetta="Barrato" attivo={editor.isActive('strike')} onClick={() => editor.chain().focus().toggleStrike().run()}><Strikethrough size={15} /></Btn>
+        <Btn etichetta={t('rteGrassetto')} attivo={editor.isActive('bold')} onClick={() => editor.chain().focus().toggleBold().run()}><Bold size={15} /></Btn>
+        <Btn etichetta={t('rteCorsivo')} attivo={editor.isActive('italic')} onClick={() => editor.chain().focus().toggleItalic().run()}><Italic size={15} /></Btn>
+        <Btn etichetta={t('rteSottolineato')} attivo={editor.isActive('underline')} onClick={() => editor.chain().focus().toggleUnderline().run()}><UnderlineIcon size={15} /></Btn>
+        <Btn etichetta={t('rteBarrato')} attivo={editor.isActive('strike')} onClick={() => editor.chain().focus().toggleStrike().run()}><Strikethrough size={15} /></Btn>
         <span className="mx-1 h-6 w-px bg-kidville-line" aria-hidden="true" />
-        <Btn etichetta="Titolo" attivo={editor.isActive('heading', { level: 2 })} onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}><Heading2 size={15} /></Btn>
-        <Btn etichetta="Sottotitolo" attivo={editor.isActive('heading', { level: 3 })} onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}><Heading3 size={15} /></Btn>
-        <Btn etichetta="Elenco puntato" attivo={editor.isActive('bulletList')} onClick={() => editor.chain().focus().toggleBulletList().run()}><List size={15} /></Btn>
-        <Btn etichetta="Elenco numerato" attivo={editor.isActive('orderedList')} onClick={() => editor.chain().focus().toggleOrderedList().run()}><ListOrdered size={15} /></Btn>
-        <Btn etichetta="Citazione" attivo={editor.isActive('blockquote')} onClick={() => editor.chain().focus().toggleBlockquote().run()}><Quote size={15} /></Btn>
+        <Btn etichetta={t('rteTitolo')} attivo={editor.isActive('heading', { level: 2 })} onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}><Heading2 size={15} /></Btn>
+        <Btn etichetta={t('rteSottotitolo')} attivo={editor.isActive('heading', { level: 3 })} onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}><Heading3 size={15} /></Btn>
+        <Btn etichetta={t('rteElencoPuntato')} attivo={editor.isActive('bulletList')} onClick={() => editor.chain().focus().toggleBulletList().run()}><List size={15} /></Btn>
+        <Btn etichetta={t('rteElencoNumerato')} attivo={editor.isActive('orderedList')} onClick={() => editor.chain().focus().toggleOrderedList().run()}><ListOrdered size={15} /></Btn>
+        <Btn etichetta={t('rteCitazione')} attivo={editor.isActive('blockquote')} onClick={() => editor.chain().focus().toggleBlockquote().run()}><Quote size={15} /></Btn>
         <span className="mx-1 h-6 w-px bg-kidville-line" aria-hidden="true" />
-        <Btn etichetta="Link" attivo={editor.isActive('link')} onClick={inserisciLink}><LinkIcon size={15} /></Btn>
+        <Btn etichetta={t('rteLink')} attivo={editor.isActive('link')} onClick={inserisciLink}><LinkIcon size={15} /></Btn>
       </div>
 
       <EditorContent editor={editor} />
@@ -112,9 +114,9 @@ export function NewsRichTextEditor({ userId, value, onChange, consensoFoto, onCo
           consensoFoto={consensoFoto}
           onConsensoFoto={onConsensoFoto}
           onUploaded={(url) => editor.chain().focus().setImage({ src: url }).run()}
-          label="Inserisci immagine nel testo"
+          label={t('rteInserisciImmagine')}
         />
-        <span className="inline-flex items-center gap-1 font-maven text-[11px] text-kidville-sub"><ImagePlus size={12} /> le immagini finiscono nel corpo dell&apos;articolo</span>
+        <span className="inline-flex items-center gap-1 font-maven text-[11px] text-kidville-sub"><ImagePlus size={12} /> {t('rteNotaImmagini')}</span>
       </div>
     </div>
   );

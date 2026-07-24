@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { ArrowUpDown, AlertTriangle } from 'lucide-react';
 import { labelRuolo } from '@/lib/auth/ruoli';
 import { StudentRowCard } from './StudentRowCard';
@@ -47,6 +48,11 @@ function getStatoBadge(stato: string) {
 }
 
 export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSelectAll, onStudentClick, currentTypeFilter = 'child' }: Props) {
+    const t = useTranslations('adminStudents');
+    // Etichette di raggruppamento tradotte: la STESSA stringa deve servire sia
+    // all'ordinamento sia alla reduce, così i gruppi combaciano col rendering.
+    const senzaSezione = t('gruppoSenzaSezione');
+    const anagraficaGenerale = t('gruppoAnagraficaGenerale');
     const [sortField, setSortField] = useState<SortField>('cognome');
     const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
 
@@ -61,8 +67,8 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
 
     const sorted = [...students].sort((a, b) => {
         if (currentTypeFilter === 'child') {
-            const aSec = a.classe_sezione || 'Senza Sezione';
-            const bSec = b.classe_sezione || 'Senza Sezione';
+            const aSec = a.classe_sezione || senzaSezione;
+            const bSec = b.classe_sezione || senzaSezione;
             if (aSec !== bSec) return aSec.localeCompare(bSec, 'it');
         }
 
@@ -79,7 +85,7 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
     });
 
     const groupedStudents = sorted.reduce((acc, student) => {
-        const sec = currentTypeFilter === 'child' ? (student.classe_sezione || 'Senza Sezione') : 'Anagrafica Generale';
+        const sec = currentTypeFilter === 'child' ? (student.classe_sezione || senzaSezione) : anagraficaGenerale;
         if (!acc[sec]) acc[sec] = [];
         acc[sec].push(student);
         return acc;
@@ -103,15 +109,15 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
     // gli stessi campi delle intestazioni cliccabili della tabella.
     const sortOptions: { field: SortField; label: string }[] = currentTypeFilter === 'child'
         ? [
-            { field: 'cognome', label: 'Cognome' },
-            { field: 'nome', label: 'Nome' },
-            { field: 'classe_sezione', label: 'Classe' },
-            { field: 'stato', label: 'Stato' },
-            { field: 'data_nascita', label: 'Nascita' },
+            { field: 'cognome', label: t('thCognome') },
+            { field: 'nome', label: t('thNome') },
+            { field: 'classe_sezione', label: t('thClasse') },
+            { field: 'stato', label: t('thStato') },
+            { field: 'data_nascita', label: t('thNascita') },
         ]
         : [
-            { field: 'cognome', label: 'Cognome' },
-            { field: 'nome', label: 'Nome' },
+            { field: 'cognome', label: t('thCognome') },
+            { field: 'nome', label: t('thNome') },
         ];
 
     return (
@@ -132,29 +138,29 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                                     />
                                 </th>
                             )}
-                            {renderSortHeader('cognome', 'Cognome')}
-                            {renderSortHeader('nome', 'Nome')}
+                            {renderSortHeader('cognome', t('thCognome'))}
+                            {renderSortHeader('nome', t('thNome'))}
                             {currentTypeFilter === 'child' ? (
                                 <>
-                                    {renderSortHeader('data_nascita', 'Nascita')}
-                                    {renderSortHeader('classe_sezione', 'Classe')}
-                                    {renderSortHeader('stato', 'Stato')}
+                                    {renderSortHeader('data_nascita', t('thNascita'))}
+                                    {renderSortHeader('classe_sezione', t('thClasse'))}
+                                    {renderSortHeader('stato', t('thStato'))}
                                     <th className="px-3 py-3 text-left">
-                                        <span className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide">Info</span>
+                                        <span className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide">{t('thInfo')}</span>
                                     </th>
                                 </>
                             ) : currentTypeFilter === 'staff' ? (
                                 <>
-                                    <th className="px-3 py-3 text-left"><span className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide">Email</span></th>
-                                    <th className="px-3 py-3 text-left"><span className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide">Ruolo</span></th>
-                                    <th className="px-3 py-3 text-left"><span className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide">Sede</span></th>
-                                    <th className="px-3 py-3 text-left"><span className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide">Classi</span></th>
+                                    <th className="px-3 py-3 text-left"><span className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide">{t('thEmail')}</span></th>
+                                    <th className="px-3 py-3 text-left"><span className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide">{t('thRuolo')}</span></th>
+                                    <th className="px-3 py-3 text-left"><span className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide">{t('thSede')}</span></th>
+                                    <th className="px-3 py-3 text-left"><span className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide">{t('thClassi')}</span></th>
                                 </>
                             ) : (
                                 <>
-                                    <th className="px-3 py-3 text-left"><span className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide">Email</span></th>
-                                    <th className="px-3 py-3 text-left"><span className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide">Telefono</span></th>
-                                    <th className="px-3 py-3 text-left"><span className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide">C. Fiscale</span></th>
+                                    <th className="px-3 py-3 text-left"><span className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide">{t('thEmail')}</span></th>
+                                    <th className="px-3 py-3 text-left"><span className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide">{t('thTelefono')}</span></th>
+                                    <th className="px-3 py-3 text-left"><span className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide">{t('thCFiscale')}</span></th>
                                 </>
                             )}
                         </tr>
@@ -167,7 +173,7 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                                 <tr className="bg-kidville-cream/20">
                                     <td colSpan={currentTypeFilter === 'child' ? 7 : 6} className="px-4 py-2 font-maven font-bold text-kidville-green">
                                         {/* Staff: niente "Sezione:" (il personale non è raggruppato per classe) e conteggio in "membri". */}
-                                        {currentTypeFilter === 'staff' ? 'Personale' : `Sezione: ${section}`} <span className="text-xs font-normal text-kidville-muted">({sectionStudents.length} {currentTypeFilter === 'staff' ? (sectionStudents.length === 1 ? 'membro' : 'membri') : 'alunni'})</span>
+                                        {currentTypeFilter === 'staff' ? t('gruppoPersonale') : `${t('gruppoSezionePrefix')}${section}`} <span className="text-xs font-normal text-kidville-muted">({currentTypeFilter === 'staff' ? t('contMembri', { n: sectionStudents.length }) : t('contAlunni', { n: sectionStudents.length })})</span>
                                     </td>
                                 </tr>
                                 {sectionStudents.map(student => {
@@ -220,8 +226,8 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                                                     <td className="px-3 py-3">
                                                         <div className="flex items-center gap-1.5">
                                                             {hasAllergie && (
-                                                                <span className="text-kidville-error text-xs font-maven font-bold flex items-center gap-0.5" title={`Allergie: ${student.note_mediche}`}>
-                                                                    <AlertTriangle size={12} /> Allergie
+                                                                <span className="text-kidville-error text-xs font-maven font-bold flex items-center gap-0.5" title={`${t('allergie')}: ${student.note_mediche}`}>
+                                                                    <AlertTriangle size={12} /> {t('allergie')}
                                                                 </span>
                                                             )}
                                                             {hasBes && (
@@ -276,7 +282,7 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                 <div data-testid="student-cards-mobile" className="sm:hidden p-3">
                     <div className="mb-3 flex items-center gap-2">
                         <label htmlFor="student-sort-mobile" className="font-barlow text-xs font-bold uppercase tracking-wide text-kidville-muted">
-                            Ordina
+                            {t('ordina')}
                         </label>
                         <select
                             id="student-sort-mobile"
@@ -291,7 +297,7 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                         <button
                             type="button"
                             onClick={() => setSortDir(d => (d === 'asc' ? 'desc' : 'asc'))}
-                            aria-label={sortDir === 'asc' ? 'Ordine crescente, tocca per invertire' : 'Ordine decrescente, tocca per invertire'}
+                            aria-label={sortDir === 'asc' ? t('ordineCrescente') : t('ordineDecrescente')}
                             className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-pill border-[1.5px] border-kidville-line bg-kidville-white text-kidville-green"
                         >
                             <ArrowUpDown size={16} />
@@ -319,10 +325,10 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                         {currentTypeFilter === 'staff' ? '🧑‍🏫' : '🧒'}
                     </div>
                     <h3 className="font-barlow font-bold text-lg text-kidville-green uppercase mb-1">
-                        {currentTypeFilter === 'staff' ? 'Nessun membro dello staff trovato' : 'Nessun alunno trovato'}
+                        {currentTypeFilter === 'staff' ? t('vuotoStaff') : t('vuotoAlunni')}
                     </h3>
                     <p className="font-maven text-sm text-kidville-muted max-w-xs">
-                        Prova a modificare i filtri o la ricerca.
+                        {t('vuotoSuggerimento')}
                     </p>
                 </div>
             )}

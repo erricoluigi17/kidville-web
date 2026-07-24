@@ -13,6 +13,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
+import { useTranslations } from 'next-intl';
 import { Search } from 'lucide-react';
 import { SedeSelector } from '@/components/ui/cockpit';
 import { UserMenu } from '@/components/ui/UserMenu';
@@ -20,26 +21,29 @@ import { AdminSearchPanel } from './AdminSearchPanel';
 import { AdminNotificationsPanel } from './AdminNotificationsPanel';
 import { useAdminIdentity } from '@/lib/context/admin-identity';
 
-const ROLE_LABEL: Record<string, string> = {
-  admin: 'Direzione',
-  coordinator: 'Segreteria',
+// Mappa ruolo → chiave i18n della label (namespace adminNav). Sono le etichette
+// UI del cockpit, locali a questa TopBar (non provengono dalla lib `labelRuolo`).
+const ROLE_LABEL_KEY: Record<string, string> = {
+  admin: 'ruoloDirezione',
+  coordinator: 'ruoloSegreteria',
 };
 
 export function AdminTopBar() {
   // userId e ruolo dall'identità condivisa del cockpit (<AdminIdentityProvider>):
   // niente lettura duplicata; il markup della TopBar non dipende da userId
   // (usato solo come prop verso i pannelli), quindi nessun mismatch di hydration.
+  const t = useTranslations('adminNav');
   const { userId, ruolo, withUser } = useAdminIdentity();
   const [search, setSearch] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
 
-  const ruoloLabel = ROLE_LABEL[ruolo] ?? (ruolo ? 'Staff' : 'Segreteria');
+  const ruoloLabel = t(ROLE_LABEL_KEY[ruolo] ?? (ruolo ? 'ruoloStaff' : 'ruoloSegreteria'));
 
   return (
     <header className="sticky top-0 z-40 hidden h-16 items-center gap-4 bg-kidville-green px-5 lg:flex">
         {/* brand — wordmark ufficiale (stessa metrica dell'AppBar genitore/docente) */}
         <div className="flex w-[214px] shrink-0 items-center">
-          <Link href={withUser('/admin')} aria-label="Home Kidville" className="shrink-0">
+          <Link href={withUser('/admin')} aria-label={t('homeAria')} className="shrink-0">
             <Image
               src="/logo-light.png"
               alt="Kidville"
@@ -60,8 +64,8 @@ export function AdminTopBar() {
             onFocus={() => setSearchOpen(true)}
             onBlur={() => setSearchOpen(false)}
             onKeyDown={(e) => { if (e.key === 'Escape') { setSearchOpen(false); e.currentTarget.blur(); } }}
-            placeholder="Cerca alunno, genitore, codice fiscale…"
-            aria-label="Ricerca globale"
+            placeholder={t('ricercaPlaceholder')}
+            aria-label={t('ricercaAria')}
             className="h-10 w-full rounded-full border-none bg-white/15 pl-10 pr-3.5 font-maven text-[13.5px] text-kidville-white transition-colors placeholder:text-kidville-white/60 focus-visible:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-kidville-yellow/70"
           />
           {searchOpen && (

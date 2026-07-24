@@ -1,4 +1,5 @@
 import { Suspense } from 'react';
+import { useTranslations } from 'next-intl';
 import { ClasseShell } from '@/components/features/primaria/ClasseShell';
 
 // Cornice per-classe dentro il cockpit Direzione/Segreteria. Stesso ClasseShell
@@ -6,9 +7,10 @@ import { ClasseShell } from '@/components/features/primaria/ClasseShell';
 // dentro la shell). {children} avvolto in Suspense: le pagine montate (re-export
 // delle pagine teacher) usano useSearchParams.
 export default function AdminPrimariaClasseLayout({ children }: { children: React.ReactNode }) {
+  const t = useTranslations('adminPrimaria');
   return (
     <ClasseShell basePrefix="/admin/primaria">
-      <Suspense fallback={<div className="font-maven text-sm text-kidville-muted">Caricamento…</div>}>
+      <Suspense fallback={<div className="font-maven text-sm text-kidville-muted">{t('comuneCaricamento')}</div>}>
         {children}
       </Suspense>
     </ClasseShell>

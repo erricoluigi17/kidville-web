@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { useTranslations } from 'next-intl';
 import { Users, Loader2, Pencil, Check, X, ShieldCheck, KeyRound } from 'lucide-react';
 import { RUOLI_ASSEGNABILI, labelRuolo } from '@/lib/auth/ruoli';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
@@ -14,6 +15,7 @@ interface Section { id: string; name: string; scuola_id: string }
 // restano della Direzione: affordance nascoste ai non-Direzione, così nessun
 // bottone che finisce sempre in un alert 403 (il gate vero resta sul server).
 export function StaffPanel({ userId }: { userId: string }) {
+  const t = useTranslations('adminSettings');
   const { role } = useSessionIdentity();
   const canEdit = role === 'admin' || role === 'coordinator';
   const [staff, setStaff] = useState<StaffUser[]>([]);
@@ -36,13 +38,13 @@ export function StaffPanel({ userId }: { userId: string }) {
       // Mai una lista eternamente vuota che nasconde un errore: se il fetch non
       // riesce, si mostra il motivo (T3).
       if (!res.ok || !j?.success) {
-        setErrore(j?.error || 'Errore di caricamento dello staff');
+        setErrore(j?.error || t('stErroreCaricamentoStaff'));
         return;
       }
       setErrore(null);
       setStaff(j.data); setSchools(j.schools ?? []); setSections(j.sections ?? []); setAsseg(j.assegnazioni ?? []);
     } finally { setLoading(false); }
-  }, [userId]);
+  }, [userId, t]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -63,15 +65,15 @@ export function StaffPanel({ userId }: { userId: string }) {
         headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
         body: JSON.stringify({ id, ruolo: draft.ruolo, scuola_id: draft.scuola_id || undefined, section_ids: draft.section_ids }),
       });
-      if (res.status === 403) { alert('Azione riservata alla Direzione, oppure non puoi modificare il tuo stesso ruolo.'); return; }
-      if (!res.ok) { const j = await res.json().catch(() => ({})); alert(j.error || 'Errore'); return; }
+      if (res.status === 403) { alert(t('stAzioneRiservataRuolo')); return; }
+      if (!res.ok) { const j = await res.json().catch(() => ({})); alert(j.error || t('errore')); return; }
       setEditId(null);
       await load();
     } finally { setSaving(false); }
   };
 
   const rigenera = async (u: StaffUser) => {
-    if (!confirm(`Rigenerare le credenziali di ${u.cognome ?? ''} ${u.nome ?? ''}? La password precedente non sarà più valida.`)) return;
+    if (!confirm(t('stConfermaRigenera', { nome: `${u.cognome ?? ''} ${u.nome ?? ''}`.trim() }))) return;
     setRegenId(u.id);
     try {
       const res = await fetch('/api/admin/regenerate-credentials', {
@@ -80,10 +82,10 @@ export function StaffPanel({ userId }: { userId: string }) {
         body: JSON.stringify({ targetKind: 'staff', targetId: u.id }),
       });
       const body = await res.json();
-      if (!res.ok) { alert(body.error || 'Errore'); return; }
+      if (!res.ok) { alert(body.error || t('errore')); return; }
       alert(body.pdf_notifica
-        ? 'Fatto: email inviata e PDF disponibile nel centro notifiche.'
-        : body.email_inviata ? 'Fatto: email con le credenziali inviata.' : (body.warning || 'Credenziali rigenerate.'));
+        ? t('stRigeneraOkPdf')
+        : body.email_inviata ? t('stRigeneraOkEmail') : (body.warning || t('stRigeneraOk')));
     } finally { setRegenId(null); }
   };
 
@@ -91,7 +93,7 @@ export function StaffPanel({ userId }: { userId: string }) {
     setDraft((d) => ({ ...d, section_ids: d.section_ids.includes(sid) ? d.section_ids.filter((x) => x !== sid) : [...d.section_ids, sid] }));
   };
 
-  if (loading) return <div className="flex items-center gap-2 text-kidville-muted p-6"><Loader2 className="animate-spin" size={16} /> Caricamento staff…</div>;
+  if (loading) return <div className="flex items-center gap-2 text-kidville-muted p-6"><Loader2 className="animate-spin" size={16} /> {t('stCaricamentoStaff')}</div>;
 
   if (errore) return <div className="rounded-xl border border-kidville-error/30 bg-kidville-error-soft p-4 font-maven text-sm text-kidville-error">{errore}</div>;
 
@@ -99,8 +101,8 @@ export function StaffPanel({ userId }: { userId: string }) {
     <div className="space-y-3">
       <div className="flex items-center gap-2 text-kidville-green">
         <Users size={18} />
-        <h3 className="font-barlow font-black uppercase tracking-wide">Gestione Staff (RBAC)</h3>
-        <span className="ml-2 inline-flex items-center gap-1 text-[11px] text-kidville-muted"><ShieldCheck size={12} /> modifiche solo Direzione</span>
+        <h3 className="font-barlow font-black uppercase tracking-wide">{t('stGestioneStaff')}</h3>
+        <span className="ml-2 inline-flex items-center gap-1 text-[11px] text-kidville-muted"><ShieldCheck size={12} /> {t('stModificheSoloDirezione')}</span>
       </div>
 
       <div className="space-y-2">
@@ -121,19 +123,19 @@ export function StaffPanel({ userId }: { userId: string }) {
                         mostrano bottoni destinati a fallire col 403 del server. */}
                     {canEdit && (
                       <>
-                        <button onClick={() => rigenera(u)} disabled={regenId === u.id} className="text-kidville-muted hover:text-kidville-green disabled:opacity-40" title="Rigenera credenziali">
+                        <button onClick={() => rigenera(u)} disabled={regenId === u.id} className="text-kidville-muted hover:text-kidville-green disabled:opacity-40" title={t('stRigeneraCredenziali')}>
                           {regenId === u.id ? <Loader2 size={15} className="animate-spin" /> : <KeyRound size={15} />}
                         </button>
-                        <button onClick={() => apri(u)} className="text-kidville-muted hover:text-kidville-green" title="Modifica"><Pencil size={15} /></button>
+                        <button onClick={() => apri(u)} className="text-kidville-muted hover:text-kidville-green" title={t('stModifica')}><Pencil size={15} /></button>
                       </>
                     )}
                   </div>
                 ) : (
                   <div className="flex items-center gap-1.5 shrink-0">
-                    <button onClick={() => salva(u.id)} disabled={saving} className="text-kidville-success hover:text-kidville-success" title="Salva">
+                    <button onClick={() => salva(u.id)} disabled={saving} className="text-kidville-success hover:text-kidville-success" title={t('salva')}>
                       {saving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
                     </button>
-                    <button onClick={() => setEditId(null)} className="text-kidville-muted hover:text-kidville-error" title="Annulla"><X size={16} /></button>
+                    <button onClick={() => setEditId(null)} className="text-kidville-muted hover:text-kidville-error" title={t('annulla')}><X size={16} /></button>
                   </div>
                 )}
               </div>
@@ -141,14 +143,14 @@ export function StaffPanel({ userId }: { userId: string }) {
               {isEditing && (
                 <div className="mt-3 grid sm:grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-[11px] font-semibold text-kidville-muted mb-1">Ruolo</label>
+                    <label className="block text-[11px] font-semibold text-kidville-muted mb-1">{t('stRuolo')}</label>
                     <select value={draft.ruolo} onChange={(e) => setDraft({ ...draft, ruolo: e.target.value })}
                       className="w-full border-2 border-kidville-line rounded-lg px-2 py-1.5 text-sm text-kidville-green focus:outline-none focus:border-kidville-green">
                       {RUOLI_ASSEGNABILI.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
                     </select>
                   </div>
                   <div>
-                    <label className="block text-[11px] font-semibold text-kidville-muted mb-1">Sede</label>
+                    <label className="block text-[11px] font-semibold text-kidville-muted mb-1">{t('stSede')}</label>
                     <select value={draft.scuola_id} onChange={(e) => setDraft({ ...draft, scuola_id: e.target.value })}
                       className="w-full border-2 border-kidville-line rounded-lg px-2 py-1.5 text-sm text-kidville-green focus:outline-none focus:border-kidville-green">
                       <option value="">—</option>
@@ -156,9 +158,9 @@ export function StaffPanel({ userId }: { userId: string }) {
                     </select>
                   </div>
                   <div className="sm:col-span-2">
-                    <label className="block text-[11px] font-semibold text-kidville-muted mb-1">Classi assegnate</label>
+                    <label className="block text-[11px] font-semibold text-kidville-muted mb-1">{t('stClassiAssegnate')}</label>
                     <div className="flex flex-wrap gap-1.5">
-                      {sezioniUtente.length === 0 && <span className="text-xs text-kidville-muted">Nessuna classe per questa sede.</span>}
+                      {sezioniUtente.length === 0 && <span className="text-xs text-kidville-muted">{t('stNessunaClasse')}</span>}
                       {sezioniUtente.map((s) => {
                         const on = draft.section_ids.includes(s.id);
                         return (

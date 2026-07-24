@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { useTranslations } from 'next-intl';
 import { X, Pencil, Trash2, Save, BadgePercent } from 'lucide-react';
 import { cx } from '@/lib/ui/cx';
 import { formatEuro } from '@/lib/format/valuta';
@@ -35,6 +36,7 @@ const METODI = [
 
 // Modifica i dati di un pagamento (anche se già pagato) e corregge gli incassi registrati.
 export function ModificaPagamentoModal({ pagamento, categorie, userId, onClose, onDone }: Props) {
+    const t = useTranslations('adminContabilita');
     const [descrizione, setDescrizione] = useState(pagamento.descrizione);
     const [importo, setImporto] = useState<number>(Number(pagamento.importo));
     const [scadenza, setScadenza] = useState(String(pagamento.scadenza).slice(0, 10));
@@ -71,9 +73,9 @@ export function ModificaPagamentoModal({ pagamento, categorie, userId, onClose, 
 
     const salvaDati = async () => {
         // Validazioni speculari a quelle del server (finding #3):
-        if (importo < 0) { setError('L\'importo non può essere negativo.'); return; }
+        if (importo < 0) { setError(t('modifErrImportoNeg')); return; }
         if (importo - sconto < giaIncassato - 0.005) {
-            setError('Il nuovo importo è inferiore a quanto già incassato. Storna prima gli incassi.');
+            setError(t('modifErrImportoInferiore'));
             return;
         }
         setSaving(true); setError(null);
@@ -87,18 +89,18 @@ export function ModificaPagamentoModal({ pagamento, categorie, userId, onClose, 
                 }),
             });
             const j = await res.json();
-            if (!res.ok) { setError(j.error || 'Errore aggiornamento'); return; }
+            if (!res.ok) { setError(j.error || t('modifErrAggiornamento')); return; }
             onDone();
         } catch {
-            setError('Errore di rete');
+            setError(t('modifErrRete'));
         } finally { setSaving(false); }
     };
 
     const applicaSconto = async () => {
-        if (sconto < 0) { setScontoMsg('Lo sconto non può essere negativo.'); return; }
-        if (sconto > importo + 0.005) { setScontoMsg('Lo sconto non può superare l\'importo.'); return; }
-        if (importo - sconto < giaIncassato - 0.005) { setScontoMsg('Sconto troppo alto: la voce scenderebbe sotto l\'incassato.'); return; }
-        if (scontoMotivo.trim().length < 3) { setScontoMsg('Indica il motivo dello sconto (almeno 3 caratteri).'); return; }
+        if (sconto < 0) { setScontoMsg(t('modifScontoNeg')); return; }
+        if (sconto > importo + 0.005) { setScontoMsg(t('modifScontoSupera')); return; }
+        if (importo - sconto < giaIncassato - 0.005) { setScontoMsg(t('modifScontoTroppoAlto')); return; }
+        if (scontoMotivo.trim().length < 3) { setScontoMsg(t('modifScontoMotivo')); return; }
         setSavingSconto(true); setScontoMsg(null);
         try {
             const res = await fetch(`/api/pagamenti/${pagamento.id}/sconto`, {
@@ -107,11 +109,11 @@ export function ModificaPagamentoModal({ pagamento, categorie, userId, onClose, 
                 body: JSON.stringify({ sconto: Number(sconto), sconto_motivo: scontoMotivo.trim() }),
             });
             const j = await res.json().catch(() => ({}));
-            if (!res.ok) { setScontoMsg(j.error || 'Errore nell\'applicazione dello sconto'); return; }
-            setScontoMsg('Sconto applicato.');
+            if (!res.ok) { setScontoMsg(j.error || t('modifScontoErrore')); return; }
+            setScontoMsg(t('modifScontoApplicato'));
             onDone();
         } catch {
-            setScontoMsg('Errore di rete');
+            setScontoMsg(t('modifErrRete'));
         } finally { setSavingSconto(false); }
     };
 
@@ -122,37 +124,37 @@ export function ModificaPagamentoModal({ pagamento, categorie, userId, onClose, 
             body: JSON.stringify(editDraft),
         });
         if (res.ok) { setEditId(null); setEditDraft({}); await loadIncassi(); }
-        else { const j = await res.json().catch(() => ({})); alert(j.error || 'Errore'); }
+        else { const j = await res.json().catch(() => ({})); alert(j.error || t('modifErrore')); }
     };
 
     // Storno TRACCIATO: il motivo è obbligatorio (niente più cancellazione secca).
     const stornaIncasso = async (id: string) => {
-        const motivo = window.prompt('Storno incasso — indica il motivo (obbligatorio):')?.trim();
+        const motivo = window.prompt(t('modifStornoPrompt'))?.trim();
         if (!motivo) return;
-        if (motivo.length < 3) { alert('Il motivo deve avere almeno 3 caratteri.'); return; }
+        if (motivo.length < 3) { alert(t('modifStornoMinCaratteri')); return; }
         const res = await fetch('/api/pagamenti/incassi/storno', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
             body: JSON.stringify({ incasso_id: id, motivo }),
         });
         if (res.ok) await loadIncassi();
-        else { const j = await res.json().catch(() => ({})); alert(j.error || 'Errore nello storno'); }
+        else { const j = await res.json().catch(() => ({})); alert(j.error || t('modifStornoErrore')); }
     };
 
     return (
         <Modal
             open
             onClose={onClose}
-            title="Modifica pagamento"
+            title={t('modifTitolo')}
             labelledBy="modifica-pagamento-title"
             className={cx(MODAL_CARD, 'max-h-[90vh] overflow-y-auto')}
             style={{ boxShadow: MODAL_SHADOW }}
         >
             <div className="flex items-center justify-between mb-4">
                 <h3 id="modifica-pagamento-title" className="font-barlow font-black text-lg text-kidville-green uppercase flex items-center gap-2">
-                    <Pencil size={18} /> Modifica pagamento
+                    <Pencil size={18} /> {t('modifTitolo')}
                 </h3>
-                <button onClick={onClose} aria-label="Chiudi" className="text-kidville-muted hover:text-kidville-ink"><X size={20} /></button>
+                <button onClick={onClose} aria-label={t('modifChiudi')} className="text-kidville-muted hover:text-kidville-ink"><X size={20} /></button>
             </div>
 
             {pagamento.alunni && (
@@ -161,25 +163,25 @@ export function ModificaPagamentoModal({ pagamento, categorie, userId, onClose, 
 
             <div className="space-y-3">
                 <div>
-                    <label htmlFor="mod-descrizione" className="font-maven text-xs text-kidville-sub mb-1 block">Descrizione</label>
+                    <label htmlFor="mod-descrizione" className="font-maven text-xs text-kidville-sub mb-1 block">{t('modifDescrizione')}</label>
                     <input id="mod-descrizione" type="text" value={descrizione} onChange={(e) => setDescrizione(e.target.value)}
                         className={INPUT} />
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                     <div>
-                        <label htmlFor="mod-importo" className="font-maven text-xs text-kidville-sub mb-1 block">Importo (€)</label>
+                        <label htmlFor="mod-importo" className="font-maven text-xs text-kidville-sub mb-1 block">{t('modifImporto')}</label>
                         <input id="mod-importo" type="number" min={0} step="0.01" value={importo || ''}
                             onChange={(e) => setImporto(e.target.value === '' ? 0 : Number(e.target.value))}
                             className={INPUT} />
                     </div>
                     <div>
-                        <label htmlFor="mod-scadenza" className="font-maven text-xs text-kidville-sub mb-1 block">Scadenza</label>
+                        <label htmlFor="mod-scadenza" className="font-maven text-xs text-kidville-sub mb-1 block">{t('modifScadenza')}</label>
                         <input id="mod-scadenza" type="date" value={scadenza} onChange={(e) => setScadenza(e.target.value)}
                             className={INPUT} />
                     </div>
                 </div>
                 <div>
-                    <label htmlFor="mod-categoria" className="font-maven text-xs text-kidville-sub mb-1 block">Categoria</label>
+                    <label htmlFor="mod-categoria" className="font-maven text-xs text-kidville-sub mb-1 block">{t('modifCategoria')}</label>
                     <select id="mod-categoria" value={categoriaId} onChange={(e) => setCategoriaId(e.target.value)}
                         className={SELECT}>
                         <option value="">—</option>
@@ -189,7 +191,7 @@ export function ModificaPagamentoModal({ pagamento, categorie, userId, onClose, 
                 <label className="flex items-center gap-2 cursor-pointer">
                     <input type="checkbox" checked={obbligatorio} onChange={(e) => setObbligatorio(e.target.checked)}
                         className="w-4 h-4 rounded border-kidville-muted text-kidville-green focus:ring-kidville-green" />
-                    <span className="font-maven text-xs text-kidville-green">Pagamento obbligatorio</span>
+                    <span className="font-maven text-xs text-kidville-green">{t('modifObbligatorio')}</span>
                 </label>
                 {error && <p role="alert" className="font-maven text-xs text-kidville-error-strong">{error}</p>}
             </div>
@@ -197,51 +199,51 @@ export function ModificaPagamentoModal({ pagamento, categorie, userId, onClose, 
             {/* Sconto / abbuono sulla voce */}
             <div className="mt-5 rounded-card bg-kidville-cream/50 p-3">
                 <h4 className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide mb-2 flex items-center gap-1.5">
-                    <BadgePercent size={14} /> Sconto sulla voce
+                    <BadgePercent size={14} /> {t('modifScontoTitolo')}
                 </h4>
                 <div className="grid grid-cols-[100px_1fr] gap-2 items-end">
                     <div>
-                        <label htmlFor="mod-sconto" className="font-maven text-[11px] text-kidville-sub mb-1 block">Sconto (€)</label>
+                        <label htmlFor="mod-sconto" className="font-maven text-[11px] text-kidville-sub mb-1 block">{t('modifScontoEuro')}</label>
                         <input id="mod-sconto" type="number" min={0} step="0.01" value={sconto || ''}
                             onChange={(e) => setSconto(e.target.value === '' ? 0 : Number(e.target.value))}
                             className={INPUT} />
                     </div>
                     <div>
-                        <label htmlFor="mod-sconto-motivo" className="font-maven text-[11px] text-kidville-sub mb-1 block">Motivo</label>
+                        <label htmlFor="mod-sconto-motivo" className="font-maven text-[11px] text-kidville-sub mb-1 block">{t('modifMotivo')}</label>
                         <input id="mod-sconto-motivo" type="text" value={scontoMotivo} onChange={(e) => setScontoMotivo(e.target.value)}
-                            placeholder="Es. sconto fratelli, esenzione…" className={INPUT} />
+                            placeholder={t('modifScontoPlaceholder')} className={INPUT} />
                     </div>
                 </div>
                 {scontoMsg && <p role="status" className="font-maven text-[11px] text-kidville-sub mt-2">{scontoMsg}</p>}
                 <button onClick={applicaSconto} disabled={savingSconto} className={cx(BTN_SECONDARY, 'mt-2 w-full')}>
-                    {savingSconto ? 'Applicazione…' : 'Applica sconto'}
+                    {savingSconto ? t('modifApplicando') : t('modifApplicaSconto')}
                 </button>
             </div>
 
             {/* Incassi registrati */}
             <div className="mt-5">
-                <h4 className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide mb-2">Incassi registrati</h4>
+                <h4 className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide mb-2">{t('modifIncassiRegistrati')}</h4>
                 {incassi.length === 0 ? (
-                    <p className="font-maven text-xs text-kidville-sub">Nessun incasso registrato.</p>
+                    <p className="font-maven text-xs text-kidville-sub">{t('modifNessunIncasso')}</p>
                 ) : (
                     <div className="space-y-2">
                         {incassi.map((inc) => (
                             <div key={inc.id} className="border border-kidville-line rounded-input p-2">
                                 {editId === inc.id ? (
                                     <div className="flex items-center gap-2 flex-wrap">
-                                        <input type="number" step="0.01" defaultValue={inc.importo} aria-label="Importo incasso"
+                                        <input type="number" step="0.01" defaultValue={inc.importo} aria-label={t('modifAriaImportoIncasso')}
                                             onChange={(e) => setEditDraft((d) => ({ ...d, importo: Number(e.target.value) }))}
                                             className={cx(INLINE_FIELD, 'w-20')} />
-                                        <input type="date" defaultValue={String(inc.data_incasso).slice(0, 10)} aria-label="Data incasso"
+                                        <input type="date" defaultValue={String(inc.data_incasso).slice(0, 10)} aria-label={t('modifAriaDataIncasso')}
                                             onChange={(e) => setEditDraft((d) => ({ ...d, data_incasso: e.target.value }))}
                                             className={INLINE_FIELD} />
-                                        <select defaultValue={inc.metodo} aria-label="Metodo incasso"
+                                        <select defaultValue={inc.metodo} aria-label={t('modifAriaMetodoIncasso')}
                                             onChange={(e) => setEditDraft((d) => ({ ...d, metodo: e.target.value }))}
                                             className={cx(INLINE_FIELD, 'cursor-pointer')}>
                                             {METODI.map((m) => <option key={m.v} value={m.v}>{m.l}</option>)}
                                         </select>
-                                        <button onClick={() => salvaIncasso(inc.id)} aria-label="Salva incasso" className="text-kidville-green"><Save size={16} /></button>
-                                        <button onClick={() => { setEditId(null); setEditDraft({}); }} aria-label="Annulla modifica incasso" className="text-kidville-muted"><X size={16} /></button>
+                                        <button onClick={() => salvaIncasso(inc.id)} aria-label={t('modifAriaSalvaIncasso')} className="text-kidville-green"><Save size={16} /></button>
+                                        <button onClick={() => { setEditId(null); setEditDraft({}); }} aria-label={t('modifAriaAnnullaModifica')} className="text-kidville-muted"><X size={16} /></button>
                                     </div>
                                 ) : (
                                     <div className="flex items-center justify-between">
@@ -249,8 +251,8 @@ export function ModificaPagamentoModal({ pagamento, categorie, userId, onClose, 
                                             {formatEuro(inc.importo)} <span className="text-kidville-sub text-xs">· {String(inc.data_incasso).slice(0, 10)} · {inc.metodo}</span>
                                         </span>
                                         <div className="flex items-center gap-2">
-                                            <button onClick={() => { setEditId(inc.id); setEditDraft({}); }} aria-label="Modifica incasso" className="text-kidville-muted hover:text-kidville-green"><Pencil size={14} /></button>
-                                            <button onClick={() => stornaIncasso(inc.id)} title="Storna (con motivo)" aria-label="Storna incasso" className="text-kidville-muted hover:text-kidville-error"><Trash2 size={14} /></button>
+                                            <button onClick={() => { setEditId(inc.id); setEditDraft({}); }} aria-label={t('modifAriaModificaIncasso')} className="text-kidville-muted hover:text-kidville-green"><Pencil size={14} /></button>
+                                            <button onClick={() => stornaIncasso(inc.id)} title={t('modifTitleStorna')} aria-label={t('modifAriaStornaIncasso')} className="text-kidville-muted hover:text-kidville-error"><Trash2 size={14} /></button>
                                         </div>
                                     </div>
                                 )}
@@ -262,10 +264,10 @@ export function ModificaPagamentoModal({ pagamento, categorie, userId, onClose, 
 
             <div className="flex gap-2 mt-5">
                 <button onClick={onClose} className={cx(BTN_SECONDARY, 'flex-1')}>
-                    Chiudi
+                    {t('modifChiudi')}
                 </button>
                 <button onClick={salvaDati} disabled={saving} className={cx(BTN_PRIMARY, 'flex-1')}>
-                    {saving ? 'Salvataggio…' : 'Salva modifiche'}
+                    {saving ? t('modifSalvataggio') : t('modifSalvaModifiche')}
                 </button>
             </div>
         </Modal>

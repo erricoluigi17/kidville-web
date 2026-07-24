@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { hdr } from './ui';
 
 /**
@@ -9,6 +10,7 @@ import { hdr } from './ui';
  * funzioni_matrice vengono unite lato server, non sovrascritte).
  */
 export function useAdminSettings(userId: string) {
+    const t = useTranslations('adminSettings');
     const [settings, setSettings] = useState<Record<string, unknown> | null>(null);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -18,9 +20,9 @@ export function useAdminSettings(userId: string) {
         fetch(`/api/admin/settings?userId=${userId}`, { headers: hdr(userId) })
             .then(r => r.json())
             .then(d => { if (active && d.success) setSettings(d.data); })
-            .catch(() => { if (active) setError('Errore di caricamento'); });
+            .catch(() => { if (active) setError(t('erroreCaricamentoDati')); });
         return () => { active = false; };
-    }, [userId]);
+    }, [userId, t]);
 
     const save = useCallback(async (updates: Record<string, unknown>) => {
         setSaving(true);
@@ -31,15 +33,15 @@ export function useAdminSettings(userId: string) {
             });
             const j = await res.json();
             if (j.success) { setSettings(j.data); return true; }
-            setError(j.error ?? 'Errore di salvataggio');
+            setError(j.error ?? t('erroreSalvataggio'));
             return false;
         } catch {
-            setError('Errore di rete');
+            setError(t('erroreRete'));
             return false;
         } finally {
             setSaving(false);
         }
-    }, [userId]);
+    }, [userId, t]);
 
     return { settings, save, saving, error };
 }

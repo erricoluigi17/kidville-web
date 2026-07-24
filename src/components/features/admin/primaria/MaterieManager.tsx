@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { Plus, Trash2, Sparkles } from 'lucide-react';
 
 interface Materia {
@@ -23,6 +24,7 @@ interface Props {
 }
 
 export function MaterieManager({ sectionId, sezione, userId, scuolaId }: Props) {
+  const t = useTranslations('adminPrimaria');
   const [materie, setMaterie] = useState<Materia[]>([]);
   const [loading, setLoading] = useState(true);
   const [livello, setLivello] = useState(1);
@@ -98,7 +100,7 @@ export function MaterieManager({ sectionId, sezione, userId, scuolaId }: Props) 
       body: JSON.stringify({ sectionId, livello }),
     });
     const d = await r.json();
-    if (!r.ok) setError(d.error || 'Errore');
+    if (!r.ok) setError(d.error || t('comuneErrore'));
     else load();
   };
 
@@ -111,7 +113,7 @@ export function MaterieManager({ sectionId, sezione, userId, scuolaId }: Props) 
       body: JSON.stringify({ sectionId, nome: nuova.nome, codice: nuova.codice, ordine: materie.length + 1 }),
     });
     const d = await r.json();
-    if (!r.ok) setError(d.error || 'Errore');
+    if (!r.ok) setError(d.error || t('comuneErrore'));
     else {
       setNuova({ nome: '', codice: '' });
       load();
@@ -135,33 +137,33 @@ export function MaterieManager({ sectionId, sezione, userId, scuolaId }: Props) 
     load();
   };
 
-  if (!sectionId) return <p className="font-maven text-kidville-muted">Seleziona una sezione primaria.</p>;
+  if (!sectionId) return <p className="font-maven text-kidville-muted">{t('comuneSelezionaSezione')}</p>;
 
   return (
     <div className="space-y-4">
       {error && <div className="rounded-card bg-kidville-error/10 text-kidville-error px-4 py-2 text-sm font-maven">{error}</div>}
 
       <div className="flex flex-wrap items-center gap-2 rounded-card bg-kidville-cream/50 p-3">
-        <span className="font-maven text-sm text-kidville-ink">Applica preset materie per livello</span>
+        <span className="font-maven text-sm text-kidville-ink">{t('materiePresetLabel')}</span>
         <select
           value={livello}
           onChange={(e) => setLivello(Number(e.target.value))}
           className="font-maven rounded-pill border border-kidville-line bg-white px-3 py-1.5 text-sm"
         >
           {[1, 2, 3, 4, 5].map((l) => (
-            <option key={l} value={l}>{l}ª</option>
+            <option key={l} value={l}>{t('comuneLivelloOrdinale', { livello: l })}</option>
           ))}
         </select>
         <button
           onClick={applyPreset}
           className="font-maven inline-flex items-center gap-1.5 rounded-pill bg-kidville-green px-4 py-1.5 text-sm text-kidville-yellow"
         >
-          <Sparkles size={14} /> Applica preset
+          <Sparkles size={14} /> {t('materieApplicaPreset')}
         </button>
       </div>
 
       {loading ? (
-        <p className="font-maven text-kidville-muted text-sm">Caricamento…</p>
+        <p className="font-maven text-kidville-muted text-sm">{t('comuneCaricamento')}</p>
       ) : (
         <ul className="divide-y divide-kidville-line">
           {materie.map((m) => {
@@ -171,13 +173,13 @@ export function MaterieManager({ sectionId, sezione, userId, scuolaId }: Props) 
               <div className="flex items-center justify-between">
                 <div>
                   <span className="font-maven text-kidville-ink">{m.nome}</span>
-                  {m.e_civica && <span className="ml-2 rounded-pill bg-kidville-info-soft text-kidville-info px-2 py-0.5 text-[11px]">Ed. Civica</span>}
-                  {m.turno_mensa && <span className="ml-2 rounded-pill bg-kidville-warn-soft text-kidville-warn px-2 py-0.5 text-[11px]">Mensa</span>}
+                  {m.e_civica && <span className="ml-2 rounded-pill bg-kidville-info-soft text-kidville-info px-2 py-0.5 text-[11px]">{t('materieBadgeCivica')}</span>}
+                  {m.turno_mensa && <span className="ml-2 rounded-pill bg-kidville-warn-soft text-kidville-warn px-2 py-0.5 text-[11px]">{t('materieBadgeMensa')}</span>}
                   <span className="ml-2 text-xs text-kidville-muted">{m.codice}</span>
                 </div>
                 <div className="flex items-center gap-3">
                   <label className="font-maven text-xs text-kidville-muted inline-flex items-center gap-1">
-                    <input type="checkbox" checked={m.attiva} onChange={() => toggleAttiva(m)} /> attiva
+                    <input type="checkbox" checked={m.attiva} onChange={() => toggleAttiva(m)} /> {t('materieAttiva')}
                   </label>
                   <button onClick={() => removeMateria(m.id)} className="text-kidville-muted hover:text-kidville-error">
                     <Trash2 size={16} />
@@ -185,51 +187,51 @@ export function MaterieManager({ sectionId, sezione, userId, scuolaId }: Props) 
                 </div>
               </div>
               <div className="mt-1.5 flex items-center gap-2">
-                <label className="font-maven text-[11px] text-kidville-muted shrink-0">Obiettivo della classe</label>
+                <label className="font-maven text-[11px] text-kidville-muted shrink-0">{t('materieObiettivoClasse')}</label>
                 <select
                   value={assoc[m.id] ?? ''}
                   onChange={(e) => setObiettivo(m.id, e.target.value)}
                   className="font-maven flex-1 rounded border border-kidville-line px-2 py-1 text-xs"
                 >
-                  <option value="">— nessuno —</option>
+                  <option value="">{t('materieNessunObiettivo')}</option>
                   {obMateria.map((o) => (
                     <option key={o.id} value={o.id}>{o.codice ? `${o.codice} · ` : ''}{o.descrizione}</option>
                   ))}
                 </select>
               </div>
               {obMateria.length === 0 && (
-                <p className="font-maven text-[11px] text-kidville-muted mt-1">Nessun obiettivo definito per {m.codice} al livello {livello}ª (sezione Obiettivi).</p>
+                <p className="font-maven text-[11px] text-kidville-muted mt-1">{t('materieNessunObiettivoDefinito', { codice: m.codice, livello })}</p>
               )}
             </li>
           );})}
-          {materie.length === 0 && <li className="py-3 font-maven text-kidville-muted text-sm">Nessuna materia. Applica un preset o aggiungine una.</li>}
+          {materie.length === 0 && <li className="py-3 font-maven text-kidville-muted text-sm">{t('materieNessunaMateria')}</li>}
         </ul>
       )}
 
       <div className="flex flex-wrap items-end gap-2 border-t border-kidville-line pt-4">
         <div>
-          <label className="block font-maven text-xs text-kidville-muted">Nome materia</label>
+          <label className="block font-maven text-xs text-kidville-muted">{t('materieNomeMateria')}</label>
           <input
             value={nuova.nome}
             onChange={(e) => setNuova((s) => ({ ...s, nome: e.target.value }))}
             className="font-maven rounded-pill border border-kidville-line px-3 py-1.5 text-sm"
-            placeholder="Es. Coding"
+            placeholder={t('materiePlaceholderNome')}
           />
         </div>
         <div>
-          <label className="block font-maven text-xs text-kidville-muted">Codice</label>
+          <label className="block font-maven text-xs text-kidville-muted">{t('materieCodice')}</label>
           <input
             value={nuova.codice}
             onChange={(e) => setNuova((s) => ({ ...s, codice: e.target.value.toLowerCase().replace(/\s+/g, '_') }))}
             className="font-maven rounded-pill border border-kidville-line px-3 py-1.5 text-sm"
-            placeholder="coding"
+            placeholder={t('materiePlaceholderCodice')}
           />
         </div>
         <button
           onClick={addMateria}
           className="font-maven inline-flex items-center gap-1.5 rounded-pill bg-kidville-green px-4 py-1.5 text-sm text-kidville-yellow"
         >
-          <Plus size={14} /> Aggiungi
+          <Plus size={14} /> {t('comuneAggiungi')}
         </button>
       </div>
     </div>

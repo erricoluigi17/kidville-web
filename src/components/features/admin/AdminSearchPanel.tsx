@@ -12,6 +12,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import type { LucideIcon } from 'lucide-react';
 import { GraduationCap, Users, LayoutGrid, FileText, SearchX } from 'lucide-react';
 import { SHADOW_FLOAT } from '@/components/ui/Card';
@@ -30,11 +31,11 @@ interface SearchGroups {
   moduli: SearchItem[];
 }
 
-const GROUPS: { key: keyof SearchGroups; label: string; icon: LucideIcon }[] = [
-  { key: 'alunni', label: 'Alunni', icon: GraduationCap },
-  { key: 'utenti', label: 'Staff', icon: Users },
-  { key: 'sezioni', label: 'Classi', icon: LayoutGrid },
-  { key: 'moduli', label: 'Moduli', icon: FileText },
+const GROUPS: { key: keyof SearchGroups; labelKey: string; icon: LucideIcon }[] = [
+  { key: 'alunni', labelKey: 'gruppoAlunni', icon: GraduationCap },
+  { key: 'utenti', labelKey: 'gruppoStaff', icon: Users },
+  { key: 'sezioni', labelKey: 'gruppoClassi', icon: LayoutGrid },
+  { key: 'moduli', labelKey: 'gruppoModuli', icon: FileText },
 ];
 
 interface Props {
@@ -45,6 +46,7 @@ interface Props {
 
 export function AdminSearchPanel({ query, userId, onNavigate }: Props) {
   const router = useRouter();
+  const t = useTranslations('adminNav');
   const [groups, setGroups] = useState<SearchGroups | null>(null);
 
   useEffect(() => {
@@ -80,17 +82,17 @@ export function AdminSearchPanel({ query, userId, onNavigate }: Props) {
       style={{ boxShadow: SHADOW_FLOAT }}
     >
       {groups == null ? (
-        <div className="px-3 py-3 font-maven text-[12.5px] text-kidville-muted">Ricerca in corso…</div>
+        <div className="px-3 py-3 font-maven text-[12.5px] text-kidville-muted">{t('ricercaInCorso')}</div>
       ) : total === 0 ? (
         <div className="flex items-center gap-2 px-3 py-3 font-maven text-[12.5px] text-kidville-muted">
-          <SearchX size={15} /> Nessun risultato per “{q}”
+          <SearchX size={15} /> {t('nessunRisultato', { q })}
         </div>
       ) : (
-        GROUPS.map(({ key, label, icon: Icon }) =>
+        GROUPS.map(({ key, labelKey, icon: Icon }) =>
           groups[key].length > 0 ? (
             <div key={key} className="py-1">
               <div className="px-2.5 pb-1 pt-1.5 font-barlow text-[11px] font-bold uppercase tracking-[0.06em] text-kidville-neutral">
-                {label}
+                {t(labelKey)}
               </div>
               {groups[key].map((item) => (
                 <button

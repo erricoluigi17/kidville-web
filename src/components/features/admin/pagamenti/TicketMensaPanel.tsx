@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { useTranslations } from 'next-intl';
 import { Ticket, Search, Plus, History, AlertTriangle } from 'lucide-react';
 import { SaveCheck } from '@/components/ui/SaveConfirmation';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
@@ -29,6 +30,7 @@ const hdr = (u: string) => ({ 'Content-Type': 'application/json', 'x-user-id': u
 const dataIt = (s: string | null | undefined) => (s ? new Date(s).toLocaleDateString('it-IT') : '—');
 
 export function TicketMensaPanel({ userId, scuolaId }: Props) {
+    const t = useTranslations('adminContabilita');
     const [alunni, setAlunni] = useState<Alunno[]>([]);
     const [search, setSearch] = useState('');
     const [sel, setSel] = useState<Alunno | null>(null);
@@ -73,7 +75,7 @@ export function TicketMensaPanel({ userId, scuolaId }: Props) {
         const j = await res.json();
         if (j.success) {
             setSaldo(j.data.saldo_ticket);
-            setDone(`Ricarica di ${pezzi} ticket registrata (€ ${costo}).`);
+            setDone(`${t('ticket_ricarica_pre')} ${pezzi} ${t('ticket_ricarica_mid')} ${costo}${t('ticket_ricarica_post')}`);
             setConfermaId(n => n + 1);
             loadStorico(sel.id);
             loadMorosi();
@@ -93,7 +95,7 @@ export function TicketMensaPanel({ userId, scuolaId }: Props) {
                 <div className="rounded-card border-[1.5px] border-kidville-error-soft bg-kidville-error-soft px-4 py-3">
                     <div className="flex items-center gap-2 text-kidville-error mb-2">
                         <AlertTriangle size={18} />
-                        <span className="font-barlow font-bold uppercase text-sm">Morosi ticket · saldo negativo ({morosi.length})</span>
+                        <span className="font-barlow font-bold uppercase text-sm">{t('ticket_morosi_titolo')} ({morosi.length})</span>
                     </div>
                     <div className="flex flex-wrap gap-2">
                         {morosi.map(m => (
@@ -109,8 +111,8 @@ export function TicketMensaPanel({ userId, scuolaId }: Props) {
 
             <div className="grid md:grid-cols-2 gap-5">
                 <div>
-                    <h3 className="font-barlow font-bold text-kidville-green uppercase text-sm mb-3 flex items-center gap-2"><Search size={14} /> Seleziona alunno</h3>
-                    <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Cerca…"
+                    <h3 className="font-barlow font-bold text-kidville-green uppercase text-sm mb-3 flex items-center gap-2"><Search size={14} /> {t('ticket_seleziona_alunno')}</h3>
+                    <input value={search} onChange={e => setSearch(e.target.value)} placeholder={t('ticket_cerca_ph')}
                         className="w-full rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-4 py-2 font-maven text-sm text-kidville-ink outline-none transition-colors focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15 mb-2" />
                     <div className="space-y-1 max-h-72 overflow-y-auto">
                         {filtered.map(a => (
@@ -123,35 +125,35 @@ export function TicketMensaPanel({ userId, scuolaId }: Props) {
                 </div>
 
                 <div>
-                    <h3 className="font-barlow font-bold text-kidville-green uppercase text-sm mb-3 flex items-center gap-2"><Ticket size={14} /> Ricarica</h3>
-                    {!sel ? <p className="font-maven text-sm text-kidville-muted">Seleziona un alunno.</p> : (
+                    <h3 className="font-barlow font-bold text-kidville-green uppercase text-sm mb-3 flex items-center gap-2"><Ticket size={14} /> {t('ticket_ricarica_titolo')}</h3>
+                    {!sel ? <p className="font-maven text-sm text-kidville-muted">{t('ticket_seleziona_prompt')}</p> : (
                         <div className={cx('rounded-card p-4', (saldo ?? 0) < 0 ? 'bg-kidville-error-soft/50' : 'bg-kidville-cream/60')}>
                             <div className="flex justify-between mb-3">
                                 <span className="font-maven text-sm text-kidville-green font-bold">{sel.nome} {sel.cognome}</span>
-                                <span className="font-maven text-sm text-kidville-muted">Saldo: <b className={(saldo ?? 0) < 0 ? 'text-kidville-error' : 'text-kidville-green'}>{saldo ?? '—'}</b> ticket</span>
+                                <span className="font-maven text-sm text-kidville-muted">{t('ticket_saldo')} <b className={(saldo ?? 0) < 0 ? 'text-kidville-error' : 'text-kidville-green'}>{saldo ?? '—'}</b> {t('ticket_unit')}</span>
                             </div>
                             {pacchetti.length > 0 && (
                                 <div className="flex flex-wrap gap-2 mb-3">
                                     {pacchetti.map((p, i) => (
                                         <button key={i} onClick={() => { setPezzi(p.pezzi); setCosto(p.costo); }}
                                             className="px-3 py-1 rounded-pill border-[1.5px] border-kidville-line bg-kidville-white font-maven text-xs text-kidville-green transition-colors hover:border-kidville-green">
-                                            {p.label} · {p.pezzi}pz · €{p.costo}
+                                            {p.label} · {p.pezzi}{t('ticket_pz')} · €{p.costo}
                                         </button>
                                     ))}
                                 </div>
                             )}
                             <div className="grid grid-cols-3 gap-2 mb-3">
-                                <div><label className="font-maven text-xs text-kidville-muted">Pezzi</label>
+                                <div><label className="font-maven text-xs text-kidville-muted">{t('ticket_pezzi_label')}</label>
                                     <input type="number" value={pezzi} onChange={e => setPezzi(Number(e.target.value))} className="w-full rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-2 py-1 font-maven text-sm text-kidville-ink outline-none transition-colors focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15" /></div>
-                                <div><label className="font-maven text-xs text-kidville-muted">Costo €</label>
+                                <div><label className="font-maven text-xs text-kidville-muted">{t('ticket_costo_label')}</label>
                                     <input type="number" value={costo} onChange={e => setCosto(Number(e.target.value))} className="w-full rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-2 py-1 font-maven text-sm text-kidville-ink outline-none transition-colors focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15" /></div>
-                                <div><label className="font-maven text-xs text-kidville-muted">Metodo</label>
+                                <div><label className="font-maven text-xs text-kidville-muted">{t('ticket_metodo_label')}</label>
                                     <select value={metodo} onChange={e => setMetodo(e.target.value)} className="w-full rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-2 py-1 font-maven text-sm text-kidville-ink outline-none transition-colors cursor-pointer hover:border-kidville-green/50 focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15">
-                                        <option value="contanti">Contanti</option><option value="bonifico">Bonifico</option><option value="pos">POS</option>
+                                        <option value="contanti">{t('ticket_contanti')}</option><option value="bonifico">{t('ticket_bonifico')}</option><option value="pos">{t('ticket_pos')}</option>
                                     </select></div>
                             </div>
                             <button onClick={ricarica} className="w-full py-2.5 rounded-pill bg-kidville-green text-kidville-yellow font-maven font-bold text-sm flex items-center justify-center gap-1 transition-colors hover:bg-kidville-green-dark">
-                                <Plus size={15} /> Ricarica (crea pagamento Mensa saldato)
+                                <Plus size={15} /> {t('ticket_ricarica_btn')}
                             </button>
                             {done && <p key={confermaId} className="mt-2 font-maven text-xs text-kidville-success flex items-center gap-1"><SaveCheck size={14} /> {done}</p>}
                         </div>
@@ -163,14 +165,14 @@ export function TicketMensaPanel({ userId, scuolaId }: Props) {
             {sel && storico && (
                 <div>
                     <h3 className="font-barlow font-bold text-kidville-green uppercase text-sm mb-3 flex items-center gap-2">
-                        <History size={14} /> Storico ticket di {sel.nome} {sel.cognome}
+                        <History size={14} /> {t('ticket_storico_di')} {sel.nome} {sel.cognome}
                     </h3>
                     <div className="grid md:grid-cols-2 gap-4">
                         {/* Ricariche acquistate */}
                         <div>
-                            <p className="font-maven text-xs font-bold text-kidville-muted uppercase mb-2">Ticket acquistati</p>
+                            <p className="font-maven text-xs font-bold text-kidville-muted uppercase mb-2">{t('ticket_acquistati')}</p>
                             {ricariche.length === 0 ? (
-                                <p className="font-maven text-sm text-kidville-muted">Nessuna ricarica registrata.</p>
+                                <p className="font-maven text-sm text-kidville-muted">{t('ticket_no_ricariche')}</p>
                             ) : (
                                 <div className="space-y-1">
                                     {ricariche.map(m => {
@@ -183,11 +185,11 @@ export function TicketMensaPanel({ userId, scuolaId }: Props) {
                                         return (
                                             <div key={m.id} className="flex items-center justify-between gap-2 bg-kidville-cream/40 rounded-lg px-3 py-1.5">
                                                 <div className="min-w-0">
-                                                    <p className="font-maven text-xs text-kidville-ink truncate">{dataIt(m.creato_il)} · +{m.delta} ticket · € {importo.toFixed(2)}</p>
+                                                    <p className="font-maven text-xs text-kidville-ink truncate">{dataIt(m.creato_il)} · +{m.delta} {t('ticket_unit')} · € {importo.toFixed(2)}</p>
                                                     {met && !gratis && <p className="font-maven text-[10px] text-kidville-muted">{METODO_LABEL[met] ?? met}</p>}
                                                 </div>
                                                 {gratis
-                                                    ? <Badge tone="neutral" className="shrink-0">Gratuita</Badge>
+                                                    ? <Badge tone="neutral" className="shrink-0">{t('ticket_gratuita')}</Badge>
                                                     : st && <Badge tone={st.tone} className="shrink-0">{st.label}</Badge>}
                                             </div>
                                         );
@@ -197,20 +199,20 @@ export function TicketMensaPanel({ userId, scuolaId }: Props) {
                         </div>
                         {/* Consumi, disdette e rettifiche */}
                         <div>
-                            <p className="font-maven text-xs font-bold text-kidville-muted uppercase mb-2">Consumi e movimenti</p>
+                            <p className="font-maven text-xs font-bold text-kidville-muted uppercase mb-2">{t('ticket_consumi_titolo')}</p>
                             {altriMovimenti.length === 0 ? (
-                                <p className="font-maven text-sm text-kidville-muted">Nessun consumo registrato.</p>
+                                <p className="font-maven text-sm text-kidville-muted">{t('ticket_no_consumi')}</p>
                             ) : (
                                 <div className="space-y-1 max-h-64 overflow-y-auto">
                                     {altriMovimenti.map(m => {
                                         const isRett = m.tipo === 'rettifica';
                                         const badgeTone: BadgeTone = m.tipo === 'disdetta' ? 'warn' : isRett ? 'read' : 'neutral';
-                                        const badgeTxt = m.tipo === 'disdetta' ? `Disdetta +${m.delta}`
-                                            : isRett ? `Rettifica ${m.delta >= 0 ? '+' : ''}${m.delta}` : `Consumo ${m.delta}`;
+                                        const badgeTxt = m.tipo === 'disdetta' ? `${t('ticket_disdetta')} +${m.delta}`
+                                            : isRett ? `${t('ticket_rettifica')} ${m.delta >= 0 ? '+' : ''}${m.delta}` : `${t('ticket_consumo')} ${m.delta}`;
                                         return (
                                             <div key={m.id} className="flex items-center justify-between gap-2 bg-kidville-cream/40 rounded-input px-3 py-1.5">
                                                 <span className="font-maven text-xs text-kidville-ink truncate">
-                                                    {isRett ? (m.note ?? 'Rettifica') : <>{dataIt(m.data)}{m.origine ? <span className="text-kidville-muted"> · {m.origine}</span> : null}</>}
+                                                    {isRett ? (m.note ?? t('ticket_rettifica')) : <>{dataIt(m.data)}{m.origine ? <span className="text-kidville-muted"> · {m.origine}</span> : null}</>}
                                                 </span>
                                                 <Badge tone={badgeTone} className="shrink-0">{badgeTxt}</Badge>
                                             </div>

@@ -1,6 +1,7 @@
 'use client';
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { MessageCircle, Users, Send, Loader2, Eye } from 'lucide-react';
 import { CockpitPage, CockpitSelect, PageHeader, Tabs } from '@/components/ui/cockpit';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
@@ -23,6 +24,7 @@ function fmtWhen(iso: string | null) {
 }
 
 function MessaggiInner() {
+  const t = useTranslations('adminComunicazioni');
   const { userId } = useSessionIdentity();
   const [tab, setTab] = useState<'genitori' | 'tutti'>('genitori');
 
@@ -123,14 +125,14 @@ function MessaggiInner() {
 
   return (
     <CockpitPage max={1200}>
-      <PageHeader eyebrow="Comunicazione" icon={MessageCircle} title="Messaggi" subtitle="Chat con i genitori e supervisione delle conversazioni genitore↔insegnante." />
+      <PageHeader eyebrow={t('eyebrow')} icon={MessageCircle} title={t('messaggiTitolo')} subtitle={t('messaggiSottotitolo')} />
 
       <Tabs
         value={tab}
         onChange={(v) => setTab(v as 'genitori' | 'tutti')}
         options={[
-          { id: 'genitori', label: 'Con i genitori', icon: Users },
-          { id: 'tutti', label: 'Tutti i messaggi', icon: Eye },
+          { id: 'genitori', label: t('messaggiTabGenitori'), icon: Users },
+          { id: 'tutti', label: t('messaggiTabTutti'), icon: Eye },
         ]}
       />
 
@@ -139,9 +141,9 @@ function MessaggiInner() {
           {/* Elenco genitori */}
           <div className="rounded-card bg-kidville-white p-3 shadow-sm max-h-[70vh] overflow-y-auto">
             {loadingContatti ? (
-              <p className="font-maven text-sm text-kidville-muted flex items-center gap-2 p-2"><Loader2 size={14} className="animate-spin" /> Caricamento…</p>
+              <p className="font-maven text-sm text-kidville-muted flex items-center gap-2 p-2"><Loader2 size={14} className="animate-spin" /> {t('caricamento')}</p>
             ) : contatti.length === 0 ? (
-              <p className="font-maven text-sm text-kidville-muted p-2">Nessun genitore con account trovato.</p>
+              <p className="font-maven text-sm text-kidville-muted p-2">{t('messaggiNessunGenitore')}</p>
             ) : contatti.map(c => (
               <button
                 key={c.parentUserId}
@@ -157,7 +159,7 @@ function MessaggiInner() {
           {/* Conversazione */}
           <div className="rounded-card bg-kidville-white p-4 shadow-sm flex flex-col max-h-[70vh]">
             {!selContatto ? (
-              <p className="font-maven text-sm text-kidville-muted m-auto">Seleziona un genitore per iniziare a scrivere.</p>
+              <p className="font-maven text-sm text-kidville-muted m-auto">{t('messaggiSelezionaGenitore')}</p>
             ) : (
               <>
                 <div className="border-b border-kidville-line pb-2 mb-3">
@@ -165,7 +167,7 @@ function MessaggiInner() {
                   <p className="font-maven text-xs text-kidville-muted">{selContatto.studentName}{selContatto.classe ? ` · ${selContatto.classe}` : ''}</p>
                 </div>
                 <div className="flex-1 overflow-y-auto space-y-2 pr-1">
-                  {chatMsgs.length === 0 && <p className="font-maven text-sm text-kidville-muted text-center py-6">Nessun messaggio. Scrivi il primo.</p>}
+                  {chatMsgs.length === 0 && <p className="font-maven text-sm text-kidville-muted text-center py-6">{t('messaggiNessunMessaggio')}</p>}
                   {chatMsgs.map(m => {
                     const mine = m.sender_id === userId;
                     return (
@@ -181,7 +183,7 @@ function MessaggiInner() {
                     value={composer}
                     onChange={e => setComposer(e.target.value)}
                     onKeyDown={e => { if (e.key === 'Enter') invia(); }}
-                    placeholder="Scrivi un messaggio…"
+                    placeholder={t('messaggiPlaceholder')}
                     className="flex-1 border-2 border-kidville-line rounded-pill px-4 py-2 font-maven text-sm focus:outline-none focus:border-kidville-green"
                   />
                   <button onClick={invia} disabled={sending || !composer.trim() || !chatThreadId} className="flex h-10 w-10 items-center justify-center rounded-full bg-kidville-green text-white disabled:opacity-50">
@@ -199,17 +201,17 @@ function MessaggiInner() {
             <CockpitSelect
               value={fTeacher}
               onChange={setFTeacher}
-              options={[{ value: '', label: 'Tutti gli insegnanti' }, ...filtri.docenti.map(d => ({ value: d.id, label: d.nome }))]}
+              options={[{ value: '', label: t('messaggiFiltroTuttiInsegnanti') }, ...filtri.docenti.map(d => ({ value: d.id, label: d.nome }))]}
             />
             <CockpitSelect
               value={fParent}
               onChange={setFParent}
-              options={[{ value: '', label: 'Tutti i genitori' }, ...filtri.genitori.map(g => ({ value: g.id, label: g.nome }))]}
+              options={[{ value: '', label: t('messaggiFiltroTuttiGenitori') }, ...filtri.genitori.map(g => ({ value: g.id, label: g.nome }))]}
             />
             <CockpitSelect
               value={fClasse}
               onChange={setFClasse}
-              options={[{ value: '', label: 'Tutte le classi' }, ...filtri.classi.map(c => ({ value: c, label: c }))]}
+              options={[{ value: '', label: t('messaggiFiltroTutteClassi') }, ...filtri.classi.map(c => ({ value: c, label: c }))]}
             />
           </div>
 
@@ -217,9 +219,9 @@ function MessaggiInner() {
             {/* Elenco thread */}
             <div className="rounded-card bg-kidville-white p-3 shadow-sm max-h-[70vh] overflow-y-auto">
               {loadingThreads ? (
-                <p className="font-maven text-sm text-kidville-muted flex items-center gap-2 p-2"><Loader2 size={14} className="animate-spin" /> Caricamento…</p>
+                <p className="font-maven text-sm text-kidville-muted flex items-center gap-2 p-2"><Loader2 size={14} className="animate-spin" /> {t('caricamento')}</p>
               ) : threads.length === 0 ? (
-                <p className="font-maven text-sm text-kidville-muted p-2">Nessuna conversazione trovata.</p>
+                <p className="font-maven text-sm text-kidville-muted p-2">{t('messaggiNessunaConversazione')}</p>
               ) : threads.map(t => (
                 <button
                   key={t.id}
@@ -235,7 +237,7 @@ function MessaggiInner() {
             {/* Messaggi (sola lettura) */}
             <div className="rounded-card bg-kidville-white p-4 shadow-sm flex flex-col max-h-[70vh]">
               {!selThread ? (
-                <p className="font-maven text-sm text-kidville-muted m-auto">Seleziona una conversazione per leggerla.</p>
+                <p className="font-maven text-sm text-kidville-muted m-auto">{t('messaggiSelezionaConversazione')}</p>
               ) : (
                 <>
                   <div className="border-b border-kidville-line pb-2 mb-3 flex items-center justify-between">
@@ -243,15 +245,15 @@ function MessaggiInner() {
                       <p className="font-barlow font-bold text-kidville-green">{selThread.parent?.nome ?? '—'} ↔ {selThread.teacher?.nome ?? '—'}</p>
                       <p className="font-maven text-xs text-kidville-muted">{selThread.student?.nome ?? ''}{selThread.student?.classe ? ` · ${selThread.student.classe}` : ''}</p>
                     </div>
-                    <span className="font-maven text-[11px] text-kidville-muted inline-flex items-center gap-1"><Eye size={12} /> sola lettura</span>
+                    <span className="font-maven text-[11px] text-kidville-muted inline-flex items-center gap-1"><Eye size={12} /> {t('messaggiSolaLettura')}</span>
                   </div>
                   <div className="flex-1 overflow-y-auto space-y-2 pr-1">
-                    {oversightMsgs.length === 0 && <p className="font-maven text-sm text-kidville-muted text-center py-6">Nessun messaggio in questa conversazione.</p>}
+                    {oversightMsgs.length === 0 && <p className="font-maven text-sm text-kidville-muted text-center py-6">{t('messaggiNessunMessaggioConv')}</p>}
                     {oversightMsgs.map(m => {
                       const fromTeacher = m.sender_id === selLabels.teacher;
                       return (
                         <div key={m.id} className={`max-w-[75%] rounded-2xl px-3 py-2 font-maven text-sm ${fromTeacher ? 'ml-auto bg-kidville-info-soft text-kidville-ink' : 'bg-kidville-cream text-kidville-ink'}`}>
-                          <p className="text-[10px] font-bold text-kidville-muted mb-0.5">{fromTeacher ? (selThread.teacher?.nome ?? 'Insegnante') : (selThread.parent?.nome ?? 'Genitore')}</p>
+                          <p className="text-[10px] font-bold text-kidville-muted mb-0.5">{fromTeacher ? (selThread.teacher?.nome ?? t('messaggiRuoloInsegnante')) : (selThread.parent?.nome ?? t('messaggiRuoloGenitore'))}</p>
                           <p>{m.content}</p>
                           <p className="text-[10px] mt-1 text-kidville-muted">{fmtWhen(m.created_at)}</p>
                         </div>
@@ -268,9 +270,14 @@ function MessaggiInner() {
   );
 }
 
+function MessaggiFallback() {
+  const t = useTranslations('adminComunicazioni');
+  return <div className="p-8 font-maven text-kidville-muted">{t('caricamento')}</div>;
+}
+
 export default function AdminMessaggiPage() {
   return (
-    <Suspense fallback={<div className="p-8 font-maven text-kidville-muted">Caricamento…</div>}>
+    <Suspense fallback={<MessaggiFallback />}>
       <MessaggiInner />
     </Suspense>
   );

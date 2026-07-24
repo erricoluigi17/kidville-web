@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useTranslations } from 'next-intl';
 import { X, Trash2, Save, AlertTriangle, Users, Baby } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { LinkedAdultProfile, AdultProfileData, AdultType } from './LinkedAdultProfile';
@@ -75,6 +76,7 @@ interface Props {
 }
 
 export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant = 'drawer' }: Props) {
+    const t = useTranslations('adminStudents');
     // Il pannello è montato per-alunno ({selectedStudent && <StudentDetailPanel/>}):
     // form inizializzato dal prop, niente state+effect (react-hooks/set-state-in-effect).
     const [form, setForm] = useState<Partial<Student>>(() => (student ? { ...student } : {}));
@@ -160,11 +162,11 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
             student.student_parents.forEach(sp => {
                 if (sp.parents) {
                     if (sp.relation_type === 'mother' || sp.parents.gender === 'F') {
-                        tabs.push({ id: 'mother', type: 'mother', label: 'Madre', data: sp.parents });
+                        tabs.push({ id: 'mother', type: 'mother', label: t('ruoloMadre'), data: sp.parents });
                     } else if (sp.relation_type === 'father' || sp.parents.gender === 'M') {
-                        tabs.push({ id: 'father', type: 'father', label: 'Padre', data: sp.parents });
+                        tabs.push({ id: 'father', type: 'father', label: t('ruoloPadre'), data: sp.parents });
                     } else {
-                        tabs.push({ id: `parent_${sp.parents.id}`, type: 'delegate', label: 'Genitore', data: sp.parents });
+                        tabs.push({ id: `parent_${sp.parents.id}`, type: 'delegate', label: t('ruoloGenitore'), data: sp.parents });
                     }
                 }
             });
@@ -172,7 +174,7 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
 
         if (student?.delegates) {
             student.delegates.forEach((del, idx) => {
-                tabs.push({ id: `delegate_${del.id}`, type: 'delegate', label: `Delegato ${idx + 1}`, data: del });
+                tabs.push({ id: `delegate_${del.id}`, type: 'delegate', label: t('detailDelegatoN', { n: idx + 1 }), data: del });
             });
         }
 
@@ -199,7 +201,7 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                 <div className="flex items-center justify-between p-5 border-b border-kidville-line">
                     <div>
                         <h2 className="font-barlow font-black text-xl text-kidville-green uppercase tracking-wide">
-                            Scheda Alunno
+                            {t('detailSchedaAlunno')}
                         </h2>
                         <p className="font-maven text-sm text-kidville-muted">
                             {student.nome} {student.cognome}
@@ -220,11 +222,11 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                     {/* Dati Anagrafici */}
                     <section>
                         <h3 className="font-barlow font-bold text-kidville-green uppercase text-xs tracking-wide mb-3">
-                            Dati Anagrafici
+                            {t('detailDatiAnagrafici')}
                         </h3>
                         <div className="grid grid-cols-2 gap-3">
                             <div>
-                                <label className="font-maven text-xs text-kidville-muted mb-1 block">Nome</label>
+                                <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoNome')}</label>
                                 <input
                                     type="text"
                                     value={(form.nome as string) ?? ''}
@@ -233,7 +235,7 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                                 />
                             </div>
                             <div>
-                                <label className="font-maven text-xs text-kidville-muted mb-1 block">Cognome</label>
+                                <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoCognome')}</label>
                                 <input
                                     type="text"
                                     value={(form.cognome as string) ?? ''}
@@ -244,7 +246,7 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                         </div>
                         <div className="grid grid-cols-2 gap-3 mt-3">
                             <div>
-                                <label className="font-maven text-xs text-kidville-muted mb-1 block">Data di Nascita</label>
+                                <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoDataNascita')}</label>
                                 <input
                                     type="date"
                                     value={(form.data_nascita as string) ?? ''}
@@ -253,7 +255,7 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                                 />
                             </div>
                             <div>
-                                <label className="font-maven text-xs text-kidville-muted mb-1 block">Codice Fiscale</label>
+                                <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoCodiceFiscale')}</label>
                                 <input
                                     type="text"
                                     value={(form.codice_fiscale as string) ?? ''}
@@ -268,23 +270,23 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                     {/* Nascita e Cittadinanza */}
                     <section>
                         <h3 className="font-barlow font-bold text-kidville-green uppercase text-xs tracking-wide mb-3">
-                            Nascita e Cittadinanza
+                            {t('detailNascitaCittadinanza')}
                         </h3>
                         <div className="grid grid-cols-2 gap-3">
                             <div>
-                                <label className="font-maven text-xs text-kidville-muted mb-1 block">Sesso</label>
+                                <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoSesso')}</label>
                                 <select
                                     value={(form.gender as string) ?? ''}
                                     onChange={e => updateForm('gender', e.target.value)}
                                     className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-kidville-white focus:outline-none focus:border-kidville-green"
                                 >
                                     <option value="">—</option>
-                                    <option value="M">Maschio</option>
-                                    <option value="F">Femmina</option>
+                                    <option value="M">{t('optMaschio')}</option>
+                                    <option value="F">{t('optFemmina')}</option>
                                 </select>
                             </div>
                             <div>
-                                <label className="font-maven text-xs text-kidville-muted mb-1 block">Comune di Nascita</label>
+                                <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoComuneNascita')}</label>
                                 <input
                                     type="text"
                                     value={(form.birth_city as string) ?? ''}
@@ -293,7 +295,7 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                                 />
                             </div>
                             <div>
-                                <label className="font-maven text-xs text-kidville-muted mb-1 block">Prov. Nascita (Sigla)</label>
+                                <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoProvNascita')}</label>
                                 <input
                                     type="text"
                                     value={(form.birth_province as string) ?? ''}
@@ -303,7 +305,7 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                                 />
                             </div>
                             <div>
-                                <label className="font-maven text-xs text-kidville-muted mb-1 block">Nazione di Nascita</label>
+                                <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoNazioneNascita')}</label>
                                 <input
                                     type="text"
                                     value={(form.birth_nation as string) ?? ''}
@@ -312,7 +314,7 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                                 />
                             </div>
                             <div className="col-span-2">
-                                <label className="font-maven text-xs text-kidville-muted mb-1 block">Cittadinanza</label>
+                                <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoCittadinanza')}</label>
                                 <input
                                     type="text"
                                     value={(form.citizenship as string) ?? ''}
@@ -326,11 +328,11 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                     {/* Residenza */}
                     <section>
                         <h3 className="font-barlow font-bold text-kidville-green uppercase text-xs tracking-wide mb-3">
-                            Residenza
+                            {t('sezioneResidenza')}
                         </h3>
                         <div className="grid grid-cols-2 gap-3">
                             <div className="col-span-2">
-                                <label className="font-maven text-xs text-kidville-muted mb-1 block">Indirizzo di Residenza</label>
+                                <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoIndirizzoResidenza')}</label>
                                 <input
                                     type="text"
                                     value={(form.residence_address as string) ?? ''}
@@ -339,7 +341,7 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                                 />
                             </div>
                             <div>
-                                <label className="font-maven text-xs text-kidville-muted mb-1 block">Numero Civico</label>
+                                <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoNumeroCivico')}</label>
                                 <input
                                     type="text"
                                     value={(form.residence_street_number as string) ?? ''}
@@ -349,7 +351,7 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                                 />
                             </div>
                             <div>
-                                <label className="font-maven text-xs text-kidville-muted mb-1 block">Comune di Residenza</label>
+                                <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoComuneResidenza')}</label>
                                 <input
                                     type="text"
                                     value={(form.residence_city as string) ?? ''}
@@ -358,7 +360,7 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                                 />
                             </div>
                             <div>
-                                <label className="font-maven text-xs text-kidville-muted mb-1 block">Prov. Residenza (Sigla)</label>
+                                <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoProvResidenza')}</label>
                                 <input
                                     type="text"
                                     value={(form.residence_province as string) ?? ''}
@@ -368,7 +370,7 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                                 />
                             </div>
                             <div>
-                                <label className="font-maven text-xs text-kidville-muted mb-1 block">CAP</label>
+                                <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoCap')}</label>
                                 <input
                                     type="text"
                                     value={(form.zip_code as string) ?? ''}
@@ -383,36 +385,36 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                     {/* Classe e Stato */}
                     <section>
                         <h3 className="font-barlow font-bold text-kidville-green uppercase text-xs tracking-wide mb-3">
-                            Classe e Stato
+                            {t('detailClasseStato')}
                         </h3>
                         <div className="grid grid-cols-2 gap-3">
                             <div>
-                                <label className="font-maven text-xs text-kidville-muted mb-1 block">Classe / Sezione</label>
+                                <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoClasseSezione')}</label>
                                 <select
                                     value={(form.classe_sezione as string) ?? ''}
                                     onChange={e => updateForm('classe_sezione', e.target.value)}
                                     className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-kidville-white focus:outline-none focus:border-kidville-green"
                                 >
-                                    <option value="">— Nessuna —</option>
+                                    <option value="">{t('detailNessuna')}</option>
                                     {sections.map(s => (
                                         <option key={s.id} value={s.name}>{s.name} ({s.school_type})</option>
                                     ))}
                                 </select>
                             </div>
                             <div>
-                                <label className="font-maven text-xs text-kidville-muted mb-1 block">Stato</label>
+                                <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoStato')}</label>
                                 <select
                                     value={(form.stato as string) ?? 'iscritto'}
                                     onChange={e => updateForm('stato', e.target.value)}
                                     className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-kidville-white focus:outline-none focus:border-kidville-green"
                                 >
-                                    <option value="iscritto">Iscritto</option>
-                                    <option value="ritirato">Ritirato</option>
-                                    <option value="sospeso">Sospeso</option>
+                                    <option value="iscritto">{t('statoIscritto')}</option>
+                                    <option value="ritirato">{t('statoRitirato')}</option>
+                                    <option value="sospeso">{t('statoSospeso')}</option>
                                 </select>
                             </div>
                             <div>
-                                <label className="font-maven text-xs text-kidville-muted mb-1 block">Data di iscrizione</label>
+                                <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoDataIscrizione')}</label>
                                 <input
                                     type="date"
                                     value={(form.data_iscrizione as string) ?? ''}
@@ -420,7 +422,7 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                                     className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
                                 />
                                 <p className="font-maven text-[11px] text-kidville-muted mt-1">
-                                    Le rette partono dal mese di iscrizione (prima del 1° set = tutto l&apos;anno). Vuota = da sempre.
+                                    {t('detailDataIscrizioneHint')}
                                 </p>
                             </div>
                         </div>
@@ -430,28 +432,28 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                     <section>
                         <h3 className="font-barlow font-bold text-kidville-green uppercase text-xs tracking-wide mb-3 flex items-center gap-2">
                             <AlertTriangle size={12} className="text-kidville-error" />
-                            Dati Medici / Didattici
+                            {t('detailDatiMedici')}
                         </h3>
 
                         <div className="mb-3">
-                            <label className="font-maven text-xs text-kidville-muted mb-1 block">Allergeni</label>
+                            <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('detailAllergeni')}</label>
                             <AllergeniSelect
                                 value={(form.allergeni as string[]) ?? []}
                                 onChange={next => updateForm('allergeni', next)}
                             />
                             {(form.allergies as string)?.trim() && (
                                 <p className="mt-2 rounded-lg bg-kidville-cream px-2.5 py-1.5 font-maven text-[11px] text-kidville-muted">
-                                    Testo storico (sola lettura): {form.allergies as string}
+                                    {t('testoStorico', { testo: form.allergies as string })}
                                 </p>
                             )}
                         </div>
 
                         <div className="mb-3">
-                            <label className="font-maven text-xs text-kidville-muted mb-1 block">Note mediche (uso interno)</label>
+                            <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('detailNoteMediche')}</label>
                             <textarea
                                 value={(form.note_mediche as string) ?? ''}
                                 onChange={e => updateForm('note_mediche', e.target.value)}
-                                placeholder="Terapie, indicazioni cliniche, note per lo staff…"
+                                placeholder={t('detailNoteMedichePlaceholder')}
                                 rows={2}
                                 className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green resize-none"
                             />
@@ -465,7 +467,7 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                                     onChange={e => updateForm('bes', e.target.checked)}
                                     className="w-4 h-4 rounded border-kidville-muted text-kidville-green focus:ring-kidville-green"
                                 />
-                                <span className="font-maven font-semibold text-sm text-kidville-green">BES (Bisogni Educativi Speciali)</span>
+                                <span className="font-maven font-semibold text-sm text-kidville-green">{t('detailBes')}</span>
                             </label>
                         </div>
 
@@ -473,7 +475,7 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                             <textarea
                                 value={(form.note_bes as string) ?? ''}
                                 onChange={e => updateForm('note_bes', e.target.value)}
-                                placeholder="Note BES..."
+                                placeholder={t('detailNoteBesPlaceholder')}
                                 rows={2}
                                 className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green resize-none"
                             />
@@ -488,11 +490,11 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                                     onChange={e => updateForm('consenso_privacy', e.target.checked)}
                                     className="w-4 h-4 rounded border-kidville-muted text-kidville-green focus:ring-kidville-green"
                                 />
-                                <span className="font-maven font-semibold text-sm text-kidville-green">Liberatoria foto/video firmata</span>
+                                <span className="font-maven font-semibold text-sm text-kidville-green">{t('detailLiberatoria')}</span>
                             </label>
                         </div>
                         <p className="font-maven text-[11px] text-kidville-muted mt-1">
-                            Senza liberatoria il bambino può comparire solo in foto individuali, visibili esclusivamente ai suoi genitori.
+                            {t('detailLiberatoriaHint')}
                         </p>
                     </section>
 
@@ -508,7 +510,7 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                     <section className="pt-4 border-t border-kidville-line">
                         <h3 className="font-barlow font-bold text-kidville-green uppercase text-xs tracking-wide mb-3 flex items-center gap-2">
                             <Users size={12} />
-                            Famiglia e Delegati
+                            {t('detailFamigliaDelegati')}
                         </h3>
                         
                         {adultTabs.length > 0 ? (
@@ -552,8 +554,8 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                         ) : (
                             <div className="text-center py-6 bg-kidville-cream rounded-xl border-2 border-dashed border-kidville-line">
                                 <Users size={24} className="mx-auto text-kidville-muted mb-2" />
-                                <p className="font-maven text-sm text-kidville-muted">Nessun genitore collegato</p>
-                                <p className="font-maven text-xs text-kidville-muted mt-1">Puoi aggiungere i genitori dalla pagina di creazione famiglia</p>
+                                <p className="font-maven text-sm text-kidville-muted">{t('detailNessunGenitore')}</p>
+                                <p className="font-maven text-xs text-kidville-muted mt-1">{t('detailAggiungiGenitori')}</p>
                             </div>
                         )}
                     </section>
@@ -562,13 +564,13 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                     <section>
                         <h3 className="font-barlow font-bold text-kidville-green uppercase text-xs tracking-wide mb-3 flex items-center gap-2">
                             <Baby size={12} className="text-kidville-green" />
-                            Fratelli / Sorelle
+                            {t('detailFratelli')}
                         </h3>
 
                         {siblingsLoading ? (
                             <div className="flex items-center gap-2 py-4 text-kidville-muted font-maven text-sm">
                                 <div className="w-4 h-4 border-2 border-kidville-line border-t-kidville-green rounded-full animate-spin" />
-                                Ricerca fratelli in corso...
+                                {t('detailRicercaFratelli')}
                             </div>
                         ) : siblings.length > 0 ? (
                             <div className="space-y-2">
@@ -582,7 +584,7 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                                                 {sibling.cognome} {sibling.nome}
                                             </p>
                                             <p className="font-maven text-xs text-kidville-muted mt-0.5">
-                                                {sibling.classe_sezione || 'Nessuna sezione'}
+                                                {sibling.classe_sezione || t('detailNessunaSezione')}
                                                 {sibling.data_nascita && ` • ${new Date(sibling.data_nascita).getFullYear()}`}
                                             </p>
                                         </div>
@@ -599,7 +601,7 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                         ) : (
                             <div className="text-center py-5 bg-kidville-cream rounded-xl border-2 border-dashed border-kidville-line">
                                 <Baby size={20} className="mx-auto text-kidville-muted mb-1.5" />
-                                <p className="font-maven text-sm text-kidville-muted">Nessun fratello/sorella registrato</p>
+                                <p className="font-maven text-sm text-kidville-muted">{t('detailNessunFratello')}</p>
                             </div>
                         )}
                     </section>
@@ -607,13 +609,13 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                     {/* ===== SEGNALAZIONI E RECLAMI ===== */}
                     <section className="pt-4 border-t border-kidville-line">
                         <h3 className="font-barlow font-bold text-kidville-green uppercase text-xs tracking-wide mb-3 flex items-center gap-2">
-                            📌 Segnalazioni e Reclami
+                            📌 {t('detailSegnalazioni')}
                         </h3>
-                        
+
                         {tasksLoading ? (
                             <div className="flex items-center gap-2 py-4 text-kidville-muted font-maven text-sm">
                                 <div className="w-4 h-4 border-2 border-kidville-line border-t-kidville-green rounded-full animate-spin" />
-                                Caricamento segnalazioni...
+                                {t('detailCaricamentoSegnalazioni')}
                             </div>
                         ) : studentTasks.length > 0 ? (
                             <div className="space-y-2">
@@ -630,7 +632,7 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                                                         ? 'bg-kidville-success-soft/50 text-kidville-success ' 
                                                         : 'bg-kidville-warn-soft/50 text-kidville-warn '
                                                 }`}>
-                                                    {isCompleted ? 'Risolto' : 'Attivo'}
+                                                    {isCompleted ? t('detailRisolto') : t('detailAttivo')}
                                                 </span>
                                             </div>
                                             
@@ -649,7 +651,7 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                                             {/* Render attachments in student panel */}
                                             {task.attachments && task.attachments.length > 0 && (
                                                 <div className="mt-1.5 space-y-1">
-                                                    <p className="text-[8px] font-bold text-kidville-muted uppercase tracking-wider">Allegati:</p>
+                                                    <p className="text-[8px] font-bold text-kidville-muted uppercase tracking-wider">{t('detailAllegati')}</p>
                                                     <div className="flex flex-col gap-1">
                                                         {task.attachments.map((att: { name: string; url: string; fileUrl?: string }, attIdx: number) => (
                                                             <a
@@ -667,8 +669,8 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                                             )}
                                             
                                             <div className="text-[8px] text-kidville-muted flex justify-between pt-1 border-t border-kidville-line/30">
-                                                <span>Categoria: {task.category}</span>
-                                                <span>Aperto il {new Date(task.created_at).toLocaleDateString('it-IT')}</span>
+                                                <span>{t('detailCategoria', { categoria: task.category })}</span>
+                                                <span>{t('detailApertoIl', { data: new Date(task.created_at).toLocaleDateString('it-IT') })}</span>
                                             </div>
                                         </div>
                                     );
@@ -677,7 +679,7 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                         ) : (
                             <div className="text-center py-5 bg-kidville-cream rounded-xl border-2 border-dashed border-kidville-line ">
                                 <span className="text-2xl block mb-1">📋</span>
-                                <p className="font-maven text-sm text-kidville-muted">Nessun reclamo o segnalazione</p>
+                                <p className="font-maven text-sm text-kidville-muted">{t('detailNessunReclamo')}</p>
                             </div>
                         )}
                     </section>
@@ -696,7 +698,7 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                         ) : (
                             <>
                                 <Save size={16} />
-                                Salva Modifiche
+                                {t('salvaModifiche')}
                             </>
                         )}
                     </button>
@@ -712,21 +714,21 @@ export function StudentDetailPanel({ student, onClose, onSave, onDelete, variant
                     >
                         <Trash2 size={14} />
                         {showDeleteConfirm
-                            ? '⚠️ Conferma eliminazione definitiva (GDPR)'
-                            : 'Elimina Alunno (GDPR)'
+                            ? `⚠️ ${t('detailConfermaEliminazione')}`
+                            : t('detailEliminaAlunno')
                         }
                     </button>
 
                     {showDeleteConfirm && (
                         <div className="bg-kidville-error-soft border border-kidville-error-soft rounded-xl p-3">
                             <p className="font-maven text-xs text-kidville-error">
-                                <strong>Attenzione:</strong> Questa azione è <strong>irreversibile</strong> e cancellerà tutti i dati dell&apos;alunno dal sistema (diario, presenze, armadietto). Una traccia di audit verrà conservata.
+                                <strong>{t('detailAttenzioneLabel')}</strong> {t('detailAttenzionePre')} <strong>{t('detailAttenzioneIrrev')}</strong> {t('detailAttenzionePost')}
                             </p>
                             <button
                                 onClick={() => setShowDeleteConfirm(false)}
                                 className="mt-2 text-xs font-maven font-bold text-kidville-muted hover:text-kidville-ink"
                             >
-                                Annulla
+                                {t('annulla')}
                             </button>
                         </div>
                     )}

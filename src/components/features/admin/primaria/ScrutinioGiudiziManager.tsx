@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { GraduationCap } from 'lucide-react';
 
 interface Section { id: string; name: string; school_type: string }
@@ -16,6 +17,7 @@ const LIVELLI = [1, 2, 3, 4, 5];
 // il testo si associa in automatico al voto assegnato. Compilare un livello vale
 // per tutte le sezioni di quel livello.
 export function ScrutinioGiudiziManager({ scuolaId, userId }: { scuolaId: string; userId: string }) {
+  const t = useTranslations('adminPrimaria');
   const [periodi, setPeriodi] = useState<Periodo[]>([]);
   const [scala, setScala] = useState<ScalaItem[]>([]);
   const [sezioni, setSezioni] = useState<Section[]>([]);
@@ -88,38 +90,37 @@ export function ScrutinioGiudiziManager({ scuolaId, userId }: { scuolaId: string
       body: JSON.stringify({ scuolaId, livello, materiaCodice, periodoId, etichettaVoto, testo }),
     });
     setTesti((prev) => ({ ...prev, [materiaCodice]: { ...(prev[materiaCodice] || {}), [etichettaVoto]: testo } }));
-    setMsg(r.ok ? 'Salvato ✓' : 'Errore salvataggio');
+    setMsg(r.ok ? t('comuneSalvato') : t('scrutinioGiudiziErroreSalvataggio'));
   };
 
   return (
     <div>
       <h3 className="font-barlow text-base font-bold text-kidville-ink mb-1 flex items-center gap-2">
-        <GraduationCap size={16} className="text-kidville-green" /> Giudizi di scrutinio per voto
+        <GraduationCap size={16} className="text-kidville-green" /> {t('scrutinioGiudiziTitolo')}
       </h3>
       <p className="font-maven text-xs text-kidville-muted mb-4">
-        Per ogni livello di classe, materia e periodo, definisci il testo associato a ciascun voto. In pagella
-        viene applicato in automatico al voto assegnato. Compilare un livello (es. 1ª) vale per tutte le sezioni di quel livello.
+        {t('scrutinioGiudiziSottotitolo')}
       </p>
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <label className="font-maven text-sm text-kidville-ink">Livello:</label>
+        <label className="font-maven text-sm text-kidville-ink">{t('scrutinioGiudiziLivello')}</label>
         <select value={livello} onChange={(e) => setLivello(Number(e.target.value))} className="font-maven rounded-pill border border-kidville-line bg-white px-4 py-2 text-sm">
-          {LIVELLI.map((l) => <option key={l} value={l}>{l}ª</option>)}
+          {LIVELLI.map((l) => <option key={l} value={l}>{t('comuneLivelloOrdinale', { livello: l })}</option>)}
         </select>
-        <label className="font-maven text-sm text-kidville-ink">Periodo:</label>
+        <label className="font-maven text-sm text-kidville-ink">{t('scrutinioGiudiziPeriodo')}</label>
         <select value={periodoId} onChange={(e) => setPeriodoId(e.target.value)} className="font-maven rounded-pill border border-kidville-line bg-white px-4 py-2 text-sm">
-          {periodi.length === 0 && <option value="">Nessun periodo</option>}
+          {periodi.length === 0 && <option value="">{t('scrutinioGiudiziNessunPeriodoOpt')}</option>}
           {periodi.map((p) => <option key={p.id} value={p.id}>{p.nome} ({p.anno_scolastico})</option>)}
         </select>
         {msg && <span className={`font-maven text-xs ${msg.includes('✓') ? 'text-kidville-success' : 'text-kidville-error'}`}>{msg}</span>}
       </div>
 
       {periodi.length === 0 ? (
-        <p className="font-maven text-sm text-kidville-warn">Configura prima un periodo di scrutinio (tab Scrutinio).</p>
+        <p className="font-maven text-sm text-kidville-warn">{t('scrutinioGiudiziConfiguraPeriodo')}</p>
       ) : scala.length === 0 ? (
-        <p className="font-maven text-sm text-kidville-warn">Configura prima la scala dei giudizi (tab Giudizi).</p>
+        <p className="font-maven text-sm text-kidville-warn">{t('scrutinioGiudiziConfiguraScala')}</p>
       ) : materie.length === 0 ? (
-        <p className="font-maven text-sm text-kidville-warn">Nessuna materia con codice per il livello {livello}ª. Configura le materie (tab Materie).</p>
+        <p className="font-maven text-sm text-kidville-warn">{t('scrutinioGiudiziNessunaMateria', { livello })}</p>
       ) : (
         <div className="space-y-5">
           {materie.map((m) => (
@@ -133,7 +134,7 @@ export function ScrutinioGiudiziManager({ scuolaId, userId }: { scuolaId: string
                       defaultValue={testi[m.codice]?.[s.etichetta] ?? ''}
                       key={`${m.codice}-${s.etichetta}-${livello}-${periodoId}`}
                       rows={2}
-                      placeholder="Testo del giudizio per questo voto…"
+                      placeholder={t('scrutinioGiudiziPlaceholder')}
                       onBlur={(e) => {
                         const v = e.target.value;
                         if (v !== (testi[m.codice]?.[s.etichetta] ?? '')) salva(m.codice, s.etichetta, v);

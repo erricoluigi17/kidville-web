@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useTranslations } from 'next-intl'
 import {
   Baby, Users, FileText, CheckCircle2, XCircle, Loader2,
   ChevronLeft, Clock, KeyRound, AlertTriangle, ExternalLink, Star,
@@ -36,6 +37,7 @@ interface SubmissionRow {
 interface Section { id: string; name: string }
 
 export function ModuliRicevuti() {
+  const t = useTranslations('adminAltro')
   const [rows, setRows] = useState<SubmissionRow[]>([])
   const [sections, setSections] = useState<Section[]>([])
   const [loading, setLoading] = useState(true)
@@ -95,7 +97,7 @@ export function ModuliRicevuti() {
         body: JSON.stringify({ id: selected.id, action: 'import', assignments, referenteIndex }),
       })
       const json = await res.json()
-      if (!res.ok) { alert(json.error ?? 'Import fallito'); return }
+      if (!res.ok) { alert(json.error ?? t('ricevutiImportFallito')); return }
       // `success:false` = errori bloccanti: l'invio resta 'pending' (nessun cambio di stato
       // lato server), quindi resta tra i "Da importare" e i pulsanti Importa/Rifiuta restano
       // disponibili per riprovare. Il pannello d'errore lo mostra in evidenza.
@@ -114,7 +116,7 @@ export function ModuliRicevuti() {
         messaggio: `Import iscrizione fallito: ${e instanceof Error ? e.message : String(e)}`,
         route: '/admin/iscrizioni',
       })
-      alert('Errore durante l\'import')
+      alert(t('ricevutiErroreImport'))
     } finally {
       setWorking(false)
     }
@@ -122,7 +124,7 @@ export function ModuliRicevuti() {
 
   async function doReject() {
     if (!selected) return
-    if (!confirm('Rifiutare questa richiesta di iscrizione?')) return
+    if (!confirm(t('ricevutiConfermaRifiuto'))) return
     setWorking(true)
     try {
       await fetch('/api/admin/iscrizioni', {
@@ -142,40 +144,40 @@ export function ModuliRicevuti() {
   return (
     <>
       <div className="mb-4 flex items-center justify-between gap-3 flex-wrap">
-        <p className="font-maven text-sm text-kidville-muted max-w-xl">Richieste d&apos;iscrizione ricevute dal modulo standard. Verificale e importale nelle anagrafiche.</p>
+        <p className="font-maven text-sm text-kidville-muted max-w-xl">{t('ricevutiIntro')}</p>
         <a
           href="/admin/sidi"
           className="inline-flex h-[40px] items-center gap-2 rounded-pill bg-kidville-green-soft px-4 font-barlow text-sm font-extrabold uppercase tracking-[0.03em] text-kidville-green hover:bg-kidville-green/20"
         >
-          <ExternalLink size={16} /> Interoperabilità SIDI
+          <ExternalLink size={16} /> {t('ricevutiSidi')}
         </a>
       </div>
 
       {!loading && rows.length > 0 && (
         <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <StatCard icon={Users} label="Totale richieste" value={rows.length} tone="green" />
-          <StatCard icon={Clock} label="In attesa" value={pending.length} tone="warn" />
-          <StatCard icon={CheckCircle2} label="Importate" value={rows.filter((r) => r.status === 'approved').length} tone="success" />
-          <StatCard icon={XCircle} label="Rifiutate" value={rows.filter((r) => r.status === 'rejected').length} tone="error" />
+          <StatCard icon={Users} label={t('ricevutiStatTotale')} value={rows.length} tone="green" />
+          <StatCard icon={Clock} label={t('ricevutiStatAttesa')} value={pending.length} tone="warn" />
+          <StatCard icon={CheckCircle2} label={t('ricevutiStatImportate')} value={rows.filter((r) => r.status === 'approved').length} tone="success" />
+          <StatCard icon={XCircle} label={t('ricevutiStatRifiutate')} value={rows.filter((r) => r.status === 'rejected').length} tone="error" />
         </div>
       )}
 
       {loading ? (
         <div className="flex items-center justify-center min-h-[40vh] gap-3">
           <Loader2 className="w-6 h-6 animate-spin text-kidville-green" />
-          <span className="font-maven text-kidville-muted">Caricamento…</span>
+          <span className="font-maven text-kidville-muted">{t('caricamento')}</span>
         </div>
       ) : rows.length === 0 ? (
         <div className="bg-kidville-white rounded-card p-10 text-center border border-kidville-line">
           <Clock className="w-10 h-10 text-kidville-neutral/50 mx-auto mb-3" />
-          <p className="font-maven text-kidville-muted">Nessuna richiesta di iscrizione ricevuta.</p>
+          <p className="font-maven text-kidville-muted">{t('ricevutiVuoto')}</p>
         </div>
       ) : (
         <div className="grid md:grid-cols-2 gap-5">
           {/* Lista */}
           <div className="space-y-3">
             <p className="text-xs font-bold uppercase tracking-wider text-kidville-muted">
-              In attesa ({pending.length}) · Totale {rows.length}
+              {t('ricevutiListaHeader', { attesa: pending.length, totale: rows.length })}
             </p>
             {rows.map(row => {
               const nChildren = row.data?.children?.length ?? 0
@@ -191,7 +193,7 @@ export function ModuliRicevuti() {
                 >
                   <div className="flex items-center justify-between mb-1.5">
                     <span className="font-barlow font-bold text-kidville-ink">
-                      {firstChild ? `${firstChild.nome ?? ''} ${firstChild.cognome ?? ''}` : 'Iscrizione'}
+                      {firstChild ? `${firstChild.nome ?? ''} ${firstChild.cognome ?? ''}` : t('ricevutiFallbackNome')}
                     </span>
                     <StatusBadge status={row.status} />
                   </div>
@@ -209,7 +211,7 @@ export function ModuliRicevuti() {
           <div>
             {!selected ? (
               <div className="bg-kidville-white rounded-card p-10 text-center border border-kidville-line text-kidville-muted font-maven">
-                Seleziona una richiesta per i dettagli.
+                {t('ricevutiSelezionaDettagli')}
               </div>
             ) : (
               <DetailPanel
@@ -235,10 +237,11 @@ export function ModuliRicevuti() {
 }
 
 function StatusBadge({ status }: { status: string }) {
+  const t = useTranslations('adminAltro')
   const map: Record<string, { label: string; cls: string }> = {
-    pending: { label: 'In attesa', cls: 'bg-kidville-warn-soft text-kidville-warn' },
-    approved: { label: 'Importata', cls: 'bg-kidville-success-soft text-kidville-success' },
-    rejected: { label: 'Rifiutata', cls: 'bg-kidville-error-soft text-kidville-error' },
+    pending: { label: t('ricevutiStatAttesa'), cls: 'bg-kidville-warn-soft text-kidville-warn' },
+    approved: { label: t('badgeImportata'), cls: 'bg-kidville-success-soft text-kidville-success' },
+    rejected: { label: t('badgeRifiutata'), cls: 'bg-kidville-error-soft text-kidville-error' },
   }
   const m = map[status] ?? map.pending
   return <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${m.cls}`}>{m.label}</span>
@@ -261,6 +264,7 @@ function DetailPanel({
   onViewDoc: (path?: string) => void
   onBack: () => void
 }) {
+  const t = useTranslations('adminAltro')
   const children = row.data?.children ?? []
   const adults = row.data?.adults ?? []
   const done = row.status !== 'pending'
@@ -268,13 +272,13 @@ function DetailPanel({
   return (
     <div className="bg-kidville-white rounded-card border border-kidville-line p-5 space-y-5">
       <button onClick={onBack} className="md:hidden flex items-center gap-1 text-sm text-kidville-muted">
-        <ChevronLeft size={16} /> Indietro
+        <ChevronLeft size={16} /> {t('ricevutiIndietro')}
       </button>
 
       {/* Bambini */}
       <section>
         <p className="text-xs font-bold uppercase tracking-wider text-kidville-muted mb-2 flex items-center gap-1.5">
-          <Baby size={14} /> Bambini ({children.length})
+          <Baby size={14} /> {t('ricevutiBambini', { count: children.length })}
         </p>
         <div className="space-y-3">
           {children.map((c: EnrollmentChild, i: number) => (
@@ -283,26 +287,26 @@ function DetailPanel({
                 <span className="font-barlow font-bold text-kidville-ink">{c.nome} {c.cognome}</span>
                 {c.documento_path && (
                   <button onClick={() => onViewDoc(c.documento_path)} className="text-xs text-kidville-green flex items-center gap-1 hover:underline">
-                    <FileText size={13} /> Documento <ExternalLink size={11} />
+                    <FileText size={13} /> {t('ricevutiDocumento')} <ExternalLink size={11} />
                   </button>
                 )}
               </div>
               <p className="text-xs text-kidville-muted font-mono mt-0.5">{c.codice_fiscale} · {c.data_nascita}</p>
               {!done && (
                 <div className="mt-2">
-                  <label className="text-[11px] font-semibold text-kidville-muted uppercase">Classe / Sezione *</label>
+                  <label className="text-[11px] font-semibold text-kidville-muted uppercase">{t('ricevutiClasseSezione')}</label>
                   <select
                     value={assignments[String(i)] ?? ''}
                     onChange={e => setAssignments({ ...assignments, [String(i)]: e.target.value })}
                     className="w-full mt-1 px-3 py-2 rounded-lg border border-kidville-line text-sm bg-white focus:outline-none focus:border-kidville-green"
                   >
-                    <option value="">Seleziona sezione…</option>
+                    <option value="">{t('ricevutiSelezionaSezione')}</option>
                     {sections.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
                   </select>
                 </div>
               )}
               {done && assignments[String(i)] && (
-                <p className="text-xs text-kidville-success mt-1">Classe: {assignments[String(i)]}</p>
+                <p className="text-xs text-kidville-success mt-1">{t('ricevutiClasseAssegnata', { classe: assignments[String(i)] })}</p>
               )}
             </div>
           ))}
@@ -312,7 +316,7 @@ function DetailPanel({
       {/* Adulti */}
       <section>
         <p className="text-xs font-bold uppercase tracking-wider text-kidville-muted mb-2 flex items-center gap-1.5">
-          <Users size={14} /> Adulti ({adults.length})
+          <Users size={14} /> {t('ricevutiAdulti', { count: adults.length })}
         </p>
         <div className="space-y-3">
           {adults.map((a: EnrollmentAdult, i: number) => (
@@ -326,12 +330,12 @@ function DetailPanel({
                 </span>
                 {a.documento_path && (
                   <button onClick={() => onViewDoc(a.documento_path)} className="text-xs text-kidville-green flex items-center gap-1 hover:underline">
-                    <FileText size={13} /> Documento <ExternalLink size={11} />
+                    <FileText size={13} /> {t('ricevutiDocumento')} <ExternalLink size={11} />
                   </button>
                 )}
               </div>
               <p className="text-xs text-kidville-muted font-mono mt-0.5">{a.fiscal_code}</p>
-              <p className="text-xs text-kidville-muted mt-0.5">{a.email || 'Nessuna email'} · {a.phone || 'Nessun telefono'}</p>
+              <p className="text-xs text-kidville-muted mt-0.5">{a.email || t('ricevutiNessunaEmail')} · {a.phone || t('ricevutiNessunTelefono')}</p>
               {!done && (
                 <label className="flex items-center gap-2 mt-2 text-xs text-kidville-ink/70 cursor-pointer">
                   <input
@@ -342,7 +346,7 @@ function DetailPanel({
                     className="accent-kidville-green"
                   />
                   <Star size={12} className={referenteIndex === i ? 'text-kidville-warn' : 'text-kidville-neutral/50'} />
-                  Referente / intestatario (riceve l&apos;account di accesso)
+                  {t('ricevutiReferente')}
                 </label>
               )}
             </div>
@@ -354,11 +358,10 @@ function DetailPanel({
       {result && result.success === false && (
         <div className="rounded-xl border-2 border-kidville-error/40 bg-kidville-error-soft p-4 space-y-2">
           <p className="text-sm font-bold text-kidville-error-strong flex items-center gap-1.5">
-            <XCircle size={16} /> Import non completato
+            <XCircle size={16} /> {t('ricevutiImportNonCompletato')}
           </p>
           <p className="text-xs text-kidville-error-strong">
-            La richiesta resta tra quelle da importare. Correggi i dati indicati e premi di nuovo
-            «Importa nelle anagrafiche».
+            {t('ricevutiImportNonCompletatoDesc')}
           </p>
           {result.errors && result.errors.length > 0 && (
             <ul className="text-xs text-kidville-error-strong list-disc ml-5 space-y-0.5">
@@ -369,7 +372,7 @@ function DetailPanel({
           )}
           {result.warnings && result.warnings.length > 0 && (
             <div className="text-xs text-kidville-warn-strong mt-1">
-              <p className="flex items-center gap-1 font-semibold"><AlertTriangle size={12} /> Avvisi:</p>
+              <p className="flex items-center gap-1 font-semibold"><AlertTriangle size={12} /> {t('ricevutiAvvisi')}</p>
               <ul className="list-disc ml-5">{result.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
             </div>
           )}
@@ -380,24 +383,24 @@ function DetailPanel({
       {result && result.success !== false && (
         <div className="rounded-xl border border-kidville-success/30 bg-kidville-success-soft p-3 space-y-2">
           <p className="text-sm font-semibold text-kidville-success flex items-center gap-1.5">
-            <CheckCircle2 size={16} /> Iscrizione importata
+            <CheckCircle2 size={16} /> {t('ricevutiImportata')}
           </p>
           {result.credentials && (
             <div className="text-xs text-kidville-success flex items-center gap-2">
               <KeyRound size={13} />
-              <span>Credenziali: <strong>{result.credentials.email}</strong> / <code>{result.credentials.password}</code></span>
+              <span>{t('ricevutiCredenziali')} <strong>{result.credentials.email}</strong> / <code>{result.credentials.password}</code></span>
             </div>
           )}
           {result.credentials && (
             <p className="text-xs flex items-center gap-1.5">
               {result.credentialsEmailSent
-                ? <><CheckCircle2 size={12} className="text-kidville-success" /> <span className="text-kidville-success">Credenziali inviate via email al referente.</span></>
-                : <><AlertTriangle size={12} className="text-kidville-warn" /> <span className="text-kidville-warn-strong">Email non inviata: comunicare le credenziali manualmente.</span></>}
+                ? <><CheckCircle2 size={12} className="text-kidville-success" /> <span className="text-kidville-success">{t('ricevutiCredInviate')}</span></>
+                : <><AlertTriangle size={12} className="text-kidville-warn" /> <span className="text-kidville-warn-strong">{t('ricevutiCredNonInviate')}</span></>}
             </p>
           )}
           {result.warnings && result.warnings.length > 0 && (
             <div className="text-xs text-kidville-warn-strong">
-              <p className="flex items-center gap-1 font-semibold"><AlertTriangle size={12} /> Avvisi:</p>
+              <p className="flex items-center gap-1 font-semibold"><AlertTriangle size={12} /> {t('ricevutiAvvisi')}</p>
               <ul className="list-disc ml-5">{result.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
             </div>
           )}
@@ -413,14 +416,14 @@ function DetailPanel({
             className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-kidville-green text-kidville-yellow font-semibold text-sm hover:opacity-90 disabled:opacity-50 transition-all"
           >
             {working ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
-            Importa nelle anagrafiche
+            {t('ricevutiImporta')}
           </button>
           <button
             onClick={onReject}
             disabled={working}
             className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-kidville-error/30 text-kidville-error font-semibold text-sm hover:bg-kidville-error-soft disabled:opacity-50 transition-all"
           >
-            <XCircle size={16} /> Rifiuta
+            <XCircle size={16} /> {t('ricevutiRifiuta')}
           </button>
         </div>
       )}

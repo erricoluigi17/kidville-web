@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { useTranslations } from 'next-intl'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   X, FileText, Download, Clock, CheckCircle2, Hash, CheckCheck,
@@ -32,20 +33,22 @@ interface Props {
   onToggleGestita: (id: string, gestita: boolean) => Promise<boolean>
 }
 
-const STATUS_MAP: Record<FormSubmissionStatus, { label: string; cls: string }> = {
-  draft: { label: 'Bozza', cls: 'bg-kidville-warn-soft text-kidville-warn border-kidville-warn/30' },
-  pending_signature: { label: 'In attesa firma', cls: 'bg-kidville-info-soft text-kidville-info border-kidville-info/30' },
-  completed: { label: 'Completato', cls: 'bg-kidville-success-soft text-kidville-success border-kidville-success/30' },
+const STATUS_MAP: Record<FormSubmissionStatus, { labelKey: string; cls: string }> = {
+  draft: { labelKey: 'statusBozza', cls: 'bg-kidville-warn-soft text-kidville-warn border-kidville-warn/30' },
+  pending_signature: { labelKey: 'statusInAttesaFirma', cls: 'bg-kidville-info-soft text-kidville-info border-kidville-info/30' },
+  completed: { labelKey: 'statusCompletato', cls: 'bg-kidville-success-soft text-kidville-success border-kidville-success/30' },
 }
 
-function renderValue(value: unknown): string {
+// I valori booleani si mostrano tradotti (Sì/No); le stringhe/array restano dati.
+function renderValue(value: unknown, siNo: { si: string; no: string }): string {
   if (value === null || value === undefined || value === '') return '—'
-  if (typeof value === 'boolean') return value ? 'Sì' : 'No'
+  if (typeof value === 'boolean') return value ? siNo.si : siNo.no
   if (Array.isArray(value)) return value.join(', ')
   return String(value)
 }
 
 export function SubmissionDetailSidebar({ submission, onClose, onToggleGestita }: Props) {
+  const t = useTranslations('adminModulistica')
   const [savingGestita, setSavingGestita] = useState(false)
 
   const fieldMap: Record<string, { label: string; type: string }> = {}
@@ -122,7 +125,7 @@ export function SubmissionDetailSidebar({ submission, onClose, onToggleGestita }
             >
               <div className="flex-1 min-w-0 pr-4">
                 <h2 className="text-kidville-green font-semibold text-base leading-snug truncate">
-                  {submission.form_model?.title ?? 'Compilazione'}
+                  {submission.form_model?.title ?? t('sdsCompilazione')}
                 </h2>
                 <p className="text-kidville-muted text-[11px] mt-0.5 font-mono flex items-center gap-1">
                   <Hash className="w-3 h-3" />
@@ -145,7 +148,7 @@ export function SubmissionDetailSidebar({ submission, onClose, onToggleGestita }
               <span
                 className={`inline-flex px-2.5 py-0.5 rounded-full text-[11px] font-medium border ${STATUS_MAP[submission.status].cls}`}
               >
-                {STATUS_MAP[submission.status].label}
+                {t(STATUS_MAP[submission.status].labelKey)}
               </span>
 
               <span className="text-kidville-muted text-[11px] flex items-center gap-1">
@@ -159,7 +162,7 @@ export function SubmissionDetailSidebar({ submission, onClose, onToggleGestita }
               {submission.signed_at && (
                 <span className="text-kidville-success text-[11px] flex items-center gap-1">
                   <CheckCircle2 className="w-3 h-3" />
-                  Firmato {new Date(submission.signed_at).toLocaleDateString('it-IT', {
+                  {t('sdsFirmato')} {new Date(submission.signed_at).toLocaleDateString('it-IT', {
                     day: '2-digit', month: 'short', year: 'numeric',
                   })}
                 </span>
@@ -171,7 +174,7 @@ export function SubmissionDetailSidebar({ submission, onClose, onToggleGestita }
               {visibleEntries.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-16 gap-3">
                   <FileText className="w-10 h-10 text-kidville-muted" />
-                  <p className="text-kidville-muted text-sm">Nessun dato da visualizzare</p>
+                  <p className="text-kidville-muted text-sm">{t('sdsNessunDato')}</p>
                 </div>
               ) : (
                 visibleEntries.map(([fieldId, value]) => {
@@ -189,7 +192,7 @@ export function SubmissionDetailSidebar({ submission, onClose, onToggleGestita }
                         {meta?.label ?? fieldId}
                       </p>
                       <p className="text-kidville-ink text-sm leading-relaxed break-words">
-                        {renderValue(value)}
+                        {renderValue(value, { si: t('subSi'), no: t('subNo') })}
                       </p>
                     </div>
                   )
@@ -207,7 +210,7 @@ export function SubmissionDetailSidebar({ submission, onClose, onToggleGestita }
                   sidebar la rilegge da props; rollback se il PATCH fallisce. */}
               <button
                 type="button"
-                title={submission.gestita_il ? 'Riporta a non gestita' : 'Segna come gestita'}
+                title={submission.gestita_il ? t('sdsRiportaNonGestita') : t('sdsSegnaComeGestita')}
                 disabled={savingGestita}
                 onClick={async () => {
                   setSavingGestita(true)
@@ -219,7 +222,7 @@ export function SubmissionDetailSidebar({ submission, onClose, onToggleGestita }
                 }}
                 className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-kidville-yellow font-barlow text-sm font-extrabold uppercase tracking-[0.03em] text-kidville-green disabled:opacity-60"
               >
-                <CheckCheck className="w-4 h-4" /> {submission.gestita_il ? 'Gestita' : 'Segna gestita'}
+                <CheckCheck className="w-4 h-4" /> {submission.gestita_il ? t('subGestita') : t('subSegnaGestita')}
                 {submission.gestita_il && (
                   <span className="rounded-pill bg-kidville-green/[0.12] px-2 py-0.5 font-maven text-[10px] font-semibold normal-case tracking-normal text-kidville-green">
                     {new Date(submission.gestita_il).toLocaleDateString('it-IT', { day: '2-digit', month: 'short' })}
@@ -244,7 +247,7 @@ export function SubmissionDetailSidebar({ submission, onClose, onToggleGestita }
                 }}
               >
                 <FileText className="w-4 h-4" />
-                Scarica PDF
+                {t('subScaricaPdf')}
               </button>
 
               <button
@@ -264,7 +267,7 @@ export function SubmissionDetailSidebar({ submission, onClose, onToggleGestita }
                 }}
               >
                 <Download className="w-4 h-4" />
-                Esporta XLSX
+                {t('subEsportaXlsx')}
               </button>
               </div>
             </div>

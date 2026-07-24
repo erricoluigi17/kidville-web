@@ -25,6 +25,15 @@ vi.mock('next-intl', async () => {
     teacherPrimaria: (await import('../messages/it/teacherPrimaria.json')).default,
     teacherTasks: (await import('../messages/it/teacherTasks.json')).default,
     teacherServizi: (await import('../messages/it/teacherServizi.json')).default,
+    adminNav: (await import('../messages/it/adminNav.json')).default,
+    adminStudents: (await import('../messages/it/adminStudents.json')).default,
+    adminContabilita: (await import('../messages/it/adminContabilita.json')).default,
+    adminMensa: (await import('../messages/it/adminMensa.json')).default,
+    adminModulistica: (await import('../messages/it/adminModulistica.json')).default,
+    adminComunicazioni: (await import('../messages/it/adminComunicazioni.json')).default,
+    adminPrimaria: (await import('../messages/it/adminPrimaria.json')).default,
+    adminSettings: (await import('../messages/it/adminSettings.json')).default,
+    adminAltro: (await import('../messages/it/adminAltro.json')).default,
   };
   const resolve = (ns: string | undefined, key: string): string => {
     const gruppo = ns ? it[ns] : undefined;

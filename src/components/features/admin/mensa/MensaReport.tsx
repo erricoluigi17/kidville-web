@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { useTranslations } from 'next-intl';
 import { ClipboardList, AlertTriangle, Users, UtensilsCrossed, Trash2, Plus } from 'lucide-react';
 import { DateField } from '@/components/ui/DateField';
 import { allergeneLabel, allergeneEmoji } from '@/lib/mensa/allergeni';
@@ -30,6 +31,7 @@ interface Report {
 interface AlternativaManuale { id: string; alunno_id: string; nome: string; classe: string; richiesta: string; origine: string; created_at: string }
 
 export function MensaReport({ userId, scuolaId, sezione, sezioni, soloLettura = false }: Props) {
+  const t = useTranslations('adminMensa');
   const [data, setData] = useState(() => new Date().toISOString().slice(0, 10));
   const [filtroSezione, setFiltroSezione] = useState<string>(sezione ?? '');
   const [report, setReport] = useState<Report | null>(null);
@@ -53,11 +55,11 @@ export function MensaReport({ userId, scuolaId, sezione, sezioni, soloLettura = 
       if (sez) qs.set('sezione', sez);
       const res = await fetch(`/api/mensa/report?${qs}`, { headers: hdr(userId) });
       const j = await res.json();
-      if (j.success) { setReport(j.data); setError(null); } else setError(j.error ?? 'Errore');
+      if (j.success) { setReport(j.data); setError(null); } else setError(j.error ?? t('errore'));
     } finally {
       setLoading(false);
     }
-  }, [userId, scuolaId, data, sezione, filtroSezione]);
+  }, [userId, scuolaId, data, sezione, filtroSezione, t]);
 
   const loadAlternative = useCallback(async () => {
     const sez = sezione ?? filtroSezione;
@@ -93,9 +95,9 @@ export function MensaReport({ userId, scuolaId, sezione, sezioni, soloLettura = 
       });
       const j = await res.json();
       if (j.success) { setFormNota(''); setFormAlunno(''); await loadAlternative(); }
-      else setAltError(j.error ?? 'Errore nel salvataggio');
+      else setAltError(j.error ?? t('erroreSalvataggioAlt'));
     } catch {
-      setAltError('Errore di rete nel salvataggio');
+      setAltError(t('erroreReteSalvataggio'));
     } finally {
       setSalvando(false);
     }
@@ -108,9 +110,9 @@ export function MensaReport({ userId, scuolaId, sezione, sezioni, soloLettura = 
       const res = await fetch(`/api/mensa/alternative?${qs}`, { method: 'DELETE', headers: hdr(userId) });
       const j = await res.json();
       if (j.success) await loadAlternative();
-      else setAltError(j.error ?? 'Errore nell\'eliminazione');
+      else setAltError(j.error ?? t('erroreEliminazione'));
     } catch {
-      setAltError('Errore di rete nell\'eliminazione');
+      setAltError(t('erroreReteEliminazione'));
     }
   };
 
@@ -118,16 +120,16 @@ export function MensaReport({ userId, scuolaId, sezione, sezioni, soloLettura = 
     <div className="kv-mensa-alt">
       <div className="flex flex-wrap items-end gap-3 mb-4">
         <div>
-          <label className="font-maven text-xs text-kidville-muted block mb-1">Data</label>
+          <label className="font-maven text-xs text-kidville-muted block mb-1">{t('dataLabel')}</label>
           <DateField value={data} onChange={setData}
             className="min-h-[44px] border-2 border-kidville-line rounded-lg px-3 py-1.5 font-maven text-sm text-kidville-green" />
         </div>
         {!sezione && sezioni && sezioni.length > 0 && (
           <div>
-            <label className="font-maven text-xs text-kidville-muted block mb-1">Sezione</label>
+            <label className="font-maven text-xs text-kidville-muted block mb-1">{t('sezione')}</label>
             <select value={filtroSezione} onChange={e => setFiltroSezione(e.target.value)}
               className="min-h-[44px] border-2 border-kidville-line rounded-lg px-3 py-1.5 font-maven text-sm text-kidville-green bg-white">
-              <option value="">Tutte</option>
+              <option value="">{t('tutte')}</option>
               {sezioni.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
           </div>
@@ -135,19 +137,19 @@ export function MensaReport({ userId, scuolaId, sezione, sezioni, soloLettura = 
         <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-kidville-green text-white">
           <Users size={16} />
           <span className="font-barlow font-black text-lg leading-none">{report?.totale ?? '—'}</span>
-          <span className="font-maven text-[11px] opacity-80">pasti</span>
+          <span className="font-maven text-[11px] opacity-80">{t('pasti')}</span>
         </div>
         {totaleConflitti > 0 && (
           <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-kidville-error-strong text-white animate-pulse">
             <AlertTriangle size={16} />
             <span className="font-barlow font-black text-lg leading-none">{totaleConflitti}</span>
-            <span className="font-maven text-[11px] opacity-90">allergie nel menu di oggi</span>
+            <span className="font-maven text-[11px] opacity-90">{t('allergieNelMenu')}</span>
           </div>
         )}
       </div>
 
       {error && <p role="alert" className="font-maven text-sm text-kidville-error-strong mb-3">{error}</p>}
-      {loading && <p className="font-maven text-sm text-kidville-muted">Caricamento…</p>}
+      {loading && <p className="font-maven text-sm text-kidville-muted">{t('caricamento')}</p>}
 
       {report && !loading && (
         <div className="space-y-4">
@@ -155,19 +157,19 @@ export function MensaReport({ userId, scuolaId, sezione, sezioni, soloLettura = 
           <div className="rounded-2xl border border-kidville-line bg-white overflow-hidden">
             <div className="flex items-center gap-1.5 px-3 py-2 bg-kidville-cream/60">
               <UtensilsCrossed size={13} className="text-kidville-green" />
-              <span className="font-barlow font-bold text-kidville-green uppercase text-xs">Alternative del giorno</span>
+              <span className="font-barlow font-bold text-kidville-green uppercase text-xs">{t('alternativeDelGiorno')}</span>
             </div>
             <div className="p-3 space-y-3">
               {/* Automatiche per allergia (derivate dal menu, nessuna scrittura) */}
               {automatiche.length === 0 ? (
-                <p className="font-maven text-xs text-kidville-muted">Nessuna alternativa automatica per allergia oggi.</p>
+                <p className="font-maven text-xs text-kidville-muted">{t('nessunaAlternativaAuto')}</p>
               ) : (
                 <ul className="space-y-1.5">
                   {automatiche.map(a => (
                     <li key={`auto-${a.alunno_id}`} className="flex items-start gap-2 rounded-xl bg-kidville-error-soft px-3 py-2">
                       <AlertTriangle size={14} className="text-kidville-error shrink-0 mt-0.5" />
                       <span className="font-maven text-sm text-kidville-error-strong">
-                        <strong>Alternativa per allergia</strong> per {a.nome} ({a.classe}) — allergeni: {(a.allergeni_label.length ? a.allergeni_label : a.allergeni.map(allergeneLabel)).join(', ')}
+                        <strong>{t('alternativaPerAllergia')}</strong> {t('alternativaAutoDettaglio', { nome: a.nome, classe: a.classe, allergeni: (a.allergeni_label.length ? a.allergeni_label : a.allergeni.map(allergeneLabel)).join(', ') })}
                       </span>
                     </li>
                   ))}
@@ -181,11 +183,11 @@ export function MensaReport({ userId, scuolaId, sezione, sezioni, soloLettura = 
                     <li key={a.id} className="flex items-start gap-2 rounded-xl bg-kidville-cream/50 px-3 py-2">
                       <UtensilsCrossed size={14} className="text-kidville-green shrink-0 mt-0.5" />
                       <span className="font-maven text-sm text-kidville-ink flex-1">
-                        <strong>Alternativa richiesta</strong> per {a.nome} ({a.classe}): {a.richiesta}
-                        {a.origine === 'genitore' && <span className="ml-1 text-[11px] text-kidville-muted">(richiesta dal genitore)</span>}
+                        <strong>{t('alternativaRichiesta')}</strong> {t('alternativaManualeDettaglio', { nome: a.nome, classe: a.classe, richiesta: a.richiesta })}
+                        {a.origine === 'genitore' && <span className="ml-1 text-[11px] text-kidville-muted">{t('richiestaDalGenitore')}</span>}
                       </span>
                       {!soloLettura && (
-                        <button onClick={() => elimina(a.alunno_id)} title="Elimina alternativa"
+                        <button onClick={() => elimina(a.alunno_id)} title={t('eliminaAlternativa')}
                           className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-kidville-error hover:opacity-70">
                           <Trash2 size={16} />
                         </button>
@@ -201,25 +203,24 @@ export function MensaReport({ userId, scuolaId, sezione, sezioni, soloLettura = 
               {!soloLettura && tuttiAlunni.length > 0 && (
                 <div className="rounded-xl border border-dashed border-kidville-line p-3 space-y-2">
                   <p className="font-maven text-[11px] text-kidville-muted">
-                    Registra un&apos;alternativa per il {new Date(`${data}T00:00:00`).toLocaleDateString('it-IT', { day: 'numeric', month: 'long' })}.
-                    Sovrascrive un&apos;eventuale nota già presente per lo stesso bambino e giorno.
+                    {t('formNotaAlternativa', { data: new Date(`${data}T00:00:00`).toLocaleDateString('it-IT', { day: 'numeric', month: 'long' }) })}
                   </p>
                   <div className="flex flex-wrap gap-2">
-                    <label htmlFor="mensa-alt-alunno" className="sr-only">Bambino</label>
+                    <label htmlFor="mensa-alt-alunno" className="sr-only">{t('bambinoLabel')}</label>
                     <select id="mensa-alt-alunno" value={formAlunno} onChange={e => setFormAlunno(e.target.value)}
                       style={{ fontSize: '16px' }}
                       className="min-h-[44px] border-2 border-kidville-line rounded-lg px-3 py-1.5 font-maven text-kidville-green bg-white min-w-[180px]">
-                      <option value="">Scegli il bambino…</option>
+                      <option value="">{t('scegliBambino')}</option>
                       {tuttiAlunni.map(a => <option key={a.id} value={a.id}>{a.nome} ({a.classe})</option>)}
                     </select>
-                    <label htmlFor="mensa-alt-nota" className="sr-only">Nota alternativa</label>
+                    <label htmlFor="mensa-alt-nota" className="sr-only">{t('notaAlternativaLabel')}</label>
                     <input id="mensa-alt-nota" type="text" value={formNota} onChange={e => setFormNota(e.target.value)}
-                      placeholder="Es. pasto in bianco, senza latticini…"
+                      placeholder={t('placeholderNotaAlternativa')}
                       style={{ fontSize: '16px' }}
                       className="min-h-[44px] flex-1 min-w-[180px] border-2 border-kidville-line rounded-lg px-3 py-1.5 font-maven text-kidville-ink" />
                     <button onClick={registra} disabled={salvando || !formAlunno || !formNota.trim()}
                       className="inline-flex min-h-[44px] items-center gap-1.5 rounded-lg bg-kidville-green text-white font-maven text-sm px-4 py-1.5 disabled:opacity-40">
-                      <Plus size={15} /> {salvando ? 'Salvo…' : 'Registra alternativa'}
+                      <Plus size={15} /> {salvando ? t('salvando') : t('registraAlternativa')}
                     </button>
                   </div>
                 </div>
@@ -228,9 +229,9 @@ export function MensaReport({ userId, scuolaId, sezione, sezioni, soloLettura = 
           </div>
 
           <div>
-            <h4 className="font-barlow font-bold text-kidville-green uppercase text-xs mb-2 flex items-center gap-1.5"><ClipboardList size={13} /> Prenotati per sezione</h4>
+            <h4 className="font-barlow font-bold text-kidville-green uppercase text-xs mb-2 flex items-center gap-1.5"><ClipboardList size={13} /> {t('prenotatiPerSezione')}</h4>
             {report.perClasse.length === 0 ? (
-              <p className="font-maven text-sm text-kidville-muted">Nessuna prenotazione per questa data.</p>
+              <p className="font-maven text-sm text-kidville-muted">{t('nessunaPrenotazione')}</p>
             ) : (
               <div className="grid md:grid-cols-2 gap-3">
                 {report.perClasse.map(c => (
@@ -265,7 +266,7 @@ export function MensaReport({ userId, scuolaId, sezione, sezioni, soloLettura = 
                             </div>
                             {conflitto && (
                               <p className="font-maven text-[11px] text-kidville-error-strong mt-0.5">
-                                Nel menu: {a.conflitti.map(cf => `${allergeneLabel(cf.allergene)} (${cf.portate.join(', ')})`).join('; ')}
+                                {t('nelMenu', { dettaglio: a.conflitti.map(cf => `${allergeneLabel(cf.allergene)} (${cf.portate.join(', ')})`).join('; ') })}
                               </p>
                             )}
                           </li>

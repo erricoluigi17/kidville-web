@@ -20,6 +20,7 @@ import {
   Globe, Lock, Copy, Link2, EyeOff,
 } from 'lucide-react'
 import { motion } from 'framer-motion'
+import { useTranslations } from 'next-intl'
 import Link from 'next/link'
 import { useSessionIdentity } from '@/lib/auth/use-session-identity'
 import { FormBuilderCanvas } from '@/components/features/admin/forms/builder/FormBuilderCanvas'
@@ -29,17 +30,25 @@ import { ANAGRAFICA_GROUPS, type AnagraficaPresetField, type AnagraficaGroup } f
 import { publicFormUrl } from '@/lib/forms/publish'
 
 // ── Field palette definition ─────────────────────────────────
+// `labelKey` è la chiave i18n dell'etichetta; il `type` resta il valore enum.
 const PALETTE_ITEMS = [
-  { type: 'text' as FormFieldType, label: 'Testo Corto', Icon: Type },
-  { type: 'textarea' as FormFieldType, label: 'Testo Lungo', Icon: AlignLeft },
-  { type: 'select' as FormFieldType, label: 'Menu a Tendina', Icon: ChevronDown },
-  { type: 'number' as FormFieldType, label: 'Numero', Icon: Hash },
-  { type: 'file' as FormFieldType, label: 'Allegato File', Icon: Paperclip },
-  { type: 'consent' as FormFieldType, label: 'Consensi/Privacy', Icon: ShieldCheck },
-  { type: 'signature' as FormFieldType, label: 'Firma', Icon: PenLine },
+  { type: 'text' as FormFieldType, labelKey: 'fieldTypeText', Icon: Type },
+  { type: 'textarea' as FormFieldType, labelKey: 'fieldTypeTextarea', Icon: AlignLeft },
+  { type: 'select' as FormFieldType, labelKey: 'fieldTypeSelect', Icon: ChevronDown },
+  { type: 'number' as FormFieldType, labelKey: 'fieldTypeNumber', Icon: Hash },
+  { type: 'file' as FormFieldType, labelKey: 'fieldTypeFile', Icon: Paperclip },
+  { type: 'consent' as FormFieldType, labelKey: 'fieldTypeConsent', Icon: ShieldCheck },
+  { type: 'signature' as FormFieldType, labelKey: 'fieldTypeSignature', Icon: PenLine },
 ] as const
 
-function makeField(type: FormFieldType, label: string): FormField {
+// I valori di default (label/testo/opzione) sono contenuti editabili mostrati
+// all'utente: arrivano già tradotti dal chiamante (dentro il componente, dove
+// `t` è disponibile), non da stringhe cablate qui.
+function makeField(
+  type: FormFieldType,
+  label: string,
+  defaults: { opzione1: string; consentLabel: string; consentTesto: string },
+): FormField {
   const base: FormField = {
     id: crypto.randomUUID(),
     type,
@@ -47,16 +56,16 @@ function makeField(type: FormFieldType, label: string): FormField {
     required: false,
     points: 0,
     options: ['select', 'radio', 'checkbox'].includes(type)
-      ? [{ label: 'Opzione 1', value: 'opt1' }]
+      ? [{ label: defaults.opzione1, value: 'opt1' }]
       : undefined,
   }
   // Il blocco Consensi nasce obbligatorio con un testo di default editabile.
   if (type === 'consent') {
     return {
       ...base,
-      label: 'Consenso al trattamento dei dati',
+      label: defaults.consentLabel,
       required: true,
-      text: 'Dichiaro di aver letto l’informativa e acconsento al trattamento dei dati.',
+      text: defaults.consentTesto,
     }
   }
   return base
@@ -201,6 +210,7 @@ function AnagraficaGroupSection({
 
 // ── Page ─────────────────────────────────────────────────────
 function FormBuilderInner() {
+  const t = useTranslations('adminModulistica')
   // Identità staff (M4): session-only, nessun fallback demo.
   const { userId } = useSessionIdentity()
   // ?id= → modifica di un modello esistente (carica schema + campi).
@@ -210,7 +220,7 @@ function FormBuilderInner() {
   const [schema, setSchema] = useState<FormSchemaConfig>(() => ({
     version: '1.0',
     pages: [
-      { id: crypto.randomUUID(), title: 'Pagina 1', description: '', fields: [] },
+      { id: crypto.randomUUID(), title: t('bldPaginaN', { n: 1 }), description: '', fields: [] },
     ],
     scoring: { enabled: false },
     settings: {
@@ -221,7 +231,7 @@ function FormBuilderInner() {
   }))
   const [activePage, setActivePage] = useState(0)
   const [selectedFieldId, setSelectedFieldId] = useState<string | null>(null)
-  const [formTitle, setFormTitle] = useState('Nuovo Modello')
+  const [formTitle, setFormTitle] = useState(() => t('bldNuovoModelloTitolo'))
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   // Pubblicazione (DL-030): id del modello salvato + stato link pubblico.
   const [savedModelId, setSavedModelId] = useState<string | null>(null)
@@ -249,7 +259,7 @@ function FormBuilderInner() {
       .then((m) => {
         if (!m || !m.id) return
         if (m.schema?.pages?.length) setSchema(m.schema)
-        setFormTitle(m.title ?? 'Modello')
+        setFormTitle(m.title ?? t('bldModelloFallback'))
         setEditingId(m.id)
         setSavedModelId(m.id)
         if (m.signature_mode === 'joint' || m.signature_mode === 'single') setSignatureMode(m.signature_mode)
@@ -260,7 +270,9 @@ function FormBuilderInner() {
         }
       })
       .catch(() => {})
-  }, [editIdParam])
+    // `t` è stabile (memoizzato da next-intl su locale/messaggi): incluso solo
+    // per soddisfare exhaustive-deps, non provoca refetch spuri.
+  }, [editIdParam, t])
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
@@ -308,7 +320,11 @@ function FormBuilderInner() {
       // Palette → Canvas: insert new field at end
       const fieldType = aId.replace('palette-', '') as FormFieldType
       const meta = PALETTE_ITEMS.find(p => p.type === fieldType)!
-      const newField = makeField(fieldType, meta.label)
+      const newField = makeField(fieldType, t(meta.labelKey), {
+        opzione1: t('bldOpzione1'),
+        consentLabel: t('bldConsensoDefaultLabel'),
+        consentTesto: t('bldConsensoDefaultTesto'),
+      })
       setSchema(prev => {
         const pages = [...prev.pages]
         pages[activePage] = {
@@ -361,7 +377,7 @@ function FormBuilderInner() {
   function addPage() {
     const page: FormPage = {
       id: crypto.randomUUID(),
-      title: `Pagina ${schema.pages.length + 1}`,
+      title: t('bldPaginaN', { n: schema.pages.length + 1 }),
       description: '',
       fields: [],
     }
@@ -498,7 +514,7 @@ function FormBuilderInner() {
               value={formTitle}
               onChange={e => setFormTitle(e.target.value)}
               className="bg-transparent text-base font-semibold text-kidville-green focus:outline-none border-b border-transparent focus:border-kidville-green/50 transition-colors w-64 pb-0.5 placeholder-kidville-muted"
-              placeholder="Nome del modello…"
+              placeholder={t('bldNomeModelloPlaceholder')}
             />
           </div>
 
@@ -507,24 +523,24 @@ function FormBuilderInner() {
               <button
                 onClick={() => setSignatureMode(m => (m === 'joint' ? 'single' : 'joint'))}
                 className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs transition-all ${signatureMode === 'joint' ? 'border-kidville-success/50 bg-kidville-success-soft text-kidville-success' : 'border-kidville-line text-kidville-muted hover:text-kidville-ink'}`}
-                title="Richiede la firma di entrambi i genitori"
+                title={t('bldFirmaCongiuntaTitle')}
               >
                 <PenLine className="w-3.5 h-3.5" />
-                {signatureMode === 'joint' ? 'Firma congiunta' : 'Firma singola'}
+                {signatureMode === 'joint' ? t('bldFirmaCongiunta') : t('bldFirmaSingola')}
               </button>
             )}
             <button
               onClick={() => setSempreFirmabile(v => !v)}
               className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs transition-all ${sempreFirmabile ? 'border-kidville-success/50 bg-kidville-success-soft text-kidville-success' : 'border-kidville-line text-kidville-muted hover:text-kidville-ink'}`}
-              title="Modulo essenziale (salute/sicurezza): firmabile anche da genitore sospeso per morosità"
+              title={t('bldEssenzialeTitle')}
             >
               <ShieldCheck className="w-3.5 h-3.5" />
-              {sempreFirmabile ? 'Essenziale: sempre firmabile' : 'Essenziale: off'}
+              {sempreFirmabile ? t('bldEssenzialeOn') : t('bldEssenzialeOff')}
             </button>
             <div className="flex items-center gap-2 text-xs text-kidville-muted font-mono tabular-nums">
-              <span>{schema.pages.length} {schema.pages.length === 1 ? 'pag.' : 'pag.'}</span>
+              <span>{t('bldPagine', { count: schema.pages.length })}</span>
               <span className="text-kidville-muted">·</span>
-              <span>{totalFields} campi</span>
+              <span>{t('bldCampiTotali', { n: totalFields })}</span>
             </div>
           </div>
 
@@ -546,12 +562,12 @@ function FormBuilderInner() {
             {saveState === 'idle' && <Save className="w-4 h-4" />}
             <span>
               {saveState === 'saving'
-                ? 'Salvataggio…'
+                ? t('bldSalvataggio')
                 : saveState === 'saved'
-                ? 'Salvato!'
+                ? t('bldSalvato')
                 : saveState === 'error'
-                ? 'Errore'
-                : 'Salva Modello'}
+                ? t('bldErrore')
+                : t('bldSalvaModello')}
             </span>
           </motion.button>
         </header>
@@ -563,7 +579,7 @@ function FormBuilderInner() {
             style={{ background: 'rgba(67,160,71,0.06)', borderBottom: '1px solid var(--color-kidville-line)' }}
           >
             <span className="flex items-center gap-1.5 text-xs font-semibold text-kidville-success uppercase tracking-wider">
-              <Globe className="w-3.5 h-3.5" /> Pubblicazione
+              <Globe className="w-3.5 h-3.5" /> {t('bldPubblicazione')}
             </span>
 
             <div className="flex items-center gap-1.5 text-xs">
@@ -571,13 +587,13 @@ function FormBuilderInner() {
                 onClick={() => setAccessMode('public')}
                 className={`flex items-center gap-1 px-2.5 py-1 rounded-lg border transition-all ${accessMode === 'public' ? 'border-kidville-success/50 bg-kidville-success-soft text-kidville-success' : 'border-kidville-line text-kidville-muted'}`}
               >
-                <Globe className="w-3 h-3" /> Link pubblico
+                <Globe className="w-3 h-3" /> {t('bldLinkPubblico')}
               </button>
               <button
                 onClick={() => setAccessMode('authenticated')}
                 className={`flex items-center gap-1 px-2.5 py-1 rounded-lg border transition-all ${accessMode === 'authenticated' ? 'border-kidville-success/50 bg-kidville-success-soft text-kidville-success' : 'border-kidville-line text-kidville-muted'}`}
               >
-                <Lock className="w-3 h-3" /> Solo registrati
+                <Lock className="w-3 h-3" /> {t('bldSoloRegistrati')}
               </button>
             </div>
 
@@ -588,7 +604,7 @@ function FormBuilderInner() {
                 className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-kidville-green hover:bg-kidville-green-dark text-kidville-yellow text-xs font-semibold transition-all disabled:opacity-50"
               >
                 {publishing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Link2 className="w-3.5 h-3.5" />}
-                Pubblica
+                {t('bldPubblica')}
               </button>
             ) : (
               <div className="flex items-center gap-2 flex-wrap">
@@ -599,7 +615,7 @@ function FormBuilderInner() {
                   readOnly
                   value={`${window.location.origin}${pub.url}`}
                   onFocus={e => e.currentTarget.select()}
-                  aria-label="Link pubblico del modello"
+                  aria-label={t('bldLinkPubblicoAria')}
                   className="w-64 text-xs text-kidville-success bg-kidville-success-soft border border-kidville-success/20 px-2.5 py-1 rounded-lg focus:outline-none focus:border-kidville-success/50"
                 />
                 <button
@@ -607,14 +623,14 @@ function FormBuilderInner() {
                   className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-kidville-line text-kidville-ink hover:bg-kidville-cream text-xs transition-all"
                 >
                   {copied ? <Check className="w-3.5 h-3.5 text-kidville-success" /> : <Copy className="w-3.5 h-3.5" />}
-                  {copied ? 'Copiato' : 'Copia link'}
+                  {copied ? t('bldCopiato') : t('bldCopiaLink')}
                 </button>
                 <button
                   onClick={() => handlePublish('unpublish')}
                   disabled={publishing}
                   className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-kidville-line text-kidville-muted hover:text-kidville-error hover:border-kidville-green/30 text-xs transition-all disabled:opacity-50"
                 >
-                  <EyeOff className="w-3.5 h-3.5" /> Ritira
+                  <EyeOff className="w-3.5 h-3.5" /> {t('bldRitira')}
                 </button>
               </div>
             )}
@@ -635,14 +651,14 @@ function FormBuilderInner() {
               {/* Campi generici */}
               <div>
                 <p className="text-[10px] font-bold text-kidville-muted uppercase tracking-widest mb-3">
-                  Libreria Campi
+                  {t('bldLibreriaCampi')}
                 </p>
                 <div className="space-y-1.5">
                   {PALETTE_ITEMS.map(item => (
                     <PaletteItem
                       key={item.type}
                       type={item.type}
-                      label={item.label}
+                      label={t(item.labelKey)}
                       Icon={item.Icon}
                     />
                   ))}
@@ -655,7 +671,7 @@ function FormBuilderInner() {
               {/* Campi anagrafica */}
               <div>
                 <p className="text-[10px] font-bold text-kidville-muted uppercase tracking-widest mb-3">
-                  Campi Anagrafica
+                  {t('bldCampiAnagrafica')}
                 </p>
                 <div className="space-y-1">
                   {ANAGRAFICA_GROUPS.map(group => (
@@ -675,7 +691,7 @@ function FormBuilderInner() {
                   ))}
                 </div>
                 <p className="mt-3 text-[10px] text-kidville-muted leading-relaxed">
-                  I campi anagrafica si collegano automaticamente al database alla compilazione.
+                  {t('bldAnagraficaHint')}
                 </p>
               </div>
             </div>
@@ -713,7 +729,7 @@ function FormBuilderInner() {
             }}
           >
             <draggingPaletteItem.Icon className="w-4 h-4 text-kidville-green flex-shrink-0" />
-            <span className="text-sm font-medium text-kidville-green">{draggingPaletteItem.label}</span>
+            <span className="text-sm font-medium text-kidville-green">{t(draggingPaletteItem.labelKey)}</span>
           </div>
         )}
         {draggingPreset && (() => {

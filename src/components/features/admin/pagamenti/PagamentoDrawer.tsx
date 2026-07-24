@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { Pencil, Layers, Download, Euro } from 'lucide-react';
 import { Drawer } from '@/components/ui/cockpit';
 import { Badge } from '@/components/ui/Badge';
@@ -45,6 +46,7 @@ const fmtData = (d?: string | null) => (d ? new Date(d).toLocaleDateString('it-I
  * azioni in un punto solo. L'emissione fattura resta manuale (FatturaButton).
  */
 export function PagamentoDrawer({ pagamento, userId, onClose, onIncassa, onModifica, onRateizza, extra }: Props) {
+    const t = useTranslations('adminContabilita');
     const [dettaglio, setDettaglio] = useState<Dettaglio | null>(null);
     const [loading, setLoading] = useState(true);
 
@@ -80,7 +82,7 @@ export function PagamentoDrawer({ pagamento, userId, onClose, onIncassa, onModif
                     {!saldato && (
                         <button type="button" onClick={onIncassa}
                             className="inline-flex items-center gap-1.5 rounded-pill bg-kidville-green px-4 py-2 font-maven text-sm font-bold text-kidville-yellow transition-colors hover:bg-kidville-green-dark">
-                            <Euro size={15} /> Incassa
+                            <Euro size={15} /> {t('drawerIncassa')}
                         </button>
                     )}
                     {saldato ? (
@@ -88,23 +90,23 @@ export function PagamentoDrawer({ pagamento, userId, onClose, onIncassa, onModif
                             <FatturaButton pagamentoId={pagamento.id} userId={userId} fatturaStato={pagamento.fattura_stato} descrizione={pagamento.descrizione} />
                             <a href={`/api/pagamenti/ricevuta?pagamento_id=${pagamento.id}&userId=${userId}`}
                                 className="inline-flex items-center gap-1 rounded-pill bg-kidville-green-soft px-3 py-1.5 font-maven text-xs font-bold text-kidville-green transition-colors hover:bg-kidville-green/20">
-                                <Download size={13} /> Ricevuta
+                                <Download size={13} /> {t('drawerRicevuta')}
                             </a>
                         </>
                     ) : (
-                        <button type="button" disabled title="Disponibile a saldo avvenuto"
+                        <button type="button" disabled title={t('drawerRicevutaDisabled')}
                             className="inline-flex cursor-not-allowed items-center gap-1 rounded-pill border-[1.5px] border-kidville-line px-3 py-1 font-maven text-xs font-bold text-kidville-muted opacity-60">
-                            <Download size={13} /> Ricevuta
+                            <Download size={13} /> {t('drawerRicevuta')}
                         </button>
                     )}
                     <button type="button" onClick={onModifica}
                         className="inline-flex items-center gap-1 rounded-pill border-[1.5px] border-kidville-line px-3 py-1 font-maven text-xs font-bold text-kidville-muted transition-colors hover:border-kidville-green hover:text-kidville-green">
-                        <Pencil size={13} /> Modifica
+                        <Pencil size={13} /> {t('drawerModifica')}
                     </button>
                     {pagamento.tipo === 'singolo' && !saldato && (
                         <button type="button" onClick={onRateizza}
                             className="inline-flex items-center gap-1 rounded-pill border-[1.5px] border-kidville-line px-3 py-1 font-maven text-xs font-bold text-kidville-muted transition-colors hover:border-kidville-green hover:text-kidville-green">
-                            <Layers size={13} /> Rateizza
+                            <Layers size={13} /> {t('drawerRateizza')}
                         </button>
                     )}
                     {extra}
@@ -117,12 +119,12 @@ export function PagamentoDrawer({ pagamento, userId, onClose, onIncassa, onModif
                     <FatturaChip stato={pagamento.stato} fatturaStato={pagamento.fattura_stato} />
                 </div>
                 <div className="mt-2 flex justify-between font-maven text-xs">
-                    <span className="text-kidville-muted">Totale € {Number(pagamento.importo).toFixed(2)}</span>
-                    <span className="text-kidville-muted">Incassato € {Number(pagamento.importo_pagato || 0).toFixed(2)}</span>
-                    <span className="font-bold text-kidville-green">Restano € {residuo.toFixed(2)}</span>
+                    <span className="text-kidville-muted">{t('drawerTotale')} € {Number(pagamento.importo).toFixed(2)}</span>
+                    <span className="text-kidville-muted">{t('drawerIncassato')} € {Number(pagamento.importo_pagato || 0).toFixed(2)}</span>
+                    <span className="font-bold text-kidville-green">{t('drawerRestano')} € {residuo.toFixed(2)}</span>
                 </div>
                 <div className="mt-2 flex justify-between font-maven text-[11px] text-kidville-muted">
-                    <span>Scadenza: {fmtData(pagamento.scadenza ?? dettaglio?.scadenza)}</span>
+                    <span>{t('drawerScadenza')} {fmtData(pagamento.scadenza ?? dettaglio?.scadenza)}</span>
                     {dettaglio?.payment_categories?.nome && <span>{dettaglio.payment_categories.nome}</span>}
                 </div>
             </div>
@@ -130,11 +132,11 @@ export function PagamentoDrawer({ pagamento, userId, onClose, onIncassa, onModif
             {/* Quote (genitori separati) */}
             {dettaglio && dettaglio.quote.length > 0 && (
                 <div className="mb-4">
-                    <h3 className="mb-1.5 font-barlow text-[13px] font-extrabold uppercase text-kidville-neutral">Quote</h3>
+                    <h3 className="mb-1.5 font-barlow text-[13px] font-extrabold uppercase text-kidville-neutral">{t('drawerQuote')}</h3>
                     <div className="space-y-1">
                         {dettaglio.quote.map((q) => (
                             <div key={q.id} className="flex items-center justify-between rounded-input bg-kidville-cream/40 px-2.5 py-1.5 font-maven text-xs">
-                                <span className="text-kidville-ink">{q.etichetta || [q.utenti?.nome, q.utenti?.cognome].filter(Boolean).join(' ') || 'Quota'}</span>
+                                <span className="text-kidville-ink">{q.etichetta || [q.utenti?.nome, q.utenti?.cognome].filter(Boolean).join(' ') || t('drawerQuota')}</span>
                                 <span className="font-bold text-kidville-green">€ {Number(q.importo).toFixed(2)}</span>
                             </div>
                         ))}
@@ -143,11 +145,11 @@ export function PagamentoDrawer({ pagamento, userId, onClose, onIncassa, onModif
             )}
 
             {/* Timeline movimenti */}
-            <h3 className="mb-1.5 font-barlow text-[13px] font-extrabold uppercase text-kidville-neutral">Movimenti</h3>
+            <h3 className="mb-1.5 font-barlow text-[13px] font-extrabold uppercase text-kidville-neutral">{t('drawerMovimenti')}</h3>
             {loading ? (
-                <p className="py-3 font-maven text-xs text-kidville-muted">Caricamento…</p>
+                <p className="py-3 font-maven text-xs text-kidville-muted">{t('drawerCaricamento')}</p>
             ) : !dettaglio || dettaglio.incassi.length === 0 ? (
-                <p className="py-3 font-maven text-xs text-kidville-muted">Nessun incasso registrato.</p>
+                <p className="py-3 font-maven text-xs text-kidville-muted">{t('drawerNessunIncasso')}</p>
             ) : (
                 <div className="space-y-1.5">
                     {dettaglio.incassi.map((i) => {
@@ -156,7 +158,7 @@ export function PagamentoDrawer({ pagamento, userId, onClose, onIncassa, onModif
                             <div key={i.id} className={`rounded-input border px-2.5 py-1.5 ${storno ? 'border-kidville-error-soft bg-kidville-error-soft/40' : 'border-kidville-line bg-kidville-white'}`}>
                                 <div className="flex items-center justify-between font-maven text-xs">
                                     <span className={`font-bold ${storno ? 'text-kidville-error' : 'text-kidville-green'}`}>
-                                        {storno ? 'Storno' : (METODO_LABEL[i.metodo] ?? i.metodo)}
+                                        {storno ? t('drawerStorno') : (METODO_LABEL[i.metodo] ?? i.metodo)}
                                     </span>
                                     <span className={`font-bold ${storno ? 'text-kidville-error' : 'text-kidville-green'}`}>
                                         {storno ? '−' : ''}€ {Math.abs(Number(i.importo)).toFixed(2)}
@@ -175,7 +177,7 @@ export function PagamentoDrawer({ pagamento, userId, onClose, onIncassa, onModif
             {/* Rate del piano (se pagamento padre) */}
             {dettaglio && dettaglio.rate.length > 0 && (
                 <div className="mt-4">
-                    <h3 className="mb-1.5 font-barlow text-[13px] font-extrabold uppercase text-kidville-neutral">Rate del piano</h3>
+                    <h3 className="mb-1.5 font-barlow text-[13px] font-extrabold uppercase text-kidville-neutral">{t('drawerRatePiano')}</h3>
                     <div className="space-y-1">
                         {dettaglio.rate.map((r) => {
                             const rst = STATI_PAGAMENTO[r.stato] ?? STATI_PAGAMENTO.da_pagare;

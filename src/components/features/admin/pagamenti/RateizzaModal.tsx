@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useMemo } from 'react';
+import { useTranslations } from 'next-intl';
 import { X, Layers, Plus, Trash2 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { cx } from '@/lib/ui/cx';
@@ -38,6 +39,7 @@ export function RateizzaModal({
     alunno, userId, scuolaId, categoriaId, descrizione = '', importoTotale = 0,
     obbligatorio = true, replacePagamentoId, onClose, onDone,
 }: Props) {
+    const t = useTranslations('adminContabilita');
     const [desc, setDesc] = useState(descrizione);
     const [totale, setTotale] = useState<number>(importoTotale);
     const [nRate, setNRate] = useState<number>(3);
@@ -48,8 +50,8 @@ export function RateizzaModal({
 
     // genera N rate uguali (l'ultima assorbe l'arrotondamento) con scadenze mensili
     const genera = () => {
-        if (!totale || totale <= 0) { setError('Inserisci un importo totale maggiore di 0'); return; }
-        if (nRate < 2) { setError('Servono almeno 2 rate'); return; }
+        if (!totale || totale <= 0) { setError(t('rateErrImporto')); return; }
+        if (nRate < 2) { setError(t('rateErrMin2')); return; }
         const base = Math.floor((totale / nRate) * 100) / 100;
         const arr: Rata[] = [];
         for (let i = 0; i < nRate; i++) {
@@ -70,9 +72,9 @@ export function RateizzaModal({
     const addRata = () => setRate((prev) => [...prev!, { importo: 0, scadenza: addMonths(dataBase, prev!.length) }]);
 
     const submit = async () => {
-        if (!desc.trim()) { setError('Inserisci una descrizione'); return; }
-        if (!rate || rate.length < 2) { setError('Genera almeno 2 rate'); return; }
-        if (!sommaOk) { setError(`La somma delle rate (€ ${somma.toFixed(2)}) deve coincidere col totale (€ ${Number(totale).toFixed(2)})`); return; }
+        if (!desc.trim()) { setError(t('rateErrDescrizione')); return; }
+        if (!rate || rate.length < 2) { setError(t('rateErrGenera2')); return; }
+        if (!sommaOk) { setError(`${t('rateErrSommaPre')} ${somma.toFixed(2)}${t('rateErrSommaMid')} ${Number(totale).toFixed(2)})`); return; }
         setSaving(true); setError(null);
         try {
             const res = await fetch('/api/pagamenti/rate', {
@@ -89,7 +91,7 @@ export function RateizzaModal({
                 }),
             });
             const j = await res.json();
-            if (!res.ok) { setError(j.error || 'Errore nella creazione del piano'); return; }
+            if (!res.ok) { setError(j.error || t('rateErrCreazione')); return; }
             // sostituzione: elimina il pagamento singolo originale
             if (replacePagamentoId) {
                 await fetch(`/api/pagamenti/${replacePagamentoId}?userId=${userId}`, {
@@ -98,7 +100,7 @@ export function RateizzaModal({
             }
             onDone();
         } catch {
-            setError('Errore di rete');
+            setError(t('rateErrRete'));
         } finally {
             setSaving(false);
         }
@@ -114,7 +116,7 @@ export function RateizzaModal({
             >
                 <div className="flex items-center justify-between mb-4">
                     <h3 className="font-barlow font-black text-lg text-kidville-green uppercase flex items-center gap-2">
-                        <Layers size={18} /> Dividi in acconti
+                        <Layers size={18} /> {t('rateTitolo')}
                     </h3>
                     <button onClick={onClose} className="text-kidville-muted hover:text-kidville-ink"><X size={20} /></button>
                 </div>
@@ -126,32 +128,32 @@ export function RateizzaModal({
 
                 <div className="space-y-3">
                     <div>
-                        <label className="font-maven text-xs text-kidville-muted mb-1 block">Descrizione</label>
+                        <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('rateDescrizione')}</label>
                         <input type="text" value={desc} onChange={(e) => setDesc(e.target.value)}
                             className={INPUT} />
                     </div>
                     <div className="grid grid-cols-3 gap-2">
                         <div>
-                            <label className="font-maven text-xs text-kidville-muted mb-1 block">Totale (€)</label>
+                            <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('rateTotale')}</label>
                             <input type="number" min={0} step="0.01" value={totale || ''}
                                 onChange={(e) => setTotale(e.target.value === '' ? 0 : Number(e.target.value))}
                                 className={cx(RATA_FIELD, 'w-full')} />
                         </div>
                         <div>
-                            <label className="font-maven text-xs text-kidville-muted mb-1 block">N° rate</label>
+                            <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('rateNRate')}</label>
                             <input type="number" min={2} max={24} value={nRate}
                                 onChange={(e) => setNRate(Math.max(2, Number(e.target.value) || 2))}
                                 className={cx(RATA_FIELD, 'w-full')} />
                         </div>
                         <div>
-                            <label className="font-maven text-xs text-kidville-muted mb-1 block">1ª scadenza</label>
+                            <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('ratePrimaScadenza')}</label>
                             <input type="date" value={dataBase} onChange={(e) => setDataBase(e.target.value)}
                                 className={cx(RATA_FIELD, 'w-full')} />
                         </div>
                     </div>
                     <button onClick={genera}
                         className="w-full rounded-pill border-[1.5px] border-kidville-green px-5 py-2 font-maven text-sm font-bold text-kidville-green transition-colors hover:bg-kidville-green-soft">
-                        Genera rate uguali
+                        {t('rateGeneraUguali')}
                     </button>
 
                     {rate && (
@@ -170,10 +172,10 @@ export function RateizzaModal({
                                 </div>
                             ))}
                             <button onClick={addRata} className="flex items-center gap-1 text-kidville-green font-maven text-xs font-bold">
-                                <Plus size={13} /> Aggiungi rata
+                                <Plus size={13} /> {t('rateAggiungiRata')}
                             </button>
                             <p className={`font-maven text-xs font-bold text-right ${sommaOk ? 'text-kidville-success' : 'text-kidville-error'}`}>
-                                Somma: € {somma.toFixed(2)} / € {Number(totale).toFixed(2)}
+                                {t('rateSomma')} € {somma.toFixed(2)} / € {Number(totale).toFixed(2)}
                             </p>
                         </div>
                     )}
@@ -183,10 +185,10 @@ export function RateizzaModal({
 
                 <div className="flex gap-2 mt-5">
                     <button onClick={onClose} className={cx(BTN_SECONDARY, 'flex-1')}>
-                        Annulla
+                        {t('rateAnnulla')}
                     </button>
                     <button onClick={submit} disabled={saving || !rate || !sommaOk} className={cx(BTN_PRIMARY, 'flex-1')}>
-                        {saving ? 'Salvataggio…' : 'Crea piano rateale'}
+                        {saving ? t('rateSalvataggio') : t('rateCreaPiano')}
                     </button>
                 </div>
             </motion.div>

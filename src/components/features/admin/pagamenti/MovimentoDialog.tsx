@@ -12,6 +12,7 @@
 // «già riconciliato da un altro operatore» diventano messaggi chiari (+ refetch).
 
 import { useCallback, useEffect, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { Check, Download, FileText, Search, X, Users } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
 import { FatturaButton } from './FatturaButton';
@@ -51,14 +52,16 @@ const TITLE_ID = 'movimento-dialog-title';
 
 /** Pill «CF» dell'aggancio per codice fiscale (su card bianca del dialog). */
 function CfPill() {
+  const t = useTranslations('adminContabilita');
   return (
     <span className="rounded-pill bg-kidville-green px-1.5 py-0.5 font-barlow text-[10px] font-extrabold uppercase leading-none text-kidville-white">
-      CF
+      {t('movdlgBadgeCf')}
     </span>
   );
 }
 
 export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, returnFocusRef, onIncassoUnico }: Props) {
+  const t = useTranslations('adminContabilita');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [ricerca, setRicerca] = useState('');
@@ -107,25 +110,25 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
       // Nessun catch muto sul parse: un corpo non-JSON risale al catch che LOGGA.
       const j = (await r.json()) as { error?: string; success?: boolean };
       if (r.status === 409) {
-        const msg = j.error || 'Operazione non possibile in questo momento';
+        const msg = j.error || t('movdlgOperazioneNonPossibile');
         setError(msg);
         // Corsa persa / stato già cambiato da un altro operatore → risincronizza la lista.
         if (/operatore|confermato/i.test(msg)) onDone();
         return;
       }
       if (!r.ok || !j.success) {
-        setError(j.error || "Errore nell'operazione");
+        setError(j.error || t('movdlgErroreOperazione'));
         return;
       }
       onDone();
       onClose();
     } catch (err) {
       logClient({ livello: 'error', evento: 'fetch', messaggio: `PATCH riconciliazione (${az}) — ${testoErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
-      setError('Errore di rete: riprova');
+      setError(t('movdlgErroreRete'));
     } finally {
       setBusy(false);
     }
-  }, [movimento.id, userId, onDone, onClose]);
+  }, [movimento.id, userId, onDone, onClose, t]);
 
   const q = ricerca.trim().toLowerCase();
   const apertiFiltrati = (q.length === 0 ? aperti : aperti.filter((p) => testoRicercaPagamento(p).includes(q))).slice(0, 25);
@@ -136,7 +139,7 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
     <Modal
       open
       onClose={onClose}
-      title={`Movimento del ${dataIt(movimento.data_operazione)}`}
+      title={`${t('movdlgTitoloMovimento')} ${dataIt(movimento.data_operazione)}`}
       labelledBy={TITLE_ID}
       className={cx(MODAL_CARD, 'max-w-lg')}
       style={{ boxShadow: MODAL_SHADOW }}
@@ -148,17 +151,17 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
           <h2 id={TITLE_ID} className="font-barlow text-lg font-black uppercase text-kidville-green">
             {formatEuro(movimento.importo)}
           </h2>
-          <p className="font-maven text-xs text-kidville-sub">Bonifico del {dataIt(movimento.data_operazione)}</p>
+          <p className="font-maven text-xs text-kidville-sub">{t('movdlgBonificoDel')} {dataIt(movimento.data_operazione)}</p>
         </div>
-        <button type="button" onClick={onClose} aria-label="Chiudi" className="rounded-pill p-1 text-kidville-muted transition-colors hover:text-kidville-ink">
+        <button type="button" onClick={onClose} aria-label={t('movdlgChiudi')} className="rounded-pill p-1 text-kidville-muted transition-colors hover:text-kidville-ink">
           <X size={20} />
         </button>
       </div>
 
       {/* Causale / controparte */}
       <div className="mb-4 rounded-card bg-kidville-cream/60 p-3">
-        <p className="font-maven text-sm text-kidville-ink" title={movimento.causale ?? ''}>{movimento.causale || 'Nessuna causale'}</p>
-        {movimento.controparte && <p className="mt-0.5 font-maven text-xs text-kidville-sub">Ordinante: {movimento.controparte}</p>}
+        <p className="font-maven text-sm text-kidville-ink" title={movimento.causale ?? ''}>{movimento.causale || t('movdlgNessunaCausale')}</p>
+        {movimento.controparte && <p className="mt-0.5 font-maven text-xs text-kidville-sub">{t('movdlgOrdinante')} {movimento.controparte}</p>}
       </div>
 
       {error && <p role="alert" className="mb-3 rounded-card bg-kidville-error-soft px-3 py-2 font-maven text-xs text-kidville-error-strong">{error}</p>}
@@ -170,10 +173,10 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
           {multiCf && onIncassoUnico && (
             <div className="rounded-card border-[1.5px] border-kidville-green-soft bg-kidville-green-soft p-3">
               <p className="flex items-center gap-1.5 font-maven text-sm font-bold text-kidville-green">
-                <Users size={15} /> Bonifico di famiglia: più figli agganciati per codice fiscale.
+                <Users size={15} /> {t('movdlgBonificoFamiglia')}
               </p>
               <button type="button" onClick={() => onIncassoUnico(movimento)} disabled={busy} className={cx(BTN_PRIMARY_AA, 'mt-2 py-1.5 px-3 text-xs')}>
-                Apri Incasso unico
+                {t('movdlgApriIncassoUnico')}
               </button>
             </div>
           )}
@@ -181,7 +184,7 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
           {/* Suggerimenti ordinati (CF-match primi) */}
           {suggerimenti.length > 0 && (
             <div>
-              <h3 className="mb-1.5 font-barlow text-xs font-black uppercase tracking-wide text-kidville-green">Suggerimenti</h3>
+              <h3 className="mb-1.5 font-barlow text-xs font-black uppercase tracking-wide text-kidville-green">{t('movdlgSuggerimenti')}</h3>
               <div className="space-y-1.5">
                 {suggerimenti.map((s, i) => (
                   <div key={`${s.pagamento_id}-${i}`} className="flex items-center justify-between gap-2 rounded-input border border-kidville-line px-3 py-2">
@@ -191,7 +194,7 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
                     </span>
                     <button type="button" onClick={() => azione('conferma', s.pagamento_id)} disabled={busy}
                       className="inline-flex shrink-0 items-center gap-1 rounded-pill bg-kidville-green px-3 py-1.5 font-maven text-xs font-bold text-kidville-white transition-colors hover:bg-kidville-green-dark disabled:opacity-50">
-                      <Check size={13} /> Conferma questo
+                      <Check size={13} /> {t('movdlgConfermaQuesto')}
                     </button>
                   </div>
                 ))}
@@ -201,21 +204,21 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
 
           {/* Ricerca manuale fra i pagamenti aperti (stessa fonte del pannello) */}
           <div>
-            <h3 className="mb-1.5 font-barlow text-xs font-black uppercase tracking-wide text-kidville-green">Cerca un altro pagamento</h3>
+            <h3 className="mb-1.5 font-barlow text-xs font-black uppercase tracking-wide text-kidville-green">{t('movdlgCercaAltroPagamento')}</h3>
             <div className="relative mb-2">
               <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-kidville-muted" />
-              <input type="text" value={ricerca} onChange={(e) => setRicerca(e.target.value)} placeholder="Nome dell'alunno o descrizione…"
-                className={cx(INPUT, 'pl-9')} aria-label="Cerca un pagamento aperto da abbinare" />
+              <input type="text" value={ricerca} onChange={(e) => setRicerca(e.target.value)} placeholder={t('movdlgCercaPlaceholder')}
+                className={cx(INPUT, 'pl-9')} aria-label={t('movdlgCercaAriaLabel')} />
             </div>
             <div className="max-h-56 space-y-1 overflow-y-auto">
               {apertiFiltrati.length === 0 ? (
-                <p className="px-1 py-2 font-maven text-xs text-kidville-sub">Nessun pagamento aperto corrisponde.</p>
+                <p className="px-1 py-2 font-maven text-xs text-kidville-sub">{t('movdlgNessunPagamentoCorrisponde')}</p>
               ) : apertiFiltrati.map((p) => (
                 <div key={p.id} className="flex items-center justify-between gap-2 rounded-input bg-kidville-cream/40 px-3 py-2">
                   <span className="min-w-0 truncate font-maven text-xs text-kidville-ink">{labelPagamentoAperto(p)}</span>
                   <button type="button" onClick={() => azione('conferma', p.id)} disabled={busy}
                     className="inline-flex shrink-0 items-center gap-1 rounded-pill border-[1.5px] border-kidville-green px-2.5 py-1 font-maven text-xs font-bold text-kidville-green transition-colors hover:bg-kidville-green hover:text-kidville-white disabled:opacity-50">
-                    <Check size={12} /> Abbina
+                    <Check size={12} /> {t('movdlgAbbina')}
                   </button>
                 </div>
               ))}
@@ -228,18 +231,18 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
       {isConfermato && (
         <div className="space-y-3">
           {loadingPag ? (
-            <p className="font-maven text-sm text-kidville-sub">Caricamento…</p>
+            <p className="font-maven text-sm text-kidville-sub">{t('movdlgCaricamento')}</p>
           ) : saldato && movimento.pagamento_id ? (
             <div className="flex flex-wrap items-center gap-2">
               <a href={`/api/pagamenti/ricevuta?pagamento_id=${movimento.pagamento_id}&userId=${userId}`}
                 className="inline-flex items-center gap-1 rounded-pill bg-kidville-green-soft px-3 py-1.5 font-maven text-xs font-bold text-kidville-green transition-colors hover:bg-kidville-green/20">
-                <Download size={13} /> Ricevuta
+                <Download size={13} /> {t('movdlgRicevuta')}
               </a>
               <FatturaButton pagamentoId={movimento.pagamento_id} userId={userId} descrizione={movimento.causale ?? undefined} />
             </div>
           ) : (
             <p className="flex items-center gap-1.5 rounded-card bg-kidville-cream/60 px-3 py-2 font-maven text-xs text-kidville-sub">
-              <FileText size={14} /> Ricevuta e fattura disponibili a saldo avvenuto.
+              <FileText size={14} /> {t('movdlgRicevutaFatturaSaldo')}
             </p>
           )}
         </div>
@@ -249,15 +252,15 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
       <div className="mt-5 flex flex-wrap items-center gap-2">
         {(stato === 'da_abbinare' || stato === 'suggerito') && (
           <button type="button" onClick={() => azione('ignora')} disabled={busy} className={cx(BTN_SECONDARY, 'py-2 px-4 text-xs')}>
-            <X size={13} /> Ignora
+            <X size={13} /> {t('movdlgIgnora')}
           </button>
         )}
         {(isConfermato || isIgnorato) && (
           <button type="button" onClick={() => azione('riapri')} disabled={busy} className={cx(BTN_SECONDARY, 'py-2 px-4 text-xs')}>
-            Riapri
+            {t('movdlgRiapri')}
           </button>
         )}
-        <button type="button" onClick={onClose} className={cx(BTN_SECONDARY, 'ml-auto py-2 px-4 text-xs')}>Chiudi</button>
+        <button type="button" onClick={onClose} className={cx(BTN_SECONDARY, 'ml-auto py-2 px-4 text-xs')}>{t('movdlgChiudi')}</button>
       </div>
     </Modal>
   );

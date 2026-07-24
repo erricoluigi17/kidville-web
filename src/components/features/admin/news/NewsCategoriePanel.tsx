@@ -11,6 +11,7 @@ import { hdr } from '@/components/features/admin/settings/ui';
 import { INPUT, BTN_PRIMARY_AA } from '@/components/features/admin/pagamenti/ui';
 import { logClient } from '@/lib/logging/client';
 import { cx } from '@/lib/ui/cx';
+import { useTranslations } from 'next-intl';
 import type { NewsCategoria } from '@/lib/news/tipi';
 
 const testoErrore = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -21,6 +22,7 @@ interface Props {
 }
 
 export function NewsCategoriePanel({ userId, scuolaId }: Props) {
+  const t = useTranslations('adminComunicazioni');
   const [categorie, setCategorie] = useState<NewsCategoria[]>([]);
   const [loading, setLoading] = useState(true);
   const [disponibile, setDisponibile] = useState(true);
@@ -56,14 +58,14 @@ export function NewsCategoriePanel({ userId, scuolaId }: Props) {
       const res = await fetch(`/api/news/categorie?userId=${userId}`, { method: 'POST', headers: hdr(userId), body: JSON.stringify({ nome: nuovoNome.trim(), scuola_id: scuolaId }) });
       const j = (await res.json().catch(() => null)) as { error?: string } | null;
       if (!res.ok) {
-        setErrore(j?.error ?? 'Creazione non riuscita.');
+        setErrore(j?.error ?? t('categorieErroreCreazione'));
         return;
       }
       setNuovoNome('');
       void carica();
     } catch (err) {
       logClient({ livello: 'error', evento: 'fetch', messaggio: `crea categoria news — ${testoErrore(err)}`, route: '/admin/news', stato: 0 });
-      setErrore('Errore di rete.');
+      setErrore(t('erroreRete'));
     } finally {
       setSalvando(false);
     }
@@ -75,7 +77,7 @@ export function NewsCategoriePanel({ userId, scuolaId }: Props) {
       if (res.ok) void carica();
       else {
         const j = (await res.json().catch(() => null)) as { error?: string } | null;
-        setErrore(j?.error ?? 'Rinomina non riuscita.');
+        setErrore(j?.error ?? t('categorieErroreRinomina'));
       }
     } catch (err) {
       logClient({ livello: 'error', evento: 'fetch', messaggio: `rinomina categoria news — ${testoErrore(err)}`, route: '/admin/news', stato: 0 });
@@ -83,13 +85,13 @@ export function NewsCategoriePanel({ userId, scuolaId }: Props) {
   };
 
   const elimina = async (id: string) => {
-    if (!confirm('Eliminare questa categoria?')) return;
+    if (!confirm(t('categorieConfermaElimina'))) return;
     try {
       const res = await fetch(`/api/news/categorie?userId=${userId}&id=${id}`, { method: 'DELETE', headers: hdr(userId) });
       if (res.ok) void carica();
       else {
         const j = (await res.json().catch(() => null)) as { error?: string } | null;
-        setErrore(j?.error ?? 'Eliminazione non riuscita.');
+        setErrore(j?.error ?? t('categorieErroreEliminazione'));
       }
     } catch (err) {
       logClient({ livello: 'error', evento: 'fetch', messaggio: `elimina categoria news — ${testoErrore(err)}`, route: '/admin/news', stato: 0 });
@@ -101,17 +103,17 @@ export function NewsCategoriePanel({ userId, scuolaId }: Props) {
       {/* Nuova categoria */}
       <div className="flex flex-wrap items-end gap-2">
         <div className="min-w-0 flex-1">
-          <label htmlFor="nuova-cat" className="mb-1.5 block font-maven text-xs font-bold uppercase tracking-wide text-kidville-sub">Nuova categoria</label>
-          <input id="nuova-cat" value={nuovoNome} onChange={(e) => setNuovoNome(e.target.value)} placeholder="Es. Sport e movimento" className={INPUT} />
+          <label htmlFor="nuova-cat" className="mb-1.5 block font-maven text-xs font-bold uppercase tracking-wide text-kidville-sub">{t('categorieNuova')}</label>
+          <input id="nuova-cat" value={nuovoNome} onChange={(e) => setNuovoNome(e.target.value)} placeholder={t('categoriePlaceholder')} className={INPUT} />
         </div>
-        <button type="button" onClick={() => void crea()} disabled={salvando || !nuovoNome.trim()} className={BTN_PRIMARY_AA}><Plus size={15} /> Aggiungi</button>
+        <button type="button" onClick={() => void crea()} disabled={salvando || !nuovoNome.trim()} className={BTN_PRIMARY_AA}><Plus size={15} /> {t('categorieAggiungi')}</button>
       </div>
       {errore && <p role="alert" className="font-maven text-sm text-kidville-error-strong">{errore}</p>}
 
       {loading ? (
         <div className="flex flex-col gap-2">{[0, 1, 2].map((i) => <div key={i} className="h-12 animate-pulse rounded-input bg-kidville-cream-dark" />)}</div>
       ) : !disponibile ? (
-        <p className="rounded-card bg-kidville-cream-dark px-4 py-8 text-center font-maven text-sm text-kidville-sub">Le News non sono ancora disponibili su questo ambiente.</p>
+        <p className="rounded-card bg-kidville-cream-dark px-4 py-8 text-center font-maven text-sm text-kidville-sub">{t('newsNonDisponibili')}</p>
       ) : (
         <ul className="divide-y divide-kidville-line rounded-card border border-kidville-line bg-kidville-white">
           {categorie.map((c) => (
@@ -124,13 +126,13 @@ export function NewsCategoriePanel({ userId, scuolaId }: Props) {
                   defaultValue={c.nome}
                   onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== c.nome) void rinomina(c.id, v); }}
                   className={cx(INPUT, 'min-w-0 flex-1 py-1.5')}
-                  aria-label={`Rinomina ${c.nome}`}
+                  aria-label={t('categorieRinominaAria', { nome: c.nome })}
                 />
               )}
               {c.is_sistema ? (
-                <span className="inline-flex flex-shrink-0 items-center gap-1 font-barlow text-[10.5px] font-bold uppercase tracking-wide text-kidville-sub"><Lock size={12} /> Sistema</span>
+                <span className="inline-flex flex-shrink-0 items-center gap-1 font-barlow text-[10.5px] font-bold uppercase tracking-wide text-kidville-sub"><Lock size={12} /> {t('categorieSistema')}</span>
               ) : (
-                <button type="button" onClick={() => void elimina(c.id)} aria-label={`Elimina ${c.nome}`} className="flex-shrink-0 text-kidville-error-strong"><Trash2 size={16} /></button>
+                <button type="button" onClick={() => void elimina(c.id)} aria-label={t('categorieEliminaAria', { nome: c.nome })} className="flex-shrink-0 text-kidville-error-strong"><Trash2 size={16} /></button>
               )}
             </li>
           ))}

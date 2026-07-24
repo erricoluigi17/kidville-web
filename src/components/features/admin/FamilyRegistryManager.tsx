@@ -2,6 +2,7 @@
 
 import React, { useRef, useState } from 'react';
 import Link from 'next/link';
+import { useTranslations } from 'next-intl';
 import { motion, AnimatePresence } from 'framer-motion';
 import { User, Users, Plus, Heart, ShieldCheck, Trash2, Save, Loader2, CheckCircle2, XCircle, ArrowRight, RefreshCw } from 'lucide-react';
 import { ScrollableStudentForm, type StudentFormHandle } from './ScrollableStudentForm';
@@ -16,10 +17,11 @@ interface TabDef {
 }
 
 export function FamilyRegistryManager() {
+    const tr = useTranslations('adminStudents');
     const [tabs, setTabs] = useState<TabDef[]>([
-        { id: 'alunno', label: 'Alunno', type: 'student', removable: false },
-        { id: 'madre', label: 'Madre', type: 'adult', removable: false, defaultRole: 'mother' },
-        { id: 'padre', label: 'Padre', type: 'adult', removable: false, defaultRole: 'father' },
+        { id: 'alunno', label: tr('familyTabAlunno'), type: 'student', removable: false },
+        { id: 'madre', label: tr('ruoloMadre'), type: 'adult', removable: false, defaultRole: 'mother' },
+        { id: 'padre', label: tr('ruoloPadre'), type: 'adult', removable: false, defaultRole: 'father' },
     ]);
     const [activeTab, setActiveTab] = useState('alunno');
     const [saving, setSaving] = useState(false);
@@ -45,7 +47,7 @@ export function FamilyRegistryManager() {
 
     const addAdultTab = () => {
         const newId = `adulto-${tabs.length}-${Math.round(performance.now())}`;
-        setTabs(prev => [...prev, { id: newId, label: 'Nuovo Componente', type: 'adult', removable: true, defaultRole: 'delegate' }]);
+        setTabs(prev => [...prev, { id: newId, label: tr('familyNuovoComponente'), type: 'adult', removable: true, defaultRole: 'delegate' }]);
         setActiveTab(newId);
     };
 
@@ -69,7 +71,7 @@ export function FamilyRegistryManager() {
         const sv = studentRef.current?.validate();
         if (!sv || !sv.ok) {
             setActiveTab('alunno');
-            showToast({ type: 'error', message: 'Correggi i dati dell’alunno evidenziati.' });
+            showToast({ type: 'error', message: tr('familyCorreggiAlunno') });
             return;
         }
 
@@ -82,7 +84,7 @@ export function FamilyRegistryManager() {
             const r = h.validate();
             if (!r.ok) {
                 setActiveTab(t.id);
-                showToast({ type: 'error', message: `Correggi i dati di “${t.label}”.` });
+                showToast({ type: 'error', message: tr('familyCorreggiAdulto', { label: t.label }) });
                 return;
             }
             adultPayloads.push({ tabId: t.id, label: t.label, data: r.data });
@@ -99,7 +101,7 @@ export function FamilyRegistryManager() {
             });
             if (!sres.ok) {
                 const e = await sres.json().catch(() => ({}));
-                throw new Error(e.error || 'Errore nel salvataggio dell’alunno');
+                throw new Error(e.error || tr('familyErrSalvataggioAlunno'));
             }
             const student = await sres.json();
             const results: {
@@ -115,11 +117,11 @@ export function FamilyRegistryManager() {
 
             const studentName = `${String(sv.data.nome ?? '')} ${String(sv.data.cognome ?? '')}`.trim();
             if (failed.length) {
-                showToast({ type: 'error', message: `Alunno salvato, ma errore su: ${failed.map(f => f.label).join(', ')}.` });
+                showToast({ type: 'error', message: tr('familyAlunnoSalvatoErrore', { lista: failed.map(f => f.label).join(', ') }) });
             } else {
                 const nonInviate = credenziali.filter(c => !c.inviata);
                 if (nonInviate.length) {
-                    showToast({ type: 'error', message: `Credenziali NON inviate via email a: ${nonInviate.map(c => c.label).join(', ')}.` });
+                    showToast({ type: 'error', message: tr('familyCredenzialiNonInviate', { lista: nonInviate.map(c => c.label).join(', ') }) });
                 }
             }
             setSavedSummary({ studentName, parents: results.filter(r => r.ok).length, failed, credenziali });
@@ -136,9 +138,9 @@ export function FamilyRegistryManager() {
         Object.values(adultRefs.current).forEach(h => h?.reset());
         // Rimuove eventuali componenti extra, torna a madre/padre.
         setTabs([
-            { id: 'alunno', label: 'Alunno', type: 'student', removable: false },
-            { id: 'madre', label: 'Madre', type: 'adult', removable: false, defaultRole: 'mother' },
-            { id: 'padre', label: 'Padre', type: 'adult', removable: false, defaultRole: 'father' },
+            { id: 'alunno', label: tr('familyTabAlunno'), type: 'student', removable: false },
+            { id: 'madre', label: tr('ruoloMadre'), type: 'adult', removable: false, defaultRole: 'mother' },
+            { id: 'padre', label: tr('ruoloPadre'), type: 'adult', removable: false, defaultRole: 'father' },
         ]);
         setActiveTab('alunno');
     };
@@ -155,18 +157,18 @@ export function FamilyRegistryManager() {
                         <CheckCircle2 size={44} className="text-kidville-green" />
                     </div>
                     <div>
-                        <h3 className="text-2xl font-black font-barlow text-kidville-green uppercase tracking-wide">Anagrafica salvata!</h3>
+                        <h3 className="text-2xl font-black font-barlow text-kidville-green uppercase tracking-wide">{tr('familyAnagraficaSalvata')}</h3>
                         <p className="text-kidville-green/80 font-maven mt-1 text-lg">{savedSummary.studentName}</p>
                         <p className="text-kidville-muted font-maven text-sm mt-1">
                             {savedSummary.parents === 0
-                                ? 'Nessun genitore collegato'
-                                : `${savedSummary.parents} ${savedSummary.parents === 1 ? 'genitore collegato' : 'genitori collegati'}`}
+                                ? tr('detailNessunGenitore')
+                                : tr('familyGenitoriCollegati', { n: savedSummary.parents })}
                         </p>
                     </div>
                     {savedSummary.failed.length > 0 && (
                         <div className="w-full max-w-md rounded-2xl border border-kidville-error/30 bg-kidville-error/5 p-4 text-left">
                             <p className="flex items-center gap-2 font-barlow font-bold text-kidville-error uppercase text-sm">
-                                <XCircle size={16} /> Alcuni genitori non salvati
+                                <XCircle size={16} /> {tr('familyGenitoriNonSalvati')}
                             </p>
                             <ul className="mt-2 space-y-1">
                                 {savedSummary.failed.map((f, i) => (
@@ -176,19 +178,19 @@ export function FamilyRegistryManager() {
                                 ))}
                             </ul>
                             <p className="mt-2 font-maven text-xs text-kidville-muted">
-                                L&apos;alunno è stato salvato. Puoi riaggiungere questi genitori dalla scheda dell&apos;alunno.
+                                {tr('familyRiaggiungi')}
                             </p>
                         </div>
                     )}
                     {savedSummary.credenziali.length > 0 && (
                         <div className="w-full max-w-md rounded-2xl border border-kidville-green/20 bg-kidville-cream/60 p-4 text-left">
-                            <p className="font-barlow font-bold text-kidville-green uppercase text-sm">Credenziali di accesso</p>
+                            <p className="font-barlow font-bold text-kidville-green uppercase text-sm">{tr('familyCredenzialiAccesso')}</p>
                             <ul className="mt-2 space-y-1">
                                 {savedSummary.credenziali.map((c, i) => (
                                     <li key={i} className={`font-maven text-xs ${c.inviata ? 'text-kidville-green' : 'text-kidville-error'}`}>
                                         <b>{c.label}</b> ({c.email}) — {c.inviata
-                                            ? 'email con le credenziali inviata ✓'
-                                            : `email NON inviata: ${c.errore ?? 'motivo sconosciuto'}. Usa "Rigenera credenziali" dalla scheda genitore.`}
+                                            ? tr('familyCredInviata')
+                                            : tr('familyCredNonInviata', { errore: c.errore ?? tr('familyMotivoSconosciuto') })}
                                     </li>
                                 ))}
                             </ul>
@@ -199,13 +201,13 @@ export function FamilyRegistryManager() {
                             href="/admin/students"
                             className="flex items-center gap-2 px-5 py-2.5 bg-kidville-green text-kidville-yellow rounded-pill font-barlow font-extrabold uppercase tracking-[0.03em] text-sm transition-transform hover:bg-kidville-green-dark active:scale-95"
                         >
-                            Vai alla lista alunni <ArrowRight size={16} />
+                            {tr('familyVaiListaAlunni')} <ArrowRight size={16} />
                         </Link>
                         <button
                             onClick={resetAll}
                             className="flex items-center gap-2 px-5 py-2.5 bg-kidville-cream border border-kidville-green/15 text-kidville-green rounded-pill font-barlow font-extrabold uppercase tracking-[0.03em] text-sm transition-transform hover:bg-kidville-green-soft active:scale-95"
                         >
-                            <RefreshCw size={16} /> Nuova anagrafica
+                            <RefreshCw size={16} /> {tr('familyNuovaAnagrafica')}
                         </button>
                     </div>
                 </motion.div>
@@ -231,8 +233,8 @@ export function FamilyRegistryManager() {
             {/* Barra azione con il pulsante di salvataggio UNICO, fuori dalle schede */}
             <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                 <div>
-                    <h1 className="font-barlow font-black text-xl text-kidville-green uppercase tracking-wide">Nuova anagrafica</h1>
-                    <p className="font-maven text-sm text-kidville-muted">Compila l&apos;alunno e i genitori, poi premi <b>Salva anagrafica</b>: verranno salvati e collegati insieme.</p>
+                    <h1 className="font-barlow font-black text-xl text-kidville-green uppercase tracking-wide">{tr('familyNuovaAnagrafica')}</h1>
+                    <p className="font-maven text-sm text-kidville-muted">{tr('familyIntroPre')}<b>{tr('familyIntroBold')}</b>{tr('familyIntroPost')}</p>
                 </div>
                 <button
                     onClick={handleSaveAll}
@@ -240,7 +242,7 @@ export function FamilyRegistryManager() {
                     className="flex items-center gap-2 px-6 py-3 rounded-pill bg-kidville-green text-kidville-yellow font-barlow font-black uppercase text-sm transition-transform hover:bg-kidville-green-dark active:scale-95 shadow-lg disabled:opacity-50 disabled:pointer-events-none"
                 >
                     {saving ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />}
-                    {saving ? 'Salvataggio…' : 'Salva anagrafica'}
+                    {saving ? tr('familySalvataggio') : tr('familySalvaAnagrafica')}
                 </button>
             </div>
 
@@ -279,7 +281,7 @@ export function FamilyRegistryManager() {
                     onClick={addAdultTab}
                     className="relative px-4 py-3 rounded-pill font-bold text-sm text-kidville-muted hover:text-kidville-green hover:bg-kidville-cream transition-colors flex items-center gap-2 border border-dashed border-kidville-green/30"
                 >
-                    <Plus size={16} /> Aggiungi Componente
+                    <Plus size={16} /> {tr('familyAggiungiComponente')}
                 </button>
             </div>
 

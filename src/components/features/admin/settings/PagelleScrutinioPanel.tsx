@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { GraduationCap, Star, ListChecks } from 'lucide-react';
 import { GiudiziManager } from '@/components/features/admin/primaria/GiudiziManager';
 import { ScrutinioPeriodiManager } from '@/components/features/admin/primaria/ScrutinioPeriodiManager';
@@ -11,28 +12,29 @@ type Tab = 'periodi' | 'giudizi' | 'giudizi-scrutinio';
 // Sezione "Pagelle & Scrutinio" dell'hub impostazioni: periodi di scrutinio,
 // scala giudizi sintetici e giudizi descrittivi. Riusa i manager esistenti.
 export function PagelleScrutinioPanel({ scuolaId, userId }: { scuolaId: string; userId: string }) {
+    const t = useTranslations('adminSettings');
     const [tab, setTab] = useState<Tab>('periodi');
 
     const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
-        { id: 'periodi', label: 'Periodi scrutinio', icon: <GraduationCap size={15} /> },
-        { id: 'giudizi', label: 'Scala giudizi', icon: <Star size={15} /> },
-        { id: 'giudizi-scrutinio', label: 'Giudizi scrutinio', icon: <ListChecks size={15} /> },
+        { id: 'periodi', label: t('pgPeriodiScrutinio'), icon: <GraduationCap size={15} /> },
+        { id: 'giudizi', label: t('pgScalaGiudizi'), icon: <Star size={15} /> },
+        { id: 'giudizi-scrutinio', label: t('pgGiudiziScrutinio'), icon: <ListChecks size={15} /> },
     ];
 
     return (
         <div>
             <nav className="mb-6 flex flex-wrap gap-2">
-                {tabs.map((t) => (
+                {tabs.map((tabItem) => (
                     <button
-                        key={t.id}
-                        onClick={() => setTab(t.id)}
-                        aria-pressed={tab === t.id}
+                        key={tabItem.id}
+                        onClick={() => setTab(tabItem.id)}
+                        aria-pressed={tab === tabItem.id}
                         className={`font-maven inline-flex items-center gap-2 rounded-pill px-4 py-2 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-kidville-green focus-visible:ring-offset-1 ${
-                            tab === t.id ? 'bg-kidville-green text-kidville-yellow' : 'bg-kidville-white text-kidville-ink hover:bg-kidville-green-soft hover:text-kidville-green'
+                            tab === tabItem.id ? 'bg-kidville-green text-kidville-yellow' : 'bg-kidville-white text-kidville-ink hover:bg-kidville-green-soft hover:text-kidville-green'
                         }`}
                     >
-                        {t.icon}
-                        {t.label}
+                        {tabItem.icon}
+                        {tabItem.label}
                     </button>
                 ))}
             </nav>

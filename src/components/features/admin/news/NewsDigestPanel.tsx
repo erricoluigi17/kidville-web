@@ -13,7 +13,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Modal } from '@/components/ui/Modal';
 import { logClient } from '@/lib/logging/client';
 import { cx } from '@/lib/ui/cx';
-import { plurale } from '@/lib/format/plurale';
+import { useTranslations } from 'next-intl';
 import { MESI_IT, type NewsDigestEdizione } from '@/lib/news/tipi';
 
 const testoErrore = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -32,6 +32,7 @@ interface Props {
 }
 
 export function NewsDigestPanel({ userId, scuolaId }: Props) {
+  const t = useTranslations('adminComunicazioni');
   const now = new Date();
   const [edizioni, setEdizioni] = useState<NewsDigestEdizione[]>([]);
   const [loading, setLoading] = useState(true);
@@ -73,17 +74,17 @@ export function NewsDigestPanel({ userId, scuolaId }: Props) {
       const res = await fetch(`/api/news/digest/genera?userId=${userId}`, { method: 'POST', headers: hdr(userId), body: JSON.stringify({ anno, mese, scuola_id: scuolaId }) });
       const j = (await res.json().catch(() => null)) as { error?: string; edizioni?: EsitoEdizione[] } | null;
       if (!res.ok) {
-        setEsito(j?.error ?? 'Generazione non riuscita.');
+        setEsito(j?.error ?? t('digestErroreGenerazione'));
         return;
       }
       const e = j?.edizioni?.[0];
-      if (!e || !e.generata) setEsito('Nessun post pubblicato in quel mese: nessun digest generato.');
-      else if (e.inviata) setEsito(`Digest inviato a ${e.destinatari_count} ${plurale(e.destinatari_count, 'famiglia', 'famiglie')}${e.errori_count ? ` (${e.errori_count} ${plurale(e.errori_count, 'errore', 'errori')})` : ''}.`);
-      else setEsito('Digest già presente per quel mese.');
+      if (!e || !e.generata) setEsito(t('digestNessunPost'));
+      else if (e.inviata) setEsito(t('digestInviatoEsito', { famiglie: e.destinatari_count, errori: e.errori_count }));
+      else setEsito(t('digestGiaPresente'));
       void carica();
     } catch (err) {
       logClient({ livello: 'error', evento: 'fetch', messaggio: `genera digest — ${testoErrore(err)}`, route: '/admin/news', stato: 0 });
-      setEsito('Errore di rete.');
+      setEsito(t('erroreRete'));
     } finally {
       setGenerando(false);
     }
@@ -101,35 +102,35 @@ export function NewsDigestPanel({ userId, scuolaId }: Props) {
     <div className="space-y-5">
       {/* Generazione manuale */}
       <div className="rounded-card border border-kidville-line bg-kidville-cream-dark p-4">
-        <p className="mb-2 font-barlow text-sm font-extrabold uppercase tracking-wide text-kidville-green">Genera / invia un digest</p>
-        <p className="mb-3 font-maven text-xs text-kidville-sub">Il digest è una comunicazione istituzionale: viene inviato via email a tutte le famiglie della sede, indipendentemente dalle loro preferenze di notifica.</p>
+        <p className="mb-2 font-barlow text-sm font-extrabold uppercase tracking-wide text-kidville-green">{t('digestGeneraTitolo')}</p>
+        <p className="mb-3 font-maven text-xs text-kidville-sub">{t('digestSpiegazione')}</p>
         <div className="flex flex-wrap items-end gap-2">
           <div>
-            <label htmlFor="digest-mese" className="mb-1 block font-maven text-[11px] font-bold uppercase tracking-wide text-kidville-sub">Mese</label>
+            <label htmlFor="digest-mese" className="mb-1 block font-maven text-[11px] font-bold uppercase tracking-wide text-kidville-sub">{t('digestMese')}</label>
             <select id="digest-mese" value={mese} onChange={(e) => setMese(Number(e.target.value))} className={cx(SELECT, 'w-auto')}>
               {MESI_IT.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
             </select>
           </div>
           <div>
-            <label htmlFor="digest-anno" className="mb-1 block font-maven text-[11px] font-bold uppercase tracking-wide text-kidville-sub">Anno</label>
+            <label htmlFor="digest-anno" className="mb-1 block font-maven text-[11px] font-bold uppercase tracking-wide text-kidville-sub">{t('digestAnno')}</label>
             <select id="digest-anno" value={anno} onChange={(e) => setAnno(Number(e.target.value))} className={cx(SELECT, 'w-auto')}>
               {anni.map((a) => <option key={a} value={a}>{a}</option>)}
             </select>
           </div>
-          <button ref={generaBtnRef} type="button" onClick={() => setConfermaAperta(true)} disabled={generando} className={BTN_PRIMARY_AA}><Send size={15} /> {generando ? 'Invio…' : 'Genera e invia'}</button>
+          <button ref={generaBtnRef} type="button" onClick={() => setConfermaAperta(true)} disabled={generando} className={BTN_PRIMARY_AA}><Send size={15} /> {generando ? t('digestInvioInCorso') : t('digestGeneraInvia')}</button>
         </div>
         {esito && <p role="status" className="mt-3 inline-flex items-center gap-1.5 font-maven text-sm font-bold text-kidville-success-strong"><CheckCircle2 size={16} /> {esito}</p>}
       </div>
 
       {/* Archivio edizioni */}
       <div>
-        <p className="mb-2 font-barlow text-sm font-extrabold uppercase tracking-wide text-kidville-green">Edizioni</p>
+        <p className="mb-2 font-barlow text-sm font-extrabold uppercase tracking-wide text-kidville-green">{t('digestEdizioni')}</p>
         {loading ? (
           <div className="flex flex-col gap-2">{[0, 1].map((i) => <div key={i} className="h-14 animate-pulse rounded-card bg-kidville-cream-dark" />)}</div>
         ) : !disponibile ? (
-          <p className="rounded-card bg-kidville-cream-dark px-4 py-8 text-center font-maven text-sm text-kidville-sub">Le News non sono ancora disponibili su questo ambiente.</p>
+          <p className="rounded-card bg-kidville-cream-dark px-4 py-8 text-center font-maven text-sm text-kidville-sub">{t('newsNonDisponibili')}</p>
         ) : edizioni.length === 0 ? (
-          <p className="rounded-card bg-kidville-cream-dark px-4 py-8 text-center font-maven text-sm text-kidville-sub">Nessuna edizione ancora generata.</p>
+          <p className="rounded-card bg-kidville-cream-dark px-4 py-8 text-center font-maven text-sm text-kidville-sub">{t('digestNessunaEdizione')}</p>
         ) : (
           <ul className="divide-y divide-kidville-line rounded-card border border-kidville-line bg-kidville-white">
             {edizioni.map((ed) => (
@@ -137,9 +138,9 @@ export function NewsDigestPanel({ userId, scuolaId }: Props) {
                 <Mail size={17} className="flex-shrink-0 text-kidville-green" strokeWidth={2} />
                 <span className="min-w-0 flex-1">
                   <span className="block font-barlow text-sm font-extrabold uppercase tracking-wide text-kidville-green">{MESI_IT[(ed.mese ?? 1) - 1] ?? ''} {ed.anno}</span>
-                  <span className="block font-maven text-[11.5px] text-kidville-sub">{ed.inviata_il ? `Inviato a ${ed.destinatari_count} ${plurale(ed.destinatari_count, 'famiglia', 'famiglie')}` : 'Generato, non ancora inviato'}</span>
+                  <span className="block font-maven text-[11.5px] text-kidville-sub">{ed.inviata_il ? t('digestEdizioneInviato', { famiglie: ed.destinatari_count }) : t('digestEdizioneNonInviato')}</span>
                 </span>
-                <Badge tone={ed.inviata_il ? 'success' : 'neutral'}>{ed.inviata_il ? 'Inviato' : 'Bozza'}</Badge>
+                <Badge tone={ed.inviata_il ? 'success' : 'neutral'}>{ed.inviata_il ? t('digestBadgeInviato') : t('digestBadgeBozza')}</Badge>
               </li>
             ))}
           </ul>
@@ -151,17 +152,17 @@ export function NewsDigestPanel({ userId, scuolaId }: Props) {
       <Modal
         open={confermaAperta}
         onClose={() => setConfermaAperta(false)}
-        title="Conferma invio del digest"
+        title={t('digestModalTitolo')}
         returnFocusRef={generaBtnRef}
         className="w-full max-w-[420px] rounded-3xl bg-kidville-white p-5"
       >
-        <h3 className="font-barlow text-lg font-black uppercase tracking-wide text-kidville-green">Inviare il digest?</h3>
+        <h3 className="font-barlow text-lg font-black uppercase tracking-wide text-kidville-green">{t('digestModalDomanda')}</h3>
         <p className="mt-2 font-maven text-sm text-kidville-ink">
-          L&apos;email del digest verrà inviata a tutte le famiglie della sede. L&apos;operazione non è annullabile.
+          {t('digestModalTesto')}
         </p>
         <div className="mt-4 flex justify-end gap-2">
-          <button type="button" onClick={() => setConfermaAperta(false)} className={BTN_SECONDARY}>Annulla</button>
-          <button type="button" onClick={confermaInvio} className={BTN_PRIMARY_AA}><Send size={15} /> Invia</button>
+          <button type="button" onClick={() => setConfermaAperta(false)} className={BTN_SECONDARY}>{t('annulla')}</button>
+          <button type="button" onClick={confermaInvio} className={BTN_PRIMARY_AA}><Send size={15} /> {t('invia')}</button>
         </div>
       </Modal>
     </div>

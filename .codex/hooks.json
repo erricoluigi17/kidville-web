@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/Users/lerri/kidville-web/.codex/hooks/verify_gate.sh'",
+            "timeout": 1800
+          }
+        ]
+      }
+    ]
+  }
+}

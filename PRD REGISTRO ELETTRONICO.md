@@ -64,7 +64,7 @@
 
 ---
 
-## 🗓️ Changelog — Fase 3 i18n (in corso): fondazione next-intl + login + aree GENITORE, DOCENTE e ADMIN tradotte (IT/EN) 2026-07-24 (branch `feat/native-fase2`)
+## 🗓️ Changelog — Fase 3 i18n COMPLETA: app bilingue IT/EN (genitore · docente · admin · pubblico · condivisi · date) 2026-07-25 (branch `feat/native-fase2`)
 
 Terza fase: internazionalizzazione (inglese). **Fondazione** posata e **pilota** tradotto; la migrazione a tappeto delle restanti pagine/componenti procede a lotti.
 
@@ -78,7 +78,14 @@ Terza fase: internazionalizzazione (inglese). **Fondazione** posata e **pilota**
 - **Tutta l'area DOCENTE tradotta** (7 namespace, ~874 chiavi): `teacherNav`, `teacherDiario`, `teacherPresenze` (giorni via `Intl`), `teacherComunicazioni`, `teacherPrimaria` (10 pagine), `teacherTasks`, `teacherServizi`.
 - **Tutta l'area ADMIN/SEGRETERIA tradotta** (9 namespace, ~2673 chiavi): `adminNav` (shell+dashboard), `adminStudents` (anagrafiche), `adminContabilita` (pagamenti/riconciliazione/cassa/merch — 835 chiavi), `adminMensa`, `adminModulistica` (moduli + form builder), `adminComunicazioni` (avvisi+news+messaggi), `adminPrimaria`, `adminSettings` (impostazioni+scuole+SIDI), `adminAltro` (GDPR+protocolli+iscrizioni). **Catalogo totale: 3921 chiavi/lingua su 25 namespace, parità IT/EN verificata.** Gate verde: eslint 0 · tsc 0 · vitest 345 file / 2825 test · build ok. Aggiornato il lock `settings-sistema-design` per accettare l'eyebrow via i18n.
 
-> ⚠️ **In corso.** Tradotte le **3 aree utente complete** (genitore + docente + admin/segreteria) + login. Resta: **componenti e config condivisi** (AppBar, shell, `ui/` «Esci»/Alto Contrasto, `admin-nav-config.ts`, `sede-context`, e le lib di etichette: ruoli, allergeni, eventi diario `eventConfig`, umore, tipi notifica, stati pagamento/aging, `MESI_IT`) + **localizzazione formati data/ora** (molte schermate già locale-aware via `Intl`/`useLocale`). Non ancora in produzione.
+- **Cornice condivisa** (`shared`, 77 chiavi): `ui/` (Esci, Alto Contrasto, DateField, cockpit, PageHeader), `shell/` (AppBar, campanella), `sede-context`, `BiometricGate`, e i componenti **galleria** (MediaGrid/StudentTagger/MediaUploader/ScattaFotoButton).
+- **Librerie di etichette** (`etichette`, 153 chiavi): ruoli, allergeni, tipi notifica, eventi diario, umore, aging pagamenti, config nav admin — via hook locale-aware (`useLabelRuolo`…), funzioni pure conservate come fallback.
+- **Formati data/ora** locale-aware: helper `src/lib/i18n/date.ts` (`useDateFormat`/`nomeMese` via `Intl`) applicato a tutti i display client; giorni/mesi si localizzano in EN.
+- **Area PUBBLICA** (`public`, 28 chiavi): pre-iscrizione (`EnrollmentWizard`, `/iscrizione`, compilazione modulo via magic-link `/m/[token]`).
+
+**Catalogo finale: ~4554 chiavi/lingua su 33 namespace, parità IT/EN verificata su tutti.** Selettore lingua (IT/EN) su login e in «Profilo e deleghe». Gate verde: eslint 0 · tsc 0 · vitest 348 file / 2851+ test · build ok. Sweep finale: 0 residui utente cablati.
+
+> ✅ **i18n completa lato UtenTE.** Restano in italiano **di proposito** (non-UI o contratti): i **PDF** e i documenti (ricevute/certificati/pagelle — atti legali), i **CSV/export** (formato-dato), i **log** applicativi, i **corpi delle notifiche persistite** (dato inviato; la localizzazione richiederebbe la lingua del destinatario al momento dell'invio), i **formati numero/valuta** (Euro), il **marchio «Kidville»** e i **placeholder-esempio**. Due form anagrafica sono dead-code (non renderizzati). **Non ancora in produzione** (Fase 2+3 da provare su dispositivo prima del deploy).
 
 ## 🗓️ Changelog — Fase 2 native: offline (avvisi·diario·menu) + fotocamera nativa + login biometrico + badge/condivisione 2026-07-24 (branch `feat/native-fase2`)
 

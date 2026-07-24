@@ -34,6 +34,8 @@ const GRUPPI_COPERTI: string[] = [
     'parent/presenze',
     'parent/primaria',
     'parent/mensa',
+    // App Store readiness (2026-07-24): cancellazione account self-service (5.1.1(v)).
+    'parent/account',
     // M3.6 + M3.7 (zod 5/14 + 6/14 — chiude tutto primaria/*)
     'primaria',
     // M3.8 (zod 7/14)

@@ -69,7 +69,7 @@ function Inner() {
         <label className="flex items-start gap-2.5 cursor-pointer">
           <input type="checkbox" checked={privacy} onChange={e => setPrivacy(e.target.checked)} className="mt-1 h-4 w-4 rounded text-kidville-green focus:ring-kidville-green" />
           <span className="font-maven text-sm text-kidville-ink leading-snug">
-            Ho letto e accetto l’<strong>informativa sulla privacy</strong> (GDPR, Reg. UE 2016/679) e il trattamento dei dati per le finalità scolastiche. <span className="text-kidville-error">*</span>
+            Ho letto e accetto l’<strong><a href="/privacy" target="_blank" rel="noopener noreferrer" className="underline">informativa sulla privacy</a></strong> (GDPR, Reg. UE 2016/679) e il trattamento dei dati per le finalità scolastiche. <span className="text-kidville-error">*</span>
           </span>
         </label>
 

@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Configurazione di sicurezza di rete (Google Play / hardening).
+  RELEASE: il traffico HTTP in chiaro è bloccato (base-config cleartextTrafficPermitted="false"):
+  l'app parla solo via HTTPS con la WebView remota di produzione.
+  DEV live-reload: il cleartext è riaperto SOLO verso gli host locali (emulatore/simulatore) via
+  domain-config esplicito — innocuo in produzione perché 10.0.2.2/localhost/127.0.0.1 sono
+  irraggiungibili dai device reali. Il domain-config (non le sole debug-overrides) garantisce il
+  cleartext locale a prescindere dal buildType, dato che AOSP potrebbe non onorare
+  cleartextTrafficPermitted sulle debug-overrides.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">10.0.2.2</domain>
+        <domain includeSubdomains="true">localhost</domain>
+        <domain includeSubdomains="true">127.0.0.1</domain>
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </domain-config>
+    <debug-overrides>
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </debug-overrides>
+</network-security-config>

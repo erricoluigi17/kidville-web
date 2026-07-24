@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useTranslations } from 'next-intl';
 import { Search, AlertCircle, Users, ThumbsUp, ThumbsDown, Eye, HelpCircle } from 'lucide-react';
 import { Avviso } from './AvvisoCard';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
@@ -35,6 +36,7 @@ interface StudentBasic {
 }
 
 export function AvvisoDetailsContent({ avviso, availableClasses = [], userId, layout = 'drawer' }: Props) {
+    const t = useTranslations('avvisi');
     const [risposte, setRisposte] = useState<RispostaDettaglio[]>([]);
     const [targetStudents, setTargetStudents] = useState<StudentBasic[]>([]);
     const [loading, setLoading] = useState(true);
@@ -143,7 +145,7 @@ export function AvvisoDetailsContent({ avviso, availableClasses = [], userId, la
                 studentId: student.id,
                 studentName: `${student.nome} ${student.cognome}`,
                 classe: student.classe_sezione,
-                parentName: resp?.parent_name || 'Genitore',
+                parentName: resp?.parent_name || t('genitoreFallback'),
                 lettoIl: resp?.letto_il ? new Date(resp.letto_il).toLocaleString('it-IT') : '-'
             };
         });
@@ -162,7 +164,7 @@ export function AvvisoDetailsContent({ avviso, availableClasses = [], userId, la
             studentId: student.id,
             studentName: `${student.nome} ${student.cognome}`,
             classe: student.classe_sezione,
-            parentName: resp?.parent_name || 'Genitore',
+            parentName: resp?.parent_name || t('genitoreFallback'),
             risposta: resp?.risposta || 'attesa', // 'si' | 'no' | 'attesa'
             rispostoIl: resp?.risposto_il ? new Date(resp.risposto_il).toLocaleString('it-IT') : '-'
         };
@@ -208,7 +210,7 @@ export function AvvisoDetailsContent({ avviso, availableClasses = [], userId, la
         return (
             <div className="flex flex-col items-center justify-center py-20 gap-3">
                 <div className="w-7 h-7 border-[3px] border-kidville-green/20 border-t-kidville-green rounded-full animate-spin" />
-                <p className="font-maven text-xs text-gray-400">Analisi risposte in corso...</p>
+                <p className="font-maven text-xs text-gray-400">{t('analisiInCorso')}</p>
             </div>
         );
     }
@@ -226,7 +228,7 @@ export function AvvisoDetailsContent({ avviso, availableClasses = [], userId, la
                         : 'border-transparent text-gray-400 hover:text-gray-600'
                 }`}
             >
-                📖 Stato Lettura
+                {t('tabStatoLettura')}
             </button>
             <button
                 onClick={() => {
@@ -240,7 +242,7 @@ export function AvvisoDetailsContent({ avviso, availableClasses = [], userId, la
                         : 'border-transparent text-gray-400 hover:text-gray-600'
                 }`}
             >
-                📋 Adesioni
+                {t('tabAdesioni')}
             </button>
         </div>
     ) : null;
@@ -250,49 +252,49 @@ export function AvvisoDetailsContent({ avviso, availableClasses = [], userId, la
             <div className="bg-gradient-to-br from-blue-50 to-kidville-info-soft border border-kidville-info/60 p-4 rounded-3xl">
                 <div className="flex items-center gap-2 text-kidville-info mb-1">
                     <Eye size={16} strokeWidth={1.5} />
-                    <span className="font-maven text-[10px] font-bold uppercase tracking-wider">Letti</span>
+                    <span className="font-maven text-[10px] font-bold uppercase tracking-wider">{t('statLetti')}</span>
                 </div>
                 <div className="flex items-baseline gap-1.5">
                     <span className="font-barlow font-black text-2xl text-blue-900">{readCount}</span>
-                    <span className="font-maven text-xs text-kidville-info/60">su {totalTarget} ({readPercentage}%)</span>
+                    <span className="font-maven text-xs text-kidville-info/60">{t('statSuTotale', { total: totalTarget, pct: readPercentage })}</span>
                 </div>
             </div>
 
             <div className="bg-gradient-to-br from-gray-50 to-gray-100/30 border border-gray-200/40 p-4 rounded-3xl">
                 <div className="flex items-center gap-2 text-gray-500 mb-1">
                     <AlertCircle size={16} strokeWidth={1.5} />
-                    <span className="font-maven text-[10px] font-bold uppercase tracking-wider">Non letti</span>
+                    <span className="font-maven text-[10px] font-bold uppercase tracking-wider">{t('statNonLetti')}</span>
                 </div>
                 <div className="flex items-baseline gap-1.5">
                     <span className="font-barlow font-black text-2xl text-gray-700">{unreadCount}</span>
-                    <span className="font-maven text-xs text-gray-500/60">famiglie</span>
+                    <span className="font-maven text-xs text-gray-500/60">{t('statFamiglie')}</span>
                 </div>
             </div>
         </div>
     ) : (
         <div className="bg-kidville-info-soft/50 border border-kidville-info/60 p-4 rounded-3xl space-y-3">
             <h4 className="font-barlow font-bold text-xs text-kidville-info uppercase tracking-wide flex items-center gap-1.5">
-                <Users size={14} strokeWidth={1.5} /> Dettaglio Adesioni
+                <Users size={14} strokeWidth={1.5} /> {t('dettaglioAdesioni')}
             </h4>
             <div className="grid grid-cols-3 gap-2">
                 <div className="bg-white/80 rounded-2xl p-2.5 text-center border border-kidville-info/30">
                     <div className="flex items-center justify-center text-kidville-success gap-1 mb-0.5">
                         <ThumbsUp size={12} strokeWidth={1.5} />
-                        <span className="font-maven text-[9px] font-bold uppercase">Sì</span>
+                        <span className="font-maven text-[9px] font-bold uppercase">{t('si')}</span>
                     </div>
                     <span className="font-barlow font-black text-lg text-kidville-success">{siCount}</span>
                 </div>
                 <div className="bg-white/80 rounded-2xl p-2.5 text-center border border-kidville-info/30">
                     <div className="flex items-center justify-center text-gray-500 gap-1 mb-0.5">
                         <ThumbsDown size={12} strokeWidth={1.5} />
-                        <span className="font-maven text-[9px] font-bold uppercase">No</span>
+                        <span className="font-maven text-[9px] font-bold uppercase">{t('no')}</span>
                     </div>
                     <span className="font-barlow font-black text-lg text-gray-600">{noCount}</span>
                 </div>
                 <div className="bg-white/80 rounded-2xl p-2.5 text-center border border-kidville-info/30">
                     <div className="flex items-center justify-center text-kidville-warn gap-1 mb-0.5">
                         <HelpCircle size={12} strokeWidth={1.5} />
-                        <span className="font-maven text-[9px] font-bold uppercase">Attesa</span>
+                        <span className="font-maven text-[9px] font-bold uppercase">{t('attesa')}</span>
                     </div>
                     <span className="font-barlow font-black text-lg text-kidville-warn">{pendingAnswers}</span>
                 </div>
@@ -303,7 +305,7 @@ export function AvvisoDetailsContent({ avviso, availableClasses = [], userId, la
     const filtersBlock = (
         <div className="bg-gray-50 border border-gray-100 p-4 rounded-3xl space-y-3">
             <div className="flex items-center justify-between">
-                <span className="font-barlow font-bold text-xs text-gray-500 uppercase tracking-wider">Filtri</span>
+                <span className="font-barlow font-bold text-xs text-gray-500 uppercase tracking-wider">{t('filtri')}</span>
                 {(selectedClass !== 'all' || selectedResponse !== 'given' || searchQuery) && (
                     <button
                         onClick={() => {
@@ -313,7 +315,7 @@ export function AvvisoDetailsContent({ avviso, availableClasses = [], userId, la
                         }}
                         className="font-maven text-[10px] text-kidville-green hover:underline font-bold"
                     >
-                        Azzera
+                        {t('azzera')}
                     </button>
                 )}
             </div>
@@ -321,13 +323,13 @@ export function AvvisoDetailsContent({ avviso, availableClasses = [], userId, la
             {mainTab === 'letture' ? (
                 <div className="grid grid-cols-1 gap-2">
                     <div>
-                        <label className="font-maven font-medium text-[9px] text-gray-400 uppercase tracking-wide mb-1 block">Classe</label>
+                        <label className="font-maven font-medium text-[9px] text-gray-400 uppercase tracking-wide mb-1 block">{t('classe')}</label>
                         <select
                             value={selectedClass}
                             onChange={e => setSelectedClass(e.target.value)}
                             className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 font-maven text-xs text-gray-600 focus:outline-none focus:ring-2 focus:ring-kidville-green/20"
                         >
-                            <option value="all">Tutte le classi</option>
+                            <option value="all">{t('tutteLeClassi')}</option>
                             {targetClasses.map(c => (
                                 <option key={c} value={c}>{c}</option>
                             ))}
@@ -337,29 +339,29 @@ export function AvvisoDetailsContent({ avviso, availableClasses = [], userId, la
             ) : (
                 <div className="grid grid-cols-2 gap-2">
                     <div>
-                        <label className="font-maven font-medium text-[9px] text-gray-400 uppercase tracking-wide mb-1 block">Classe</label>
+                        <label className="font-maven font-medium text-[9px] text-gray-400 uppercase tracking-wide mb-1 block">{t('classe')}</label>
                         <select
                             value={selectedClass}
                             onChange={e => setSelectedClass(e.target.value)}
                             className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 font-maven text-xs text-gray-600 focus:outline-none focus:ring-2 focus:ring-kidville-green/20"
                         >
-                            <option value="all">Tutte le classi</option>
+                            <option value="all">{t('tutteLeClassi')}</option>
                             {targetClasses.map(c => (
                                 <option key={c} value={c}>{c}</option>
                             ))}
                         </select>
                     </div>
                     <div>
-                        <label className="font-maven font-medium text-[9px] text-gray-400 uppercase tracking-wide mb-1 block">Risposta</label>
+                        <label className="font-maven font-medium text-[9px] text-gray-400 uppercase tracking-wide mb-1 block">{t('risposta')}</label>
                         <select
                             value={selectedResponse}
                             onChange={e => setSelectedResponse(e.target.value)}
                             className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 font-maven text-xs text-gray-600 focus:outline-none focus:ring-2 focus:ring-kidville-green/20"
                         >
-                            <option value="given">Risposte date (Sì/No)</option>
-                            <option value="si">Aderito (Sì)</option>
-                            <option value="no">Declinato (No)</option>
-                            <option value="attesa">In attesa</option>
+                            <option value="given">{t('optRisposteDate')}</option>
+                            <option value="si">{t('optAderitoSi')}</option>
+                            <option value="no">{t('optDeclinatoNo')}</option>
+                            <option value="attesa">{t('optInAttesa')}</option>
                         </select>
                     </div>
                 </div>
@@ -371,7 +373,7 @@ export function AvvisoDetailsContent({ avviso, availableClasses = [], userId, la
                 <input
                     value={searchQuery}
                     onChange={e => setSearchQuery(e.target.value)}
-                    placeholder="Cerca alunno o genitore..."
+                    placeholder={t('cercaPlaceholder')}
                     className="w-full bg-white border border-gray-200 rounded-xl pl-9 pr-3 py-1.5 font-maven text-xs text-gray-600 focus:outline-none focus:ring-2 focus:ring-kidville-green/20"
                 />
             </div>
@@ -390,7 +392,7 @@ export function AvvisoDetailsContent({ avviso, availableClasses = [], userId, la
                                 readSubTab === 'letti' ? 'bg-white text-kidville-green shadow-sm' : 'text-gray-500 hover:text-gray-700'
                             }`}
                         >
-                            Letti ({filteredLetti.length})
+                            {t('subTabLetti', { count: filteredLetti.length })}
                         </button>
                         <button
                             onClick={() => setReadSubTab('non_letti')}
@@ -398,7 +400,7 @@ export function AvvisoDetailsContent({ avviso, availableClasses = [], userId, la
                                 readSubTab === 'non_letti' ? 'bg-white text-kidville-green shadow-sm' : 'text-gray-500 hover:text-gray-700'
                             }`}
                         >
-                            Non letti ({filteredNonLetti.length})
+                            {t('subTabNonLetti', { count: filteredNonLetti.length })}
                         </button>
                     </div>
 
@@ -406,14 +408,14 @@ export function AvvisoDetailsContent({ avviso, availableClasses = [], userId, la
                     <div className={`space-y-2 ${listMaxH} overflow-y-auto pr-1`}>
                         {readSubTab === 'letti' ? (
                             filteredLetti.length === 0 ? (
-                                <p className="font-maven text-xs text-gray-400 text-center py-6">Nessuna lettura corrispondente</p>
+                                <p className="font-maven text-xs text-gray-400 text-center py-6">{t('nessunaLettura')}</p>
                             ) : (
                                 filteredLetti.map(item => (
                                     <div key={item.studentId} className="flex items-center justify-between p-3 bg-white border border-gray-100 rounded-2xl shadow-sm hover:border-gray-200 transition-colors">
                                         <div className="min-w-0">
                                             <p className="font-barlow font-bold text-xs text-kidville-green uppercase truncate">{item.studentName}</p>
                                             <p className="font-maven text-[10px] text-gray-400 mt-0.5 truncate">
-                                                Genitore: {item.parentName} • Classe {item.classe}
+                                                {t('genitoreClasse', { genitore: item.parentName, classe: item.classe })}
                                             </p>
                                         </div>
                                         <span className="font-maven text-[9px] text-gray-400 bg-gray-50 border border-gray-100 rounded-lg px-2 py-1 flex-shrink-0 text-right">
@@ -424,16 +426,16 @@ export function AvvisoDetailsContent({ avviso, availableClasses = [], userId, la
                             )
                         ) : (
                             filteredNonLetti.length === 0 ? (
-                                <p className="font-maven text-xs text-gray-400 text-center py-6">Tutte le famiglie hanno letto!</p>
+                                <p className="font-maven text-xs text-gray-400 text-center py-6">{t('tutteHannoLetto')}</p>
                             ) : (
                                 filteredNonLetti.map(item => (
                                     <div key={item.studentId} className="flex items-center justify-between p-3 bg-white border border-gray-100 rounded-2xl shadow-sm hover:border-gray-200 transition-colors">
                                         <div>
                                             <p className="font-barlow font-bold text-xs text-kidville-green uppercase">{item.studentName}</p>
-                                            <p className="font-maven text-[10px] text-gray-400 mt-0.5">Classe {item.classe}</p>
+                                            <p className="font-maven text-[10px] text-gray-400 mt-0.5">{t('soloClasse', { classe: item.classe })}</p>
                                         </div>
                                         <span className="flex items-center gap-1 font-maven text-[9px] font-bold text-kidville-warn bg-kidville-warn-soft border border-kidville-warn/30 rounded-lg px-2 py-1">
-                                            <AlertCircle size={10} /> Da leggere
+                                            <AlertCircle size={10} /> {t('badgeDaLeggere')}
                                         </span>
                                     </div>
                                 ))
@@ -446,23 +448,23 @@ export function AvvisoDetailsContent({ avviso, availableClasses = [], userId, la
                 <div className="space-y-2">
                     <div className="flex items-center justify-between px-1">
                         <span className="font-barlow font-bold text-[10px] text-gray-400 uppercase tracking-wider">
-                            {selectedResponse === 'given' ? 'Risposte Ricevute' :
-                             selectedResponse === 'si' ? 'Aderito (Sì)' :
-                             selectedResponse === 'no' ? 'Declinato (No)' : 'Nessuna Risposta (In attesa)'}
+                            {selectedResponse === 'given' ? t('titoloRisposteRicevute') :
+                             selectedResponse === 'si' ? t('optAderitoSi') :
+                             selectedResponse === 'no' ? t('optDeclinatoNo') : t('titoloNessunaRisposta')}
                         </span>
-                        <span className="font-maven text-[10px] text-gray-400 font-medium">Totale: {filteredAdesioni.length}</span>
+                        <span className="font-maven text-[10px] text-gray-400 font-medium">{t('totale', { count: filteredAdesioni.length })}</span>
                     </div>
 
                     <div className={`space-y-2 ${listMaxHAdesioni} overflow-y-auto pr-1`}>
                         {filteredAdesioni.length === 0 ? (
-                            <p className="font-maven text-xs text-gray-400 text-center py-8">Nessuna adesione corrispondente</p>
+                            <p className="font-maven text-xs text-gray-400 text-center py-8">{t('nessunaAdesione')}</p>
                         ) : (
                             filteredAdesioni.map(item => (
                                 <div key={item.studentId} className="flex items-center justify-between p-3 bg-white border border-gray-100 rounded-2xl shadow-sm hover:border-gray-200 transition-colors">
                                     <div className="min-w-0">
                                         <p className="font-barlow font-bold text-xs text-kidville-green uppercase truncate">{item.studentName}</p>
                                         <p className="font-maven text-[10px] text-gray-400 mt-0.5 truncate">
-                                            Genitore: {item.parentName} • Classe {item.classe}
+                                            {t('genitoreClasse', { genitore: item.parentName, classe: item.classe })}
                                         </p>
                                     </div>
                                     <span className={`flex items-center gap-1 font-maven text-[9px] font-bold rounded-lg px-2 py-1 flex-shrink-0 border ${
@@ -472,9 +474,9 @@ export function AvvisoDetailsContent({ avviso, availableClasses = [], userId, la
                                                 ? 'bg-gray-100 border-gray-200 text-gray-600'
                                                 : 'bg-kidville-warn-soft border-kidville-warn/30 text-kidville-warn'
                                     }`}>
-                                        {item.risposta === 'si' && <><ThumbsUp size={10} /> Sì, Aderisco</>}
-                                        {item.risposta === 'no' && <><ThumbsDown size={10} /> No</>}
-                                        {item.risposta === 'attesa' && <><HelpCircle size={10} className="w-2.5 h-2.5" /> In attesa</>}
+                                        {item.risposta === 'si' && <><ThumbsUp size={10} /> {t('badgeSiAderisco')}</>}
+                                        {item.risposta === 'no' && <><ThumbsDown size={10} /> {t('no')}</>}
+                                        {item.risposta === 'attesa' && <><HelpCircle size={10} className="w-2.5 h-2.5" /> {t('optInAttesa')}</>}
                                     </span>
                                 </div>
                             ))

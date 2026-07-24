@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 
 interface Figlio { id: string; nome: string; cognome: string; classe_sezione?: string | null }
@@ -18,6 +19,9 @@ function initials(nome: string, cognome: string) {
 export function ChildSwitcher() {
   const { parentId, studentId, ready } = useParentIdentity();
   const [figli, setFigli] = useState<Figlio[]>([]);
+  // Testo dell'aria-label del selettore dal namespace i18n «nav». I nomi dei
+  // figli e la classe sono DATI: restano invariati, non si traducono.
+  const t = useTranslations('nav');
 
   useEffect(() => {
     if (!parentId) return;
@@ -41,7 +45,7 @@ export function ChildSwitcher() {
     <div
       className="flex gap-2.5 overflow-x-auto px-5 pt-3 pb-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
       role="tablist"
-      aria-label="Seleziona figlio"
+      aria-label={t('ariaSelezionaFiglio')}
     >
       {figli.map((f) => {
         const on = f.id === studentId;

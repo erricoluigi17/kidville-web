@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useTranslations } from 'next-intl'
 import { CircleCheck, CircleX, Clock, LogOut, CircleHelp } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
 import type { StatoPresenza } from '@/lib/primaria/oreAssenza'
@@ -30,35 +31,29 @@ interface Props {
   parentId: string
 }
 
-// Presentazione dello stato di oggi. `null` = appello non ancora registrato.
+// Presentazione dello stato di oggi (icona + stili). `null` = appello non ancora
+// registrato. Le etichette testuali (label/pillText) sono i18n: si risolvono a
+// runtime da `presenzeStato_<stato>` / `presenzePill_<stato>`.
 const STATI = {
   presente: {
-    label: 'A scuola',
     Icon: CircleCheck,
     badge: 'bg-kidville-green-soft text-kidville-green',
     pill: 'bg-kidville-success text-white',
-    pillText: 'Presente',
   },
   assente: {
-    label: 'Assente oggi',
     Icon: CircleX,
     badge: 'bg-kidville-error-soft text-kidville-error',
     pill: 'bg-kidville-error text-white',
-    pillText: 'Assente',
   },
   ritardo: {
-    label: 'Entrato in ritardo',
     Icon: Clock,
     badge: 'bg-kidville-warn-soft text-kidville-warn',
     pill: 'bg-kidville-warn text-white',
-    pillText: 'Ritardo',
   },
   uscita_anticipata: {
-    label: 'Uscita anticipata',
     Icon: LogOut,
     badge: 'bg-kidville-warn-soft text-kidville-warn',
     pill: 'bg-kidville-warn text-white',
-    pillText: 'Uscita',
   },
 } as const
 
@@ -77,6 +72,7 @@ function hhmm(v: string | null): string {
  * `null` e mostriamo un messaggio neutro (nessun allarme).
  */
 export function PresenzeTodayCard({ studentId, parentId }: Props) {
+  const t = useTranslations('home')
   const [data, setData] = useState<PresenzeData | null>(null)
   const [loaded, setLoaded] = useState(false)
 
@@ -117,20 +113,23 @@ export function PresenzeTodayCard({ studentId, parentId }: Props) {
         <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-[11px] bg-kidville-green-soft text-kidville-green">
           <CircleHelp size={18} />
         </span>
-        <p className="font-maven text-[13px] text-kidville-muted">Presenze non disponibili al momento.</p>
+        <p className="font-maven text-[13px] text-kidville-muted">{t('presenzeNonDisponibili')}</p>
       </Card>
     )
   }
 
   const { oggi, riepilogo } = data
   const stato = oggi.stato ? STATI[oggi.stato] : null
+  // Etichette testuali dallo stato: titolo, pill e sottotitolo tradotti.
+  const statoLabel = oggi.stato ? t(`presenzeStato_${oggi.stato}`) : t('presenzeInAttesa')
+  const pillText = oggi.stato ? t(`presenzePill_${oggi.stato}`) : ''
 
   // Sottotitolo contestuale in base allo stato di oggi.
-  let sub = 'Appello non ancora registrato'
-  if (oggi.stato === 'presente') sub = oggi.orario_entrata ? `Ingresso alle ${hhmm(oggi.orario_entrata)}` : 'Presente oggi'
-  else if (oggi.stato === 'ritardo') sub = oggi.orario_entrata ? `Ingresso alle ${hhmm(oggi.orario_entrata)}` : 'Entrato in ritardo'
-  else if (oggi.stato === 'uscita_anticipata') sub = oggi.orario_uscita ? `Uscita alle ${hhmm(oggi.orario_uscita)}` : 'Uscita anticipata'
-  else if (oggi.stato === 'assente') sub = 'Assente per oggi'
+  let sub = t('presenzeAppelloNonRegistrato')
+  if (oggi.stato === 'presente') sub = oggi.orario_entrata ? t('presenzeIngressoAlle', { ora: hhmm(oggi.orario_entrata) }) : t('presenzePresenteOggi')
+  else if (oggi.stato === 'ritardo') sub = oggi.orario_entrata ? t('presenzeIngressoAlle', { ora: hhmm(oggi.orario_entrata) }) : t('presenzeEntratoRitardo')
+  else if (oggi.stato === 'uscita_anticipata') sub = oggi.orario_uscita ? t('presenzeUscitaAlle', { ora: hhmm(oggi.orario_uscita) }) : t('presenzeUscitaAnticipata')
+  else if (oggi.stato === 'assente') sub = t('presenzeAssentePerOggi')
 
   const oreMancate = riepilogo.ore ? Math.round(riepilogo.ore.oreTotali * 10) / 10 : null
 
@@ -147,27 +146,27 @@ export function PresenzeTodayCard({ studentId, parentId }: Props) {
         </span>
         <div className="min-w-0 flex-1">
           <span className="font-barlow text-sm font-extrabold uppercase text-kidville-green">
-            {stato ? stato.label : 'In attesa dell’appello'}
+            {statoLabel}
           </span>
           <p className="font-maven text-xs text-kidville-muted">{sub}</p>
         </div>
         {stato && (
           <span className={'rounded-pill px-3 py-1 font-barlow text-[11px] font-extrabold uppercase tracking-wide ' + stato.pill}>
-            {stato.pillText}
+            {pillText}
           </span>
         )}
       </div>
 
       {/* Riepilogo ultimi 30 giorni */}
       <div className="mt-3 flex items-center gap-2 border-t border-kidville-line pt-3">
-        <Riquadro n={riepilogo.presenze} label="Presenze" tone="green" />
-        <Riquadro n={riepilogo.assenze} label="Assenze" tone="red" />
-        <Riquadro n={riepilogo.ritardi} label="Ritardi" tone="amber" />
+        <Riquadro n={riepilogo.presenze} label={t('presenzeRiquadroPresenze')} tone="green" />
+        <Riquadro n={riepilogo.assenze} label={t('presenzeRiquadroAssenze')} tone="red" />
+        <Riquadro n={riepilogo.ritardi} label={t('presenzeRiquadroRitardi')} tone="amber" />
         {oreMancate !== null && oreMancate > 0 && (
-          <Riquadro n={oreMancate} label="Ore perse" tone="amber" suffix="h" />
+          <Riquadro n={oreMancate} label={t('presenzeRiquadroOrePerse')} tone="amber" suffix="h" />
         )}
       </div>
-      <p className="mt-2 font-maven text-[10.5px] text-kidville-muted">Ultimi 30 giorni</p>
+      <p className="mt-2 font-maven text-[10.5px] text-kidville-muted">{t('presenzeUltimi30')}</p>
     </Card>
   )
 }

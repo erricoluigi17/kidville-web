@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useTranslations } from 'next-intl';
 import { Bell, BellOff } from 'lucide-react';
 import { isNativeApp, registerNativePush, unregisterNativePush } from '@/lib/push/native-register';
 
@@ -16,6 +17,7 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array {
 }
 
 export function PushOptIn({ userId }: Props) {
+    const t = useTranslations('pagamenti');
     // Nella shell nativa la push non usa il service worker: bottone sempre disponibile.
     // Lazy initializer (non setState in effect) per non violare react-hooks set-state-in-effect.
     const [supported, setSupported] = useState<boolean>(() => isNativeApp());
@@ -95,7 +97,7 @@ export function PushOptIn({ userId }: Props) {
             className={`flex items-center gap-2 px-4 py-2 rounded-full font-maven text-sm font-bold disabled:opacity-50 ${subscribed ? 'bg-kidville-green text-white' : 'border-2 border-kidville-green text-kidville-green'}`}
         >
             {subscribed ? <Bell size={15} /> : <BellOff size={15} />}
-            {subscribed ? 'Promemoria attivi' : 'Attiva promemoria pagamenti'}
+            {subscribed ? t('promemoriaAttivi') : t('attivaPromemoria')}
         </button>
     );
 }

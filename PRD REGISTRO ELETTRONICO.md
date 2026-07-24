@@ -64,7 +64,7 @@
 
 ---
 
-## 🗓️ Changelog — Fase 3 i18n (in corso): fondazione next-intl + login tradotta (IT/EN) 2026-07-24 (branch `feat/native-fase2`)
+## 🗓️ Changelog — Fase 3 i18n (in corso): fondazione next-intl + login + tutta l'area GENITORE tradotta (IT/EN) 2026-07-24 (branch `feat/native-fase2`)
 
 Terza fase: internazionalizzazione (inglese). **Fondazione** posata e **pilota** tradotto; la migrazione a tappeto delle restanti pagine/componenti procede a lotti.
 
@@ -72,9 +72,11 @@ Terza fase: internazionalizzazione (inglese). **Fondazione** posata e **pilota**
 - **Cataloghi** `messages/it.json` (sorgente) + `messages/en.json` (traduzione), namespace `common` + `auth`.
 - **Selettore lingua** `LanguageSwitcher` (IT/EN: scrive il cookie e ricarica) sulla login e in «Profilo e deleghe».
 - **Pilota**: pagina di **login** interamente migrata a `useTranslations` (titoli, label, placeholder, errori, aria-label).
-- **Test**: mock globale di `next-intl` in `test/setup.ts` (risolve le chiavi sui testi italiani reali) → i test che renderizzano componenti tradotti passano senza wrapper. Gate verde (343 file / 2815 test).
+- **Test**: mock globale di `next-intl` in `test/setup.ts` (risolve le chiavi sui testi italiani reali) → i test che renderizzano componenti tradotti passano senza wrapper.
+- **Cataloghi per-namespace**: `messages/<locale>/<ns>.json` (un file per area), assemblati in `src/i18n/request.ts` — abilita la migrazione in parallelo (più agenti) senza conflitti sui file dei messaggi.
+- **Tutta l'area GENITORE tradotta** (7 namespace, ~374 chiavi, parità IT/EN verificata): `nav` (BottomNav + ChildSwitcher), `home` (dashboard + card), `avvisi` (page + AvvisoCard/DetailsContent/Drawer), `diario` (con plurali ICU), `mensa`, `pagamenti` (summary/storico/causale/push), `profilo`. Gate verde: eslint 0 · tsc 0 · vitest 344 file / 2819 test · build ok.
 
-> ⚠️ **In corso.** Tradotta finora solo la login (+ scaffolding). Resta da migrare il grosso dell'app (parent/teacher/admin/componenti) area per area, con i testi EN da rifinire. Non ancora in produzione.
+> ⚠️ **In corso.** Tradotte: **login + tutta l'area genitore**. Resta da migrare **docente**, **admin/segreteria**, i **componenti condivisi** (AppBar, shell, `ui/`, lib: ruoli, config eventi diario, allergeni, umore) e la **localizzazione dei formati data/ora** (oggi fissi `it-IT`; alcune schermate genitore già locale-aware via `useLocale()`). Non ancora in produzione.
 
 ## 🗓️ Changelog — Fase 2 native: offline (avvisi·diario·menu) + fotocamera nativa + login biometrico + badge/condivisione 2026-07-24 (branch `feat/native-fase2`)
 

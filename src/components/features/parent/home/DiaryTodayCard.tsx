@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { useTranslations } from 'next-intl'
 import { BookOpen, ChevronRight } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
 
@@ -25,8 +26,9 @@ const fmtTime = (iso: string) => {
   }
 }
 
-const titleCase = (s: string) =>
-  s ? s.charAt(0).toUpperCase() + s.slice(1).replace(/_/g, ' ') : 'Aggiornamento'
+// Formatta il codice `tipo_evento` (dato) in etichetta leggibile. Il fallback UI
+// per codice vuoto è gestito al call site con la stringa tradotta.
+const titleCase = (s: string) => s.charAt(0).toUpperCase() + s.slice(1).replace(/_/g, ' ')
 
 /**
  * "Oggi a scuola" del design (DR DiaryToday). Mostra gli ultimi aggiornamenti del
@@ -34,6 +36,7 @@ const titleCase = (s: string) =>
  * (sola lettura). Si nasconde se non ci sono eventi oggi.
  */
 export function DiaryTodayCard({ studentId, href }: Props) {
+  const t = useTranslations('home')
   const [entries, setEntries] = useState<Entry[]>([])
   const [loaded, setLoaded] = useState(false)
 
@@ -63,7 +66,7 @@ export function DiaryTodayCard({ studentId, href }: Props) {
         <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-[13px] bg-kidville-green-soft text-kidville-green">
           <BookOpen size={20} strokeWidth={1.8} />
         </span>
-        <p className="font-maven text-[13px] text-kidville-muted">Ancora nessun aggiornamento del diario per oggi.</p>
+        <p className="font-maven text-[13px] text-kidville-muted">{t('diaryVuoto')}</p>
       </Card>
     )
   }
@@ -79,9 +82,9 @@ export function DiaryTodayCard({ studentId, href }: Props) {
         </div>
         <div className="min-w-0 flex-1">
           <p className="font-barlow text-[17px] font-black uppercase leading-none text-kidville-green">
-            Oggi a scuola
+            {t('titoloOggiAScuola')}
           </p>
-          {updated && <p className="mt-0.5 font-maven text-[11.5px] text-kidville-muted">Aggiornato · {updated}</p>}
+          {updated && <p className="mt-0.5 font-maven text-[11.5px] text-kidville-muted">{t('diaryAggiornato', { ora: updated })}</p>}
         </div>
       </div>
 
@@ -97,7 +100,7 @@ export function DiaryTodayCard({ studentId, href }: Props) {
             <div className="min-w-0 flex-1 pt-0.5">
               <div className="flex items-baseline gap-2">
                 <span className="font-barlow text-[13.5px] font-extrabold uppercase tracking-wide text-kidville-green">
-                  {titleCase(ev.tipo_evento)}
+                  {ev.tipo_evento ? titleCase(ev.tipo_evento) : t('diaryAggiornamentoDefault')}
                 </span>
                 <span className="font-maven text-[11px] text-kidville-muted">{fmtTime(ev.timestamp_evento)}</span>
               </div>
@@ -113,7 +116,7 @@ export function DiaryTodayCard({ studentId, href }: Props) {
         href={href}
         className="flex items-center justify-center gap-1.5 border-t border-kidville-line py-3 font-barlow text-sm font-extrabold uppercase tracking-wide text-kidville-green"
       >
-        Apri il diario completo
+        {t('diaryApriCompleto')}
         <ChevronRight size={16} strokeWidth={2.2} />
       </Link>
     </Card>

@@ -1,0 +1,22 @@
+{
+  "titolo": "Profile and delegations",
+  "sottotitolo": "Manage your account, privacy, and data deletion.",
+  "linkPrivacy": "Privacy policy",
+  "linkTermini": "Terms of service",
+  "linkAssistenza": "Support",
+  "bioTitolo": "Unlock with Face ID / fingerprint",
+  "bioDescDisponibile": "Requires biometric authentication when you open the app.",
+  "bioDescNonDisponibile": "Not available on this device.",
+  "bioSwitchAria": "Turn on biometric unlock",
+  "bioPromptVerifica": "Turn on unlock with Face ID or fingerprint",
+  "eliminaTitolo": "Delete account",
+  "caricamento": "Loading…",
+  "pendingBody": "Your deletion request is <strong>being processed</strong>. The school office will handle it shortly (within 30 days). You can still <strong>cancel it</strong> if you’ve changed your mind.",
+  "annullaRichiesta": "Cancel the request",
+  "eliminaSpiegazione": "The request is sent to the school office, which <strong>irreversibly anonymises</strong> your personal data (name, contacts, documents) and disconnects your access. Data for children still enrolled stays managed by the school; tax documents are kept as required by law.",
+  "confermaIstruzione": "To confirm, type",
+  "richiediCancellazione": "Request deletion",
+  "esci": "Sign out",
+  "erroreGenerico": "Operation failed.",
+  "erroreRete": "Network error. Please try again."
+}

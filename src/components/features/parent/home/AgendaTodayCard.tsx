@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useTranslations } from 'next-intl'
 import { CalendarDays } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
 
@@ -21,11 +22,13 @@ interface EventoAgenda {
   orario_fine?: string | null
 }
 
-const TIPO_LABEL: Record<string, string> = {
-  evento: 'Evento',
-  uscita: 'Uscita',
-  scadenza: 'Scadenza',
-  riunione: 'Riunione',
+// Mappa il codice `tipo` (dato) alla chiave i18n della sua etichetta. Codici
+// sconosciuti degradano al valore grezzo (vedi tipoLabel nel componente).
+const TIPO_CHIAVE: Record<string, string> = {
+  evento: 'agendaTipoEvento',
+  uscita: 'agendaTipoUscita',
+  scadenza: 'agendaTipoScadenza',
+  riunione: 'agendaTipoRiunione',
 }
 
 function giornoMese(ymd: string): { giorno: string; mese: string } {
@@ -41,8 +44,11 @@ function giornoMese(ymd: string): { giorno: string; mese: string } {
 }
 
 export function AgendaTodayCard({ studentId }: { studentId: string | null }) {
+  const t = useTranslations('home')
   const [eventi, setEventi] = useState<EventoAgenda[]>([])
   const [loading, setLoading] = useState(true)
+  // Etichetta del tipo evento: tradotta se nota, altrimenti codice grezzo (dato).
+  const tipoLabel = (tipo: string) => (TIPO_CHIAVE[tipo] ? t(TIPO_CHIAVE[tipo]) : tipo)
 
   useEffect(() => {
     if (!studentId) return
@@ -80,10 +86,10 @@ export function AgendaTodayCard({ studentId }: { studentId: string | null }) {
         </span>
         <div className="min-w-0">
           <p className="font-barlow text-sm font-extrabold uppercase text-kidville-green">
-            Nessun appuntamento in programma
+            {t('agendaVuotaTitolo')}
           </p>
           <p className="mt-0.5 font-maven text-[12.5px] leading-snug text-kidville-muted">
-            Qui vedrai uscite, eventi e scadenze della sezione.
+            {t('agendaVuotaSottotitolo')}
           </p>
         </div>
       </Card>
@@ -105,8 +111,8 @@ export function AgendaTodayCard({ studentId }: { studentId: string | null }) {
                 {e.titolo}
               </p>
               <p className="mt-0.5 font-maven text-[12.5px] leading-snug text-kidville-muted">
-                {TIPO_LABEL[e.tipo] ?? e.tipo}
-                {e.orario_inizio ? ` · ore ${e.orario_inizio.slice(0, 5)}` : ''}
+                {tipoLabel(e.tipo)}
+                {e.orario_inizio ? t('agendaOre', { ora: e.orario_inizio.slice(0, 5) }) : ''}
               </p>
             </div>
           </div>

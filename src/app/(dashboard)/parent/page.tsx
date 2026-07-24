@@ -2,6 +2,7 @@
 
 import { useState, useEffect, Suspense } from 'react';
 import Link from 'next/link';
+import { useTranslations } from 'next-intl';
 import { MessageCircle, BookOpen, Camera, CalendarX2, GraduationCap } from 'lucide-react';
 import { withIdentity } from '@/lib/auth/current-user';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
@@ -28,6 +29,7 @@ interface QuickAction {
 }
 
 function ParentHomeContent() {
+  const t = useTranslations('home');
   const { parentId, studentId } = useParentIdentity();
   const { schoolType } = useChildSchoolType();
   const isPrimaria = schoolType === 'primaria';
@@ -57,19 +59,19 @@ function ParentHomeContent() {
   const quickActions: QuickAction[] = [
     {
       id: 'absence',
-      label: 'Segnala\nassenza',
+      label: t('azioneAssenza'),
       icon: CalendarX2,
       href: wi(isPrimaria ? '/parent/primaria/assenze' : '/parent/attendance'),
       bg: 'bg-kidville-error-soft',
       fg: 'text-kidville-error',
     },
-    { id: 'chat', label: 'Scrivi\nmaestra', icon: MessageCircle, href: wi('/parent/chat'), bg: 'bg-kidville-green-soft', fg: 'text-kidville-green' },
-    { id: 'foto', label: 'Vedi\nfoto', icon: Camera, href: wi('/parent/gallery'), bg: 'bg-kidville-yellow-soft', fg: 'text-kidville-yellow-dark' },
+    { id: 'chat', label: t('azioneChat'), icon: MessageCircle, href: wi('/parent/chat'), bg: 'bg-kidville-green-soft', fg: 'text-kidville-green' },
+    { id: 'foto', label: t('azioneFoto'), icon: Camera, href: wi('/parent/gallery'), bg: 'bg-kidville-yellow-soft', fg: 'text-kidville-yellow-dark' },
     // Il diario giornaliero è solo nido/infanzia: per la primaria l'azione
     // diventa l'area Scuola (lezioni, compiti, voti), senza la parola "Diario".
     isPrimaria
-      ? { id: 'scuola', label: 'Scuola\nprimaria', icon: GraduationCap, href: wi('/parent/primaria'), bg: 'bg-kidville-success-soft', fg: 'text-kidville-success' }
-      : { id: 'diario', label: 'Diario\ndi oggi', icon: BookOpen, href: wi('/parent/diary'), bg: 'bg-kidville-success-soft', fg: 'text-kidville-success' },
+      ? { id: 'scuola', label: t('azioneScuola'), icon: GraduationCap, href: wi('/parent/primaria'), bg: 'bg-kidville-success-soft', fg: 'text-kidville-success' }
+      : { id: 'diario', label: t('azioneDiario'), icon: BookOpen, href: wi('/parent/diary'), bg: 'bg-kidville-success-soft', fg: 'text-kidville-success' },
   ];
 
   return (
@@ -78,9 +80,9 @@ function ParentHomeContent() {
       {/* ── HERO (DR warm) — wordmark/campanella nella AppBar ───────── */}
       <div className="px-4 pt-5">
         <HeroCard
-          title={firstName ? `Ciao,\n${firstName}!` : 'Ciao!'}
+          title={firstName ? t('heroCiaoNome', { nome: firstName }) : t('heroCiao')}
           loading={nameLoading}
-          subtitle={firstName ? 'Ecco le novità di oggi 🌈' : undefined}
+          subtitle={firstName ? t('heroSottotitolo') : undefined}
         />
       </div>
 
@@ -113,9 +115,9 @@ function ParentHomeContent() {
       {parentId && studentId && (
         <div className="px-4 pt-5">
           <SectionHeader
-            eyebrow="Presenze"
-            title="Oggi a scuola"
-            actionLabel="Storico"
+            eyebrow={t('eyebrowPresenze')}
+            title={t('titoloOggiAScuola')}
+            actionLabel={t('azioneStorico')}
             actionHref={wi(isPrimaria ? '/parent/primaria/assenze' : '/parent/attendance')}
           />
           <PresenzeTodayCard studentId={studentId} parentId={parentId} />
@@ -132,7 +134,7 @@ function ParentHomeContent() {
       {/* ── DIARIO OGGI (solo infanzia) ───────────── */}
       {!isPrimaria && studentId && (
         <div className="px-4 pt-5">
-          <SectionHeader eyebrow="Diario" title={firstName ? `La giornata di ${firstName}` : 'Il diario'} />
+          <SectionHeader eyebrow={t('eyebrowDiario')} title={firstName ? t('diarioGiornataDi', { nome: firstName }) : t('diarioTitolo')} />
           <DiaryTodayCard studentId={studentId} href={wi('/parent/diary')} />
         </div>
       )}
@@ -140,7 +142,7 @@ function ParentHomeContent() {
       {/* ── AVVISI (top 2, sola lettura) ──────────── */}
       {parentId && studentId && (
         <div className="px-4 pt-5">
-          <SectionHeader eyebrow="Comunicazioni" title="Avvisi" actionLabel="Tutti" actionHref={wi('/parent/avvisi')} />
+          <SectionHeader eyebrow={t('eyebrowComunicazioni')} title={t('titoloAvvisi')} actionLabel={t('azioneTutti')} actionHref={wi('/parent/avvisi')} />
           <AvvisiPreview parentId={parentId} studentId={studentId} />
         </div>
       )}
@@ -148,7 +150,7 @@ function ParentHomeContent() {
       {/* ── NEWS (top 3, sola lettura; si nasconde se vuoto) ── */}
       {parentId && (
         <div className="px-4 pt-5">
-          <SectionHeader eyebrow="Comunicazioni" title="News" actionLabel="Tutte" actionHref={wi('/parent/news')} />
+          <SectionHeader eyebrow={t('eyebrowComunicazioni')} title={t('titoloNews')} actionLabel={t('azioneTutte')} actionHref={wi('/parent/news')} />
           <NewsPreview parentId={parentId} studentId={studentId} />
         </div>
       )}
@@ -156,7 +158,7 @@ function ParentHomeContent() {
       {/* ── GALLERIA OGGI ─────────────────────────── */}
       {parentId && studentId && (
         <div className="px-4 pt-5">
-          <SectionHeader eyebrow="Galleria" title="Foto di oggi" actionLabel="Tutte" actionHref={wi('/parent/gallery')} />
+          <SectionHeader eyebrow={t('eyebrowGalleria')} title={t('titoloFotoDiOggi')} actionLabel={t('azioneTutte')} actionHref={wi('/parent/gallery')} />
           <GalleryTodayCard studentId={studentId} parentId={parentId} href={wi('/parent/gallery')} />
         </div>
       )}
@@ -164,20 +166,20 @@ function ParentHomeContent() {
       {/* ── ARMADIETTO · SCORTE (teaser DR) ───────── */}
       {studentId && (
         <div className="px-4 pt-5">
-          <SectionHeader eyebrow="Armadietto" title="Scorte" actionLabel="Gestisci" actionHref={wi('/parent/locker')} />
+          <SectionHeader eyebrow={t('eyebrowArmadietto')} title={t('titoloScorte')} actionLabel={t('azioneGestisci')} actionHref={wi('/parent/locker')} />
           <LockerTodayCard studentId={studentId} />
         </div>
       )}
 
       {/* ── CALENDARIO · AGENDA (eventi_agenda M6) ── */}
       <div className="px-4 pt-5">
-        <SectionHeader eyebrow="Calendario" title="Prossimi appuntamenti" />
+        <SectionHeader eyebrow={t('eyebrowCalendario')} title={t('titoloProssimiAppuntamenti')} />
         <AgendaTodayCard studentId={studentId} />
       </div>
 
       {/* ── NOTA / FOOTER ─────────────────────────── */}
       <p className="px-4 pt-6 text-center font-maven text-[11px] text-kidville-muted">
-        Le informazioni restano visibili per 14 giorni · Kidville
+        {t('footerRetention')}
       </p>
     </div>
   );

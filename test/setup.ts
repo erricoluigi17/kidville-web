@@ -8,7 +8,17 @@ import { vi } from 'vitest';
 // asseriscono sui testi italiani continuano a passare senza wrapper. Scalabile a
 // tutta la migrazione i18n: nessun test esistente va toccato per il provider.
 vi.mock('next-intl', async () => {
-  const it = (await import('../messages/it.json')).default as Record<string, Record<string, string>>;
+  const it: Record<string, Record<string, string>> = {
+    common: (await import('../messages/it/common.json')).default,
+    auth: (await import('../messages/it/auth.json')).default,
+    nav: (await import('../messages/it/nav.json')).default,
+    home: (await import('../messages/it/home.json')).default,
+    avvisi: (await import('../messages/it/avvisi.json')).default,
+    diario: (await import('../messages/it/diario.json')).default,
+    mensa: (await import('../messages/it/mensa.json')).default,
+    pagamenti: (await import('../messages/it/pagamenti.json')).default,
+    profilo: (await import('../messages/it/profilo.json')).default,
+  };
   const resolve = (ns: string | undefined, key: string): string => {
     const gruppo = ns ? it[ns] : undefined;
     return (gruppo && gruppo[key]) ?? (ns ? `${ns}.${key}` : key);

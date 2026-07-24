@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useTranslations } from 'next-intl'
 import { Megaphone, ClipboardList } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
 import { Badge, type BadgeTone } from '@/components/ui/Badge'
@@ -26,6 +27,7 @@ const fmtDate = (iso: string) => {
  * esistente: GET /api/diary/students + GET /api/avvisi. Si nasconde se vuoto.
  */
 export function AvvisiPreview({ parentId, studentId }: Props) {
+  const t = useTranslations('home')
   const [items, setItems] = useState<Avviso[]>([])
   const [loaded, setLoaded] = useState(false)
 
@@ -79,14 +81,14 @@ export function AvvisiPreview({ parentId, studentId }: Props) {
         if (isAdesione) {
           if (answered) {
             tone = answered === 'si' ? 'success' : 'error'
-            label = answered === 'si' ? 'Hai aderito' : 'Non aderisci'
+            label = answered === 'si' ? t('avvisiHaiAderito') : t('avvisiNonAderisci')
           } else {
             tone = 'unread'
-            label = 'Richiede adesione'
+            label = t('avvisiRichiedeAdesione')
           }
         } else {
           tone = read ? 'read' : 'info'
-          label = read ? 'Letto' : 'Da leggere'
+          label = read ? t('avvisiLetto') : t('avvisiDaLeggere')
         }
         return (
           <Card key={a.id} className={cx('p-[14px]', !isAdesione && read && 'opacity-70')}>

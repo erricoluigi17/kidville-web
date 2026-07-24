@@ -1,6 +1,7 @@
 'use client';
 
 import { Suspense, useCallback, useEffect, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 import { Download, Check, Award, ShieldCheck } from 'lucide-react';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
@@ -16,6 +17,7 @@ interface ScrutinioView {
 
 function PagelleGenitore() {
   const { parentId, studentId, ready } = useParentIdentity();
+  const t = useTranslations('parentPrimaria');
   const [pagelle, setPagelle] = useState<PagellaItem[]>([]);
   const [certificati, setCertificati] = useState<CertItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -68,7 +70,7 @@ function PagelleGenitore() {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'x-user-id': parentId },
     });
     const d = await r.json();
-    if (!r.ok) { setMsg(d.error || 'Errore OTP'); return; }
+    if (!r.ok) { setMsg(d.error || t('pagelleErroreOtp')); return; }
     setOtpState(d.data);
   };
 
@@ -82,28 +84,28 @@ function PagelleGenitore() {
     });
     const d = await r.json();
     setFirmando(null);
-    if (!r.ok) { setMsg(d.error || 'Firma non riuscita'); return; }
+    if (!r.ok) { setMsg(d.error || t('pagelleFirmaNonRiuscita')); return; }
     setOtpState(null); setOtpCode(''); setOtpTarget(null);
-    setMsg('Pagella firmata ✓');
+    setMsg(t('pagelleFirmataMsg'));
     carica();
   };
 
   return (
     <div className="px-4 pt-5 pb-24">
-      <PageHeaderCard eyebrow="Didattica · Primaria" title="Pagelle" className="mb-4" />
+      <PageHeaderCard eyebrow={t('eyebrow')} title={t('pagelleTitolo')} className="mb-4" />
 
       {/* Banner conformità O.M. 3/2025 (DR PagelleScreen) */}
       <div className="mb-4 flex items-start gap-2.5 rounded-[16px] bg-kidville-green-soft px-4 py-3">
         <ShieldCheck size={18} className="mt-0.5 flex-shrink-0 text-kidville-green" />
         <p className="font-maven text-[12.5px] leading-snug text-kidville-green/80">
-          Documento ufficiale di valutazione in <strong>giudizi sintetici</strong> (O.M. 3/2025): nessun voto numerico.
+          {t.rich('pagelleBanner', { strong: (chunks) => <strong>{chunks}</strong> })}
         </p>
       </div>
 
       {loading ? (
-        <p className="font-maven text-sm text-kidville-muted">Caricamento…</p>
+        <p className="font-maven text-sm text-kidville-muted">{t('caricamento')}</p>
       ) : pagelle.length === 0 ? (
-        <p className="font-maven text-sm text-kidville-muted">Nessuna pagella disponibile.</p>
+        <p className="font-maven text-sm text-kidville-muted">{t('pagelleVuoto')}</p>
       ) : (
         <div className="space-y-3">
           {msg && <p className={`font-maven text-sm rounded-2xl px-4 py-2 ${msg.includes('✓') ? 'bg-kidville-success-soft text-kidville-success' : 'bg-kidville-error-soft text-kidville-error'}`}>{msg}</p>}
@@ -115,25 +117,25 @@ function PagelleGenitore() {
                 <div className="flex items-center justify-between gap-2 px-4 py-3.5">
                   <div>
                     <p className="font-barlow text-base font-extrabold uppercase tracking-wide text-kidville-green">{p.periodo}</p>
-                    <p className="font-maven text-xs text-kidville-muted">A.S. {p.anno}</p>
+                    <p className="font-maven text-xs text-kidville-muted">{t('pagelleAnnoScolastico', { anno: p.anno })}</p>
                   </div>
                   <div className="flex items-center gap-2">
                     {p.firmato
-                      ? <span className="font-maven text-xs text-kidville-success flex items-center gap-1"><Check size={11} /> Firmata</span>
+                      ? <span className="font-maven text-xs text-kidville-success flex items-center gap-1"><Check size={11} /> {t('firmata')}</span>
                       : (
                         <Btn variant="primary" size="sm" onClick={() => avviaFirma(p.scrutinioId)}>
-                          Firma
+                          {t('pagelleFirma')}
                         </Btn>
                       )}
                     <Btn variant="ghost" size="sm" onClick={() => apriPDF(p.scrutinioId)}>
-                      <Download size={12} /> PDF
+                      <Download size={12} /> {t('pagellePdf')}
                     </Btn>
                     {p.firmato && (
                       <button
                         onClick={() => caricaDettaglio(p.scrutinioId)}
                         className="font-maven text-xs text-kidville-muted underline"
                       >
-                        {det !== undefined ? 'Nascondi' : 'Dettaglio'}
+                        {det !== undefined ? t('pagelleNascondi') : t('pagelleDettaglio')}
                       </button>
                     )}
                   </div>
@@ -149,7 +151,7 @@ function PagelleGenitore() {
                       </div>
                     ))}
                     {det.comportamento && (
-                      <p className="font-maven text-xs text-kidville-muted mt-2">Comportamento: {det.comportamento}</p>
+                      <p className="font-maven text-xs text-kidville-muted mt-2">{t('pagelleComportamento', { value: det.comportamento })}</p>
                     )}
                     {det.giudizioGlobale && (
                       <p className="font-maven text-xs text-kidville-muted italic mt-1">{det.giudizioGlobale}</p>
@@ -160,9 +162,9 @@ function PagelleGenitore() {
                 {/* OTP firma inline */}
                 {otpTarget === p.scrutinioId && otpState && (
                   <div className="border-t border-kidville-line px-4 py-3 space-y-2">
-                    <p className="font-maven text-sm text-kidville-muted">Inserisci il codice OTP ricevuto via email:</p>
+                    <p className="font-maven text-sm text-kidville-muted">{t('otpIstruzione')}</p>
                     {otpState.devCode && (
-                      <p className="font-maven text-xs text-kidville-warn">Dev: <b>{otpState.devCode}</b></p>
+                      <p className="font-maven text-xs text-kidville-warn">{t('devLabel')} <b>{otpState.devCode}</b></p>
                     )}
                     <div className="flex gap-2">
                       <input
@@ -176,10 +178,10 @@ function PagelleGenitore() {
                         onClick={confermaFirma}
                         disabled={firmando === p.scrutinioId || !otpCode}
                       >
-                        {firmando === p.scrutinioId ? 'Firma…' : 'Conferma'}
+                        {firmando === p.scrutinioId ? t('firmando') : t('conferma')}
                       </Btn>
                       <button onClick={() => { setOtpTarget(null); setOtpState(null); setOtpCode(''); }}
-                        className="font-maven text-xs text-kidville-muted">Annulla</button>
+                        className="font-maven text-xs text-kidville-muted">{t('annulla')}</button>
                     </div>
                   </div>
                 )}
@@ -192,21 +194,21 @@ function PagelleGenitore() {
       {certificati.length > 0 && (
         <div className="mt-6">
           <h2 className="font-barlow text-lg font-black text-kidville-green uppercase tracking-wide mb-3 flex items-center gap-2">
-            <Award size={18} /> Certificato delle Competenze
+            <Award size={18} /> {t('pagelleCertificatoTitolo')}
           </h2>
           <div className="space-y-2">
             {certificati.map((c) => (
               <div key={c.id} className="rounded-card border border-kidville-line bg-white shadow-sm px-4 py-3.5 flex items-center justify-between">
                 <div>
-                  <p className="font-barlow text-base font-extrabold uppercase tracking-wide text-kidville-green">Classe quinta</p>
-                  <p className="font-maven text-xs text-kidville-muted">A.S. {c.anno}</p>
+                  <p className="font-barlow text-base font-extrabold uppercase tracking-wide text-kidville-green">{t('pagelleClasseQuinta')}</p>
+                  <p className="font-maven text-xs text-kidville-muted">{t('pagelleAnnoScolastico', { anno: c.anno })}</p>
                 </div>
                 {c.downloadUrl ? (
                   <a href={c.downloadUrl} target="_blank" rel="noreferrer" className={btnClass('ghost', 'sm')}>
-                    <Download size={12} /> Scarica
+                    <Download size={12} /> {t('pagelleScarica')}
                   </a>
                 ) : (
-                  <span className="font-maven text-xs text-kidville-muted">In preparazione</span>
+                  <span className="font-maven text-xs text-kidville-muted">{t('pagelleInPreparazione')}</span>
                 )}
               </div>
             ))}
@@ -218,8 +220,9 @@ function PagelleGenitore() {
 }
 
 export default function PagelleGenitorePage() {
+  const t = useTranslations('parentPrimaria');
   return (
-    <Suspense fallback={<div className="px-4 pt-5 pb-24 font-maven text-kidville-muted">Caricamento…</div>}>
+    <Suspense fallback={<div className="px-4 pt-5 pb-24 font-maven text-kidville-muted">{t('caricamento')}</div>}>
       <PagelleGenitore />
     </Suspense>
   );

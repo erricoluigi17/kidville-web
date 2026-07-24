@@ -1,6 +1,7 @@
 'use client';
 
 import { BookOpen, ClipboardList, FileText, Image as ImageIcon, CalendarClock } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 import { useDateFormat } from '@/lib/i18n/date';
 
 export interface Allegato { id: string; tipo: string; file_url: string; file_name: string | null }
@@ -26,15 +27,16 @@ const fmtGiorno = (g: string, locale: string) =>
 
 // Sezione "Lezioni": materia + argomento + allegati (sola lettura).
 export function LezioniList({ lezioni }: { lezioni: Lezione[] }) {
+  const t = useTranslations('parentPrimaria');
   const f = useDateFormat();
   const giorni = perGiorno(lezioni);
   return (
     <section className="rounded-card bg-white p-5 shadow-sm">
       <h3 className="font-barlow text-lg font-bold text-kidville-ink flex items-center gap-2 mb-3">
-        <BookOpen size={18} className="text-kidville-green" /> Lezioni
+        <BookOpen size={18} className="text-kidville-green" /> {t('lezioniTitolo')}
       </h3>
       {giorni.length === 0 ? (
-        <p className="font-maven text-sm text-kidville-muted">Nessuna lezione registrata di recente.</p>
+        <p className="font-maven text-sm text-kidville-muted">{t('lezioniVuoto')}</p>
       ) : (
         <div className="space-y-4">
           {giorni.map(([giorno, lez]) => (
@@ -44,18 +46,18 @@ export function LezioniList({ lezioni }: { lezioni: Lezione[] }) {
                 {lez.map((l) => (
                   <li key={l.id} className="rounded-card bg-kidville-cream/40 p-2.5">
                     <div className="font-maven text-sm text-kidville-ink">
-                      <span className="font-semibold text-kidville-green">{l.materia || 'Lezione'}</span>
+                      <span className="font-semibold text-kidville-green">{l.materia || t('lezioniLezione')}</span>
                       {l.argomento && <span className="text-kidville-muted"> — {l.argomento}</span>}
                     </div>
                     {l.individualizzate.filter((i) => i.argomento).map((i, idx) => (
-                      <p key={idx} className="mt-1 rounded bg-kidville-info-soft px-2 py-1 font-maven text-xs text-kidville-info">Attività individuale: {i.argomento}</p>
+                      <p key={idx} className="mt-1 rounded bg-kidville-info-soft px-2 py-1 font-maven text-xs text-kidville-info">{t('lezioniAttivitaIndividuale', { value: i.argomento ?? '' })}</p>
                     ))}
                     {l.allegati.length > 0 && (
                       <div className="mt-1 flex flex-wrap gap-2">
                         {l.allegati.map((a) => (
                           <a key={a.id} href={a.file_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 rounded-pill bg-white px-2 py-0.5 text-[11px] text-kidville-muted">
                             {a.tipo === 'pdf' ? <FileText size={11} /> : <ImageIcon size={11} />}
-                            {a.file_name || 'allegato'}
+                            {a.file_name || t('lezioniAllegato')}
                           </a>
                         ))}
                       </div>
@@ -73,16 +75,17 @@ export function LezioniList({ lezioni }: { lezioni: Lezione[] }) {
 
 // Sezione "Compiti": compiti + scadenza (mostra solo le lezioni con compiti).
 export function CompitiList({ lezioni }: { lezioni: Lezione[] }) {
+  const t = useTranslations('parentPrimaria');
   const f = useDateFormat();
   const conCompiti = lezioni.filter((l) => l.compiti || l.individualizzate.some((i) => i.compiti));
   const giorni = perGiorno(conCompiti);
   return (
     <section className="rounded-card bg-white p-5 shadow-sm">
       <h3 className="font-barlow text-lg font-bold text-kidville-ink flex items-center gap-2 mb-3">
-        <ClipboardList size={18} className="text-kidville-yellow" /> Compiti
+        <ClipboardList size={18} className="text-kidville-yellow" /> {t('compitiTitolo')}
       </h3>
       {giorni.length === 0 ? (
-        <p className="font-maven text-sm text-kidville-muted">Nessun compito assegnato di recente.</p>
+        <p className="font-maven text-sm text-kidville-muted">{t('compitiVuoto')}</p>
       ) : (
         <div className="space-y-4">
           {giorni.map(([giorno, lez]) => (
@@ -91,17 +94,17 @@ export function CompitiList({ lezioni }: { lezioni: Lezione[] }) {
               <ul className="space-y-1.5">
                 {lez.map((l) => (
                   <li key={l.id} className="rounded-card bg-kidville-cream/40 p-2.5">
-                    <div className="font-maven text-xs text-kidville-muted">{l.materia || 'Lezione'}</div>
+                    <div className="font-maven text-xs text-kidville-muted">{l.materia || t('compitiLezione')}</div>
                     {l.compiti && <p className="mt-1 rounded bg-kidville-yellow/20 px-2 py-1 font-maven text-sm text-kidville-ink">{l.compiti}</p>}
                     {l.individualizzate.filter((i) => i.compiti).map((i, idx) => (
-                      <p key={idx} className="mt-1 rounded bg-kidville-info-soft px-2 py-1 font-maven text-xs text-kidville-info">Compiti individuali: {i.compiti}</p>
+                      <p key={idx} className="mt-1 rounded bg-kidville-info-soft px-2 py-1 font-maven text-xs text-kidville-info">{t('compitiIndividuali', { value: i.compiti ?? '' })}</p>
                     ))}
                     {l.data_consegna_compiti && (
                       // Data di consegna: unico indicatore (chip), formato it-IT.
                       // Con il datepicker docente la data non va più scritta nel
                       // testo libero, evitando la doppia indicazione.
                       <p className="mt-1.5 inline-flex items-center gap-1 rounded-pill bg-kidville-error-soft px-2 py-0.5 font-maven text-[11px] font-semibold text-kidville-error">
-                        <CalendarClock size={11} /> Consegna: {new Intl.DateTimeFormat(f.locale, { weekday: 'short', day: 'numeric', month: 'short' }).format(new Date(l.data_consegna_compiti))}
+                        <CalendarClock size={11} /> {t('compitiConsegna', { data: new Intl.DateTimeFormat(f.locale, { weekday: 'short', day: 'numeric', month: 'short' }).format(new Date(l.data_consegna_compiti)) })}
                       </p>
                     )}
                   </li>

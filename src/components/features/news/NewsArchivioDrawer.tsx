@@ -1,6 +1,6 @@
 'use client'
 
-import { useLocale } from 'next-intl'
+import { useLocale, useTranslations } from 'next-intl'
 import { CalendarDays, Check } from 'lucide-react'
 import { Modal } from '@/components/ui/Modal'
 import { cx } from '@/lib/ui/cx'
@@ -24,6 +24,7 @@ interface Props {
 
 export function NewsArchivioDrawer({ open, onClose, mesi, current, onSelect }: Props) {
   const locale = useLocale()
+  const t = useTranslations('parentNews')
   const scegli = (mese: string | null) => {
     onSelect(mese)
     onClose()
@@ -33,7 +34,7 @@ export function NewsArchivioDrawer({ open, onClose, mesi, current, onSelect }: P
     <Modal
       open={open}
       onClose={onClose}
-      title="Archivio delle news per mese"
+      title={t('archivioModalTitolo')}
       className="w-full max-w-[400px] rounded-3xl bg-kidville-cream p-4"
     >
       <div className="mb-3 flex items-center gap-2 px-1">
@@ -41,8 +42,8 @@ export function NewsArchivioDrawer({ open, onClose, mesi, current, onSelect }: P
           <CalendarDays size={19} strokeWidth={1.9} />
         </span>
         <div>
-          <p className="font-barlow text-[10px] font-bold uppercase tracking-[0.14em] text-kidville-sub">Archivio</p>
-          <h3 className="font-barlow text-lg font-black uppercase leading-none tracking-wide text-kidville-green">Scegli un mese</h3>
+          <p className="font-barlow text-[10px] font-bold uppercase tracking-[0.14em] text-kidville-sub">{t('archivioEyebrow')}</p>
+          <h3 className="font-barlow text-lg font-black uppercase leading-none tracking-wide text-kidville-green">{t('archivioScegliMese')}</h3>
         </div>
       </div>
 
@@ -55,12 +56,12 @@ export function NewsArchivioDrawer({ open, onClose, mesi, current, onSelect }: P
               'flex w-full items-center justify-between gap-3 border-b border-kidville-line px-3 py-3 text-left active:bg-kidville-cream',
             )}
           >
-            <span className="font-barlow text-sm font-extrabold uppercase tracking-wide text-kidville-green">Tutti i mesi</span>
+            <span className="font-barlow text-sm font-extrabold uppercase tracking-wide text-kidville-green">{t('tuttiIMesi')}</span>
             {current === null && <Check size={16} strokeWidth={2.4} className="text-kidville-green" />}
           </button>
 
           {mesi.length === 0 && (
-            <p className="px-3 py-4 font-maven text-[13px] text-kidville-sub">Ancora nessun mese in archivio.</p>
+            <p className="px-3 py-4 font-maven text-[13px] text-kidville-sub">{t('archivioVuoto')}</p>
           )}
 
           {mesi.map((m, i) => {

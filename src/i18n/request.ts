@@ -40,6 +40,11 @@ export default getRequestConfig(async () => {
     adminAltro: (await import(`../../messages/${locale}/adminAltro.json`)).default,
     shared: (await import(`../../messages/${locale}/shared.json`)).default,
     etichette: (await import(`../../messages/${locale}/etichette.json`)).default,
+    parentNews: (await import(`../../messages/${locale}/parentNews.json`)).default,
+    parentChat: (await import(`../../messages/${locale}/parentChat.json`)).default,
+    parentPrimaria: (await import(`../../messages/${locale}/parentPrimaria.json`)).default,
+    parentServizi: (await import(`../../messages/${locale}/parentServizi.json`)).default,
+    parentForms: (await import(`../../messages/${locale}/parentForms.json`)).default,
   };
 
   return { locale, messages };

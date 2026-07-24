@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { useForm, FieldValues } from 'react-hook-form'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useRouter } from 'next/navigation'
+import { useTranslations } from 'next-intl'
 import {
   ArrowLeft, ArrowRight, Check, Loader2, PartyPopper, FileText,
 } from 'lucide-react'
@@ -47,6 +48,7 @@ export function WizardContainer({
   publicToken,
 }: Props) {
   const router = useRouter()
+  const t = useTranslations('parentForms')
   const pages = schema.pages ?? []
   // In modalità pubblica la firma OTP è disattivata (nessuna identità/email).
   const useSignature = requiresSignature && !publicToken
@@ -189,7 +191,7 @@ export function WizardContainer({
         messaggio: `invio modulo fallito — ${err instanceof Error ? err.message : 'errore sconosciuto'}`,
         stack: err instanceof Error ? err.stack : undefined,
       })
-      alert('Si è verificato un errore durante l\'invio. Riprova.')
+      alert(t('erroreInvioModulo'))
     } finally {
       setSubmitting(false)
     }
@@ -198,7 +200,7 @@ export function WizardContainer({
   if (pages.length === 0) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-kidville-cream">
-        <p className="font-maven text-kidville-muted">Questo modulo non contiene pagine.</p>
+        <p className="font-maven text-kidville-muted">{t('nessunaPagina')}</p>
       </div>
     )
   }
@@ -224,7 +226,7 @@ export function WizardContainer({
           </div>
           {!done && (
             <p className="font-maven text-xs text-kidville-yellow-dark font-semibold">
-              Passo {step + 1} di {pages.length}
+              {t('passo', { step: step + 1, totale: pages.length })}
             </p>
           )}
         </div>
@@ -238,15 +240,15 @@ export function WizardContainer({
             <div className="w-16 h-16 rounded-2xl bg-kidville-success-soft flex items-center justify-center mb-4">
               <PartyPopper className="w-8 h-8 text-kidville-success" />
             </div>
-            <h2 className="font-barlow text-xl font-black uppercase text-kidville-green">Modulo inviato!</h2>
+            <h2 className="font-barlow text-xl font-black uppercase text-kidville-green">{t('moduloInviato')}</h2>
             <p className="font-maven text-sm text-kidville-muted mt-1.5 max-w-xs">
-              La tua compilazione è stata registrata correttamente.
+              {t('compilazioneRegistrata')}
             </p>
             <button
               onClick={() => router.push('/parent/modulistica')}
               className="mt-6 px-5 py-2.5 rounded-pill bg-kidville-green-soft text-kidville-green font-barlow font-bold text-sm uppercase tracking-wide hover:bg-kidville-green hover:text-kidville-yellow transition-all"
             >
-              Torna ai moduli
+              {t('tornaModuli')}
             </button>
           </motion.div>
         ) : (
@@ -289,7 +291,7 @@ export function WizardContainer({
                 className="flex items-center gap-2 px-4 py-2.5 rounded-pill font-barlow font-bold uppercase tracking-wide text-sm text-kidville-muted hover:text-kidville-green hover:bg-kidville-green-soft disabled:opacity-30 disabled:cursor-not-allowed transition-all"
               >
                 <ArrowLeft className="w-4 h-4" />
-                Indietro
+                {t('indietro')}
               </button>
 
               <button
@@ -305,7 +307,7 @@ export function WizardContainer({
                   <ArrowRight className="w-4 h-4 order-2" />
                 )}
                 <span className={isLast || submitting ? '' : 'order-1'}>
-                  {submitting ? 'Invio…' : isLast ? (useSignature ? 'Firma il modulo' : 'Invia') : 'Avanti'}
+                  {submitting ? t('invioInCorso') : isLast ? (useSignature ? t('firmaModulo') : t('invia')) : t('avanti')}
                 </span>
               </button>
             </div>

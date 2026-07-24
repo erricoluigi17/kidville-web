@@ -1,5 +1,7 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
+
 // Skeleton di caricamento della schermata chat: riproduce header + lista thread
 // (avatar + due righe) per una percezione di caricamento migliore rispetto al
 // solo spinner. Nessuna dipendenza extra: usa animate-pulse di Tailwind.
@@ -17,12 +19,13 @@ function SkeletonRow() {
 }
 
 export function ChatListSkeleton() {
+    const t = useTranslations('parentChat');
     const rows = [0, 1, 2, 3, 4];
     return (
         <div
             className="px-4 pt-5 pb-24 animate-pulse"
             aria-busy="true"
-            aria-label="Caricamento chat"
+            aria-label={t('loadingAria')}
         >
             {/* Header — sagoma della card verde (PageHeaderCard) */}
             <div className="mb-4 h-[104px] rounded-3xl bg-kidville-line/70" />

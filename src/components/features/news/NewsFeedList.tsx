@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import { useTranslations } from 'next-intl'
 import { Search, X, CalendarDays, RotateCcw } from 'lucide-react'
 import { withIdentity } from '@/lib/auth/current-user'
 import { cx } from '@/lib/ui/cx'
@@ -71,6 +72,7 @@ interface Props {
 }
 
 export function NewsFeedList({ parentId, studentId, onCount }: Props) {
+  const t = useTranslations('parentNews')
   const [posts, setPosts] = useState<NewsPost[]>([])
   const [categorie, setCategorie] = useState<NewsCategoria[]>([])
   const [mesiArchivio, setMesiArchivio] = useState<{ mese: string; conteggio: number }[]>([])
@@ -168,12 +170,12 @@ export function NewsFeedList({ parentId, studentId, onCount }: Props) {
             type="search"
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Cerca nelle news…"
-            aria-label="Cerca nelle news"
+            placeholder={t('cercaPlaceholder')}
+            aria-label={t('cercaAria')}
             className="min-w-0 flex-1 bg-transparent font-maven text-sm text-kidville-ink outline-none placeholder:text-kidville-muted"
           />
           {q && (
-            <button type="button" onClick={azzeraRicerca} aria-label="Cancella ricerca" className="text-kidville-muted">
+            <button type="button" onClick={azzeraRicerca} aria-label={t('cancellaRicerca')} className="text-kidville-muted">
               <X size={16} strokeWidth={2.4} />
             </button>
           )}
@@ -181,7 +183,7 @@ export function NewsFeedList({ parentId, studentId, onCount }: Props) {
         <button
           type="button"
           onClick={apriArchivio}
-          aria-label="Archivio per mese"
+          aria-label={t('archivioAria')}
           className="flex h-[42px] w-[42px] flex-shrink-0 items-center justify-center rounded-pill border border-kidville-line bg-kidville-white text-kidville-green active:scale-95"
         >
           <CalendarDays size={19} strokeWidth={1.9} />
@@ -190,7 +192,7 @@ export function NewsFeedList({ parentId, studentId, onCount }: Props) {
 
       {/* Pillole categoria (solo se disponibili) */}
       {categorie.length > 0 && (
-        <div className="mb-3 -mx-4 flex gap-2 overflow-x-auto px-4 pb-1" role="group" aria-label="Filtra per categoria">
+        <div className="mb-3 -mx-4 flex gap-2 overflow-x-auto px-4 pb-1" role="group" aria-label={t('filtraCategoriaAria')}>
           <button
             type="button"
             aria-pressed={catFiltro === null}
@@ -200,7 +202,7 @@ export function NewsFeedList({ parentId, studentId, onCount }: Props) {
               catFiltro === null ? 'bg-kidville-green text-white' : 'bg-kidville-white text-kidville-green border border-kidville-line',
             )}
           >
-            Tutte
+            {t('tutteCategorie')}
           </button>
           {categorie.map((c) => (
             <button
@@ -231,14 +233,14 @@ export function NewsFeedList({ parentId, studentId, onCount }: Props) {
             className="flex items-center gap-1 font-barlow text-[11.5px] font-extrabold uppercase tracking-wide text-kidville-green"
           >
             <RotateCcw size={13} strokeWidth={2.4} />
-            Tutti i mesi
+            {t('tuttiIMesi')}
           </button>
         </div>
       )}
 
       {/* Loading */}
       {loading && (
-        <div className="flex flex-col gap-3" role="status" aria-label="Caricamento delle news">
+        <div className="flex flex-col gap-3" role="status" aria-label={t('caricamentoNewsFeed')}>
           {[0, 1, 2].map((i) => (
             <div key={i} className="h-[120px] animate-pulse rounded-card bg-kidville-white" />
           ))}
@@ -248,7 +250,7 @@ export function NewsFeedList({ parentId, studentId, onCount }: Props) {
       {/* Errore con retry */}
       {!loading && errore && (
         <div role="alert" className="flex flex-col items-center justify-center rounded-card bg-kidville-white py-12 text-center">
-          <p className="font-maven text-sm text-kidville-sub">Non è stato possibile caricare le news.</p>
+          <p className="font-maven text-sm text-kidville-sub">{t('erroreCaricamentoFeed')}</p>
           <button
             type="button"
             onClick={() => {
@@ -258,7 +260,7 @@ export function NewsFeedList({ parentId, studentId, onCount }: Props) {
             className="mt-3 inline-flex items-center gap-2 rounded-pill bg-kidville-green px-4 py-2 font-barlow text-sm font-extrabold uppercase tracking-wide text-white active:scale-95"
           >
             <RotateCcw size={15} strokeWidth={2.4} />
-            Riprova
+            {t('riprova')}
           </button>
         </div>
       )}
@@ -268,10 +270,10 @@ export function NewsFeedList({ parentId, studentId, onCount }: Props) {
         <div role="status" className="kv-news-onbody flex flex-col items-center justify-center py-16 text-center">
           <div className="mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-kidville-cream text-4xl">📰</div>
           <h2 className="mb-1 font-barlow text-xl font-bold uppercase text-kidville-green">
-            {filtriAttivi ? 'Nessun risultato' : 'Ancora nessuna news'}
+            {filtriAttivi ? t('vuotoFiltriTitolo') : t('vuotoTitolo')}
           </h2>
           <p className="max-w-xs font-maven text-sm text-kidville-sub">
-            {filtriAttivi ? 'Prova a rimuovere i filtri di ricerca.' : 'Qui compariranno le novità e i comunicati della scuola.'}
+            {filtriAttivi ? t('vuotoFiltriTesto') : t('vuotoTesto')}
           </p>
         </div>
       )}

@@ -3,6 +3,7 @@
 import { Suspense, useCallback, useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
+import { useTranslations } from 'next-intl'
 import { ArrowLeft, RotateCcw, Share2 } from 'lucide-react'
 import { useParentIdentity } from '@/lib/auth/use-parent-identity'
 import { withIdentity } from '@/lib/auth/current-user'
@@ -12,6 +13,7 @@ import type { NewsMedia, NewsPost } from '@/lib/news/tipi'
 
 function ParentNewsDetail() {
   const { parentId, studentId, ready } = useParentIdentity()
+  const t = useTranslations('parentNews')
   const params = useParams<{ id: string }>()
   const id = params?.id
 
@@ -51,7 +53,7 @@ function ParentNewsDetail() {
           className="kv-news-onbody inline-flex items-center gap-1.5 font-barlow text-[12.5px] font-extrabold uppercase tracking-wide text-kidville-green active:scale-95"
         >
           <ArrowLeft size={16} strokeWidth={2.4} />
-          Tutte le news
+          {t('tutteLeNews')}
         </Link>
         {post && !problema && (
           <button
@@ -63,17 +65,17 @@ function ParentNewsDetail() {
                 url: typeof window !== 'undefined' ? window.location.href : undefined,
               })
             }
-            aria-label="Condividi questa news"
+            aria-label={t('condividiAria')}
             className="inline-flex items-center gap-1.5 rounded-pill border border-kidville-green/30 bg-kidville-white px-3 py-1.5 font-barlow text-[12px] font-extrabold uppercase tracking-wide text-kidville-green active:scale-95"
           >
             <Share2 size={15} strokeWidth={2.4} />
-            Condividi
+            {t('condividi')}
           </button>
         )}
       </div>
 
       {loading || !ready ? (
-        <div className="flex flex-col gap-3" role="status" aria-label="Caricamento della news">
+        <div className="flex flex-col gap-3" role="status" aria-label={t('caricamentoNews')}>
           <div className="h-48 animate-pulse rounded-card bg-kidville-white" />
           <div className="h-6 w-2/3 animate-pulse rounded-pill bg-kidville-white" />
           <div className="h-24 animate-pulse rounded-card bg-kidville-white" />
@@ -82,7 +84,7 @@ function ParentNewsDetail() {
         <NewsDetailContent post={post} media={media} />
       ) : problema === 'errore' ? (
         <div role="alert" className="flex flex-col items-center justify-center rounded-card bg-kidville-white py-12 text-center">
-          <p className="font-maven text-sm text-kidville-sub">Non è stato possibile caricare la news.</p>
+          <p className="font-maven text-sm text-kidville-sub">{t('erroreCaricamento')}</p>
           <button
             type="button"
             onClick={() => {
@@ -93,14 +95,14 @@ function ParentNewsDetail() {
             className="mt-3 inline-flex items-center gap-2 rounded-pill bg-kidville-green px-4 py-2 font-barlow text-sm font-extrabold uppercase tracking-wide text-white active:scale-95"
           >
             <RotateCcw size={15} strokeWidth={2.4} />
-            Riprova
+            {t('riprova')}
           </button>
         </div>
       ) : (
         <div role="status" className="kv-news-onbody flex flex-col items-center justify-center py-16 text-center">
           <div className="mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-kidville-cream text-4xl">📰</div>
-          <h2 className="mb-1 font-barlow text-xl font-bold uppercase text-kidville-green">News non disponibile</h2>
-          <p className="max-w-xs font-maven text-sm text-kidville-sub">Potrebbe essere stata rimossa o non essere destinata al tuo profilo.</p>
+          <h2 className="mb-1 font-barlow text-xl font-bold uppercase text-kidville-green">{t('nonDisponibileTitolo')}</h2>
+          <p className="max-w-xs font-maven text-sm text-kidville-sub">{t('nonDisponibileTesto')}</p>
         </div>
       )}
     </div>

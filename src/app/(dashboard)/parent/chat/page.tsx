@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, Suspense, useRef } from 'react';
+import { useTranslations } from 'next-intl';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowLeft, MessageSquare, Plus, X, UserPlus } from 'lucide-react';
 import { ChatThreadList, ChatThread } from '@/components/features/chat/ChatThreadList';
@@ -24,6 +25,7 @@ interface Contact {
 
 // Identità dalla sessione (URL → localStorage → /api/me), senza fallback demo (M4).
 function ParentChatContent() {
+    const t = useTranslations('parentChat');
     const { userId: parentId, ready } = useSessionIdentity();
 
     const [threads, setThreads] = useState<ChatThread[]>([]);
@@ -308,8 +310,8 @@ function ParentChatContent() {
     return (
         <div className="px-4 pt-5 pb-24">
             <PageHeaderCard
-                eyebrow="Comunicazioni"
-                title="Messaggi"
+                eyebrow={t('eyebrow')}
+                title={t('title')}
                 className="mb-4"
                 badge={
                     <AnimatePresence>
@@ -326,21 +328,23 @@ function ParentChatContent() {
                         )}
                     </AnimatePresence>
                 }
-                subtitle={<>Chatta con gli insegnanti{childrenNames.length > 0 ? ` di ${childrenNames.join(' e ')}` : ''}</>}
+                subtitle={childrenNames.length > 0
+                    ? t('subtitleWithNames', { names: childrenNames.join(` ${t('and')} `) })
+                    : t('subtitle')}
                 action={
                     <Btn
                         variant="secondary"
                         size="sm"
                         onClick={() => { setShowNewChat(true); setLoadingContacts(true); loadContacts(); }}
                     >
-                        <Plus size={16} strokeWidth={1.5} /> Nuova Chat
+                        <Plus size={16} strokeWidth={1.5} /> {t('newChat')}
                     </Btn>
                 }
             />
 
             {chatCfg && !chatCfg.in_orario && (
                 <div className="mb-4 rounded-2xl bg-kidville-yellow-soft border border-kidville-yellow/40 px-4 py-3 font-maven text-sm text-kidville-yellow-dark">
-                    {chatCfg.risposta_fuori_orario_msg || `I docenti rispondono dalle ${chatCfg.orario_docenti_da} alle ${chatCfg.orario_docenti_a} nei giorni scolastici.`}
+                    {chatCfg.risposta_fuori_orario_msg || t('outOfHoursFallback', { da: chatCfg.orario_docenti_da, a: chatCfg.orario_docenti_a })}
                 </div>
             )}
 
@@ -352,7 +356,7 @@ function ParentChatContent() {
             <div className="hidden md:flex gap-4 h-[calc(100vh-200px-var(--kv-appbar-h,0px))] min-h-[500px] mb-24">
                 <div className="w-80 flex-shrink-0 bg-white rounded-3xl border border-kidville-line shadow-sm overflow-hidden flex flex-col">
                     <div className="px-4 py-3 border-b border-kidville-line">
-                        <p className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide">Insegnanti</p>
+                        <p className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide">{t('teachers')}</p>
                     </div>
                     <div className="flex-1 overflow-y-auto">
                         <ChatThreadList threads={threads} selectedId={selectedThread?.id ?? null}
@@ -372,7 +376,7 @@ function ParentChatContent() {
                                         {selectedThread.other_user.first_name} {selectedThread.other_user.last_name}
                                     </p>
                                     <p className="font-maven text-[11px] text-kidville-muted">
-                                        Insegnante • {selectedThread.student.classe_sezione}
+                                        {t('teacherRole')} • {selectedThread.student.classe_sezione}
                                     </p>
                                 </div>
                             </div>
@@ -384,7 +388,7 @@ function ParentChatContent() {
                                 firstUnreadId={firstUnreadId}
                                 onMarkRead={handleMarkRead}
                             />
-                            <ChatInput onSend={handleSendMessage} placeholder="Scrivi un messaggio all'insegnante..." />
+                            <ChatInput onSend={handleSendMessage} placeholder={t('inputPlaceholderTeacher')} />
                         </>
                     ) : (
                         <div className="flex-1 flex items-center justify-center">
@@ -392,8 +396,8 @@ function ParentChatContent() {
                                 <div className="w-20 h-20 bg-kidville-cream rounded-full flex items-center justify-center mx-auto mb-4">
                                     <MessageSquare size={32} className="text-kidville-green" strokeWidth={1.5} />
                                 </div>
-                                <p className="font-barlow font-bold text-lg text-kidville-green uppercase mb-1">Seleziona un insegnante</p>
-                                <p className="font-maven text-sm text-kidville-muted">Scegli dalla lista o premi &quot;Nuova Chat&quot;</p>
+                                <p className="font-barlow font-bold text-lg text-kidville-green uppercase mb-1">{t('selectTeacher')}</p>
+                                <p className="font-maven text-sm text-kidville-muted">{t('selectTeacherHint', { action: t('newChat') })}</p>
                             </div>
                         </div>
                     )}
@@ -416,7 +420,7 @@ function ParentChatContent() {
                         className="fixed inset-0 z-[60] bg-kidville-cream flex flex-col overflow-hidden pb-[env(safe-area-inset-bottom)]">
                         {/* Header conversazione del design: barra verde, back white/15, avatar giallo */}
                         <div className="flex items-center gap-2.5 bg-kidville-green px-3 py-2.5 pt-[max(10px,env(safe-area-inset-top))]">
-                            <button onClick={() => setShowMobile('list')} aria-label="Torna alla lista"
+                            <button onClick={() => setShowMobile('list')} aria-label={t('backToList')}
                                 className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-full bg-white/15 text-white transition-transform active:scale-95">
                                 <ArrowLeft size={18} strokeWidth={2.2} />
                             </button>
@@ -438,7 +442,7 @@ function ParentChatContent() {
                             firstUnreadId={firstUnreadId}
                             onMarkRead={handleMarkRead}
                         />
-                        <ChatInput onSend={handleSendMessage} placeholder="Scrivi un messaggio..." />
+                        <ChatInput onSend={handleSendMessage} placeholder={t('inputPlaceholder')} />
                     </motion.div>
                 )}
             </div>
@@ -458,7 +462,7 @@ function ParentChatContent() {
                             <div className="flex items-center justify-between px-6 py-4 border-b border-kidville-line">
                                 <div className="flex items-center gap-2">
                                     <UserPlus size={18} className="text-kidville-green" strokeWidth={1.5} />
-                                    <h2 className="font-barlow font-black text-lg text-kidville-green uppercase tracking-wide">Nuova Chat</h2>
+                                    <h2 className="font-barlow font-black text-lg text-kidville-green uppercase tracking-wide">{t('newChat')}</h2>
                                 </div>
                                 <button onClick={() => setShowNewChat(false)}
                                     className="w-8 h-8 rounded-xl bg-kidville-neutral-soft hover:bg-kidville-cream-dark flex items-center justify-center text-kidville-muted">
@@ -469,18 +473,18 @@ function ParentChatContent() {
                                 {loadingContacts ? (
                                     <div className="flex flex-col items-center py-8 gap-3">
                                         <div className="w-7 h-7 border-[3px] border-kidville-green/20 border-t-kidville-green rounded-full animate-spin" />
-                                        <p className="font-maven text-sm text-kidville-muted">Caricamento contatti...</p>
+                                        <p className="font-maven text-sm text-kidville-muted">{t('loadingContacts')}</p>
                                     </div>
                                 ) : contacts.length === 0 ? (
                                     <div className="flex flex-col items-center py-8 text-center">
                                         <p className="font-maven text-sm text-kidville-muted">
-                                            Hai già una conversazione con tutte le maestre disponibili! 🎉
+                                            {t('allContactsUsed')}
                                         </p>
                                     </div>
                                 ) : (
                                     <div className="space-y-2">
                                         <p className="font-maven text-xs text-kidville-muted mb-3">
-                                            Seleziona un insegnante per iniziare una conversazione
+                                            {t('selectTeacherToStart')}
                                         </p>
                                         {contacts.map((contact, idx) => {
                                             const initials = contact.user_name.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase();
@@ -501,7 +505,7 @@ function ParentChatContent() {
                                                             {contact.user_name}
                                                         </p>
                                                         <p className="font-maven text-xs text-kidville-muted truncate">
-                                                            Insegnante di {contact.student_name} • {contact.sezione}
+                                                            {t('teacherOf', { name: contact.student_name })} • {contact.sezione}
                                                         </p>
                                                     </div>
                                                     <Plus size={16} className="text-kidville-green flex-shrink-0" strokeWidth={1.5} />

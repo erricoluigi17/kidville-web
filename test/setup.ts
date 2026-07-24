@@ -36,6 +36,11 @@ vi.mock('next-intl', async () => {
     adminAltro: (await import('../messages/it/adminAltro.json')).default,
     shared: (await import('../messages/it/shared.json')).default,
     etichette: (await import('../messages/it/etichette.json')).default,
+    parentNews: (await import('../messages/it/parentNews.json')).default,
+    parentChat: (await import('../messages/it/parentChat.json')).default,
+    parentPrimaria: (await import('../messages/it/parentPrimaria.json')).default,
+    parentServizi: (await import('../messages/it/parentServizi.json')).default,
+    parentForms: (await import('../messages/it/parentForms.json')).default,
   };
   const resolve = (ns: string | undefined, key: string): string => {
     const gruppo = ns ? it[ns] : undefined;

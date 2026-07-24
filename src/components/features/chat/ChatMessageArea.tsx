@@ -71,6 +71,7 @@ function groupByDate(messages: ChatMessage[], locale: string, labels: EtichetteG
 
 /** Separatore "Nuovi Messaggi" — pillola del design (non-letto = giallo, mai rosso). */
 function UnreadSeparator() {
+    const t = useTranslations('parentChat');
     return (
         <motion.div
             initial={{ opacity: 0, scaleX: 0.8 }}
@@ -79,7 +80,7 @@ function UnreadSeparator() {
             className="my-5 flex justify-center"
         >
             <span className="whitespace-nowrap rounded-pill border border-kidville-yellow bg-kidville-yellow-soft px-3 py-1 font-barlow text-[10.5px] font-extrabold uppercase tracking-[0.08em] text-kidville-yellow-dark">
-                Nuovi Messaggi
+                {t('newMessages')}
             </span>
         </motion.div>
     );
@@ -88,6 +89,7 @@ function UnreadSeparator() {
 /** Bolla messaggio + traduzione automatica (DL-042) per i messaggi in ingresso. */
 function MessageBubble({ msg, isMine, currentUserId }: { msg: ChatMessage; isMine: boolean; currentUserId: string }) {
     const locale = useLocale();
+    const t = useTranslations('parentChat');
     const [translated, setTranslated] = useState<string | null>(null);
     const [translating, setTranslating] = useState(false);
     const [unavailable, setUnavailable] = useState(false);
@@ -132,7 +134,7 @@ function MessageBubble({ msg, isMine, currentUserId }: { msg: ChatMessage; isMin
             {msg.attachment_url && msg.attachment_type === 'image' && (
                 <div className="mb-2 rounded-xl overflow-hidden">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={msg.attachment_url} alt="Allegato" className="w-full h-auto max-h-48 object-cover" />
+                    <img src={msg.attachment_url} alt={t('attachmentAlt')} className="w-full h-auto max-h-48 object-cover" />
                 </div>
             )}
             {msg.attachment_url && msg.attachment_type === 'document' && (
@@ -143,13 +145,13 @@ function MessageBubble({ msg, isMine, currentUserId }: { msg: ChatMessage; isMin
                         rel="noopener noreferrer"
                         className={`mb-2 px-3 py-2 rounded-xl text-xs font-maven flex items-center gap-2 underline-offset-2 hover:underline ${isMine ? 'bg-white/20' : 'bg-kidville-neutral-soft'}`}
                     >
-                        📎 Documento allegato
+                        📎 {t('documentAttachment')}
                     </a>
                 ) : (
                     // URL con schema non-http (es. javascript:) salvato via API:
                     // niente link, solo il chip inerte com'era prima.
                     <div className={`mb-2 px-3 py-2 rounded-xl text-xs font-maven flex items-center gap-2 ${isMine ? 'bg-white/20' : 'bg-kidville-neutral-soft'}`}>
-                        📎 Documento allegato
+                        📎 {t('documentAttachment')}
                     </div>
                 )
             )}
@@ -176,7 +178,7 @@ function MessageBubble({ msg, isMine, currentUserId }: { msg: ChatMessage; isMin
                         {translating
                             ? <Loader2 size={11} className="animate-spin" />
                             : <Languages size={11} strokeWidth={2} />}
-                        {translated ? 'Mostra originale' : 'Traduci'}
+                        {translated ? t('showOriginal') : t('translate')}
                     </button>
                 </>
             )}
@@ -192,7 +194,7 @@ function MessageBubble({ msg, isMine, currentUserId }: { msg: ChatMessage; isMin
                     // senza colonna): in tal caso si ricade su "inviato", che è la verità visibile.
                     <span
                         role="img"
-                        aria-label={msg.read_at ? 'Letto' : msg.delivered_at ? 'Consegnato' : 'Inviato'}
+                        aria-label={msg.read_at ? t('statusRead') : msg.delivered_at ? t('statusDelivered') : t('statusSent')}
                         className="transition-all duration-300"
                     >
                         {msg.read_at
@@ -217,6 +219,7 @@ export function ChatMessageArea({
 }: Props) {
     const locale = useLocale();
     const tCommon = useTranslations('common');
+    const t = useTranslations('parentChat');
     const bottomRef = useRef<HTMLDivElement>(null);
     const separatorRef = useRef<HTMLDivElement>(null);
     const observerRef = useRef<IntersectionObserver | null>(null);
@@ -307,7 +310,7 @@ export function ChatMessageArea({
             <div className="flex-1 flex items-center justify-center bg-kidville-cream/50">
                 <div className="flex flex-col items-center gap-3">
                     <div className="w-7 h-7 border-[3px] border-kidville-green/20 border-t-kidville-green rounded-full animate-spin" />
-                    <p className="font-maven text-sm text-kidville-muted">Caricamento messaggi...</p>
+                    <p className="font-maven text-sm text-kidville-muted">{t('loadingMessages')}</p>
                 </div>
             </div>
         );
@@ -321,10 +324,10 @@ export function ChatMessageArea({
                         💬
                     </div>
                     <p className="font-barlow font-bold text-lg text-kidville-green uppercase mb-1">
-                        Inizia la conversazione
+                        {t('startConversation')}
                     </p>
                     <p className="font-maven text-sm text-kidville-muted max-w-xs">
-                        Scrivi un messaggio a {otherUserName}
+                        {t('writeMessageTo', { name: otherUserName })}
                     </p>
                 </div>
             </div>

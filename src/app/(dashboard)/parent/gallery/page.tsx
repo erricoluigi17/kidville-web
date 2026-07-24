@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, Suspense } from 'react';
+import { useTranslations } from 'next-intl';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronDown, ImageOff, Info } from 'lucide-react';
 import { MediaGrid, MediaItem } from '@/components/features/gallery/MediaGrid';
@@ -10,6 +11,7 @@ import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 
 // Identità dalla sessione (URL → localStorage → /api/me), senza fallback demo (M4).
 function ParentGalleryContent() {
+    const t = useTranslations('parentServizi');
     const { parentId, studentId, ready } = useParentIdentity();
 
     const [media, setMedia] = useState<MediaItem[]>([]);
@@ -74,13 +76,13 @@ function ParentGalleryContent() {
     return (
         <div className="px-4 pt-5 pb-24">
             <PageHeaderCard
-                eyebrow="Momenti"
-                title="Le mie foto"
+                eyebrow={t('galleryEyebrow')}
+                title={t('galleryTitolo')}
                 subtitle={
                     <>
-                        {studentName ? `Le foto di ${studentName} a scuola` : 'Foto dalla scuola'} 🌈
+                        {studentName ? t('gallerySottotitoloConNome', { nome: studentName }) : t('gallerySottotitolo')} 🌈
                         {totalCount > 0 && (
-                            <> · {totalCount} {totalCount === 1 ? 'foto' : 'foto'} disponibil{totalCount === 1 ? 'e' : 'i'}</>
+                            <> · {t('galleryFotoDisponibili', { count: totalCount })}</>
                         )}
                     </>
                 }
@@ -108,7 +110,7 @@ function ParentGalleryContent() {
                         className="flex flex-col items-center justify-center py-20 gap-3"
                     >
                         <div className="w-7 h-7 border-[3px] border-kidville-green/20 border-t-kidville-green rounded-full animate-spin" />
-                        <p className="font-maven text-sm text-kidville-muted">Caricamento foto...</p>
+                        <p className="font-maven text-sm text-kidville-muted">{t('galleryCaricamentoFoto')}</p>
                     </motion.div>
                 )}
             </AnimatePresence>
@@ -132,10 +134,10 @@ function ParentGalleryContent() {
                             </div>
                             <div className="text-center">
                                 <p className="font-barlow font-bold text-kidville-green/60 text-sm uppercase tracking-wide">
-                                    Nessuna foto disponibile
+                                    {t('galleryVuotoTitolo')}
                                 </p>
                                 <p className="font-maven text-xs text-kidville-muted mt-1">
-                                    Le foto appariranno qui quando gli insegnanti le condivideranno
+                                    {t('galleryVuotoTesto')}
                                 </p>
                             </div>
                         </motion.div>
@@ -154,9 +156,9 @@ function ParentGalleryContent() {
                             disabled={loadingMore}
                         >
                             {loadingMore ? (
-                                <><div className="w-4 h-4 border-2 border-kidville-green/20 border-t-kidville-green rounded-full animate-spin" /> Caricamento...</>
+                                <><div className="w-4 h-4 border-2 border-kidville-green/20 border-t-kidville-green rounded-full animate-spin" /> {t('galleryCaricamento')}</>
                             ) : (
-                                <><ChevronDown className="w-4 h-4" /> Carica Altre Foto</>
+                                <><ChevronDown className="w-4 h-4" /> {t('galleryCaricaAltre')}</>
                             )}
                         </Btn>
                     )}
@@ -174,8 +176,7 @@ function ParentGalleryContent() {
                     <Info size={18} />
                 </span>
                 <p className="font-maven text-[12.5px] leading-snug text-kidville-green/80">
-                    Trovi solo le foto in cui {studentName ?? 'il tuo bambino'} è taggato/a. Sono visibili ai
-                    genitori della sezione e restano disponibili per 14 giorni; puoi scaricarle e condividerle.
+                    {t('galleryInfoPrivacy', { nome: studentName ?? t('galleryInfoBambinoFallback') })}
                 </p>
             </motion.div>
         </div>

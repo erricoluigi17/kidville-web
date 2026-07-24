@@ -1,5 +1,6 @@
 'use client'
 
+import { useTranslations } from 'next-intl'
 import { buildEmbedUrl } from '@/lib/news/instagram'
 
 // =============================================================================
@@ -16,6 +17,7 @@ interface Props {
 }
 
 export function InstagramEmbed({ shortcode, url }: Props) {
+  const t = useTranslations('parentNews')
   const embedUrl = buildEmbedUrl(shortcode)
   const permalink = url && /^https?:\/\/(www\.)?instagram\.com\//i.test(url)
     ? url
@@ -29,7 +31,7 @@ export function InstagramEmbed({ shortcode, url }: Props) {
       >
         <iframe
           src={embedUrl}
-          title="Post Instagram"
+          title={t('postInstagram')}
           loading="lazy"
           scrolling="no"
           referrerPolicy="strict-origin-when-cross-origin"
@@ -43,7 +45,7 @@ export function InstagramEmbed({ shortcode, url }: Props) {
         rel="noopener noreferrer"
         className="inline-flex items-center justify-center gap-2 rounded-pill bg-kidville-green px-4 py-2.5 font-barlow text-sm font-extrabold uppercase tracking-wide text-white active:scale-95"
       >
-        Apri su Instagram
+        {t('apriInstagram')}
       </a>
     </div>
   )

@@ -2,6 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
+import { useTranslations } from 'next-intl'
 import { ArrowLeft, Mail, ChevronRight } from 'lucide-react'
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard'
 import { useParentIdentity } from '@/lib/auth/use-parent-identity'
@@ -22,6 +23,7 @@ function estraiEdizioni(data: unknown): NewsDigestEdizione[] {
 
 function ParentDigestList() {
   const { parentId, studentId, ready } = useParentIdentity()
+  const t = useTranslations('parentNews')
   const { nomeMese } = useDateFormat()
   const [edizioni, setEdizioni] = useState<NewsDigestEdizione[]>([])
   const [loading, setLoading] = useState(true)
@@ -46,13 +48,13 @@ function ParentDigestList() {
         className="mb-4 inline-flex items-center gap-1.5 font-barlow text-[12.5px] font-extrabold uppercase tracking-wide text-kidville-green active:scale-95"
       >
         <ArrowLeft size={16} strokeWidth={2.4} />
-        News
+        {t('feedTitle')}
       </Link>
 
-      <PageHeaderCard eyebrow="Comunicazioni" title="Digest mensile" subtitle="Il riepilogo «Kidville News» inviato via email" className="mb-5" />
+      <PageHeaderCard eyebrow={t('eyebrow')} title={t('digestNavTitolo')} subtitle={t('digestSottotitolo')} className="mb-5" />
 
       {loading || !ready ? (
-        <div className="flex flex-col gap-3" role="status" aria-label="Caricamento del digest">
+        <div className="flex flex-col gap-3" role="status" aria-label={t('caricamentoDigest')}>
           {[0, 1, 2].map((i) => (
             <div key={i} className="h-[64px] animate-pulse rounded-card bg-kidville-white" />
           ))}
@@ -60,8 +62,8 @@ function ParentDigestList() {
       ) : edizioni.length === 0 ? (
         <div role="status" className="kv-news-onbody flex flex-col items-center justify-center py-16 text-center">
           <div className="mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-kidville-cream text-4xl">✉️</div>
-          <h2 className="mb-1 font-barlow text-xl font-bold uppercase text-kidville-green">Ancora nessun digest</h2>
-          <p className="max-w-xs font-maven text-sm text-kidville-sub">Ogni mese qui trovi il riepilogo delle novità della scuola.</p>
+          <h2 className="mb-1 font-barlow text-xl font-bold uppercase text-kidville-green">{t('digestVuotoTitolo')}</h2>
+          <p className="max-w-xs font-maven text-sm text-kidville-sub">{t('digestVuotoTesto')}</p>
         </div>
       ) : (
         <div className="flex flex-col gap-3">
@@ -77,7 +79,7 @@ function ParentDigestList() {
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block font-barlow text-sm font-extrabold uppercase tracking-wide text-kidville-green">
-                  {ed.titolo || `Kidville News — ${nomeMese(ed.mese ?? 1)} ${ed.anno ?? ''}`.trim()}
+                  {ed.titolo || t('digestTitoloFallback', { mese: nomeMese(ed.mese ?? 1), anno: ed.anno ?? '' }).trim()}
                 </span>
                 <span className="block font-maven text-xs text-kidville-sub">{nomeMese(ed.mese ?? 1)} {ed.anno}</span>
               </span>

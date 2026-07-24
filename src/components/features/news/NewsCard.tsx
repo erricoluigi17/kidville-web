@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useLocale } from 'next-intl'
+import { useLocale, useTranslations } from 'next-intl'
 import { Pin, Newspaper, Megaphone, Camera } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
@@ -24,10 +24,12 @@ const fmtData = (iso: string | null, locale: string): string => {
   }
 }
 
-const TIPO_META: Record<NewsTipo, { label: string; Icon: typeof Newspaper }> = {
-  articolo: { label: 'Articolo', Icon: Newspaper },
-  breve: { label: 'Comunicato', Icon: Megaphone },
-  instagram: { label: 'Instagram', Icon: Camera },
+// La label del tipo passa dall'i18n: la chiave è risolta dentro il componente
+// (gli hook non si usano a livello di modulo).
+const TIPO_META: Record<NewsTipo, { labelKey: string; Icon: typeof Newspaper }> = {
+  articolo: { labelKey: 'tipoArticolo', Icon: Newspaper },
+  breve: { labelKey: 'tipoComunicato', Icon: Megaphone },
+  instagram: { labelKey: 'tipoInstagram', Icon: Camera },
 }
 
 interface Props {
@@ -38,6 +40,7 @@ interface Props {
 
 export function NewsCard({ post, categoriaNome, href }: Props) {
   const locale = useLocale()
+  const t = useTranslations('parentNews')
   const meta = TIPO_META[post.tipo] ?? TIPO_META.articolo
   const Icon = meta.Icon
   const estratto = estrattoTesto(post.contenuto_testo)
@@ -57,12 +60,12 @@ export function NewsCard({ post, categoriaNome, href }: Props) {
             {post.pinned && (
               <Badge tone="evidenza" className="gap-1">
                 <Pin size={11} strokeWidth={2.4} />
-                In evidenza
+                {t('inEvidenza')}
               </Badge>
             )}
             <span className="inline-flex items-center gap-1 rounded-pill bg-kidville-green-soft px-[9px] py-1 font-barlow text-[11px] font-extrabold uppercase tracking-[0.06em] text-kidville-green">
               <Icon size={12} strokeWidth={2.2} />
-              {meta.label}
+              {t(meta.labelKey)}
             </span>
             {categoriaNome && (
               <span className="inline-flex items-center rounded-pill bg-kidville-yellow-soft px-[9px] py-1 font-barlow text-[11px] font-extrabold uppercase tracking-[0.06em] text-kidville-ink">

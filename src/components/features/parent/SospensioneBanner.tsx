@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import { useTranslations } from 'next-intl';
 import { Ban } from 'lucide-react';
 import { getSupabase } from '@/lib/supabase/browser-client';
 import { formatEuro } from '@/lib/format/valuta';
@@ -21,6 +22,7 @@ interface StatoSospensione {
 // gate. Se non sospeso non renderizza nulla. Si aggiorna in realtime quando un
 // pagamento/incasso cambia (la revoca automatica lo fa sparire da solo).
 export function SospensioneBanner({ userId, className }: Props) {
+    const t = useTranslations('parentServizi');
     const [stato, setStato] = useState<StatoSospensione | null>(null);
     const [loading, setLoading] = useState(true);
 
@@ -59,14 +61,15 @@ export function SospensioneBanner({ userId, className }: Props) {
                 </span>
                 <div className="min-w-0 flex-1">
                     <p className="font-barlow text-base font-black uppercase leading-none text-kidville-error-strong">
-                        Servizi sospesi
+                        {t('sospensioneServiziSospesi')}
                     </p>
                     <p className="mt-1 font-maven text-[12.5px] leading-snug text-kidville-error-strong">
-                        La tua posizione risulta sospesa per morosità
-                        {stato.totaleScaduto > 0 ? ` (${formatEuro(stato.totaleScaduto)} scaduti)` : ''}.
-                        Alcuni servizi (moduli, adesioni, ordini) sono temporaneamente bloccati.
-                        Salda gli importi scaduti o contatta la <strong>Segreteria</strong> per regolarizzare:
-                        la riattivazione è automatica una volta saldato tutto lo scaduto.
+                        {t.rich('sospensioneTesto', {
+                            scaduto: stato.totaleScaduto > 0
+                                ? t('sospensioneScaduto', { importo: formatEuro(stato.totaleScaduto) })
+                                : '',
+                            strong: (chunks) => <strong>{chunks}</strong>,
+                        })}
                     </p>
                 </div>
             </div>

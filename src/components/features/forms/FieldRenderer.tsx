@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { useTranslations } from 'next-intl'
 import type {
   UseFormRegister,
   Control,
@@ -36,6 +37,7 @@ export function FieldRenderer({
   /** Se valorizzato, gli upload passano da questo endpoint server (multipart) invece del client browser. */
   uploadEndpoint?: string
 }) {
+  const t = useTranslations('parentForms')
   // Regola unica di validazione: la STESSA `validateField` che rigira il server
   // (obbligatorietà + pattern/lunghezze/provincia/email/date/select). RHF mostra
   // sotto il campo il messaggio (in italiano) che ritorna. I blocchi `consent`
@@ -74,7 +76,7 @@ export function FieldRenderer({
       <div className="flex items-start gap-3 px-4 py-3 rounded-xl bg-kidville-green-light border border-kidville-green/20">
         <PenLine className="w-4 h-4 text-kidville-green flex-shrink-0 mt-0.5" />
         <p className="text-sm text-kidville-green/80">
-          {field.label || 'Questo modulo richiede la firma elettronica via OTP al termine.'}
+          {field.label || t('firmaRichiesta')}
         </p>
       </div>
     )
@@ -89,7 +91,7 @@ export function FieldRenderer({
         name={field.id}
         control={control}
         defaultValue={false}
-        rules={field.required ? { validate: (v) => v === true || 'Devi accettare per proseguire' } : undefined}
+        rules={field.required ? { validate: (v) => v === true || t('devAccettare') } : undefined}
         render={({ field: rhf }) => (
           <div className="space-y-1.5">
             <label className="flex items-start gap-3 px-4 py-3 rounded-xl bg-kidville-cream border border-kidville-green/15 cursor-pointer hover:border-kidville-green/30 transition-all">
@@ -116,7 +118,7 @@ export function FieldRenderer({
                     onClick={e => e.stopPropagation()}
                     className="inline-block mt-1 text-xs text-kidville-green underline"
                   >
-                    {field.link_label || 'Leggi l’informativa'}
+                    {field.link_label || t('leggiInformativa')}
                   </a>
                 )}
               </span>
@@ -208,7 +210,7 @@ export function FieldRenderer({
       {field.type === 'select' && (
         <select id={field.id} className={`${FIELD_BASE} [color-scheme:light]`} defaultValue="" {...ariaProps} {...register(field.id, rules)}>
           <option value="" disabled className="bg-white text-kidville-green">
-            Seleziona…
+            {t('seleziona')}
           </option>
           {(field.options ?? []).map((opt, i) => (
             <option key={i} value={opt.value} className="bg-white text-kidville-green">
@@ -319,6 +321,7 @@ export function FileField({
   /** Dimensione massima in MB comunicata al server per la validazione. */
   maxSizeMb?: number
 }) {
+  const t = useTranslations('parentForms')
   const [uploading, setUploading] = useState(false)
   const [fileName, setFileName] = useState('')
   const [uploadError, setUploadError] = useState<string | null>(null)
@@ -363,7 +366,7 @@ export function FileField({
         messaggio: `upload allegato modulo fallito — ${err instanceof Error ? err.message : 'errore sconosciuto'}`,
         stack: err instanceof Error ? err.stack : undefined,
       })
-      setUploadError('Caricamento non riuscito. Riprova.')
+      setUploadError(t('caricamentoNonRiuscito'))
       onChange('')
     } finally {
       setUploading(false)
@@ -388,10 +391,10 @@ export function FileField({
         )}
         <span className="text-sm text-kidville-green/80 truncate">
           {uploading
-            ? 'Caricamento…'
+            ? t('caricamento')
             : value
-            ? fileName || 'Allegato caricato'
-            : 'Seleziona un file (PDF, JPG…)'}
+            ? fileName || t('allegatoCaricato')
+            : t('selezionaFile')}
         </span>
         <input
           type="file"
@@ -406,7 +409,7 @@ export function FileField({
       {consenteImmagini && (
         <ScattaFotoButton
           onFile={processaFile}
-          label="Scatta foto"
+          label={t('scattaFoto')}
           disabled={uploading}
           className="mt-2 inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-dashed border-kidville-green/30 text-sm font-medium text-kidville-green hover:border-kidville-green transition-colors disabled:opacity-50"
         />

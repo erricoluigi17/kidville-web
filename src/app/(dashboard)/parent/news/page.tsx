@@ -2,6 +2,7 @@
 
 import { Suspense } from 'react'
 import Link from 'next/link'
+import { useTranslations } from 'next-intl'
 import { Mail, ChevronRight } from 'lucide-react'
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard'
 import { useParentIdentity } from '@/lib/auth/use-parent-identity'
@@ -10,13 +11,14 @@ import { NewsFeedList } from '@/components/features/news/NewsFeedList'
 
 function ParentNewsContent() {
   const { parentId, studentId, ready } = useParentIdentity()
+  const t = useTranslations('parentNews')
 
   return (
     <div className="px-4 pt-5 pb-28">
       <PageHeaderCard
-        eyebrow="Comunicazioni"
-        title="News"
-        subtitle="Novità, eventi e comunicati della scuola"
+        eyebrow={t('eyebrow')}
+        title={t('feedTitle')}
+        subtitle={t('feedSubtitle')}
         className="mb-5"
       />
 
@@ -30,8 +32,8 @@ function ParentNewsContent() {
           <Mail size={19} strokeWidth={1.9} />
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block font-barlow text-sm font-extrabold uppercase tracking-wide text-kidville-green">Digest mensile</span>
-          <span className="block font-maven text-xs text-kidville-sub">Il riepilogo «Kidville News» via email</span>
+          <span className="block font-barlow text-sm font-extrabold uppercase tracking-wide text-kidville-green">{t('digestNavTitolo')}</span>
+          <span className="block font-maven text-xs text-kidville-sub">{t('digestNavSottotitolo')}</span>
         </span>
         <ChevronRight size={16} strokeWidth={2} className="flex-shrink-0 text-kidville-muted/60" />
       </Link>

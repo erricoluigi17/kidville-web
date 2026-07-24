@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
+import { useTranslations } from 'next-intl'
 import { ShieldCheck, Loader2, AlertCircle, Mail, X, CheckCircle2 } from 'lucide-react'
 
 interface Props {
@@ -17,6 +18,7 @@ interface Props {
  * Stile conforme a design.md (sfondi chiari, verde Kidville, niente scuri).
  */
 export function OtpEmailModal({ open, email, devCode, onClose, onVerify }: Props) {
+  const t = useTranslations('parentForms')
   const [code, setCode] = useState('')
   const [verifying, setVerifying] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -43,7 +45,7 @@ export function OtpEmailModal({ open, email, devCode, onClose, onVerify }: Props
 
   async function handleVerify() {
     if (code.length !== 6) {
-      setError('Inserisci il codice a 6 cifre')
+      setError(t('inserisciCodice6'))
       return
     }
     setVerifying(true)
@@ -51,7 +53,7 @@ export function OtpEmailModal({ open, email, devCode, onClose, onVerify }: Props
     const res = await onVerify(code)
     setVerifying(false)
     if (!res.ok) {
-      setError(res.error ?? 'Verifica fallita')
+      setError(res.error ?? t('verificaFallita'))
       return
     }
     setSuccess(true)
@@ -77,10 +79,10 @@ export function OtpEmailModal({ open, email, devCode, onClose, onVerify }: Props
               <CheckCircle2 className="w-8 h-8 text-kidville-success" />
             </div>
             <h3 className="font-barlow font-black text-xl text-kidville-green uppercase tracking-wide">
-              Modulo firmato!
+              {t('moduloFirmato')}
             </h3>
             <p className="font-maven text-sm text-gray-500 mt-1">
-              La firma elettronica è stata registrata con successo.
+              {t('firmaRegistrata')}
             </p>
           </div>
         ) : (
@@ -89,12 +91,12 @@ export function OtpEmailModal({ open, email, devCode, onClose, onVerify }: Props
               <ShieldCheck className="w-6 h-6 text-kidville-green" />
             </div>
             <h3 className="font-barlow font-black text-xl text-kidville-green uppercase tracking-wide">
-              Firma elettronica
+              {t('firmaElettronica')}
             </h3>
             <p className="flex items-center gap-1.5 font-maven text-sm text-gray-500 mt-1.5">
               <Mail className="w-3.5 h-3.5 flex-shrink-0" />
-              Codice inviato a{' '}
-              <span className="text-kidville-green font-semibold">{email ?? 'la tua email'}</span>
+              {t('codiceInviatoA')}{' '}
+              <span className="text-kidville-green font-semibold">{email ?? t('laTuaEmail')}</span>
             </p>
 
             {devCode && (
@@ -126,7 +128,7 @@ export function OtpEmailModal({ open, email, devCode, onClose, onVerify }: Props
               className="mt-5 w-full flex items-center justify-center gap-2 px-4 py-3 rounded-pill bg-kidville-green text-kidville-yellow font-barlow font-black uppercase tracking-wider disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 transition-all"
             >
               {verifying ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
-              Firma e completa
+              {t('firmaCompleta')}
             </button>
           </div>
         )}

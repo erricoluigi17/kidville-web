@@ -6,7 +6,7 @@ import { BellRing, ShieldAlert } from 'lucide-react';
 import { useAdminSettings } from './useAdminSettings';
 import { card, h3, hint } from './ui';
 import { CheckField, SaveRow } from './fields';
-import { TIPI_NOTIFICA, type GruppoNotifica } from '@/lib/notifiche/tipi';
+import { TIPI_NOTIFICA, useTipoNotifica, type GruppoNotifica } from '@/lib/notifiche/tipi';
 
 // Pannello Impostazioni → Notifiche: un toggle per ogni tipo del catalogo
 // (src/lib/notifiche/tipi.ts). Toggle assente = attiva; il gate server-side è
@@ -27,6 +27,7 @@ const GRUPPI: { id: GruppoNotifica; labelKey: string; subKey: string }[] = [
 
 export function NotificheSettings({ userId }: { userId: string }) {
     const t = useTranslations('adminSettings');
+    const notifica = useTipoNotifica();
     const { settings, save, saving, error } = useAdminSettings(userId);
     const [draft, setDraft] = useState<Record<string, boolean> | null>(null);
     const [msg, setMsg] = useState('');
@@ -55,11 +56,13 @@ export function NotificheSettings({ userId }: { userId: string }) {
                         <h3 className={h3}><BellRing size={16} /> {t(gruppo.labelKey)}</h3>
                         <p className="font-maven text-xs text-kidville-muted -mt-3 mb-4">{t(gruppo.subKey)}</p>
                         <div className="space-y-3">
-                            {voci.map(([tipo, def]) => (
+                            {voci.map(([tipo, def]) => {
+                                const info = notifica(tipo);
+                                return (
                                 <div key={tipo}>
                                     <CheckField checked={attiva(tipo)} onChange={(v) => set(tipo, v)}>
                                         <span className="inline-flex items-center gap-1.5">
-                                            {def.label}
+                                            {info.label}
                                             {def.sicurezza && (
                                                 <span className="inline-flex items-center gap-1 text-[10px] bg-kidville-warn-soft text-kidville-warn px-2 py-0.5 rounded-full">
                                                     <ShieldAlert size={11} /> {t('ntSicurezza')}
@@ -67,14 +70,15 @@ export function NotificheSettings({ userId }: { userId: string }) {
                                             )}
                                         </span>
                                     </CheckField>
-                                    {def.descrizione && <p className="font-maven text-[11px] text-kidville-muted ml-6">{def.descrizione}</p>}
+                                    {info.descrizione && <p className="font-maven text-[11px] text-kidville-muted ml-6">{info.descrizione}</p>}
                                     {def.sicurezza && !attiva(tipo) && (
                                         <p className="font-maven text-[11px] text-kidville-warn ml-6 mt-0.5">
                                             {t('ntSicurezzaAvviso')}
                                         </p>
                                     )}
                                 </div>
-                            ))}
+                                );
+                            })}
                         </div>
                         <SaveRow onSave={salva} saving={saving} msg={msg} error={error} />
                     </section>

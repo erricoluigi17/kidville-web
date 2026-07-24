@@ -35,6 +35,7 @@ vi.mock('next-intl', async () => {
     adminSettings: (await import('../messages/it/adminSettings.json')).default,
     adminAltro: (await import('../messages/it/adminAltro.json')).default,
     shared: (await import('../messages/it/shared.json')).default,
+    etichette: (await import('../messages/it/etichette.json')).default,
   };
   const resolve = (ns: string | undefined, key: string): string => {
     const gruppo = ns ? it[ns] : undefined;

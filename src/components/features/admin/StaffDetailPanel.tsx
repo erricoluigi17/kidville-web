@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { X, Pencil, Check, KeyRound, Loader2, ShieldCheck } from 'lucide-react';
-import { RUOLI_ASSEGNABILI, labelRuolo } from '@/lib/auth/ruoli';
+import { RUOLI_ASSEGNABILI, useLabelRuolo } from '@/lib/auth/ruoli';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 
 // Scheda dedicata di un membro dello STAFF (elenco reale da `utenti`, tab Staff
@@ -31,6 +31,7 @@ interface Props {
 
 export function StaffDetailPanel({ staffId, onClose }: Props) {
   const t = useTranslations('adminStudents');
+  const labelRuolo = useLabelRuolo();
   const { userId, role, ready } = useSessionIdentity();
   const canEdit = role === 'admin' || role === 'coordinator';
 

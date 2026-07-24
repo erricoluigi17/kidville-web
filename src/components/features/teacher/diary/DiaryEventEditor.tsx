@@ -6,10 +6,10 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { X, Plus, Minus, Moon, Sun } from 'lucide-react';
 import { DiaryEventType } from '@/lib/offline/db';
 import { EventTypeButton } from '@/components/features/teacher/diary/EventTypeButton';
-import { EVENT_CONFIG, BATHROOM_TYPES } from '@/components/features/teacher/diary/eventConfig';
+import { EVENT_CONFIG, BATHROOM_TYPES, useEventLabel } from '@/components/features/teacher/diary/eventConfig';
 import { MealDetailInline } from '@/components/features/teacher/diary/MealDetailInline';
 import { ActivityDetailInline, ActivityItem } from '@/components/features/teacher/diary/ActivityDetailInline';
-import { UMORE_VALUES, UMORE_CONFIG, umoreFromDettagli, umoreAttivo } from '@/lib/diary/umore';
+import { UMORE_VALUES, UMORE_CONFIG, useUmoreLabel, umoreFromDettagli, umoreAttivo } from '@/lib/diary/umore';
 
 // =============================================================================
 // Compilazione del diario 0-6 per una sezione: stato + handler (useDiaryDay) e
@@ -395,6 +395,8 @@ export type DiaryDay = ReturnType<typeof useDiaryDay>;
 
 export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: string | null }) {
     const t = useTranslations('teacherDiario');
+    const eventLabel = useEventLabel();
+    const umoreLabel = useUmoreLabel();
     const {
         students, eventTypes, selectedEvent, setSelectedEvent, studentStates, savedStudentIds,
         activities, setActivities, notaLibera, setNotaLibera, notaBambino, updateNotaBambino,
@@ -457,7 +459,7 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
                                         {cfg.emoji}
                                     </div>
                                     <div>
-                                        <h2 className="font-barlow font-black text-lg text-kidville-green uppercase tracking-wide">{cfg.label}</h2>
+                                        <h2 className="font-barlow font-black text-lg text-kidville-green uppercase tracking-wide">{eventLabel(selectedEvent ?? '')}</h2>
                                         <p className="font-maven text-[11px] text-kidville-muted">{t('numBambini', { count: students.length })} • {todayISO()}</p>
                                     </div>
                                 </div>
@@ -680,11 +682,11 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
                                                                     : 'border-kidville-line bg-white hover:bg-kidville-cream'
                                                             }`}
                                                             aria-pressed={active}
-                                                            aria-label={`${student.firstName}: ${c.label}`}
+                                                            aria-label={`${student.firstName}: ${umoreLabel(v)}`}
                                                         >
                                                             <span className="text-xl leading-none">{c.emoji}</span>
                                                             <span className={`font-maven text-[10px] ${active ? 'font-bold text-kidville-yellow-dark' : 'text-kidville-muted'}`}>
-                                                                {c.label}
+                                                                {umoreLabel(v)}
                                                             </span>
                                                         </button>
                                                     );
@@ -745,7 +747,7 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
                                 >
                                     {isSaving
                                         ? <><div className="w-5 h-5 border-2 border-kidville-yellow/40 border-t-kidville-yellow rounded-full animate-spin" /> {t('salvataggio')}</>
-                                        : <><span>{cfg.emoji}</span> {t('salvaPerTutti', { evento: cfg.label })}</>
+                                        : <><span>{cfg.emoji}</span> {t('salvaPerTutti', { evento: eventLabel(selectedEvent ?? '') })}</>
                                     }
                                 </button>
                             </div>

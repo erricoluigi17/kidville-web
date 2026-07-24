@@ -5,7 +5,7 @@ import { useTranslations } from 'next-intl';
 import { useSearchParams } from 'next/navigation';
 import { ChefHat, UtensilsCrossed } from 'lucide-react';
 import { MensaReport } from '@/components/features/admin/mensa/MensaReport';
-import { allergeniDelGiorno, allergeneLabel, allergeneEmoji, type AllergeniPortate } from '@/lib/mensa/allergeni';
+import { allergeniDelGiorno, useAllergeneLabel, allergeneEmoji, type AllergeniPortate } from '@/lib/mensa/allergeni';
 import { CockpitPage, PageHeader } from '@/components/ui/cockpit';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 
@@ -15,6 +15,7 @@ const hdr = (u: string) => ({ 'Content-Type': 'application/json', 'x-user-id': u
 
 function CucinaInner() {
   const t = useTranslations('adminMensa');
+  const allergeneLabel = useAllergeneLabel();
   const params = useSearchParams();
   const { userId } = useSessionIdentity();
   // l'insegnante arriva con ?sezione=… per restare scoped alla sua classe

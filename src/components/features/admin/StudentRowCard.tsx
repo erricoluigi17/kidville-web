@@ -3,7 +3,7 @@
 import React from 'react';
 import { useTranslations } from 'next-intl';
 import { AlertTriangle } from 'lucide-react';
-import { labelRuolo } from '@/lib/auth/ruoli';
+import { useLabelRuolo } from '@/lib/auth/ruoli';
 import type { Student } from './StudentTable';
 
 /**
@@ -35,6 +35,7 @@ interface Props {
 
 export function StudentRowCard({ student, isSelected, onToggleSelect, onClick, currentTypeFilter }: Props) {
     const t = useTranslations('adminStudents');
+    const labelRuolo = useLabelRuolo();
     const cognome = student.cognome || student.last_name || '—';
     const nome = student.nome || student.first_name || '';
     const hasAllergie = !!student.note_mediche;

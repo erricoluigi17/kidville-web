@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useTranslations } from 'next-intl';
 import { ClipboardList, AlertTriangle, Users, UtensilsCrossed, Trash2, Plus } from 'lucide-react';
 import { DateField } from '@/components/ui/DateField';
-import { allergeneLabel, allergeneEmoji } from '@/lib/mensa/allergeni';
+import { useAllergeneLabel, allergeneEmoji } from '@/lib/mensa/allergeni';
 
 interface Props {
   userId: string;
@@ -32,6 +32,7 @@ interface AlternativaManuale { id: string; alunno_id: string; nome: string; clas
 
 export function MensaReport({ userId, scuolaId, sezione, sezioni, soloLettura = false }: Props) {
   const t = useTranslations('adminMensa');
+  const allergeneLabel = useAllergeneLabel();
   const [data, setData] = useState(() => new Date().toISOString().slice(0, 10));
   const [filtroSezione, setFiltroSezione] = useState<string>(sezione ?? '');
   const [report, setReport] = useState<Report | null>(null);

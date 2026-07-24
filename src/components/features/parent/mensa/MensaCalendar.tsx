@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
 import { motion } from 'framer-motion';
 import { Ticket, ChevronLeft, ChevronRight, Check, X, Lock, CalendarOff, UtensilsCrossed, RefreshCw, AlertTriangle, Clock, LogIn } from 'lucide-react';
-import { allergeniDelGiorno, allergeneLabel, allergeneEmoji, type AllergeniPortate } from '@/lib/mensa/allergeni';
+import { allergeniDelGiorno, useAllergeneLabel, allergeneEmoji, type AllergeniPortate } from '@/lib/mensa/allergeni';
 import { SaveCelebration } from '@/components/ui/SaveConfirmation';
 import { OfflineBadge } from '@/components/ui/OfflineBadge';
 import { logClient } from '@/lib/logging/client';
@@ -66,6 +66,7 @@ async function recuperaPrimoFiglio(parentId: string): Promise<string | null> {
 
 export function MensaCalendar({ userId, studentId }: Props) {
   const t = useTranslations('mensa');
+  const allergeneLabel = useAllergeneLabel();
   // La lingua attiva regge sia le abbreviazioni dei giorni sia la formattazione
   // dell'intervallo settimana (mese abbreviato) — altrimenti in EN si vedrebbero
   // i mesi in italiano. In IT (default e nei test) resta 'it-IT', invariato.

@@ -8,7 +8,7 @@ import { StudentTable } from '@/components/features/admin/StudentTable';
 import { BulkAssignBar } from '@/components/features/admin/BulkAssignBar';
 import { SectionsView } from '@/components/features/admin/SectionsView';
 import { CockpitPage, HEADER_BTN, PageHeader, Tabs, StatCard } from '@/components/ui/cockpit';
-import { labelRuolo } from '@/lib/auth/ruoli';
+import { useLabelRuolo } from '@/lib/auth/ruoli';
 import { useSediAttive } from '@/lib/context/sede-context';
 
 interface Student {
@@ -37,6 +37,7 @@ interface Student {
 
 function AdminStudentsInner() {
   const t = useTranslations('adminStudents');
+  const labelRuolo = useLabelRuolo();
   // Tab iniziale dal query param (?tab=sections: back-link dal dettaglio sezione).
   const search = useSearchParams();
   const router = useRouter();

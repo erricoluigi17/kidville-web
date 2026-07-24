@@ -61,6 +61,9 @@ const FOOTER_BTN_CLS =
 
 export function AdminMenuSheet({ open, onClose, withUser, ruolo, returnFocusRef }: AdminMenuSheetProps) {
   const t = useTranslations('adminNav');
+  // Etichette delle voci di nav dal config condiviso (namespace `etichette`).
+  // Fallback all'IT del config se la chiave manca → nessuna rottura.
+  const te = useTranslations('etichette');
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeBtnRef = useRef<HTMLButtonElement>(null);
 
@@ -173,7 +176,7 @@ export function AdminMenuSheet({ open, onClose, withUser, ruolo, returnFocusRef 
             <div key={gi} className="flex flex-col gap-1">
               {g.title && (
                 <p className="px-1 pb-1 font-barlow text-[11px] font-bold uppercase tracking-[0.14em] text-kidville-muted">
-                  {g.title}
+                  {g.titleKey && te.has(g.titleKey) ? te(g.titleKey) : g.title}
                 </p>
               )}
               {g.items.map((item) => {
@@ -181,7 +184,7 @@ export function AdminMenuSheet({ open, onClose, withUser, ruolo, returnFocusRef 
                 return (
                   <Link key={item.href} href={withUser(item.href)} onClick={onClose} className={ROW_CLS}>
                     <Icon size={20} strokeWidth={2} className="shrink-0 text-kidville-green" />
-                    <span className="min-w-0 flex-1 font-semibold">{item.label}</span>
+                    <span className="min-w-0 flex-1 font-semibold">{te.has(item.labelKey) ? te(item.labelKey) : item.label}</span>
                     <ChevronRight size={16} className="text-kidville-muted shrink-0" strokeWidth={2} />
                   </Link>
                 );

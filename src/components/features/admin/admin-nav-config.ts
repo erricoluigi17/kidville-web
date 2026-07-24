@@ -37,67 +37,79 @@ import {
 
 export interface NavItem {
   href: string;
+  /** Etichetta IT — fallback se la chiave i18n manca (namespace `etichette`). */
   label: string;
+  /** Chiave i18n della label (namespace `etichette`, `nav_<id>`). */
+  labelKey: string;
   icon: typeof LayoutDashboard;
   roles?: string[]; // se assente → visibile a tutti i ruoli staff
 }
 
 export interface NavGroup {
+  /** Titolo IT — fallback se la chiave i18n manca. */
   title: string | null;
+  /** Chiave i18n del titolo (namespace `etichette`, `navgruppo_<id>`). */
+  titleKey?: string | null;
   items: NavItem[];
 }
 
 export const NAV_GROUPS: NavGroup[] = [
   {
     title: null,
-    items: [{ href: '/admin', label: 'Dashboard', icon: LayoutDashboard }],
+    items: [{ href: '/admin', label: 'Dashboard', labelKey: 'nav_dashboard', icon: LayoutDashboard }],
   },
   {
     title: 'Anagrafica',
-    items: [{ href: '/admin/students', label: 'Anagrafica', icon: Users }],
+    titleKey: 'navgruppo_anagrafica',
+    items: [{ href: '/admin/students', label: 'Anagrafica', labelKey: 'nav_students', icon: Users }],
   },
   {
     title: 'Didattica',
+    titleKey: 'navgruppo_didattica',
     items: [
-      { href: '/admin/primaria', label: 'Primaria', icon: GraduationCap },
-      { href: '/admin/diary', label: 'Diario 0–6', icon: BookOpen },
-      { href: '/admin/competenze', label: 'Competenze', icon: Award },
+      { href: '/admin/primaria', label: 'Primaria', labelKey: 'nav_primaria', icon: GraduationCap },
+      { href: '/admin/diary', label: 'Diario 0–6', labelKey: 'nav_diary', icon: BookOpen },
+      { href: '/admin/competenze', label: 'Competenze', labelKey: 'nav_competenze', icon: Award },
     ],
   },
   {
     title: 'Operativo',
+    titleKey: 'navgruppo_operativo',
     items: [
-      { href: '/admin/armadietto', label: 'Armadietto', icon: Package },
-      { href: '/admin/merchandise', label: 'Merchandise', icon: ShoppingBag },
-      { href: '/admin/mensa', label: 'Mensa', icon: UtensilsCrossed },
-      { href: '/admin/mensa/cucina', label: 'Report Cucina', icon: ChefHat },
+      { href: '/admin/armadietto', label: 'Armadietto', labelKey: 'nav_armadietto', icon: Package },
+      { href: '/admin/merchandise', label: 'Merchandise', labelKey: 'nav_merchandise', icon: ShoppingBag },
+      { href: '/admin/mensa', label: 'Mensa', labelKey: 'nav_mensa', icon: UtensilsCrossed },
+      { href: '/admin/mensa/cucina', label: 'Report Cucina', labelKey: 'nav_mensa_cucina', icon: ChefHat },
     ],
   },
   {
     title: 'Amministrazione',
+    titleKey: 'navgruppo_amministrazione',
     items: [
-      { href: '/admin/pagamenti', label: 'Contabilità', icon: Euro },
+      { href: '/admin/pagamenti', label: 'Contabilità', labelKey: 'nav_pagamenti', icon: Euro },
       // Registro protocolli: riservato ad admin+segreteria (decisione spec
       // 2026-07-12); primo uso reale del campo `roles` (il gate vero è nelle API).
-      { href: '/admin/protocolli', label: 'Protocollo', icon: Stamp, roles: ['admin', 'segreteria'] },
-      { href: '/admin/modulistica', label: 'Modulistica', icon: FileText },
-      { href: '/admin/gdpr', label: 'Privacy & GDPR', icon: ShieldCheck },
+      { href: '/admin/protocolli', label: 'Protocollo', labelKey: 'nav_protocolli', icon: Stamp, roles: ['admin', 'segreteria'] },
+      { href: '/admin/modulistica', label: 'Modulistica', labelKey: 'nav_modulistica', icon: FileText },
+      { href: '/admin/gdpr', label: 'Privacy & GDPR', labelKey: 'nav_gdpr', icon: ShieldCheck },
     ],
   },
   {
     title: 'Comunicazione',
+    titleKey: 'navgruppo_comunicazione',
     items: [
-      { href: '/admin/messaggi', label: 'Messaggi', icon: MessageCircle },
-      { href: '/admin/avvisi', label: 'Avvisi', icon: Bell },
-      { href: '/admin/news', label: 'News', icon: Newspaper },
-      { href: '/admin/compiti', label: 'Compiti', icon: ListTodo },
+      { href: '/admin/messaggi', label: 'Messaggi', labelKey: 'nav_messaggi', icon: MessageCircle },
+      { href: '/admin/avvisi', label: 'Avvisi', labelKey: 'nav_avvisi', icon: Bell },
+      { href: '/admin/news', label: 'News', labelKey: 'nav_news', icon: Newspaper },
+      { href: '/admin/compiti', label: 'Compiti', labelKey: 'nav_compiti', icon: ListTodo },
     ],
   },
   {
     title: 'Sistema',
+    titleKey: 'navgruppo_sistema',
     items: [
-      { href: '/admin/impostazioni', label: 'Impostazioni', icon: Settings },
-      { href: '/admin/tools', label: 'Strumenti', icon: Wrench },
+      { href: '/admin/impostazioni', label: 'Impostazioni', labelKey: 'nav_impostazioni', icon: Settings },
+      { href: '/admin/tools', label: 'Strumenti', labelKey: 'nav_tools', icon: Wrench },
     ],
   },
 ];

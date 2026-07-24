@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { useAdminIdentity } from '@/lib/context/admin-identity';
 import { motion } from 'framer-motion';
 import { LogoutMenuButton } from '@/components/ui/LogoutMenuButton';
@@ -24,6 +25,9 @@ const CONTRAST_ROW_CLS =
 // la pillola animata è dedicata alla sidebar.
 export function AdminSidebar() {
   const pathname = usePathname();
+  // Etichette di nav localizzate (namespace `etichette`, chiavi nav_*/navgruppo_*).
+  // Fallback all'IT del config se la chiave manca → nessuna rottura, mai la chiave.
+  const te = useTranslations('etichette');
   // userId (→ href ?userId=) e ruolo dall'identità condivisa del cockpit. Il
   // provider risolve userId in two-pass (null al primo render, come l'SSR) →
   // gli href della sidebar combaciano e non c'è hydration mismatch.
@@ -44,7 +48,7 @@ export function AdminSidebar() {
             <div key={gi} className="flex flex-col gap-1">
               {group.title && (
                 <p className="px-4 pb-1 pt-1 font-barlow text-[11px] font-bold uppercase tracking-[0.14em] text-kidville-muted">
-                  {group.title}
+                  {group.titleKey && te.has(group.titleKey) ? te(group.titleKey) : group.title}
                 </p>
               )}
               {items.map((item) => {
@@ -73,7 +77,7 @@ export function AdminSidebar() {
                       strokeWidth={2.2}
                       className={`relative z-10 shrink-0 ${active ? 'text-kidville-yellow' : ''}`}
                     />
-                    <span className="relative z-10 font-semibold">{item.label}</span>
+                    <span className="relative z-10 font-semibold">{te.has(item.labelKey) ? te(item.labelKey) : item.label}</span>
                   </Link>
                 );
               })}

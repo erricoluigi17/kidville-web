@@ -39,6 +39,7 @@ export default getRequestConfig(async () => {
     adminSettings: (await import(`../../messages/${locale}/adminSettings.json`)).default,
     adminAltro: (await import(`../../messages/${locale}/adminAltro.json`)).default,
     shared: (await import(`../../messages/${locale}/shared.json`)).default,
+    etichette: (await import(`../../messages/${locale}/etichette.json`)).default,
   };
 
   return { locale, messages };

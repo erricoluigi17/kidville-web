@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { ArrowUpDown, AlertTriangle } from 'lucide-react';
-import { labelRuolo } from '@/lib/auth/ruoli';
+import { useLabelRuolo } from '@/lib/auth/ruoli';
 import { StudentRowCard } from './StudentRowCard';
 
 export interface Student {
@@ -49,6 +49,7 @@ function getStatoBadge(stato: string) {
 
 export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSelectAll, onStudentClick, currentTypeFilter = 'child' }: Props) {
     const t = useTranslations('adminStudents');
+    const labelRuolo = useLabelRuolo();
     // Etichette di raggruppamento tradotte: la STESSA stringa deve servire sia
     // all'ordinamento sia alla reduce, così i gruppi combaciano col rendering.
     const senzaSezione = t('gruppoSenzaSezione');

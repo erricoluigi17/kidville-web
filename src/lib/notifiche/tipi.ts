@@ -4,6 +4,12 @@
 // e gate server-side isNotificaAbilitata() (src/lib/notifiche/config.ts).
 // Chiave = valore della colonna `notifiche.tipo`. Toggle assente = ATTIVA.
 // =============================================================================
+// NB: `useTranslations` è importato da 'next-intl' che espone una variante
+// react-server: l'import è sicuro anche nei moduli SERVER che usano questo
+// catalogo (triggers, config) — lo hook è CHIAMATO solo dai componenti client
+// (pannello Impostazioni/campanella). I CORPI delle notifiche persistite NON
+// vanno tradotti qui: qui si traducono solo le etichette del pannello.
+import { useTranslations } from 'next-intl'
 
 export type GruppoNotifica = 'genitore' | 'docente' | 'staff'
 
@@ -263,4 +269,32 @@ export const TIPI_NOTIFICA: Record<string, TipoNotifica> = {
 /** Risolve eventuali alias sul tipo canonico del catalogo. */
 export function tipoCanonico(tipo: string): string {
   return TIPO_ALIAS[tipo] ?? tipo
+}
+
+/** Etichetta + descrizione localizzate di un tipo notifica per la UI. */
+export interface TipoNotificaLabel {
+  label: string
+  descrizione?: string
+}
+
+/**
+ * Hook locale-aware per label/descrizione di un tipo notifica (namespace
+ * `etichette`, chiavi `notifica_<tipo>_label` / `notifica_<tipo>_desc`). Da
+ * usare nei componenti client (pannello Impostazioni, campanella). Chiave
+ * assente → fallback al catalogo puro `TIPI_NOTIFICA` (IT), MAI la chiave i18n.
+ * Il catalogo `TIPI_NOTIFICA` resta la fonte per gruppo/sicurezza e per il gate
+ * server-side.
+ */
+export function useTipoNotifica(): (tipo: string) => TipoNotificaLabel {
+  const t = useTranslations('etichette')
+  return (tipo: string) => {
+    const canon = tipoCanonico(tipo)
+    const def = TIPI_NOTIFICA[canon]
+    const kLabel = `notifica_${canon}_label`
+    const kDesc = `notifica_${canon}_desc`
+    return {
+      label: t.has(kLabel) ? t(kLabel) : (def?.label ?? tipo),
+      descrizione: t.has(kDesc) ? t(kDesc) : def?.descrizione,
+    }
+  }
 }

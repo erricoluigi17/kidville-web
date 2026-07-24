@@ -5,13 +5,13 @@ import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronLeft, ChevronRight, Camera, ChevronDown, GraduationCap } from 'lucide-react';
-import { getEventConfig } from '@/components/features/teacher/diary/eventConfig';
+import { getEventConfig, useEventLabel } from '@/components/features/teacher/diary/eventConfig';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { OfflineBadge } from '@/components/ui/OfflineBadge';
 import { fetchConCache } from '@/lib/offline/read-cache';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 import { useChildSchoolType } from '@/lib/auth/use-child-school-type';
-import { UMORE_CONFIG, umoreFromDettagli, umoreNarrative } from '@/lib/diary/umore';
+import { UMORE_CONFIG, useUmoreLabel, umoreFromDettagli, umoreNarrative } from '@/lib/diary/umore';
 import { MediaGrid, MediaItem } from '@/components/features/gallery/MediaGrid';
 
 // Tipo del traduttore next-intl: serve per passare `t` alle funzioni helper
@@ -194,6 +194,7 @@ function deduplicateAndSort(entries: DiaryEntry[]): DiaryEntry[] {
 
 function EventCard({ entry, index }: { entry: DiaryEntry; index: number }) {
     const t = useTranslations('diario');
+    const eventLabel = useEventLabel();
     const config = getEventConfig(entry.tipo_evento);
     const { lines, emoji } = buildFirstPersonNarrative(
         entry.tipo_evento,
@@ -216,7 +217,7 @@ function EventCard({ entry, index }: { entry: DiaryEntry; index: number }) {
                 </div>
                 <div className="flex-1">
                     <p className={`font-barlow font-black text-sm uppercase tracking-wide ${config.accentColor.split(' ').find(c => c.startsWith('text-')) ?? 'text-kidville-green'}`}>
-                        {config.label}
+                        {eventLabel(entry.tipo_evento)}
                     </p>
                     <p className="font-maven text-[11px] text-kidville-muted">
                         {formatTime(entry.timestamp_evento)}
@@ -310,6 +311,7 @@ function PhotosSection({ photos }: { photos: MediaItem[] }) {
 // Identità dalla sessione (URL → localStorage → /api/me), senza fallback demo (M4).
 function ParentDiaryContent() {
     const t = useTranslations('diario');
+    const umoreLabel = useUmoreLabel();
     const { parentId, studentId: alunnoId, ready } = useParentIdentity();
     // Guardia grado: il diario giornaliero esiste solo per nido/infanzia.
     const { schoolType, ready: schoolTypeReady } = useChildSchoolType();
@@ -541,7 +543,7 @@ function ParentDiaryContent() {
                                 <span className="text-[26px] leading-none">{umoreCfg?.emoji ?? '🙂'}</span>
                                 <div className="min-w-0">
                                     <p className="font-barlow text-[15px] font-black uppercase leading-none tracking-wide text-kidville-green">
-                                        {t('umoreTitolo')}{umoreCfg ? `: ${umoreCfg.label}` : ''}
+                                        {t('umoreTitolo')}{umoreCfg ? `: ${umoreLabel(umore ?? '')}` : ''}
                                     </p>
                                     <p className="mt-1 font-maven text-[12px] text-kidville-green/75">
                                         {umore

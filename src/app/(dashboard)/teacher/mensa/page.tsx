@@ -10,7 +10,7 @@ import { useTranslations } from 'next-intl';
 import { useSearchParams } from 'next/navigation';
 import { AlertTriangle, RefreshCw, CalendarDays, UtensilsCrossed } from 'lucide-react';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
-import { allergeneLabel, allergeneEmoji } from '@/lib/mensa/allergeni';
+import { useAllergeneLabel, allergeneEmoji } from '@/lib/mensa/allergeni';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 
 interface AlunnoReport { id: string; nome: string; classe: string; allergeni: string[]; conflitti: unknown[] }
@@ -21,6 +21,7 @@ interface AltManuale { id: string; alunno_id: string; nome: string; classe: stri
 
 function MensaDocente() {
   const t = useTranslations('teacherServizi');
+  const allergeneLabel = useAllergeneLabel();
   const search = useSearchParams();
   const userId = getCurrentTeacherId(search);
 

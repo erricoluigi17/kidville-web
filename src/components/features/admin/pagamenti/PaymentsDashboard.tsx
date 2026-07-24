@@ -14,7 +14,7 @@ import { ModificaPagamentoModal } from './ModificaPagamentoModal';
 import { RateizzaModal } from './RateizzaModal';
 import { STATI_PAGAMENTO as STATI, calcolaTotaliPagamenti } from './stati';
 import { AgendaScadenze } from './AgendaScadenze';
-import { AGING_LABEL, bucketScadenze, isMoroso, residuoEffettivo, type AgingBucketId } from '@/lib/pagamenti/aging';
+import { useAgingLabel, bucketScadenze, isMoroso, residuoEffettivo, type AgingBucketId } from '@/lib/pagamenti/aging';
 import { Badge } from '@/components/ui/Badge';
 import { StatCard, TABLE_WRAP, TABLE, TH, TD, TROW } from '@/components/ui/cockpit';
 import { cx } from '@/lib/ui/cx';
@@ -64,6 +64,7 @@ interface Props { userId: string; scuolaId: string }
 
 export function PaymentsDashboard({ userId, scuolaId }: Props) {
     const t = useTranslations('adminContabilita');
+    const agingLabel = useAgingLabel();
     const [pagamenti, setPagamenti] = useState<Pagamento[]>([]);
     const [alunni, setAlunni] = useState<Alunno[]>([]);
     const [categorie, setCategorie] = useState<Categoria[]>([]);
@@ -330,7 +331,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                 <>
                 <div className="mb-2 flex items-center justify-between gap-2">
                     <p className="font-maven text-xs text-kidville-muted">
-                        <span className="font-bold text-kidville-green">{AGING_LABEL[agendaFiltro]}</span> · {agendaItems.length} {agendaItems.length === 1 ? t('dashPagamentoApertiSing') : t('dashPagamentiApertiPlur')}
+                        <span className="font-bold text-kidville-green">{agingLabel(agendaFiltro)}</span> · {agendaItems.length} {agendaItems.length === 1 ? t('dashPagamentoApertiSing') : t('dashPagamentiApertiPlur')}
                     </p>
                     <button onClick={() => setAgendaFiltro(null)}
                         className="inline-flex items-center gap-1 rounded-pill border-[1.5px] border-kidville-line bg-kidville-white px-2.5 py-1 font-maven text-xs font-bold text-kidville-muted transition-colors hover:border-kidville-green hover:text-kidville-green">

@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslations } from 'next-intl';
 import { Users, Loader2, Pencil, Check, X, ShieldCheck, KeyRound } from 'lucide-react';
-import { RUOLI_ASSEGNABILI, labelRuolo } from '@/lib/auth/ruoli';
+import { RUOLI_ASSEGNABILI, useLabelRuolo } from '@/lib/auth/ruoli';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 
 interface StaffUser { id: string; nome?: string; cognome?: string; email?: string; ruolo: string; scuola_id?: string; gradi?: string[] }
@@ -16,6 +16,7 @@ interface Section { id: string; name: string; scuola_id: string }
 // bottone che finisce sempre in un alert 403 (il gate vero resta sul server).
 export function StaffPanel({ userId }: { userId: string }) {
   const t = useTranslations('adminSettings');
+  const labelRuolo = useLabelRuolo();
   const { role } = useSessionIdentity();
   const canEdit = role === 'admin' || role === 'coordinator';
   const [staff, setStaff] = useState<StaffUser[]>([]);

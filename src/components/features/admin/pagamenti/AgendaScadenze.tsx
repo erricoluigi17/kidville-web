@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo } from 'react';
-import { AGING_LABEL, bucketScadenze, type AgingBucketId, type AgingPagamento } from '@/lib/pagamenti/aging';
+import { useAgingLabel, bucketScadenze, type AgingBucketId, type AgingPagamento } from '@/lib/pagamenti/aging';
 import { cx } from '@/lib/ui/cx';
 
 const ORDINE: AgingBucketId[] = ['scaduti_oltre_30', 'scaduti_entro_30', 'settimana', 'mese'];
@@ -22,6 +22,7 @@ interface Props {
 
 /** Agenda scadenze: 4 bucket di aging cliccabili che filtrano la lista. */
 export function AgendaScadenze({ pagamenti, oggi, attivo, onSelect }: Props) {
+    const agingLabel = useAgingLabel();
     const rif = oggi ?? new Date().toISOString().slice(0, 10);
     const buckets = useMemo(() => bucketScadenze(pagamenti, rif), [pagamenti, rif]);
 
@@ -42,7 +43,7 @@ export function AgendaScadenze({ pagamenti, oggi, attivo, onSelect }: Props) {
                         )}
                     >
                         <span className="block font-barlow text-[11px] font-bold uppercase tracking-[0.04em] text-kidville-neutral">
-                            {AGING_LABEL[id]}
+                            {agingLabel(id)}
                         </span>
                         <span className="mt-0.5 flex items-baseline gap-1.5">
                             <span className={cx('font-barlow text-xl font-black leading-none', TONO[id].testo)}>{b.count}</span>

@@ -8,7 +8,7 @@ import { getSupabase } from '@/lib/supabase/browser-client';
 import { useAccessibility } from '@/lib/accessibility/useAccessibility';
 import { LanguageSwitcher } from '@/components/features/i18n/LanguageSwitcher';
 import { areaFromPath, homePathForRole, isAreaAllowed } from '@/lib/auth/active-role';
-import { labelRuolo } from '@/lib/auth/ruoli';
+import { useLabelRuolo } from '@/lib/auth/ruoli';
 import styles from './page.module.css';
 
 /* ───────── Iconcine inline (leading/eye + decori) ───────── */
@@ -101,11 +101,6 @@ interface ProfiloDisponibile {
   area: string;
 }
 
-const ETICHETTE: Record<string, string> = { genitore: 'Genitore' };
-
-function etichettaProfilo(ruolo: string): string {
-  return ETICHETTE[ruolo] ?? labelRuolo(ruolo);
-}
 
 /** Destinazione post-login: `?next=` onorato solo se coerente col ruolo attivo. */
 function destinazione(ruolo: string, next: string | null): string {
@@ -141,6 +136,7 @@ function LoginForm() {
   // profilo ma senza ruolo attivo → salta le credenziali, mostra la scelta.
   const scegli = params.get('scegli') === '1';
   const t = useTranslations('auth');
+  const labelRuolo = useLabelRuolo();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -332,7 +328,7 @@ function LoginForm() {
                   onClick={() => void scegliRuolo(p.ruolo)}
                   className={styles.roleBtn}
                 >
-                  {etichettaProfilo(p.ruolo)}
+                  {labelRuolo(p.ruolo)}
                 </button>
               ))}
             </div>

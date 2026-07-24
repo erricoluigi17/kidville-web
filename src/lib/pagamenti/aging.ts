@@ -3,6 +3,7 @@
 // contenitori padre) in bucket temporali rispetto a una data di riferimento.
 // Conta la DATA di scadenza, non lo stato: un "da_pagare" col trigger non
 // ancora girato ma scaduto ieri finisce comunque tra gli scaduti.
+import { useTranslations } from 'next-intl'
 
 export type AgingBucketId = 'scaduti_oltre_30' | 'scaduti_entro_30' | 'settimana' | 'mese'
 
@@ -31,6 +32,20 @@ export const AGING_LABEL: Record<AgingBucketId, string> = {
     scaduti_entro_30: 'Scaduti fino a 30gg',
     settimana: 'Questa settimana',
     mese: 'Prossimi 30gg',
+}
+
+/**
+ * Hook locale-aware per l'etichetta di un bucket di aging (namespace
+ * `etichette`, chiavi `aging_<code>`). Da usare nei componenti client. Chiave
+ * assente → fallback alla mappa pura `AGING_LABEL` (IT), MAI la chiave i18n.
+ * `AGING_LABEL` resta per il server (route che compongono payload/notifiche).
+ */
+export function useAgingLabel(): (id: AgingBucketId) => string {
+    const t = useTranslations('etichette')
+    return (id: AgingBucketId) => {
+        const k = `aging_${id}`
+        return t.has(k) ? t(k) : AGING_LABEL[id]
+    }
 }
 
 const STATI_APERTI = new Set(['da_pagare', 'parziale', 'scaduto'])

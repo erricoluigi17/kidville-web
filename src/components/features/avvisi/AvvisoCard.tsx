@@ -1,8 +1,9 @@
 'use client';
 
 import { motion } from 'framer-motion';
-import { Eye, ThumbsUp, ThumbsDown, Clock, ChevronDown, Users, Pencil, Trash2, Megaphone, ClipboardList } from 'lucide-react';
+import { Eye, ThumbsUp, ThumbsDown, Clock, ChevronDown, Users, Pencil, Trash2, Megaphone, ClipboardList, Share2 } from 'lucide-react';
 import { useState } from 'react';
+import { condividi } from '@/lib/native/share';
 
 export interface Avviso {
     id: string;
@@ -214,6 +215,22 @@ export function AvvisoCard({ avviso, index, isTeacher, onReadReceipt, onAdesione
                                         🔗 Link Esterno
                                     </a>
                                 )}
+                            </div>
+                        )}
+
+                        {/* Condivisione (genitore): titolo + testo dell'avviso */}
+                        {!isTeacher && (
+                            <div className="mt-3">
+                                <button
+                                    type="button"
+                                    onClick={() =>
+                                        void condividi({ title: avviso.titolo, text: `${avviso.titolo}\n\n${avviso.contenuto}` })
+                                    }
+                                    aria-label="Condividi questo avviso"
+                                    className="inline-flex items-center gap-1.5 rounded-pill border border-kidville-green/30 bg-kidville-white px-3 py-2 font-barlow text-xs font-extrabold uppercase tracking-wide text-kidville-green transition-colors hover:bg-kidville-cream active:scale-95"
+                                >
+                                    <Share2 size={14} strokeWidth={2} /> Condividi
+                                </button>
                             </div>
                         )}
                     </div>

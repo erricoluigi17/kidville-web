@@ -64,15 +64,18 @@
 
 ---
 
-## 🗓️ Changelog — Fase 2 native (in corso): cache offline lato genitore (avvisi · diario · menu) 2026-07-24 (branch `feat/native-fase2`)
+## 🗓️ Changelog — Fase 2 native: offline (avvisi·diario·menu) + fotocamera nativa + login biometrico + badge/condivisione 2026-07-24 (branch `feat/native-fase2`)
 
 Seconda fase della preparazione allo store: **funzioni native**. Primo tassello, l'**offline** (l'unico pienamente verificabile col gate web; le altre native — fotocamera, biometria, badge — seguono e richiedono verifica su dispositivo).
 
 - **Service Worker con caching del guscio** (`public/sw.js`, prima solo Web Push): `install`/`activate`/`fetch` — asset statici cache-first, navigazioni network-first con fallback alla cache (l'app si apre anche senza rete), `/api/` sempre in rete (mai dati stale). Registrato ora su web **e** nativo (`ServiceWorkerRegister` in `RootProviders`).
 - **Cache dati con Dexie** (riuso di `KidvilleOfflineDB`, nuova `version(11)` con store `cache_read`): helper `fetchConCache` (`src/lib/offline/read-cache.ts`) che serve l'ultima copia salvata quando la rete manca. Agganciato a **avvisi**, **diario** (entries) e **menu mensa**; indicatore «Dati non aggiornati — offline» (`OfflineBadge`). Saldo ticket e prenotazioni NON cachati (stato mutabile).
-- **Gate** verde: eslint 0 · tsc 0 · vitest 336 file / 2789 test · build ok. Nuovi test `read-cache` (7 casi) e `ServiceWorkerRegister`.
+- **Fotocamera nativa** (`@capacitor/camera`): sull'app nativa il caricamento foto apre lo scatto/scelta nativo; su web resta l'`<input type=file>`. Agganciata a galleria e news (i punti che accettano anche PDF restano su input per non perdere l'allegato documento). Helper `src/lib/native/camera.ts` + hook `useImagePicker`.
+- **Login biometrico** (`@aparajita/capacitor-biometric-auth`, opt-in): interruttore in «Profilo e deleghe»; la sessione Supabase è su cookie, quindi la biometria **sblocca** l'app (overlay `BiometricGate` all'avvio e al ritorno in foreground), non ri-autentica. Anti-lockout con «Esci».
+- **Badge icona** (`@capawesome/capacitor-badge`) = numero di notifiche non lette (dal Centro Notifiche). **Condivisione nativa** (`@capacitor/share`, fallback Web Share/clipboard): pulsanti «Condividi» su news e avvisi.
+- **Gate** verde: eslint 0 · tsc 0 · vitest 341 file / 2809 test · build ok. Nuovi test: read-cache, ServiceWorkerRegister, camera, use-image-picker, share, biometric.
 
-> ⚠️ **Non ancora in produzione**: la Fase 2 va provata su dispositivo/simulatore (comportamento del Service Worker nella WebView, plugin nativi) prima del deploy. Restano da fare in Fase 2: fotocamera nativa, login biometrico, badge icona/condivisione.
+> ⚠️ **Non ancora in produzione.** Tutte e 4 le funzioni native della Fase 2 sono implementate e passano il gate web, ma il comportamento runtime (Service Worker nella WebView, scatto foto, prompt biometrico, badge sull'icona, foglio di condivisione) **va verificato su dispositivo/simulatore** (`npx cap sync` + build nativa) prima del deploy. Nota di prodotto aperta: sul nativo il caricamento **video** dalla galleria va ripristinato con un pulsante dedicato se serve. Fase 3 (i18n EN completo) da avviare.
 
 ## 🗓️ Changelog — App Store & Play readiness (Fase 1): stringhe d'uso iOS, cancellazione account, pagine legali, privacy manifest, cleartext Android 2026-07-24 (branch `feat/app-store-readiness`)
 

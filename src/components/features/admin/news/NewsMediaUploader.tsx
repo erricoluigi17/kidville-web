@@ -12,6 +12,7 @@ import { useRef, useState } from 'react';
 import { Upload, ShieldQuestion } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
 import { logClient } from '@/lib/logging/client';
+import { useImagePicker } from '@/lib/native/use-image-picker';
 import { MODAL_CARD, MODAL_SHADOW, BTN_PRIMARY_AA, BTN_SECONDARY } from '@/components/features/admin/pagamenti/ui';
 
 interface Props {
@@ -76,11 +77,10 @@ export function NewsMediaUploader({
     }
   };
 
-  const onFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  // Gate del consenso foto: vale sia per il file scelto dall'input (web) sia per
+  // la foto scattata/scelta con la fotocamera nativa. Punto d'ingresso unico.
+  const processaFile = (file: File) => {
     const isImmagine = file.type.startsWith('image/');
-    // Gate del consenso foto: solo per le immagini, solo se non ancora dato.
     if (isImmagine && !consensoFoto) {
       setPending(file);
       setSpuntato(false);
@@ -88,6 +88,19 @@ export function NewsMediaUploader({
     }
     void carica(file);
   };
+
+  const onFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    processaFile(file);
+  };
+
+  // Nativo: apre la fotocamera Capacitor; web: click sull'input nascosto.
+  const { apri } = useImagePicker({
+    inputRef,
+    onFiles: (files) => { const f = files[0]; if (f) processaFile(f); },
+    multiplo: false,
+  });
 
   const confermaConsenso = () => {
     if (!spuntato) return;
@@ -109,7 +122,7 @@ export function NewsMediaUploader({
       <button
         ref={triggerRef}
         type="button"
-        onClick={() => inputRef.current?.click()}
+        onClick={() => { void apri(); }}
         disabled={disabled || busy}
         className="inline-flex items-center gap-2 rounded-pill border-[1.5px] border-dashed border-kidville-line bg-kidville-white px-4 py-2.5 font-maven text-sm font-bold text-kidville-green transition-colors hover:border-kidville-green disabled:opacity-50"
       >

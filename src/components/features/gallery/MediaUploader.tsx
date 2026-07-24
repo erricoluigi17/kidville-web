@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Upload, X, Image as ImageIcon } from 'lucide-react';
+import { useImagePicker } from '@/lib/native/use-image-picker';
 
 interface Props {
     onUpload: (files: { file: File; preview: string }[]) => void;
@@ -14,12 +15,16 @@ export function MediaUploader({ onUpload, uploading }: Props) {
     const [dragOver, setDragOver] = useState(false);
     const inputRef = useRef<HTMLInputElement>(null);
 
-    const addFiles = (fileList: FileList) => {
+    const addFiles = useCallback((fileList: FileList | File[]) => {
         const newFiles = Array.from(fileList)
             .filter(f => f.type.startsWith('image/') || f.type.startsWith('video/'))
             .map(file => ({ file, preview: URL.createObjectURL(file) }));
         setPreviews(prev => [...prev, ...newFiles]);
-    };
+    }, []);
+
+    // Nativo: la foto arriva dalla fotocamera Capacitor; web: click sull'input.
+    // In entrambi i casi i file confluiscono in addFiles → flusso identico.
+    const { apri } = useImagePicker({ inputRef, onFiles: addFiles, multiplo: true });
 
     const removeFile = (idx: number) => {
         setPreviews(prev => {
@@ -43,7 +48,7 @@ export function MediaUploader({ onUpload, uploading }: Props) {
                 onDragOver={e => { e.preventDefault(); setDragOver(true); }}
                 onDragLeave={() => setDragOver(false)}
                 onDrop={e => { e.preventDefault(); setDragOver(false); addFiles(e.dataTransfer.files); }}
-                onClick={() => inputRef.current?.click()}
+                onClick={() => { void apri(); }}
             >
                 <input ref={inputRef} type="file" accept="image/*,video/*" multiple className="hidden"
                     onChange={e => { if (e.target.files) addFiles(e.target.files); e.target.value = ''; }} />

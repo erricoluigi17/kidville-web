@@ -15,6 +15,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Bell, BellOff } from 'lucide-react';
 import { SHADOW_FLOAT } from '@/components/ui/Card';
+import { impostaBadgeNonLette } from '@/lib/native/badge';
 
 interface Notifica {
   id: string;
@@ -53,7 +54,11 @@ export function NotificationsPanel({ area, userId }: { area: 'teacher' | 'parent
       const j = res?.ok ? await res.json().catch(() => null) : null;
       if (j?.success) {
         setItems((j.data ?? []).slice(0, 20));
-        setNonLette(j.non_lette ?? 0);
+        const nl = j.non_lette ?? 0;
+        setNonLette(nl);
+        // Badge dell'icona app (nativo): riflette le notifiche non lette.
+        // No-op su web e gated internamente; best-effort, mai lancia.
+        void impostaBadgeNonLette(nl);
       }
     } finally {
       setReady(true);

@@ -2,9 +2,10 @@
 
 import { Suspense, useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
-import { IdCard, ShieldCheck, FileText, LifeBuoy, Loader2, AlertTriangle, Trash2, RotateCcw } from 'lucide-react';
+import { IdCard, ShieldCheck, FileText, LifeBuoy, Loader2, AlertTriangle, Trash2, RotateCcw, Fingerprint } from 'lucide-react';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { doLogout } from '@/lib/auth/logout';
+import { biometriaDisponibile, biometriaAttiva, impostaBiometria, verificaBiometria } from '@/lib/native/biometric';
 
 // Pagina «Profilo e deleghe» (attiva il placeholder della BottomNav). Contiene i
 // link legali e la CANCELLAZIONE ACCOUNT self-service (App Store 5.1.1(v) + GDPR):
@@ -27,7 +28,47 @@ function Inner() {
   const [busy, setBusy] = useState(false);
   const [errore, setErrore] = useState<string | null>(null);
 
+  // Sblocco biometrico opt-in (nativo). `bioSupportata`: null = in verifica,
+  // false = non disponibile (web o device senza biometria), true = disponibile.
+  const [bioSupportata, setBioSupportata] = useState<boolean | null>(null);
+  const [bioAttiva, setBioAttiva] = useState(false);
+  const [bioBusy, setBioBusy] = useState(false);
+
   const hdr = (uid: string) => ({ 'Content-Type': 'application/json', 'x-user-id': uid });
+
+  const controllaBio = useCallback(async () => {
+    // try/finally + setState dopo l'await: è il pattern che la regola
+    // react-hooks/set-state-in-effect accetta (prior art: `carica` più sotto).
+    try {
+      const disp = await biometriaDisponibile();
+      setBioSupportata(disp);
+      setBioAttiva(biometriaAttiva());
+    } finally {
+      // nessuna azione: il ramo esiste solo per delimitare l'async boundary
+    }
+  }, []);
+
+  useEffect(() => { void controllaBio(); }, [controllaBio]);
+
+  const toggleBio = async () => {
+    if (bioBusy) return;
+    setBioBusy(true);
+    try {
+      if (bioAttiva) {
+        impostaBiometria(false);
+        setBioAttiva(false);
+      } else {
+        // Verifica di prova prima di attivare l'opt-in.
+        const ok = await verificaBiometria('Attiva lo sblocco con Face ID o impronta');
+        if (ok) {
+          impostaBiometria(true);
+          setBioAttiva(true);
+        }
+      }
+    } finally {
+      setBioBusy(false);
+    }
+  };
 
   const carica = useCallback(async () => {
     if (!userId) return;
@@ -97,6 +138,46 @@ function Inner() {
           <span className="font-barlow text-sm font-extrabold uppercase text-kidville-green">Assistenza</span>
         </Link>
       </section>
+
+      {/* Sblocco biometrico (opt-in) — solo se il dispositivo lo supporta */}
+      {bioSupportata !== null && (
+        <section className="rounded-card border border-kidville-line bg-white p-5 shadow-sm">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <Fingerprint size={20} className="mt-0.5 flex-shrink-0 text-kidville-green" />
+              <div>
+                <h2 className="font-barlow text-sm font-extrabold uppercase text-kidville-green">
+                  Sblocco con Face ID / impronta
+                </h2>
+                <p className="mt-1 font-maven text-[13px] leading-relaxed text-kidville-ink/70">
+                  {bioSupportata
+                    ? 'Richiede il riconoscimento biometrico all’apertura dell’app.'
+                    : 'Non disponibile su questo dispositivo.'}
+                </p>
+              </div>
+            </div>
+            {bioSupportata && (
+              <button
+                type="button"
+                role="switch"
+                aria-checked={bioAttiva}
+                aria-label="Attiva lo sblocco biometrico"
+                onClick={() => void toggleBio()}
+                disabled={bioBusy}
+                className={`relative mt-0.5 h-7 w-12 flex-shrink-0 rounded-pill transition-colors disabled:opacity-50 ${
+                  bioAttiva ? 'bg-kidville-green' : 'bg-kidville-line'
+                }`}
+              >
+                <span
+                  className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${
+                    bioAttiva ? 'translate-x-6' : 'translate-x-1'
+                  }`}
+                />
+              </button>
+            )}
+          </div>
+        </section>
+      )}
 
       {/* Cancellazione account */}
       <section className="rounded-card border-t-4 border-kidville-error bg-white p-5 shadow-sm">

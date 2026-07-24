@@ -3,9 +3,10 @@
 import { Suspense, useCallback, useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
-import { ArrowLeft, RotateCcw } from 'lucide-react'
+import { ArrowLeft, RotateCcw, Share2 } from 'lucide-react'
 import { useParentIdentity } from '@/lib/auth/use-parent-identity'
 import { withIdentity } from '@/lib/auth/current-user'
+import { condividi } from '@/lib/native/share'
 import { NewsDetailContent } from '@/components/features/news/NewsDetailContent'
 import type { NewsMedia, NewsPost } from '@/lib/news/tipi'
 
@@ -44,13 +45,32 @@ function ParentNewsDetail() {
 
   return (
     <div className="px-4 pt-5 pb-28">
-      <Link
-        href={withIdentity('/parent/news', parentId, studentId)}
-        className="kv-news-onbody mb-4 inline-flex items-center gap-1.5 font-barlow text-[12.5px] font-extrabold uppercase tracking-wide text-kidville-green active:scale-95"
-      >
-        <ArrowLeft size={16} strokeWidth={2.4} />
-        Tutte le news
-      </Link>
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <Link
+          href={withIdentity('/parent/news', parentId, studentId)}
+          className="kv-news-onbody inline-flex items-center gap-1.5 font-barlow text-[12.5px] font-extrabold uppercase tracking-wide text-kidville-green active:scale-95"
+        >
+          <ArrowLeft size={16} strokeWidth={2.4} />
+          Tutte le news
+        </Link>
+        {post && !problema && (
+          <button
+            type="button"
+            onClick={() =>
+              void condividi({
+                title: post.titolo,
+                text: post.titolo,
+                url: typeof window !== 'undefined' ? window.location.href : undefined,
+              })
+            }
+            aria-label="Condividi questa news"
+            className="inline-flex items-center gap-1.5 rounded-pill border border-kidville-green/30 bg-kidville-white px-3 py-1.5 font-barlow text-[12px] font-extrabold uppercase tracking-wide text-kidville-green active:scale-95"
+          >
+            <Share2 size={15} strokeWidth={2.4} />
+            Condividi
+          </button>
+        )}
+      </div>
 
       {loading || !ready ? (
         <div className="flex flex-col gap-3" role="status" aria-label="Caricamento della news">

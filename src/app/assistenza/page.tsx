@@ -5,12 +5,11 @@ import Link from 'next/link';
 // per gli store. Mostra SOLO l'email di supporto e l'invito a contattare la
 // Segreteria: nessun telefono, nessun indirizzo.
 //
-// ATTENZIONE, DEBITO NOTO: l'indirizzo qui è una PEC, ed è l'unico recapito
-// disponibile oggi. Come contatto del Titolare va benissimo, ma quasi tutti i
-// gestori PEC RIFIUTANO la posta ordinaria: un genitore che scrive da Gmail — e
-// il revisore Apple, che usa questa pagina come Support URL — riceverebbe un
-// errore di consegna. Va sostituita con una casella ordinaria prima della
-// submission agli store.
+// L'indirizzo è una casella ORDINARIA, e deve restare tale: qui prima c'era una
+// PEC, ma quasi tutti i gestori PEC rifiutano la posta ordinaria — un genitore
+// che scrive da Gmail, e il revisore Apple che usa questa pagina come Support
+// URL, si sarebbero presi un errore di consegna. Un recapito di supporto che
+// rimbalza è peggio di nessun recapito: sembra funzionare.
 export const metadata: Metadata = {
   title: 'Assistenza — Kidville',
   description: 'Come ricevere assistenza per il registro elettronico Kidville.',
@@ -47,7 +46,7 @@ export default function AssistenzaPage() {
             </p>
             <p className="font-maven text-[15px] leading-relaxed text-kidville-ink">
               Email di supporto:{' '}
-              <strong className="text-kidville-green">scuolalafavola@pec.it</strong>
+              <strong className="text-kidville-green">lerrico7@gmail.com</strong>
             </p>
           </section>
 

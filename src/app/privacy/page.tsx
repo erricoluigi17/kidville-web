@@ -6,9 +6,11 @@ import Link from 'next/link';
 // dato personale, solo i riferimenti societari del Titolare (dati pubblici
 // d'impresa), forniti dal Titolare stesso.
 //
-// RESTA DA FARE prima della submission: la validazione legale del testo. E la
-// PEC va bene come contatto del Titolare/DPO, ma NON come recapito di supporto
-// per un genitore che scrive da una casella ordinaria — vedi /assistenza.
+// Il recapito è lo stesso di /termini e /assistenza: una casella ORDINARIA, così
+// un interessato può esercitare i suoi diritti scrivendo da un indirizzo
+// qualunque (una PEC rifiuterebbe la posta ordinaria e la richiesta rimbalzerebbe).
+//
+// RESTA DA FARE prima della submission: la validazione legale del testo.
 export const metadata: Metadata = {
   title: 'Informativa sulla privacy — Kidville',
   description:
@@ -47,7 +49,7 @@ export default function PrivacyPage() {
               <strong>03394870616</strong>, con sede in{' '}
               <strong>Via Silvio Pellico 7, 81030 Cesa (CE)</strong>. Per ogni richiesta relativa
               al trattamento dei dati è possibile scrivere a{' '}
-              <strong>scuolalafavola@pec.it</strong>.
+              <strong>lerrico7@gmail.com</strong>.
             </p>
           </section>
 
@@ -210,7 +212,7 @@ export default function PrivacyPage() {
             <p className="font-maven text-[15px] leading-relaxed text-kidville-ink">
               La <strong>cancellazione dell&rsquo;account</strong> può essere avviata direttamente
               dall&rsquo;app, nella sezione <strong>&laquo;Profilo e deleghe&raquo;</strong>. Per
-              le altre richieste è possibile scrivere a <strong>scuolalafavola@pec.it</strong>.
+              le altre richieste è possibile scrivere a <strong>lerrico7@gmail.com</strong>.
             </p>
           </section>
 
@@ -233,7 +235,7 @@ export default function PrivacyPage() {
             <p className="font-maven text-[15px] leading-relaxed text-kidville-ink">
               Per ogni informazione relativa alla presente informativa e al trattamento dei dati è
               possibile contattare il Titolare all&rsquo;indirizzo{' '}
-              <strong>scuolalafavola@pec.it</strong> oppure rivolgersi alla Segreteria.
+              <strong>lerrico7@gmail.com</strong> oppure rivolgersi alla Segreteria.
             </p>
           </section>
         </article>

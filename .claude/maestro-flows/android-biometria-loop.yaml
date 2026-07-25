@@ -1,0 +1,72 @@
+# =============================================================================
+# Kidville · ANDROID — prova del BLOCCANTE 1: loop del prompt biometrico
+#
+# Il difetto: l'AuthActivity del plugin biometrico è traslucida, quindi la
+# MainActivity riceve pause/resume anche quando il prompt si apre e si chiude —
+# e il listener `resume` ri-bloccava incondizionatamente. Dopo uno sblocco
+# RIUSCITO il prompt si riapriva, all'infinito, e l'unica via d'uscita era il
+# force-stop (il bottone «Esci» era coperto dall'Activity nativa).
+#
+# Questo flow: login → Profilo → attiva lo sblocco biometrico → riavvia l'app →
+# sblocca con l'impronta → verifica che l'app sia USABILE e non ri-bloccata.
+#
+# Prerequisiti:
+#   - APK con CAP_SERVER_URL="https://app.kidville.it"
+#   - emulatore con PIN impostato e UN'IMPRONTA REGISTRATA
+#   - l'impronta si "tocca" da fuori: adb -s <serial> emu finger touch 1
+#   - env MAESTRO_KV_EMAIL_GENITORE / MAESTRO_KV_PASSWORD esportate
+#
+# Selettori per TESTO italiano visibile (è una WebView: niente testID).
+# =============================================================================
+appId: it.kidville.app
+name: Kidville · Android — loop biometrico (bloccante 1)
+tags:
+  - android
+  - biometria
+env:
+  KV_EMAIL: ${MAESTRO_KV_EMAIL_GENITORE}
+  KV_PASSWORD: ${MAESTRO_KV_PASSWORD}
+---
+- launchApp:
+    clearState: true
+
+# ── 1. LOGIN ─────────────────────────────────────────────────────────────────
+- extendedWaitUntil:
+    visible: "Accedi al tuo account Kidville"
+    timeout: 90000
+- tapOn:
+    below: "Email"
+- inputText: ${KV_EMAIL}
+- hideKeyboard
+- tapOn:
+    below: "Password"
+- inputText: ${KV_PASSWORD}
+- hideKeyboard
+- tapOn: "Accedi"
+
+- runFlow:
+    when:
+      visible: "Non consentire"
+    commands:
+      - tapOn: "Non consentire"
+
+- extendedWaitUntil:
+    visible: "HOME"
+    timeout: 90000
+- takeScreenshot: /tmp/kv-bio-1-home
+
+# ── 2. PROFILO → attiva lo sblocco biometrico ────────────────────────────────
+- tapOn: "MENU"
+- extendedWaitUntil:
+    visible: "TUTTE LE SEZIONI"
+    timeout: 30000
+# La voce «Profilo e deleghe» sta in fondo al foglio: va raggiunta scorrendo.
+- scrollUntilVisible:
+    element: "PROFILO E DELEGHE"
+    direction: DOWN
+    timeout: 20000
+- tapOn: "PROFILO E DELEGHE"
+- extendedWaitUntil:
+    visible: "SBLOCCO CON FACE ID / IMPRONTA"
+    timeout: 60000
+- takeScreenshot: /tmp/kv-bio-2-profilo

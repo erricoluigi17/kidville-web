@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  PRIVACY (Android 12+, API 31+). L'app non partecipa a nessuna forma di
+  estrazione dei dati.
+
+  La cache locale della WebView (IndexedDB/Dexie `KidvilleOfflineDB`: presenze,
+  diario, armadietto, anagrafiche, galleria offline, appello e registro della
+  primaria) e i cookie di sessione Supabase contengono dati personali e sanitari
+  di MINORI: non devono uscire dal dispositivo, né verso Google Drive né verso
+  un altro telefono. Il dato autorevole è sul server: dopo un ripristino si rifà
+  il login.
+
+  `<device-transfer>` è indispensabile e non ridondante: su Android 12+
+  `allowBackup="false"` da solo NON disattiva il trasferimento device-to-device.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" />
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+        <exclude domain="device_root" />
+        <exclude domain="device_file" />
+        <exclude domain="device_database" />
+        <exclude domain="device_sharedpref" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" />
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+        <exclude domain="device_root" />
+        <exclude domain="device_file" />
+        <exclude domain="device_database" />
+        <exclude domain="device_sharedpref" />
+    </device-transfer>
+</data-extraction-rules>

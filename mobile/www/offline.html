@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="it">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Kidville</title>
+    <!--
+      Ripiego NATIVO (capacitor.config.ts → server.errorPath). Copre l'unico caso
+      che nessun Service Worker può coprire: app appena installata, dispositivo
+      offline, SW mai registrato — quindi nessuna cache da cui pescare.
+
+      Il testo dice «non raggiungibile» e NON «sei offline» di proposito: su
+      Android questa pagina scatta anche su un 4xx/5xx di main frame
+      (onReceivedHttpError), cioè anche con la rete perfettamente funzionante.
+      Dire una cosa falsa all'utente sarebbe un modo di nascondere un guasto.
+
+      Nessuna dipendenza esterna: né font, né CSS, né JS. È il ripiego del ripiego.
+    -->
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+      }
+      body {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+        padding: calc(32px + env(safe-area-inset-top)) 32px calc(32px + env(safe-area-inset-bottom));
+        background: #006a5f;
+        color: #fff;
+        text-align: center;
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      h1 {
+        margin: 0;
+        font-size: 22px;
+        font-weight: 900;
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
+      }
+      p {
+        margin: 0;
+        max-width: 22em;
+        font-size: 15px;
+        line-height: 1.5;
+        opacity: 0.85;
+      }
+      button {
+        margin-top: 10px;
+        border: 0;
+        border-radius: 999px;
+        background: #fdc400;
+        color: #006a5f;
+        font: inherit;
+        font-weight: 800;
+        text-transform: uppercase;
+        padding: 13px 28px;
+      }
+      button:active {
+        transform: scale(0.96);
+      }
+      .en {
+        display: none;
+      }
+      html[lang="en"] .it {
+        display: none;
+      }
+      html[lang="en"] .en {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <h1 class="it">Kidville non è raggiungibile</h1>
+    <h1 class="en">Kidville is unreachable</h1>
+    <p class="it">Controlla la connessione e riprova.</p>
+    <p class="en">Check your connection and try again.</p>
+    <button class="it" type="button" onclick="location.href='https://app.kidville.it/'">
+      Riprova
+    </button>
+    <button class="en" type="button" onclick="location.href='https://app.kidville.it/'">
+      Try again
+    </button>
+    <script>
+      // La lingua del sistema è l'unico segnale disponibile: il cookie KV_LOCALE
+      // vive sull'origine remota, che qui non è raggiungibile.
+      try {
+        if (/^en/i.test(navigator.language || '')) document.documentElement.lang = 'en';
+      } catch (e) {
+        /* lingua non determinabile: resta l'italiano */
+      }
+    </script>
+  </body>
+</html>

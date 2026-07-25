@@ -257,7 +257,6 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
                                     {/* Nativo: scatta la foto dell'allegato. Su web non compare. */}
                                     <ScattaFotoButton
                                         onFile={processaFile}
-                                        label="Scatta foto"
                                         disabled={fileUploading}
                                         className="flex items-center gap-2 px-4 py-2.5 border-2 border-dashed border-kidville-line rounded-2xl font-maven text-xs font-semibold text-kidville-green hover:border-kidville-green transition-colors disabled:opacity-50"
                                     />

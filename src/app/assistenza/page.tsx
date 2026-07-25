@@ -2,8 +2,15 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 
 // Pagina PUBBLICA (nessun login): supporto. Serve anche come "Support URL"
-// per gli store. Mostra SOLO un'email di supporto (segnaposto) e l'invito a
-// contattare la Segreteria: nessun telefono, nessun indirizzo.
+// per gli store. Mostra SOLO l'email di supporto e l'invito a contattare la
+// Segreteria: nessun telefono, nessun indirizzo.
+//
+// ATTENZIONE, DEBITO NOTO: l'indirizzo qui è una PEC, ed è l'unico recapito
+// disponibile oggi. Come contatto del Titolare va benissimo, ma quasi tutti i
+// gestori PEC RIFIUTANO la posta ordinaria: un genitore che scrive da Gmail — e
+// il revisore Apple, che usa questa pagina come Support URL — riceverebbe un
+// errore di consegna. Va sostituita con una casella ordinaria prima della
+// submission agli store.
 export const metadata: Metadata = {
   title: 'Assistenza — Kidville',
   description: 'Come ricevere assistenza per il registro elettronico Kidville.',
@@ -40,7 +47,7 @@ export default function AssistenzaPage() {
             </p>
             <p className="font-maven text-[15px] leading-relaxed text-kidville-ink">
               Email di supporto:{' '}
-              <strong className="text-kidville-green">[email di supporto]</strong>
+              <strong className="text-kidville-green">scuolalafavola@pec.it</strong>
             </p>
           </section>
 

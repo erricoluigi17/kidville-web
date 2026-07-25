@@ -27,6 +27,10 @@ const PUBLIC_PREFIXES = [
   '/privacy', // informativa GDPR pubblica (Privacy Policy URL per lo store)
   '/termini', // termini di servizio pubblici
   '/assistenza', // pagina di supporto pubblica (Support URL per lo store)
+  // Ripiego offline pre-cachato dal Service Worker. DEVE essere pubblica: senza,
+  // il pre-cache in `install` scaricherebbe il 307 verso /auth/login invece
+  // della pagina, e offline l'app mostrerebbe un redirect al posto del ripiego.
+  '/offline',
 ];
 
 export function isPublicPath(pathname: string): boolean {

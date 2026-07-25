@@ -2,7 +2,8 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 
 // Pagina PUBBLICA (nessun login): termini di servizio. Server component
-// statico; i riferimenti dell'ente sono segnaposto tra parentesi quadre.
+// statico. I riferimenti societari sono quelli reali del Titolare (dati
+// pubblici d'impresa). RESTA DA FARE: la validazione legale del testo.
 export const metadata: Metadata = {
   title: 'Termini di servizio — Kidville',
   description:
@@ -141,8 +142,9 @@ export default function TerminiPage() {
             </h2>
             <p className="font-maven text-[15px] leading-relaxed text-kidville-ink">
               Per informazioni sui presenti termini è possibile contattare{' '}
-              <strong>[Ragione sociale del Titolare]</strong> all&rsquo;indirizzo{' '}
-              <strong>[email del Titolare/DPO]</strong> oppure rivolgersi alla Segreteria.
+              <strong>Scuola dell&rsquo;Infanzia La Favola Soc. Coop.</strong>, Via Silvio Pellico
+              7, 81030 Cesa (CE), P.IVA 03394870616, all&rsquo;indirizzo{' '}
+              <strong>scuolalafavola@pec.it</strong> oppure rivolgersi alla Segreteria.
             </p>
           </section>
         </article>

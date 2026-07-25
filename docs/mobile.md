@@ -150,9 +150,15 @@ vedi `docs/cicd.md`).
 
 ### Prima della build per lo store — checklist obbligatoria
 
-⚠️ I `capacitor.config.json` **committati puntano al DEV**, non alla produzione:
-iOS → `http://localhost:3000`, Android → `http://10.0.2.2:3000`. Una build store
-generata così caricherebbe un dev server irraggiungibile dal device. Perciò,
+⚠️ I `capacitor.config.json` di `android/` e `ios/` **non sono nel repo** (sono
+gitignorati): li **rigenera `npx cap sync`** a ogni esecuzione, con il valore di
+`CAP_SERVER_URL` presente in quel momento nell'ambiente. Se la variabile non è
+valorizzata, la chiave `server.url` **sparisce** dal config generato e la WebView
+ricade sul `webDir` locale (`mobile/www`, che contiene solo un `index.html`
+segnaposto e la pagina `offline.html`): l'app si apre muta. È il modo più rapido
+di produrre una build inservibile, e non se ne accorge nessun test.
+
+Perciò `cap sync` va lanciato **sempre** con `CAP_SERVER_URL` esplicita, e
 **prima di ogni Archive/`.aab` destinato agli store**:
 
 1. **Rigenera i config con l'URL HTTPS di produzione** e ri-sincronizza i progetti
@@ -164,7 +170,40 @@ generata così caricherebbe un dev server irraggiungibile dal device. Perciò,
 
    Verifica poi che `ios/App/App/capacitor.config.json` e
    `android/app/src/main/assets/capacitor.config.json` riportino il `server.url`
-   HTTPS di produzione (non più `localhost` / `10.0.2.2`).
+   HTTPS di produzione (non più `localhost` / `10.0.2.2`), **e** contengano
+   `"loggingBehavior": "none"` e — su iOS — `"limitsNavigationsToAppBoundDomains":
+   true`:
+
+   ```bash
+   grep -n 'loggingBehavior\|"url"\|limitsNavigations' \
+     ios/App/App/capacitor.config.json \
+     android/app/src/main/assets/capacitor.config.json
+   ```
+
+### Service Worker, offline e log nativi
+
+- **`loggingBehavior: 'none'`** in `capacitor.config.ts` spegne i log del bridge
+  Capacitor. Non è un'ottimizzazione: col default (`debug`) il bridge stampa nei
+  log di sistema il payload intero di ogni risposta nativa, compreso il dataUrl
+  base64 di una foto scattata e il suo EXIF. Su Android spegne anche l'inoltro
+  della console della WebView verso logcat. **Per il debug** si usano
+  `chrome://inspect` (Android) e Safari → Sviluppo (iOS); il canale strutturato
+  dell'app resta `@/lib/logging/client` → `/api/logs` → tabella `app_log`, che è
+  redatto e interrogabile. Se serve davvero il logcat, si mette `'debug'` in
+  locale **senza committare**.
+- **`WKAppBoundDomains`** in `ios/App/App/Info.plist` è ciò che permette a
+  WKWebView di registrare il Service Worker: senza, su iPhone l'offline non
+  esiste. Il rovescio è che **limita le navigazioni** ai domini elencati (massimo
+  10) e si cambia solo con un aggiornamento sullo store: aggiungendo un embed di
+  terze parti va aggiunto anche lì. Il flag
+  `ios.limitsNavigationsToAppBoundDomains` si accende **solo** contro
+  `https://app.kidville.it` — in dev l'URL è un IP di LAN, che non è un dominio
+  registrabile. Conseguenza: **su iOS l'offline non si collauda in dev su IP di
+  LAN**, serve una build puntata al dominio di produzione.
+- **`server.errorPath: 'offline.html'`** copre l'unico caso che il Service Worker
+  non può coprire: app appena installata, dispositivo offline, SW mai registrato.
+  Su Android scatta anche sui 4xx/5xx di main frame, per questo il testo della
+  pagina dice «non raggiungibile» e non «sei offline».
 
 2. **iOS — controlla l'entitlement APNs nell'export dell'Archive.** Il sorgente
    `ios/App/App/App.entitlements` ha `aps-environment` = `development`; con la

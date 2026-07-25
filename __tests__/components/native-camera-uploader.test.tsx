@@ -47,7 +47,14 @@ describe('MediaUploader — fotocamera nativa', () => {
     fireEvent.click(screen.getByText(/Trascina foto o video/i))
     // A foto acquisita compare il pulsante di invio "Carica 1 file"
     await waitFor(() => expect(screen.getByText(/Carica 1 file/i)).toBeInTheDocument())
-    expect(scegliMock).toHaveBeenCalledWith({ multiplo: true })
+    expect(scegliMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        multiplo: true,
+        // L'hook traduce le etichette del foglio nativo: prima il picker
+        // Capacitor compariva in inglese dentro un'app italiana.
+        etichette: expect.objectContaining({ scatta: 'Scatta una foto' }),
+      }),
+    )
   })
 })
 

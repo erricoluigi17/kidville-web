@@ -33,6 +33,30 @@
 	<string>Kidville accede alle foto per allegare immagini e documenti al diario, alla galleria, alle comunicazioni e ai moduli.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Kidville usa il microfono quando registri o alleghi video, ad esempio nella galleria della classe.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Kidville usa Face ID per sbloccare l'app quando la riapri, così i dati di tuo figlio restano protetti se il telefono finisce in altre mani. Non sostituisce l'accesso con email e password.</string>
+	<!-- Senza questa chiave WKWebView NON registra alcun Service Worker: era la
+	     causa dell'offline morto su iPhone (nel container del simulatore la
+	     CacheStorage conteneva solo `salt`). Attenzione al rovescio: la lista
+	     LIMITA le navigazioni ai domini elencati, massimo 10, e si cambia solo
+	     con un aggiornamento sullo store. Il match è per dominio REGISTRABILE,
+	     quindi `supabase.co` copre `<ref>.supabase.co` e `kidville.it` copre i
+	     suoi sottodomini. `localhost` è obbligatorio per Capacitor: è lo schema
+	     locale che serve `offline.html` di `server.errorPath`.
+	     I tre domini di terze parti tengono in vita gli embed della sezione News
+	     (Instagram, YouTube, Vimeo), che sono navigazioni di sottoframe e
+	     verrebbero altrimenti bloccate: il video resterebbe nero, senza alcun
+	     link di ripiego. 7 slot su 10, 3 liberi. -->
+	<key>WKAppBoundDomains</key>
+	<array>
+		<string>kidville.it</string>
+		<string>app.kidville.it</string>
+		<string>localhost</string>
+		<string>supabase.co</string>
+		<string>instagram.com</string>
+		<string>youtube-nocookie.com</string>
+		<string>vimeo.com</string>
+	</array>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>

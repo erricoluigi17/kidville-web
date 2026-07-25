@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { logClient } from '@/lib/logging/client';
 import { useTranslations } from 'next-intl';
 import { X, Save, Users, User, ChevronRight, KeyRound } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -79,8 +80,8 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
                 const data = await res.json();
                 setParent(data);
                 setForm(data);
-            } catch (err) {
-                console.error(err);
+            } catch {
+                logClient({ livello: 'error', evento: 'fetch', messaggio: 'dettaglio-genitore-fallito', route: '/admin/students' });
             } finally {
                 setIsLoading(false);
             }

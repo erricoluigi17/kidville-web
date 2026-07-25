@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { logClient } from '@/lib/logging/client';
 import type { FormEvent } from 'react';
 import { Task } from '@/components/features/teacher/tasks/TaskCard';
 import { TaskFormData } from '@/components/features/teacher/tasks/TaskForm';
@@ -339,7 +340,7 @@ export function useTasks() {
         }));
         triggerToast('Task preso in carico! ▶️');
       }
-    } catch (err) { console.error(err); }
+    } catch { logClient({ livello: 'error', evento: 'fetch', messaggio: 'task-presa-in-carico-fallita', route: '/teacher/tasks' }); }
   }, [teacherId, markTaskReadLocally, triggerToast]);
 
   // Open completion modal
@@ -404,7 +405,7 @@ export function useTasks() {
         const err = await res.json();
         triggerToast(err.error || 'Errore nella creazione', 'error');
       }
-    } catch (err) { console.error(err); }
+    } catch { logClient({ livello: 'error', evento: 'fetch', messaggio: 'task-creazione-fallita', route: '/teacher/tasks' }); }
   }, [teacherId, triggerToast, loadTasks]);
 
   // Edit task fields (managers only)
@@ -430,7 +431,7 @@ export function useTasks() {
         setTasks(prev => prev.filter(t => t.id !== taskId));
         triggerToast('Task eliminato.');
       }
-    } catch (err) { console.error(err); }
+    } catch { logClient({ livello: 'error', evento: 'fetch', messaggio: 'task-eliminazione-fallita', route: '/teacher/tasks' }); }
   }, [teacherId, triggerToast]);
 
   // Resolve subtask (compito)

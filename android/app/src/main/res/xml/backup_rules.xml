@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Auto Backup per Android 11 e precedenti (minSdk 24). È ridondante finché
+  `allowBackup="false"` nel manifest, ma si tiene per due ragioni: documenta
+  l'intenzione, e se un domani qualcuno rimettesse `allowBackup="true"`
+  l'esclusione resterebbe in piedi invece di aprire silenziosamente il backup
+  dei dati di minori. Stessa motivazione di data_extraction_rules.xml.
+-->
+<full-backup-content>
+    <exclude domain="root" />
+    <exclude domain="file" />
+    <exclude domain="database" />
+    <exclude domain="sharedpref" />
+    <exclude domain="external" />
+</full-backup-content>

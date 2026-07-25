@@ -20,6 +20,19 @@ function writeStore(key: string, value: string) {
     try { window.localStorage.setItem(key, value); } catch { /* ignore */ }
 }
 
+/**
+ * True se questo dispositivo ha un'identità di sessione persistita.
+ *
+ * Usata dal gate biometrico per non restare spento nella finestra fra il login
+ * (che naviga con `router.replace`, quindi senza ri-renderizzare il root layout
+ * server) e il successivo avvio a freddo. NON è una prova di autenticazione: la
+ * chiave sopravvive alla scadenza della sessione, e per questo il gate la
+ * combina sempre con `isPublicPath()`.
+ */
+export function haIdentitaLocale(): boolean {
+    return !!readStore(SESSION_USER_KEY);
+}
+
 // Restituisce l'id genitore corrente: URL → localStorage → sessione → null.
 // Se presente in URL lo persiste per le pagine successive.
 export function getCurrentParentId(params?: URLSearchParams | null): string | null {

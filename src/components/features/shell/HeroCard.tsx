@@ -1,6 +1,7 @@
 'use client';
 
 import { motion } from 'framer-motion';
+import { useLocale } from 'next-intl';
 import { useClientValue } from '@/lib/hooks/use-client-value';
 import { HeroMascot } from './HeroMascot';
 
@@ -32,8 +33,9 @@ export function HeroCard({
   animate = true,
 }: HeroCardProps) {
   // Data locale calcolata SOLO client-side (hydration-safe, come il saluto).
+  const locale = useLocale();
   const oggi = useClientValue(
-    () => new Date().toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' }),
+    () => new Date().toLocaleDateString(locale, { weekday: 'long', day: 'numeric', month: 'long' }),
     '',
   );
 

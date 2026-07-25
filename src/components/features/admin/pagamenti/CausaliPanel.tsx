@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { Pencil, Save, Star } from 'lucide-react';
 import { logClient } from '@/lib/logging/client';
 import {
@@ -58,6 +59,7 @@ const testoErrore = (e: unknown) => (e instanceof Error ? e.message : String(e))
  * così ogni riga è indipendente. Anteprima dal vivo con dati sintetici.
  */
 export function CausaliPanel({ userId, scuolaId }: Props) {
+  const t = useTranslations('adminContabilita');
   const [categorie, setCategorie] = useState<Categoria[]>([]);
   const [modelli, setModelli] = useState<Record<string, string>>({});
   const [caricato, setCaricato] = useState(false);
@@ -155,43 +157,41 @@ export function CausaliPanel({ userId, scuolaId }: Props) {
         body: JSON.stringify({ scuola_id: scuolaId, causali_config }),
       });
       const j = await res.json();
-      if (j.success) setMsg('Modelli di causale salvati');
-      else setError(j.error ?? 'Errore di salvataggio');
+      if (j.success) setMsg(t('caus_msg_salvati'));
+      else setError(j.error ?? t('caus_err_salvataggio'));
     } catch (err) {
       logClient({ livello: 'error', evento: 'fetch', messaggio: `PATCH settings causali — ${testoErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
-      setError('Errore di rete nel salvataggio');
+      setError(t('caus_err_rete'));
     } finally {
       setSaving(false);
     }
-  }, [modelli, userId, scuolaId]);
+  }, [modelli, userId, scuolaId, t]);
 
   if (!caricato) {
-    return <p className="py-8 text-center font-maven text-sm text-kidville-muted">Caricamento…</p>;
+    return <p className="py-8 text-center font-maven text-sm text-kidville-muted">{t('caus_caricamento')}</p>;
   }
 
   const righe: { chiave: string; etichetta: string; badge: React.ReactNode }[] = [
-    { chiave: CHIAVE_DEFAULT, etichetta: 'Predefinito', badge: <Star size={14} className="text-kidville-green" aria-hidden /> },
+    { chiave: CHIAVE_DEFAULT, etichetta: t('caus_predefinito'), badge: <Star size={14} className="text-kidville-green" aria-hidden /> },
     ...categorie.map((c) => ({ chiave: c.slug, etichetta: c.nome, badge: <span aria-hidden>{c.icona}</span> })),
   ];
   const placeholderDefault = (modelli[CHIAVE_DEFAULT] ?? '').trim() || DEFAULT_CAUSALE_TEMPLATE;
 
   return (
     <section className={card}>
-      <h3 className={h3}><Pencil size={16} /> Causali bonifico</h3>
+      <h3 className={h3}><Pencil size={16} /> {t('caus_titolo')}</h3>
       <p className="font-maven text-[13px] text-kidville-sub mb-4">
-        Il modello della causale che il genitore copia nel bonifico. Personalizzabile per categoria;
-        una riga lasciata vuota usa il <strong>Predefinito</strong>. Clicca un segnaposto per inserirlo
-        nel campo selezionato.
+        {t('caus_help_pre')}<strong>{t('caus_predefinito')}</strong>{t('caus_help_post')}
       </p>
 
       {/* Chip dei segnaposto: inseriscono {chiave} nel campo attivo. */}
-      <div className="flex flex-wrap gap-2 mb-5" role="group" aria-label="Segnaposto disponibili">
+      <div className="flex flex-wrap gap-2 mb-5" role="group" aria-label={t('caus_aria_segnaposto')}>
         {PLACEHOLDER_CAUSALE.map((p) => (
           <button
             key={p.chiave}
             type="button"
             onClick={() => inserisciSegnaposto(p.chiave)}
-            title={`${p.label} · es. ${p.esempio}`}
+            title={`${p.label} · ${t('caus_es')} ${p.esempio}`}
             className="inline-flex items-center gap-1.5 rounded-pill bg-kidville-cream px-3 py-1.5 font-maven text-xs text-kidville-green ring-[1.5px] ring-inset ring-kidville-green/20 transition-colors hover:ring-kidville-green outline-none focus-visible:ring-2 focus-visible:ring-kidville-green"
           >
             <code className="font-semibold">{`{${p.chiave}}`}</code>
@@ -222,7 +222,7 @@ export function CausaliPanel({ userId, scuolaId }: Props) {
                 className={`${input} w-full`}
               />
               <p className="mt-1.5 flex flex-wrap items-baseline gap-1.5">
-                <span className="font-barlow text-[10px] font-extrabold uppercase tracking-wide text-kidville-sub">Anteprima</span>
+                <span className="font-barlow text-[10px] font-extrabold uppercase tracking-wide text-kidville-sub">{t('caus_anteprima')}</span>
                 <span className="rounded bg-kidville-cream px-2 py-0.5 font-maven text-[12.5px] text-kidville-ink">
                   {anteprima || '—'}
                 </span>
@@ -234,12 +234,12 @@ export function CausaliPanel({ userId, scuolaId }: Props) {
 
       <div className="mt-5 flex items-center gap-3">
         <button type="button" onClick={salva} disabled={saving} className={BTN_PRIMARY_AA}>
-          <Save size={14} /> {saving ? 'Salvataggio…' : 'Salva'}
+          <Save size={14} /> {saving ? t('caus_salvataggio') : t('caus_salva')}
         </button>
         {msg && <span role="status" className="font-maven text-sm text-kidville-success">{msg}</span>}
         {error && <span role="alert" className="font-maven text-sm text-kidville-error">{error}</span>}
       </div>
-      <p className={hint}>L&apos;anteprima usa dati d&apos;esempio; i dati reali del minore restano visibili solo al genitore.</p>
+      <p className={hint}>{t('caus_hint')}</p>
     </section>
   );
 }

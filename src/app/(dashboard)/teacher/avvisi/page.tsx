@@ -8,9 +8,11 @@ import { AvvisoDetailsDrawer } from '@/components/features/avvisi/AvvisoDetailsD
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { Btn } from '@/components/ui/Btn';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
+import { useTranslations } from 'next-intl';
 
 // Identità dalla sessione (URL → localStorage → /api/me), senza fallback demo (M4).
 function TeacherAvvisiContent() {
+    const t = useTranslations('teacherComunicazioni');
     const { userId: teacherId } = useSessionIdentity();
 
     const [avvisi, setAvvisi] = useState<Avviso[]>([]);
@@ -87,7 +89,7 @@ function TeacherAvvisiContent() {
 
     const handleDelete = async (avvisoId: string) => {
         if (!teacherId) return;
-        if (!window.confirm("Sei sicuro di voler eliminare definitivamente questo avviso? Questa azione eliminerà anche tutte le risposte associate.")) return;
+        if (!window.confirm(t('avvisiConfermaElimina'))) return;
         try {
             const res = await fetch(`/api/avvisi/${avvisoId}?userId=${teacherId}`, {
                 method: 'DELETE',
@@ -103,12 +105,12 @@ function TeacherAvvisiContent() {
         <div className="mx-auto max-w-[460px] px-4 pt-5">
             {/* Header verde (DR) */}
             <PageHeaderCard
-                eyebrow="Comunicazioni"
-                title="Bacheca"
-                subtitle="Circolari e avvisi alle famiglie"
+                eyebrow={t('avvisiEyebrow')}
+                title={t('avvisiTitolo')}
+                subtitle={t('avvisiSottotitolo')}
                 action={
                     <Btn variant="secondary" size="sm" onClick={() => { setEditingAvviso(null); setShowForm(true); }}>
-                        <Plus size={16} strokeWidth={1.8} /> Nuovo
+                        <Plus size={16} strokeWidth={1.8} /> {t('avvisiNuovo')}
                     </Btn>
                 }
             />
@@ -118,7 +120,7 @@ function TeacherAvvisiContent() {
             {loading && (
                 <div className="flex flex-col items-center justify-center py-20 gap-3">
                     <div className="w-7 h-7 border-[3px] border-kidville-green/20 border-t-kidville-green rounded-full animate-spin" />
-                    <p className="font-maven text-sm text-kidville-muted">Caricamento avvisi...</p>
+                    <p className="font-maven text-sm text-kidville-muted">{t('avvisiCaricamento')}</p>
                 </div>
             )}
 
@@ -126,9 +128,9 @@ function TeacherAvvisiContent() {
             {!loading && avvisi.length === 0 && (
                 <div className="flex flex-col items-center justify-center py-20 text-center">
                     <div className="w-20 h-20 bg-kidville-cream rounded-full flex items-center justify-center mb-4 text-4xl">📢</div>
-                    <h2 className="font-barlow font-bold text-xl text-kidville-green uppercase mb-2">Nessun avviso</h2>
+                    <h2 className="font-barlow font-bold text-xl text-kidville-green uppercase mb-2">{t('avvisiVuotoTitolo')}</h2>
                     <p className="font-maven text-kidville-muted text-sm max-w-xs">
-                        Crea il tuo primo avviso per comunicare con le famiglie
+                        {t('avvisiVuotoDescrizione')}
                     </p>
                 </div>
             )}

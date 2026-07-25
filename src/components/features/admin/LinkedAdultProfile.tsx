@@ -1,4 +1,5 @@
 import React from 'react';
+import { useTranslations, useLocale } from 'next-intl';
 import { User, IdCard, Download, Mail, Phone, MapPin } from 'lucide-react';
 
 export type AdultType = 'mother' | 'father' | 'delegate';
@@ -38,12 +39,14 @@ const Value = ({ children }: { children: React.ReactNode }) => (
 );
 
 export function LinkedAdultProfile({ data, type }: Props) {
+    const t = useTranslations('adminStudents');
+    const locale = useLocale();
     const Icon = type === 'delegate' ? IdCard : User;
 
     const formatDate = (dateStr?: string) => {
         if (!dateStr) return '—';
         try {
-            return new Date(dateStr).toLocaleDateString('it-IT');
+            return new Date(dateStr).toLocaleDateString(locale);
         } catch {
             return dateStr;
         }
@@ -60,7 +63,7 @@ export function LinkedAdultProfile({ data, type }: Props) {
                         {data.first_name} {data.last_name}
                     </h4>
                     <p className="text-xs text-kidville-muted capitalize font-maven">
-                        {type === 'mother' ? 'Madre' : type === 'father' ? 'Padre' : 'Delegato'}
+                        {type === 'mother' ? t('ruoloMadre') : type === 'father' ? t('ruoloPadre') : t('ruoloDelegato')}
                     </p>
                 </div>
             </div>
@@ -69,19 +72,19 @@ export function LinkedAdultProfile({ data, type }: Props) {
                 {/* Dati Personali */}
                 <div className="space-y-4">
                     <div>
-                        <Label>Sesso</Label>
-                        <Value>{data.gender === 'F' ? 'Femmina' : data.gender === 'M' ? 'Maschio' : data.gender}</Value>
+                        <Label>{t('campoSesso')}</Label>
+                        <Value>{data.gender === 'F' ? t('optFemmina') : data.gender === 'M' ? t('optMaschio') : data.gender}</Value>
                     </div>
                     <div>
-                        <Label>Nato/a il</Label>
+                        <Label>{t('linkedNatoIl')}</Label>
                         <Value>{formatDate(data.birth_date)}</Value>
                     </div>
                     <div>
-                        <Label>Luogo di Nascita</Label>
+                        <Label>{t('linkedLuogoNascita')}</Label>
                         <Value>{data.birth_city}</Value>
                     </div>
                     <div>
-                        <Label>Codice Fiscale</Label>
+                        <Label>{t('campoCodiceFiscale')}</Label>
                         <Value>
                             <span className="uppercase">{data.fiscal_code}</span>
                         </Value>
@@ -91,21 +94,21 @@ export function LinkedAdultProfile({ data, type }: Props) {
                 {/* Contatti e Residenza */}
                 <div className="space-y-4">
                     <div>
-                        <Label>Email</Label>
+                        <Label>{t('campoEmail')}</Label>
                         <div className="flex items-center gap-2">
                             <Mail size={14} className="text-kidville-muted flex-shrink-0" />
                             <Value>{data.emails?.[0]}</Value>
                         </div>
                     </div>
                     <div>
-                        <Label>Cellulare</Label>
+                        <Label>{t('linkedCellulare')}</Label>
                         <div className="flex items-center gap-2">
                             <Phone size={14} className="text-kidville-muted flex-shrink-0" />
                             <Value>{data.phone_numbers?.[0]}</Value>
                         </div>
                     </div>
                     <div>
-                        <Label>Residenza</Label>
+                        <Label>{t('linkedResidenza')}</Label>
                         <div className="flex items-start gap-2">
                             <MapPin size={14} className="text-kidville-muted flex-shrink-0 mt-0.5" />
                             <Value>
@@ -119,15 +122,15 @@ export function LinkedAdultProfile({ data, type }: Props) {
                 {type === 'delegate' && (
                     <div className="space-y-4 lg:col-span-1 md:col-span-2">
                         <div className="bg-kidville-cream rounded-xl p-4 border border-kidville-green/10 h-full">
-                            <Label>Documento d&apos;Identità</Label>
+                            <Label>{t('linkedDocumento')}</Label>
                             <div className="mt-2 space-y-3">
                                 <div>
-                                    <div className="text-xs text-kidville-muted mb-0.5">Tipo:</div>
-                                    <Value>{data.document_type || 'Non specificato'}</Value>
+                                    <div className="text-xs text-kidville-muted mb-0.5">{t('linkedTipoDoc')}</div>
+                                    <Value>{data.document_type || t('linkedNonSpecificato')}</Value>
                                 </div>
                                 <div>
-                                    <div className="text-xs text-kidville-muted mb-0.5">Numero:</div>
-                                    <Value>{data.document_number || 'Non specificato'}</Value>
+                                    <div className="text-xs text-kidville-muted mb-0.5">{t('linkedNumeroDoc')}</div>
+                                    <Value>{data.document_number || t('linkedNonSpecificato')}</Value>
                                 </div>
                                 
                                 {data.document_url && (
@@ -137,8 +140,8 @@ export function LinkedAdultProfile({ data, type }: Props) {
                                         rel="noopener noreferrer"
                                         className="mt-4 flex items-center gap-2 justify-center w-full py-2 bg-kidville-green/20 text-kidville-green hover:bg-kidville-green/30 transition-colors rounded-lg text-xs font-bold font-barlow uppercase tracking-wider border border-kidville-green/30"
                                     >
-                                        <Download size={14} /> 
-                                        Visualizza Allegato
+                                        <Download size={14} />
+                                        {t('linkedVisualizzaAllegato')}
                                     </a>
                                 )}
                             </div>

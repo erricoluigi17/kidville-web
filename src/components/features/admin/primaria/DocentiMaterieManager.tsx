@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { Plus, Trash2 } from 'lucide-react';
 
 interface Assegnazione {
@@ -28,6 +29,7 @@ interface Props {
 }
 
 export function DocentiMaterieManager({ sectionId, scuolaId, userId, sezioni = [], sezioneName, onSectionChange }: Props) {
+  const t = useTranslations('adminPrimaria');
   const [assegnazioni, setAssegnazioni] = useState<Assegnazione[]>([]);
   const [materie, setMaterie] = useState<Materia[]>([]);
   const [docenti, setDocenti] = useState<Docente[]>([]);
@@ -72,7 +74,7 @@ export function DocentiMaterieManager({ sectionId, scuolaId, userId, sezioni = [
       body: JSON.stringify({ utenteId: sel.utenteId, sectionId, materiaId: sel.materiaId, eContitolare: sel.eContitolare }),
     });
     const d = await r.json();
-    if (!r.ok) setError(d.error || 'Errore');
+    if (!r.ok) setError(d.error || t('comuneErrore'));
     else {
       setSel({ utenteId: '', materiaId: '', eContitolare: false });
       load();
@@ -87,20 +89,20 @@ export function DocentiMaterieManager({ sectionId, scuolaId, userId, sezioni = [
     load();
   };
 
-  if (!sectionId) return <p className="font-maven text-kidville-muted">Seleziona una sezione primaria.</p>;
+  if (!sectionId) return <p className="font-maven text-kidville-muted">{t('comuneSelezionaSezione')}</p>;
 
   return (
     <div className="space-y-4">
       {error && <div className="rounded-card bg-kidville-error/10 text-kidville-error px-4 py-2 text-sm font-maven">{error}</div>}
       {docenti.length === 0 && (
         <div className="rounded-card bg-kidville-warn-soft text-kidville-warn px-4 py-2 text-sm font-maven">
-          Nessun docente classificato come &quot;primaria&quot;. Impostalo nella tab Classificazione docenti.
+          {t('docentiMaterieNessunClassificato')}
         </div>
       )}
 
       {sezioneName && (
         <p className="font-maven text-sm text-kidville-muted">
-          Associazioni per la classe: <b className="text-kidville-green">{sezioneName}</b>
+          {t.rich('docentiMaterieAssociazioniPer', { nome: sezioneName, b: (chunks) => <b className="text-kidville-green">{chunks}</b> })}
         </p>
       )}
 
@@ -112,20 +114,20 @@ export function DocentiMaterieManager({ sectionId, scuolaId, userId, sezioni = [
               <span className="mx-2 text-kidville-muted">→</span>
               <span className="text-kidville-green">{a.materie?.nome ?? a.materia_id}</span>
               {sezioneName && <span className="ml-2 rounded-pill bg-kidville-cream text-kidville-muted px-2 py-0.5 text-[11px]">{sezioneName}</span>}
-              {a.e_contitolare && <span className="ml-2 rounded-pill bg-kidville-green/10 text-kidville-green px-2 py-0.5 text-[11px]">contitolare</span>}
+              {a.e_contitolare && <span className="ml-2 rounded-pill bg-kidville-green/10 text-kidville-green px-2 py-0.5 text-[11px]">{t('comuneContitolare')}</span>}
             </div>
             <button onClick={() => remove(a.id)} className="text-kidville-muted hover:text-kidville-error">
               <Trash2 size={16} />
             </button>
           </li>
         ))}
-        {assegnazioni.length === 0 && <li className="py-3 font-maven text-kidville-muted text-sm">Nessuna assegnazione.</li>}
+        {assegnazioni.length === 0 && <li className="py-3 font-maven text-kidville-muted text-sm">{t('docentiMaterieNessunAssegnazione')}</li>}
       </ul>
 
       <div className="flex flex-wrap items-end gap-2 border-t border-kidville-line pt-4">
         {sezioni.length > 0 && (
           <div>
-            <label className="block font-maven text-xs text-kidville-muted">Classe</label>
+            <label className="block font-maven text-xs text-kidville-muted">{t('docentiMaterieLabelClasse')}</label>
             <select
               value={sectionId}
               onChange={(e) => onSectionChange?.(e.target.value)}
@@ -138,26 +140,26 @@ export function DocentiMaterieManager({ sectionId, scuolaId, userId, sezioni = [
           </div>
         )}
         <div>
-          <label className="block font-maven text-xs text-kidville-muted">Docente</label>
+          <label className="block font-maven text-xs text-kidville-muted">{t('docentiMaterieLabelDocente')}</label>
           <select
             value={sel.utenteId}
             onChange={(e) => setSel((s) => ({ ...s, utenteId: e.target.value }))}
             className="font-maven rounded-pill border border-kidville-line bg-white px-3 py-1.5 text-sm"
           >
-            <option value="">Seleziona…</option>
+            <option value="">{t('comuneSeleziona')}</option>
             {docenti.map((d) => (
               <option key={d.id} value={d.id}>{d.nome} {d.cognome}</option>
             ))}
           </select>
         </div>
         <div>
-          <label className="block font-maven text-xs text-kidville-muted">Materia</label>
+          <label className="block font-maven text-xs text-kidville-muted">{t('docentiMaterieLabelMateria')}</label>
           <select
             value={sel.materiaId}
             onChange={(e) => setSel((s) => ({ ...s, materiaId: e.target.value }))}
             className="font-maven rounded-pill border border-kidville-line bg-white px-3 py-1.5 text-sm"
           >
-            <option value="">Seleziona…</option>
+            <option value="">{t('comuneSeleziona')}</option>
             {materie.map((m) => (
               <option key={m.id} value={m.id}>{m.nome}</option>
             ))}
@@ -169,13 +171,13 @@ export function DocentiMaterieManager({ sectionId, scuolaId, userId, sezioni = [
             checked={sel.eContitolare}
             onChange={(e) => setSel((s) => ({ ...s, eContitolare: e.target.checked }))}
           />
-          contitolare
+          {t('comuneContitolare')}
         </label>
         <button
           onClick={add}
           className="font-maven inline-flex items-center gap-1.5 rounded-pill bg-kidville-green px-4 py-1.5 text-sm text-kidville-yellow"
         >
-          <Plus size={14} /> Assegna
+          <Plus size={14} /> {t('docentiMaterieAssegna')}
         </button>
       </div>
     </div>

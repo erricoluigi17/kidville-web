@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback, Suspense } from 'react';
+import { useTranslations } from 'next-intl';
 import {
     CheckCircle2, Clock, ChevronDown, Package, Bell,
     Table2, ChevronLeft, ChevronRight, RefreshCw, Zap,
@@ -12,6 +13,7 @@ import {
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { Btn } from '@/components/ui/Btn';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
+import { useDateFormat } from '@/lib/i18n/date';
 
 interface LockerRequest {
     id: string;
@@ -28,13 +30,15 @@ interface LockerRequest {
     };
 }
 
+// Ritorna una CHIAVE di traduzione (`labelKey`) invece del testo: la funzione è
+// module-level e non può usare l'hook — la label si traduce al render con `t`.
 function getSemaforoUI(qty: number, gialla: number, rossa: number) {
     if (qty <= rossa) return {
         bg: 'bg-kidville-error-soft',
         border: 'border-kidville-error/30',
         text: 'text-kidville-error',
         icon: '🔴',
-        label: 'Esaurito!',
+        labelKey: 'lockerStatoEsaurito',
         barColor: 'bg-kidville-error',
     };
     if (qty <= gialla) return {
@@ -42,7 +46,7 @@ function getSemaforoUI(qty: number, gialla: number, rossa: number) {
         border: 'border-kidville-warn/30',
         text: 'text-kidville-warn',
         icon: '🟡',
-        label: 'In esaurimento',
+        labelKey: 'lockerStatoInEsaurimento',
         barColor: 'bg-kidville-warn',
     };
     return {
@@ -50,7 +54,7 @@ function getSemaforoUI(qty: number, gialla: number, rossa: number) {
         border: 'border-kidville-success/30',
         text: 'text-kidville-success',
         icon: '🟢',
-        label: 'Ok',
+        labelKey: 'lockerStatoOk',
         barColor: 'bg-kidville-success',
     };
 }
@@ -76,7 +80,9 @@ function nextMonth(ym: string): string {
 
 function LockerInner() {
     // Identità reale (niente ID/nome hardcoded): come le altre pagine genitore.
+    const t = useTranslations('parentServizi');
     const { studentId, ready } = useParentIdentity();
+    const f = useDateFormat();
     const [childName, setChildName] = useState('');
     useEffect(() => {
         if (!studentId) return;
@@ -187,11 +193,11 @@ function LockerInner() {
                 body: JSON.stringify({ id: requestId, stato: 'acknowledged' }),
             });
             if (!res.ok) throw new Error('Errore');
-            showToastMsg('✅ Preso in carico!');
+            showToastMsg(t('lockerToastPresoInCarico'));
             fetchData();
         } catch (err) {
             console.error('Errore:', err);
-            showToastMsg('❌ Errore nel salvataggio');
+            showToastMsg(t('lockerToastErrSalvataggio'));
         } finally {
             setSavingId(null);
         }
@@ -211,7 +217,7 @@ function LockerInner() {
         return (
             <div className="px-4 pt-5 pb-24 flex flex-col items-center justify-center min-h-[60vh] gap-4 text-center">
                 <Package size={40} className="text-kidville-muted" />
-                <p className="font-maven text-kidville-muted">Nessun bambino collegato a questo profilo.</p>
+                <p className="font-maven text-kidville-muted">{t('lockerNessunBambino')}</p>
             </div>
         );
     }
@@ -220,7 +226,7 @@ function LockerInner() {
         return (
             <div className="px-4 pt-5 pb-24 flex flex-col items-center justify-center min-h-[60vh] gap-4">
                 <div className="w-10 h-10 border-4 border-kidville-green/30 border-t-kidville-green rounded-full animate-spin" />
-                <p className="font-maven text-kidville-muted">Caricamento armadietto...</p>
+                <p className="font-maven text-kidville-muted">{t('lockerCaricamentoArmadietto')}</p>
             </div>
         );
     }
@@ -229,9 +235,9 @@ function LockerInner() {
         <div className="px-4 pt-5 pb-24">
             {/* ── Header ── */}
             <PageHeaderCard
-                eyebrow="Servizi"
-                title="Armadietto"
-                subtitle={<>Materiale scolastico di {childName}</>}
+                eyebrow={t('lockerEyebrow')}
+                title={t('lockerTitolo')}
+                subtitle={<>{t('lockerSottotitolo', { nome: childName })}</>}
                 action={
                     <>
                         {/* Badge LIVE */}
@@ -242,7 +248,7 @@ function LockerInner() {
                         <button
                             onClick={() => { fetchData(); if (activeTab === 'monthly') fetchMonthly(month); }}
                             className="flex h-9 w-9 items-center justify-center rounded-full bg-white/15 text-white transition-colors hover:bg-white/25"
-                            title="Aggiorna">
+                            title={t('lockerAggiornaTitle')}>
                             <RefreshCw size={16} />
                         </button>
                     </>
@@ -250,7 +256,7 @@ function LockerInner() {
             />
             {lastUpdated && (
                 <p className="mt-2 px-1 font-maven text-[11px] text-kidville-muted">
-                    Aggiornato alle {lastUpdated.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                    {t('lockerAggiornatoAlle', { ora: new Intl.DateTimeFormat(f.locale, { hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(lastUpdated) })}
                 </p>
             )}
 
@@ -264,7 +270,7 @@ function LockerInner() {
                                     ? 'bg-white shadow text-kidville-green'
                                     : 'text-kidville-muted hover:text-kidville-green'}`}
                 >
-                    <Package size={14} /> Panoramica
+                    <Package size={14} /> {t('lockerTabPanoramica')}
                 </button>
                 <button
                     id="tab-monthly-btn"
@@ -274,7 +280,7 @@ function LockerInner() {
                                     ? 'bg-white shadow text-kidville-green'
                                     : 'text-kidville-muted hover:text-kidville-green'}`}
                 >
-                    <Table2 size={14} /> Andamento Mensile
+                    <Table2 size={14} /> {t('lockerTabMensile')}
                 </button>
             </div>
 
@@ -289,7 +295,7 @@ function LockerInner() {
                             <div className="flex items-center gap-2 mb-3">
                                 <Bell size={16} className="text-kidville-error" />
                                 <h2 className="font-barlow font-bold text-kidville-green uppercase text-sm tracking-wide">
-                                    Da portare a scuola
+                                    {t('lockerDaPortare')}
                                 </h2>
                                 <span className="bg-kidville-error text-white text-xs font-bold w-5 h-5 rounded-full flex items-center justify-center">
                                     {pendingRequests.length}
@@ -316,11 +322,15 @@ function LockerInner() {
                                                 <p className={`font-maven text-sm ${
                                                     req.livello_alert === 'rosso' ? 'text-kidville-error' : 'text-kidville-warn'
                                                 }`}>
-                                                    {req.livello_alert === 'rosso' ? '🔴 Esaurito!' : '🟡 In esaurimento'} — Rimasti: {req.quantita_residua} {req.locker_catalog.unita}
+                                                    {t('lockerRigaResiduo', {
+                                                        stato: t(req.livello_alert === 'rosso' ? 'lockerAlertRosso' : 'lockerAlertGiallo'),
+                                                        quantita: req.quantita_residua,
+                                                        unita: req.locker_catalog.unita,
+                                                    })}
                                                 </p>
                                                 <p className="font-maven text-xs text-kidville-muted mt-0.5 flex items-center gap-1">
                                                     <Clock size={10} />
-                                                    {new Date(req.creato_il).toLocaleDateString('it-IT', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                                                    {new Intl.DateTimeFormat(f.locale, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).format(new Date(req.creato_il))}
                                                 </p>
                                             </div>
                                         </div>
@@ -337,7 +347,7 @@ function LockerInner() {
                                             ) : (
                                                 <>
                                                     <CheckCircle2 size={16} />
-                                                    Preso in carico
+                                                    {t('lockerPresoInCaricoBtn')}
                                                 </>
                                             )}
                                         </Btn>
@@ -352,7 +362,7 @@ function LockerInner() {
                         <div className="mb-6">
                             <h2 className="font-barlow font-bold text-kidville-green uppercase text-sm tracking-wide mb-3 flex items-center gap-2">
                                 <CheckCircle2 size={14} className="text-kidville-success" />
-                                Preso in carico
+                                {t('lockerPresoInCaricoTitolo')}
                             </h2>
                             <div className="space-y-2">
                                 {acknowledgedRequests.map(req => (
@@ -361,7 +371,7 @@ function LockerInner() {
                                         <div className="flex-1">
                                             <p className="font-maven font-bold text-sm text-kidville-green">{req.locker_catalog.nome}</p>
                                             <p className="font-maven text-xs text-kidville-success">
-                                                ✅ Portare a scuola — Preso il {new Date(req.preso_in_carico_il!).toLocaleDateString('it-IT', { day: 'numeric', month: 'short' })}
+                                                {t('lockerPortareEPreso', { data: new Intl.DateTimeFormat(f.locale, { day: 'numeric', month: 'short' }).format(new Date(req.preso_in_carico_il!)) })}
                                             </p>
                                         </div>
                                     </div>
@@ -373,7 +383,7 @@ function LockerInner() {
                     {/* Situazione Materiale — usa stockData da mode=stock (numeri precisi) */}
                     <div className="mb-6">
                         <h2 className="font-barlow font-bold text-kidville-green uppercase text-sm tracking-wide mb-3 flex items-center gap-2">
-                            <Package size={14} /> Situazione Materiale
+                            <Package size={14} /> {t('lockerSituazioneMateriale')}
                         </h2>
                         {stockData.length > 0 ? (
                             <div className="grid grid-cols-2 gap-3">
@@ -393,12 +403,12 @@ function LockerInner() {
                                             <div className="text-3xl mb-2">{icona}</div>
                                             <p className="font-maven font-bold text-sm text-kidville-green mb-1">{item.materiale}</p>
                                             <p className={`font-barlow font-black text-3xl ${sem.text}`}>{qty}</p>
-                                            <p className="font-maven text-xs text-kidville-muted mb-2">pz</p>
+                                            <p className="font-maven text-xs text-kidville-muted mb-2">{t('lockerPz')}</p>
                                             <div className="h-2 bg-white/60 rounded-full overflow-hidden">
                                                 <div className={`h-full ${sem.barColor} rounded-full transition-all duration-700`}
                                                     style={{ width: `${pct}%` }} />
                                             </div>
-                                            <p className={`font-maven text-xs mt-1 ${sem.text}`}>{sem.icon} {sem.label}</p>
+                                            <p className={`font-maven text-xs mt-1 ${sem.text}`}>{sem.icon} {t(sem.labelKey)}</p>
                                         </div>
                                     );
                                 })}
@@ -406,7 +416,7 @@ function LockerInner() {
                         ) : (
                             <div className="text-center py-8 bg-white rounded-2xl">
                                 <Package size={40} className="mx-auto text-kidville-muted mb-2" />
-                                <p className="font-maven text-kidville-muted text-sm">Nessun materiale in stock</p>
+                                <p className="font-maven text-kidville-muted text-sm">{t('lockerNessunMaterialeStock')}</p>
                             </div>
                         )}
                     </div>
@@ -420,7 +430,7 @@ function LockerInner() {
                                 className="flex items-center gap-2 mb-2"
                             >
                                 <h2 className="font-barlow font-bold text-kidville-muted uppercase text-sm tracking-wide">
-                                    Storico richieste ({completedRequests.length})
+                                    {t('lockerStoricoRichieste', { count: completedRequests.length })}
                                 </h2>
                                 <ChevronDown size={14} className={`text-kidville-muted transition-transform ${showHistory ? 'rotate-180' : ''}`} />
                             </button>
@@ -433,7 +443,7 @@ function LockerInner() {
                                                 <p className="font-maven text-sm text-kidville-muted">{req.locker_catalog.nome}</p>
                                             </div>
                                             <span className="font-maven text-xs text-kidville-muted">
-                                                {new Date(req.creato_il).toLocaleDateString('it-IT', { day: 'numeric', month: 'short' })}
+                                                {new Intl.DateTimeFormat(f.locale, { day: 'numeric', month: 'short' }).format(new Date(req.creato_il))}
                                             </span>
                                         </div>
                                     ))}
@@ -458,7 +468,7 @@ function LockerInner() {
                         >
                             <ChevronLeft size={18} />
                         </button>
-                        <span className="text-sm font-semibold text-kidville-green/70">Andamento mensile di {childName}</span>
+                        <span className="text-sm font-semibold text-kidville-green/70">{t('lockerAndamentoMensileDi', { nome: childName })}</span>
                         <button
                             id="parent-next-month-btn"
                             onClick={() => setMonth(m => nextMonth(m))}
@@ -471,7 +481,7 @@ function LockerInner() {
                     {isMonthlyLoading ? (
                         <div className="flex items-center justify-center py-16 gap-3">
                             <div className="w-6 h-6 border-2 border-kidville-green/30 border-t-kidville-green rounded-full animate-spin" />
-                            <span className="text-kidville-muted text-sm">Caricamento...</span>
+                            <span className="text-kidville-muted text-sm">{t('caricamento')}</span>
                         </div>
                     ) : (
                         <MonthlyLockerTable
@@ -493,9 +503,14 @@ function LockerInner() {
     );
 }
 
+function LockerFallback() {
+    const t = useTranslations('parentServizi');
+    return <div className="p-8 font-maven text-kidville-muted">{t('caricamento')}</div>;
+}
+
 export default function ParentLockerPage() {
     return (
-        <Suspense fallback={<div className="p-8 font-maven text-kidville-muted">Caricamento…</div>}>
+        <Suspense fallback={<LockerFallback />}>
             <LockerInner />
         </Suspense>
     );

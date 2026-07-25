@@ -1,6 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { NewsNav, VISTE_NEWS } from '@/components/features/admin/news/NewsNav';
+import itMessages from '../../messages/it/adminComunicazioni.json';
+
+// Le etichette delle viste sono ora i18n (`labelKey` → namespace
+// adminComunicazioni). Il mock next-intl risolve contro i messaggi ITALIANI
+// reali, quindi il testo reso è il valore IT associato alla chiave.
+const labelIt = (labelKey: string) => (itMessages as Record<string, string>)[labelKey];
 
 /**
  * Navigazione della sezione News del cockpit admin (Step 4): clone strutturale
@@ -17,7 +23,7 @@ describe('NewsNav', () => {
   it('rende le etichette delle viste', () => {
     render(<NewsNav value="elenco" onChange={() => {}} />);
     for (const v of VISTE_NEWS) {
-      expect(screen.getAllByText(v.label).length).toBeGreaterThan(0);
+      expect(screen.getAllByText(labelIt(v.labelKey)).length).toBeGreaterThan(0);
     }
   });
 

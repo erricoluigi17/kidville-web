@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
+import { useTranslations } from 'next-intl'
 import { motion, AnimatePresence } from 'framer-motion'
 import { ShieldCheck, Loader2, AlertCircle, Mail, X, CheckCircle2, Users, RotateCcw } from 'lucide-react'
 import { Modal } from '@/components/ui/Modal'
@@ -27,6 +28,7 @@ export function OtpSignatureModal({
   onClose,
   onSigned,
 }: Props) {
+  const t = useTranslations('parentForms')
   const [phase, setPhase] = useState<Phase>('code')
   const [code, setCode] = useState('')
   const [verifying, setVerifying] = useState(false)
@@ -60,7 +62,7 @@ export function OtpSignatureModal({
 
   async function handleVerify() {
     if (code.length !== 6) {
-      setError('Inserisci il codice a 6 cifre')
+      setError(t('inserisciCodice6'))
       return
     }
     setVerifying(true)
@@ -73,7 +75,7 @@ export function OtpSignatureModal({
       })
       const json = await res.json()
       if (!res.ok) {
-        setError(json.error ?? 'Verifica fallita')
+        setError(json.error ?? t('verificaFallita'))
         return
       }
       if (json.completed) {
@@ -85,7 +87,7 @@ export function OtpSignatureModal({
         setCode('')
       }
     } catch {
-      setError('Errore di rete. Riprova.')
+      setError(t('erroreRete'))
     } finally {
       setVerifying(false)
     }
@@ -102,7 +104,7 @@ export function OtpSignatureModal({
       })
       const json = await res.json()
       if (!res.ok) {
-        setError(json.error ?? 'Invio non riuscito')
+        setError(json.error ?? t('invioNonRiuscito'))
         return false
       }
       setLocalDevCode(json.devCode)
@@ -110,7 +112,7 @@ export function OtpSignatureModal({
       setResendCooldown(30)
       return true
     } catch {
-      setError('Errore di rete. Riprova.')
+      setError(t('erroreRete'))
       return false
     }
   }
@@ -122,7 +124,7 @@ export function OtpSignatureModal({
 
   async function handleSecondSigner() {
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(secondEmail)) {
-      setError('Inserisci un’email valida')
+      setError(t('emailNonValida'))
       return
     }
     setVerifying(true)
@@ -142,14 +144,14 @@ export function OtpSignatureModal({
     <Modal
       open={open}
       onClose={requestClose}
-      title="Firma elettronica"
+      title={t('firmaElettronica')}
       closeOnBackdrop={false}
       className="w-full max-w-sm rounded-3xl p-6 relative bg-white border border-kidville-green/10 shadow-2xl"
     >
       {!success && (
         <button
           onClick={onClose}
-          aria-label="Chiudi"
+          aria-label={t('chiudi')}
           className="absolute top-4 right-4 p-1.5 rounded-lg text-kidville-muted hover:text-kidville-green hover:bg-kidville-cream transition-all"
         >
           <X className="w-4 h-4" />
@@ -172,9 +174,9 @@ export function OtpSignatureModal({
             >
               <CheckCircle2 className="w-8 h-8 text-kidville-green" />
             </motion.div>
-            <h3 className="text-lg font-semibold text-kidville-green">Modulo firmato!</h3>
+            <h3 className="text-lg font-semibold text-kidville-green">{t('moduloFirmato')}</h3>
             <p className="text-sm text-kidville-muted mt-1">
-              La firma elettronica è stata registrata con successo.
+              {t('firmaRegistrata')}
             </p>
           </motion.div>
         ) : phase === 'second-email' ? (
@@ -182,17 +184,16 @@ export function OtpSignatureModal({
             <div className="w-12 h-12 rounded-2xl bg-kidville-green/10 flex items-center justify-center mb-4">
               <Users className="w-6 h-6 text-kidville-green" />
             </div>
-            <h3 className="text-lg font-semibold text-kidville-green">Firma congiunta</h3>
+            <h3 className="text-lg font-semibold text-kidville-green">{t('firmaCongiunta')}</h3>
             <p className="text-sm text-kidville-muted mt-1.5">
-              La prima firma è stata registrata. Inserisci l’email del <strong>secondo genitore</strong>:
-              riceverà un codice per completare la firma.
+              {t.rich('firmaCongiuntaCorpo', { strong: (chunks) => <strong>{chunks}</strong> })}
             </p>
             <input
               type="email"
               value={secondEmail}
               onChange={e => setSecondEmail(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && handleSecondSigner()}
-              placeholder="email.secondo.genitore@esempio.it"
+              placeholder={t('emailSecondoPlaceholder')}
               className="mt-4 w-full px-4 py-3 rounded-xl bg-kidville-cream border border-kidville-green/15 text-kidville-green placeholder-kidville-green/40 focus:outline-none focus:border-kidville-green transition-all"
             />
             {error && (
@@ -206,7 +207,7 @@ export function OtpSignatureModal({
               className="mt-4 w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-kidville-green hover:opacity-90 disabled:opacity-40 text-kidville-yellow font-semibold transition-all"
             >
               {verifying ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
-              Invia codice al 2° genitore
+              {t('inviaCodiceSecondo')}
             </button>
           </motion.div>
         ) : (
@@ -215,17 +216,17 @@ export function OtpSignatureModal({
               <ShieldCheck className="w-6 h-6 text-kidville-green" />
             </div>
             <h3 className="text-lg font-semibold text-kidville-green">
-              Firma elettronica
+              {t('firmaElettronica')}
               {signatureMode === 'joint' && (
                 <span className="ml-2 text-xs font-medium text-kidville-green/60">
-                  (firmatario {signerNumber} di 2)
+                  {t('firmatarioNdi2', { n: signerNumber })}
                 </span>
               )}
             </h3>
             <p className="flex items-center gap-1.5 text-sm text-kidville-muted mt-1.5">
               <Mail className="w-3.5 h-3.5 flex-shrink-0" />
-              Codice inviato a{' '}
-              <span className="text-kidville-green/80">{signerEmail ?? 'la tua email'}</span>
+              {t('codiceInviatoA')}{' '}
+              <span className="text-kidville-green/80">{signerEmail ?? t('laTuaEmail')}</span>
             </p>
 
             {localDevCode && (
@@ -240,7 +241,7 @@ export function OtpSignatureModal({
               onChange={e => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
               onKeyDown={e => e.key === 'Enter' && handleVerify()}
               inputMode="numeric"
-              aria-label="Codice di firma a 6 cifre"
+              aria-label={t('ariaCodiceFirma')}
               placeholder="••••••"
               className="mt-5 w-full px-4 py-4 rounded-xl bg-kidville-cream border border-kidville-green/15 text-center text-2xl font-mono tracking-[0.5em] text-kidville-green placeholder-kidville-green/30 focus:outline-none focus:border-kidville-green transition-all"
             />
@@ -257,7 +258,7 @@ export function OtpSignatureModal({
               className="mt-5 w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-kidville-green hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed text-kidville-yellow font-semibold transition-all"
             >
               {verifying ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
-              Firma e completa
+              {t('firmaCompleta')}
             </button>
 
             <button
@@ -266,7 +267,7 @@ export function OtpSignatureModal({
               className="mt-3 w-full flex items-center justify-center gap-1.5 text-xs text-kidville-green/70 hover:text-kidville-green disabled:opacity-40 disabled:cursor-not-allowed transition-all"
             >
               <RotateCcw className="w-3.5 h-3.5" />
-              {resendCooldown > 0 ? `Reinvia codice tra ${resendCooldown}s` : 'Reinvia codice'}
+              {resendCooldown > 0 ? t('reinviaCodiceTra', { s: resendCooldown }) : t('reinviaCodice')}
             </button>
           </motion.div>
         )}

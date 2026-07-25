@@ -2,22 +2,24 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
+import { useTranslations, useLocale } from 'next-intl'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   Trophy, Medal, ChevronDown, Search, Loader2, Inbox, Info,
   SlidersHorizontal, Gavel, FileDown,
 } from 'lucide-react'
 import { MEDAL } from '@/lib/ui/chart-colors'
-const ESITO_BADGE: Record<string, { label: string; bg: string; color: string }> = {
-  ammesso: { label: 'Ammesso', bg: 'rgba(52,211,153,0.14)', color: 'rgb(52,211,153)' },
-  lista_attesa: { label: "Lista d'attesa", bg: 'rgba(230,114,10,0.14)', color: 'rgb(251,191,36)' },
-  non_ammesso: { label: 'Non ammesso', bg: 'rgba(244,114,128,0.14)', color: 'rgb(244,114,128)' },
+// Le chiavi enum (ammesso/lista_attesa/non_ammesso) restano; l'etichetta è i18n.
+const ESITO_BADGE: Record<string, { labelKey: string; bg: string; color: string }> = {
+  ammesso: { labelKey: 'esitoAmmesso', bg: 'rgba(52,211,153,0.14)', color: 'rgb(52,211,153)' },
+  lista_attesa: { labelKey: 'esitoListaAttesa', bg: 'rgba(230,114,10,0.14)', color: 'rgb(251,191,36)' },
+  non_ammesso: { labelKey: 'esitoNonAmmesso', bg: 'rgba(244,114,128,0.14)', color: 'rgb(244,114,128)' },
 }
 import { RankingAdjustModal, type RankingRow, type ManualAdjustment } from './RankingAdjustModal'
 
 /* ── helpers ───────────────────────────────────────────────── */
 
-function candidateLabel(data: Record<string, unknown>): string {
+function candidateLabel(data: Record<string, unknown>, fallback: string): string {
   const nome =
     (data['nome_alunno'] as string) ??
     (data['child_first_name'] as string) ??
@@ -33,7 +35,7 @@ function candidateLabel(data: Record<string, unknown>): string {
   const pn = (data['parent_first_name'] as string) ?? (data['nome_genitore'] as string) ?? ''
   const ps = (data['parent_last_name'] as string) ?? (data['cognome_genitore'] as string) ?? ''
   if (pn || ps) return `${ps} ${pn}`.trim()
-  return 'Candidato'
+  return fallback
 }
 
 // Podio graduatorie: le tinte oro/argento/bronzo sono "data colors" del ranking
@@ -48,6 +50,8 @@ const MEDAL_STYLES: Record<number, { icon: typeof Trophy; color: string; glow: s
 /* ── tooltip per manual_adjustments ────────────────────────── */
 
 function AdjustmentTooltip({ adjustments }: { adjustments: ManualAdjustment[] }) {
+  const t = useTranslations('adminModulistica')
+  const locale = useLocale()
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
@@ -83,7 +87,7 @@ function AdjustmentTooltip({ adjustments }: { adjustments: ManualAdjustment[] })
             }}
           >
             <p className="text-[10px] font-bold text-kidville-muted uppercase tracking-widest mb-1.5">
-              Modifiche manuali
+              {t('radjModificheManuali')}
             </p>
             {adjustments.map((adj, i) => (
               <div key={i} className="flex items-start gap-2 text-xs">
@@ -96,7 +100,7 @@ function AdjustmentTooltip({ adjustments }: { adjustments: ManualAdjustment[] })
                 </span>
                 <span className="text-kidville-muted leading-snug flex-1">{adj.reason}</span>
                 <span className="text-kidville-muted tabular-nums shrink-0">
-                  {adj.at ? new Date(adj.at).toLocaleDateString('it-IT', { day: '2-digit', month: 'short' }) : ''}
+                  {adj.at ? new Date(adj.at).toLocaleDateString(locale, { day: '2-digit', month: 'short' }) : ''}
                 </span>
               </div>
             ))}
@@ -114,6 +118,8 @@ interface SubmissionWithModel extends RankingRow {
 }
 
 export function RankingTable() {
+  const t = useTranslations('adminModulistica')
+  const locale = useLocale()
   const [submissions, setSubmissions] = useState<SubmissionWithModel[]>([])
   const [formModels, setFormModels] = useState<{ id: string; title: string }[]>([])
   const [loading, setLoading] = useState(true)
@@ -171,7 +177,7 @@ export function RankingTable() {
   /* ── delibera ammissioni (DL-025) ── */
   const applicaDelibera = async () => {
     if (!filterFormId) return
-    if (!confirm(`Deliberare con ${posti} posti e soglia ${soglia}? Gli esiti verranno (ri)assegnati.`)) return
+    if (!confirm(t('rnkDeliberaConfirm', { posti, soglia }))) return
     setDeliberando(true)
     try {
       const res = await fetch('/api/forms/delibera', {
@@ -181,7 +187,7 @@ export function RankingTable() {
       })
       if (!res.ok) {
         const j = await res.json().catch(() => ({}))
-        alert(j.error || 'Delibera non riuscita')
+        alert(j.error || t('rnkDeliberaFallita'))
       } else {
         await fetchRankings()
       }
@@ -194,7 +200,7 @@ export function RankingTable() {
   const filtered = search
     ? submissions.filter(s => {
         const q = search.toLowerCase()
-        const label = candidateLabel(s.data).toLowerCase()
+        const label = candidateLabel(s.data, t('rnkCandidato')).toLowerCase()
         return (
           label.includes(q) ||
           (s.form_model?.title ?? '').toLowerCase().includes(q) ||
@@ -214,9 +220,9 @@ export function RankingTable() {
       {/* Stat cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
         {[
-          { label: 'Candidati', value: filtered.length, accent: 'rgba(0,106,95,0.8)' },
-          { label: 'Punteggio medio', value: avgScore, accent: 'rgba(52,211,153,0.8)' },
-          { label: 'Punteggio massimo', value: maxScore, accent: 'rgba(230,114,10,0.8)' },
+          { label: t('rnkStatCandidati'), value: filtered.length, accent: 'rgba(0,106,95,0.8)' },
+          { label: t('rnkStatPunteggioMedio'), value: avgScore, accent: 'rgba(52,211,153,0.8)' },
+          { label: t('rnkStatPunteggioMassimo'), value: maxScore, accent: 'rgba(230,114,10,0.8)' },
         ].map(card => (
           <div
             key={card.label}
@@ -243,7 +249,7 @@ export function RankingTable() {
           <input
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="Cerca candidato…"
+            placeholder={t('rnkCercaCandidato')}
             className="w-full pl-9 pr-4 py-2.5 rounded-xl text-kidville-ink placeholder-kidville-muted text-sm focus:outline-none transition-colors"
             style={{
               background: 'var(--color-kidville-white)',
@@ -265,7 +271,7 @@ export function RankingTable() {
               border: '1px solid var(--color-kidville-line)',
             }}
           >
-            <option value="">Tutti i moduli</option>
+            <option value="">{t('rnkTuttiModuli')}</option>
             {formModels.map(m => (
               <option key={m.id} value={m.id}>{m.title}</option>
             ))}
@@ -281,10 +287,10 @@ export function RankingTable() {
           style={{ background: 'rgba(0,106,95,0.06)', border: '1px solid rgba(0,106,95,0.18)' }}
         >
           <div className="flex items-center gap-1.5 text-kidville-info text-xs font-bold uppercase tracking-widest mr-1">
-            <Gavel className="w-3.5 h-3.5" /> Delibera
+            <Gavel className="w-3.5 h-3.5" /> {t('rnkDelibera')}
           </div>
           <label className="text-[11px] text-kidville-muted">
-            Posti
+            {t('rnkPosti')}
             <input
               type="number" min={0} value={posti}
               onChange={e => setPosti(Math.max(0, parseInt(e.target.value || '0', 10)))}
@@ -293,7 +299,7 @@ export function RankingTable() {
             />
           </label>
           <label className="text-[11px] text-kidville-muted">
-            Soglia punti
+            {t('rnkSogliaPunti')}
             <input
               type="number" min={0} value={soglia}
               onChange={e => setSoglia(Math.max(0, parseInt(e.target.value || '0', 10)))}
@@ -308,14 +314,14 @@ export function RankingTable() {
             style={{ background: 'rgba(0,106,95,0.85)', border: '1px solid rgba(0,106,95,0.3)' }}
           >
             {deliberando ? <Loader2 className="w-4 h-4 animate-spin" /> : <Gavel className="w-4 h-4" />}
-            Applica delibera
+            {t('rnkApplicaDelibera')}
           </button>
           <a
             href={`/api/forms/export/delibera?modelId=${filterFormId}${userId ? `&userId=${userId}` : ''}`}
             className="flex items-center gap-2 px-4 py-2 rounded-xl text-kidville-info text-sm font-semibold transition-all hover:text-kidville-green"
             style={{ background: 'var(--color-kidville-white)', border: '1px solid var(--color-kidville-line)' }}
           >
-            <FileDown className="w-4 h-4" /> Esporta PDF
+            <FileDown className="w-4 h-4" /> {t('rnkEsportaPdf')}
           </a>
         </div>
       )}
@@ -328,13 +334,13 @@ export function RankingTable() {
       ) : filtered.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-28 gap-3">
           <Inbox className="w-12 h-12 text-kidville-muted" />
-          <p className="text-kidville-muted text-sm">Nessuna compilazione completata trovata</p>
+          <p className="text-kidville-muted text-sm">{t('rnkNessunaCompilazione')}</p>
           {(filterFormId || search) && (
             <button
               onClick={() => { setFilterFormId(''); setSearch('') }}
               className="text-kidville-green text-xs hover:underline"
             >
-              Rimuovi filtri
+              {t('rimuoviFiltri')}
             </button>
           )}
         </div>
@@ -352,8 +358,8 @@ export function RankingTable() {
               background: 'var(--color-kidville-line)',
             }}
           >
-            {['#', 'Candidato', 'Modulo', 'Firma', 'Punti', ''].map(col => (
-              <div key={col} className="px-4 py-3 text-[10px] font-bold text-kidville-muted uppercase tracking-widest">
+            {['#', t('rnkCandidato'), t('rnkColModulo'), t('colFirma'), t('rnkColPunti'), ''].map((col, ci) => (
+              <div key={ci} className="px-4 py-3 text-[10px] font-bold text-kidville-muted uppercase tracking-widest">
                 {col}
               </div>
             ))}
@@ -364,7 +370,7 @@ export function RankingTable() {
             {filtered.map((sub, i) => {
               const rank = i + 1
               const medal = MEDAL_STYLES[rank]
-              const label = candidateLabel(sub.data)
+              const label = candidateLabel(sub.data, t('rnkCandidato'))
               const manualTotal = (sub.manual_adjustments ?? []).reduce((s, a) => s + a.delta, 0)
 
               return (
@@ -429,7 +435,7 @@ export function RankingTable() {
                             color: ESITO_BADGE[sub.esito_ammissione].color,
                           }}
                         >
-                          {ESITO_BADGE[sub.esito_ammissione].label}
+                          {t(ESITO_BADGE[sub.esito_ammissione].labelKey)}
                         </span>
                       )}
                     </div>
@@ -444,7 +450,7 @@ export function RankingTable() {
                   <div className="px-4 py-4 text-xs">
                     {sub.signed_at ? (
                       <span className="text-kidville-muted tabular-nums">
-                        {new Date(sub.signed_at).toLocaleDateString('it-IT', {
+                        {new Date(sub.signed_at).toLocaleDateString(locale, {
                           day: '2-digit', month: 'short', year: '2-digit',
                         })}
                       </span>

@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useTranslations, useLocale } from 'next-intl'
 import { CalendarDays } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
 
@@ -21,19 +22,21 @@ interface EventoAgenda {
   orario_fine?: string | null
 }
 
-const TIPO_LABEL: Record<string, string> = {
-  evento: 'Evento',
-  uscita: 'Uscita',
-  scadenza: 'Scadenza',
-  riunione: 'Riunione',
+// Mappa il codice `tipo` (dato) alla chiave i18n della sua etichetta. Codici
+// sconosciuti degradano al valore grezzo (vedi tipoLabel nel componente).
+const TIPO_CHIAVE: Record<string, string> = {
+  evento: 'agendaTipoEvento',
+  uscita: 'agendaTipoUscita',
+  scadenza: 'agendaTipoScadenza',
+  riunione: 'agendaTipoRiunione',
 }
 
-function giornoMese(ymd: string): { giorno: string; mese: string } {
+function giornoMese(ymd: string, locale: string): { giorno: string; mese: string } {
   try {
     const d = new Date(`${ymd}T00:00:00`)
     return {
-      giorno: d.toLocaleDateString('it-IT', { day: 'numeric' }),
-      mese: d.toLocaleDateString('it-IT', { month: 'short' }).replace('.', ''),
+      giorno: d.toLocaleDateString(locale, { day: 'numeric' }),
+      mese: d.toLocaleDateString(locale, { month: 'short' }).replace('.', ''),
     }
   } catch {
     return { giorno: '—', mese: '' }
@@ -41,8 +44,12 @@ function giornoMese(ymd: string): { giorno: string; mese: string } {
 }
 
 export function AgendaTodayCard({ studentId }: { studentId: string | null }) {
+  const t = useTranslations('home')
+  const locale = useLocale()
   const [eventi, setEventi] = useState<EventoAgenda[]>([])
   const [loading, setLoading] = useState(true)
+  // Etichetta del tipo evento: tradotta se nota, altrimenti codice grezzo (dato).
+  const tipoLabel = (tipo: string) => (TIPO_CHIAVE[tipo] ? t(TIPO_CHIAVE[tipo]) : tipo)
 
   useEffect(() => {
     if (!studentId) return
@@ -80,10 +87,10 @@ export function AgendaTodayCard({ studentId }: { studentId: string | null }) {
         </span>
         <div className="min-w-0">
           <p className="font-barlow text-sm font-extrabold uppercase text-kidville-green">
-            Nessun appuntamento in programma
+            {t('agendaVuotaTitolo')}
           </p>
           <p className="mt-0.5 font-maven text-[12.5px] leading-snug text-kidville-muted">
-            Qui vedrai uscite, eventi e scadenze della sezione.
+            {t('agendaVuotaSottotitolo')}
           </p>
         </div>
       </Card>
@@ -93,7 +100,7 @@ export function AgendaTodayCard({ studentId }: { studentId: string | null }) {
   return (
     <Card className="divide-y divide-kidville-line px-4 py-1">
       {eventi.map((e) => {
-        const { giorno, mese } = giornoMese(e.data)
+        const { giorno, mese } = giornoMese(e.data, locale)
         return (
           <div key={e.id} className="flex items-center gap-3 py-3">
             <span className="flex h-10 w-10 flex-shrink-0 flex-col items-center justify-center rounded-[13px] bg-kidville-yellow-soft text-kidville-yellow-dark">
@@ -105,8 +112,8 @@ export function AgendaTodayCard({ studentId }: { studentId: string | null }) {
                 {e.titolo}
               </p>
               <p className="mt-0.5 font-maven text-[12.5px] leading-snug text-kidville-muted">
-                {TIPO_LABEL[e.tipo] ?? e.tipo}
-                {e.orario_inizio ? ` · ore ${e.orario_inizio.slice(0, 5)}` : ''}
+                {tipoLabel(e.tipo)}
+                {e.orario_inizio ? t('agendaOre', { ora: e.orario_inizio.slice(0, 5) }) : ''}
               </p>
             </div>
           </div>

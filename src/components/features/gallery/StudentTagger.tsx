@@ -1,6 +1,7 @@
 'use client';
 
 import { motion } from 'framer-motion';
+import { useTranslations } from 'next-intl';
 import { Lock, Check, EyeOff, Search, X } from 'lucide-react';
 import { useState } from 'react';
 
@@ -21,6 +22,7 @@ interface Props {
 }
 
 export function StudentTagger({ students, selectedIds, onToggle, onSelectAll, onDeselectAll }: Props) {
+    const t = useTranslations('shared');
     const [searchTerm, setSearchTerm] = useState('');
     
     const selectableCount = students.filter(s => s.consenso_privacy).length;
@@ -69,14 +71,14 @@ export function StudentTagger({ students, selectedIds, onToggle, onSelectAll, on
             {/* Header with bulk actions */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-kidville-line pb-2">
                 <p className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide">
-                    Tagga i bambini presenti nella foto
+                    {t('galleryTaggaTitolo')}
                 </p>
                 <div className="flex gap-2 self-end">
                     <button 
                         onClick={allSelected ? onDeselectAll : onSelectAll}
                         disabled={hasNoPrivacySelected}
                         className="px-3 py-1 rounded-xl font-maven text-xs text-kidville-green bg-kidville-cream hover:bg-kidville-yellow/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                        {allSelected ? 'Deseleziona tutti' : 'Seleziona tutti'}
+                        {allSelected ? t('galleryDeselezionaTutti') : t('gallerySelezionaTutti')}
                     </button>
                 </div>
             </div>
@@ -88,7 +90,7 @@ export function StudentTagger({ students, selectedIds, onToggle, onSelectAll, on
                 </div>
                 <input
                     type="text"
-                    placeholder="Cerca alunno o genitore (es. Sarah Pagano)..."
+                    placeholder={t('galleryCercaPlaceholder')}
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
                     className="w-full pl-9 pr-8 py-2 bg-kidville-cream border border-kidville-line focus:outline-none focus:ring-1 focus:ring-kidville-green rounded-xl font-maven text-xs text-kidville-ink transition-all placeholder:text-kidville-muted"
@@ -106,7 +108,7 @@ export function StudentTagger({ students, selectedIds, onToggle, onSelectAll, on
             {/* Student list */}
             {filteredStudents.length === 0 ? (
                 <div className="text-center py-4 text-xs font-maven text-kidville-muted">
-                    Nessun alunno o genitore corrisponde alla ricerca.
+                    {t('galleryNessunRisultato')}
                 </div>
             ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
@@ -170,13 +172,13 @@ export function StudentTagger({ students, selectedIds, onToggle, onSelectAll, on
                                         <p className={`font-maven text-[9px] truncate ${
                                             isSelected ? 'text-white/70' : 'text-kidville-muted'
                                         }`}>
-                                            Genitore: {parentNames}
+                                            {t('galleryGenitorePrefisso')} {parentNames}
                                         </p>
                                     ) : (
-                                        <p className="font-maven text-[9px] text-kidville-muted italic">Genitore non collegato</p>
+                                        <p className="font-maven text-[9px] text-kidville-muted italic">{t('galleryGenitoreNonCollegato')}</p>
                                     )}
                                     {!hasPrivacy && (
-                                        <p className="font-maven text-[9px] text-kidville-warn font-semibold mt-0.5">Solo genitori</p>
+                                        <p className="font-maven text-[9px] text-kidville-warn font-semibold mt-0.5">{t('gallerySoloGenitori')}</p>
                                     )}
                                 </div>
                             </motion.button>
@@ -195,14 +197,14 @@ export function StudentTagger({ students, selectedIds, onToggle, onSelectAll, on
                     <>
                         <EyeOff size={14} className="text-kidville-warn flex-shrink-0 mt-0.5" strokeWidth={2} />
                         <p className="font-maven">
-                            <strong>Foto Privata:</strong> Hai selezionato un bambino senza liberatoria generale. Questa foto sarà visibile <strong>esclusivamente</strong> ai suoi genitori e nessun altro potrà essere taggato.
+                            {t.rich('galleryFotoPrivata', { strong: (c) => <strong>{c}</strong> })}
                         </p>
                     </>
                 ) : (
                     <>
                         <Lock size={14} className="text-kidville-green flex-shrink-0 mt-0.5" strokeWidth={1.5} />
                         <p className="font-maven">
-                            I bambini con la dicitura &ldquo;Solo genitori&rdquo; non hanno firmato la liberatoria generale. Taggarli limiterà la visibilità della foto solo alla loro famiglia.
+                            {t('galleryPrivacyInfo')}
                         </p>
                     </>
                 )}

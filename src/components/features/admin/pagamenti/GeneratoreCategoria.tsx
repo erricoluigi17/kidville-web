@@ -1,6 +1,8 @@
 'use client';
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useTranslations } from 'next-intl';
+import { useDateFormat } from '@/lib/i18n/date';
 import { Layers, RefreshCw } from 'lucide-react';
 import { SaveCheck } from '@/components/ui/SaveConfirmation';
 import { cx } from '@/lib/ui/cx';
@@ -23,6 +25,8 @@ function addMonths(iso: string, n: number): string {
 // Genera un pagamento una tantum (es. Iscrizione, Divisa) per una classe o tutti
 // gli iscritti, con importo unico, causale e scadenza. Opzione divisione in acconti.
 export function GeneratoreCategoria({ userId, scuolaId }: Props) {
+    const t = useTranslations('adminContabilita');
+    const f = useDateFormat();
     const [categorie, setCategorie] = useState<Categoria[]>([]);
     const [alunni, setAlunni] = useState<Alunno[]>([]);
     const [categoriaId, setCategoriaId] = useState('');
@@ -91,9 +95,9 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
     }, [importo, nRate, scadenza]);
 
     const caricaAnteprima = async () => {
-        if (!descrizione.trim()) { setError('Inserisci una causale/descrizione'); return; }
-        if (!importo || importo <= 0) { setError('Inserisci un importo maggiore di 0'); return; }
-        if (target.length === 0) { setError('Nessun alunno nel target selezionato'); return; }
+        if (!descrizione.trim()) { setError(t('gencErrCausale')); return; }
+        if (!importo || importo <= 0) { setError(t('gencErrImporto')); return; }
+        if (target.length === 0) { setError(t('gencErrNessunTarget')); return; }
         setLoading(true); setError(null); setDone(null);
         try {
             const qs = new URLSearchParams();
@@ -102,16 +106,16 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
             if (gruppo.trim()) qs.set('gruppo', gruppo.trim());
             const res = await fetch(`/api/pagamenti/genera?${qs.toString()}`, { headers: hdr(userId) });
             const j = await res.json();
-            if (!res.ok || !j.success) { setError(j.error || "Errore nel calcolo dell'anteprima"); return; }
+            if (!res.ok || !j.success) { setError(j.error || t('gencErrAnteprima')); return; }
             setAnteprima({ candidati: j.data.candidati || [], giaGenerati: j.data.gia_generati || 0 });
         } catch {
-            setError('Errore di rete');
+            setError(t('gencErrRete'));
         } finally { setLoading(false); }
     };
 
     const genera = async () => {
         if (!anteprima) return;
-        if (anteprima.candidati.length === 0) { setError('Nessun alunno da generare (tutti già presenti nel gruppo)'); return; }
+        if (anteprima.candidati.length === 0) { setError(t('gencErrNessunGenerare')); return; }
         setLoading(true); setError(null); setDone(null);
         try {
             const body: Record<string, unknown> = {
@@ -126,11 +130,11 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
             if (acconti && nRate >= 2) body.rate = buildRate();
             const res = await fetch('/api/pagamenti/genera', { method: 'POST', headers: hdr(userId), body: JSON.stringify(body) });
             const j = await res.json();
-            if (!res.ok) { setError(j.error || 'Errore nella generazione'); return; }
-            setDone(`Generati ${j.data.generati} pagamenti${acconti ? ' rateali' : ''}.`);
+            if (!res.ok) { setError(j.error || t('gencErrGenerazione')); return; }
+            setDone(`${t('gencDoneGenerati')} ${j.data.generati} ${acconti ? t('gencDonePagamentiRateali') : t('gencDonePagamenti')}.`);
             setAnteprima(null);
         } catch {
-            setError('Errore di rete');
+            setError(t('gencErrRete'));
         } finally { setLoading(false); }
     };
 
@@ -138,40 +142,40 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
         <div className="space-y-4">
             <div className="grid sm:grid-cols-2 gap-3">
                 <div>
-                    <label className="font-maven text-xs text-kidville-muted mb-1 block">Categoria</label>
+                    <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('gencCategoria')}</label>
                     <select value={categoriaId} onChange={(e) => applyCategoria(categorie.find((c) => c.id === e.target.value))}
                         className={GC_SELECT}>
                         {categorie.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
                     </select>
                 </div>
                 <div>
-                    <label className="font-maven text-xs text-kidville-muted mb-1 block">Classe (vuoto = tutti gli iscritti)</label>
+                    <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('gencClasseLabel')}</label>
                     <select value={classe} onChange={(e) => { setClasse(e.target.value); setAnteprima(null); }}
                         className={GC_SELECT}>
-                        <option value="">Tutti ({alunni.length})</option>
+                        <option value="">{t('gencOpzioneTutti')} ({alunni.length})</option>
                         {classi.map((c) => <option key={c} value={c}>{c}</option>)}
                     </select>
                 </div>
                 <div>
-                    <label className="font-maven text-xs text-kidville-muted mb-1 block">Causale / descrizione</label>
+                    <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('gencCausaleDescrizione')}</label>
                     <input type="text" value={descrizione} onChange={(e) => { setDescrizione(e.target.value); setAnteprima(null); }}
                         className={GC_INPUT} />
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                     <div>
-                        <label className="font-maven text-xs text-kidville-muted mb-1 block">Importo (€)</label>
+                        <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('gencImportoLabel')}</label>
                         <input type="number" min={0} step="0.01" value={importo || ''}
                             onChange={(e) => { setImporto(e.target.value === '' ? 0 : Number(e.target.value)); setAnteprima(null); }}
                             className={GC_INPUT} />
                     </div>
                     <div>
-                        <label className="font-maven text-xs text-kidville-muted mb-1 block">{acconti ? '1ª scadenza' : 'Scadenza'}</label>
+                        <label className="font-maven text-xs text-kidville-muted mb-1 block">{acconti ? t('gencPrimaScadenza') : t('gencScadenza')}</label>
                         <input type="date" value={scadenza} onChange={(e) => { setScadenza(e.target.value); setAnteprima(null); }}
                             className={GC_INPUT} />
                     </div>
                 </div>
                 <div>
-                    <label className="font-maven text-xs text-kidville-muted mb-1 block">Gruppo (evita duplicati)</label>
+                    <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('gencGruppoLabel')}</label>
                     <input type="text" value={gruppo} onChange={(e) => { setGruppo(e.target.value); setAnteprima(null); }}
                         className={GC_INPUT} />
                 </div>
@@ -181,34 +185,34 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
                 <label className="flex items-center gap-2 cursor-pointer">
                     <input type="checkbox" checked={obbligatorio} onChange={(e) => { setObbligatorio(e.target.checked); setAnteprima(null); }}
                         className="w-4 h-4 rounded border-kidville-muted text-kidville-green focus:ring-kidville-green" />
-                    <span className="font-maven text-xs text-kidville-green">Obbligatorio</span>
+                    <span className="font-maven text-xs text-kidville-green">{t('gencObbligatorio')}</span>
                 </label>
                 <label className="flex items-center gap-2 cursor-pointer">
                     <input type="checkbox" checked={acconti} onChange={(e) => { setAcconti(e.target.checked); setAnteprima(null); }}
                         className="w-4 h-4 rounded border-kidville-muted text-kidville-green focus:ring-kidville-green" />
-                    <span className="font-maven text-xs text-kidville-green">Dividi in acconti</span>
+                    <span className="font-maven text-xs text-kidville-green">{t('gencDividiAcconti')}</span>
                 </label>
                 {acconti && (
                     <div className="flex items-center gap-2">
-                        <span className="font-maven text-xs text-kidville-muted">N° rate</span>
+                        <span className="font-maven text-xs text-kidville-muted">{t('gencNRate')}</span>
                         <input type="number" min={2} max={24} value={nRate}
                             onChange={(e) => { setNRate(Math.max(2, Number(e.target.value) || 2)); setAnteprima(null); }}
                             className={cx(GC_INPUT, 'w-16')} />
-                        <span className="font-maven text-[11px] text-kidville-muted">mensili, ~€ {importo ? (importo / nRate).toFixed(2) : '0'} cad.</span>
+                        <span className="font-maven text-[11px] text-kidville-muted">{t('gencMensili')} ~€ {importo ? (importo / nRate).toFixed(2) : '0'} {t('gencCadauno')}</span>
                     </div>
                 )}
             </div>
 
             {anteprima && !done && (
                 <div className="space-y-1 rounded-card border-[1.5px] border-kidville-line bg-kidville-cream/50 p-4">
-                    <p className="font-maven text-sm font-bold text-kidville-green">Anteprima generazione</p>
+                    <p className="font-maven text-sm font-bold text-kidville-green">{t('gencAnteprimaGenerazione')}</p>
                     <p className="font-maven text-xs text-kidville-ink">
-                        Da generare: {anteprima.candidati.length} pagament{anteprima.candidati.length === 1 ? 'o' : 'i'} da € {importo.toFixed(2)}
-                        {acconti && nRate >= 2 ? ` in ${nRate} rate` : ''} · totale € {(anteprima.candidati.length * importo).toFixed(2)}
+                        {t('gencDaGenerare')} {anteprima.candidati.length} {anteprima.candidati.length === 1 ? t('gencPagamentoSing') : t('gencPagamentoPlur')} {t('gencDa')} € {importo.toFixed(2)}
+                        {acconti && nRate >= 2 ? ` ${t('gencInRate1')}${nRate}${t('gencInRate2')}` : ''} · {t('gencTotale')} € {(anteprima.candidati.length * importo).toFixed(2)}
                     </p>
-                    <p className="font-maven text-xs text-kidville-muted">Già presenti (saltati per gruppo): {anteprima.giaGenerati}</p>
+                    <p className="font-maven text-xs text-kidville-muted">{t('gencGiaPresenti')} {anteprima.giaGenerati}</p>
                     <p className="font-maven text-xs text-kidville-muted">
-                        Scadenza {acconti ? '1ª rata ' : ''}{new Date(scadenza).toLocaleDateString('it-IT')} · {classe || 'tutti gli iscritti'}
+                        {t('gencScadenzaPre')} {acconti ? t('gencPrimaRata') : ''}{f.dataBreve(scadenza)} · {classe || t('gencTuttiIscritti')}
                     </p>
                 </div>
             )}
@@ -223,17 +227,17 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
             {!anteprima ? (
                 <button onClick={caricaAnteprima} disabled={loading} className={GC_BTN_PRIMARY}>
                     {loading ? <RefreshCw size={15} className="animate-spin" /> : <Layers size={15} />}
-                    Anteprima ({target.length} alunni)
+                    {t('gencAnteprima')} ({target.length} {t('gencAlunni')})
                 </button>
             ) : (
                 <div className="flex flex-wrap gap-2">
                     <button onClick={() => setAnteprima(null)} disabled={loading}
                         className="inline-flex items-center gap-2 rounded-pill border-[1.5px] border-kidville-line bg-kidville-white px-5 py-2.5 font-maven text-sm font-bold text-kidville-muted transition-colors hover:border-kidville-green hover:text-kidville-green disabled:opacity-50">
-                        Modifica
+                        {t('gencModifica')}
                     </button>
                     <button onClick={genera} disabled={loading || anteprima.candidati.length === 0} className={GC_BTN_PRIMARY}>
                         {loading ? <RefreshCw size={15} className="animate-spin" /> : <Layers size={15} />}
-                        Conferma generazione ({anteprima.candidati.length})
+                        {t('gencConfermaGenerazione')} ({anteprima.candidati.length})
                     </button>
                 </div>
             )}

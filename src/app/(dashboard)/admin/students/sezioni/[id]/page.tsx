@@ -3,9 +3,14 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { ArrowLeft, Building2, GraduationCap, Loader2, Plus, Settings, User, X } from 'lucide-react';
 import { CockpitPage } from '@/components/ui/cockpit';
 import { schoolTypeConfig } from '@/components/features/admin/SectionsView';
+
+// Etichetta tradotta del grado (schoolTypeConfig.label resta fallback statico).
+const livelloLabelKey = (tipo: string) =>
+    tipo === 'nido' ? 'secTipoNido' : tipo === 'primaria' ? 'secTipoPrimaria' : 'secTipoInfanzia';
 
 // Dettaglio sezione a tutta area contenuto (sidebar e header del cockpit
 // restano): alunni assegnati + impostazioni. Sostituisce il pannello inline
@@ -37,6 +42,7 @@ interface Teacher {
 }
 
 export default function SezioneDetailPage() {
+    const t = useTranslations('adminStudents');
     const params = useParams<{ id: string }>();
     const sectionId = params?.id;
 
@@ -154,12 +160,12 @@ export default function SezioneDetailPage() {
         return (
             <CockpitPage max={1152}>
                 <Link href={backHref} className="mb-4 inline-flex items-center gap-1.5 font-maven text-sm font-semibold text-kidville-green hover:underline">
-                    <ArrowLeft size={15} strokeWidth={2} /> Tutte le sezioni
+                    <ArrowLeft size={15} strokeWidth={2} /> {t('sezBack')}
                 </Link>
                 <div className="flex flex-col items-center rounded-card bg-kidville-white p-10 text-center shadow-sm">
                     <div className="mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-kidville-cream text-4xl">🏫</div>
-                    <h2 className="font-barlow text-lg font-bold uppercase text-kidville-green">Sezione non disponibile</h2>
-                    <p className="font-maven mt-1 text-sm text-kidville-muted">La sezione non esiste o non appartiene ai tuoi plessi.</p>
+                    <h2 className="font-barlow text-lg font-bold uppercase text-kidville-green">{t('sezNonDisp')}</h2>
+                    <p className="font-maven mt-1 text-sm text-kidville-muted">{t('sezNonDispHint')}</p>
                 </div>
             </CockpitPage>
         );
@@ -171,7 +177,7 @@ export default function SezioneDetailPage() {
     return (
         <CockpitPage max={1152}>
             <Link href={backHref} className="mb-4 inline-flex items-center gap-1.5 font-maven text-sm font-semibold text-kidville-green hover:underline">
-                <ArrowLeft size={15} strokeWidth={2} /> Tutte le sezioni
+                <ArrowLeft size={15} strokeWidth={2} /> {t('sezBack')}
             </Link>
 
             {/* Testata sezione */}
@@ -181,16 +187,16 @@ export default function SezioneDetailPage() {
                         <Icon size={28} className={config.color} />
                     </div>
                     <div>
-                        <h1 className="font-barlow text-3xl font-black uppercase leading-none text-kidville-green">Sezione {sezione.name}</h1>
+                        <h1 className="font-barlow text-3xl font-black uppercase leading-none text-kidville-green">{t('sezIntestazione', { nome: sezione.name })}</h1>
                         <div className="mt-1.5 flex flex-wrap items-center gap-3">
                             <span className={`text-xs font-bold uppercase tracking-wider px-2 py-1 rounded-lg ${config.bg} ${config.color}`}>
-                                {config.label}
+                                {t(livelloLabelKey(sezione.school_type))}
                             </span>
                             <span className="font-maven flex items-center gap-1 text-sm text-kidville-muted">
                                 <Building2 size={14} /> {sezione.scuolaNome}
                             </span>
                             <span className="font-maven flex items-center gap-1 text-sm text-kidville-muted">
-                                <User size={14} /> {students.length} alunni
+                                <User size={14} /> {t('contAlunni', { n: students.length })}
                             </span>
                         </div>
                     </div>
@@ -201,7 +207,7 @@ export default function SezioneDetailPage() {
                 {/* Alunni della sezione */}
                 <div className="rounded-card bg-kidville-white p-6 shadow-sm">
                     <h4 className="font-barlow mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-kidville-muted">
-                        <User size={16} /> Alunni in questa sezione ({students.length})
+                        <User size={16} /> {t('sezAlunniInSezione', { n: students.length })}
                     </h4>
                     {students.length > 0 ? (
                         <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
@@ -219,11 +225,11 @@ export default function SezioneDetailPage() {
                         </div>
                     ) : (
                         <div className="rounded-xl bg-kidville-cream py-6 text-center">
-                            <p className="font-maven text-sm text-kidville-muted">Nessun alunno assegnato a questa sezione</p>
+                            <p className="font-maven text-sm text-kidville-muted">{t('sezNessunAlunno')}</p>
                         </div>
                     )}
                     <p className="font-maven mt-4 text-xs text-kidville-muted">
-                        Per aprire o modificare la scheda di un alunno usa il tab <Link href="/admin/students" className="font-semibold text-kidville-green hover:underline">Alunni</Link> dell&apos;anagrafica.
+                        {t('sezPerAprirePre')}<Link href="/admin/students" className="font-semibold text-kidville-green hover:underline">{t('tabAlunni')}</Link>{t('sezPerAprirePost')}
                     </p>
                 </div>
 
@@ -231,24 +237,24 @@ export default function SezioneDetailPage() {
                 {/* Impostazioni sezione */}
                 <div className="rounded-card bg-kidville-white p-6 shadow-sm">
                     <h4 className="font-barlow mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-kidville-muted">
-                        <Settings size={16} /> Impostazioni Sezione
+                        <Settings size={16} /> {t('sezImpostazioni')}
                     </h4>
                     <div className="space-y-4 rounded-xl bg-kidville-cream p-4">
                         <div>
-                            <label className="mb-1 block text-xs font-bold uppercase text-kidville-muted">Tipo di Scuola</label>
+                            <label className="mb-1 block text-xs font-bold uppercase text-kidville-muted">{t('sezTipoScuola')}</label>
                             <select
                                 value={sezione.school_type}
                                 disabled={isSavingType}
                                 onChange={e => changeSchoolType(e.target.value as SchoolType)}
                                 className="w-full rounded-xl border-2 border-kidville-line bg-kidville-white p-2.5 font-maven text-sm focus:border-kidville-green focus:outline-none disabled:opacity-60"
                             >
-                                <option value="nido">Nido</option>
-                                <option value="infanzia">Infanzia</option>
-                                <option value="primaria">Primaria</option>
+                                <option value="nido">{t('secTipoNido')}</option>
+                                <option value="infanzia">{t('secTipoInfanzia')}</option>
+                                <option value="primaria">{t('secTipoPrimaria')}</option>
                             </select>
                         </div>
                         <div>
-                            <label className="mb-1 block text-xs font-bold uppercase text-kidville-muted">Sede</label>
+                            <label className="mb-1 block text-xs font-bold uppercase text-kidville-muted">{t('campoSede')}</label>
                             <div className="flex items-center gap-2 rounded-xl border-2 border-kidville-line bg-kidville-white p-2.5">
                                 <Building2 size={16} className="text-kidville-muted" />
                                 <span className="font-maven text-sm text-kidville-ink">{sezione.scuolaNome}</span>
@@ -260,18 +266,18 @@ export default function SezioneDetailPage() {
                 {/* Insegnanti di riferimento */}
                 <div className="rounded-card bg-kidville-white p-6 shadow-sm">
                     <h4 className="font-barlow mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-kidville-muted">
-                        <GraduationCap size={16} /> Insegnanti di riferimento
+                        <GraduationCap size={16} /> {t('sezInsegnanti')}
                     </h4>
                     <div className="space-y-3 rounded-xl bg-kidville-cream p-4">
                         {teachers.assigned.length > 0 ? (
                             <div className="flex flex-wrap gap-2">
-                                {teachers.assigned.map(t => (
-                                    <span key={t.id} className="inline-flex items-center gap-1.5 rounded-full bg-kidville-green/10 px-3 py-1.5 font-maven text-sm text-kidville-green">
-                                        {t.cognome} {t.nome}
+                                {teachers.assigned.map(tch => (
+                                    <span key={tch.id} className="inline-flex items-center gap-1.5 rounded-full bg-kidville-green/10 px-3 py-1.5 font-maven text-sm text-kidville-green">
+                                        {tch.cognome} {tch.nome}
                                         <button
-                                            onClick={() => removeTeacher(t.id)}
+                                            onClick={() => removeTeacher(tch.id)}
                                             disabled={teacherBusy}
-                                            aria-label="Rimuovi insegnante"
+                                            aria-label={t('sezRimuoviInsegnante')}
                                             className="text-kidville-green/60 hover:text-kidville-error disabled:opacity-50"
                                         >
                                             <X size={14} />
@@ -280,7 +286,7 @@ export default function SezioneDetailPage() {
                                 ))}
                             </div>
                         ) : (
-                            <p className="font-maven text-sm text-kidville-muted">Nessun insegnante di riferimento assegnato.</p>
+                            <p className="font-maven text-sm text-kidville-muted">{t('sezNessunInsegnante')}</p>
                         )}
                         <div className="flex items-center gap-2">
                             <select
@@ -289,9 +295,9 @@ export default function SezioneDetailPage() {
                                 disabled={teacherBusy || teachersLoading || teachers.available.length === 0}
                                 className="flex-1 rounded-xl border-2 border-kidville-line bg-kidville-white p-2.5 font-maven text-sm focus:border-kidville-green focus:outline-none disabled:opacity-60"
                             >
-                                <option value="">{teachersLoading ? 'Caricamento…' : teachers.available.length === 0 ? 'Nessun docente disponibile' : '— Seleziona insegnante —'}</option>
-                                {teachers.available.map(t => (
-                                    <option key={t.id} value={t.id}>{t.cognome} {t.nome}</option>
+                                <option value="">{teachersLoading ? t('sezCaricamento') : teachers.available.length === 0 ? t('sezNessunDocente') : t('sezSelezionaInsegnante')}</option>
+                                {teachers.available.map(tch => (
+                                    <option key={tch.id} value={tch.id}>{tch.cognome} {tch.nome}</option>
                                 ))}
                             </select>
                             <button
@@ -299,11 +305,11 @@ export default function SezioneDetailPage() {
                                 disabled={!newTeacherId || teacherBusy || teachersLoading}
                                 className="inline-flex items-center gap-1.5 rounded-xl bg-kidville-green px-4 py-2.5 font-barlow text-sm font-bold uppercase text-kidville-yellow disabled:opacity-50"
                             >
-                                <Plus size={16} /> Aggiungi
+                                <Plus size={16} /> {t('sezAggiungi')}
                             </button>
                         </div>
                         <p className="font-maven text-xs text-kidville-muted">
-                            L&apos;insegnante aggiunto comparirà automaticamente tra le sue &quot;Classi assegnate&quot;.
+                            {t('sezInsegnanteHint')}
                         </p>
                     </div>
                 </div>

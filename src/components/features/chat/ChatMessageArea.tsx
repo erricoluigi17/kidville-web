@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useCallback, useState } from 'react';
+import { useLocale, useTranslations } from 'next-intl';
 import { motion } from 'framer-motion';
 import { Check, CheckCheck, Languages, Loader2 } from 'lucide-react';
 import { sembraItaliano } from '@/lib/translate/lingua';
@@ -30,26 +31,34 @@ interface Props {
     onMarkRead?: (ids: string[]) => void;
 }
 
-function formatMessageTime(iso: string): string {
-    return new Date(iso).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+function formatMessageTime(iso: string, locale: string): string {
+    return new Date(iso).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
 }
 
-function formatMessageDate(iso: string): string {
+/** Etichette localizzate per i separatori relativi (da `common.oggi`/`common.ieri`). */
+export interface EtichetteGiorno {
+    oggi: string;
+    ieri: string;
+}
+
+export function formatMessageDate(iso: string, locale: string, labels: EtichetteGiorno): string {
     const d = new Date(iso);
     const today = new Date();
     const yesterday = new Date(Date.now() - 86400000);
 
-    if (d.toDateString() === today.toDateString()) return 'Oggi';
-    if (d.toDateString() === yesterday.toDateString()) return 'Ieri';
-    return d.toLocaleDateString('it-IT', { day: 'numeric', month: 'long' });
+    // «Oggi»/«Ieri» arrivano localizzate (parità it/en); il resto della data
+    // (giorno + mese) è localizzato tramite `Intl.DateTimeFormat(locale, …)`.
+    if (d.toDateString() === today.toDateString()) return labels.oggi;
+    if (d.toDateString() === yesterday.toDateString()) return labels.ieri;
+    return new Intl.DateTimeFormat(locale, { day: 'numeric', month: 'long' }).format(d);
 }
 
-function groupByDate(messages: ChatMessage[]): { date: string; messages: ChatMessage[] }[] {
+function groupByDate(messages: ChatMessage[], locale: string, labels: EtichetteGiorno): { date: string; messages: ChatMessage[] }[] {
     const groups: { date: string; messages: ChatMessage[] }[] = [];
     let currentDate = '';
 
     messages.forEach(msg => {
-        const date = formatMessageDate(msg.created_at);
+        const date = formatMessageDate(msg.created_at, locale, labels);
         if (date !== currentDate) {
             currentDate = date;
             groups.push({ date, messages: [] });
@@ -62,6 +71,7 @@ function groupByDate(messages: ChatMessage[]): { date: string; messages: ChatMes
 
 /** Separatore "Nuovi Messaggi" — pillola del design (non-letto = giallo, mai rosso). */
 function UnreadSeparator() {
+    const t = useTranslations('parentChat');
     return (
         <motion.div
             initial={{ opacity: 0, scaleX: 0.8 }}
@@ -70,7 +80,7 @@ function UnreadSeparator() {
             className="my-5 flex justify-center"
         >
             <span className="whitespace-nowrap rounded-pill border border-kidville-yellow bg-kidville-yellow-soft px-3 py-1 font-barlow text-[10.5px] font-extrabold uppercase tracking-[0.08em] text-kidville-yellow-dark">
-                Nuovi Messaggi
+                {t('newMessages')}
             </span>
         </motion.div>
     );
@@ -78,6 +88,8 @@ function UnreadSeparator() {
 
 /** Bolla messaggio + traduzione automatica (DL-042) per i messaggi in ingresso. */
 function MessageBubble({ msg, isMine, currentUserId }: { msg: ChatMessage; isMine: boolean; currentUserId: string }) {
+    const locale = useLocale();
+    const t = useTranslations('parentChat');
     const [translated, setTranslated] = useState<string | null>(null);
     const [translating, setTranslating] = useState(false);
     const [unavailable, setUnavailable] = useState(false);
@@ -122,7 +134,7 @@ function MessageBubble({ msg, isMine, currentUserId }: { msg: ChatMessage; isMin
             {msg.attachment_url && msg.attachment_type === 'image' && (
                 <div className="mb-2 rounded-xl overflow-hidden">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={msg.attachment_url} alt="Allegato" className="w-full h-auto max-h-48 object-cover" />
+                    <img src={msg.attachment_url} alt={t('attachmentAlt')} className="w-full h-auto max-h-48 object-cover" />
                 </div>
             )}
             {msg.attachment_url && msg.attachment_type === 'document' && (
@@ -133,13 +145,13 @@ function MessageBubble({ msg, isMine, currentUserId }: { msg: ChatMessage; isMin
                         rel="noopener noreferrer"
                         className={`mb-2 px-3 py-2 rounded-xl text-xs font-maven flex items-center gap-2 underline-offset-2 hover:underline ${isMine ? 'bg-white/20' : 'bg-kidville-neutral-soft'}`}
                     >
-                        📎 Documento allegato
+                        📎 {t('documentAttachment')}
                     </a>
                 ) : (
                     // URL con schema non-http (es. javascript:) salvato via API:
                     // niente link, solo il chip inerte com'era prima.
                     <div className={`mb-2 px-3 py-2 rounded-xl text-xs font-maven flex items-center gap-2 ${isMine ? 'bg-white/20' : 'bg-kidville-neutral-soft'}`}>
-                        📎 Documento allegato
+                        📎 {t('documentAttachment')}
                     </div>
                 )
             )}
@@ -166,7 +178,7 @@ function MessageBubble({ msg, isMine, currentUserId }: { msg: ChatMessage; isMin
                         {translating
                             ? <Loader2 size={11} className="animate-spin" />
                             : <Languages size={11} strokeWidth={2} />}
-                        {translated ? 'Mostra originale' : 'Traduci'}
+                        {translated ? t('showOriginal') : t('translate')}
                     </button>
                 </>
             )}
@@ -174,7 +186,7 @@ function MessageBubble({ msg, isMine, currentUserId }: { msg: ChatMessage; isMin
             {/* Time + read status */}
             <div className={`flex items-center gap-1 mt-1 ${isMine ? 'justify-end' : 'justify-start'}`}>
                 <span className={`font-maven text-[10px] ${isMine ? 'text-white/60' : 'text-kidville-muted'}`}>
-                    {formatMessageTime(msg.created_at)}
+                    {formatMessageTime(msg.created_at, locale)}
                 </span>
                 {isMine && (
                     // Tre stati: letto (doppia spunta gialla) › consegnato (doppia spunta grigia)
@@ -182,7 +194,7 @@ function MessageBubble({ msg, isMine, currentUserId }: { msg: ChatMessage; isMin
                     // senza colonna): in tal caso si ricade su "inviato", che è la verità visibile.
                     <span
                         role="img"
-                        aria-label={msg.read_at ? 'Letto' : msg.delivered_at ? 'Consegnato' : 'Inviato'}
+                        aria-label={msg.read_at ? t('statusRead') : msg.delivered_at ? t('statusDelivered') : t('statusSent')}
                         className="transition-all duration-300"
                     >
                         {msg.read_at
@@ -205,6 +217,9 @@ export function ChatMessageArea({
     firstUnreadId,
     onMarkRead,
 }: Props) {
+    const locale = useLocale();
+    const tCommon = useTranslations('common');
+    const t = useTranslations('parentChat');
     const bottomRef = useRef<HTMLDivElement>(null);
     const separatorRef = useRef<HTMLDivElement>(null);
     const observerRef = useRef<IntersectionObserver | null>(null);
@@ -295,7 +310,7 @@ export function ChatMessageArea({
             <div className="flex-1 flex items-center justify-center bg-kidville-cream/50">
                 <div className="flex flex-col items-center gap-3">
                     <div className="w-7 h-7 border-[3px] border-kidville-green/20 border-t-kidville-green rounded-full animate-spin" />
-                    <p className="font-maven text-sm text-kidville-muted">Caricamento messaggi...</p>
+                    <p className="font-maven text-sm text-kidville-muted">{t('loadingMessages')}</p>
                 </div>
             </div>
         );
@@ -309,17 +324,17 @@ export function ChatMessageArea({
                         💬
                     </div>
                     <p className="font-barlow font-bold text-lg text-kidville-green uppercase mb-1">
-                        Inizia la conversazione
+                        {t('startConversation')}
                     </p>
                     <p className="font-maven text-sm text-kidville-muted max-w-xs">
-                        Scrivi un messaggio a {otherUserName}
+                        {t('writeMessageTo', { name: otherUserName })}
                     </p>
                 </div>
             </div>
         );
     }
 
-    const groups = groupByDate(messages);
+    const groups = groupByDate(messages, locale, { oggi: tCommon('oggi'), ieri: tCommon('ieri') });
 
     return (
         <div className="flex-1 overflow-y-auto bg-kidville-cream/50 px-4 py-4 space-y-4">

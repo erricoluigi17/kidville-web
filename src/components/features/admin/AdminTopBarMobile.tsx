@@ -18,15 +18,17 @@
 
 import Link from 'next/link';
 import Image from 'next/image';
+import { useTranslations } from 'next-intl';
 import { useAdminIdentity } from '@/lib/context/admin-identity';
 import { AdminNotificationsPanel } from './AdminNotificationsPanel';
 
 export function AdminTopBarMobile() {
+  const t = useTranslations('adminNav');
   const { userId, withUser } = useAdminIdentity();
 
   return (
     <header className="kv-admin-topbar kv-appbar-admin sticky top-0 z-[105] flex items-center gap-2.5 bg-kidville-green px-4 pb-3 pt-2 lg:hidden">
-      <Link href={withUser('/admin')} aria-label="Home Kidville" className="mr-auto">
+      <Link href={withUser('/admin')} aria-label={t('homeAria')} className="mr-auto">
         <Image
           src="/logo-light.png"
           alt="Kidville"

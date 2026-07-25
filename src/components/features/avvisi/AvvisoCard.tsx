@@ -1,8 +1,14 @@
 'use client';
 
 import { motion } from 'framer-motion';
-import { Eye, ThumbsUp, ThumbsDown, Clock, ChevronDown, Users, Pencil, Trash2, Megaphone, ClipboardList } from 'lucide-react';
+import { Eye, ThumbsUp, ThumbsDown, Clock, ChevronDown, Users, Pencil, Trash2, Megaphone, ClipboardList, Share2 } from 'lucide-react';
 import { useState } from 'react';
+import { useTranslations, useLocale } from 'next-intl';
+import { condividi } from '@/lib/native/share';
+
+// Tipo del traduttore next-intl: serve per passare `t` alle funzioni helper
+// (timeAgo/statusBadge) definite fuori dal componente, dove gli hook non si usano.
+type Traduttore = ReturnType<typeof useTranslations>;
 
 export interface Avviso {
     id: string;
@@ -31,43 +37,45 @@ interface Props {
     onDelete?: (avvisoId: string) => void;
 }
 
-function timeAgo(iso: string): string {
+function timeAgo(iso: string, t: Traduttore): string {
     const diff = Date.now() - new Date(iso).getTime();
     const mins = Math.floor(diff / 60000);
-    if (mins < 1) return 'Adesso';
-    if (mins < 60) return `${mins}m fa`;
+    if (mins < 1) return t('adesso');
+    if (mins < 60) return t('minutiFa', { n: mins });
     const hrs = Math.floor(mins / 60);
-    if (hrs < 24) return `${hrs}h fa`;
+    if (hrs < 24) return t('oreFa', { n: hrs });
     const days = Math.floor(hrs / 24);
-    return `${days}g fa`;
+    return t('giorniFa', { n: days });
 }
 
-// Badge di stato in stile DR (AvvisoRow).
-function statusBadge(opts: { isAdesione: boolean; isRead: boolean; myAnswer?: string | null; isTeacher?: boolean }) {
+// Badge di stato in stile DR (AvvisoRow). Riceve `t` perché è definita fuori dal componente.
+function statusBadge(opts: { isAdesione: boolean; isRead: boolean; myAnswer?: string | null; isTeacher?: boolean }, t: Traduttore) {
     const { isAdesione, isRead, myAnswer, isTeacher } = opts;
     if (isTeacher) {
         return isAdesione
-            ? { txt: 'Conferma adesione', cls: 'bg-kidville-yellow text-kidville-green' }
-            : { txt: 'Comunicazione', cls: 'bg-kidville-info-soft text-kidville-info' };
+            ? { txt: t('badgeConfermaAdesione'), cls: 'bg-kidville-yellow text-kidville-green' }
+            : { txt: t('badgeComunicazione'), cls: 'bg-kidville-info-soft text-kidville-info' };
     }
     if (isAdesione) {
-        if (myAnswer === 'si') return { txt: 'Hai aderito', cls: 'bg-kidville-success-soft text-kidville-success' };
-        if (myAnswer === 'no') return { txt: 'Non aderisci', cls: 'bg-kidville-error-soft text-kidville-error' };
-        return { txt: 'Richiede adesione', cls: 'bg-kidville-yellow text-kidville-green' };
+        if (myAnswer === 'si') return { txt: t('badgeHaiAderito'), cls: 'bg-kidville-success-soft text-kidville-success' };
+        if (myAnswer === 'no') return { txt: t('badgeNonAderisci'), cls: 'bg-kidville-error-soft text-kidville-error' };
+        return { txt: t('badgeRichiedeAdesione'), cls: 'bg-kidville-yellow text-kidville-green' };
     }
     return isRead
-        ? { txt: 'Letto', cls: 'bg-kidville-neutral-soft text-kidville-muted' }
-        : { txt: 'Da leggere', cls: 'bg-kidville-green-soft text-kidville-green' };
+        ? { txt: t('badgeLetto'), cls: 'bg-kidville-neutral-soft text-kidville-muted' }
+        : { txt: t('badgeDaLeggere'), cls: 'bg-kidville-green-soft text-kidville-green' };
 }
 
 export function AvvisoCard({ avviso, index, isTeacher, onReadReceipt, onAdesione, onShowDetails, onEdit, onDelete }: Props) {
+    const t = useTranslations('avvisi');
+    const locale = useLocale();
     const [expanded, setExpanded] = useState(false);
     const isAdesione = avviso.tipo === 'adesione';
     const isRead = !!avviso.my_response?.letto_il;
     const myAnswer = avviso.my_response?.risposta;
     const isExpired = avviso.scadenza && new Date(avviso.scadenza) < new Date();
     const unread = !isRead && !isTeacher;
-    const badge = statusBadge({ isAdesione, isRead, myAnswer, isTeacher });
+    const badge = statusBadge({ isAdesione, isRead, myAnswer, isTeacher }, t);
 
     // Target leggibile: una pill «🌐 Tutti» per gli avvisi di plesso, una pill
     // per ogni classe destinataria. Contrasto Clay Village (green su green-soft).
@@ -125,7 +133,7 @@ export function AvvisoCard({ avviso, index, isTeacher, onReadReceipt, onAdesione
                         <span className={`inline-flex items-center rounded-full px-2 py-0.5 font-barlow text-[10px] font-bold uppercase tracking-wide ${badge.cls}`}>
                             {badge.txt}
                         </span>
-                        <span className="flex-shrink-0 font-maven text-[11px] text-kidville-muted">{timeAgo(avviso.created_at)}</span>
+                        <span className="flex-shrink-0 font-maven text-[11px] text-kidville-muted">{timeAgo(avviso.created_at, t)}</span>
                     </div>
                     <h3 className="mt-1.5 truncate font-barlow text-base font-extrabold uppercase leading-tight tracking-wide text-kidville-green">
                         {avviso.titolo}
@@ -137,7 +145,7 @@ export function AvvisoCard({ avviso, index, isTeacher, onReadReceipt, onAdesione
                         <div className="mt-1.5 flex flex-wrap gap-1">
                             {isGlobale ? (
                                 <span className="inline-flex items-center rounded-full bg-kidville-green-soft px-2 py-0.5 font-maven text-[10px] font-semibold text-kidville-green">
-                                    🌐 Tutti
+                                    {t('tutti')}
                                 </span>
                             ) : (
                                 classiTarget.map((classe) => (
@@ -184,8 +192,8 @@ export function AvvisoCard({ avviso, index, isTeacher, onReadReceipt, onAdesione
                                     : 'border-kidville-warn/20 bg-kidville-warn-soft text-kidville-warn'
                             }`}>
                                 <Clock size={12} strokeWidth={1.8} />
-                                {isExpired ? 'Scaduto il' : 'Scadenza:'}{' '}
-                                {new Date(avviso.scadenza).toLocaleDateString('it-IT', {
+                                {isExpired ? t('scadutoIl') : t('scadenza')}{' '}
+                                {new Date(avviso.scadenza).toLocaleDateString(locale, {
                                     day: 'numeric', month: 'long', year: 'numeric'
                                 })}
                             </div>
@@ -201,7 +209,7 @@ export function AvvisoCard({ avviso, index, isTeacher, onReadReceipt, onAdesione
                                         rel="noopener noreferrer"
                                         className="inline-flex items-center gap-1.5 rounded-xl border border-kidville-line bg-kidville-cream px-3 py-2 font-maven text-xs font-semibold text-kidville-green transition-colors hover:bg-kidville-cream-dark"
                                     >
-                                        📎 Allegato File
+                                        {t('allegatoFile')}
                                     </a>
                                 )}
                                 {linkUrl && (
@@ -211,9 +219,25 @@ export function AvvisoCard({ avviso, index, isTeacher, onReadReceipt, onAdesione
                                         rel="noopener noreferrer"
                                         className="inline-flex items-center gap-1.5 rounded-xl border border-kidville-line bg-kidville-cream px-3 py-2 font-maven text-xs font-semibold text-kidville-info transition-colors hover:bg-kidville-cream-dark"
                                     >
-                                        🔗 Link Esterno
+                                        {t('linkEsterno')}
                                     </a>
                                 )}
+                            </div>
+                        )}
+
+                        {/* Condivisione (genitore): titolo + testo dell'avviso */}
+                        {!isTeacher && (
+                            <div className="mt-3">
+                                <button
+                                    type="button"
+                                    onClick={() =>
+                                        void condividi({ title: avviso.titolo, text: `${avviso.titolo}\n\n${avviso.contenuto}` })
+                                    }
+                                    aria-label={t('condividiAria')}
+                                    className="inline-flex items-center gap-1.5 rounded-pill border border-kidville-green/30 bg-kidville-white px-3 py-2 font-barlow text-xs font-extrabold uppercase tracking-wide text-kidville-green transition-colors hover:bg-kidville-cream active:scale-95"
+                                >
+                                    <Share2 size={14} strokeWidth={2} /> {t('condividi')}
+                                </button>
                             </div>
                         )}
                     </div>
@@ -225,13 +249,13 @@ export function AvvisoCard({ avviso, index, isTeacher, onReadReceipt, onAdesione
                                 onClick={() => onAdesione?.(avviso.id, 'si')}
                                 className="flex flex-1 items-center justify-center gap-2 rounded-pill bg-kidville-green py-2.5 font-barlow text-sm font-extrabold uppercase tracking-wide text-kidville-yellow transition-all hover:bg-kidville-green-dark active:scale-[0.98]"
                             >
-                                <ThumbsUp size={14} strokeWidth={2} /> Aderisco
+                                <ThumbsUp size={14} strokeWidth={2} /> {t('aderisco')}
                             </button>
                             <button
                                 onClick={() => onAdesione?.(avviso.id, 'no')}
                                 className="flex flex-1 items-center justify-center gap-2 rounded-pill bg-kidville-green-soft py-2.5 font-barlow text-sm font-extrabold uppercase tracking-wide text-kidville-green transition-all hover:bg-kidville-cream-dark active:scale-[0.98]"
                             >
-                                <ThumbsDown size={14} strokeWidth={2} /> Non aderisco
+                                <ThumbsDown size={14} strokeWidth={2} /> {t('nonAderisco')}
                             </button>
                         </div>
                     )}
@@ -245,7 +269,7 @@ export function AvvisoCard({ avviso, index, isTeacher, onReadReceipt, onAdesione
                                     : 'border-kidville-neutral/20 bg-kidville-neutral-soft text-kidville-muted'
                             }`}>
                                 {myAnswer === 'si' ? <ThumbsUp size={12} strokeWidth={1.8} /> : <ThumbsDown size={12} strokeWidth={1.8} />}
-                                {myAnswer === 'si' ? 'Hai aderito ✓' : 'Hai declinato'}
+                                {myAnswer === 'si' ? t('haiAderitoConferma') : t('haiDeclinato')}
                             </div>
                         </div>
                     )}
@@ -255,7 +279,7 @@ export function AvvisoCard({ avviso, index, isTeacher, onReadReceipt, onAdesione
                         <div className="flex flex-wrap items-center gap-4 border-t border-kidville-line px-5 pb-4 pt-3">
                             <div className="flex items-center gap-1.5 font-maven text-xs text-kidville-muted">
                                 <Eye size={12} strokeWidth={1.8} />
-                                <span>{avviso.stats.letti} hanno letto</span>
+                                <span>{t('hannoLetto', { count: avviso.stats.letti })}</span>
                             </div>
                             {isAdesione && (
                                 <>
@@ -274,19 +298,19 @@ export function AvvisoCard({ avviso, index, isTeacher, onReadReceipt, onAdesione
                                     onClick={() => onShowDetails?.(avviso)}
                                     className="flex items-center gap-1 font-maven text-xs font-bold text-kidville-green hover:underline"
                                 >
-                                    <Users size={12} strokeWidth={1.8} /> Dettaglio
+                                    <Users size={12} strokeWidth={1.8} /> {t('dettaglio')}
                                 </button>
                                 <button
                                     onClick={() => onEdit?.(avviso)}
                                     className="flex items-center gap-1 font-maven text-xs font-bold text-kidville-info hover:underline"
                                 >
-                                    <Pencil size={12} strokeWidth={1.8} /> Modifica
+                                    <Pencil size={12} strokeWidth={1.8} /> {t('modifica')}
                                 </button>
                                 <button
                                     onClick={() => onDelete?.(avviso.id)}
                                     className="flex items-center gap-1 font-maven text-xs font-bold text-kidville-error hover:underline"
                                 >
-                                    <Trash2 size={12} strokeWidth={1.8} /> Elimina
+                                    <Trash2 size={12} strokeWidth={1.8} /> {t('elimina')}
                                 </button>
                             </div>
                         </div>

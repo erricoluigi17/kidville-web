@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useTranslations } from 'next-intl';
 import { FileText, Download, Loader2, X } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { Badge } from '@/components/ui/Badge';
@@ -12,6 +13,7 @@ interface FatturaRow { id: string; quota_label: string | null; intestatario: str
 // Download fattura(e): link singolo o menù a tendina quando il pagamento è stato
 // fatturato in più quote (genitori separati).
 function EmessaLinks({ pagamentoId, userId }: { pagamentoId: string; userId: string }) {
+    const t = useTranslations('adminContabilita');
     const [fatture, setFatture] = useState<FatturaRow[] | null>(null);
     const [open, setOpen] = useState(false);
     useEffect(() => {
@@ -27,7 +29,7 @@ function EmessaLinks({ pagamentoId, userId }: { pagamentoId: string; userId: str
         return (
             <a href={`/api/pagamenti/fattura?pagamento_id=${pagamentoId}&userId=${userId}`}
                 className="inline-flex items-center gap-1 px-2 py-1 rounded-pill bg-kidville-green-soft text-kidville-green text-xs font-bold transition-colors hover:bg-kidville-green/20">
-                <Download size={12} /> Fattura
+                <Download size={12} /> {t('fatBtn_fattura')}
             </a>
         );
     }
@@ -35,14 +37,14 @@ function EmessaLinks({ pagamentoId, userId }: { pagamentoId: string; userId: str
         <div className="relative inline-block">
             <button onClick={() => setOpen((o) => !o)}
                 className="inline-flex items-center gap-1 px-2 py-1 rounded-pill bg-kidville-green-soft text-kidville-green text-xs font-bold transition-colors hover:bg-kidville-green/20">
-                <Download size={12} /> Fatture ({fatture.length})
+                <Download size={12} /> {t('fatBtn_fatture')} ({fatture.length})
             </button>
             {open && (
                 <div className="absolute right-0 z-20 mt-1 w-56 rounded-card border border-kidville-line bg-kidville-white p-1" style={{ boxShadow: MODAL_SHADOW }}>
                     {fatture.map((f) => (
                         <a key={f.id} href={`/api/pagamenti/fattura?pagamento_id=${pagamentoId}&fattura_id=${f.id}&userId=${userId}`}
                             className="block rounded-input px-3 py-1.5 font-maven text-xs text-kidville-green hover:bg-kidville-green-soft">
-                            Fattura — {f.quota_label || f.intestatario}
+                            {t('fatBtn_fattura_dash')} {f.quota_label || f.intestatario}
                         </a>
                     ))}
                 </div>
@@ -63,6 +65,7 @@ interface Props {
 // Pulsante "Invia Fattura" (scaffold Aruba). Prima dell'emissione apre un modale
 // per modificare la causale; quando emessa mostra il link di download.
 export function FatturaButton({ pagamentoId, userId, fatturaStato, descrizione, onEmessa }: Props) {
+    const t = useTranslations('adminContabilita');
     const [stato, setStato] = useState(fatturaStato ?? 'non_richiesta');
     const [busy, setBusy] = useState(false);
     const [open, setOpen] = useState(false);
@@ -88,8 +91,8 @@ export function FatturaButton({ pagamentoId, userId, fatturaStato, descrizione, 
 
     if (stato === 'in_attesa') {
         return (
-            <Badge tone="warn" title="Trasmessa allo SDI tramite Aruba, in attesa di esito">
-                <Loader2 size={12} className="animate-spin" /> In attesa SDI
+            <Badge tone="warn" title={t('fatBtn_attesa_title')}>
+                <Loader2 size={12} className="animate-spin" /> {t('fatBtn_attesa_sdi')}
             </Badge>
         );
     }
@@ -99,7 +102,7 @@ export function FatturaButton({ pagamentoId, userId, fatturaStato, descrizione, 
             <button onClick={() => { setCausale(descrizione ?? ''); setOpen(true); }}
                 className="inline-flex items-center gap-1 px-2 py-1 rounded-pill border-[1.5px] border-kidville-line text-kidville-muted text-xs font-bold transition-colors hover:border-kidville-green hover:text-kidville-green">
                 <FileText size={12} />
-                {stato === 'scartata' ? 'Riprova fattura' : 'Invia fattura'}
+                {stato === 'scartata' ? t('fatBtn_riprova') : t('fatBtn_invia')}
             </button>
 
             {open && (
@@ -112,20 +115,20 @@ export function FatturaButton({ pagamentoId, userId, fatturaStato, descrizione, 
                     >
                         <div className="flex items-center justify-between mb-4">
                             <h3 className="font-barlow font-black text-lg text-kidville-green uppercase flex items-center gap-2">
-                                <FileText size={18} /> Emetti fattura
+                                <FileText size={18} /> {t('fatBtn_emetti_titolo')}
                             </h3>
                             <button onClick={() => setOpen(false)} className="text-kidville-muted hover:text-kidville-ink"><X size={20} /></button>
                         </div>
-                        <label className="font-maven text-xs text-kidville-muted mb-1 block">Causale fattura</label>
+                        <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('fatBtn_causale_label')}</label>
                         <textarea value={causale} onChange={(e) => setCausale(e.target.value)} rows={3}
-                            placeholder="Lascia vuoto per usare il template delle impostazioni"
+                            placeholder={t('fatBtn_causale_ph')}
                             className={INPUT} />
                         <div className="flex gap-2 mt-4">
                             <button onClick={() => setOpen(false)} className={cx(BTN_SECONDARY, 'flex-1')}>
-                                Annulla
+                                {t('fatBtn_annulla')}
                             </button>
                             <button onClick={emetti} disabled={busy} className={cx(BTN_PRIMARY, 'flex-1')}>
-                                {busy ? <Loader2 size={14} className="animate-spin" /> : null} Emetti
+                                {busy ? <Loader2 size={14} className="animate-spin" /> : null} {t('fatBtn_emetti')}
                             </button>
                         </div>
                     </motion.div>

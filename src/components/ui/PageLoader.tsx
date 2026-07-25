@@ -1,3 +1,4 @@
+import { useTranslations } from 'next-intl';
 import styles from './PageLoader.module.css';
 
 /**
@@ -9,6 +10,7 @@ import styles from './PageLoader.module.css';
  * pagine client (regressione appello del root app/loading.tsx, ora evitata).
  */
 export function PageLoader({ visible }: { visible: boolean }) {
+  const t = useTranslations('shared');
   return (
     <div
       className={styles.overlay}
@@ -20,7 +22,7 @@ export function PageLoader({ visible }: { visible: boolean }) {
       {/* Testo per screen reader reso SOLO quando visibile: la mutazione dentro
           la live region fa scattare l'annuncio (un testo statico presente dal
           mount non verrebbe annunciato). */}
-      {visible ? <span className={styles.srOnly}>Caricamento in corso…</span> : null}
+      {visible ? <span className={styles.srOnly}>{t('caricamentoInCorso')}</span> : null}
       <span className={`${styles.glow} ${styles.glowA}`} aria-hidden="true" />
       <span className={`${styles.glow} ${styles.glowB}`} aria-hidden="true" />
       <div className={styles.loader}>
@@ -29,7 +31,7 @@ export function PageLoader({ visible }: { visible: boolean }) {
           <span className={styles.sweep} />
         </div>
         <p className={styles.caption} aria-hidden="true">
-          Caricamento
+          {t('caricamento')}
           <span className={styles.dot}>.</span>
           <span className={styles.dot}>.</span>
           <span className={styles.dot}>.</span>

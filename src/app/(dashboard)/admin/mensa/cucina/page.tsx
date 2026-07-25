@@ -1,10 +1,11 @@
 'use client';
 
 import { Suspense, useState, useEffect, useCallback } from 'react';
+import { useTranslations } from 'next-intl';
 import { useSearchParams } from 'next/navigation';
 import { ChefHat, UtensilsCrossed } from 'lucide-react';
 import { MensaReport } from '@/components/features/admin/mensa/MensaReport';
-import { allergeniDelGiorno, allergeneLabel, allergeneEmoji, type AllergeniPortate } from '@/lib/mensa/allergeni';
+import { allergeniDelGiorno, useAllergeneLabel, allergeneEmoji, type AllergeniPortate } from '@/lib/mensa/allergeni';
 import { CockpitPage, PageHeader } from '@/components/ui/cockpit';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 
@@ -13,6 +14,8 @@ interface MenuGiorno { data: string; attivo: boolean; chiuso: boolean; portate: 
 const hdr = (u: string) => ({ 'Content-Type': 'application/json', 'x-user-id': u });
 
 function CucinaInner() {
+  const t = useTranslations('adminMensa');
+  const allergeneLabel = useAllergeneLabel();
   const params = useSearchParams();
   const { userId } = useSessionIdentity();
   // l'insegnante arriva con ?sezione=… per restare scoped alla sua classe
@@ -36,25 +39,25 @@ function CucinaInner() {
   return (
     <CockpitPage max={1152}>
       <PageHeader
-        eyebrow="Operativo"
+        eyebrow={t('eyebrowOperativo')}
         icon={ChefHat}
-        title="Report Cucina"
-        subtitle={`Pasti del giorno, allergie e menù ${sezione ? `· sezione ${sezione} ` : ''}(sola lettura).`}
+        title={t('cucinaTitolo')}
+        subtitle={sezione ? t('cucinaSottotitoloConSezione', { sezione }) : t('cucinaSottotitolo')}
       />
 
       {/* Menu del giorno */}
       <div className="bg-kidville-white rounded-2xl shadow-sm p-4 md:p-6 mb-4">
-        <h3 className="font-barlow font-bold text-kidville-green uppercase text-sm mb-2 flex items-center gap-2"><UtensilsCrossed size={14} /> Menu di oggi</h3>
-        {!oggi ? <p className="font-maven text-sm text-kidville-muted">Caricamento…</p> :
-          oggi.chiuso ? <p className="font-maven text-sm text-kidville-error">Mensa chiusa {oggi.note ? `· ${oggi.note}` : ''}</p> :
+        <h3 className="font-barlow font-bold text-kidville-green uppercase text-sm mb-2 flex items-center gap-2"><UtensilsCrossed size={14} /> {t('menuDiOggi')}</h3>
+        {!oggi ? <p className="font-maven text-sm text-kidville-muted">{t('caricamento')}</p> :
+          oggi.chiuso ? <p className="font-maven text-sm text-kidville-error">{t('mensaChiusa')} {oggi.note ? `· ${oggi.note}` : ''}</p> :
           oggi.portate ? (
             <>
               <p className="font-maven text-sm text-kidville-green">
-                {[oggi.portate.primo, oggi.portate.secondo, oggi.portate.contorno, oggi.portate.frutta].filter(Boolean).join('  ·  ') || 'Menu non pubblicato'}
+                {[oggi.portate.primo, oggi.portate.secondo, oggi.portate.contorno, oggi.portate.frutta].filter(Boolean).join('  ·  ') || t('menuNonPubblicato')}
               </p>
               {allergeniDelGiorno(oggi.allergeni).length > 0 && (
                 <div className="flex flex-wrap gap-1 mt-2">
-                  <span className="font-maven text-[11px] text-kidville-muted mr-1">Allergeni:</span>
+                  <span className="font-maven text-[11px] text-kidville-muted mr-1">{t('allergeni')}</span>
                   {allergeniDelGiorno(oggi.allergeni).map(k => (
                     <span key={k} title={allergeneLabel(k)}
                       className="px-1.5 py-0.5 rounded-full bg-kidville-error-soft border border-kidville-error/30 text-kidville-error font-maven text-[10px] font-bold">
@@ -64,7 +67,7 @@ function CucinaInner() {
                 </div>
               )}
             </>
-          ) : <p className="font-maven text-sm text-kidville-muted">Menu non pubblicato per oggi.</p>}
+          ) : <p className="font-maven text-sm text-kidville-muted">{t('menuNonPubblicatoOggi')}</p>}
       </div>
 
       {/* Report pasti + allergie */}
@@ -76,8 +79,9 @@ function CucinaInner() {
 }
 
 export default function CucinaPage() {
+  const t = useTranslations('adminMensa');
   return (
-    <Suspense fallback={<div className="p-8 font-maven text-kidville-muted">Caricamento…</div>}>
+    <Suspense fallback={<div className="p-8 font-maven text-kidville-muted">{t('caricamento')}</div>}>
       <CucinaInner />
     </Suspense>
   );

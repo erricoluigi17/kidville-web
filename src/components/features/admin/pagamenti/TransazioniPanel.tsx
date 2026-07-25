@@ -12,6 +12,8 @@
 // In fondo: registro transazioni con annullo (motivo obbligatorio) e ristampa.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useTranslations } from 'next-intl';
+import { useDateFormat } from '@/lib/i18n/date';
 import { Coins, Search, Wand2, X, RotateCcw, FileText, UtensilsCrossed, ArrowLeft, Check, Printer } from 'lucide-react';
 import { SectionTitle } from '@/components/ui/cockpit';
 import { Modal } from '@/components/ui/Modal';
@@ -51,7 +53,6 @@ interface TxRow {
 }
 
 const hdr = (u: string) => ({ 'Content-Type': 'application/json', 'x-user-id': u });
-const dataIt = (d?: string | null) => (d ? new Date(d).toLocaleDateString('it-IT') : '—');
 const nomeFiglio = (f?: { nome?: string | null; cognome?: string | null } | null) =>
     `${f?.nome ?? ''} ${f?.cognome ?? ''}`.trim() || 'Alunno';
 
@@ -66,6 +67,10 @@ const METODI = [
 type Ricarica = { euro: string; ticket: string };
 
 export function TransazioniPanel({ userId, scuolaId, precompila }: Props) {
+    const t = useTranslations('adminContabilita');
+    const f = useDateFormat();
+    // Data breve localizzata (IT identica a `toLocaleDateString('it-IT')`); '—' se assente.
+    const dataIt = (d?: string | null) => (d ? f.dataBreve(d) : '—');
     const [step, setStep] = useState<'pagante' | 'importi'>('pagante');
 
     // Step (a) — ricerca pagante.
@@ -159,9 +164,9 @@ export function TransazioniPanel({ userId, scuolaId, precompila }: Props) {
         try {
             const r = await fetch(`/api/pagamenti/famiglia?parent_id=${p.id}`, { headers: hdr(userId) });
             const j = await r.json();
-            if (!j?.success) { setError(j?.error || 'Impossibile caricare la famiglia'); return; }
+            if (!j?.success) { setError(j?.error || t('transErrCaricaFamiglia')); return; }
             applicaFamiglia(j.data as Famiglia);
-        } catch { setError('Errore di rete nel caricamento della famiglia'); }
+        } catch { setError(t('transErrReteFamiglia')); }
     };
 
     // ── Precompilazione da bonifico multi-CF (Riconciliazione v2) ──────────────
@@ -220,7 +225,7 @@ export function TransazioniPanel({ userId, scuolaId, precompila }: Props) {
 
     const proponi = () => {
         if (!fam) return;
-        if (totaleNum <= 0) { setError('Inserisci prima l\'importo totale versato'); return; }
+        if (totaleNum <= 0) { setError(t('transErrImportoTotale')); return; }
         setError(null);
         // Capienza = totale meno quanto già destinato alle ricariche mensa; le voci
         // sono già ordinate dal server (più vecchie prima).
@@ -262,11 +267,11 @@ export function TransazioniPanel({ userId, scuolaId, precompila }: Props) {
             const j = await res.json();
             // Eccedenza mai silenziosa: 409 → apri la conferma esplicita «credito famiglia».
             if (res.status === 409 && j.eccedenza != null) { setConfermaEcc(Number(j.eccedenza)); return; }
-            if (!res.ok) { setError(j.error || 'Errore nella registrazione della transazione'); return; }
+            if (!res.ok) { setError(j.error || t('transErrRegistrazione')); return; }
             setConfermaEcc(null);
             setFatto({ transazioneId: j.data?.transazione_id ?? '', voci: vociIncluse });
             void caricaRegistro();
-        } catch { setError('Errore di rete'); }
+        } catch { setError(t('transErrRete')); }
         finally { setSaving(false); }
     };
 
@@ -286,8 +291,8 @@ export function TransazioniPanel({ userId, scuolaId, precompila }: Props) {
                 method: 'POST', headers: hdr(userId), body: JSON.stringify({ motivo: motivoAnnullo.trim() }),
             });
             if (res.ok) { setAnnullaTx(null); setMotivoAnnullo(''); void caricaRegistro(); }
-            else { const j = await res.json(); setError(j.error || 'Annullo non riuscito'); }
-        } catch { setError('Errore di rete nell\'annullo'); }
+            else { const j = await res.json(); setError(j.error || t('transErrAnnullo')); }
+        } catch { setError(t('transErrReteAnnullo')); }
         finally { setBusyAnnullo(false); }
     };
 
@@ -295,7 +300,7 @@ export function TransazioniPanel({ userId, scuolaId, precompila }: Props) {
     return (
         <div className="space-y-8">
             <div>
-                <SectionTitle icon={Coins} title="Incasso unico di famiglia" sub="Un solo versamento che salda più voci di più figli e ricarica la mensa." />
+                <SectionTitle icon={Coins} title={t('transTitolo')} sub={t('transSottotitolo')} />
 
                 {/* STEP A — pagante */}
                 {step === 'pagante' && (
@@ -304,14 +309,14 @@ export function TransazioniPanel({ userId, scuolaId, precompila }: Props) {
                             <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-kidville-muted" />
                             <input
                                 type="text" value={query} onChange={(e) => setQuery(e.target.value)}
-                                placeholder="Cerca il pagante per nome o cognome…"
-                                className={cx(INPUT, 'pl-9')} aria-label="Cerca pagante"
+                                placeholder={t('transCercaPlaceholder')}
+                                className={cx(INPUT, 'pl-9')} aria-label={t('transCercaPagante')}
                             />
                         </div>
                         <div className="max-h-80 overflow-y-auto rounded-card border border-kidville-line divide-y divide-kidville-line">
-                            {loadingParents && <p className="px-3 py-3 font-maven text-sm text-kidville-muted">Caricamento…</p>}
+                            {loadingParents && <p className="px-3 py-3 font-maven text-sm text-kidville-muted">{t('transCaricamento')}</p>}
                             {!loadingParents && parentsFiltrati.length === 0 && (
-                                <p className="px-3 py-3 font-maven text-sm text-kidville-muted">Nessun tutore trovato.</p>
+                                <p className="px-3 py-3 font-maven text-sm text-kidville-muted">{t('transNessunTutore')}</p>
                             )}
                             {parentsFiltrati.map((p) => (
                                 <button
@@ -332,34 +337,34 @@ export function TransazioniPanel({ userId, scuolaId, precompila }: Props) {
                     <div className="space-y-5">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                             <div>
-                                <p className="font-barlow text-sm font-black uppercase text-kidville-green">{fam.parent.nome || 'Pagante'}</p>
+                                <p className="font-barlow text-sm font-black uppercase text-kidville-green">{fam.parent.nome || t('transPagante')}</p>
                                 <p className="font-maven text-xs text-kidville-sub">
-                                    {fam.figli.length} {fam.figli.length === 1 ? 'figlio' : 'figli'} · credito famiglia {formatEuro(fam.credito)}
+                                    {fam.figli.length} {fam.figli.length === 1 ? t('transFiglio') : t('transFigli')} {t('transCreditoFamiglia')} {formatEuro(fam.credito)}
                                 </p>
                             </div>
                             <button type="button" onClick={reset} className={cx(BTN_SECONDARY, 'py-1.5 px-3 text-xs')}>
-                                <ArrowLeft size={13} /> Cambia pagante
+                                <ArrowLeft size={13} /> {t('transCambiaPagante')}
                             </button>
                         </div>
 
                         {/* Dati del versamento */}
                         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
                             <div>
-                                <label htmlFor="tx-totale" className="mb-1 block font-maven text-xs text-kidville-sub">Totale versato (€)</label>
+                                <label htmlFor="tx-totale" className="mb-1 block font-maven text-xs text-kidville-sub">{t('transTotaleVersato')}</label>
                                 <input id="tx-totale" type="number" min={0} step="0.01" value={totale} onChange={(e) => setTotale(e.target.value)} className={INPUT} />
                             </div>
                             <div>
-                                <label htmlFor="tx-metodo" className="mb-1 block font-maven text-xs text-kidville-sub">Metodo</label>
+                                <label htmlFor="tx-metodo" className="mb-1 block font-maven text-xs text-kidville-sub">{t('transMetodo')}</label>
                                 <select id="tx-metodo" value={metodo} onChange={(e) => setMetodo(e.target.value)} className={SELECT}>
                                     {METODI.map((m) => <option key={m.v} value={m.v}>{m.l}</option>)}
                                 </select>
                             </div>
                             <div>
-                                <label htmlFor="tx-riferimento" className="mb-1 block font-maven text-xs text-kidville-sub">Riferimento / CRO</label>
-                                <input id="tx-riferimento" type="text" value={riferimento} onChange={(e) => setRiferimento(e.target.value)} placeholder="CRO / TRN" className={INPUT} />
+                                <label htmlFor="tx-riferimento" className="mb-1 block font-maven text-xs text-kidville-sub">{t('transRiferimento')}</label>
+                                <input id="tx-riferimento" type="text" value={riferimento} onChange={(e) => setRiferimento(e.target.value)} placeholder={t('transRifPlaceholder')} className={INPUT} />
                             </div>
                             <div>
-                                <label htmlFor="tx-datavaluta" className="mb-1 block font-maven text-xs text-kidville-sub">Data valuta</label>
+                                <label htmlFor="tx-datavaluta" className="mb-1 block font-maven text-xs text-kidville-sub">{t('transDataValuta')}</label>
                                 <input id="tx-datavaluta" type="date" value={dataValuta} onChange={(e) => setDataValuta(e.target.value)} className={INPUT} />
                             </div>
                         </div>
@@ -367,12 +372,12 @@ export function TransazioniPanel({ userId, scuolaId, precompila }: Props) {
                         {/* Voci aperte per figlio */}
                         <div className="space-y-4">
                             <div className="flex items-center justify-between">
-                                <h3 className="font-barlow text-xs font-black uppercase tracking-wide text-kidville-green">Voci da saldare</h3>
+                                <h3 className="font-barlow text-xs font-black uppercase tracking-wide text-kidville-green">{t('transVociDaSaldare')}</h3>
                                 <button type="button" onClick={proponi} className={cx(BTN_SECONDARY, 'py-1.5 px-3 text-xs')}>
-                                    <Wand2 size={13} /> Proposta automatica
+                                    <Wand2 size={13} /> {t('transPropostaAutomatica')}
                                 </button>
                             </div>
-                            {fam.voci.length === 0 && <p className="font-maven text-sm text-kidville-muted">Nessuna voce aperta per questa famiglia.</p>}
+                            {fam.voci.length === 0 && <p className="font-maven text-sm text-kidville-muted">{t('transNessunaVoce')}</p>}
                             {fam.figli.filter((f) => fam.voci.some((v) => v.alunno_id === f.id)).map((f) => (
                                 <div key={f.id} className="rounded-card border border-kidville-line p-3">
                                     <p className="mb-2 font-maven text-sm font-bold text-kidville-ink">{nomeFiglio(f)}</p>
@@ -384,12 +389,12 @@ export function TransazioniPanel({ userId, scuolaId, precompila }: Props) {
                                                     <input
                                                         type="checkbox" checked={on} onChange={() => toggleVoce(v)}
                                                         className="h-4 w-4 rounded border-kidville-muted text-kidville-green focus:ring-kidville-green"
-                                                        aria-label={`Includi ${v.descrizione ?? 'voce'}`}
+                                                        aria-label={`${t('transIncludi')} ${v.descrizione ?? t('transVoce')}`}
                                                     />
                                                     <span className="flex-1 truncate font-maven text-sm text-kidville-ink">
-                                                        {v.descrizione ?? 'Voce'}
+                                                        {v.descrizione ?? t('transVoceCap')}
                                                         <span className={cx('ml-2 text-xs', v.stato_effettivo === 'scaduto' ? 'text-kidville-error-strong' : 'text-kidville-sub')}>
-                                                            resta {formatEuro(v.residuo)}{v.scadenza ? ` · scad. ${dataIt(v.scadenza)}` : ''}
+                                                            {t('transResta')} {formatEuro(v.residuo)}{v.scadenza ? ` ${t('transScad')} ${dataIt(v.scadenza)}` : ''}
                                                         </span>
                                                     </span>
                                                     <span className="font-maven text-xs text-kidville-muted">€</span>
@@ -397,7 +402,7 @@ export function TransazioniPanel({ userId, scuolaId, precompila }: Props) {
                                                         type="number" min={0} step="0.01" disabled={!on}
                                                         value={on ? alloc[v.id] : ''} onChange={(e) => setVoceImporto(v.id, e.target.value)}
                                                         className="w-24 rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-2 py-1 font-maven text-sm text-kidville-ink outline-none focus:border-kidville-green disabled:opacity-50"
-                                                        aria-label={`Importo ${v.descrizione ?? 'voce'}`}
+                                                        aria-label={`${t('transImporto')} ${v.descrizione ?? t('transVoce')}`}
                                                     />
                                                 </div>
                                             );
@@ -410,12 +415,12 @@ export function TransazioniPanel({ userId, scuolaId, precompila }: Props) {
                         {/* Ricariche mensa per figlio */}
                         <div className="space-y-2">
                             <h3 className="flex items-center gap-1.5 font-barlow text-xs font-black uppercase tracking-wide text-kidville-green">
-                                <UtensilsCrossed size={13} /> Ricarica mensa
+                                <UtensilsCrossed size={13} /> {t('transRicaricaMensa')}
                             </h3>
                             {fam.figli.map((f) => (
                                 <div key={f.id} className="flex flex-wrap items-center gap-2">
                                     <span className="min-w-40 flex-1 font-maven text-sm text-kidville-ink">
-                                        {nomeFiglio(f)} <span className="text-xs text-kidville-muted">({f.saldo_ticket} ticket)</span>
+                                        {nomeFiglio(f)} <span className="text-xs text-kidville-muted">({f.saldo_ticket} {t('transTicket')})</span>
                                     </span>
                                     <div className="flex items-center gap-1">
                                         <span className="font-maven text-xs text-kidville-muted">€</span>
@@ -423,7 +428,7 @@ export function TransazioniPanel({ userId, scuolaId, precompila }: Props) {
                                             type="number" min={0} step="0.01" value={ric[f.id]?.euro ?? ''}
                                             onChange={(e) => setRicarica(f.id, 'euro', e.target.value)}
                                             className="w-20 rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-2 py-1 font-maven text-sm text-kidville-ink outline-none focus:border-kidville-green"
-                                            aria-label={`Euro ricarica ${nomeFiglio(f)}`}
+                                            aria-label={`${t('transEuroRicarica')} ${nomeFiglio(f)}`}
                                         />
                                     </div>
                                     <div className="flex items-center gap-1">
@@ -431,14 +436,14 @@ export function TransazioniPanel({ userId, scuolaId, precompila }: Props) {
                                             type="number" min={0} step="1" value={ric[f.id]?.ticket ?? ''}
                                             onChange={(e) => setRicarica(f.id, 'ticket', e.target.value)}
                                             className="w-20 rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-2 py-1 font-maven text-sm text-kidville-ink outline-none focus:border-kidville-green"
-                                            aria-label={`Ticket ricarica ${nomeFiglio(f)}`}
+                                            aria-label={`${t('transTicketRicarica')} ${nomeFiglio(f)}`}
                                         />
-                                        <span className="font-maven text-xs text-kidville-muted">ticket</span>
+                                        <span className="font-maven text-xs text-kidville-muted">{t('transTicket')}</span>
                                     </div>
                                 </div>
                             ))}
                             {hasRigheOltreTotale && (
-                                <p role="alert" className="font-maven text-[11px] text-kidville-error-strong">Ogni ricarica richiede sia gli euro sia i ticket (entrambi &gt; 0).</p>
+                                <p role="alert" className="font-maven text-[11px] text-kidville-error-strong">{t('transRicaricaWarn')}</p>
                             )}
                         </div>
 
@@ -448,26 +453,26 @@ export function TransazioniPanel({ userId, scuolaId, precompila }: Props) {
                             differenza === 0 ? 'bg-kidville-success-soft' : differenza > 0 ? 'bg-kidville-warn-soft' : 'bg-kidville-error-soft',
                         )}>
                             <span className="font-maven text-sm text-kidville-ink">
-                                Allocato <strong>{formatEuro(allocato)}</strong> su <strong>{formatEuro(totaleNum)}</strong>
+                                {t('transAllocato')} <strong>{formatEuro(allocato)}</strong> {t('transSu')} <strong>{formatEuro(totaleNum)}</strong>
                             </span>
                             <span className={cx(
                                 'font-barlow text-sm font-black uppercase',
                                 differenza === 0 ? 'text-kidville-success-strong' : differenza > 0 ? 'text-kidville-warn-strong' : 'text-kidville-error-strong',
                             )}>
-                                {differenza === 0 ? 'Quadra' : differenza > 0 ? `${formatEuro(differenza)} in eccesso → credito` : `${formatEuro(-differenza)} oltre il totale`}
+                                {differenza === 0 ? t('transQuadra') : differenza > 0 ? `${formatEuro(differenza)} ${t('transInEccesso')}` : `${formatEuro(-differenza)} ${t('transOltreTotale')}`}
                             </span>
                         </div>
 
                         {error && <p role="alert" className="font-maven text-xs text-kidville-error-strong">{error}</p>}
 
                         <div className="flex gap-2">
-                            <button type="button" onClick={reset} className={cx(BTN_SECONDARY, 'flex-1')}>Annulla</button>
+                            <button type="button" onClick={reset} className={cx(BTN_SECONDARY, 'flex-1')}>{t('transAnnulla')}</button>
                             <button
                                 ref={registraBtnRef}
                                 type="button" onClick={() => invia(false)} disabled={!puoConfermare || saving}
                                 className={cx(BTN_PRIMARY, 'flex-1')}
                             >
-                                {saving ? 'Registrazione…' : 'Registra incasso'}
+                                {saving ? t('transRegistrazione') : t('transRegistraIncasso')}
                             </button>
                         </div>
                     </div>
@@ -478,7 +483,7 @@ export function TransazioniPanel({ userId, scuolaId, precompila }: Props) {
                     <div className="space-y-4">
                         <div role="status" className="flex items-center gap-2 rounded-card bg-kidville-success-soft px-3 py-2.5">
                             <Check size={18} className="text-kidville-success-strong" />
-                            <span className="font-maven text-sm font-bold text-kidville-success-strong">Transazione registrata · {formatEuro(totaleNum)}</span>
+                            <span className="font-maven text-sm font-bold text-kidville-success-strong">{t('transRegistrata')} {formatEuro(totaleNum)}</span>
                         </div>
 
                         <div className="flex flex-wrap gap-2">
@@ -487,18 +492,18 @@ export function TransazioniPanel({ userId, scuolaId, precompila }: Props) {
                                 target="_blank" rel="noopener noreferrer"
                                 className={cx(BTN_PRIMARY, 'text-sm')}
                             >
-                                <FileText size={15} /> Ricevuta famiglia (PDF)
+                                <FileText size={15} /> {t('transRicevutaFamiglia')}
                             </a>
                         </div>
 
                         {fatto.voci.length > 0 && (
                             <div className="rounded-card border border-kidville-line p-3">
-                                <p className="mb-2 font-barlow text-xs font-black uppercase tracking-wide text-kidville-green">Dividi in fatture</p>
-                                <p className="mb-3 font-maven text-[11px] text-kidville-muted">In alternativa alla ricevuta unica, emetti una fattura elettronica per singola voce.</p>
+                                <p className="mb-2 font-barlow text-xs font-black uppercase tracking-wide text-kidville-green">{t('transDividiFatture')}</p>
+                                <p className="mb-3 font-maven text-[11px] text-kidville-muted">{t('transDividiFattureSub')}</p>
                                 <div className="space-y-1.5">
                                     {fatto.voci.map((v) => (
                                         <div key={v.id} className="flex items-center justify-between gap-2">
-                                            <span className="flex-1 truncate font-maven text-sm text-kidville-ink">{v.descrizione ?? 'Voce'}</span>
+                                            <span className="flex-1 truncate font-maven text-sm text-kidville-ink">{v.descrizione ?? t('transVoceCap')}</span>
                                             <FatturaButton pagamentoId={v.id} userId={userId} descrizione={v.descrizione ?? undefined} />
                                         </div>
                                     ))}
@@ -506,51 +511,51 @@ export function TransazioniPanel({ userId, scuolaId, precompila }: Props) {
                             </div>
                         )}
 
-                        <button type="button" onClick={reset} className={cx(BTN_SECONDARY, 'w-full')}>Nuovo incasso</button>
+                        <button type="button" onClick={reset} className={cx(BTN_SECONDARY, 'w-full')}>{t('transNuovoIncasso')}</button>
                     </div>
                 )}
             </div>
 
             {/* REGISTRO TRANSAZIONI */}
             <div>
-                <SectionTitle icon={RotateCcw} title="Registro transazioni" sub="Ultime transazioni di famiglia: ristampa la ricevuta o annulla con motivo." />
-                {loadingRegistro && <p className="font-maven text-sm text-kidville-muted">Caricamento…</p>}
-                {!loadingRegistro && !registroDisp && <p className="font-maven text-sm text-kidville-muted">Registro non disponibile su questo ambiente.</p>}
-                {!loadingRegistro && registroDisp && registro.length === 0 && <p className="font-maven text-sm text-kidville-muted">Nessuna transazione registrata.</p>}
+                <SectionTitle icon={RotateCcw} title={t('transRegistroTitolo')} sub={t('transRegistroSub')} />
+                {loadingRegistro && <p className="font-maven text-sm text-kidville-muted">{t('transCaricamento')}</p>}
+                {!loadingRegistro && !registroDisp && <p className="font-maven text-sm text-kidville-muted">{t('transRegistroNonDisp')}</p>}
+                {!loadingRegistro && registroDisp && registro.length === 0 && <p className="font-maven text-sm text-kidville-muted">{t('transNessunaTransazione')}</p>}
                 {!loadingRegistro && registroDisp && registro.length > 0 && (
                     <div className="overflow-x-auto rounded-card border border-kidville-line">
                         <table className="w-full min-w-[640px] border-collapse">
                             <thead>
                                 <tr className="border-b border-kidville-line bg-kidville-cream/40 text-left">
-                                    {['Data', 'Totale', 'Metodo', 'Riferimento', ''].map((h) => (
+                                    {[t('transThData'), t('transThTotale'), t('transMetodo'), t('transThRiferimento'), ''].map((h) => (
                                         <th key={h} className="px-3 py-2 font-barlow text-[11px] font-black uppercase tracking-wide text-kidville-muted">{h}</th>
                                     ))}
                                 </tr>
                             </thead>
                             <tbody>
-                                {registro.map((t) => (
-                                    <tr key={t.id} className={cx('border-b border-kidville-line last:border-0', t.annullata_il && 'opacity-50')}>
-                                        <td className="px-3 py-2 font-maven text-sm text-kidville-ink">{dataIt(t.data_valuta ?? t.creato_il)}</td>
-                                        <td className="px-3 py-2 font-maven text-sm font-bold text-kidville-green">{formatEuro(Number(t.importo_totale))}</td>
-                                        <td className="px-3 py-2 font-maven text-sm text-kidville-ink">{METODI.find((m) => m.v === t.metodo)?.l ?? t.metodo}</td>
-                                        <td className="px-3 py-2 font-maven text-xs text-kidville-muted">{t.riferimento || '—'}</td>
+                                {registro.map((tx) => (
+                                    <tr key={tx.id} className={cx('border-b border-kidville-line last:border-0', tx.annullata_il && 'opacity-50')}>
+                                        <td className="px-3 py-2 font-maven text-sm text-kidville-ink">{dataIt(tx.data_valuta ?? tx.creato_il)}</td>
+                                        <td className="px-3 py-2 font-maven text-sm font-bold text-kidville-green">{formatEuro(Number(tx.importo_totale))}</td>
+                                        <td className="px-3 py-2 font-maven text-sm text-kidville-ink">{METODI.find((m) => m.v === tx.metodo)?.l ?? tx.metodo}</td>
+                                        <td className="px-3 py-2 font-maven text-xs text-kidville-muted">{tx.riferimento || '—'}</td>
                                         <td className="px-3 py-2 text-right">
-                                            {t.annullata_il ? (
-                                                <span className="font-barlow text-[11px] font-black uppercase text-kidville-error">Annullata</span>
+                                            {tx.annullata_il ? (
+                                                <span className="font-barlow text-[11px] font-black uppercase text-kidville-error">{t('transAnnullata')}</span>
                                             ) : (
                                                 <div className="flex items-center justify-end gap-1.5">
                                                     <a
-                                                        href={`/api/pagamenti/transazioni/${t.id}/ricevuta?userId=${userId}`}
-                                                        target="_blank" rel="noopener noreferrer" title="Ristampa ricevuta"
+                                                        href={`/api/pagamenti/transazioni/${tx.id}/ricevuta?userId=${userId}`}
+                                                        target="_blank" rel="noopener noreferrer" title={t('transRistampaRicevuta')}
                                                         className="inline-flex items-center gap-1 rounded-pill bg-kidville-green-soft px-2 py-1 font-maven text-xs font-bold text-kidville-green transition-colors hover:bg-kidville-green/20"
                                                     >
-                                                        <Printer size={12} /> Ricevuta
+                                                        <Printer size={12} /> {t('transRicevuta')}
                                                     </a>
                                                     <button
-                                                        type="button" onClick={() => { setAnnullaTx(t); setMotivoAnnullo(''); }}
+                                                        type="button" onClick={() => { setAnnullaTx(tx); setMotivoAnnullo(''); }}
                                                         className="inline-flex items-center gap-1 rounded-pill border-[1.5px] border-kidville-line px-2 py-1 font-maven text-xs font-bold text-kidville-muted transition-colors hover:border-kidville-error hover:text-kidville-error"
                                                     >
-                                                        <X size={12} /> Annulla
+                                                        <X size={12} /> {t('transAnnulla')}
                                                     </button>
                                                 </div>
                                             )}
@@ -567,20 +572,19 @@ export function TransazioniPanel({ userId, scuolaId, precompila }: Props) {
             <Modal
                 open={confermaEcc != null}
                 onClose={() => setConfermaEcc(null)}
-                title="Eccedenza da confermare"
+                title={t('transEccTitolo')}
                 labelledBy="tx-eccedenza-title"
                 className={cx(MODAL_CARD, 'max-w-sm')}
                 style={{ boxShadow: MODAL_SHADOW }}
                 returnFocusRef={registraBtnRef}
             >
-                <h2 id="tx-eccedenza-title" className="mb-2 font-barlow text-base font-black uppercase text-kidville-green">Eccedenza da confermare</h2>
+                <h2 id="tx-eccedenza-title" className="mb-2 font-barlow text-base font-black uppercase text-kidville-green">{t('transEccTitolo')}</h2>
                 <p className="mb-3 font-maven text-sm text-kidville-ink">
-                    Il totale versato supera l&apos;allocato di <strong>{formatEuro(confermaEcc)}</strong>.
-                    Vuoi registrare l&apos;eccedenza come <strong>credito famiglia</strong> riutilizzabile?
+                    {t('transEccPre')} <strong>{formatEuro(confermaEcc)}</strong>{t('transEccMid')} <strong>{t('transEccCredito')}</strong> {t('transEccPost')}
                 </p>
                 <div className="flex gap-2">
-                    <button type="button" onClick={() => setConfermaEcc(null)} className={cx(BTN_SECONDARY, 'flex-1')}>Annulla</button>
-                    <button type="button" onClick={() => invia(true)} disabled={saving} className={cx(BTN_PRIMARY, 'flex-1')}>Conferma credito</button>
+                    <button type="button" onClick={() => setConfermaEcc(null)} className={cx(BTN_SECONDARY, 'flex-1')}>{t('transAnnulla')}</button>
+                    <button type="button" onClick={() => invia(true)} disabled={saving} className={cx(BTN_PRIMARY, 'flex-1')}>{t('transConfermaCredito')}</button>
                 </div>
             </Modal>
 
@@ -588,26 +592,26 @@ export function TransazioniPanel({ userId, scuolaId, precompila }: Props) {
             <Modal
                 open={annullaTx != null}
                 onClose={() => setAnnullaTx(null)}
-                title="Annulla transazione"
+                title={t('transAnnulloTitolo')}
                 labelledBy="tx-annullo-title"
                 className={cx(MODAL_CARD, 'max-w-sm')}
                 style={{ boxShadow: MODAL_SHADOW }}
             >
-                <h2 id="tx-annullo-title" className="mb-2 font-barlow text-base font-black uppercase text-kidville-green">Annulla transazione</h2>
+                <h2 id="tx-annullo-title" className="mb-2 font-barlow text-base font-black uppercase text-kidville-green">{t('transAnnulloTitolo')}</h2>
                 <p className="mb-3 font-maven text-sm text-kidville-ink">
-                    Verranno stornati tutti gli incassi collegati, incluse le eventuali ricariche mensa{annullaTx ? ` (${formatEuro(Number(annullaTx.importo_totale))})` : ''}. Indica il motivo (obbligatorio).
+                    {t('transAnnulloIntro')}{annullaTx ? ` (${formatEuro(Number(annullaTx.importo_totale))})` : ''}{t('transAnnulloOutro')}
                 </p>
                 <input
                     type="text" value={motivoAnnullo} onChange={(e) => setMotivoAnnullo(e.target.value)}
-                    placeholder="Motivo dell'annullo (min 3 caratteri)" className={cx(INPUT, 'mb-3')} aria-label="Motivo dell'annullo"
+                    placeholder={t('transMotivoPlaceholder')} className={cx(INPUT, 'mb-3')} aria-label={t('transMotivoAria')}
                 />
                 <div className="flex gap-2">
-                    <button type="button" onClick={() => setAnnullaTx(null)} className={cx(BTN_SECONDARY, 'flex-1')}>Indietro</button>
+                    <button type="button" onClick={() => setAnnullaTx(null)} className={cx(BTN_SECONDARY, 'flex-1')}>{t('transIndietro')}</button>
                     <button
                         type="button" onClick={eseguiAnnullo} disabled={busyAnnullo || motivoAnnullo.trim().length < 3}
                         className={cx(BTN_PRIMARY, 'flex-1')}
                     >
-                        {busyAnnullo ? 'Annullo…' : 'Conferma annullo'}
+                        {busyAnnullo ? t('transAnnulloBusy') : t('transConfermaAnnullo')}
                     </button>
                 </div>
             </Modal>

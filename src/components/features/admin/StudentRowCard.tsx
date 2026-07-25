@@ -1,8 +1,9 @@
 'use client';
 
 import React from 'react';
+import { useTranslations, useLocale } from 'next-intl';
 import { AlertTriangle } from 'lucide-react';
-import { labelRuolo } from '@/lib/auth/ruoli';
+import { useLabelRuolo } from '@/lib/auth/ruoli';
 import type { Student } from './StudentTable';
 
 /**
@@ -33,6 +34,9 @@ interface Props {
 }
 
 export function StudentRowCard({ student, isSelected, onToggleSelect, onClick, currentTypeFilter }: Props) {
+    const t = useTranslations('adminStudents');
+    const locale = useLocale();
+    const labelRuolo = useLabelRuolo();
     const cognome = student.cognome || student.last_name || '—';
     const nome = student.nome || student.first_name || '';
     const hasAllergie = !!student.note_mediche;
@@ -44,7 +48,7 @@ export function StudentRowCard({ student, isSelected, onToggleSelect, onClick, c
             data-student-id={student.id}
             role="button"
             tabIndex={0}
-            aria-label={`Apri scheda di ${cognome} ${nome}`.trim()}
+            aria-label={t('cardApriScheda', { nome: `${cognome} ${nome}`.trim() })}
             onClick={() => onClick(student)}
             onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
@@ -85,7 +89,7 @@ export function StudentRowCard({ student, isSelected, onToggleSelect, onClick, c
                             </span>
                             <span>
                                 {student.data_nascita
-                                    ? new Date(student.data_nascita).toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: '2-digit' })
+                                    ? new Date(student.data_nascita).toLocaleDateString(locale, { day: '2-digit', month: '2-digit', year: '2-digit' })
                                     : '—'}
                             </span>
                         </div>
@@ -96,7 +100,7 @@ export function StudentRowCard({ student, isSelected, onToggleSelect, onClick, c
                             <p className="truncate">{student.emails && student.emails.length > 0 ? student.emails[0] : '—'}</p>
                             <p className="truncate">{student.sede_nome || '—'}</p>
                             <p className="font-semibold text-kidville-green">
-                                {student.classi_count ?? 0} {(student.classi_count ?? 0) === 1 ? 'classe' : 'classi'}
+                                {t('cardClassi', { n: student.classi_count ?? 0 })}
                             </p>
                         </div>
                     )}
@@ -130,8 +134,8 @@ export function StudentRowCard({ student, isSelected, onToggleSelect, onClick, c
                         // Solo un flag di presenza: la nota medica GREZZA (dato art. 9
                         // GDPR di un minore) non finisce mai in un attributo DOM — il
                         // dettaglio vive solo dietro la scheda alunno.
-                        <span className="text-kidville-error text-xs font-maven font-bold flex items-center gap-0.5" title="Allergie/note mediche presenti">
-                            <AlertTriangle size={12} /> Allergie
+                        <span className="text-kidville-error text-xs font-maven font-bold flex items-center gap-0.5" title={t('allergieNotePresenti')}>
+                            <AlertTriangle size={12} /> {t('allergie')}
                         </span>
                     )}
                     {hasBes && (

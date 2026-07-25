@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, Suspense } from 'react';
+import { useTranslations } from 'next-intl';
 import { usePathname, useSearchParams } from 'next/navigation';
 import {
     RefreshCw, ChevronDown, ChevronRight,
@@ -33,6 +34,7 @@ interface CaricoDayStudent { id: string; nome: string; cognome: string; inventar
 // ─────────────────────────────────────────────────────────────────────────────
 
 function TeacherLockerInner() {
+    const t = useTranslations('teacherServizi');
     const search = useSearchParams();
     const pathname = usePathname();
     const userId = getCurrentTeacherId(search);
@@ -184,14 +186,14 @@ function TeacherLockerInner() {
         <div className="mx-auto max-w-[460px] px-4 pt-5">
             {/* Header verde (DR) */}
             <PageHeaderCard
-                eyebrow="Strumenti"
-                title="Armadietto"
-                subtitle={<>Scorte e consegne · Sezione {sezione || '…'}</>}
+                eyebrow={t('lockerEyebrow')}
+                title={t('lockerTitolo')}
+                subtitle={t('lockerSottotitolo', { sezione: sezione || '…' })}
                 action={
                     <>
                         <Link href={settingsHref}
                             className="flex h-9 w-9 items-center justify-center rounded-full bg-white/15 text-white transition-colors hover:bg-white/25"
-                            title="Impostazioni materiali">
+                            title={t('lockerImpostazioniMateriali')}>
                             <Settings size={17} />
                         </Link>
                         <button
@@ -222,9 +224,9 @@ function TeacherLockerInner() {
             {/* Toggle 3 viste */}
             <div className="mt-5 mb-6 flex gap-1 rounded-2xl bg-white p-1 shadow-sm">
                 {([
-                    { key: 'carico',  icon: <Truck size={14} />,    label: 'Carico Genitore' },
-                    { key: 'consumo', icon: <MinusCircle size={14} />, label: 'Consumo' },
-                    { key: 'mensile', icon: <Table2 size={14} />,   label: 'Mensile' },
+                    { key: 'carico',  icon: <Truck size={14} />,    label: t('lockerTabCarico') },
+                    { key: 'consumo', icon: <MinusCircle size={14} />, label: t('lockerTabConsumo') },
+                    { key: 'mensile', icon: <Table2 size={14} />,   label: t('lockerTabMensile') },
                 ] as const).map(({ key, icon, label }) => (
                     <button
                         key={key}
@@ -246,11 +248,11 @@ function TeacherLockerInner() {
                         onClick={() => { setPreStudent(''); setPreMat(''); setShowModal(true); }}
                         className="w-full mb-5 py-3 bg-kidville-green text-kidville-yellow rounded-2xl font-barlow font-black uppercase shadow-lg hover:opacity-90 active:scale-[0.98] transition-all flex items-center justify-center gap-2"
                     >
-                        <PlusCircle size={20} /> Registra Carico Odierno
+                        <PlusCircle size={20} /> {t('lockerRegistraCarico')}
                     </button>
 
                     {caricoLoading ? (
-                        <div className="text-center py-10 text-kidville-muted">Caricamento...</div>
+                        <div className="text-center py-10 text-kidville-muted">{t('lockerCaricamento')}</div>
                     ) : (
                         <div className="space-y-3">
                             {caricoStudents.map(student => {
@@ -268,7 +270,7 @@ function TeacherLockerInner() {
                                             <div className="flex-1 text-left">
                                                 <p className="font-maven font-bold text-kidville-green">{student.nome} {student.cognome}</p>
                                                 <p className="text-xs text-kidville-muted">
-                                                    {todayCount > 0 ? `${todayCount} consegne oggi` : 'Nessuna consegna oggi'}
+                                                    {t('lockerConsegneOggi', { count: todayCount })}
                                                 </p>
                                             </div>
                                             {todayCount > 0 && (
@@ -288,7 +290,7 @@ function TeacherLockerInner() {
                                                     {/* Stock totale attuale */}
                                                     {studentStocks.length > 0 && (
                                                         <div className="rounded-xl bg-kidville-green/5 border border-kidville-green/10 px-3 py-2">
-                                                            <p className="text-[10px] font-bold text-kidville-green uppercase tracking-wide mb-1.5">📦 Stock Totale Attuale</p>
+                                                            <p className="text-[10px] font-bold text-kidville-green uppercase tracking-wide mb-1.5">{t('lockerStockTotale')}</p>
                                                             <div className="flex gap-3 flex-wrap">
                                                                 {studentStocks.map((s) => (
                                                                     <span key={s.materiale} className="text-xs font-maven font-semibold text-kidville-ink">
@@ -302,7 +304,7 @@ function TeacherLockerInner() {
                                                     {/* Consegne di oggi */}
                                                     {todayCount > 0 ? (
                                                         <div className="space-y-1.5">
-                                                            <p className="text-[10px] font-bold text-kidville-success uppercase tracking-wide">✅ Consegnato oggi</p>
+                                                            <p className="text-[10px] font-bold text-kidville-success uppercase tracking-wide">{t('lockerConsegnatoOggi')}</p>
                                                             {student.inventario.map((item, idx) => {
                                                                 const matStock = studentStocks.find((s) => s.materiale === (item.materiale ?? item.nome_oggetto))?.stock ?? 0;
                                                                 return (
@@ -312,21 +314,21 @@ function TeacherLockerInner() {
                                                                         </span>
                                                                         <div className="text-right">
                                                                             <span className="font-barlow font-black text-kidville-success block">+{item.quantita} pz</span>
-                                                                            <span className="text-[10px] text-kidville-muted">Totale: {matStock} pz</span>
+                                                                            <span className="text-[10px] text-kidville-muted">{t('lockerTotale')}: {matStock} pz</span>
                                                                         </div>
                                                                     </div>
                                                                 );
                                                             })}
                                                         </div>
                                                     ) : (
-                                                        <p className="text-center text-kidville-muted text-sm py-2">Nessuna consegna registrata oggi</p>
+                                                        <p className="text-center text-kidville-muted text-sm py-2">{t('lockerNessunaConsegna')}</p>
                                                     )}
 
                                                     <button
                                                         onClick={() => { setPreStudent(student.id); setPreMat(''); setShowModal(true); }}
                                                         className="w-full py-2 border-2 border-dashed border-kidville-green/30 rounded-xl text-kidville-green text-xs font-bold hover:bg-kidville-green/5 transition-colors flex items-center justify-center gap-1"
                                                     >
-                                                        <PlusCircle size={14} /> Aggiungi carico per {student.nome}
+                                                        <PlusCircle size={14} /> {t('lockerAggiungiCaricoPer', { nome: student.nome })}
                                                     </button>
                                                 </div>
                                             );
@@ -354,11 +356,11 @@ function TeacherLockerInner() {
             {view === 'consumo' && (
                 <>
                     <div className="mb-4 bg-kidville-warn-soft border border-kidville-warn/30 rounded-2xl px-4 py-3 text-xs text-kidville-warn font-maven">
-                        <strong>👆 Tocca un materiale</strong> per registrare che l&apos;hai utilizzato. Lo stock si aggiorna in tempo reale.
+                        {t.rich('lockerConsumoHint', { strong: (c) => <strong>{c}</strong> })}
                     </div>
 
                     {consumoLoading ? (
-                        <div className="text-center py-10 text-kidville-muted">Caricamento stock...</div>
+                        <div className="text-center py-10 text-kidville-muted">{t('lockerCaricamentoStock')}</div>
                     ) : (
                         <div className="space-y-3">
                             {consumoStudents.map(student => {
@@ -375,10 +377,10 @@ function TeacherLockerInner() {
                                             </div>
                                             <div className="flex-1 text-left">
                                                 <p className="font-maven font-bold text-kidville-green">{student.nome} {student.cognome}</p>
-                                                <p className="text-xs text-kidville-muted">{student.stocks.length} materiali in stock</p>
+                                                <p className="text-xs text-kidville-muted">{t('lockerMaterialiInStock', { count: student.stocks.length })}</p>
                                             </div>
                                             {!hasStock && (
-                                                <span className="bg-kidville-error-soft text-kidville-error text-[10px] font-bold px-2 py-0.5 rounded-full">ESAURITO</span>
+                                                <span className="bg-kidville-error-soft text-kidville-error text-[10px] font-bold px-2 py-0.5 rounded-full">{t('lockerEsaurito')}</span>
                                             )}
                                             {isOpen ? <ChevronDown size={18} className="text-kidville-muted" /> : <ChevronRight size={18} className="text-kidville-muted" />}
                                         </button>
@@ -386,7 +388,7 @@ function TeacherLockerInner() {
                                         {isOpen && (
                                             <div className="p-4 bg-kidville-cream/50 border-t border-kidville-line space-y-2">
                                                 {student.stocks.length === 0 ? (
-                                                    <p className="text-center text-kidville-muted text-sm py-3">Nessun materiale in stock</p>
+                                                    <p className="text-center text-kidville-muted text-sm py-3">{t('lockerNessunMateriale')}</p>
                                                 ) : student.stocks.map(item => {
                                                     const isFormOpen = consumoForm?.sid === student.id && consumoForm?.mat === item.materiale;
                                                     return (
@@ -418,7 +420,7 @@ function TeacherLockerInner() {
                                                             {isFormOpen && (
                                                                 <div className="mt-1 px-4 py-3 bg-kidville-warn-soft border border-kidville-warn/30 rounded-xl space-y-3">
                                                                     <p className="text-xs text-kidville-warn font-maven">
-                                                                        Quante unità di <strong>{item.materiale}</strong> hai utilizzato?
+                                                                        {t.rich('lockerQuanteUnita', { materiale: item.materiale, strong: (c) => <strong>{c}</strong> })}
                                                                     </p>
                                                                     <div className="flex items-center gap-3">
                                                                         <button
@@ -435,9 +437,9 @@ function TeacherLockerInner() {
                                                                             disabled={consumoSaving || consumoQty > item.stock}
                                                                             className="flex-1 h-9 bg-kidville-warn text-white rounded-xl font-barlow font-black text-sm disabled:opacity-50 hover:bg-kidville-warn-dark active:scale-95 transition-all"
                                                                         >
-                                                                            {consumoSaving ? '...' : '✓ Conferma'}
+                                                                            {consumoSaving ? '...' : t('lockerConferma')}
                                                                         </button>
-                                                                        <button onClick={() => setConsumoForm(null)} className="text-kidville-muted text-xs">Annulla</button>
+                                                                        <button onClick={() => setConsumoForm(null)} className="text-kidville-muted text-xs">{t('lockerAnnulla')}</button>
                                                                     </div>
                                                                 </div>
                                                             )}
@@ -462,7 +464,7 @@ function TeacherLockerInner() {
                             className="p-2 rounded-xl text-kidville-muted hover:text-kidville-green hover:bg-kidville-cream transition-all">
                             <ChevronLeft size={18} />
                         </button>
-                        <span className="text-sm font-semibold text-kidville-green/70">Consegne mensili</span>
+                        <span className="text-sm font-semibold text-kidville-green/70">{t('lockerConsegneMensili')}</span>
                         <button id="next-month-btn" onClick={() => setMonth(m => shiftMonth(m, 1))}
                             className="p-2 rounded-xl text-kidville-muted hover:text-kidville-green hover:bg-kidville-cream transition-all">
                             <ChevronRightIcon size={18} />
@@ -471,7 +473,7 @@ function TeacherLockerInner() {
                     {mensileLoading ? (
                         <div className="flex items-center justify-center py-16 gap-3">
                             <div className="w-5 h-5 border-2 border-kidville-green/30 border-t-kidville-green rounded-full animate-spin" />
-                            <span className="text-kidville-muted text-sm">Caricamento...</span>
+                            <span className="text-kidville-muted text-sm">{t('lockerCaricamento')}</span>
                         </div>
                     ) : (
                         <MonthlyLockerTable students={mensileStudents} month={month} hideStudentColumn={false} />

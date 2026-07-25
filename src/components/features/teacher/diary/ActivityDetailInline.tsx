@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Plus, Trash2, ChevronDown, CheckCircle } from 'lucide-react';
 
@@ -21,27 +22,34 @@ export interface ActivityItem {
     studentPartecipazione: Record<string, string | null>;
 }
 
+// Etichette in teacherDiario.json (chiavi `activity_<value>`); qui restano solo
+// `value` (chiave dati/i18n) ed emoji.
 const ACTIVITY_TYPES = [
-    { value: 'pittura',  label: 'Pittura',      emoji: '🎨' },
-    { value: 'musica',   label: 'Musica',        emoji: '🎵' },
-    { value: 'lettura',  label: 'Lettura',       emoji: '📚' },
-    { value: 'motoria',  label: 'Motoria',       emoji: '🏃' },
-    { value: 'gioco',    label: 'Gioco libero',  emoji: '🧩' },
-    { value: 'natura',   label: 'Natura',        emoji: '🌿' },
-    { value: 'cucina',   label: 'Cucina',        emoji: '🍪' },
-    { value: 'teatro',   label: 'Teatro',        emoji: '🎭' },
-    { value: 'altro',    label: 'Altro',         emoji: '✨' },
+    { value: 'pittura',  emoji: '🎨' },
+    { value: 'musica',   emoji: '🎵' },
+    { value: 'lettura',  emoji: '📚' },
+    { value: 'motoria',  emoji: '🏃' },
+    { value: 'gioco',    emoji: '🧩' },
+    { value: 'natura',   emoji: '🌿' },
+    { value: 'cucina',   emoji: '🍪' },
+    { value: 'teatro',   emoji: '🎭' },
+    { value: 'altro',    emoji: '✨' },
 ] as const;
 
+// Etichette in teacherDiario.json (chiavi `participation_<value>`).
 const PARTICIPATION_LEVELS = [
-    { value: 'non_fatta',  label: 'Non fatta',      bg: 'bg-kidville-error-soft',     text: 'text-kidville-error',     border: 'border-kidville-error/25' },
-    { value: 'difficolta', label: 'Con difficoltà',  bg: 'bg-kidville-warn-soft/80',  text: 'text-kidville-warn',  border: 'border-kidville-warn/60' },
-    { value: 'aiuto',      label: 'Con aiuto',       bg: 'bg-yellow-100/80',  text: 'text-yellow-700',  border: 'border-yellow-200/60' },
-    { value: 'autonomia',  label: 'In autonomia',    bg: 'bg-kidville-success-soft/80', text: 'text-kidville-success', border: 'border-kidville-success/60' },
+    { value: 'non_fatta',  bg: 'bg-kidville-error-soft',     text: 'text-kidville-error',     border: 'border-kidville-error/25' },
+    { value: 'difficolta', bg: 'bg-kidville-warn-soft/80',  text: 'text-kidville-warn',  border: 'border-kidville-warn/60' },
+    { value: 'aiuto',      bg: 'bg-yellow-100/80',  text: 'text-yellow-700',  border: 'border-yellow-200/60' },
+    { value: 'autonomia',  bg: 'bg-kidville-success-soft/80', text: 'text-kidville-success', border: 'border-kidville-success/60' },
 ] as const;
 
-function getActivityMeta(tipo: string) {
-    return ACTIVITY_TYPES.find(a => a.value === tipo) ?? { emoji: '✨', label: tipo };
+function getActivityEmoji(tipo: string) {
+    return ACTIVITY_TYPES.find(a => a.value === tipo)?.emoji ?? '✨';
+}
+
+function isKnownActivity(tipo: string) {
+    return ACTIVITY_TYPES.some(a => a.value === tipo);
 }
 
 interface Props {
@@ -70,8 +78,10 @@ function ActivityAccordion({
     onRemove: () => void;
     savedStudentIds: Set<string>;
 }) {
+    const t = useTranslations('teacherDiario');
     const [open, setOpen] = useState(true);
-    const meta = getActivityMeta(activity.tipo);
+    const emoji = getActivityEmoji(activity.tipo);
+    const label = isKnownActivity(activity.tipo) ? t(`activity_${activity.tipo}`) : activity.tipo;
 
     // Quanti studenti hanno una partecipazione compilata per questa attività
     const compiledCount = students.filter(
@@ -95,13 +105,13 @@ function ActivityAccordion({
                 onClick={() => setOpen(v => !v)}
                 className="w-full flex items-center gap-3 px-4 py-3 hover:bg-white/60 transition-colors"
             >
-                <span className="text-xl flex-shrink-0">{meta.emoji}</span>
+                <span className="text-xl flex-shrink-0">{emoji}</span>
                 <div className="flex-1 text-left">
                     <p className="font-barlow font-bold text-sm text-kidville-green uppercase tracking-wide">
-                        {index + 1}. {meta.label}
+                        {index + 1}. {label}
                     </p>
                     <p className="font-maven text-[11px] text-kidville-muted">
-                        {compiledCount}/{students.length} bambini compilati
+                        {t('bambiniCompilati', { done: compiledCount, total: students.length })}
                     </p>
                 </div>
                 {isComplete && (
@@ -138,7 +148,7 @@ function ActivityAccordion({
 
                             {/* Tipo attività */}
                             <div>
-                                <p className="font-maven text-[11px] text-kidville-muted uppercase tracking-wide mb-1.5">Tipo</p>
+                                <p className="font-maven text-[11px] text-kidville-muted uppercase tracking-wide mb-1.5">{t('tipo')}</p>
                                 <div className="flex flex-wrap gap-1.5">
                                     {ACTIVITY_TYPES.map(at => (
                                         <button
@@ -151,7 +161,7 @@ function ActivityAccordion({
                                             }`}
                                         >
                                             <span>{at.emoji}</span>
-                                            <span>{at.label}</span>
+                                            <span>{t(`activity_${at.value}`)}</span>
                                         </button>
                                     ))}
                                 </div>
@@ -159,11 +169,11 @@ function ActivityAccordion({
 
                             {/* Descrizione */}
                             <div>
-                                <p className="font-maven text-[11px] text-kidville-muted uppercase tracking-wide mb-1.5">Descrizione (facoltativa)</p>
+                                <p className="font-maven text-[11px] text-kidville-muted uppercase tracking-wide mb-1.5">{t('descrizioneFacoltativa')}</p>
                                 <textarea
                                     value={activity.descrizione}
                                     onChange={e => onChange({ descrizione: e.target.value })}
-                                    placeholder={`Descrivi l'attività di ${meta.label.toLowerCase()}...`}
+                                    placeholder={t('descriviAttivita', { tipo: label.toLowerCase() })}
                                     rows={2}
                                     className="w-full px-3 py-2.5 rounded-xl bg-kidville-cream border border-kidville-line font-maven text-sm text-kidville-green placeholder:text-kidville-muted resize-none focus:outline-none focus:ring-2 focus:ring-kidville-info/40 focus:border-kidville-info/60 transition-all duration-200"
                                 />
@@ -171,7 +181,7 @@ function ActivityAccordion({
 
                             {/* Partecipazione per studente */}
                             <div>
-                                <p className="font-maven text-[11px] text-kidville-muted uppercase tracking-wide mb-1.5">Partecipazione</p>
+                                <p className="font-maven text-[11px] text-kidville-muted uppercase tracking-wide mb-1.5">{t('partecipazione')}</p>
                                 <div className="space-y-2">
                                     {students.map(student => {
                                         const sel = activity.studentPartecipazione[student.id] ?? null;
@@ -198,7 +208,7 @@ function ActivityAccordion({
                                                                     : 'bg-white text-kidville-muted border-kidville-line hover:border-kidville-line'
                                                             }`}
                                                         >
-                                                            {lv.label}
+                                                            {t(`participation_${lv.value}`)}
                                                         </button>
                                                     ))}
                                                 </div>
@@ -218,6 +228,7 @@ function ActivityAccordion({
 // ─── Componente principale ─────────────────────────────────────────────────────
 
 export function ActivityDetailInline({ students, activities, onActivitiesChange, savedStudentIds }: Props) {
+    const t = useTranslations('teacherDiario');
 
     const addActivity = () => {
         const initPart: Record<string, string | null> = {};
@@ -266,7 +277,7 @@ export function ActivityDetailInline({ students, activities, onActivitiesChange,
                 className="w-full flex items-center justify-center gap-2 py-3 rounded-2xl border-2 border-dashed border-kidville-info/30 hover:border-kidville-info hover:bg-kidville-info-soft/40 text-kidville-info hover:text-kidville-info transition-all duration-200 font-maven text-sm font-semibold"
             >
                 <Plus size={15} strokeWidth={1.5} />
-                Aggiungi attività
+                {t('aggiungiAttivita')}
             </button>
         </div>
     );

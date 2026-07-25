@@ -9,6 +9,7 @@
 // Solo token `kidville-*`; importi con formatEuro.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { BarChart3, Download } from 'lucide-react';
 import { logClient } from '@/lib/logging/client';
 import { formatEuro } from '@/lib/format/valuta';
@@ -51,6 +52,7 @@ interface CategoriaPag { id: string; nome: string; slug?: string }
 const testoErrore = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 export function CassaReport({ userId, scuolaId }: Props) {
+  const t = useTranslations('adminContabilita');
   const [da, setDa] = useState('');
   const [a, setA] = useState('');
   const [categoriaPag, setCategoriaPag] = useState('');
@@ -111,39 +113,39 @@ export function CassaReport({ userId, scuolaId }: Props) {
 
   return (
     <section className={card}>
-      <h3 className={h3}><BarChart3 size={16} /> Report di cassa</h3>
+      <h3 className={h3}><BarChart3 size={16} /> {t('cassaRepTitolo')}</h3>
 
       <div className="mb-4 flex flex-wrap items-end gap-3">
         <div>
-          <label htmlFor="report-da" className={label}>Dal</label>
+          <label htmlFor="report-da" className={label}>{t('cassaRepDal')}</label>
           <input id="report-da" type="date" value={da} onChange={(e) => setDa(e.target.value)} disabled={intero} className={cx(input, intero && 'opacity-50')} />
         </div>
         <div>
-          <label htmlFor="report-a" className={label}>Al</label>
+          <label htmlFor="report-a" className={label}>{t('cassaRepAl')}</label>
           <input id="report-a" type="date" value={a} onChange={(e) => setA(e.target.value)} disabled={intero} className={cx(input, intero && 'opacity-50')} />
         </div>
         <div>
-          <label htmlFor="report-cat" className={label}>Categoria di pagamento</label>
+          <label htmlFor="report-cat" className={label}>{t('cassaRepCategoriaPag')}</label>
           <select id="report-cat" value={categoriaPag} onChange={(e) => setCategoriaPag(e.target.value)} className={cx(input, 'cursor-pointer')}>
-            <option value="">Tutte</option>
+            <option value="">{t('cassaRepTutte')}</option>
             {categoriePag.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
           </select>
         </div>
         {categoriaPag && (
           <label className="flex items-center gap-2 pb-2">
             <input type="checkbox" checked={intero} onChange={(e) => setIntero(e.target.checked)} className="h-4 w-4 rounded accent-kidville-green" />
-            <span className="font-maven text-xs text-kidville-green">Intero importo, tutti i mesi</span>
+            <span className="font-maven text-xs text-kidville-green">{t('cassaRepInteroImporto')}</span>
           </label>
         )}
-        <a href={csvHref} className={cx(BTN_SECONDARY, 'ml-auto')}><Download size={14} /> Scarica CSV</a>
+        <a href={csvHref} className={cx(BTN_SECONDARY, 'ml-auto')}><Download size={14} /> {t('cassaRepScaricaCsv')}</a>
       </div>
 
       {dati === null && !errore ? (
-        <p className="py-6 text-center font-maven text-sm text-kidville-sub">Caricamento…</p>
+        <p className="py-6 text-center font-maven text-sm text-kidville-sub">{t('cassaRepCaricamento')}</p>
       ) : errore ? (
-        <p role="alert" className="font-maven text-sm text-kidville-error-strong">Impossibile caricare il report. Riprova.</p>
+        <p role="alert" className="font-maven text-sm text-kidville-error-strong">{t('cassaRepErrore')}</p>
       ) : !disponibile ? (
-        <p className="font-maven text-sm text-kidville-sub">Modulo cassa non ancora attivo su questo ambiente.</p>
+        <p className="font-maven text-sm text-kidville-sub">{t('cassaRepNonAttivo')}</p>
       ) : (
         <div className="space-y-6">
           <TabellaEntrate righe={entrate} />
@@ -156,21 +158,22 @@ export function CassaReport({ userId, scuolaId }: Props) {
 }
 
 function TabellaEntrate({ righe }: { righe: EntrataCat[] }) {
+  const t = useTranslations('adminContabilita');
   return (
     <div>
-      <h4 className="mb-2 font-barlow text-xs font-black uppercase tracking-wide text-kidville-green">Entrate per categoria di pagamento</h4>
+      <h4 className="mb-2 font-barlow text-xs font-black uppercase tracking-wide text-kidville-green">{t('cassaRepEntrateTitolo')}</h4>
       {righe.length === 0 ? (
-        <p className="font-maven text-sm text-kidville-sub">Nessuna entrata nel periodo selezionato.</p>
+        <p className="font-maven text-sm text-kidville-sub">{t('cassaRepNessunaEntrata')}</p>
       ) : (
         <div className={TABLE_WRAP}>
           <table className={TABLE}>
             <thead>
-              <tr><th scope="col" className={TH}>Categoria</th><th scope="col" className={TH}>Per metodo</th><th scope="col" className={cx(TH, 'text-right')}>Totale</th></tr>
+              <tr><th scope="col" className={TH}>{t('cassaRepThCategoria')}</th><th scope="col" className={TH}>{t('cassaRepThPerMetodo')}</th><th scope="col" className={cx(TH, 'text-right')}>{t('cassaRepThTotale')}</th></tr>
             </thead>
             <tbody>
               {righe.map((r, i) => (
                 <tr key={r.categoria_id ?? `e${i}`} className={TROW}>
-                  <td className={TD}><span className="font-maven text-sm text-kidville-ink">{r.categoria_nome ?? 'Senza categoria'}</span></td>
+                  <td className={TD}><span className="font-maven text-sm text-kidville-ink">{r.categoria_nome ?? t('cassaRepSenzaCategoria')}</span></td>
                   <td className={TD}>
                     <span className="font-maven text-xs text-kidville-sub">
                       {r.per_metodo && Object.keys(r.per_metodo).length > 0
@@ -190,21 +193,22 @@ function TabellaEntrate({ righe }: { righe: EntrataCat[] }) {
 }
 
 function TabellaUscite({ righe }: { righe: UscitaCat[] }) {
+  const t = useTranslations('adminContabilita');
   return (
     <div>
-      <h4 className="mb-2 font-barlow text-xs font-black uppercase tracking-wide text-kidville-green">Uscite per categoria</h4>
+      <h4 className="mb-2 font-barlow text-xs font-black uppercase tracking-wide text-kidville-green">{t('cassaRepUsciteTitolo')}</h4>
       {righe.length === 0 ? (
-        <p className="font-maven text-sm text-kidville-sub">Nessuna uscita nel periodo selezionato.</p>
+        <p className="font-maven text-sm text-kidville-sub">{t('cassaRepNessunaUscita')}</p>
       ) : (
         <div className={TABLE_WRAP}>
           <table className={TABLE}>
             <thead>
-              <tr><th scope="col" className={TH}>Categoria</th><th scope="col" className={cx(TH, 'text-right')}>Di cui contanti</th><th scope="col" className={cx(TH, 'text-right')}>Totale</th></tr>
+              <tr><th scope="col" className={TH}>{t('cassaRepThCategoria')}</th><th scope="col" className={cx(TH, 'text-right')}>{t('cassaRepThDiCuiContanti')}</th><th scope="col" className={cx(TH, 'text-right')}>{t('cassaRepThTotale')}</th></tr>
             </thead>
             <tbody>
               {righe.map((r, i) => (
                 <tr key={r.categoria_id ?? `u${i}`} className={TROW}>
-                  <td className={TD}><span className="font-maven text-sm text-kidville-ink">{r.categoria_nome ?? 'Senza categoria'}</span></td>
+                  <td className={TD}><span className="font-maven text-sm text-kidville-ink">{r.categoria_nome ?? t('cassaRepSenzaCategoria')}</span></td>
                   <td className={cx(TD, 'text-right')}><span className="font-maven text-xs text-kidville-sub">{r.contanti != null ? formatEuro(r.contanti) : '—'}</span></td>
                   <td className={cx(TD, 'text-right')}><span className="font-barlow font-bold text-kidville-error-strong">{formatEuro(r.totale)}</span></td>
                 </tr>
@@ -218,13 +222,14 @@ function TabellaUscite({ righe }: { righe: UscitaCat[] }) {
 }
 
 function TabellaMensile({ righe }: { righe: MeseRiga[] }) {
+  const t = useTranslations('adminContabilita');
   return (
     <div>
-      <h4 className="mb-2 font-barlow text-xs font-black uppercase tracking-wide text-kidville-green">Riepilogo mensile</h4>
+      <h4 className="mb-2 font-barlow text-xs font-black uppercase tracking-wide text-kidville-green">{t('cassaRepMensileTitolo')}</h4>
       <div className={TABLE_WRAP}>
         <table className={TABLE}>
           <thead>
-            <tr><th scope="col" className={TH}>Mese</th><th scope="col" className={cx(TH, 'text-right')}>Entrate</th><th scope="col" className={cx(TH, 'text-right')}>Uscite</th></tr>
+            <tr><th scope="col" className={TH}>{t('cassaRepThMese')}</th><th scope="col" className={cx(TH, 'text-right')}>{t('cassaRepThEntrate')}</th><th scope="col" className={cx(TH, 'text-right')}>{t('cassaRepThUscite')}</th></tr>
           </thead>
           <tbody>
             {righe.map((r) => (

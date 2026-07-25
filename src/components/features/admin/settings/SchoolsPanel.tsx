@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { useTranslations } from 'next-intl';
 import { Building2, Loader2, Pencil, Check, X, Plus, Power, ShieldCheck, FileText } from 'lucide-react';
 import { parseAnagraficaSede, type AnagraficaSede } from '@/lib/scuole/anagrafica';
 
@@ -15,6 +16,7 @@ interface Scuola {
 
 // Pannello Multi-Sede (DL-033) — riservato alla Direzione (gate server).
 export function SchoolsPanel({ userId }: { userId: string }) {
+  const t = useTranslations('adminSettings');
   const [scuole, setScuole] = useState<Scuola[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -48,7 +50,7 @@ export function SchoolsPanel({ userId }: { userId: string }) {
     setSaving(true);
     try {
       const res = await fetch('/api/admin/schools', { method: 'POST', headers: hdr, body: JSON.stringify(nuova) });
-      if (!res.ok) { const j = await res.json().catch(() => ({})); alert(j.error || 'Errore'); return; }
+      if (!res.ok) { const j = await res.json().catch(() => ({})); alert(j.error || t('errore')); return; }
       setNuova({ nome: '', citta: '', indirizzo: '' });
       setShowNuova(false);
       await load();
@@ -61,8 +63,8 @@ export function SchoolsPanel({ userId }: { userId: string }) {
     setSaving(true);
     try {
       const res = await fetch('/api/admin/schools', { method: 'PATCH', headers: hdr, body: JSON.stringify({ id, ...body }) });
-      if (res.status === 403) { alert('Azione riservata alla Direzione.'); return; }
-      if (!res.ok) { const j = await res.json().catch(() => ({})); alert(j.error || 'Errore'); return; }
+      if (res.status === 403) { alert(t('scAzioneRiservata')); return; }
+      if (!res.ok) { const j = await res.json().catch(() => ({})); alert(j.error || t('errore')); return; }
       setEditId(null);
       setAnagId(null);
       await load();
@@ -71,14 +73,14 @@ export function SchoolsPanel({ userId }: { userId: string }) {
     }
   };
 
-  if (loading) return <div className="flex items-center gap-2 text-kidville-muted p-6"><Loader2 className="animate-spin" size={16} /> Caricamento sedi…</div>;
+  if (loading) return <div className="flex items-center gap-2 text-kidville-muted p-6"><Loader2 className="animate-spin" size={16} /> {t('scCaricamentoSedi')}</div>;
 
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2 text-kidville-green">
         <Building2 size={18} />
-        <h3 className="font-barlow font-black uppercase tracking-wide">Gestione Multi-Sede</h3>
-        <span className="ml-2 inline-flex items-center gap-1 text-[11px] text-kidville-muted"><ShieldCheck size={12} /> solo Direzione</span>
+        <h3 className="font-barlow font-black uppercase tracking-wide">{t('scGestioneMultiSede')}</h3>
+        <span className="ml-2 inline-flex items-center gap-1 text-[11px] text-kidville-muted"><ShieldCheck size={12} /> {t('scSoloDirezione')}</span>
       </div>
 
       <div className="space-y-2">
@@ -98,11 +100,11 @@ export function SchoolsPanel({ userId }: { userId: string }) {
               <div className="min-w-0">
                 <p className="font-barlow font-bold text-kidville-green truncate">
                   {s.nome}
-                  {!s.attiva && <span className="ml-2 text-[10px] uppercase bg-kidville-line text-kidville-muted px-2 py-0.5 rounded-full">Disattivata</span>}
-                  {s.attiva && <span className="ml-2 text-[10px] uppercase bg-kidville-success-soft text-kidville-success px-2 py-0.5 rounded-full">Attiva</span>}
+                  {!s.attiva && <span className="ml-2 text-[10px] uppercase bg-kidville-line text-kidville-muted px-2 py-0.5 rounded-full">{t('scDisattivata')}</span>}
+                  {s.attiva && <span className="ml-2 text-[10px] uppercase bg-kidville-success-soft text-kidville-success px-2 py-0.5 rounded-full">{t('scAttiva')}</span>}
                 </p>
                 <p className="font-maven text-xs text-kidville-muted truncate">
-                  {[s.citta, s.indirizzo, anag.codice_meccanografico && `Cod. Mecc. ${anag.codice_meccanografico}`].filter(Boolean).join(' · ') || '—'}
+                  {[s.citta, s.indirizzo, anag.codice_meccanografico && t('scCodMecc', { codice: anag.codice_meccanografico })].filter(Boolean).join(' · ') || '—'}
                 </p>
               </div>
             )}
@@ -110,10 +112,10 @@ export function SchoolsPanel({ userId }: { userId: string }) {
             <div className="flex items-center gap-1.5 flex-shrink-0">
               {editId === s.id ? (
                 <>
-                  <button disabled={saving} onClick={() => patch(s.id, { nome: draftNome })} className="p-2 rounded-lg text-kidville-success hover:bg-kidville-success-soft" title="Salva">
+                  <button disabled={saving} onClick={() => patch(s.id, { nome: draftNome })} className="p-2 rounded-lg text-kidville-success hover:bg-kidville-success-soft" title={t('salva')}>
                     <Check size={16} />
                   </button>
-                  <button onClick={() => setEditId(null)} className="p-2 rounded-lg text-kidville-muted hover:bg-kidville-cream" title="Annulla">
+                  <button onClick={() => setEditId(null)} className="p-2 rounded-lg text-kidville-muted hover:bg-kidville-cream" title={t('annulla')}>
                     <X size={16} />
                   </button>
                 </>
@@ -127,18 +129,18 @@ export function SchoolsPanel({ userId }: { userId: string }) {
                       setDraftSede({ citta: s.citta ?? '', indirizzo: s.indirizzo ?? '' });
                     }}
                     className={`p-2 rounded-lg hover:bg-kidville-cream ${anagId === s.id ? 'text-kidville-green' : 'text-kidville-muted hover:text-kidville-green'}`}
-                    title="Anagrafica"
+                    title={t('scAnagrafica')}
                   >
                     <FileText size={16} />
                   </button>
-                  <button onClick={() => { setEditId(s.id); setDraftNome(s.nome); }} className="p-2 rounded-lg text-kidville-muted hover:text-kidville-green hover:bg-kidville-cream" title="Rinomina">
+                  <button onClick={() => { setEditId(s.id); setDraftNome(s.nome); }} className="p-2 rounded-lg text-kidville-muted hover:text-kidville-green hover:bg-kidville-cream" title={t('scRinomina')}>
                     <Pencil size={16} />
                   </button>
                   <button
                     disabled={saving}
                     onClick={() => patch(s.id, { attiva: !s.attiva })}
                     className={`p-2 rounded-lg hover:bg-kidville-cream ${s.attiva ? 'text-kidville-success' : 'text-kidville-muted'}`}
-                    title={s.attiva ? 'Disattiva' : 'Riattiva'}
+                    title={s.attiva ? t('scDisattiva') : t('scRiattiva')}
                   >
                     <Power size={16} />
                   </button>
@@ -151,26 +153,26 @@ export function SchoolsPanel({ userId }: { userId: string }) {
                 Dati in scuole.config.anagrafica (merge server-side, solo Direzione). */}
             {anagId === s.id && (
               <div className="border-t border-kidville-line pt-3 space-y-2">
-                <input value={draftAnag.denominazione ?? ''} onChange={(e) => setDraftAnag(prev => ({ ...prev, denominazione: e.target.value }))} placeholder="Denominazione ufficiale" className="w-full border-2 border-kidville-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kidville-green" />
+                <input value={draftAnag.denominazione ?? ''} onChange={(e) => setDraftAnag(prev => ({ ...prev, denominazione: e.target.value }))} placeholder={t('scDenominazioneUfficiale')} className="w-full border-2 border-kidville-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kidville-green" />
                 <div className="grid grid-cols-2 gap-2">
-                  <input value={draftSede.citta} onChange={(e) => setDraftSede(prev => ({ ...prev, citta: e.target.value }))} placeholder="Città" className="border-2 border-kidville-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kidville-green" />
-                  <input value={draftSede.indirizzo} onChange={(e) => setDraftSede(prev => ({ ...prev, indirizzo: e.target.value }))} placeholder="Indirizzo" className="border-2 border-kidville-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kidville-green" />
-                  <input value={draftAnag.cap ?? ''} onChange={(e) => setDraftAnag(prev => ({ ...prev, cap: e.target.value }))} placeholder="CAP" className="border-2 border-kidville-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kidville-green" />
-                  <input value={draftAnag.provincia ?? ''} onChange={(e) => setDraftAnag(prev => ({ ...prev, provincia: e.target.value }))} placeholder="Provincia (sigla)" className="border-2 border-kidville-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kidville-green" />
-                  <input value={draftAnag.codice_meccanografico ?? ''} onChange={(e) => setDraftAnag(prev => ({ ...prev, codice_meccanografico: e.target.value }))} placeholder="Codice meccanografico" className="border-2 border-kidville-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kidville-green" />
-                  <input value={draftAnag.piva_cf ?? ''} onChange={(e) => setDraftAnag(prev => ({ ...prev, piva_cf: e.target.value }))} placeholder="P.IVA / CF ente" className="border-2 border-kidville-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kidville-green" />
-                  <input value={draftAnag.telefono ?? ''} onChange={(e) => setDraftAnag(prev => ({ ...prev, telefono: e.target.value }))} placeholder="Telefono" className="border-2 border-kidville-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kidville-green" />
-                  <input value={draftAnag.email ?? ''} onChange={(e) => setDraftAnag(prev => ({ ...prev, email: e.target.value }))} placeholder="Email" className="border-2 border-kidville-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kidville-green" />
+                  <input value={draftSede.citta} onChange={(e) => setDraftSede(prev => ({ ...prev, citta: e.target.value }))} placeholder={t('scCitta')} className="border-2 border-kidville-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kidville-green" />
+                  <input value={draftSede.indirizzo} onChange={(e) => setDraftSede(prev => ({ ...prev, indirizzo: e.target.value }))} placeholder={t('scIndirizzo')} className="border-2 border-kidville-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kidville-green" />
+                  <input value={draftAnag.cap ?? ''} onChange={(e) => setDraftAnag(prev => ({ ...prev, cap: e.target.value }))} placeholder={t('scCap')} className="border-2 border-kidville-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kidville-green" />
+                  <input value={draftAnag.provincia ?? ''} onChange={(e) => setDraftAnag(prev => ({ ...prev, provincia: e.target.value }))} placeholder={t('scProvincia')} className="border-2 border-kidville-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kidville-green" />
+                  <input value={draftAnag.codice_meccanografico ?? ''} onChange={(e) => setDraftAnag(prev => ({ ...prev, codice_meccanografico: e.target.value }))} placeholder={t('scCodiceMeccanografico')} className="border-2 border-kidville-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kidville-green" />
+                  <input value={draftAnag.piva_cf ?? ''} onChange={(e) => setDraftAnag(prev => ({ ...prev, piva_cf: e.target.value }))} placeholder={t('scPivaCf')} className="border-2 border-kidville-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kidville-green" />
+                  <input value={draftAnag.telefono ?? ''} onChange={(e) => setDraftAnag(prev => ({ ...prev, telefono: e.target.value }))} placeholder={t('scTelefono')} className="border-2 border-kidville-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kidville-green" />
+                  <input value={draftAnag.email ?? ''} onChange={(e) => setDraftAnag(prev => ({ ...prev, email: e.target.value }))} placeholder={t('scEmail')} className="border-2 border-kidville-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kidville-green" />
                 </div>
-                <input value={draftAnag.pec ?? ''} onChange={(e) => setDraftAnag(prev => ({ ...prev, pec: e.target.value }))} placeholder="PEC" className="w-full border-2 border-kidville-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kidville-green" />
+                <input value={draftAnag.pec ?? ''} onChange={(e) => setDraftAnag(prev => ({ ...prev, pec: e.target.value }))} placeholder={t('scPec')} className="w-full border-2 border-kidville-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kidville-green" />
                 <div className="flex gap-2 justify-end">
-                  <button onClick={() => setAnagId(null)} className="px-3 py-1.5 text-sm rounded-pill border border-kidville-line text-kidville-muted">Annulla</button>
+                  <button onClick={() => setAnagId(null)} className="px-3 py-1.5 text-sm rounded-pill border border-kidville-line text-kidville-muted">{t('annulla')}</button>
                   <button
                     disabled={saving}
                     onClick={() => patch(s.id, { citta: draftSede.citta, indirizzo: draftSede.indirizzo, anagrafica: draftAnag })}
                     className="px-4 py-1.5 text-sm font-bold uppercase rounded-pill bg-kidville-green text-kidville-yellow disabled:opacity-50"
                   >
-                    {saving ? 'Salvataggio…' : 'Salva anagrafica'}
+                    {saving ? t('salvataggioInCorso') : t('scSalvaAnagrafica')}
                   </button>
                 </div>
               </div>
@@ -182,21 +184,21 @@ export function SchoolsPanel({ userId }: { userId: string }) {
 
       {showNuova ? (
         <div className="bg-kidville-cream/40 rounded-card border border-kidville-green/10 p-4 space-y-2">
-          <input value={nuova.nome} onChange={(e) => setNuova({ ...nuova, nome: e.target.value })} placeholder="Nome sede *" className="w-full border-2 border-kidville-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kidville-green" />
+          <input value={nuova.nome} onChange={(e) => setNuova({ ...nuova, nome: e.target.value })} placeholder={t('scNomeSede')} className="w-full border-2 border-kidville-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kidville-green" />
           <div className="grid grid-cols-2 gap-2">
-            <input value={nuova.citta} onChange={(e) => setNuova({ ...nuova, citta: e.target.value })} placeholder="Città" className="border-2 border-kidville-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kidville-green" />
-            <input value={nuova.indirizzo} onChange={(e) => setNuova({ ...nuova, indirizzo: e.target.value })} placeholder="Indirizzo" className="border-2 border-kidville-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kidville-green" />
+            <input value={nuova.citta} onChange={(e) => setNuova({ ...nuova, citta: e.target.value })} placeholder={t('scCitta')} className="border-2 border-kidville-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kidville-green" />
+            <input value={nuova.indirizzo} onChange={(e) => setNuova({ ...nuova, indirizzo: e.target.value })} placeholder={t('scIndirizzo')} className="border-2 border-kidville-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kidville-green" />
           </div>
           <div className="flex gap-2 justify-end">
-            <button onClick={() => setShowNuova(false)} className="px-3 py-1.5 text-sm rounded-pill border border-kidville-line text-kidville-muted">Annulla</button>
+            <button onClick={() => setShowNuova(false)} className="px-3 py-1.5 text-sm rounded-pill border border-kidville-line text-kidville-muted">{t('annulla')}</button>
             <button disabled={saving || !nuova.nome.trim()} onClick={crea} className="px-4 py-1.5 text-sm font-bold uppercase rounded-pill bg-kidville-green text-kidville-yellow disabled:opacity-50">
-              {saving ? 'Creazione…' : 'Crea sede'}
+              {saving ? t('scCreazione') : t('scCreaSede')}
             </button>
           </div>
         </div>
       ) : (
         <button onClick={() => setShowNuova(true)} className="flex items-center gap-1.5 px-4 py-2 rounded-pill bg-kidville-green text-kidville-yellow font-barlow font-black uppercase text-xs tracking-wider">
-          <Plus size={16} /> Aggiungi Sede
+          <Plus size={16} /> {t('scAggiungiSede')}
         </button>
       )}
     </div>

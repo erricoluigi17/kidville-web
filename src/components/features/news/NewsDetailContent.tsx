@@ -1,21 +1,23 @@
 'use client'
 
+import { useLocale, useTranslations } from 'next-intl'
 import { Pin, Newspaper, Megaphone, Camera } from 'lucide-react'
 import { Badge } from '@/components/ui/Badge'
 import type { NewsMedia, NewsPost, NewsTipo } from '@/lib/news/tipi'
 import { InstagramEmbed } from './InstagramEmbed'
 import { VideoEmbed } from './VideoEmbed'
 
-const TIPO_META: Record<NewsTipo, { label: string; Icon: typeof Newspaper }> = {
-  articolo: { label: 'Articolo', Icon: Newspaper },
-  breve: { label: 'Comunicato', Icon: Megaphone },
-  instagram: { label: 'Instagram', Icon: Camera },
+// La label del tipo passa dall'i18n: la chiave è risolta dentro il componente.
+const TIPO_META: Record<NewsTipo, { labelKey: string; Icon: typeof Newspaper }> = {
+  articolo: { labelKey: 'tipoArticolo', Icon: Newspaper },
+  breve: { labelKey: 'tipoComunicato', Icon: Megaphone },
+  instagram: { labelKey: 'tipoInstagram', Icon: Camera },
 }
 
-const fmtDataLunga = (iso: string | null): string => {
+const fmtDataLunga = (iso: string | null, locale: string): string => {
   if (!iso) return ''
   try {
-    return new Date(iso).toLocaleDateString('it-IT', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/Rome' })
+    return new Date(iso).toLocaleDateString(locale, { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/Rome' })
   } catch {
     return ''
   }
@@ -28,6 +30,8 @@ interface Props {
 }
 
 export function NewsDetailContent({ post, media, categoriaNome }: Props) {
+  const locale = useLocale()
+  const t = useTranslations('parentNews')
   const meta = TIPO_META[post.tipo] ?? TIPO_META.articolo
   const Icon = meta.Icon
   const immagini = media.filter((m) => m.tipo === 'immagine')
@@ -48,12 +52,12 @@ export function NewsDetailContent({ post, media, categoriaNome }: Props) {
           {post.pinned && (
             <Badge tone="evidenza" className="gap-1">
               <Pin size={11} strokeWidth={2.4} />
-              In evidenza
+              {t('inEvidenza')}
             </Badge>
           )}
           <span className="inline-flex items-center gap-1 rounded-pill bg-kidville-green-soft px-[9px] py-1 font-barlow text-[11px] font-extrabold uppercase tracking-[0.06em] text-kidville-green">
             <Icon size={12} strokeWidth={2.2} />
-            {meta.label}
+            {t(meta.labelKey)}
           </span>
           {categoriaNome && (
             <span className="inline-flex items-center rounded-pill bg-kidville-yellow-soft px-[9px] py-1 font-barlow text-[11px] font-extrabold uppercase tracking-[0.06em] text-kidville-ink">
@@ -63,7 +67,7 @@ export function NewsDetailContent({ post, media, categoriaNome }: Props) {
         </div>
         <h1 className="mt-2 font-barlow text-2xl font-black uppercase leading-tight text-kidville-green">{post.titolo}</h1>
         {post.pubblicata_il && (
-          <p className="mt-1 font-maven text-[12.5px] text-kidville-sub">{fmtDataLunga(post.pubblicata_il)}</p>
+          <p className="mt-1 font-maven text-[12.5px] text-kidville-sub">{fmtDataLunga(post.pubblicata_il, locale)}</p>
         )}
       </header>
 

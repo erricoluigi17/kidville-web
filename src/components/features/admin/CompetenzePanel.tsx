@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
+import { useTranslations } from 'next-intl'
 import { Award, Download, PenLine, Save, Stamp } from 'lucide-react'
 import { COMPETENZE_CHIAVE, LIVELLI, COMPETENZE_SIGNIFICATIVE_CODICE } from '@/lib/competenze/modello'
 import { cx } from '@/lib/ui/cx'
@@ -31,6 +32,7 @@ const LEVEL_DOT: Record<string, string> = {
 }
 
 export function CompetenzePanel({ userId }: { userId: string }) {
+  const t = useTranslations('adminStudents')
   const hdr = useCallback(() => ({ 'Content-Type': 'application/json', 'x-user-id': userId }), [userId])
   const [sezioni, setSezioni] = useState<Sezione[]>([])
   const [sezioniLoaded, setSezioniLoaded] = useState(false)
@@ -71,8 +73,8 @@ export function CompetenzePanel({ userId }: { userId: string }) {
     try {
       const r = await fetch(`/api/admin/competenze?userId=${userId}`, { method: 'POST', headers: hdr(), body: JSON.stringify({ sectionId }) })
       const d = await r.json()
-      if (!r.ok) { setMsg(d.error ?? 'Errore nella creazione delle bozze'); return }
-      setMsg(`Bozze create/riallineate: ${d.creati}.`)
+      if (!r.ok) { setMsg(d.error ?? t('compErrCreazione')); return }
+      setMsg(t('compBozzeCreate', { n: d.creati }))
       await loadCerts(sectionId)
     } finally { setBusy(null) }
   }
@@ -96,8 +98,8 @@ export function CompetenzePanel({ userId }: { userId: string }) {
     try {
       const livelli = COMPETENZE_CHIAVE.map((comp) => ({ competenza_codice: comp.codice, livello: livelloOf(c, comp.codice) || null }))
       const r = await fetch(`/api/admin/competenze?userId=${userId}`, { method: 'PATCH', headers: hdr(), body: JSON.stringify({ certificatoId: c.id, livelli, competenzeSignificative: noteOf(c) }) })
-      if (!r.ok) { const d = await r.json(); setMsg(d.error ?? 'Salvataggio fallito'); return }
-      setMsg('Livelli salvati (certificato riportato in bozza).')
+      if (!r.ok) { const d = await r.json(); setMsg(d.error ?? t('compSalvataggioFallito')); return }
+      setMsg(t('compLivelliSalvati'))
       await loadCerts(sectionId)
     } finally { setBusy(null) }
   }
@@ -107,8 +109,8 @@ export function CompetenzePanel({ userId }: { userId: string }) {
     try {
       const r = await fetch(`/api/admin/competenze/genera?userId=${userId}`, { method: 'POST', headers: hdr(), body: JSON.stringify({ certificatoId: c.id }) })
       const d = await r.json()
-      if (!r.ok) { setMsg(d.error ?? 'Generazione fallita'); return }
-      setMsg('Certificato generato e firmato.')
+      if (!r.ok) { setMsg(d.error ?? t('compGenerazioneFallita')); return }
+      setMsg(t('compCertGenerato'))
       await loadCerts(sectionId)
     } finally { setBusy(null) }
   }
@@ -123,8 +125,8 @@ export function CompetenzePanel({ userId }: { userId: string }) {
         body: JSON.stringify({ sorgente: 'certificato_competenze', id: c.id }),
       })
       const d = await r.json()
-      if (!r.ok) { setMsg(d.error ?? 'Protocollazione non riuscita'); return }
-      setMsg(`Certificato protocollato in uscita: n. ${d.data?.numeroFormattato ?? ''}.`)
+      if (!r.ok) { setMsg(d.error ?? t('compProtNonRiuscita')); return }
+      setMsg(t('compProtOk', { numero: d.data?.numeroFormattato ?? '' }))
       if (d.data?.downloadTimbrato) window.open(d.data.downloadTimbrato, '_blank')
     } finally { setBusy(null) }
   }
@@ -133,12 +135,12 @@ export function CompetenzePanel({ userId }: { userId: string }) {
     const r = await fetch(`/api/admin/competenze/download?certificatoId=${c.id}&userId=${userId}`, { headers: hdr() })
     const d = await r.json()
     if (d.url) window.open(d.url, '_blank')
-    else setMsg(d.error ?? 'PDF non disponibile')
+    else setMsg(d.error ?? t('compPdfNonDisp'))
   }
 
   const statoTone = (s: string) => (s === 'firmato' ? 'success' : s === 'generato' ? 'info' : 'read') as 'success' | 'info' | 'read'
   const selected = certs.find((c) => c.id === selectedId) ?? null
-  const nomeOf = (c: Cert) => { const a = one(c.alunni); return `${a?.cognome ?? ''} ${a?.nome ?? ''}`.trim() || 'Alunno' }
+  const nomeOf = (c: Cert) => { const a = one(c.alunni); return `${a?.cognome ?? ''} ${a?.nome ?? ''}`.trim() || t('compAlunnoFallback') }
   const ini = (c: Cert) => { const a = one(c.alunni); return `${a?.cognome?.[0] ?? ''}${a?.nome?.[0] ?? ''}`.toUpperCase() || 'AL' }
 
   // Nessuna classe quinta nei plessi consentiti: il Certificato delle Competenze
@@ -147,11 +149,9 @@ export function CompetenzePanel({ userId }: { userId: string }) {
     return (
       <section className="rounded-2xl border border-dashed border-kidville-line bg-kidville-white/60 p-10 text-center">
         <Award size={30} className="mx-auto text-kidville-muted" />
-        <h3 className="mt-3 font-barlow text-lg font-black uppercase text-kidville-green">Nessuna classe quinta</h3>
+        <h3 className="mt-3 font-barlow text-lg font-black uppercase text-kidville-green">{t('compNessunaQuinta')}</h3>
         <p className="mx-auto mt-2 max-w-md font-maven text-sm text-kidville-muted">
-          Il Certificato delle Competenze (D.M. 14/2024) si rilascia a fine classe quinta di primaria.
-          Nei tuoi plessi non risultano classi quinte: quando ce ne sarà una, comparirà qui per creare
-          le bozze dallo scrutinio finale, assegnare i livelli A/B/C/D e firmare.
+          {t('compNessunaQuintaHint')}
         </p>
       </section>
     )
@@ -163,16 +163,16 @@ export function CompetenzePanel({ userId }: { userId: string }) {
       <section className="rounded-2xl border border-kidville-line bg-kidville-white p-5">
         <div className="flex flex-wrap items-center gap-3">
           <select value={sectionId} onChange={(e) => selectSection(e.target.value)} className="h-9 rounded-xl border border-kidville-line bg-kidville-white px-3 font-maven text-sm text-kidville-ink">
-            <option value="">Seleziona classe quinta…</option>
+            <option value="">{t('compSelezionaClasse')}</option>
             {sezioni.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
           <button onClick={seed} disabled={!sectionId || busy === 'seed'} className="h-9 rounded-pill bg-kidville-green px-4 font-barlow text-xs font-black uppercase text-kidville-yellow disabled:opacity-50">
-            {busy === 'seed' ? 'Creazione…' : 'Crea bozze dallo scrutinio finale'}
+            {busy === 'seed' ? t('compCreazione') : t('compCreaBozze')}
           </button>
         </div>
         {/* legenda scala A/B/C/D */}
         <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-kidville-line pt-3">
-          <span className="font-barlow text-[11px] font-bold uppercase tracking-[0.05em] text-kidville-muted">Scala D.M. 14/2024</span>
+          <span className="font-barlow text-[11px] font-bold uppercase tracking-[0.05em] text-kidville-muted">{t('compScala')}</span>
           {LIVELLI.map((l) => (
             <span key={l.codice} className="inline-flex items-center gap-1.5 font-maven text-xs text-kidville-ink/80">
               <span className={cx('inline-flex h-5 w-5 items-center justify-center rounded-md font-barlow text-[11px] font-black text-kidville-white', LEVEL_DOT[l.codice])}>{l.codice}</span>
@@ -187,7 +187,7 @@ export function CompetenzePanel({ userId }: { userId: string }) {
       {certs.length === 0 ? (
         <section className="rounded-2xl border border-dashed border-kidville-line bg-kidville-white/60 p-10 text-center">
           <Award size={26} className="mx-auto text-kidville-muted" />
-          <p className="mt-2 font-maven text-sm text-kidville-muted">Seleziona una classe quinta e crea le bozze per iniziare.</p>
+          <p className="mt-2 font-maven text-sm text-kidville-muted">{t('compBozzePerIniziare')}</p>
         </section>
       ) : (
         <div className="grid grid-cols-1 gap-5 lg:grid-cols-[300px_1fr] lg:items-start">
@@ -242,17 +242,17 @@ export function CompetenzePanel({ userId }: { userId: string }) {
                   </div>
                 ))}
                 <div>
-                  <label className="mb-1 block font-barlow text-[11px] font-bold uppercase tracking-[0.04em] text-kidville-muted">Competenze significative (facoltativo)</label>
-                  <textarea value={noteOf(selected)} onChange={(e) => setField(selected.id, COMPETENZE_SIGNIFICATIVE_CODICE, e.target.value)} placeholder="Es. eccellenza in ambito musicale…" className="w-full rounded-lg border border-kidville-line bg-kidville-white p-2.5 font-maven text-[13px] text-kidville-ink outline-none focus:border-kidville-green" rows={2} />
+                  <label className="mb-1 block font-barlow text-[11px] font-bold uppercase tracking-[0.04em] text-kidville-muted">{t('compCompetenzeSignificative')}</label>
+                  <textarea value={noteOf(selected)} onChange={(e) => setField(selected.id, COMPETENZE_SIGNIFICATIVE_CODICE, e.target.value)} placeholder={t('compCompetenzePlaceholder')} className="w-full rounded-lg border border-kidville-line bg-kidville-white p-2.5 font-maven text-[13px] text-kidville-ink outline-none focus:border-kidville-green" rows={2} />
                 </div>
               </div>
               <div className="mt-4 flex flex-wrap items-center gap-2">
-                <button onClick={() => save(selected)} disabled={busy === `save:${selected.id}`} className="inline-flex h-9 items-center gap-1.5 rounded-pill bg-kidville-green-soft px-3.5 font-barlow text-[11px] font-black uppercase text-kidville-green disabled:opacity-50"><Save size={13} /> Salva livelli</button>
-                <button onClick={() => genera(selected)} disabled={busy === `gen:${selected.id}`} className="inline-flex h-9 items-center gap-1.5 rounded-pill bg-kidville-yellow px-3.5 font-barlow text-[11px] font-black uppercase text-kidville-green disabled:opacity-50"><PenLine size={13} /> Genera e firma</button>
+                <button onClick={() => save(selected)} disabled={busy === `save:${selected.id}`} className="inline-flex h-9 items-center gap-1.5 rounded-pill bg-kidville-green-soft px-3.5 font-barlow text-[11px] font-black uppercase text-kidville-green disabled:opacity-50"><Save size={13} /> {t('compSalvaLivelli')}</button>
+                <button onClick={() => genera(selected)} disabled={busy === `gen:${selected.id}`} className="inline-flex h-9 items-center gap-1.5 rounded-pill bg-kidville-yellow px-3.5 font-barlow text-[11px] font-black uppercase text-kidville-green disabled:opacity-50"><PenLine size={13} /> {t('compGeneraFirma')}</button>
                 {(selected.stato === 'generato' || selected.stato === 'firmato') && (
                   <>
-                    <button onClick={() => download(selected)} className="inline-flex h-9 items-center gap-1.5 rounded-pill bg-kidville-green px-3.5 font-barlow text-[11px] font-black uppercase text-kidville-yellow"><Download size={13} /> Scarica PDF</button>
-                    <button onClick={() => protocolla(selected)} disabled={busy === `prot:${selected.id}`} className="inline-flex h-9 items-center gap-1.5 rounded-pill bg-kidville-info-soft px-3.5 font-barlow text-[11px] font-black uppercase text-kidville-info disabled:opacity-50"><Stamp size={13} /> Protocolla</button>
+                    <button onClick={() => download(selected)} className="inline-flex h-9 items-center gap-1.5 rounded-pill bg-kidville-green px-3.5 font-barlow text-[11px] font-black uppercase text-kidville-yellow"><Download size={13} /> {t('compScaricaPdf')}</button>
+                    <button onClick={() => protocolla(selected)} disabled={busy === `prot:${selected.id}`} className="inline-flex h-9 items-center gap-1.5 rounded-pill bg-kidville-info-soft px-3.5 font-barlow text-[11px] font-black uppercase text-kidville-info disabled:opacity-50"><Stamp size={13} /> {t('compProtocolla')}</button>
                   </>
                 )}
               </div>

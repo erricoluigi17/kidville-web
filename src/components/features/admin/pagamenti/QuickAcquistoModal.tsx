@@ -1,6 +1,8 @@
 'use client';
 
 import { useState } from 'react';
+import { useTranslations } from 'next-intl';
+import { useDateFormat } from '@/lib/i18n/date';
 import { X, ShoppingBag } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { FatturaButton } from './FatturaButton';
@@ -33,6 +35,8 @@ const METODI = [
 // un acquisto della categoria scelta (Gita, Divisa, Materiale…). Può marcarlo
 // "già pagato" (crea l'incasso) e poi inviare la fattura, tutto dal popup.
 export function QuickAcquistoModal({ alunno, categoria, userId, scuolaId, onClose, onDone }: Props) {
+    const t = useTranslations('adminContabilita');
+    const f = useDateFormat();
     const [descrizione, setDescrizione] = useState(categoria.nome);
     const [importo, setImporto] = useState<number>(0);
     const [obbligatorio, setObbligatorio] = useState(false);
@@ -50,8 +54,8 @@ export function QuickAcquistoModal({ alunno, categoria, userId, scuolaId, onClos
     const [confermaDup, setConfermaDup] = useState<string | null>(null);
 
     const submit = async () => {
-        if (!descrizione.trim()) { setError('Inserisci una descrizione'); return; }
-        if (!importo || importo <= 0) { setError('Inserisci un importo maggiore di 0'); return; }
+        if (!descrizione.trim()) { setError(t('quickErrDescrizione')); return; }
+        if (!importo || importo <= 0) { setError(t('quickErrImporto')); return; }
         setSaving(true);
         setError(null);
         if (!confermaDup) {
@@ -63,7 +67,7 @@ export function QuickAcquistoModal({ alunno, categoria, userId, scuolaId, onClos
                     (p) => Number(p.importo) === Number(importo) && p.scadenza && Math.abs(Date.parse(p.scadenza) - Date.parse(data)) <= SOGLIA_MS
                 );
                 if (dup) {
-                    setConfermaDup(`Possibile duplicato: esiste già "${dup.descrizione}" da € ${Number(dup.importo).toFixed(2)} con scadenza ${dup.scadenza ? new Date(dup.scadenza).toLocaleDateString('it-IT') : '—'}.`);
+                    setConfermaDup(`${t('quickDupPre')} "${dup.descrizione}" ${t('quickDupImporto')} € ${Number(dup.importo).toFixed(2)} ${t('quickDupScadenza')} ${dup.scadenza ? f.dataBreve(dup.scadenza) : '—'}.`);
                     setSaving(false);
                     return;
                 }
@@ -87,7 +91,7 @@ export function QuickAcquistoModal({ alunno, categoria, userId, scuolaId, onClos
                 }),
             });
             const json = await res.json();
-            if (!res.ok) { setError(json.error || 'Errore nella creazione'); return; }
+            if (!res.ok) { setError(json.error || t('quickErrCreazione')); return; }
             const pagamento = json.data;
 
             if (giaPagato) {
@@ -104,14 +108,14 @@ export function QuickAcquistoModal({ alunno, categoria, userId, scuolaId, onClos
                 });
                 if (!incRes.ok) {
                     const j = await incRes.json().catch(() => ({}));
-                    setError(j.error || 'Acquisto creato ma errore nella registrazione del pagamento');
+                    setError(j.error || t('quickErrIncasso'));
                     setCreato({ id: pagamento.id, fattura_stato: pagamento.fattura_stato });
                     return;
                 }
             }
             setCreato({ id: pagamento.id, fattura_stato: pagamento.fattura_stato });
         } catch {
-            setError('Errore di rete');
+            setError(t('quickErrRete'));
         } finally {
             setSaving(false);
         }
@@ -128,7 +132,7 @@ export function QuickAcquistoModal({ alunno, categoria, userId, scuolaId, onClos
             >
                 <div className="flex items-center justify-between mb-4">
                     <h3 className="font-barlow font-black text-lg text-kidville-green uppercase flex items-center gap-2">
-                        <ShoppingBag size={18} /> Nuovo acquisto
+                        <ShoppingBag size={18} /> {t('quickNuovoAcquisto')}
                     </h3>
                     <button onClick={onClose} className="text-kidville-muted hover:text-kidville-ink"><X size={20} /></button>
                 </div>
@@ -138,7 +142,7 @@ export function QuickAcquistoModal({ alunno, categoria, userId, scuolaId, onClos
                         {alunno.nome} {alunno.cognome}
                     </p>
                     <p className="font-maven text-xs text-kidville-muted">
-                        {alunno.classe_sezione || '—'} · Categoria: {categoria.nome}
+                        {alunno.classe_sezione || '—'} · {t('quickCategoria')} {categoria.nome}
                     </p>
                 </div>
 
@@ -146,7 +150,7 @@ export function QuickAcquistoModal({ alunno, categoria, userId, scuolaId, onClos
                     <div className="text-center py-4">
                         <span className="mx-auto mb-2 flex w-10 justify-center text-kidville-green"><SaveCheck size={40} /></span>
                         <p className="font-maven text-sm text-kidville-green font-bold mb-1">
-                            Acquisto registrato{giaPagato ? ' e saldato' : ''}.
+                            {t('quickAcquistoRegistrato')}{giaPagato ? ` ${t('quickESaldato')}` : ''}.
                         </p>
                         {error && <p className="font-maven text-xs text-kidville-warn mb-3">{error}</p>}
                         {giaPagato && (
@@ -155,26 +159,26 @@ export function QuickAcquistoModal({ alunno, categoria, userId, scuolaId, onClos
                             </div>
                         )}
                         <button onClick={onDone} className={cx(BTN_PRIMARY, 'mt-2 w-full')}>
-                            Chiudi
+                            {t('quickChiudi')}
                         </button>
                     </div>
                 ) : (
                     <>
                         <div className="space-y-3">
                             <div>
-                                <label className="font-maven text-xs text-kidville-muted mb-1 block">Descrizione</label>
+                                <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('quickDescrizione')}</label>
                                 <input type="text" value={descrizione} onChange={(e) => setDescrizione(e.target.value)}
                                     className={INPUT} />
                             </div>
                             <div className="grid grid-cols-2 gap-3">
                                 <div>
-                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">Importo (€)</label>
+                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('quickImportoLabel')}</label>
                                     <input type="number" min={0} step="0.01" value={importo || ''}
                                         onChange={(e) => { setImporto(e.target.value === '' ? 0 : Number(e.target.value)); setConfermaDup(null); }}
                                         className={INPUT} />
                                 </div>
                                 <div>
-                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">Data</label>
+                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('quickData')}</label>
                                     <input type="date" value={data} onChange={(e) => { setData(e.target.value); setConfermaDup(null); }}
                                         className={INPUT} />
                                 </div>
@@ -183,37 +187,36 @@ export function QuickAcquistoModal({ alunno, categoria, userId, scuolaId, onClos
                             <label className="flex items-center gap-2 cursor-pointer">
                                 <input type="checkbox" checked={obbligatorio} onChange={(e) => setObbligatorio(e.target.checked)}
                                     className="w-4 h-4 rounded border-kidville-muted text-kidville-green focus:ring-kidville-green" />
-                                <span className="font-maven text-xs text-kidville-green">Pagamento obbligatorio (genera solleciti)</span>
+                                <span className="font-maven text-xs text-kidville-green">{t('quickObbligatorio')}</span>
                             </label>
 
                             <label className="flex items-center gap-2 cursor-pointer">
                                 <input type="checkbox" checked={acconti} onChange={(e) => { setAcconti(e.target.checked); if (e.target.checked) setGiaPagato(false); }}
                                     className="w-4 h-4 rounded border-kidville-muted text-kidville-green focus:ring-kidville-green" />
-                                <span className="font-maven text-xs text-kidville-green">Dividi in acconti (rate)</span>
+                                <span className="font-maven text-xs text-kidville-green">{t('quickDividiAcconti')}</span>
                             </label>
 
                             {!acconti && (
                                 <label className="flex items-center gap-2 cursor-pointer">
                                     <input type="checkbox" checked={giaPagato} onChange={(e) => setGiaPagato(e.target.checked)}
                                         className="w-4 h-4 rounded border-kidville-muted text-kidville-green focus:ring-kidville-green" />
-                                    <span className="font-maven text-xs text-kidville-green">Già pagato (registra subito l&apos;incasso)</span>
+                                    <span className="font-maven text-xs text-kidville-green">{t('quickGiaPagato')}</span>
                                 </label>
                             )}
 
                             {!acconti && giaPagato && (
                                 <div>
-                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">Metodo di pagamento</label>
+                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('quickMetodo')}</label>
                                     <select value={metodo} onChange={(e) => setMetodo(e.target.value)}
                                         className={SELECT}>
-                                        {METODI.map((m) => <option key={m.v} value={m.v}>{m.l}</option>)}
+                                        {METODI.map((m) => <option key={m.v} value={m.v}>{t(`quickMetodo_${m.v}`)}</option>)}
                                     </select>
                                 </div>
                             )}
 
                             {!acconti && giaPagato && metodo === 'contanti' && (
                                 <p className="rounded-card bg-kidville-warn-soft px-3 py-2 font-maven text-[11px] leading-snug text-kidville-warn">
-                                    Contanti: pagamento non tracciabile. La quota non sarà detraibile nel 730 (art. 15 TUIR)
-                                    e resterà esclusa dalla comunicazione delle spese scolastiche all&apos;AdE.
+                                    {t('quickWarnContanti')}
                                 </p>
                             )}
 
@@ -228,20 +231,20 @@ export function QuickAcquistoModal({ alunno, categoria, userId, scuolaId, onClos
 
                         <div className="flex gap-2 mt-5">
                             <button onClick={onClose} className={cx(BTN_SECONDARY, 'flex-1')}>
-                                Annulla
+                                {t('quickAnnulla')}
                             </button>
                             {acconti ? (
                                 <button onClick={() => {
-                                    if (!descrizione.trim()) { setError('Inserisci una descrizione'); return; }
-                                    if (!importo || importo <= 0) { setError('Inserisci un importo maggiore di 0'); return; }
+                                    if (!descrizione.trim()) { setError(t('quickErrDescrizione')); return; }
+                                    if (!importo || importo <= 0) { setError(t('quickErrImporto')); return; }
                                     setError(null); setRateizza(true);
                                 }}
                                     className={cx(BTN_PRIMARY, 'flex-1')}>
-                                    Configura acconti
+                                    {t('quickConfiguraAcconti')}
                                 </button>
                             ) : (
                                 <button onClick={submit} disabled={saving} className={cx(BTN_PRIMARY, 'flex-1')}>
-                                    {saving ? 'Salvataggio…' : confermaDup ? 'Conferma comunque' : 'Registra acquisto'}
+                                    {saving ? t('quickSalvataggio') : confermaDup ? t('quickConfermaComunque') : t('quickRegistraAcquisto')}
                                 </button>
                             )}
                         </div>

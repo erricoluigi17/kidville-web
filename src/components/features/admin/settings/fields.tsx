@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import { Save } from 'lucide-react';
 import { input, label, btnPrimary, checkbox, checkboxLabel, checkboxRow } from './ui';
 
@@ -64,10 +65,11 @@ export function PillMultiSelect({ options, selected, onChange }: { options: { id
 }
 
 export function SaveRow({ onSave, saving, msg, error }: { onSave: () => void; saving: boolean; msg: string; error: string | null }) {
+    const t = useTranslations('adminSettings');
     return (
         <div className="mt-4 flex items-center gap-3">
             <button onClick={onSave} disabled={saving} className={btnPrimary}>
-                <Save size={14} /> {saving ? 'Salvataggio…' : 'Salva'}
+                <Save size={14} /> {saving ? t('salvataggioInCorso') : t('salva')}
             </button>
             {msg && <span role="status" className="font-maven text-sm text-kidville-success">{msg}</span>}
             {error && <span role="alert" className="font-maven text-sm text-kidville-error">{error}</span>}
@@ -76,5 +78,6 @@ export function SaveRow({ onSave, saving, msg, error }: { onSave: () => void; sa
 }
 
 export function ComingSoonBadge() {
-    return <span className="ml-1 text-[10px] bg-kidville-warn-soft text-kidville-warn px-2 py-0.5 rounded-full align-middle">prossimamente</span>;
+    const t = useTranslations('adminSettings');
+    return <span className="ml-1 text-[10px] bg-kidville-warn-soft text-kidville-warn px-2 py-0.5 rounded-full align-middle">{t('prossimamente')}</span>;
 }

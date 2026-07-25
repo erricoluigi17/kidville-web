@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useTranslations } from 'next-intl'
 import Link from 'next/link'
 import {
   CheckCircle2, Loader2, Copy, Link2, Pencil, Plus, RotateCcw,
@@ -22,6 +23,7 @@ interface FormModel {
 }
 
 export function ModuliInviabili() {
+  const t = useTranslations('adminAltro')
   const [models, setModels] = useState<FormModel[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
@@ -41,7 +43,7 @@ export function ModuliInviabili() {
   useEffect(() => { load() }, [])
 
   const resetStandard = async () => {
-    if (!confirm('Reimpostare il Modulo d\'iscrizione standard ai valori di base? Le modifiche fatte verranno annullate.')) return
+    if (!confirm(t('inviabiliResetConferma'))) return
     setResetting(true)
     try {
       const res = await fetch('/api/admin/form-models/reset', {
@@ -49,8 +51,8 @@ export function ModuliInviabili() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: STANDARD_ENROLLMENT_MODEL_ID }),
       })
-      if (!res.ok) { const j = await res.json().catch(() => ({})); alert(j.error || 'Errore'); return }
-      alert('Modulo d\'iscrizione standard ripristinato ai valori di base.')
+      if (!res.ok) { const j = await res.json().catch(() => ({})); alert(j.error || t('errore')); return }
+      alert(t('inviabiliResetSuccess'))
     } finally {
       setResetting(false)
     }
@@ -64,7 +66,7 @@ export function ModuliInviabili() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: m.id, action: m.published_at ? 'unpublish' : 'publish' }),
       })
-      if (!res.ok) { const j = await res.json().catch(() => ({})); alert(j.error || 'Errore'); return }
+      if (!res.ok) { const j = await res.json().catch(() => ({})); alert(j.error || t('errore')); return }
       load()
     } finally { setBusy(null) }
   }
@@ -78,37 +80,37 @@ export function ModuliInviabili() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <p className="font-maven text-sm text-kidville-muted max-w-xl">Moduli personalizzabili da inviare ai genitori tramite link. Modificali nel builder e pubblicali per ottenere il link condivisibile.</p>
-        <Link href="/admin/forms/builder" className="inline-flex items-center gap-2 rounded-pill bg-kidville-green px-4 py-2 font-barlow text-sm font-bold uppercase text-kidville-yellow"><Plus size={15} /> Nuovo modulo</Link>
+        <p className="font-maven text-sm text-kidville-muted max-w-xl">{t('inviabiliIntro')}</p>
+        <Link href="/admin/forms/builder" className="inline-flex items-center gap-2 rounded-pill bg-kidville-green px-4 py-2 font-barlow text-sm font-bold uppercase text-kidville-yellow"><Plus size={15} /> {t('inviabiliNuovoModulo')}</Link>
       </div>
 
       {/* Modulo predefinito: wizard /iscrizione, editabile dal builder */}
       <div className="rounded-card border border-kidville-line bg-kidville-white p-4">
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div>
-            <p className="font-barlow font-bold text-kidville-ink">Modulo d&apos;iscrizione standard
-              <span className="ml-2 text-[10px] uppercase bg-kidville-cream px-2 py-0.5 rounded-full text-kidville-muted">predefinito</span>
+            <p className="font-barlow font-bold text-kidville-ink">{t('inviabiliStandardTitolo')}
+              <span className="ml-2 text-[10px] uppercase bg-kidville-cream px-2 py-0.5 rounded-full text-kidville-muted">{t('inviabiliPredefinito')}</span>
             </p>
-            <p className="font-maven text-xs text-kidville-muted">Wizard pubblico sempre attivo. Le richieste arrivano nel tab «Moduli ricevuti». Modificabile dal builder.</p>
+            <p className="font-maven text-xs text-kidville-muted">{t('inviabiliStandardDesc')}</p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <Link href={`/admin/forms/builder?id=${STANDARD_ENROLLMENT_MODEL_ID}`} className="inline-flex items-center gap-1.5 rounded-pill border border-kidville-line px-3 py-1.5 text-sm text-kidville-muted hover:text-kidville-green">
-              <Pencil size={14} /> Modifica
+              <Pencil size={14} /> {t('inviabiliModifica')}
             </Link>
             <button onClick={resetStandard} disabled={resetting} className="inline-flex items-center gap-1.5 rounded-pill border border-kidville-warn/30 px-3 py-1.5 text-sm text-kidville-warn disabled:opacity-50">
-              {resetting ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />} Reimposta
+              {resetting ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />} {t('inviabiliReimposta')}
             </button>
             <button onClick={() => copyLink(`${origin}/iscrizione`, 'std')} className="inline-flex items-center gap-1.5 rounded-pill border border-kidville-green/30 px-3 py-1.5 text-sm text-kidville-green">
-              {copied === 'std' ? <><CheckCircle2 size={14} /> Copiato</> : <><Copy size={14} /> Copia link</>}
+              {copied === 'std' ? <><CheckCircle2 size={14} /> {t('inviabiliCopiato')}</> : <><Copy size={14} /> {t('inviabiliCopiaLink')}</>}
             </button>
           </div>
         </div>
       </div>
 
       {loading ? (
-        <div className="flex items-center gap-2 text-kidville-muted p-4"><Loader2 size={16} className="animate-spin" /> Caricamento…</div>
+        <div className="flex items-center gap-2 text-kidville-muted p-4"><Loader2 size={16} className="animate-spin" /> {t('caricamento')}</div>
       ) : models.length === 0 ? (
-        <p className="font-maven text-sm text-kidville-muted p-2">Nessun modulo personalizzato. Creane uno con «Nuovo modulo».</p>
+        <p className="font-maven text-sm text-kidville-muted p-2">{t('inviabiliNessunModulo')}</p>
       ) : models.map((m) => {
         const pub = !!m.published_at
         const url = m.public_token ? `${origin}${publicFormUrl(m.public_token)}` : ''
@@ -118,21 +120,21 @@ export function ModuliInviabili() {
               <div className="min-w-0">
                 <p className="font-barlow font-bold text-kidville-ink truncate">
                   {m.title}
-                  {m.is_enrollment_form && <span className="ml-2 text-[10px] uppercase bg-kidville-green-soft px-2 py-0.5 rounded-full text-kidville-green">iscrizione</span>}
-                  <span className={`ml-2 text-[10px] uppercase px-2 py-0.5 rounded-full ${pub ? 'bg-kidville-success-soft text-kidville-success' : 'bg-kidville-warn-soft text-kidville-warn'}`}>{pub ? 'pubblicato' : 'bozza'}</span>
+                  {m.is_enrollment_form && <span className="ml-2 text-[10px] uppercase bg-kidville-green-soft px-2 py-0.5 rounded-full text-kidville-green">{t('inviabiliBadgeIscrizione')}</span>}
+                  <span className={`ml-2 text-[10px] uppercase px-2 py-0.5 rounded-full ${pub ? 'bg-kidville-success-soft text-kidville-success' : 'bg-kidville-warn-soft text-kidville-warn'}`}>{pub ? t('inviabiliPubblicato') : t('inviabiliBozza')}</span>
                 </p>
                 {pub && url && <p className="font-maven text-xs text-kidville-muted truncate">{url}</p>}
               </div>
               <div className="flex items-center gap-2 shrink-0">
-                <Link href={`/admin/forms/builder?id=${m.id}`} className="inline-flex items-center gap-1.5 rounded-pill border border-kidville-line px-3 py-1.5 text-sm text-kidville-muted hover:text-kidville-green"><Pencil size={14} /> Modifica</Link>
+                <Link href={`/admin/forms/builder?id=${m.id}`} className="inline-flex items-center gap-1.5 rounded-pill border border-kidville-line px-3 py-1.5 text-sm text-kidville-muted hover:text-kidville-green"><Pencil size={14} /> {t('inviabiliModifica')}</Link>
                 {pub && url && (
                   <button onClick={() => copyLink(url, m.id)} className="inline-flex items-center gap-1.5 rounded-pill border border-kidville-green/30 px-3 py-1.5 text-sm text-kidville-green">
-                    {copied === m.id ? <><CheckCircle2 size={14} /> Copiato</> : <><Copy size={14} /> Copia link</>}
+                    {copied === m.id ? <><CheckCircle2 size={14} /> {t('inviabiliCopiato')}</> : <><Copy size={14} /> {t('inviabiliCopiaLink')}</>}
                   </button>
                 )}
                 <button onClick={() => togglePublish(m)} disabled={busy === m.id} className={`inline-flex items-center gap-1.5 rounded-pill px-3 py-1.5 text-sm ${pub ? 'border border-kidville-error/30 text-kidville-error' : 'bg-kidville-green text-kidville-yellow'}`}>
                   {busy === m.id ? <Loader2 size={14} className="animate-spin" /> : <Link2 size={14} />}
-                  {pub ? 'Ritira' : 'Pubblica'}
+                  {pub ? t('inviabiliRitira') : t('inviabiliPubblica')}
                 </button>
               </div>
             </div>

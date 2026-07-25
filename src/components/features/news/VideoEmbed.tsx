@@ -1,5 +1,6 @@
 'use client'
 
+import { useTranslations } from 'next-intl'
 import type { NewsMedia, NewsMediaTipo } from '@/lib/news/tipi'
 
 // =============================================================================
@@ -61,6 +62,7 @@ export function risolviVideo(media: {
 }
 
 export function VideoEmbed({ media }: { media: NewsMedia }) {
+  const t = useTranslations('parentNews')
   const v = risolviVideo(media)
   if (v.kind === 'none' || !v.src) return null
 
@@ -83,7 +85,7 @@ export function VideoEmbed({ media }: { media: NewsMedia }) {
     <div className="relative w-full overflow-hidden rounded-card bg-black" style={{ aspectRatio: '16 / 9' }}>
       <iframe
         src={v.src}
-        title={v.kind === 'youtube' ? 'Video YouTube' : 'Video Vimeo'}
+        title={v.kind === 'youtube' ? t('videoYoutube') : t('videoVimeo')}
         loading="lazy"
         allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
         allowFullScreen

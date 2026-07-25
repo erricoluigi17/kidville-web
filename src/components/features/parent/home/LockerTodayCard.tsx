@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useTranslations } from 'next-intl'
 import { Package, Bell } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
 
@@ -26,6 +27,7 @@ const SOGLIA_ROSSA = 2
  * della scuola e i docenti della sezione (tipo `locker_scorte`).
  */
 export function LockerTodayCard({ studentId }: Props) {
+  const t = useTranslations('home')
   const [items, setItems] = useState<StockItem[]>([])
   const [loaded, setLoaded] = useState(false)
   const [toast, setToast] = useState('')
@@ -58,8 +60,8 @@ export function LockerTodayCard({ studentId }: Props) {
         body: JSON.stringify({ alunno_id: studentId, materiale: nome }),
       }).catch(() => null)
       setToast(res?.ok
-        ? `Avviso inviato alla scuola per ${nome.toLowerCase()}.`
-        : 'Invio non riuscito. Riprova tra poco.')
+        ? t('lockerAvvisoInviato', { materiale: nome.toLowerCase() })
+        : t('lockerInvioFallito'))
     } finally {
       setSending(false)
       setTimeout(() => setToast(''), 2600)
@@ -81,7 +83,7 @@ export function LockerTodayCard({ studentId }: Props) {
         <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-[11px] bg-kidville-green-soft text-kidville-green">
           <Package size={18} />
         </span>
-        <p className="font-maven text-[13px] text-kidville-muted">Nessun materiale registrato al momento.</p>
+        <p className="font-maven text-[13px] text-kidville-muted">{t('lockerVuoto')}</p>
       </Card>
     )
   }
@@ -114,7 +116,7 @@ export function LockerTodayCard({ studentId }: Props) {
                       'font-maven text-xs font-bold ' + (basso ? 'text-kidville-error' : 'text-kidville-muted')
                     }
                   >
-                    {it.stock} pz
+                    {it.stock} {t('lockerPz')}
                   </span>
                 </div>
                 <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-kidville-line">
@@ -128,7 +130,7 @@ export function LockerTodayCard({ studentId }: Props) {
                   onClick={() => notifyScuola(it.materiale)}
                   className="flex flex-shrink-0 items-center gap-1 rounded-pill bg-kidville-cream-dark px-3 py-1.5 font-barlow text-[11.5px] font-extrabold uppercase tracking-wide text-kidville-green active:scale-95 disabled:opacity-60"
                 >
-                  <Bell size={13} /> Avvisa
+                  <Bell size={13} /> {t('lockerAvvisa')}
                 </button>
               )}
             </div>

@@ -4,6 +4,7 @@ import { usePathname, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useState } from 'react';
+import { useTranslations } from 'next-intl';
 import {
   Home, NotebookPen, MessageCircle, BookOpen, LayoutGrid,
   Image, Package, FileText, ClipboardCheck, Users, Megaphone,
@@ -43,6 +44,7 @@ interface MenuGroup {
 }
 
 export default function TeacherBottomNav() {
+  const t = useTranslations('teacherNav');
   const pathname = usePathname();
   const search = useSearchParams();
   const [showMenu, setShowMenu] = useState(false);
@@ -59,32 +61,32 @@ export default function TeacherBottomNav() {
   // Menu raggruppato del DR (TEACHER_MENU), mappato alle rotte reali.
   const groups: MenuGroup[] = [
     {
-      label: 'In classe',
+      label: t('gruppoInClasse'),
       items: [
-        { id: 'appello', label: 'Appello', sub: 'Presenze del giorno', icon: ClipboardCheck, href: '/teacher/attendance', tint: '#006A5F', grado: 'comune' },
-        { id: 'diario', label: 'Diario', sub: 'Schede giornaliere', icon: NotebookPen, href: '/teacher/diary', tint: '#2A6FDB', grado: 'infanzia' },
-        { id: 'registro', label: 'Registro', sub: 'Le mie classi · valutazioni', icon: BookOpen, href: '/teacher/primaria', tint: '#7A3FD0', grado: 'primaria' },
-        { id: 'presenze', label: 'Presenze', sub: 'Riepilogo assenze', icon: Users, href: '/teacher/attendance', tint: '#43A047', grado: 'comune' },
+        { id: 'appello', label: t('voceAppelloLabel'), sub: t('voceAppelloSub'), icon: ClipboardCheck, href: '/teacher/attendance', tint: '#006A5F', grado: 'comune' },
+        { id: 'diario', label: t('voceDiarioLabel'), sub: t('voceDiarioSub'), icon: NotebookPen, href: '/teacher/diary', tint: '#2A6FDB', grado: 'infanzia' },
+        { id: 'registro', label: t('voceRegistroLabel'), sub: t('voceRegistroSub'), icon: BookOpen, href: '/teacher/primaria', tint: '#7A3FD0', grado: 'primaria' },
+        { id: 'presenze', label: t('vocePresenzeLabel'), sub: t('vocePresenzeSub'), icon: Users, href: '/teacher/attendance', tint: '#43A047', grado: 'comune' },
       ],
     },
     {
-      label: 'Vita scolastica',
+      label: t('gruppoVitaScolastica'),
       items: [
-        { id: 'mensa', label: 'Mensa', sub: 'Prenotazioni pranzo', icon: UtensilsCrossed, href: '/teacher/mensa', tint: '#E6720A', grado: 'comune' },
-        { id: 'foto', label: 'Foto', sub: 'Galleria sezione', icon: Image, href: '/teacher/gallery', tint: '#006A5F', grado: 'comune' },
-        { id: 'bacheca', label: 'Bacheca', sub: 'Avvisi e comunicazioni', icon: Megaphone, href: '/teacher/avvisi', tint: '#E53935', grado: 'comune' },
-        { id: 'news', label: 'News', sub: 'Novità e comunicati', icon: Newspaper, href: '/teacher/news', tint: '#006A5F', grado: 'comune' },
-        { id: 'calendario', label: 'Calendario', sub: 'Eventi e uscite', icon: CalendarDays, href: null, tint: '#2A6FDB', grado: 'comune', soon: true },
+        { id: 'mensa', label: t('voceMensaLabel'), sub: t('voceMensaSub'), icon: UtensilsCrossed, href: '/teacher/mensa', tint: '#E6720A', grado: 'comune' },
+        { id: 'foto', label: t('voceFotoLabel'), sub: t('voceFotoSub'), icon: Image, href: '/teacher/gallery', tint: '#006A5F', grado: 'comune' },
+        { id: 'bacheca', label: t('voceBachecaLabel'), sub: t('voceBachecaSub'), icon: Megaphone, href: '/teacher/avvisi', tint: '#E53935', grado: 'comune' },
+        { id: 'news', label: t('voceNewsLabel'), sub: t('voceNewsSub'), icon: Newspaper, href: '/teacher/news', tint: '#006A5F', grado: 'comune' },
+        { id: 'calendario', label: t('voceCalendarioLabel'), sub: t('voceCalendarioSub'), icon: CalendarDays, href: null, tint: '#2A6FDB', grado: 'comune', soon: true },
       ],
     },
     {
-      label: 'Strumenti',
+      label: t('gruppoStrumenti'),
       items: [
-        { id: 'attivita', label: 'Attività', sub: 'Attività e bacheca interna', icon: ListTodo, href: '/teacher/tasks', tint: '#1F8A5B', grado: 'comune' },
-        { id: 'armadietto', label: 'Armadietto', sub: 'Scorte e richieste', icon: Package, href: '/teacher/locker', tint: '#7A3FD0', grado: 'infanzia' },
-        { id: 'moduli', label: 'Moduli', sub: 'Form da gestire', icon: FileText, href: '/teacher/modulistica', tint: '#E6720A', grado: 'comune' },
-        { id: 'messaggi', label: 'Messaggi', sub: 'Chat con le famiglie', icon: MessageCircle, href: '/teacher/chat', tint: '#006A5F', grado: 'comune' },
-        { id: 'profilo', label: 'Profilo', sub: 'Account e impostazioni', icon: User, href: null, tint: '#7C8A84', grado: 'comune', soon: true },
+        { id: 'attivita', label: t('voceAttivitaLabel'), sub: t('voceAttivitaSub'), icon: ListTodo, href: '/teacher/tasks', tint: '#1F8A5B', grado: 'comune' },
+        { id: 'armadietto', label: t('voceArmadiettoLabel'), sub: t('voceArmadiettoSub'), icon: Package, href: '/teacher/locker', tint: '#7A3FD0', grado: 'infanzia' },
+        { id: 'moduli', label: t('voceModuliLabel'), sub: t('voceModuliSub'), icon: FileText, href: '/teacher/modulistica', tint: '#E6720A', grado: 'comune' },
+        { id: 'messaggi', label: t('voceMessaggiLabel'), sub: t('voceMessaggiSub'), icon: MessageCircle, href: '/teacher/chat', tint: '#006A5F', grado: 'comune' },
+        { id: 'profilo', label: t('voceProfiloLabel'), sub: t('voceProfiloSub'), icon: User, href: null, tint: '#7C8A84', grado: 'comune', soon: true },
       ],
     },
   ];
@@ -101,18 +103,18 @@ export default function TeacherBottomNav() {
   // Il 2° tab segue i gradi (solo-primaria → Registro, solo-infanzia → Diario);
   // per i misti — o finché il dato non è pronto — resta il contesto di navigazione.
   const secondTab = tg.ready && tg.isPrimariaOnly
-    ? { id: 'registro', label: 'Registro', icon: BookOpen, href: '/teacher/primaria' as const }
+    ? { id: 'registro', label: t('voceRegistroLabel'), icon: BookOpen, href: '/teacher/primaria' as const }
     : tg.ready && tg.isInfanziaOnly
-      ? { id: 'diario', label: 'Diario', icon: NotebookPen, href: '/teacher/diary' as const }
+      ? { id: 'diario', label: t('voceDiarioLabel'), icon: NotebookPen, href: '/teacher/diary' as const }
       : isPrimaria
-        ? { id: 'registro', label: 'Registro', icon: BookOpen, href: '/teacher/primaria' as const }
-        : { id: 'diario', label: 'Diario', icon: NotebookPen, href: '/teacher/diary' as const };
+        ? { id: 'registro', label: t('voceRegistroLabel'), icon: BookOpen, href: '/teacher/primaria' as const }
+        : { id: 'diario', label: t('voceDiarioLabel'), icon: NotebookPen, href: '/teacher/diary' as const };
   const mainTabs = [
-    { id: 'home', label: 'Dashboard', icon: Home, href: '/teacher' as const },
+    { id: 'home', label: t('tabDashboard'), icon: Home, href: '/teacher' as const },
     secondTab,
-    { id: 'messaggi', label: 'Messaggi', icon: MessageCircle, href: '/teacher/chat' as const },
-    { id: 'foto', label: 'Foto', icon: Image, href: '/teacher/gallery' as const },
-    { id: 'menu', label: 'Menu', icon: LayoutGrid, href: null },
+    { id: 'messaggi', label: t('tabMessaggi'), icon: MessageCircle, href: '/teacher/chat' as const },
+    { id: 'foto', label: t('tabFoto'), icon: Image, href: '/teacher/gallery' as const },
+    { id: 'menu', label: t('tabMenu'), icon: LayoutGrid, href: null },
   ] as const;
 
   const isActive = (href: string) => {
@@ -133,7 +135,7 @@ export default function TeacherBottomNav() {
       <div className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[460px] z-50 px-3 pb-3"
         style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}>
         <div className="bg-white/96 backdrop-blur-2xl rounded-[26px] shadow-[0_-2px_24px_rgba(0,106,95,0.10),0_8px_32px_rgba(0,0,0,0.08)] border border-white/60">
-          <nav aria-label="Navigazione principale" className="flex items-stretch justify-around px-1 h-[60px]">
+          <nav aria-label={t('ariaNavigazionePrincipale')} className="flex items-stretch justify-around px-1 h-[60px]">
             {mainTabs.map((tab) => {
               const Icon = tab.icon;
               const active = tab.href ? isActive(tab.href) : ((isMenuSectionActive && !anyMainTabActive) || showMenu);
@@ -145,7 +147,7 @@ export default function TeacherBottomNav() {
                     onClick={() => setShowMenu((v) => !v)}
                     aria-haspopup="menu"
                     aria-expanded={showMenu}
-                    aria-label="Menu · tutte le sezioni"
+                    aria-label={t('ariaMenu')}
                     className="flex flex-col items-center justify-center gap-[3px] flex-1 py-1 relative"
                   >
                     <motion.div
@@ -226,12 +228,12 @@ export default function TeacherBottomNav() {
               <div className="bg-kidville-cream rounded-[26px] shadow-2xl border border-black/5 max-h-[70vh] overflow-y-auto p-4">
                 <div className="flex items-center justify-between mb-3 px-1">
                   <div>
-                    <p className="font-barlow font-bold text-[10px] uppercase tracking-[0.14em] text-kidville-yellow-dark">Tutte le sezioni</p>
-                    <h3 className="font-barlow font-black text-xl text-kidville-green uppercase tracking-wide leading-none">Menu</h3>
+                    <p className="font-barlow font-bold text-[10px] uppercase tracking-[0.14em] text-kidville-yellow-dark">{t('menuEyebrow')}</p>
+                    <h3 className="font-barlow font-black text-xl text-kidville-green uppercase tracking-wide leading-none">{t('menuTitolo')}</h3>
                   </div>
                   <button
                     onClick={() => setShowMenu(false)}
-                    aria-label="Chiudi"
+                    aria-label={t('ariaChiudi')}
                     className="w-9 h-9 rounded-full bg-kidville-cream-dark flex items-center justify-center text-kidville-green"
                   >
                     <X className="w-4 h-4" strokeWidth={2.4} />
@@ -268,7 +270,7 @@ export default function TeacherBottomNav() {
                                   </span>
                                   {it.soon && (
                                     <span className="font-barlow font-bold text-[9.5px] uppercase tracking-wide px-1.5 py-0.5 rounded-pill bg-kidville-neutral-soft text-kidville-muted">
-                                      In arrivo
+                                      {t('badgeInArrivo')}
                                     </span>
                                   )}
                                 </span>

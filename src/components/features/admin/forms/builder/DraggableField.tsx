@@ -2,6 +2,7 @@
 
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
+import { useTranslations } from 'next-intl'
 import { motion } from 'framer-motion'
 import {
   GripVertical, Trash2, Type, AlignLeft, ChevronDown,
@@ -27,21 +28,23 @@ const FIELD_ICONS: Record<FormFieldType, React.ComponentType<{ className?: strin
   paragraph: AlignCenter,
 }
 
-const FIELD_LABELS: Record<FormFieldType, string> = {
-  text: 'Testo Corto',
-  textarea: 'Testo Lungo',
-  number: 'Numero',
-  email: 'Email',
-  phone: 'Telefono',
-  date: 'Data',
-  select: 'Menu a Tendina',
-  radio: 'Scelta Singola',
-  checkbox: 'Scelta Multipla',
-  file: 'Allegato File',
-  consent: 'Consensi/Privacy',
-  signature: 'Firma',
-  section_header: 'Intestazione',
-  paragraph: 'Paragrafo',
+// Chiavi i18n delle etichette dei tipi di campo (i `value` degli enum restano
+// tali: si traducono solo le label mostrate all'utente).
+const FIELD_LABEL_KEYS: Record<FormFieldType, string> = {
+  text: 'fieldTypeText',
+  textarea: 'fieldTypeTextarea',
+  number: 'fieldTypeNumber',
+  email: 'fieldTypeEmail',
+  phone: 'fieldTypePhone',
+  date: 'fieldTypeDate',
+  select: 'fieldTypeSelect',
+  radio: 'fieldTypeRadio',
+  checkbox: 'fieldTypeCheckbox',
+  file: 'fieldTypeFile',
+  consent: 'fieldTypeConsent',
+  signature: 'fieldTypeSignature',
+  section_header: 'fieldTypeSectionHeader',
+  paragraph: 'fieldTypeParagraph',
 }
 
 interface Props {
@@ -52,6 +55,7 @@ interface Props {
 }
 
 export function DraggableField({ field, isSelected, onClick, onDelete }: Props) {
+  const t = useTranslations('adminModulistica')
   const {
     attributes,
     listeners,
@@ -108,13 +112,13 @@ export function DraggableField({ field, isSelected, onClick, onDelete }: Props) 
           <p className="text-sm font-medium text-kidville-ink truncate">{field.label}</p>
           <div className="flex items-center gap-2 mt-0.5 flex-wrap">
             <span className="text-[10px] text-kidville-muted uppercase tracking-wide">
-              {FIELD_LABELS[field.type] ?? field.type}
+              {FIELD_LABEL_KEYS[field.type] ? t(FIELD_LABEL_KEYS[field.type]) : field.type}
             </span>
             {field.required && (
-              <span className="text-[10px] text-kidville-error/80">● Obbligatorio</span>
+              <span className="text-[10px] text-kidville-error/80">● {t('obbligatorio')}</span>
             )}
             {(field.points ?? 0) > 0 && (
-              <span className="text-[10px] text-kidville-warn/80">+{field.points}pt</span>
+              <span className="text-[10px] text-kidville-warn/80">{t('draggablePunti', { points: field.points ?? 0 })}</span>
             )}
             {field.db_mapping && (
               <span className="text-[10px] text-kidville-success/70 font-mono">⇢ {field.db_mapping}</span>
@@ -126,7 +130,7 @@ export function DraggableField({ field, isSelected, onClick, onDelete }: Props) 
         <button
           onClick={e => { e.stopPropagation(); onDelete() }}
           className="flex-shrink-0 opacity-0 group-hover:opacity-100 p-1.5 rounded-lg text-kidville-muted hover:text-kidville-error hover:bg-kidville-error/10 transition-all"
-          title="Elimina campo"
+          title={t('draggableEliminaCampo')}
         >
           <Trash2 className="w-3.5 h-3.5" />
         </button>

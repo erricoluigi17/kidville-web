@@ -2,11 +2,13 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { PenLine, BookOpen, Check, Paperclip, FileText, Image as ImageIcon } from 'lucide-react';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { saveLocalRegistro, syncPendingRegistro } from '@/lib/offline/syncEngine';
 import { nomeCompleto } from '@/lib/format/nome';
 import { DateField } from '@/components/ui/DateField';
+import { ScattaFotoButton } from '@/components/features/native/ScattaFotoButton';
 
 interface Campanella { id: string; ordine: number; ora_inizio: string; ora_fine: string; tipo: string }
 interface OrarioCella { campanella_id: string; materia_id: string | null; materie?: { nome: string } | null }
@@ -19,6 +21,7 @@ interface Alunno { id: string; nome: string; cognome: string }
 function oggiIso() { return new Date().toISOString().slice(0, 10); }
 
 export default function RegistroPage() {
+  const t = useTranslations('teacherPrimaria');
   const params = useParams();
   const search = useSearchParams();
   const sectionId = params?.sectionId as string;
@@ -76,14 +79,14 @@ export default function RegistroPage() {
   }, [load]);
 
   const uploadAllegato = async (registroId: string, file: File) => {
-    if (!userId) { alert('Identità non risolta: riapri la pagina dal registro.'); return; }
+    if (!userId) { alert(t('comuneIdentitaNonRisolta')); return; }
     const fd = new FormData();
     fd.append('file', file);
     fd.append('registroId', registroId);
     fd.append('userId', userId);
     const r = await fetch(`/api/primaria/allegati?userId=${userId}`, { method: 'POST', headers: { 'x-user-id': userId }, body: fd });
     if (r.ok) load();
-    else { const d = await r.json(); alert(d.error || 'Errore upload'); }
+    else { const d = await r.json(); alert(d.error || t('registroErroreUpload')); }
   };
 
   const rigaDi = (ordine: number) => righe.find((r) => r.ora_lezione === ordine);
@@ -95,11 +98,11 @@ export default function RegistroPage() {
   return (
     <div className="rounded-card bg-white p-5 shadow-sm">
       <div className="mb-4 flex items-center justify-between">
-        <h2 className="font-barlow text-lg font-bold text-kidville-ink">Registro di classe</h2>
+        <h2 className="font-barlow text-lg font-bold text-kidville-ink">{t('registroTitolo')}</h2>
         <DateField
           value={data}
           onChange={setData}
-          aria-label="Data del registro"
+          aria-label={t('registroDataAria')}
           className="font-maven rounded-pill border border-kidville-line px-3 py-1.5 text-sm"
         />
       </div>
@@ -111,10 +114,10 @@ export default function RegistroPage() {
           <div className="mb-4 space-y-3">
             <div className="rounded-2xl bg-white p-4" style={{ boxShadow: 'inset 0 0 0 1.5px var(--color-kidville-line)' }}>
               <div className="flex items-end justify-between">
-                <span className="font-barlow text-[11px] font-bold uppercase tracking-[0.1em] text-kidville-yellow-dark">Avanzamento firme</span>
+                <span className="font-barlow text-[11px] font-bold uppercase tracking-[0.1em] text-kidville-yellow-dark">{t('registroAvanzamentoFirme')}</span>
                 <span className="font-barlow text-lg font-black text-kidville-green">
                   {firmate}<span className="text-kidville-muted">/{tot}</span>
-                  <span className="ml-1 text-[11px] font-extrabold uppercase text-kidville-muted">ore firmate</span>
+                  <span className="ml-1 text-[11px] font-extrabold uppercase text-kidville-muted">{t('registroOreFirmate')}</span>
                 </span>
               </div>
               <div className="mt-2 h-2 overflow-hidden rounded-full bg-kidville-cream-dark">
@@ -124,7 +127,7 @@ export default function RegistroPage() {
             <div className="flex items-start gap-2 rounded-xl border border-kidville-info/20 bg-kidville-info-soft px-3 py-2.5">
               <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-kidville-info" />
               <span className="font-maven text-[11.5px] leading-snug text-kidville-info">
-                Le ore già firmate restano modificabili da chi le ha firmate; le firme dei colleghi sono in sola lettura.
+                {t('registroInfoFirme')}
               </span>
             </div>
           </div>
@@ -132,9 +135,9 @@ export default function RegistroPage() {
       })()}
 
       {loading ? (
-        <p className="font-maven text-kidville-muted text-sm">Caricamento…</p>
+        <p className="font-maven text-kidville-muted text-sm">{t('comuneCaricamento')}</p>
       ) : lezioni.length === 0 ? (
-        <p className="font-maven text-kidville-muted text-sm">Nessuna ora prevista dall&apos;orario in questo giorno.</p>
+        <p className="font-maven text-kidville-muted text-sm">{t('registroNessunaOra')}</p>
       ) : (
         <ul className="space-y-2">
           {campanelle.map((camp) => {
@@ -144,7 +147,7 @@ export default function RegistroPage() {
                 <li key={camp.id} className="rounded-card border border-dashed border-kidville-line bg-kidville-cream/40 px-3 py-2">
                   <div className="flex items-center gap-2">
                     <span className="font-barlow text-[11px] font-bold uppercase tracking-[0.1em] text-kidville-muted">
-                      {camp.tipo === 'mensa' ? 'Mensa' : 'Intervallo'}
+                      {camp.tipo === 'mensa' ? t('registroMensa') : t('registroIntervallo')}
                     </span>
                     <span className="text-xs text-kidville-muted">{camp.ora_inizio?.slice(0, 5)}–{camp.ora_fine?.slice(0, 5)}</span>
                   </div>
@@ -161,22 +164,22 @@ export default function RegistroPage() {
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex-1">
                     <div className="flex items-center gap-2">
-                      <span className="font-barlow text-sm font-bold text-kidville-green">{camp.ordine}ª ora</span>
+                      <span className="font-barlow text-sm font-bold text-kidville-green">{t('registroOra', { ora: camp.ordine })}</span>
                       <span className="text-xs text-kidville-muted">{camp.ora_inizio?.slice(0, 5)}–{camp.ora_fine?.slice(0, 5)}</span>
                       <span className={`font-maven text-sm ${materiaNome ? 'text-kidville-ink' : 'italic text-kidville-muted'}`}>
-                        · {materiaNome || 'orario da completare'}
+                        · {materiaNome || t('registroOrarioDaCompletare')}
                       </span>
                     </div>
                     {riga?.argomento && <p className="mt-1 font-maven text-sm text-kidville-ink">{riga.argomento}</p>}
                     {riga?.compiti && (
                       <p className="mt-1 rounded bg-kidville-yellow/20 px-2 py-1 font-maven text-xs text-kidville-ink">
-                        Compiti: {riga.compiti}
+                        {t('registroCompitiLabel')} {riga.compiti}
                       </p>
                     )}
                     {riga?.firme_docenti?.map((f) => (
                       <div key={f.id} className="mt-1 text-[11px] text-kidville-muted">
                         ✍ {f.utenti ? nomeCompleto(f.utenti.nome, f.utenti.cognome) : '—'} ({f.tipo_compresenza})
-                        {f.argomento_proprio && <span className="ml-1 text-kidville-info">· attività individualizzata</span>}
+                        {f.argomento_proprio && <span className="ml-1 text-kidville-info">· {t('registroAttivitaIndividualizzata')}</span>}
                       </div>
                     ))}
                     {(riga?.allegati_registro?.length ?? 0) > 0 && (
@@ -185,21 +188,30 @@ export default function RegistroPage() {
                           <a key={a.id} href={a.file_url} target="_blank" rel="noopener noreferrer"
                             className="inline-flex items-center gap-1 rounded-pill bg-kidville-cream px-2 py-0.5 text-[11px] text-kidville-ink hover:bg-kidville-cream-dark">
                             {a.tipo === 'pdf' ? <FileText size={11} /> : <ImageIcon size={11} />}
-                            {a.file_name || 'allegato'}
+                            {a.file_name || t('registroAllegato')}
                           </a>
                         ))}
                       </div>
                     )}
                     {riga && (
-                      <label className="mt-1.5 inline-flex cursor-pointer items-center gap-1 text-[11px] text-kidville-green">
-                        <Paperclip size={11} /> Allega
-                        <input
-                          type="file"
-                          accept="application/pdf,image/*"
-                          className="hidden"
-                          onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadAllegato(riga.id, f); }}
+                      <div className="mt-1.5 flex items-center gap-3">
+                        <label className="inline-flex cursor-pointer items-center gap-1 text-[11px] text-kidville-green">
+                          <Paperclip size={11} /> {t('registroAllega')}
+                          <input
+                            type="file"
+                            accept="application/pdf,image/*"
+                            className="hidden"
+                            onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadAllegato(riga.id, f); }}
+                          />
+                        </label>
+                        {/* Nativo: scatta la foto (compito/documento) come allegato. Su web non compare. */}
+                        <ScattaFotoButton
+                          onFile={(f) => uploadAllegato(riga.id, f)}
+                          label="Scatta foto"
+                          iconSize={11}
+                          className="inline-flex items-center gap-1 text-[11px] text-kidville-green"
                         />
-                      </label>
+                      </div>
                     )}
                   </div>
                   <button
@@ -209,7 +221,7 @@ export default function RegistroPage() {
                     }`}
                   >
                     {firmata ? <Check size={13} /> : <PenLine size={13} />}
-                    {firmata ? 'Modifica' : 'Firma'}
+                    {firmata ? t('registroModifica') : t('registroFirma')}
                   </button>
                 </div>
               </li>
@@ -243,6 +255,7 @@ function FirmaModal({
   materie: Materia[]; alunni: Alunno[]; sezioni: { id: string; name: string }[]; defaultMateriaId: string;
   onClose: () => void; onSaved: () => void;
 }) {
+  const t = useTranslations('teacherPrimaria');
   // Classe in cui si firma: di default quella corrente, ma il docente può
   // sceglierne un'altra (supplenza). Cambiando classe si azzera la materia
   // (le materie sono per-sezione e non sono caricate per le altre classi).
@@ -282,7 +295,7 @@ function FirmaModal({
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
       if (perAlunni) {
         setSaving(false);
-        setError('La selezione degli alunni richiede la connessione. Scegli «Tutta la classe» oppure riprova quando sei online.');
+        setError(t('firmaModalSelezioneOffline'));
         return;
       }
       await saveLocalRegistro({
@@ -315,7 +328,7 @@ function FirmaModal({
     });
     const d = await r.json();
     setSaving(false);
-    if (!r.ok) setError(d.error || 'Errore');
+    if (!r.ok) setError(d.error || t('comuneErrore'));
     else onSaved();
   };
 
@@ -324,7 +337,7 @@ function FirmaModal({
       <div className="flex max-h-[85dvh] w-full max-w-md flex-col rounded-card bg-white shadow-xl">
         <div className="flex items-center gap-2 rounded-t-card bg-kidville-green p-4 text-kidville-yellow">
           <BookOpen size={18} />
-          <h3 className="font-barlow text-lg font-bold">{ordine}ª ora — Firma lezione</h3>
+          <h3 className="font-barlow text-lg font-bold">{t('firmaModalTitolo', { ora: ordine })}</h3>
         </div>
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
           {error && <div className="rounded-card bg-kidville-error/10 text-kidville-error px-3 py-2 text-sm font-maven">{error}</div>}
@@ -332,31 +345,31 @@ function FirmaModal({
           {/* Classe: di default la corrente, ma è possibile firmare in un'altra (supplenza). */}
           {sezioni.length > 1 && (
             <div>
-              <label className="block font-maven text-xs text-kidville-muted">Classe</label>
+              <label className="block font-maven text-xs text-kidville-muted">{t('firmaModalClasse')}</label>
               <select value={targetSectionId} onChange={(e) => setTargetSectionId(e.target.value)} className="font-maven w-full rounded-pill border border-kidville-line px-3 py-2 text-sm">
-                {sezioni.map((s) => <option key={s.id} value={s.id}>{s.name}{s.id === sectionId ? ' (questa classe)' : ''}</option>)}
+                {sezioni.map((s) => <option key={s.id} value={s.id}>{s.name}{s.id === sectionId ? ` ${t('firmaModalQuestaClasse')}` : ''}</option>)}
               </select>
-              {altraClasse && <p className="mt-1 font-maven text-[11px] text-kidville-warn">Stai firmando in un&apos;altra classe (supplenza).</p>}
+              {altraClasse && <p className="mt-1 font-maven text-[11px] text-kidville-warn">{t('firmaModalSupplenza')}</p>}
             </div>
           )}
 
           {!altraClasse && (
             <div>
-              <label className="block font-maven text-xs text-kidville-muted">Materia</label>
+              <label className="block font-maven text-xs text-kidville-muted">{t('firmaModalMateria')}</label>
               <select value={materiaId} onChange={(e) => setMateriaId(e.target.value)} className="font-maven w-full rounded-pill border border-kidville-line px-3 py-2 text-sm">
-                <option value="">— seleziona —</option>
+                <option value="">{t('firmaModalSeleziona')}</option>
                 {materie.map((m) => <option key={m.id} value={m.id}>{m.nome}</option>)}
               </select>
             </div>
           )}
 
           <div>
-            <label className="block font-maven text-xs text-kidville-muted">Tipo firma</label>
+            <label className="block font-maven text-xs text-kidville-muted">{t('firmaModalTipoFirma')}</label>
             <select value={tipo} onChange={(e) => setTipo(e.target.value as typeof tipo)} className="font-maven w-full rounded-pill border border-kidville-line px-3 py-2 text-sm">
-              <option value="principale">Principale</option>
-              <option value="compresenza">Compresenza</option>
-              <option value="cofirma">Cofirma (condivido l&apos;argomento)</option>
-              <option value="sostegno">Sostegno (attività individualizzata)</option>
+              <option value="principale">{t('firmaModalTipoPrincipale')}</option>
+              <option value="compresenza">{t('firmaModalTipoCompresenza')}</option>
+              <option value="cofirma">{t('firmaModalTipoCofirma')}</option>
+              <option value="sostegno">{t('firmaModalTipoSostegno')}</option>
             </select>
           </div>
 
@@ -366,15 +379,15 @@ function FirmaModal({
               supplenza (altra classe) l'assegnazione resta di classe. */}
           {!altraClasse && tipo !== 'sostegno' && (
             <div>
-              <label className="block font-maven text-xs text-kidville-muted">Destinatari</label>
-              <div className="mt-1 inline-flex rounded-pill border border-kidville-line p-0.5" role="group" aria-label="Destinatari dei compiti e dell'argomento">
+              <label className="block font-maven text-xs text-kidville-muted">{t('firmaModalDestinatari')}</label>
+              <div className="mt-1 inline-flex rounded-pill border border-kidville-line p-0.5" role="group" aria-label={t('firmaModalDestinatariAria')}>
                 <button
                   type="button"
                   onClick={scegliClasse}
                   aria-pressed={!perAlunni}
                   className={`font-maven rounded-pill px-3 py-1 text-xs ${!perAlunni ? 'bg-kidville-green text-kidville-yellow' : 'text-kidville-ink'}`}
                 >
-                  Tutta la classe
+                  {t('firmaModalTuttaClasse')}
                 </button>
                 <button
                   type="button"
@@ -382,7 +395,7 @@ function FirmaModal({
                   aria-pressed={perAlunni}
                   className={`font-maven rounded-pill px-3 py-1 text-xs ${perAlunni ? 'bg-kidville-green text-kidville-yellow' : 'text-kidville-ink'}`}
                 >
-                  Alunni selezionati
+                  {t('firmaModalAlunniSelezionati')}
                 </button>
               </div>
             </div>
@@ -391,11 +404,11 @@ function FirmaModal({
           {!perAlunni ? (
             <>
               <div>
-                <label className="block font-maven text-xs text-kidville-muted">Argomento svolto (tutta la classe)</label>
+                <label className="block font-maven text-xs text-kidville-muted">{t('firmaModalArgomentoClasse')}</label>
                 <textarea value={argomento} onChange={(e) => setArgomento(e.target.value)} rows={2} className="font-maven w-full rounded-card border border-kidville-line px-3 py-2 text-sm" />
               </div>
               <div>
-                <label className="block font-maven text-xs text-kidville-muted">Compiti (tutta la classe)</label>
+                <label className="block font-maven text-xs text-kidville-muted">{t('firmaModalCompitiClasse')}</label>
                 <textarea value={compiti} onChange={(e) => setCompiti(e.target.value)} rows={2} className="font-maven w-full rounded-card border border-kidville-line px-3 py-2 text-sm" />
               </div>
             </>
@@ -403,8 +416,8 @@ function FirmaModal({
             <div className="rounded-card bg-kidville-info-soft p-3">
               <p className="mb-2 font-maven text-xs text-kidville-info">
                 {tipo === 'sostegno'
-                  ? 'Attività individualizzata: argomento e compiti visibili solo alle famiglie degli alunni selezionati.'
-                  : 'Argomento e compiti visibili solo alle famiglie degli alunni selezionati.'}
+                  ? t('firmaModalInfoSostegno')
+                  : t('firmaModalInfoSelezionati')}
               </p>
               <div className="mb-2 max-h-32 overflow-y-auto rounded bg-white p-2">
                 {alunni.map((a) => (
@@ -414,9 +427,9 @@ function FirmaModal({
                   </label>
                 ))}
               </div>
-              <label className="block font-maven text-xs text-kidville-muted">Argomento (solo per gli alunni selezionati)</label>
+              <label className="block font-maven text-xs text-kidville-muted">{t('firmaModalArgomentoSelezionati')}</label>
               <textarea value={argomentoProprio} onChange={(e) => setArgomentoProprio(e.target.value)} rows={2} className="mb-2 font-maven w-full rounded-card border border-kidville-line px-3 py-2 text-sm" />
-              <label className="block font-maven text-xs text-kidville-muted">Compiti (solo per gli alunni selezionati)</label>
+              <label className="block font-maven text-xs text-kidville-muted">{t('firmaModalCompitiSelezionati')}</label>
               <textarea value={compitiPropri} onChange={(e) => setCompitiPropri(e.target.value)} rows={2} className="font-maven w-full rounded-card border border-kidville-line px-3 py-2 text-sm" />
             </div>
           )}
@@ -426,20 +439,20 @@ function FirmaModal({
               classe. La consegna per i singoli destinatari (data_consegna_propri) è rinviata. */}
           {!perAlunni && (
             <div>
-              <label className="block font-maven text-xs text-kidville-muted">Consegna compiti (facoltativa)</label>
+              <label className="block font-maven text-xs text-kidville-muted">{t('firmaModalConsegnaCompiti')}</label>
               <DateField
                 value={dataConsegnaCompiti}
                 onChange={setDataConsegnaCompiti}
-                aria-label="Data di consegna dei compiti"
+                aria-label={t('firmaModalConsegnaAria')}
                 className="font-maven w-full rounded-pill border border-kidville-line px-3 py-2 text-sm"
               />
             </div>
           )}
         </div>
         <div className="flex justify-end gap-2 border-t border-kidville-line p-4">
-          <button onClick={onClose} className="font-maven rounded-pill bg-kidville-cream px-4 py-2 text-sm text-kidville-ink">Annulla</button>
+          <button onClick={onClose} className="font-maven rounded-pill bg-kidville-cream px-4 py-2 text-sm text-kidville-ink">{t('firmaModalAnnulla')}</button>
           <button onClick={salva} disabled={saving} className="font-maven rounded-pill bg-kidville-green px-4 py-2 text-sm text-kidville-yellow disabled:opacity-50">
-            {saving ? 'Salvataggio…' : 'Firma'}
+            {saving ? t('comuneSalvataggio') : t('registroFirma')}
           </button>
         </div>
       </div>

@@ -1,10 +1,44 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useTranslations, useLocale } from 'next-intl';
 import { ChevronLeft, ChevronRight, RefreshCw, AlertCircle, Download } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import type { MonthlyAttendanceRecord } from '@/app/api/attendance/monthly/route';
 import { calcolaOreAssenza } from '@/lib/primaria/oreAssenza';
+
+// Etichette testuali passate all'export PDF: le stringhe utente vengono dal
+// namespace i18n (risolte nel componente), non da letterali qui dentro.
+interface PdfLabels {
+    titolo: string;
+    meta: string;
+    studente: string;
+    abbrevP: string;
+    abbrevA: string;
+    abbrevR: string;
+    simboli: Record<string, string>;
+    giorni: string[];
+    piePagina: (n: number, tot: number) => string;
+    nomeFile: string;
+}
+
+// Nomi di mesi e giorni localizzati via Intl (niente array hardcoded per lingua).
+// I giorni sono indicizzati per Date.getDay() (0 = domenica).
+function nomiMesi(locale: string): string[] {
+    const fmt = new Intl.DateTimeFormat(locale, { month: 'long' });
+    return Array.from({ length: 12 }, (_, i) => {
+        const s = fmt.format(new Date(2000, i, 1));
+        return s.charAt(0).toUpperCase() + s.slice(1);
+    });
+}
+function nomiGiorni(locale: string): string[] {
+    const fmt = new Intl.DateTimeFormat(locale, { weekday: 'short' });
+    // 2023-01-01 è una domenica → getDay() 0..6 = dom..sab.
+    return Array.from({ length: 7 }, (_, i) => {
+        const s = fmt.format(new Date(2023, 0, 1 + i));
+        return s.charAt(0).toUpperCase() + s.slice(1);
+    });
+}
 
 type AttendanceStatus = 'presente' | 'assente' | 'ritardo' | 'uscita_anticipata' | 'nessun_dato';
 
@@ -34,9 +68,6 @@ const STATUS_CONFIG: Record<AttendanceStatus, { short: string; bg: string; text:
     uscita_anticipata: { short: 'U', bg: 'bg-kidville-info-soft',    text: 'text-kidville-info',    dot: 'bg-blue-400' },
     nessun_dato:       { short: '·', bg: '',               text: 'text-kidville-muted',    dot: 'bg-kidville-cream-dark' },
 };
-
-const GIORNI = ['Dom','Lun','Mar','Mer','Gio','Ven','Sab'];
-const MESI = ['Gennaio','Febbraio','Marzo','Aprile','Maggio','Giugno','Luglio','Agosto','Settembre','Ottobre','Novembre','Dicembre'];
 
 function getDays(year: number, month: number) {
     const days: Date[] = [];
@@ -98,15 +129,18 @@ function hhmm(ts: string | null | undefined): string {
 }
 
 function Cell({ record, isWeekend }: { record?: MonthlyAttendanceRecord; isWeekend: boolean }) {
+    const t = useTranslations('teacherPresenze');
     const s: AttendanceStatus = record?.stato ?? 'nessun_dato';
     const cfg = STATUS_CONFIG[s];
     const ora = s === 'ritardo' ? hhmm(record?.orario_entrata) : s === 'uscita_anticipata' ? hhmm(record?.orario_uscita) : '';
-    const title = ora ? `${s === 'ritardo' ? 'Entrata' : 'Uscita'} ${ora}` : undefined;
+    const title = ora ? `${s === 'ritardo' ? t('entrata') : t('uscita')} ${ora}` : undefined;
+    // Simboli-lettera localizzati (R/U → L/E in inglese); ✓ ✗ · restano neutri.
+    const simbolo = s === 'ritardo' ? t('abbrevR') : s === 'uscita_anticipata' ? t('abbrevU') : cfg.short;
     return (
         <td className={`p-0 border-b border-kidville-line ${isWeekend ? 'bg-kidville-cream' : ''}`} style={{ width: 38 }} title={title}>
             <div className="flex flex-col items-center justify-center" style={{ height: 40 }}>
                 <span className={`text-[11px] font-black w-6 h-6 rounded-full flex items-center justify-center ${s !== 'nessun_dato' ? `${cfg.bg} ${cfg.text}` : cfg.text}`}>
-                    {cfg.short}
+                    {simbolo}
                 </span>
                 {ora && <span className="text-[8px] leading-none text-kidville-muted mt-0.5">{ora}</span>}
             </div>
@@ -116,7 +150,7 @@ function Cell({ record, isWeekend }: { record?: MonthlyAttendanceRecord; isWeeke
 
 // ─── Export PDF ───────────────────────────────────────────────────────────────
 
-async function exportPDF(students: StudentMonthData[], days: Date[], month: number, year: number, sezione: string) {
+async function exportPDF(students: StudentMonthData[], days: Date[], labels: PdfLabels) {
     const { default: jsPDF } = await import('jspdf');
     const { default: autoTable } = await import('jspdf-autotable');
 
@@ -135,17 +169,17 @@ async function exportPDF(students: StudentMonthData[], days: Date[], month: numb
     doc.setTextColor(255, 255, 255);
     doc.setFontSize(15);
     doc.setFont('helvetica', 'bold');
-    doc.text(`REGISTRO PRESENZE — ${MESI[month - 1].toUpperCase()} ${year}`, 10, 13);
+    doc.text(labels.titolo, 10, 13);
     doc.setFontSize(9);
     doc.setFont('helvetica', 'normal');
-    doc.text(`Sezione: ${sezione}   |   Esportato il ${new Date().toLocaleDateString('it-IT')}`, 289, 13, { align: 'right' });
+    doc.text(labels.meta, 289, 13, { align: 'right' });
 
     // ── Intestazioni colonne giorni ───────────────────────────────────
     const dayHeaders = days.map(d => {
         const dow = d.getDay();
         const isWe = dow === 0 || dow === 6;
         return {
-            content: `${GIORNI[dow][0]}\n${d.getDate()}`,
+            content: `${labels.giorni[dow][0]}\n${d.getDate()}`,
             styles: {
                 halign: 'center' as const,
                 fontSize: 7,
@@ -157,15 +191,15 @@ async function exportPDF(students: StudentMonthData[], days: Date[], month: numb
     });
 
     const head = [[
-        { content: 'Studente', styles: { halign: 'left' as const, fontSize: 8, cellWidth: NAME_COL } },
+        { content: labels.studente, styles: { halign: 'left' as const, fontSize: 8, cellWidth: NAME_COL } },
         ...dayHeaders,
-        { content: 'P', styles: { halign: 'center' as const, fontSize: 8, cellWidth: SUMM_COLS, fillColor: [46,125,50]  as [number,number,number], textColor: [255,255,255] as [number,number,number] } },
-        { content: 'A', styles: { halign: 'center' as const, fontSize: 8, cellWidth: SUMM_COLS, fillColor: [183,28,28]  as [number,number,number], textColor: [255,255,255] as [number,number,number] } },
-        { content: 'R', styles: { halign: 'center' as const, fontSize: 8, cellWidth: SUMM_COLS, fillColor: [230,119,0]  as [number,number,number], textColor: [255,255,255] as [number,number,number] } },
+        { content: labels.abbrevP, styles: { halign: 'center' as const, fontSize: 8, cellWidth: SUMM_COLS, fillColor: [46,125,50]  as [number,number,number], textColor: [255,255,255] as [number,number,number] } },
+        { content: labels.abbrevA, styles: { halign: 'center' as const, fontSize: 8, cellWidth: SUMM_COLS, fillColor: [183,28,28]  as [number,number,number], textColor: [255,255,255] as [number,number,number] } },
+        { content: labels.abbrevR, styles: { halign: 'center' as const, fontSize: 8, cellWidth: SUMM_COLS, fillColor: [230,119,0]  as [number,number,number], textColor: [255,255,255] as [number,number,number] } },
     ]];
 
-    // Simboli ASCII (più leggibili nei PDF vs unicode)
-    const SIMBOLO: Record<string, string> = { presente: 'P', assente: 'A', ritardo: 'R', uscita_anticipata: 'U' };
+    // Simboli-lettera localizzati per le celle (P/A/R/U → localizzati).
+    const SIMBOLO: Record<string, string> = labels.simboli;
     const COLORE_STATO: Record<string, [number,number,number]> = {
         presente:          [200, 230, 201],
         assente:           [255, 205, 210],
@@ -230,18 +264,20 @@ async function exportPDF(students: StudentMonthData[], days: Date[], month: numb
             doc.setFontSize(7);
             doc.setTextColor(160, 160, 160);
             doc.text(
-                `Pagina ${data.pageNumber} di ${data.pageCount}  —  Kidville Electronic Register`,
+                labels.piePagina(data.pageNumber, data.pageCount),
                 148, 207, { align: 'center' }
             );
         },
     });
 
-    doc.save(`presenze_${sezione}_${MESI[month-1].toLowerCase()}_${year}.pdf`);
+    doc.save(labels.nomeFile);
 }
 
 // ─── Componente Principale ───────────────────────────────────────────────────
 
 export function MonthlyAttendanceTable({ sezione = '' }: { sezione?: string }) {
+    const t = useTranslations('teacherPresenze');
+    const locale = useLocale();
     const now = new Date();
     const [year, setYear] = useState(now.getFullYear());
     const [month, setMonth] = useState(now.getMonth() + 1);
@@ -249,6 +285,9 @@ export function MonthlyAttendanceTable({ sezione = '' }: { sezione?: string }) {
     const [isLoading, setIsLoading] = useState(true);
     const [isExporting, setIsExporting] = useState(false);
     const [error, setError] = useState<string | null>(null);
+
+    const MESI = useMemo(() => nomiMesi(locale), [locale]);
+    const GIORNI = useMemo(() => nomiGiorni(locale), [locale]);
 
     const days = getDays(year, month);
     const todayISO = toISO(now);
@@ -269,15 +308,15 @@ export function MonthlyAttendanceTable({ sezione = '' }: { sezione?: string }) {
                     setStudents(mergeStudentsAndPresences(allStudents, records));
                     setError(null);
                 } else {
-                    setError('Errore caricamento');
+                    setError(t('erroreCaricamento'));
                 }
             } else {
-                setError('Errore caricamento studenti');
+                setError(t('erroreCaricamentoStudenti'));
             }
         } finally {
             setIsLoading(false);
         }
-    }, [year, month, sezione]);
+    }, [year, month, sezione, t]);
 
     useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -297,7 +336,24 @@ export function MonthlyAttendanceTable({ sezione = '' }: { sezione?: string }) {
 
     const handleExport = async () => {
         setIsExporting(true);
-        try { await exportPDF(students, days, month, year, sezione); }
+        const labels: PdfLabels = {
+            titolo: t('pdfTitolo', { mese: MESI[month - 1].toUpperCase(), anno: year }),
+            meta: t('pdfMeta', { sezione, data: new Date().toLocaleDateString(locale) }),
+            studente: t('studente'),
+            abbrevP: t('abbrevP'),
+            abbrevA: t('abbrevA'),
+            abbrevR: t('abbrevR'),
+            simboli: {
+                presente: t('abbrevP'),
+                assente: t('abbrevA'),
+                ritardo: t('abbrevR'),
+                uscita_anticipata: t('abbrevU'),
+            },
+            giorni: GIORNI,
+            piePagina: (n, tot) => t('pdfPiePagina', { n, tot }),
+            nomeFile: `${t('pdfPrefissoFile')}_${sezione}_${MESI[month - 1].toLowerCase()}_${year}.pdf`,
+        };
+        try { await exportPDF(students, days, labels); }
         finally { setIsExporting(false); }
     };
 
@@ -329,7 +385,7 @@ export function MonthlyAttendanceTable({ sezione = '' }: { sezione?: string }) {
                     {isCurrentMonth && !isLoading && students.length > 0 && (
                         <div className="flex items-center gap-1.5 bg-kidville-success-soft border border-kidville-success/30 rounded-xl px-3 py-1.5">
                             <span className="w-2 h-2 rounded-full bg-kidville-success-soft0 animate-pulse" />
-                            <span className="font-maven text-xs text-kidville-success font-medium">{todayPresenti}/{students.length} oggi</span>
+                            <span className="font-maven text-xs text-kidville-success font-medium">{t('oggiConteggio', { presenti: todayPresenti, totale: students.length })}</span>
                         </div>
                     )}
                     <button onClick={refresh} disabled={isLoading} className="w-9 h-9 rounded-xl border border-kidville-line bg-white hover:bg-kidville-cream flex items-center justify-center text-kidville-muted hover:text-kidville-green transition-all shadow-sm disabled:opacity-40">
@@ -342,7 +398,7 @@ export function MonthlyAttendanceTable({ sezione = '' }: { sezione?: string }) {
                         style={{ background: KV.green }}
                     >
                         <Download size={15} />
-                        {isExporting ? 'Generazione…' : 'Esporta PDF'}
+                        {isExporting ? t('generazione') : t('esportaPdf')}
                     </button>
                 </div>
             </div>
@@ -354,7 +410,7 @@ export function MonthlyAttendanceTable({ sezione = '' }: { sezione?: string }) {
                         className="flex items-center gap-3 bg-kidville-error-soft border border-kidville-error/25 rounded-2xl px-4 py-3">
                         <AlertCircle size={16} className="text-kidville-error flex-shrink-0" />
                         <p className="font-maven text-sm text-kidville-error">{error}</p>
-                        <button onClick={refresh} className="ml-auto font-maven text-xs text-kidville-error hover:text-kidville-error underline">Riprova</button>
+                        <button onClick={refresh} className="ml-auto font-maven text-xs text-kidville-error hover:text-kidville-error underline">{t('riprova')}</button>
                     </motion.div>
                 )}
             </AnimatePresence>
@@ -368,7 +424,7 @@ export function MonthlyAttendanceTable({ sezione = '' }: { sezione?: string }) {
                                 {/* Sticky corner */}
                                 <th style={{ position: 'sticky', top: 0, left: 0, zIndex: 30, width: 200, background: KV.green }}
                                     className="text-left px-4 py-3 font-barlow font-bold text-xs text-white uppercase tracking-widest border-b border-r border-white/20">
-                                    Studente
+                                    {t('studente')}
                                 </th>
                                 {days.map(day => {
                                     const dow = day.getDay();
@@ -388,7 +444,7 @@ export function MonthlyAttendanceTable({ sezione = '' }: { sezione?: string }) {
                                 <th style={{ position: 'sticky', top: 0, right: 0, zIndex: 25, width: 150, background: KV.green }}
                                     className="border-b border-l border-white/20 text-center">
                                     <div className="flex justify-around py-3 px-2">
-                                        {['P','A','R','U','ORE'].map(l => <span key={l} className="text-white/80 text-[10px] font-barlow font-black">{l}</span>)}
+                                        {[t('abbrevP'), t('abbrevA'), t('abbrevR'), t('abbrevU'), t('abbrevOre')].map((l, i) => <span key={i} className="text-white/80 text-[10px] font-barlow font-black">{l}</span>)}
                                     </div>
                                 </th>
                             </tr>
@@ -404,7 +460,7 @@ export function MonthlyAttendanceTable({ sezione = '' }: { sezione?: string }) {
                                 <tr><td colSpan={days.length + 2}>
                                     <div className="flex flex-col items-center justify-center py-20 gap-3">
                                         <span className="text-5xl opacity-20">👶</span>
-                                        <p className="font-maven text-sm text-kidville-muted">Nessun alunno nella sezione <strong>{sezione}</strong></p>
+                                        <p className="font-maven text-sm text-kidville-muted">{t('nessunAlunnoPre')} <strong>{sezione}</strong></p>
                                     </div>
                                 </td></tr>
                             ) : students.map((student, idx) => {
@@ -436,27 +492,27 @@ export function MonthlyAttendanceTable({ sezione = '' }: { sezione?: string }) {
                                             <div className="flex items-center justify-around px-2 py-1.5">
                                                 <div className="flex flex-col items-center">
                                                     <span className="font-barlow font-black text-sm text-kidville-success">{s.presenze}</span>
-                                                    <span className="font-maven text-[8px] text-kidville-muted">P</span>
+                                                    <span className="font-maven text-[8px] text-kidville-muted">{t('abbrevP')}</span>
                                                 </div>
                                                 <div className="w-px h-5 bg-kidville-cream"/>
                                                 <div className="flex flex-col items-center">
                                                     <span className="font-barlow font-black text-sm text-kidville-error">{s.assenze}</span>
-                                                    <span className="font-maven text-[8px] text-kidville-muted">A</span>
+                                                    <span className="font-maven text-[8px] text-kidville-muted">{t('abbrevA')}</span>
                                                 </div>
                                                 <div className="w-px h-5 bg-kidville-cream"/>
                                                 <div className="flex flex-col items-center">
                                                     <span className="font-barlow font-black text-sm text-kidville-warn">{s.ritardi}</span>
-                                                    <span className="font-maven text-[8px] text-kidville-muted">R</span>
+                                                    <span className="font-maven text-[8px] text-kidville-muted">{t('abbrevR')}</span>
                                                 </div>
                                                 <div className="w-px h-5 bg-kidville-cream"/>
                                                 <div className="flex flex-col items-center">
                                                     <span className="font-barlow font-black text-sm text-kidville-info">{s.uscite}</span>
-                                                    <span className="font-maven text-[8px] text-kidville-muted">U</span>
+                                                    <span className="font-maven text-[8px] text-kidville-muted">{t('abbrevU')}</span>
                                                 </div>
                                                 <div className="w-px h-5 bg-kidville-cream"/>
                                                 <div className="flex flex-col items-center">
                                                     <span className="font-barlow font-black text-sm text-kidville-ink">{s.oreAssenza}</span>
-                                                    <span className="font-maven text-[8px] text-kidville-muted">ORE</span>
+                                                    <span className="font-maven text-[8px] text-kidville-muted">{t('abbrevOre')}</span>
                                                 </div>
                                             </div>
                                         </td>
@@ -473,7 +529,7 @@ export function MonthlyAttendanceTable({ sezione = '' }: { sezione?: string }) {
                 <div className="flex flex-wrap gap-4">
                     {(['presente','assente','ritardo','uscita_anticipata'] as AttendanceStatus[]).map(s => {
                         const cfg = STATUS_CONFIG[s];
-                        const label = s === 'uscita_anticipata' ? 'Uscita Ant.' : s.charAt(0).toUpperCase() + s.slice(1);
+                        const label = s === 'uscita_anticipata' ? t('uscitaAnt') : t(s);
                         return (
                             <div key={s} className="flex items-center gap-1.5">
                                 <span className={`w-4 h-4 rounded-full ${cfg.dot}`} />
@@ -485,9 +541,9 @@ export function MonthlyAttendanceTable({ sezione = '' }: { sezione?: string }) {
                 {!isLoading && students.length > 0 && (
                     <div className="flex gap-5">
                         {[
-                            { label: 'Presenze', key: 'presenze', color: 'text-kidville-success' },
-                            { label: 'Assenze',  key: 'assenze',  color: 'text-kidville-error' },
-                            { label: 'Ritardi',  key: 'ritardi',  color: 'text-kidville-warn' },
+                            { label: t('presenze'), key: 'presenze', color: 'text-kidville-success' },
+                            { label: t('assenze'),  key: 'assenze',  color: 'text-kidville-error' },
+                            { label: t('ritardi'),  key: 'ritardi',  color: 'text-kidville-warn' },
                         ].map(({ label, key, color }) => {
                             const count = students.reduce((acc, st) => acc + (calcSummary(st) as unknown as Record<string,number>)[key], 0);
                             return (

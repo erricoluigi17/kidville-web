@@ -13,6 +13,7 @@ import { hdr } from '@/components/features/admin/settings/ui';
 import { INPUT, SELECT, BTN_PRIMARY_AA, BTN_SECONDARY } from '@/components/features/admin/pagamenti/ui';
 import { logClient } from '@/lib/logging/client';
 import { cx } from '@/lib/ui/cx';
+import { useTranslations } from 'next-intl';
 import { parseInstagramUrl, buildEmbedUrl } from '@/lib/news/instagram';
 import type { NewsCategoria, NewsGrado, NewsPost, NewsScope, NewsStato, NewsTipo } from '@/lib/news/tipi';
 import { NewsRichTextEditor } from './NewsRichTextEditor';
@@ -33,15 +34,17 @@ interface Props {
 
 const testoErrore = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-const TIPI: { id: NewsTipo; label: string }[] = [
-  { id: 'articolo', label: 'Articolo' },
-  { id: 'breve', label: 'Comunicato breve' },
-  { id: 'instagram', label: 'Post Instagram' },
+// `labelKey` = chiave i18n (namespace adminComunicazioni), risolta nel componente.
+const TIPI: { id: NewsTipo; labelKey: string }[] = [
+  { id: 'articolo', labelKey: 'editorTipoArticolo' },
+  { id: 'breve', labelKey: 'editorTipoBreve' },
+  { id: 'instagram', labelKey: 'editorTipoInstagram' },
 ];
 
 interface EsitoIg { valido: boolean; shortcode?: string | null; embed_url?: string | null; raggiungibile?: boolean }
 
 export function NewsEditorPanel({ userId, scuolaId, modalita, canAllSedi = false, postIniziale = null, onSalvato, onAnnulla }: Props) {
+  const t = useTranslations('adminComunicazioni');
   const inModifica = postIniziale !== null;
 
   const [tipo, setTipo] = useState<NewsTipo>(postIniziale?.tipo ?? 'articolo');
@@ -106,7 +109,7 @@ export function NewsEditorPanel({ userId, scuolaId, modalita, canAllSedi = false
 
   const verificaIg = async () => {
     const sc = parseInstagramUrl(instagramUrl);
-    if (!sc) { setErrore('URL Instagram non valido: usa un link a un post, reel o TV.'); setIgEsito({ valido: false }); return; }
+    if (!sc) { setErrore(t('editorIgUrlNonValido')); setIgEsito({ valido: false }); return; }
     setErrore(null);
     setIgVerificando(true);
     try {
@@ -121,20 +124,20 @@ export function NewsEditorPanel({ userId, scuolaId, modalita, canAllSedi = false
         setIgEsito({ valido: true, shortcode: sc, embed_url: buildEmbedUrl(sc), raggiungibile: undefined });
       } else {
         const j = (await res.json().catch(() => null)) as { error?: string } | null;
-        setErrore(j?.error ?? 'Verifica non riuscita.');
+        setErrore(j?.error ?? t('editorIgVerificaFallita'));
       }
     } catch (err) {
       logClient({ livello: 'error', evento: 'fetch', messaggio: `POST news/instagram/valida — ${testoErrore(err)}`, route: '/admin/news', stato: 0 });
-      setErrore('Errore di rete durante la verifica.');
+      setErrore(t('editorIgErroreRete'));
     } finally {
       setIgVerificando(false);
     }
   };
 
   const salva = async (stato: NewsStato) => {
-    if (!titolo.trim()) { setErrore('Il titolo è obbligatorio.'); return; }
-    if (tipo === 'instagram' && !parseInstagramUrl(instagramUrl)) { setErrore('Inserisci un URL Instagram valido.'); return; }
-    if (!inModifica && stato === 'programmata' && !programmataIl) { setErrore('Scegli data e ora di pubblicazione.'); return; }
+    if (!titolo.trim()) { setErrore(t('editorTitoloObbligatorio')); return; }
+    if (tipo === 'instagram' && !parseInstagramUrl(instagramUrl)) { setErrore(t('editorIgInserisciUrl')); return; }
+    if (!inModifica && stato === 'programmata' && !programmataIl) { setErrore(t('editorScegliData')); return; }
     setErrore(null);
     setSalvato(false);
     setSalvando(true);
@@ -163,7 +166,7 @@ export function NewsEditorPanel({ userId, scuolaId, modalita, canAllSedi = false
       }
       const j = (await res.json().catch(() => null)) as { error?: string } | null;
       if (!res.ok) {
-        setErrore(j?.error ?? (res.status === 404 ? 'Le News non sono ancora disponibili su questo ambiente.' : 'Salvataggio non riuscito.'));
+        setErrore(j?.error ?? (res.status === 404 ? t('newsNonDisponibili') : t('editorSalvataggioFallito')));
         return;
       }
       setSalvato(true);
@@ -175,7 +178,7 @@ export function NewsEditorPanel({ userId, scuolaId, modalita, canAllSedi = false
       onSalvato?.();
     } catch (err) {
       logClient({ livello: 'error', evento: 'fetch', messaggio: `salva post news — ${testoErrore(err)}`, route: '/admin/news', stato: 0 });
-      setErrore('Errore di rete: riprova.');
+      setErrore(t('erroreReteRiprova'));
     } finally {
       setSalvando(false);
     }
@@ -187,15 +190,15 @@ export function NewsEditorPanel({ userId, scuolaId, modalita, canAllSedi = false
     <div className="space-y-5">
       {/* Tipo */}
       <div>
-        <span className={labelCls}>Tipo di contenuto</span>
+        <span className={labelCls}>{t('editorTipoContenuto')}</span>
         <div className="flex flex-wrap gap-2">
-          {TIPI.map((t) => {
-            const on = tipo === t.id;
+          {TIPI.map((tp) => {
+            const on = tipo === tp.id;
             return (
               <button
-                key={t.id}
+                key={tp.id}
                 type="button"
-                onClick={() => setTipo(t.id)}
+                onClick={() => setTipo(tp.id)}
                 aria-pressed={on}
                 className={cx(
                   'inline-flex items-center gap-1.5 rounded-pill px-3.5 py-2 font-maven text-[13px] font-bold transition-colors',
@@ -203,7 +206,7 @@ export function NewsEditorPanel({ userId, scuolaId, modalita, canAllSedi = false
                   on ? 'bg-kidville-green text-kidville-white' : 'border-[1.5px] border-kidville-line bg-kidville-white text-kidville-green hover:border-kidville-green',
                 )}
               >
-                {t.label}
+                {t(tp.labelKey)}
               </button>
             );
           })}
@@ -212,56 +215,56 @@ export function NewsEditorPanel({ userId, scuolaId, modalita, canAllSedi = false
 
       {/* Titolo */}
       <div>
-        <label htmlFor="news-titolo" className={labelCls}>Titolo</label>
-        <input id="news-titolo" value={titolo} onChange={(e) => setTitolo(e.target.value)} placeholder="Es. La festa di primavera" className={INPUT} />
+        <label htmlFor="news-titolo" className={labelCls}>{t('editorTitolo')}</label>
+        <input id="news-titolo" value={titolo} onChange={(e) => setTitolo(e.target.value)} placeholder={t('editorTitoloPlaceholder')} className={INPUT} />
       </div>
 
       {/* Categoria */}
       <div>
-        <label htmlFor="news-categoria" className={labelCls}>Categoria</label>
+        <label htmlFor="news-categoria" className={labelCls}>{t('editorCategoria')}</label>
         <select id="news-categoria" value={categoriaId ?? ''} onChange={(e) => setCategoriaId(e.target.value)} className={SELECT}>
-          <option value="">— Nessuna categoria —</option>
+          <option value="">{t('editorNessunaCategoria')}</option>
           {categorie.map((c) => <option key={c.id} value={c.id}>{c.icona ? `${c.icona} ` : ''}{c.nome}</option>)}
         </select>
       </div>
 
       {/* Copertina */}
       <div>
-        <span className={labelCls}>Immagine di copertina</span>
+        <span className={labelCls}>{t('editorCopertina')}</span>
         {copertinaUrl ? (
           <div className="flex items-center gap-3">
             {/* eslint-disable-next-line @next/next/no-img-element -- anteprima locale dell'upload, dimensioni ignote */}
-            <img src={copertinaUrl} alt="Anteprima copertina" className="h-16 w-24 rounded-input border border-kidville-line object-cover" />
-            <button type="button" onClick={() => setCopertinaUrl('')} className={BTN_SECONDARY}><X size={14} /> Rimuovi</button>
+            <img src={copertinaUrl} alt={t('editorCopertinaAlt')} className="h-16 w-24 rounded-input border border-kidville-line object-cover" />
+            <button type="button" onClick={() => setCopertinaUrl('')} className={BTN_SECONDARY}><X size={14} /> {t('editorRimuovi')}</button>
           </div>
         ) : (
-          <NewsMediaUploader userId={userId} consensoFoto={consensoFoto} onConsensoFoto={() => setConsensoFoto(true)} onUploaded={setCopertinaUrl} label="Carica copertina" />
+          <NewsMediaUploader userId={userId} consensoFoto={consensoFoto} onConsensoFoto={() => setConsensoFoto(true)} onUploaded={setCopertinaUrl} label={t('editorCaricaCopertina')} />
         )}
       </div>
 
       {/* Contenuto: rich-text per articolo/breve, embed per instagram */}
       {tipo === 'instagram' ? (
         <div>
-          <label htmlFor="news-ig" className={labelCls}>Link al post Instagram</label>
+          <label htmlFor="news-ig" className={labelCls}>{t('editorLinkIg')}</label>
           <div className="flex flex-wrap items-center gap-2">
-            <input id="news-ig" type="url" inputMode="url" autoCapitalize="none" autoCorrect="off" spellCheck={false} value={instagramUrl} onChange={(e) => { setInstagramUrl(e.target.value); setIgEsito(null); }} placeholder="https://www.instagram.com/p/…" className={cx(INPUT, 'min-w-0 flex-1')} />
+            <input id="news-ig" type="url" inputMode="url" autoCapitalize="none" autoCorrect="off" spellCheck={false} value={instagramUrl} onChange={(e) => { setInstagramUrl(e.target.value); setIgEsito(null); }} placeholder={t('editorIgPlaceholder')} className={cx(INPUT, 'min-w-0 flex-1')} />
             <button type="button" onClick={verificaIg} disabled={igVerificando || !instagramUrl.trim()} className={BTN_SECONDARY}>
-              {igVerificando ? 'Verifica…' : 'Verifica'}
+              {igVerificando ? t('editorVerificaInCorso') : t('editorVerifica')}
             </button>
           </div>
           {igEsito && (
             <div className="mt-3">
               {igEsito.raggiungibile === false && (
-                <p className="mb-2 font-maven text-xs text-kidville-warn-strong">Il post non risulta raggiungibile: verifica che sia pubblico.</p>
+                <p className="mb-2 font-maven text-xs text-kidville-warn-strong">{t('editorIgNonRaggiungibile')}</p>
               )}
               {igEsito.embed_url && (
                 <div className="overflow-hidden rounded-card border border-kidville-line">
-                  <iframe src={igEsito.embed_url} title="Anteprima del post Instagram" className="h-[420px] w-full" loading="lazy" />
+                  <iframe src={igEsito.embed_url} title={t('editorIgAnteprima')} className="h-[420px] w-full" loading="lazy" />
                 </div>
               )}
               {igEsito.embed_url && (
                 <a href={instagramUrl.trim()} target="_blank" rel="noopener noreferrer" className="mt-2 inline-flex items-center gap-1.5 font-maven text-sm font-bold text-kidville-green underline">
-                  <ExternalLink size={14} /> Apri su Instagram
+                  <ExternalLink size={14} /> {t('editorApriIg')}
                 </a>
               )}
             </div>
@@ -269,21 +272,21 @@ export function NewsEditorPanel({ userId, scuolaId, modalita, canAllSedi = false
         </div>
       ) : (
         <div>
-          <span className={labelCls}>Contenuto</span>
+          <span className={labelCls}>{t('editorContenuto')}</span>
           <NewsRichTextEditor
             userId={userId}
             value={contenutoJson}
             onChange={setContenutoJson}
             consensoFoto={consensoFoto}
             onConsensoFoto={() => setConsensoFoto(true)}
-            placeholder="Racconta la novità…"
+            placeholder={t('editorContenutoPlaceholder')}
           />
         </div>
       )}
 
       {/* Destinatari */}
       <div>
-        <span className={labelCls}>Destinatari</span>
+        <span className={labelCls}>{t('editorDestinatari')}</span>
         <NewsTargetPicker
           scope={scope}
           onScope={setScope}
@@ -301,13 +304,13 @@ export function NewsEditorPanel({ userId, scuolaId, modalita, canAllSedi = false
       {/* Notifica */}
       <label className="flex cursor-pointer items-center gap-2.5">
         <input type="checkbox" checked={inviaNotifica} onChange={(e) => setInviaNotifica(e.target.checked)} className="h-4 w-4 rounded accent-kidville-green" />
-        <span className="inline-flex items-center gap-1.5 font-maven text-sm text-kidville-ink"><Megaphone size={15} /> Invia una notifica alle famiglie quando viene pubblicato</span>
+        <span className="inline-flex items-center gap-1.5 font-maven text-sm text-kidville-ink"><Megaphone size={15} /> {t('editorInviaNotifica')}</span>
       </label>
 
       {/* Programmazione (solo admin, in creazione) */}
       {!inModifica && modalita === 'admin' && (
         <div>
-          <label htmlFor="news-programmata" className={labelCls}>Programma per (opzionale)</label>
+          <label htmlFor="news-programmata" className={labelCls}>{t('editorProgrammaPer')}</label>
           <input id="news-programmata" type="datetime-local" value={programmataIl} onChange={(e) => setProgrammataIl(e.target.value)} className={cx(INPUT, 'max-w-xs')} />
         </div>
       )}
@@ -315,7 +318,7 @@ export function NewsEditorPanel({ userId, scuolaId, modalita, canAllSedi = false
       {errore && <p role="alert" className="font-maven text-sm text-kidville-error-strong">{errore}</p>}
       {salvato && !errore && (
         <p role="status" className="inline-flex items-center gap-1.5 font-maven text-sm font-bold text-kidville-success-strong">
-          <CheckCircle2 size={16} /> {inModifica ? 'Modifiche salvate.' : 'Salvato.'}
+          <CheckCircle2 size={16} /> {inModifica ? t('editorModificheSalvate') : t('editorSalvato')}
         </p>
       )}
 
@@ -323,25 +326,25 @@ export function NewsEditorPanel({ userId, scuolaId, modalita, canAllSedi = false
       <div className="flex flex-wrap items-center gap-2 border-t border-kidville-line pt-4">
         {inModifica ? (
           <>
-            <button type="button" onClick={() => salva('bozza')} disabled={salvando} className={BTN_PRIMARY_AA}><Save size={15} /> Salva modifiche</button>
-            {onAnnulla && <button type="button" onClick={onAnnulla} disabled={salvando} className={BTN_SECONDARY}>Chiudi</button>}
+            <button type="button" onClick={() => salva('bozza')} disabled={salvando} className={BTN_PRIMARY_AA}><Save size={15} /> {t('editorSalvaModifiche')}</button>
+            {onAnnulla && <button type="button" onClick={onAnnulla} disabled={salvando} className={BTN_SECONDARY}>{t('editorChiudi')}</button>}
           </>
         ) : modalita === 'admin' ? (
           <>
-            <button type="button" onClick={() => salva('bozza')} disabled={salvando} className={BTN_SECONDARY}><Save size={15} /> Salva bozza</button>
-            {programmataIl && <button type="button" onClick={() => salva('programmata')} disabled={salvando} className={BTN_SECONDARY}><CalendarClock size={15} /> Programma</button>}
-            <button type="button" onClick={() => salva('pubblicata')} disabled={salvando} className={BTN_PRIMARY_AA}><Send size={15} /> Pubblica</button>
+            <button type="button" onClick={() => salva('bozza')} disabled={salvando} className={BTN_SECONDARY}><Save size={15} /> {t('editorSalvaBozza')}</button>
+            {programmataIl && <button type="button" onClick={() => salva('programmata')} disabled={salvando} className={BTN_SECONDARY}><CalendarClock size={15} /> {t('editorProgramma')}</button>}
+            <button type="button" onClick={() => salva('pubblicata')} disabled={salvando} className={BTN_PRIMARY_AA}><Send size={15} /> {t('editorPubblica')}</button>
           </>
         ) : (
           <>
-            <button type="button" onClick={() => salva('bozza')} disabled={salvando} className={BTN_SECONDARY}><Save size={15} /> Salva bozza</button>
-            <button type="button" onClick={() => salva('proposta')} disabled={salvando} className={BTN_PRIMARY_AA}><Send size={15} /> Invia proposta</button>
+            <button type="button" onClick={() => salva('bozza')} disabled={salvando} className={BTN_SECONDARY}><Save size={15} /> {t('editorSalvaBozza')}</button>
+            <button type="button" onClick={() => salva('proposta')} disabled={salvando} className={BTN_PRIMARY_AA}><Send size={15} /> {t('editorInviaProposta')}</button>
           </>
         )}
       </div>
 
       <p className="inline-flex items-center gap-1.5 font-maven text-[11px] text-kidville-sub">
-        <ShieldCheck size={12} /> Il contenuto viene sanificato dal server prima della pubblicazione.
+        <ShieldCheck size={12} /> {t('editorNotaSanifica')}
       </p>
     </div>
   );

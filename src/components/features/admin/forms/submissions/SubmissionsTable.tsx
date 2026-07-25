@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams } from 'next/navigation'
+import { useTranslations, useLocale } from 'next-intl'
 import { motion } from 'framer-motion'
 import {
   FileText, Table2, Search, ChevronDown, Download, Loader2, Inbox,
@@ -12,10 +13,10 @@ import {
   type SubmissionRow,
 } from './SubmissionDetailSidebar'
 
-const STATUS_LABELS: Record<FormSubmissionStatus, string> = {
-  draft: 'Bozza',
-  pending_signature: 'In attesa firma',
-  completed: 'Completato',
+const STATUS_LABEL_KEYS: Record<FormSubmissionStatus, string> = {
+  draft: 'statusBozza',
+  pending_signature: 'statusInAttesaFirma',
+  completed: 'statusCompletato',
 }
 
 const STATUS_COLORS: Record<FormSubmissionStatus, string> = {
@@ -25,6 +26,8 @@ const STATUS_COLORS: Record<FormSubmissionStatus, string> = {
 }
 
 export function SubmissionsTable() {
+  const t = useTranslations('adminModulistica')
+  const locale = useLocale()
   const userId = useSearchParams().get('userId') ?? ''
   const [submissions, setSubmissions] = useState<SubmissionRow[]>([])
   const [formModels, setFormModels] = useState<{ id: string; title: string }[]>([])
@@ -154,7 +157,7 @@ export function SubmissionsTable() {
           <input
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="Cerca per modello o contenuto…"
+            placeholder={t('subCercaPlaceholder')}
             className="w-full pl-9 pr-4 py-2.5 rounded-xl text-kidville-ink placeholder-kidville-muted text-sm focus:outline-none transition-colors"
             style={{
               background: 'var(--color-kidville-white)',
@@ -180,10 +183,10 @@ export function SubmissionsTable() {
               border: '1px solid var(--color-kidville-line)',
             }}
           >
-            <option value="">Tutti gli stati</option>
-            <option value="draft">Bozza</option>
-            <option value="pending_signature">In attesa firma</option>
-            <option value="completed">Completato</option>
+            <option value="">{t('subTuttiStati')}</option>
+            <option value="draft">{t('statusBozza')}</option>
+            <option value="pending_signature">{t('statusInAttesaFirma')}</option>
+            <option value="completed">{t('statusCompletato')}</option>
           </select>
           <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-kidville-muted" />
         </div>
@@ -199,7 +202,7 @@ export function SubmissionsTable() {
               border: '1px solid var(--color-kidville-line)',
             }}
           >
-            <option value="">Tutti i modelli</option>
+            <option value="">{t('subTuttiModelli')}</option>
             {formModels.map(m => (
               <option key={m.id} value={m.id}>{m.title}</option>
             ))}
@@ -243,7 +246,7 @@ export function SubmissionsTable() {
             }}
           >
             <Table2 className="w-4 h-4" />
-            Esporta tutto ({filtered.length})
+            {t('subEsportaTutto', { count: filtered.length })}
           </button>
         )}
       </div>
@@ -256,13 +259,13 @@ export function SubmissionsTable() {
       ) : filtered.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-28 gap-3">
           <Inbox className="w-12 h-12 text-kidville-muted" />
-          <p className="text-kidville-muted text-sm">Nessuna compilazione trovata</p>
+          <p className="text-kidville-muted text-sm">{t('subNessunaCompilazione')}</p>
           {(filterStatus || filterFormId || filterDate || search) && (
             <button
               onClick={() => { setFilterStatus(''); setFilterFormId(''); setFilterDate(''); setSearch('') }}
               className="text-kidville-green text-xs hover:underline"
             >
-              Rimuovi filtri
+              {t('rimuoviFiltri')}
             </button>
           )}
         </div>
@@ -280,8 +283,8 @@ export function SubmissionsTable() {
               background: 'rgba(0,106,95,0.04)',
             }}
           >
-            {['Data invio', 'Modello', 'Stato', 'Firma', 'Azioni'].map(col => (
-              <div key={col} className="px-4 py-3 text-[10px] font-bold text-kidville-muted uppercase tracking-widest">
+            {[t('subColData'), t('subColModello'), t('subColStato'), t('colFirma'), t('subColAzioni')].map((col, ci) => (
+              <div key={ci} className="px-4 py-3 text-[10px] font-bold text-kidville-muted uppercase tracking-widest">
                 {col}
               </div>
             ))}
@@ -309,12 +312,12 @@ export function SubmissionsTable() {
             >
               {/* Date */}
               <div className="px-4 py-4 text-kidville-muted text-xs tabular-nums">
-                {new Date(sub.created_at).toLocaleDateString('it-IT', {
+                {new Date(sub.created_at).toLocaleDateString(locale, {
                   day: '2-digit', month: 'short', year: '2-digit',
                 })}
                 <br />
                 <span className="text-kidville-muted">
-                  {new Date(sub.created_at).toLocaleTimeString('it-IT', {
+                  {new Date(sub.created_at).toLocaleTimeString(locale, {
                     hour: '2-digit', minute: '2-digit',
                   })}
                 </span>
@@ -323,7 +326,7 @@ export function SubmissionsTable() {
               {/* Model title */}
               <div className="px-4 py-4 text-kidville-ink text-sm truncate">
                 {sub.form_model?.title ?? (
-                  <span className="text-kidville-muted italic text-xs">Modello rimosso</span>
+                  <span className="text-kidville-muted italic text-xs">{t('subModelloRimosso')}</span>
                 )}
               </div>
 
@@ -332,11 +335,11 @@ export function SubmissionsTable() {
                 <span
                   className={`inline-flex px-2.5 py-0.5 rounded-full text-[11px] font-medium border ${STATUS_COLORS[sub.status]}`}
                 >
-                  {STATUS_LABELS[sub.status]}
+                  {t(STATUS_LABEL_KEYS[sub.status])}
                 </span>
                 {sub.gestita_il && (
                   <span className="inline-flex px-2.5 py-0.5 rounded-full text-[11px] font-medium border bg-kidville-success-soft text-kidville-success border-kidville-success/30">
-                    Gestita
+                    {t('subGestita')}
                   </span>
                 )}
               </div>
@@ -345,7 +348,7 @@ export function SubmissionsTable() {
               <div className="px-4 py-4 text-xs">
                 {sub.signed_at ? (
                   <span className="text-kidville-success">
-                    {new Date(sub.signed_at).toLocaleDateString('it-IT', {
+                    {new Date(sub.signed_at).toLocaleDateString(locale, {
                       day: '2-digit', month: 'short',
                     })}
                   </span>
@@ -360,7 +363,7 @@ export function SubmissionsTable() {
                 onClick={e => e.stopPropagation()}
               >
                 <button
-                  title="Scarica PDF"
+                  title={t('subScaricaPdf')}
                   onClick={e => handleRowPDF(e, sub.id)}
                   className="p-1.5 rounded-lg text-kidville-muted transition-all"
                   onMouseEnter={e => {
@@ -379,7 +382,7 @@ export function SubmissionsTable() {
                   <FileText className="w-4 h-4" />
                 </button>
                 <button
-                  title="Esporta XLSX"
+                  title={t('subEsportaXlsx')}
                   onClick={e => handleRowXLSX(e, sub.id)}
                   className="p-1.5 rounded-lg text-kidville-muted transition-all"
                   onMouseEnter={e => {

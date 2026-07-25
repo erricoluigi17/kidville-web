@@ -26,6 +26,7 @@
  */
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { useAdminIdentity } from './admin-identity';
 
 const COOKIE = 'sedi_attive';
@@ -160,12 +161,15 @@ export function useSediAttive(): SediContextValue {
  * più sedi (selezione ambigua). Specchia lato UI il 400 di `resolveScuolaScrittura`.
  */
 export function SedeNotice({ cosa }: { cosa?: string }) {
+  const t = useTranslations('shared');
   return (
     <div className="rounded-2xl border border-kidville-line bg-kidville-white p-8 text-center">
-      <p className="font-barlow text-lg font-extrabold uppercase text-kidville-green">Seleziona una sede</p>
+      <p className="font-barlow text-lg font-extrabold uppercase text-kidville-green">{t('selezionaUnaSede')}</p>
       <p className="mt-2 font-maven text-[14px] text-kidville-muted">
-        Hai più sedi attive. Scegline <strong>una sola</strong> dal menu in alto
-        {cosa ? <> per gestire {cosa}</> : null}.
+        {t.rich('sedeNoticeCorpo', { strong: (chunks) => <strong>{chunks}</strong> })}
+        {/* La clausola «per gestire {cosa}» è opzionale; `cosa` arriva già tradotto
+            dal namespace della pagina chiamante. Il punto finale resta sempre fuori. */}
+        {cosa ? <> {t('sedeNoticePerGestire', { cosa })}</> : null}.
       </p>
     </div>
   );
@@ -186,8 +190,9 @@ export function SedeRequired({
   children: (scuolaId: string) => React.ReactNode;
 }) {
   const { sedeCorrente, loading } = useSediAttive();
+  const t = useTranslations('shared');
   if (loading) {
-    return <div className="p-8 font-maven text-kidville-muted">Caricamento…</div>;
+    return <div className="p-8 font-maven text-kidville-muted">{t('caricamentoPuntini')}</div>;
   }
   if (!sedeCorrente) {
     return <SedeNotice cosa={cosa} />;

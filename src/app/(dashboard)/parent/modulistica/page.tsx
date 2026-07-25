@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { useTranslations } from 'next-intl';
 import {
   Clock, Archive, Award, HeartPulse, Shield,
   ArrowRight, Download, CheckCircle2, Upload, Mail
@@ -9,7 +10,9 @@ import { OtpEmailModal } from '@/components/features/parent/forms/OtpEmailModal'
 import { DateField } from '@/components/ui/DateField';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { Btn } from '@/components/ui/Btn';
+import { ScattaFotoButton } from '@/components/features/native/ScattaFotoButton';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
+import { useDateFormat } from '@/lib/i18n/date';
 import { annoScolasticoCorrente } from '@/lib/anno-scolastico';
 import { buildCertificatoBody, buildIntestazioneSede, rigaLuogoData } from '@/lib/certificati/self-service';
 
@@ -88,7 +91,9 @@ interface SignedArchiveItem {
 
 // Identità dalla sessione (URL → localStorage → /api/me), senza fallback demo (M4).
 export default function ParentModulisticaPage() {
+  const t = useTranslations('parentServizi');
   const { userId: parentId } = useSessionIdentity();
+  const f = useDateFormat();
   const [activeTab, setActiveTab] = useState<'compilare' | 'archivio' | 'certificati' | 'medici'>('compilare');
   const [assignedForms, setAssignedForms] = useState<AssignedForm[]>([]);
   const [archive, setArchive] = useState<SignedArchiveItem[]>([]);
@@ -209,7 +214,7 @@ export default function ParentModulisticaPage() {
     for (const field of compilingForm.fields) {
       const v = formAnswers[field.id];
       if (field.required && (v === undefined || v === null || v === '' || v === false)) {
-        showToastMsg(`❌ Compilare il campo obbligatorio: ${field.label || 'campo'}`);
+        showToastMsg(t('modulisticaToastCampoObbligatorio', { campo: field.label || t('modulisticaCampoFallback') }));
         return false;
       }
     }
@@ -232,14 +237,14 @@ export default function ParentModulisticaPage() {
       });
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
-        showToastMsg(`❌ ${j.error ?? 'Invio fallito'}`);
+        showToastMsg(`❌ ${j.error ?? t('modulisticaInvioFallito')}`);
         return;
       }
-      showToastMsg('✅ Risposte inviate con successo!');
+      showToastMsg(t('modulisticaToastRisposteInviate'));
       setCompilingForm(null);
       fetchData();
     } catch {
-      showToastMsg('❌ Errore durante l\'invio');
+      showToastMsg(t('modulisticaToastErrInvio'));
     }
   };
 
@@ -254,22 +259,22 @@ export default function ParentModulisticaPage() {
       });
       const json = await res.json();
       if (!res.ok) {
-        showToastMsg(`❌ ${json.error ?? 'Invio codice fallito'}`);
+        showToastMsg(`❌ ${json.error ?? t('modulisticaInvioCodiceFallito')}`);
         return;
       }
       setOtpSession({ email: json.email, expiry: json.expiry, ticket: json.ticket, devCode: json.devCode });
       setShowOtpModal(true);
       if (!json.sent) {
-        showToastMsg('ℹ️ Email non configurata: usa il codice mostrato (dev).');
+        showToastMsg(t('modulisticaEmailNonConfigurata'));
       }
     } catch {
-      showToastMsg('❌ Errore durante l\'invio del codice');
+      showToastMsg(t('modulisticaToastErrInvioCodice'));
     }
   };
 
   // Firma OTP via email — step 2: verifica il codice, finalizza la firma e genera la ricevuta
   const verifyOtpAndSign = async (code: string): Promise<{ ok: boolean; error?: string }> => {
-    if (!compilingForm || !otpSession || !parentId) return { ok: false, error: 'Sessione di firma scaduta' };
+    if (!compilingForm || !otpSession || !parentId) return { ok: false, error: t('modulisticaSessioneScaduta') };
     try {
       const res = await fetch('/api/parent/forms/otp', {
         method: 'PATCH',
@@ -284,7 +289,7 @@ export default function ParentModulisticaPage() {
         }),
       });
       const json = await res.json();
-      if (!res.ok) return { ok: false, error: json.error ?? 'Verifica fallita' };
+      if (!res.ok) return { ok: false, error: json.error ?? t('modulisticaVerificaFallita') };
 
       // Ricevuta PDF con il signature_log autorevole restituito dal server
       generateReceiptPDF(compilingForm, formAnswers, json.signature_log);
@@ -299,7 +304,7 @@ export default function ParentModulisticaPage() {
 
       return { ok: true };
     } catch {
-      return { ok: false, error: 'Errore di rete. Riprova.' };
+      return { ok: false, error: t('modulisticaErrRete') };
     }
   };
 
@@ -394,7 +399,7 @@ export default function ParentModulisticaPage() {
   const generateSelfServiceCertificate = (type: 'iscrizione' | 'frequenza') => {
     if (!parentInfo || children.length === 0) return;
     
-    showToastMsg('⏳ Generazione certificato in corso...');
+    showToastMsg(t('modulisticaGenerazioneInCorso'));
     setTimeout(async () => {
       const { jsPDF } = await import('jspdf');
       const doc = new jsPDF();
@@ -459,17 +464,25 @@ export default function ParentModulisticaPage() {
       doc.text('dell\'art. 21 CAD (D.Lgs. 82/2005)', 125, 200);
 
       doc.save(`Certificato_${mainTitle.replace(/\s+/g, '_')}.pdf`);
-      showToastMsg('✅ Certificato scaricato con successo!');
+      showToastMsg(t('modulisticaCertScaricato'));
     }, 1000);
+  };
+
+  // Punto d'ingresso unico per il file del certificato: lo usano sia l'<input>
+  // (che accetta anche PDF) sia il bottone «Scatta foto» nativo. Il documento può
+  // essere un PDF o una foto → il supporto PDF resta intatto.
+  const processaCertFile = (f: File | null) => {
+    setCertFile(f);
+    setCertFileName(f?.name ?? '');
   };
 
   // Submit Medical Certificate
   const handleUploadMedicalCert = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!parentId) { showToastMsg('❌ Identità non risolta: accedi di nuovo.'); return; }
-    if (!certFile) { showToastMsg('❌ Caricare un file di certificato medico.'); return; }
-    if (!selectedChildId) { showToastMsg('❌ Seleziona il figlio.'); return; }
-    if (!certDal || !certAl || certDal > certAl) { showToastMsg('❌ Indica un periodo di copertura valido (dal/al).'); return; }
+    if (!parentId) { showToastMsg(t('modulisticaIdentitaNonRisolta')); return; }
+    if (!certFile) { showToastMsg(t('modulisticaCaricareFile')); return; }
+    if (!selectedChildId) { showToastMsg(t('modulisticaSelezionaIlFiglio')); return; }
+    if (!certDal || !certAl || certDal > certAl) { showToastMsg(t('modulisticaPeriodoNonValido')); return; }
 
     try {
       const fd = new FormData();
@@ -484,11 +497,11 @@ export default function ParentModulisticaPage() {
         body: fd,
       });
       if (!res.ok) throw new Error('Errore upload');
-      showToastMsg('✅ Certificato caricato. In attesa di validazione della Segreteria.');
+      showToastMsg(t('modulisticaCertCaricato'));
       setCertFile(null); setCertFileName(''); setCertDal(''); setCertAl(''); setCertNotes('');
       fetchData();
     } catch {
-      showToastMsg('❌ Errore caricamento certificato medico');
+      showToastMsg(t('modulisticaToastErrCaricamento'));
     }
   };
 
@@ -496,9 +509,9 @@ export default function ParentModulisticaPage() {
     <div className="flex-1 flex flex-col px-4 pt-5 pb-24">
       {/* Header */}
       <PageHeaderCard
-        eyebrow="Documenti"
-        title="Modulistica"
-        subtitle="Firme, certificati e documenti"
+        eyebrow={t('modulisticaEyebrow')}
+        title={t('modulisticaTitolo')}
+        subtitle={t('modulisticaSottotitolo')}
       />
 
       {/* Tabs */}
@@ -507,32 +520,32 @@ export default function ParentModulisticaPage() {
           className={`pb-3 px-2 font-barlow font-bold uppercase tracking-wide whitespace-nowrap transition-colors flex items-center gap-1.5 ${activeTab === 'compilare' ? 'text-kidville-green border-b-2 border-kidville-green' : 'text-kidville-muted hover:text-kidville-ink'}`}
           onClick={() => { setActiveTab('compilare'); setCompilingForm(null); }}
         >
-          <Clock size={16} /> Da Compilare
+          <Clock size={16} /> {t('modulisticaTabCompilare')}
         </button>
         <button
           className={`pb-3 px-2 font-barlow font-bold uppercase tracking-wide whitespace-nowrap transition-colors flex items-center gap-1.5 ${activeTab === 'archivio' ? 'text-kidville-green border-b-2 border-kidville-green' : 'text-kidville-muted hover:text-kidville-ink'}`}
           onClick={() => { setActiveTab('archivio'); setCompilingForm(null); }}
         >
-          <Archive size={16} /> Archivio Firmati
+          <Archive size={16} /> {t('modulisticaTabArchivio')}
         </button>
         <button
           className={`pb-3 px-2 font-barlow font-bold uppercase tracking-wide whitespace-nowrap transition-colors flex items-center gap-1.5 ${activeTab === 'certificati' ? 'text-kidville-green border-b-2 border-kidville-green' : 'text-kidville-muted hover:text-kidville-ink'}`}
           onClick={() => { setActiveTab('certificati'); setCompilingForm(null); }}
         >
-          <Award size={16} /> Certificati Self-Service
+          <Award size={16} /> {t('modulisticaTabCertificati')}
         </button>
         <button
           className={`pb-3 px-2 font-barlow font-bold uppercase tracking-wide whitespace-nowrap transition-colors flex items-center gap-1.5 ${activeTab === 'medici' ? 'text-kidville-green border-b-2 border-kidville-green' : 'text-kidville-muted hover:text-kidville-ink'}`}
           onClick={() => { setActiveTab('medici'); setCompilingForm(null); }}
         >
-          <HeartPulse size={16} /> Certificati Medici
+          <HeartPulse size={16} /> {t('modulisticaTabMedici')}
         </button>
       </div>
 
       {isLoading ? (
         <div className="flex-1 flex flex-col items-center justify-center min-h-[40vh] gap-3">
           <div className="w-10 h-10 border-4 border-kidville-green/30 border-t-kidville-green rounded-full animate-spin" />
-          <p className="font-maven text-kidville-muted">Caricamento in corso...</p>
+          <p className="font-maven text-kidville-muted">{t('modulisticaCaricamento')}</p>
         </div>
       ) : (
         <>
@@ -542,7 +555,7 @@ export default function ParentModulisticaPage() {
               {assignedForms.filter(f => f.status === 'pending').length === 0 ? (
                 <div className="bg-white rounded-card p-10 text-center border border-kidville-line">
                   <CheckCircle2 className="mx-auto text-kidville-success mb-3" size={48} />
-                  <p className="font-maven text-kidville-muted">Ottimo lavoro! Non hai moduli da compilare.</p>
+                  <p className="font-maven text-kidville-muted">{t('modulisticaNessunModulo')}</p>
                 </div>
               ) : (
                 assignedForms.filter(f => f.status === 'pending').map(form => (
@@ -558,23 +571,23 @@ export default function ParentModulisticaPage() {
                       <div className="flex flex-wrap items-center gap-3 mt-3">
                         {form.form_type === 'autorizzazione' && (
                           <span className="bg-kidville-green text-kidville-yellow px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider flex items-center gap-1">
-                            <Shield size={11} /> Autorizzazione
+                            <Shield size={11} /> {t('modulisticaBadgeAutorizzazione')}
                           </span>
                         )}
                         {form.form_type === 'sondaggio' && (
-                          <span className="bg-kidville-yellow-light text-kidville-green px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider">Sondaggio</span>
+                          <span className="bg-kidville-yellow-light text-kidville-green px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider">{t('modulisticaBadgeSondaggio')}</span>
                         )}
                         {form.form_type === 'gradimento' && (
-                          <span className="bg-kidville-yellow-light text-kidville-green px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider">Gradimento</span>
+                          <span className="bg-kidville-yellow-light text-kidville-green px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider">{t('modulisticaBadgeGradimento')}</span>
                         )}
                         <span className="bg-kidville-cream text-kidville-green px-2.5 py-1 rounded-full text-xs font-semibold">
-                          Figlio: {form.student.nome} {form.student.cognome}
+                          {t('modulisticaFiglio', { nome: `${form.student.nome} ${form.student.cognome}` })}
                         </span>
 
                         {form.expiration_date && (
                           <span className="bg-kidville-warn-soft text-kidville-warn px-2.5 py-1 rounded-full text-xs font-semibold flex items-center gap-1">
                             <Clock size={12} />
-                            Scade il: {new Date(form.expiration_date).toLocaleDateString('it-IT')}
+                            {t('modulisticaScadeIl', { data: f.dataBreve(form.expiration_date) })}
                           </span>
                         )}
                       </div>
@@ -586,7 +599,7 @@ export default function ParentModulisticaPage() {
                       onClick={() => startCompiling(form)}
                       className="self-start md:self-auto"
                     >
-                      {form.form_type === 'autorizzazione' ? 'Compila e Firma' : 'Compila'} <ArrowRight size={16} />
+                      {form.form_type === 'autorizzazione' ? t('modulisticaCompilaFirma') : t('modulisticaCompila')} <ArrowRight size={16} />
                     </Btn>
                   </div>
                 ))
@@ -602,7 +615,10 @@ export default function ParentModulisticaPage() {
                   {compilingForm.title}
                 </h3>
                 <p className="font-maven text-sm text-kidville-muted mt-1">
-                  Compilazione per: <strong>{compilingForm.student.nome} {compilingForm.student.cognome}</strong>
+                  {t.rich('modulisticaCompilazionePer', {
+                    nome: `${compilingForm.student.nome} ${compilingForm.student.cognome}`,
+                    strong: (chunks) => <strong>{chunks}</strong>,
+                  })}
                 </p>
                 <div className="bg-kidville-neutral-soft p-4 rounded-xl font-maven text-xs text-kidville-sub mt-4 leading-relaxed border border-kidville-line">
                   {compilingForm.description}
@@ -636,7 +652,7 @@ export default function ParentModulisticaPage() {
                             value={String(formAnswers[field.id] ?? '')}
                             onChange={e => handleFieldChange(field.id, e.target.value)}
                             className="w-full border-2 border-kidville-line rounded-xl px-4 py-2.5 font-maven text-sm focus:outline-none focus:border-kidville-green resize-none h-24"
-                            placeholder="Scrivi la tua risposta..."
+                            placeholder={t('modulisticaRispostaPlaceholder')}
                           />
                         )}
 
@@ -685,7 +701,7 @@ export default function ParentModulisticaPage() {
                             value={String(formAnswers[field.id] ?? '')}
                             onChange={e => handleFieldChange(field.id, e.target.value)}
                             className="w-full border-2 border-kidville-line rounded-xl px-4 py-2.5 font-maven text-sm focus:outline-none focus:border-kidville-green"
-                            placeholder={`Inserisci ${field.label.toLowerCase()}...`}
+                            placeholder={t('modulisticaInserisciCampo', { campo: field.label.toLowerCase() })}
                           />
                         )}
                       </>
@@ -699,15 +715,14 @@ export default function ParentModulisticaPage() {
                 <div className="bg-kidville-cream/40 p-5 rounded-card border-2 border-dashed border-kidville-green/10 flex flex-col md:flex-row md:items-center justify-between gap-4">
                   <div className="space-y-1">
                     <h4 className="font-barlow font-bold text-lg text-kidville-green uppercase tracking-wide flex items-center gap-1.5">
-                      <Shield size={18} className="text-kidville-yellow" /> Firma Elettronica Semplice (FES)
+                      <Shield size={18} className="text-kidville-yellow" /> {t('modulisticaFesTitolo')}
                     </h4>
                     <p className="font-maven text-xs text-kidville-muted max-w-md leading-relaxed">
-                      Per validare la firma con valore legale (Art. 20 CAD) invieremo un codice OTP
-                      alla tua email registrata. Inseriscilo per completare la firma.
+                      {t('modulisticaFesTesto')}
                     </p>
                   </div>
                   <div className="bg-kidville-green-light text-kidville-green px-4 py-2 rounded-xl text-xs font-bold border border-kidville-green/15 flex items-center gap-1.5 self-start md:self-auto">
-                    <Mail size={15} /> Verifica via email
+                    <Mail size={15} /> {t('modulisticaVerificaEmail')}
                   </div>
                 </div>
               )}
@@ -719,14 +734,14 @@ export default function ParentModulisticaPage() {
                   size="sm"
                   onClick={() => setCompilingForm(null)}
                 >
-                  Annulla
+                  {t('modulisticaAnnulla')}
                 </Btn>
                 <Btn
                   variant="primary"
                   size="md"
                   onClick={compilingForm.form_type === 'autorizzazione' ? handleStartSigning : handleSubmitDirect}
                 >
-                  {compilingForm.form_type === 'autorizzazione' ? 'Invia e Firma Ricevuta' : 'Invia Risposte'}
+                  {compilingForm.form_type === 'autorizzazione' ? t('modulisticaInviaFirmaRicevuta') : t('modulisticaInviaRisposte')}
                 </Btn>
               </div>
             </div>
@@ -738,7 +753,7 @@ export default function ParentModulisticaPage() {
               {archive.length === 0 ? (
                 <div className="bg-white rounded-card p-10 text-center border border-kidville-line">
                   <Archive className="mx-auto text-kidville-line mb-3" size={48} />
-                  <p className="font-maven text-kidville-muted">Nessun modulo firmato finora.</p>
+                  <p className="font-maven text-kidville-muted">{t('modulisticaNessunFirmato')}</p>
                 </div>
               ) : (
                 archive.map(item => (
@@ -748,10 +763,10 @@ export default function ParentModulisticaPage() {
                         {item.forms_templates?.title}
                       </h3>
                       <p className="font-maven text-xs text-kidville-muted mt-1">
-                        Figlio: {item.alunni?.nome} {item.alunni?.cognome} | Firmato il: {new Date(item.created_at).toLocaleDateString('it-IT')}
+                        {t('modulisticaFiglioFirmato', { nome: `${item.alunni?.nome ?? ''} ${item.alunni?.cognome ?? ''}`.trim(), data: f.dataBreve(item.created_at) })}
                       </p>
                       <div className="mt-2.5 flex items-center gap-1 text-[10px] text-kidville-success bg-kidville-success-soft px-2 py-0.5 rounded-full font-bold w-fit uppercase tracking-wider">
-                        <Shield size={10} /> Ricevuta FES Protetta
+                        <Shield size={10} /> {t('modulisticaRicevutaFesProtetta')}
                       </div>
                     </div>
 
@@ -761,7 +776,7 @@ export default function ParentModulisticaPage() {
                       onClick={() => generateReceiptPDF(item, item.answers, item.signature_log)}
                       className="self-start md:self-auto"
                     >
-                      <Download size={14} /> Ricevuta PDF
+                      <Download size={14} /> {t('modulisticaRicevutaPdf')}
                     </Btn>
                   </div>
                 ))
@@ -776,9 +791,9 @@ export default function ParentModulisticaPage() {
               <div className="bg-white rounded-card p-6 border border-kidville-line shadow-sm flex flex-col justify-between">
                 <div className="space-y-2">
                   <Award className="text-kidville-green/20 mb-2" size={32} />
-                  <h3 className="font-barlow font-bold text-lg text-kidville-green uppercase">Certificato Frequenza</h3>
+                  <h3 className="font-barlow font-bold text-lg text-kidville-green uppercase">{t('modulisticaCertFrequenzaTitolo')}</h3>
                   <p className="font-maven text-xs text-kidville-muted leading-relaxed">
-                    Genera istantaneamente il certificato attestante la frequenza scolastica dell&apos;alunno per l&apos;anno in corso.
+                    {t('modulisticaCertFrequenzaTesto')}
                   </p>
                 </div>
                 <Btn
@@ -787,7 +802,7 @@ export default function ParentModulisticaPage() {
                   onClick={() => generateSelfServiceCertificate('frequenza')}
                   className="mt-6 w-full"
                 >
-                  <Download size={16} /> Scarica PDF
+                  <Download size={16} /> {t('modulisticaScaricaPdf')}
                 </Btn>
               </div>
 
@@ -795,9 +810,9 @@ export default function ParentModulisticaPage() {
               <div className="bg-white rounded-card p-6 border border-kidville-line shadow-sm flex flex-col justify-between">
                 <div className="space-y-2">
                   <Award className="text-kidville-green/20 mb-2" size={32} />
-                  <h3 className="font-barlow font-bold text-lg text-kidville-green uppercase">Certificato Iscrizione</h3>
+                  <h3 className="font-barlow font-bold text-lg text-kidville-green uppercase">{t('modulisticaCertIscrizioneTitolo')}</h3>
                   <p className="font-maven text-xs text-kidville-muted leading-relaxed">
-                    Certificato formale di avvenuta iscrizione scolastica, utilizzabile per bonus INPS e detrazioni fiscali.
+                    {t('modulisticaCertIscrizioneTesto')}
                   </p>
                 </div>
                 <Btn
@@ -806,7 +821,7 @@ export default function ParentModulisticaPage() {
                   onClick={() => generateSelfServiceCertificate('iscrizione')}
                   className="mt-6 w-full"
                 >
-                  <Download size={16} /> Scarica PDF
+                  <Download size={16} /> {t('modulisticaScaricaPdf')}
                 </Btn>
               </div>
             </div>
@@ -817,13 +832,13 @@ export default function ParentModulisticaPage() {
             <div className="space-y-6">
               <form onSubmit={handleUploadMedicalCert} className="bg-white rounded-card p-5 sm:p-6 shadow-sm border border-kidville-line space-y-4">
                 <h3 className="font-barlow font-bold text-xl text-kidville-green uppercase tracking-wide">
-                  Carica Certificato Medico
+                  {t('modulisticaCaricaCertMedico')}
                 </h3>
-                
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="block font-maven text-xs font-semibold text-kidville-green mb-1">
-                      Seleziona Figlio *
+                      {t('modulisticaSelezionaFiglio')} *
                     </label>
                     <select
                       value={selectedChildId}
@@ -838,7 +853,7 @@ export default function ParentModulisticaPage() {
 
                   <div>
                     <label className="block font-maven text-xs font-semibold text-kidville-green mb-1">
-                      Documento Scansionato (PDF / Foto) *
+                      {t('modulisticaDocScansionato')} *
                     </label>
                     {certFileName ? (
                       <div className="flex items-center justify-between border-2 border-kidville-success/20 bg-kidville-success-soft text-kidville-success px-3 py-2 rounded-xl text-xs font-semibold">
@@ -846,15 +861,23 @@ export default function ParentModulisticaPage() {
                         <button type="button" onClick={() => { setCertFileName(''); setCertFile(null); }} className="text-kidville-muted hover:text-kidville-error">✕</button>
                       </div>
                     ) : (
-                      <label className="w-full h-10 border-2 border-dashed border-kidville-line hover:border-kidville-green rounded-xl flex items-center justify-center gap-1.5 cursor-pointer text-xs font-semibold text-kidville-sub transition-colors">
-                        <Upload size={14} /> Carica Certificato
-                        <input
-                          type="file"
-                          accept=".pdf,image/*"
-                          className="hidden"
-                          onChange={e => { const f = e.target.files?.[0] ?? null; setCertFile(f); setCertFileName(f?.name || ''); }}
+                      <div className="flex flex-col gap-1.5">
+                        <label className="w-full h-10 border-2 border-dashed border-kidville-line hover:border-kidville-green rounded-xl flex items-center justify-center gap-1.5 cursor-pointer text-xs font-semibold text-kidville-sub transition-colors">
+                          <Upload size={14} /> {t('modulisticaCaricaCertificato')}
+                          <input
+                            type="file"
+                            accept=".pdf,image/*"
+                            className="hidden"
+                            onChange={e => processaCertFile(e.target.files?.[0] ?? null)}
+                          />
+                        </label>
+                        {/* Nativo: scatta la foto del certificato cartaceo. Su web non compare. */}
+                        <ScattaFotoButton
+                          onFile={processaCertFile}
+                          label={t('modulisticaScattaFoto')}
+                          className="h-10 w-full flex items-center justify-center gap-1.5 border-2 border-dashed border-kidville-line hover:border-kidville-green rounded-xl text-xs font-semibold text-kidville-green transition-colors"
                         />
-                      </label>
+                      </div>
                     )}
                   </div>
                 </div>
@@ -862,60 +885,60 @@ export default function ParentModulisticaPage() {
                 {/* Periodo di copertura (dal/al) — DL-027 */}
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block font-maven text-xs font-semibold text-kidville-green mb-1">Coperto dal *</label>
-                    <DateField value={certDal} onChange={setCertDal} aria-label="Certificato medico: coperto dal"
+                    <label className="block font-maven text-xs font-semibold text-kidville-green mb-1">{t('modulisticaCopertoDal')} *</label>
+                    <DateField value={certDal} onChange={setCertDal} aria-label={t('modulisticaAriaCopertoDal')}
                       className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-xs text-kidville-sub focus:outline-none focus:border-kidville-green" />
                   </div>
                   <div>
-                    <label className="block font-maven text-xs font-semibold text-kidville-green mb-1">al *</label>
-                    <DateField value={certAl} onChange={setCertAl} aria-label="Certificato medico: coperto al"
+                    <label className="block font-maven text-xs font-semibold text-kidville-green mb-1">{t('modulisticaAl')} *</label>
+                    <DateField value={certAl} onChange={setCertAl} aria-label={t('modulisticaAriaCopertoAl')}
                       className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-xs text-kidville-sub focus:outline-none focus:border-kidville-green" />
                   </div>
                 </div>
 
                 <div>
                   <label className="block font-maven text-xs font-semibold text-kidville-green mb-1">
-                    Note di accompagnamento
+                    {t('modulisticaNoteAccompagnamento')}
                   </label>
                   <textarea
                     value={certNotes}
                     onChange={e => setCertNotes(e.target.value)}
                     className="w-full border-2 border-kidville-line rounded-xl p-2.5 font-maven text-xs focus:outline-none focus:border-kidville-green resize-none h-16"
-                    placeholder="Es. Influenza stagionale, rientro previsto dopo 5 giorni..."
+                    placeholder={t('modulisticaNotePlaceholder')}
                   />
                 </div>
 
                 <Btn type="submit" variant="primary" size="md" className="w-full">
-                  Invia Certificato Medico
+                  {t('modulisticaInviaCertMedico')}
                 </Btn>
               </form>
 
               {/* Elenco certificati medici passati */}
               <div className="space-y-3">
                 <h4 className="font-barlow font-bold text-base text-kidville-green uppercase tracking-wide">
-                  Ricevute Caricamenti Medici Recenti
+                  {t('modulisticaRicevuteRecenti')}
                 </h4>
                 {medCerts.length === 0 ? (
                   <div className="bg-white rounded-card p-6 text-center border border-kidville-line font-maven text-xs text-kidville-muted">
-                    Nessun certificato medico caricato in precedenza.
+                    {t('modulisticaNessunCertMedico')}
                   </div>
                 ) : (
                   medCerts.map(cert => (
                     <div key={cert.id} className="bg-white rounded-card p-4 border border-kidville-line flex items-center justify-between text-xs font-maven">
                       <div>
-                        <div className="font-semibold text-kidville-ink">Certificato: {cert.fileName}</div>
-                        <div className="text-kidville-muted mt-0.5">Figlio: {cert.alunno?.nome} | Caricato il: {new Date(cert.creato_il).toLocaleDateString('it-IT')}</div>
-                        {cert.notes && <div className="text-kidville-muted mt-1 italic">Note: {cert.notes}</div>}
+                        <div className="font-semibold text-kidville-ink">{t('modulisticaCertLabel', { nome: cert.fileName ?? '' })}</div>
+                        <div className="text-kidville-muted mt-0.5">{t('modulisticaFiglioCaricato', { nome: cert.alunno?.nome ?? '', data: f.dataBreve(cert.creato_il) })}</div>
+                        {cert.notes && <div className="text-kidville-muted mt-1 italic">{t('modulisticaNote', { note: cert.notes })}</div>}
                       </div>
 
                       <div className="flex flex-col items-end gap-1.5">
                         {(cert.giorni_coperti?.length ?? 0) > 0 ? (
                           <span className="bg-kidville-success-soft text-kidville-success px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider">
-                            Giustificato: {(cert.giorni_coperti ?? []).map((d: string) => new Date(d).toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit' })).join(', ')}
+                            {t('modulisticaGiustificato', { giorni: (cert.giorni_coperti ?? []).map((d: string) => new Intl.DateTimeFormat(f.locale, { day: '2-digit', month: '2-digit' }).format(new Date(d))).join(', ') })}
                           </span>
                         ) : (
                           <span className="bg-kidville-warn-soft text-kidville-warn px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider">
-                            In attesa di abbinamento assenza
+                            {t('modulisticaInAttesaAbbinamento')}
                           </span>
                         )}
                       </div>

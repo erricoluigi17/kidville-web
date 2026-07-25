@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import createNextIntlPlugin from "next-intl/plugin";
 
 const nextConfig: NextConfig = {
   /* config options here */
@@ -19,4 +20,6 @@ const nextConfig: NextConfig = {
   // Vedi docs/superpowers/specs/2026-07-12-logging-strutturato-design.md
 };
 
-export default nextConfig;
+// next-intl: legge la lingua dal cookie via src/i18n/request.ts (senza routing per-locale).
+const withNextIntl = createNextIntlPlugin("./src/i18n/request.ts");
+export default withNextIntl(nextConfig);

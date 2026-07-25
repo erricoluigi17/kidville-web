@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { LogOut } from 'lucide-react';
 import { doLogout } from '@/lib/auth/logout';
 
@@ -15,6 +16,7 @@ export function LogoutMenuButton({
   className?: string;
   iconSize?: number;
 }) {
+  const t = useTranslations('shared');
   const [busy, setBusy] = useState(false);
   return (
     <button
@@ -24,11 +26,11 @@ export function LogoutMenuButton({
         await doLogout();
       }}
       disabled={busy}
-      aria-label="Esci"
+      aria-label={t('esci')}
       className={className}
     >
       <LogOut size={iconSize} strokeWidth={2.2} className="shrink-0" />
-      <span>{busy ? 'Uscita…' : 'Esci'}</span>
+      <span>{busy ? t('uscita') : t('esci')}</span>
     </button>
   );
 }

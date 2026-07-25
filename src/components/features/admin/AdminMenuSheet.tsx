@@ -24,6 +24,7 @@
 
 import { useEffect, useRef } from 'react';
 import Link from 'next/link';
+import { useTranslations } from 'next-intl';
 import { X, Users, ChevronRight } from 'lucide-react';
 import { LogoutMenuButton } from '@/components/ui/LogoutMenuButton';
 import { ContrastMenuButton } from '@/components/ui/ContrastMenuButton';
@@ -59,6 +60,10 @@ const FOOTER_BTN_CLS =
   'flex w-full items-center gap-3 min-h-[44px] px-3 py-2.5 rounded-xl font-maven text-sm font-semibold transition-colors';
 
 export function AdminMenuSheet({ open, onClose, withUser, ruolo, returnFocusRef }: AdminMenuSheetProps) {
+  const t = useTranslations('adminNav');
+  // Etichette delle voci di nav dal config condiviso (namespace `etichette`).
+  // Fallback all'IT del config se la chiave manca → nessuna rottura.
+  const te = useTranslations('etichette');
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeBtnRef = useRef<HTMLButtonElement>(null);
 
@@ -129,20 +134,20 @@ export function AdminMenuSheet({ open, onClose, withUser, ruolo, returnFocusRef 
         <div className="flex items-center justify-between mb-3 px-1">
           <div>
             <p className="font-barlow font-bold text-[10px] uppercase tracking-[0.14em] text-kidville-sub">
-              Tutte le sezioni
+              {t('menuEyebrow')}
             </p>
             <h2
               id="admin-menu-sheet-title"
               className="font-barlow font-black text-xl text-kidville-green uppercase tracking-wide leading-none"
             >
-              Menu
+              {t('menuTitolo')}
             </h2>
           </div>
           <button
             ref={closeBtnRef}
             type="button"
             onClick={onClose}
-            aria-label="Chiudi"
+            aria-label={t('chiudi')}
             className="w-11 h-11 rounded-full bg-kidville-cream-dark flex items-center justify-center text-kidville-green"
           >
             <X className="w-4 h-4" strokeWidth={2.4} />
@@ -157,10 +162,10 @@ export function AdminMenuSheet({ open, onClose, withUser, ruolo, returnFocusRef 
           </span>
           <span className="min-w-0 flex-1">
             <span className="block font-barlow font-extrabold text-base uppercase leading-none text-kidville-green">
-              Anagrafica
+              {t('anagrafica')}
             </span>
             <span className="block font-maven text-xs text-kidville-muted mt-0.5">
-              Alunni, famiglie e personale
+              {t('anagraficaSub')}
             </span>
           </span>
           <ChevronRight size={16} className="text-kidville-muted shrink-0" strokeWidth={2} />
@@ -171,7 +176,7 @@ export function AdminMenuSheet({ open, onClose, withUser, ruolo, returnFocusRef 
             <div key={gi} className="flex flex-col gap-1">
               {g.title && (
                 <p className="px-1 pb-1 font-barlow text-[11px] font-bold uppercase tracking-[0.14em] text-kidville-muted">
-                  {g.title}
+                  {g.titleKey && te.has(g.titleKey) ? te(g.titleKey) : g.title}
                 </p>
               )}
               {g.items.map((item) => {
@@ -179,7 +184,7 @@ export function AdminMenuSheet({ open, onClose, withUser, ruolo, returnFocusRef 
                 return (
                   <Link key={item.href} href={withUser(item.href)} onClick={onClose} className={ROW_CLS}>
                     <Icon size={20} strokeWidth={2} className="shrink-0 text-kidville-green" />
-                    <span className="min-w-0 flex-1 font-semibold">{item.label}</span>
+                    <span className="min-w-0 flex-1 font-semibold">{te.has(item.labelKey) ? te(item.labelKey) : item.label}</span>
                     <ChevronRight size={16} className="text-kidville-muted shrink-0" strokeWidth={2} />
                   </Link>
                 );

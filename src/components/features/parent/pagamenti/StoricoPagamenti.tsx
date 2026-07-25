@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useTranslations } from 'next-intl';
 import { AlertTriangle, Download, Receipt } from 'lucide-react';
 import { getSupabase } from '@/lib/supabase/browser-client';
 import { raggruppaPerCategoria } from '@/lib/pagamenti/categorie';
@@ -45,14 +46,17 @@ function residuoRiga(p: Pagamento): number {
 
 interface Props { userId: string }
 
-const STATI: Record<string, { label: string; cls: string }> = {
-    da_pagare: { label: 'Da pagare', cls: 'bg-kidville-neutral-soft text-kidville-sub' },
-    parziale: { label: 'Parziale', cls: 'bg-kidville-warn-soft text-kidville-warn-strong' },
-    pagato: { label: 'Pagato', cls: 'bg-kidville-success-soft text-kidville-success-strong' },
-    scaduto: { label: 'Scaduto', cls: 'bg-kidville-error-soft text-kidville-error-strong' },
+// Mappa stato → chiave i18n dell'etichetta + classi colore. La label si risolve a
+// render con `t()` (la mappa vive fuori dal componente, senza accesso agli hook).
+const STATI: Record<string, { labelKey: string; cls: string }> = {
+    da_pagare: { labelKey: 'statoDaPagare', cls: 'bg-kidville-neutral-soft text-kidville-sub' },
+    parziale: { labelKey: 'statoParziale', cls: 'bg-kidville-warn-soft text-kidville-warn-strong' },
+    pagato: { labelKey: 'statoPagato', cls: 'bg-kidville-success-soft text-kidville-success-strong' },
+    scaduto: { labelKey: 'statoScaduto', cls: 'bg-kidville-error-soft text-kidville-error-strong' },
 };
 
 export function StoricoPagamenti({ userId }: Props) {
+    const t = useTranslations('pagamenti');
     const [pagamenti, setPagamenti] = useState<Pagamento[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -67,12 +71,12 @@ export function StoricoPagamenti({ userId }: Props) {
                 idsRef.current = j.data.map((p: Pagamento) => p.id).join(',');
                 setError(null);
             } else if (j) {
-                setError(j.error || 'Impossibile caricare i pagamenti');
+                setError(j.error || t('erroreCaricamento'));
             } else {
-                setError('Errore di rete');
+                setError(t('erroreRete'));
             }
         } finally { setLoading(false); }
-    }, [userId]);
+    }, [userId, t]);
 
     useEffect(() => { load(); }, [load]);
 
@@ -106,7 +110,7 @@ export function StoricoPagamenti({ userId }: Props) {
     const perFiglio = new Map<string, { nome: string; totale: number }>();
     for (const p of pagamenti) {
         const key = p.alunno_id ?? 'sconosciuto';
-        const nome = `${p.alunni?.nome ?? ''} ${p.alunni?.cognome ?? ''}`.trim() || 'Alunno';
+        const nome = `${p.alunni?.nome ?? ''} ${p.alunni?.cognome ?? ''}`.trim() || t('alunno');
         const cur = perFiglio.get(key) ?? { nome, totale: 0 };
         cur.totale += residuoRiga(p);
         cur.nome = nome;
@@ -135,27 +139,26 @@ export function StoricoPagamenti({ userId }: Props) {
                 <div className="flex items-start gap-2 rounded-card border border-kidville-error/30 bg-kidville-error-soft px-4 py-3 text-kidville-error">
                     <AlertTriangle size={18} className="shrink-0 mt-0.5" />
                     <p className="font-maven text-sm">
-                        <span className="font-bold">Account sospeso per morosità</span> ({sospesi.join(', ')}).
-                        Le funzioni di servizio sono temporaneamente limitate: regolarizza i pagamenti o contatta la Segreteria.
+                        <span className="font-bold">{t('sospesoTitolo')}</span> ({sospesi.join(', ')}). {t('sospesoTesto')}
                     </p>
                 </div>
             )}
 
             {!loading && !error && totaleDovuto > 0 && (
                 <div className="rounded-[22px] p-[18px]" style={{ background: 'linear-gradient(135deg, var(--color-kidville-green), var(--color-kidville-green-dark))' }}>
-                    <p className="font-maven text-[12.5px] text-white">Totale da saldare</p>
+                    <p className="font-maven text-[12.5px] text-white">{t('totaleDaSaldare')}</p>
                     <p className="font-barlow font-black text-[40px] leading-none text-kidville-yellow">
                         {formatEuro(totaleDovuto)}
                     </p>
                     <p className="font-maven text-xs text-white mt-1">
-                        {vociAperte} voc{vociAperte === 1 ? 'e' : 'i'} da saldare
+                        {t('vociDaSaldare', { count: vociAperte })}
                     </p>
                 </div>
             )}
 
             {!loading && !error && mostraTotaleFamiglia && (
                 <div className="rounded-card border border-kidville-line bg-white p-4">
-                    <p className="font-barlow font-bold text-kidville-green uppercase text-xs tracking-wide mb-2">Totale famiglia</p>
+                    <p className="font-barlow font-bold text-kidville-green uppercase text-xs tracking-wide mb-2">{t('totaleFamiglia')}</p>
                     <div className="space-y-1.5">
                         {[...perFiglio.entries()].map(([id, f]) => (
                             <div key={id} className="flex items-center justify-between font-maven text-sm">
@@ -165,7 +168,7 @@ export function StoricoPagamenti({ userId }: Props) {
                         ))}
                     </div>
                     <div className="mt-2 flex items-center justify-between border-t border-kidville-line pt-2 font-maven text-sm">
-                        <span className="font-bold text-kidville-green">Totale complessivo</span>
+                        <span className="font-bold text-kidville-green">{t('totaleComplessivo')}</span>
                         <span className="font-black text-kidville-green">{formatEuro(totaleDovuto)}</span>
                     </div>
                 </div>
@@ -178,11 +181,11 @@ export function StoricoPagamenti({ userId }: Props) {
             <div className="flex justify-end"><PushOptIn userId={userId} /></div>
 
             {loading ? (
-                <p className="font-maven text-sm text-kidville-muted text-center py-8">Caricamento…</p>
+                <p className="font-maven text-sm text-kidville-muted text-center py-8">{t('caricamento')}</p>
             ) : error ? (
                 <p className="font-maven text-sm text-kidville-error text-center py-8">{error}</p>
             ) : pagamenti.length === 0 ? (
-                <p className="font-maven text-sm text-kidville-muted text-center py-8">Nessun pagamento.</p>
+                <p className="font-maven text-sm text-kidville-muted text-center py-8">{t('nessunPagamento')}</p>
             ) : (
                 gruppi.map((g) => (
                     <Section key={g.categoria} title={g.categoria} icon={<span className="text-base leading-none">{g.icona ?? '📁'}</span>}>
@@ -200,6 +203,7 @@ interface FatturaRow { id: string; numero: number; quota_label: string | null; i
 // Link fattura: uno solo (fast-path invariato) o uno per intestatario quando il
 // pagamento è stato fatturato in più quote (genitori separati).
 function FatturaLinks({ pagamentoId, userId }: { pagamentoId: string; userId: string }) {
+    const t = useTranslations('pagamenti');
     const [fatture, setFatture] = useState<FatturaRow[] | null>(null);
     useEffect(() => {
         let active = true;
@@ -217,7 +221,7 @@ function FatturaLinks({ pagamentoId, userId }: { pagamentoId: string; userId: st
                 href={`/api/pagamenti/fattura?pagamento_id=${pagamentoId}&userId=${userId}`}
                 className="flex items-center gap-1 px-3 py-1 rounded-full bg-kidville-green/10 text-kidville-green text-xs font-bold hover:bg-kidville-green/20"
             >
-                <Download size={13} /> Fattura
+                <Download size={13} /> {t('fattura')}
             </a>
         );
     }
@@ -229,7 +233,7 @@ function FatturaLinks({ pagamentoId, userId }: { pagamentoId: string; userId: st
                     href={`/api/pagamenti/fattura?pagamento_id=${pagamentoId}&fattura_id=${f.id}&userId=${userId}`}
                     className="flex items-center gap-1 px-3 py-1 rounded-full bg-kidville-green/10 text-kidville-green text-xs font-bold hover:bg-kidville-green/20"
                 >
-                    <Download size={13} /> Fattura — {f.quota_label || f.intestatario}
+                    <Download size={13} /> {t('fatturaConEtichetta', { etichetta: f.quota_label || f.intestatario })}
                 </a>
             ))}
         </div>
@@ -248,6 +252,7 @@ function Section({ title, icon, children }: { title: string; icon: React.ReactNo
 }
 
 function PagamentoCard({ p, userId }: { p: Pagamento; userId: string }) {
+    const t = useTranslations('pagamenti');
     const st = STATI[p.stato] ?? STATI.da_pagare;
     const isSplit = p.tipo === 'split';
     // Per gli split importo_pagato è dell'intero pagamento, non della quota:
@@ -262,20 +267,20 @@ function PagamentoCard({ p, userId }: { p: Pagamento; userId: string }) {
                 <div className="min-w-0">
                     <p className="font-maven font-bold text-sm text-kidville-green flex items-center gap-1">
                         {p.payment_categories?.icona} {p.descrizione}
-                        {p.obbligatorio && <span className="text-[10px] text-kidville-error">•obbl.</span>}
+                        {p.obbligatorio && <span className="text-[10px] text-kidville-error">{t('obbligatorioBadge')}</span>}
                     </p>
                     <p className="font-maven text-xs text-kidville-muted">
-                        {p.alunni?.nome} {p.alunni?.cognome} · scad. {isoToIt(p.scadenza) || p.scadenza}
-                        {isSplit && <span className="ml-1 text-kidville-warn-strong">· tua quota</span>}
+                        {p.alunni?.nome} {p.alunni?.cognome} · {t('scadPrefix')} {isoToIt(p.scadenza) || p.scadenza}
+                        {isSplit && <span className="ml-1 text-kidville-warn-strong">· {t('tuaQuota')}</span>}
                     </p>
                 </div>
-                <span className={`shrink-0 px-2 py-0.5 rounded-full text-[11px] font-bold ${st.cls}`}>{st.label}</span>
+                <span className={`shrink-0 px-2 py-0.5 rounded-full text-[11px] font-bold ${st.cls}`}>{t(st.labelKey)}</span>
             </div>
 
             <div className="flex items-center justify-between mt-2">
                 <div className="font-maven text-sm">
                     <span className="text-kidville-green font-bold">{formatEuro(p.importo)}</span>
-                    {(p.stato === 'parziale' || p.stato === 'scaduto') && !isSplit && Number(p.importo_pagato) > 0 && <span className="text-kidville-sub text-xs ml-2">(resta {formatEuro(resto)})</span>}
+                    {(p.stato === 'parziale' || p.stato === 'scaduto') && !isSplit && Number(p.importo_pagato) > 0 && <span className="text-kidville-sub text-xs ml-2">{t('restaImporto', { importo: formatEuro(resto) })}</span>}
                 </div>
                 {fatturaPronta ? (
                     <FatturaLinks pagamentoId={p.id} userId={userId} />
@@ -284,7 +289,7 @@ function PagamentoCard({ p, userId }: { p: Pagamento; userId: string }) {
                         href={`/api/pagamenti/ricevuta?pagamento_id=${p.id}&userId=${userId}`}
                         className="flex items-center gap-1 px-3 py-1 rounded-full border border-kidville-line text-kidville-muted text-xs font-bold hover:border-kidville-green hover:text-kidville-green"
                     >
-                        <Receipt size={13} /> Ricevuta
+                        <Receipt size={13} /> {t('ricevuta')}
                     </a>
                 ) : null}
             </div>

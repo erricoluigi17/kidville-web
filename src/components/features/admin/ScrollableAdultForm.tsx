@@ -2,14 +2,16 @@
 
 import React, { useState, useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useTranslations } from 'next-intl';
 import { UserPlus, Shield, Mail, Phone, Loader2, MapPin, Plus, Trash2, Fingerprint } from 'lucide-react';
 import { fetchFiscalCode } from '@/lib/utils/fiscalCodeApi';
 import { z } from 'zod';
 import { DateField } from '@/components/ui/DateField';
 
-const adultSchema = z.object({
-    first_name: z.string().min(2, "Almeno 2 caratteri"),
-    last_name: z.string().min(2, "Almeno 2 caratteri"),
+// Schema con messaggi di validazione localizzati (costruito con `t`).
+const buildAdultSchema = (t: (k: string) => string) => z.object({
+    first_name: z.string().min(2, t('valMin2')),
+    last_name: z.string().min(2, t('valMin2')),
     role: z.enum(['admin', 'coordinator', 'educator', 'parent', 'delegate', 'mother', 'father']),
     gender: z.enum(['M', 'F']).optional().or(z.literal('')),
     birth_date: z.string().optional().or(z.literal('')),
@@ -17,13 +19,13 @@ const adultSchema = z.object({
     birth_nation: z.string().optional().or(z.literal('')),
     birth_province: z.string().max(2).optional().or(z.literal('')),
     birth_place: z.string().optional().or(z.literal('')),
-    fiscal_code: z.string().length(16, "CF deve essere 16 caratteri").toUpperCase().optional().or(z.literal('')),
+    fiscal_code: z.string().length(16, t('valCf16')).toUpperCase().optional().or(z.literal('')),
     address: z.string().optional().or(z.literal('')),
     civico: z.string().max(20).optional().or(z.literal('')),
     residence_city: z.string().optional().or(z.literal('')),
     residence_province: z.string().max(2).optional().or(z.literal('')),
     zip_code: z.string().max(10).optional().or(z.literal('')),
-    emails: z.array(z.string().email("Email non valida")).optional(),
+    emails: z.array(z.string().email(t('valEmailNonValida'))).optional(),
     phones: z.array(z.string()).optional()
 });
 
@@ -39,6 +41,7 @@ export interface AdultFormHandle {
 
 export const ScrollableAdultForm = forwardRef<AdultFormHandle, { defaultRole?: string; updateTabLabel?: (label: string) => void }>(
     function ScrollableAdultForm({ defaultRole, updateTabLabel }, ref) {
+    const t = useTranslations('adminStudents');
     const initialRole = defaultRole || 'mother';
     const initialGender = (initialRole === 'mother' || initialRole === 'delegate') ? 'F' : 'M';
 
@@ -111,7 +114,7 @@ export const ScrollableAdultForm = forwardRef<AdultFormHandle, { defaultRole?: s
             const newFirst = name === 'first_name' ? value : formData.first_name;
             const newLast  = name === 'last_name'  ? value : formData.last_name;
             const label = `${newFirst} ${newLast}`.trim();
-            updateTabLabel(label || 'Nuovo Adulto');
+            updateTabLabel(label || t('familyNuovoAdulto'));
         }
         if (errors[name]) {
             setErrors(prev => { const newErrors = { ...prev }; delete newErrors[name]; return newErrors; });
@@ -153,7 +156,7 @@ export const ScrollableAdultForm = forwardRef<AdultFormHandle, { defaultRole?: s
                     emails: formData.emails.filter(e => e.trim() !== ''),
                     phones: formData.phones.filter(p => p.trim() !== ''),
                 };
-                const parsedData = adultSchema.parse(dataToValidate);
+                const parsedData = buildAdultSchema(t).parse(dataToValidate);
                 return { ok: true as const, data: { ...parsedData } };
             } catch (error) {
                 const zodLike = error as { issues?: { path?: (string | number)[]; message: string }[] };
@@ -178,7 +181,7 @@ export const ScrollableAdultForm = forwardRef<AdultFormHandle, { defaultRole?: s
         <div className="text-kidville-green">
             <div className="flex items-center mb-8 border-b border-kidville-green/15 pb-4">
                 <h2 className="text-2xl font-bold text-kidville-green flex items-center gap-2">
-                    <UserPlus /> Compilazione Adulto
+                    <UserPlus /> {t('aFormCompilazioneAdulto')}
                 </h2>
             </div>
 
@@ -186,34 +189,34 @@ export const ScrollableAdultForm = forwardRef<AdultFormHandle, { defaultRole?: s
                 {/* Dati Personali */}
                 <section>
                     <h3 className="text-lg font-bold text-kidville-green mb-4 flex items-center gap-2 border-l-4 border-kidville-green pl-3">
-                        Dati Personali
+                        {t('datiPersonali')}
                     </h3>
                     <div className="grid grid-cols-2 gap-6">
                         <div>
-                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Nome</label>
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">{t('campoNome')}</label>
                             <input name="first_name" value={formData.first_name} onChange={handleInputChange} className={`w-full p-3 rounded-xl border bg-kidville-white text-kidville-green placeholder-kidville-green/40 outline-none focus:ring-2 focus:ring-kidville-green ${errors.first_name ? 'border-kidville-error shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} />
                             {errors.first_name && <span className="text-xs text-kidville-error font-bold">{errors.first_name}</span>}
                         </div>
                         <div>
-                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Cognome</label>
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">{t('campoCognome')}</label>
                             <input name="last_name" value={formData.last_name} onChange={handleInputChange} className={`w-full p-3 rounded-xl border bg-kidville-white text-kidville-green placeholder-kidville-green/40 outline-none focus:ring-2 focus:ring-kidville-green ${errors.last_name ? 'border-kidville-error shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} />
                             {errors.last_name && <span className="text-xs text-kidville-error font-bold">{errors.last_name}</span>}
                         </div>
                         <div>
-                            <label className="block text-sm font-bold text-kidville-green/80 mb-1 flex items-center gap-2"><Shield size={14}/> Ruolo Familiare / Operativo</label>
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1 flex items-center gap-2"><Shield size={14}/> {t('aFormRuoloFamiliare')}</label>
                             <select name="role" value={formData.role} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-kidville-white text-kidville-green outline-none focus:ring-2 focus:ring-kidville-green">
-                                <option value="mother">Madre</option>
-                                <option value="father">Padre</option>
-                                <option value="delegate">Delegato/a</option>
-                                <option value="educator">Educatore/trice</option>
-                                <option value="coordinator">Coordinatore</option>
+                                <option value="mother">{t('ruoloMadre')}</option>
+                                <option value="father">{t('ruoloPadre')}</option>
+                                <option value="delegate">{t('aFormRuoloDelegato')}</option>
+                                <option value="educator">{t('aFormRuoloEducatore')}</option>
+                                <option value="coordinator">{t('aFormRuoloCoordinatore')}</option>
                             </select>
                         </div>
                         <div>
-                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Sesso</label>
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">{t('campoSesso')}</label>
                             <select name="gender" value={formData.gender} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-kidville-white text-kidville-green outline-none focus:ring-2 focus:ring-kidville-green">
-                                <option value="M">Maschio</option>
-                                <option value="F">Femmina</option>
+                                <option value="M">{t('optMaschio')}</option>
+                                <option value="F">{t('optFemmina')}</option>
                             </select>
                         </div>
                     </div>
@@ -222,34 +225,34 @@ export const ScrollableAdultForm = forwardRef<AdultFormHandle, { defaultRole?: s
                 {/* Nascita e Cittadinanza */}
                 <section>
                     <h3 className="text-lg font-bold text-kidville-green mb-4 flex items-center gap-2 border-l-4 border-kidville-warn pl-3">
-                        Nascita e Cittadinanza
+                        {t('detailNascitaCittadinanza')}
                     </h3>
                     <div className="grid grid-cols-2 gap-6">
                         <div>
-                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Data di Nascita</label>
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">{t('campoDataNascita')}</label>
                             <DateField name="birth_date" value={formData.birth_date} onChange={(iso) => handleInputChange({ target: { name: 'birth_date', value: iso } } as unknown as React.ChangeEvent<HTMLInputElement>)} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-kidville-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none" />
                         </div>
                         <div>
-                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Cittadinanza</label>
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">{t('campoCittadinanza')}</label>
                             <input name="citizenship" value={formData.citizenship} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-kidville-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none" />
                         </div>
                         <div>
-                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Nazione di Nascita</label>
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">{t('campoNazioneNascita')}</label>
                             <input name="birth_nation" value={formData.birth_nation} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-kidville-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none" />
                         </div>
                         <div>
-                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Comune di Nascita</label>
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">{t('campoComuneNascita')}</label>
                             <input name="birth_place" value={formData.birth_place} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-kidville-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none" />
                         </div>
                         <div>
-                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Prov. Nascita (Sigla)</label>
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">{t('campoProvNascita')}</label>
                             <input name="birth_province" value={formData.birth_province} onChange={handleInputChange} maxLength={2} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-kidville-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none uppercase" />
                         </div>
                         <div className="col-span-2">
                             <label className="block text-sm font-bold text-kidville-green/80 mb-1 flex items-center gap-2">
-                                <Fingerprint size={16} /> Codice Fiscale
+                                <Fingerprint size={16} /> {t('campoCodiceFiscale')}
                                 {isCfLoading && <Loader2 size={14} className="animate-spin text-kidville-green" />}
-                                {isCfAutoCalculated && <span className="text-xs text-kidville-green font-normal">Autocalcolato! ✨</span>}
+                                {isCfAutoCalculated && <span className="text-xs text-kidville-green font-normal">{t('cfAutocalcolato')}</span>}
                             </label>
                             <input name="fiscal_code" value={formData.fiscal_code} onChange={handleInputChange} className={`w-full p-3 rounded-xl border outline-none uppercase bg-kidville-white text-kidville-green placeholder-kidville-green/40 transition-colors ${errors.fiscal_code ? 'border-kidville-error shadow-[0_0_10px_rgba(239,68,68,0.3)]' : isCfAutoCalculated ? 'border-kidville-green ring-2 ring-kidville-green/50 bg-kidville-green/5' : 'border-kidville-green/15 focus:ring-2 focus:ring-kidville-green'}`} />
                             {errors.fiscal_code && <span className="text-xs text-kidville-error font-bold">{errors.fiscal_code}</span>}
@@ -260,27 +263,27 @@ export const ScrollableAdultForm = forwardRef<AdultFormHandle, { defaultRole?: s
                 {/* Residenza */}
                 <section>
                     <h3 className="text-lg font-bold text-kidville-green mb-4 flex items-center gap-2 border-l-4 border-kidville-info pl-3">
-                        <MapPin size={20} className="text-kidville-info"/> Residenza
+                        <MapPin size={20} className="text-kidville-info"/> {t('sezioneResidenza')}
                     </h3>
                     <div className="grid grid-cols-2 gap-6">
                         <div className="col-span-2">
-                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Indirizzo di Residenza</label>
-                            <input name="address" value={formData.address} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-kidville-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none" placeholder="Via Roma" />
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">{t('campoIndirizzoResidenza')}</label>
+                            <input name="address" value={formData.address} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-kidville-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none" placeholder={t('phVia')} />
                         </div>
                         <div>
-                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Numero Civico</label>
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">{t('campoNumeroCivico')}</label>
                             <input name="civico" value={formData.civico} onChange={handleInputChange} maxLength={20} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-kidville-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none" placeholder="123" />
                         </div>
                         <div>
-                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Città di Residenza</label>
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">{t('campoCittaResidenza')}</label>
                             <input name="residence_city" value={formData.residence_city} onChange={handleInputChange} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-kidville-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none" />
                         </div>
                         <div>
-                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">Prov. Residenza (Sigla)</label>
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">{t('campoProvResidenza')}</label>
                             <input name="residence_province" value={formData.residence_province} onChange={handleInputChange} maxLength={2} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-kidville-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none uppercase" />
                         </div>
                         <div>
-                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">CAP</label>
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-1">{t('campoCap')}</label>
                             <input name="zip_code" value={formData.zip_code} onChange={handleInputChange} maxLength={10} className="w-full p-3 rounded-xl border border-kidville-green/15 bg-kidville-white text-kidville-green placeholder-kidville-green/40 focus:ring-2 focus:ring-kidville-green outline-none" />
                         </div>
                     </div>
@@ -289,12 +292,12 @@ export const ScrollableAdultForm = forwardRef<AdultFormHandle, { defaultRole?: s
                 {/* Contatti */}
                 <section>
                     <h3 className="text-lg font-bold text-kidville-green mb-4 flex items-center gap-2 border-l-4 border-pink-500 pl-3">
-                        Contatti e Accesso
+                        {t('aFormContattiAccesso')}
                     </h3>
                     <div className="grid grid-cols-2 gap-6">
                         {/* Telefoni */}
                         <div>
-                            <label className="block text-sm font-bold text-kidville-green/80 mb-2 flex items-center gap-2"><Phone size={14}/> Numeri di Cellulare</label>
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-2 flex items-center gap-2"><Phone size={14}/> {t('aFormNumeriCellulare')}</label>
                             <div className="space-y-3">
                                 <AnimatePresence>
                                     {formData.phones.map((phone, idx) => (
@@ -307,21 +310,21 @@ export const ScrollableAdultForm = forwardRef<AdultFormHandle, { defaultRole?: s
                                     ))}
                                 </AnimatePresence>
                                 <button onClick={() => addArrayItem('phones')} className="text-sm font-bold text-kidville-green flex items-center gap-1 hover:underline">
-                                    <Plus size={14} /> Aggiungi Numero
+                                    <Plus size={14} /> {t('aFormAggiungiNumero')}
                                 </button>
                             </div>
                         </div>
 
                         {/* Email */}
                         <div>
-                            <label className="block text-sm font-bold text-kidville-green/80 mb-2 flex items-center gap-2"><Mail size={14}/> Indirizzi Email (La prima verrà usata per Auth)</label>
+                            <label className="block text-sm font-bold text-kidville-green/80 mb-2 flex items-center gap-2"><Mail size={14}/> {t('aFormIndirizziEmail')}</label>
                             <div className="space-y-3">
                                 <AnimatePresence>
                                     {formData.emails.map((email, idx) => (
                                         <motion.div key={idx} initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="flex items-center gap-2">
                                             <div className="flex-1 relative">
                                                 <input type="email" value={email} onChange={(e) => handleArrayChange(idx, 'emails', e.target.value)} placeholder="mario.rossi@email.com" className={`w-full p-3 rounded-xl border bg-kidville-white text-kidville-green placeholder-kidville-green/40 outline-none focus:ring-2 focus:ring-kidville-green ${errors[`emails.${idx}`] ? 'border-kidville-error shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'border-kidville-green/15'}`} />
-                                                {idx === 0 && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] uppercase font-black tracking-widest text-kidville-green bg-kidville-green/10 px-2 py-1 rounded">Primaria</span>}
+                                                {idx === 0 && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] uppercase font-black tracking-widest text-kidville-green bg-kidville-green/10 px-2 py-1 rounded">{t('aFormPrimaria')}</span>}
                                             </div>
                                             <button onClick={() => removeArrayItem(idx, 'emails')} className="p-3 bg-kidville-error/10 text-kidville-error rounded-xl hover:bg-kidville-error/20 transition-colors">
                                                 <Trash2 size={18} />
@@ -330,7 +333,7 @@ export const ScrollableAdultForm = forwardRef<AdultFormHandle, { defaultRole?: s
                                     ))}
                                 </AnimatePresence>
                                 <button onClick={() => addArrayItem('emails')} className="text-sm font-bold text-kidville-green flex items-center gap-1 hover:underline">
-                                    <Plus size={14} /> Aggiungi Email
+                                    <Plus size={14} /> {t('aFormAggiungiEmail')}
                                 </button>
                             </div>
                         </div>

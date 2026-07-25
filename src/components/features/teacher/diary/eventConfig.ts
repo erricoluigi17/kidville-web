@@ -1,3 +1,4 @@
+import { useTranslations } from 'next-intl';
 import { DiaryEventType, DiaryEventTypeLegacy } from '@/lib/offline/db';
 
 interface EventConfig {
@@ -79,6 +80,23 @@ const LEGACY_EVENT_CONFIG: Partial<Record<string, EventConfig>> = {
 export function getEventConfig(type: DiaryEventTypeLegacy | string): EventConfig {
     if (type in EVENT_CONFIG) return EVENT_CONFIG[type as DiaryEventType];
     return LEGACY_EVENT_CONFIG[type] ?? LEGACY_FALLBACK;
+}
+
+/**
+ * Hook locale-aware per la SOLA etichetta di un tipo evento (namespace
+ * `etichette`, chiavi `evento_<tipo>`; il fallback generico legacy usa
+ * `evento_legacy`). Da usare nei componenti client. Emoji e colori restano su
+ * `getEventConfig` (config pura, non tradotta). Chiave assente → fallback alla
+ * label pura, MAI la chiave i18n.
+ */
+export function useEventLabel(): (type: DiaryEventTypeLegacy | string) => string {
+    const t = useTranslations('etichette');
+    return (type) => {
+        const specific = `evento_${type}`;
+        if (t.has(specific)) return t(specific);
+        if (t.has('evento_legacy')) return t('evento_legacy');
+        return getEventConfig(type).label;
+    };
 }
 
 export const MEAL_QUANTITIES = [

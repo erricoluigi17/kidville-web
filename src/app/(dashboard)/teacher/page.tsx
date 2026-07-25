@@ -6,6 +6,7 @@ import {
   BookOpen, ClipboardCheck, NotebookPen, Images, Megaphone, ListTodo,
   ChevronRight, Check, AlertTriangle, Eye, Users,
 } from 'lucide-react';
+import { useTranslations, useLocale } from 'next-intl';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { useTeacherGradi } from '@/lib/auth/use-teacher-gradi';
 import { useClientValue } from '@/lib/hooks/use-client-value';
@@ -18,16 +19,16 @@ import { TeacherAgendaCard } from '@/components/features/teacher/TeacherAgendaCa
 // bottom-nav: le voci 0-6 sono gated dalla matrice funzioni
 // (admin_settings.funzioni_matrice), quella primaria dai gradi del docente;
 // comunica/attività sono sempre disponibili. Tutte puntano a rotte reali.
+// Le etichette (eyebrow/title/detail) sono i18n: risolte a runtime per `key`
+// contro il namespace `teacherNav` (chiavi `shortcut_<key>_*`).
 const SHORTCUTS = [
-  { key: 'appello', eyebrow: 'Presenze', title: 'Appello', icon: ClipboardCheck, tint: '#006A5F', href: '/teacher/attendance', always: true, grado: 'comune' },
-  { key: 'diario', eyebrow: 'Giornata', title: 'Diario', icon: NotebookPen, tint: '#2A6FDB', href: '/teacher/diary', always: false, grado: 'infanzia' },
-  { key: 'registro', eyebrow: 'Valutazioni', title: 'Registro', icon: BookOpen, tint: '#7A3FD0', href: '/teacher/primaria', always: false, grado: 'primaria' },
-  { key: 'gallery', eyebrow: 'Galleria', title: 'Foto del giorno', icon: Images, tint: '#006A5F', href: '/teacher/gallery', always: false, grado: 'infanzia' },
-  { key: 'comunica', eyebrow: 'Famiglie', title: 'Comunica', icon: Megaphone, tint: '#E53935', href: '/teacher/avvisi', always: true, grado: 'comune' },
-  { key: 'attivita', eyebrow: 'Staff', title: 'Attività', icon: ListTodo, tint: '#1F8A5B', href: '/teacher/tasks', always: true, grado: 'comune' },
+  { key: 'appello', icon: ClipboardCheck, tint: '#006A5F', href: '/teacher/attendance', always: true, grado: 'comune' },
+  { key: 'diario', icon: NotebookPen, tint: '#2A6FDB', href: '/teacher/diary', always: false, grado: 'infanzia' },
+  { key: 'registro', icon: BookOpen, tint: '#7A3FD0', href: '/teacher/primaria', always: false, grado: 'primaria' },
+  { key: 'gallery', icon: Images, tint: '#006A5F', href: '/teacher/gallery', always: false, grado: 'infanzia' },
+  { key: 'comunica', icon: Megaphone, tint: '#E53935', href: '/teacher/avvisi', always: true, grado: 'comune' },
+  { key: 'attivita', icon: ListTodo, tint: '#1F8A5B', href: '/teacher/tasks', always: true, grado: 'comune' },
 ] as const;
-
-const GRADO_LABEL: Record<string, string> = { infanzia: 'Infanzia', nido: 'Nido', primaria: 'Primaria' };
 
 type MeData = { gradi: string[]; funzioni: Record<string, Record<string, boolean>> };
 type Student = { id: string; nome: string; cognome: string; note_mediche: string | null; consenso_privacy: boolean };
@@ -46,19 +47,24 @@ function Eyebrow({ children }: { children: React.ReactNode }) {
   );
 }
 
-function relDate(iso: string) {
+function relDate(iso: string, locale: string) {
   try {
-    return new Date(iso).toLocaleDateString('it-IT', { day: 'numeric', month: 'short' });
+    return new Date(iso).toLocaleDateString(locale, { day: 'numeric', month: 'short' });
   } catch {
     return '';
   }
 }
 
 function TeacherDashboardInner() {
+  const t = useTranslations('teacherNav');
+  const locale = useLocale();
   const { userId } = useSessionIdentity();
   // La home docente semina i link dell'app: con identità non risolta il
   // parametro viene omesso (href invariato), mai `userId=null`.
   const withUser = (href: string) => (userId ? `${href}?userId=${userId}` : href);
+  // Etichette dei gradi tradotte (fallback al codice grezzo se sconosciuto).
+  const gradoLabel = (g: string): string =>
+    ({ infanzia: t('gradoInfanzia'), nido: t('gradoNido'), primaria: t('gradoPrimaria') } as Record<string, string>)[g] ?? g;
 
   const [me, setMe] = useState<MeData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -122,8 +128,9 @@ function TeacherDashboardInner() {
   const { hasPrimaria, isPrimariaOnly } = useTeacherGradi(userId ?? null);
   // Un docente solo-primaria non deve vedere lessico 0-6 (né riferimenti a
   // infanzia/nido): il mondo primaria parla di "classe" e "alunni".
-  const nounFigli = isPrimariaOnly ? 'alunni' : 'bambini';
-  const nounFiglioSing = isPrimariaOnly ? 'alunno' : 'bambino';
+  // Discriminatore lessicale: seleziona in JS la variante i18n giusta (le
+  // stringhe world-dependent hanno una chiave `*Classe`/`*Sezione` dedicata),
+  // così le pluralizzazioni restano gestite dall'ICU senza select annidati.
   const nounGruppo = isPrimariaOnly ? 'classe' : 'sezione';
 
   // derivati
@@ -148,8 +155,8 @@ function TeacherDashboardInner() {
       <HeroCard
         title={`${greeting}${greeting ? '!' : ''}`}
         subtitle={activeSection
-          ? `${isPrimariaOnly ? 'Classe' : 'Sezione'} ${activeSection} · ${studentCount} ${nounFigli}`
-          : `La tua giornata in ${nounGruppo}`}
+          ? t(isPrimariaOnly ? 'heroSottotitoloClasse' : 'heroSottotitoloSezione', { sezione: activeSection, count: studentCount })
+          : t(isPrimariaOnly ? 'heroVuotoClasse' : 'heroVuotoSezione')}
       />
 
       {/* ── GRADE WORLD SWITCH (solo docenti misti) ─────── */}
@@ -191,10 +198,10 @@ function TeacherDashboardInner() {
             </span>
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
-                <h2 className="font-barlow text-xl font-black uppercase leading-none text-kidville-green">Comunicazioni</h2>
+                <h2 className="font-barlow text-xl font-black uppercase leading-none text-kidville-green">{t('comunicazioniTitolo')}</h2>
                 <span className="inline-flex h-[22px] min-w-[22px] items-center justify-center rounded-full bg-kidville-green px-1.5 font-barlow text-xs font-extrabold text-kidville-yellow">{avvisi.length}</span>
               </div>
-              <p className="mt-0.5 font-maven text-[11.5px] text-kidville-yellow-dark">Avvisi pubblicati in bacheca · letture</p>
+              <p className="mt-0.5 font-maven text-[11.5px] text-kidville-yellow-dark">{t('comunicazioniSottotitolo')}</p>
             </div>
           </div>
           <div className="flex flex-col gap-2.5">
@@ -210,10 +217,10 @@ function TeacherDashboardInner() {
                     <div className="min-w-0 flex-1">
                       <div className="mb-1 flex flex-wrap items-center gap-1.5">
                         <span className="inline-flex items-center gap-1 rounded-pill bg-kidville-green-soft px-2 py-0.5 font-barlow text-[10.5px] font-extrabold uppercase tracking-wide text-kidville-green">
-                          {isAdesione ? 'Adesione' : 'Presa visione'}
+                          {isAdesione ? t('badgeAdesione') : t('badgePresaVisione')}
                         </span>
                         <span className="ml-auto font-maven text-[10.5px] text-kidville-muted">
-                          {a.author ? `${a.author.first_name ?? ''} ${a.author.last_name ?? ''}`.trim() : ''} · {relDate(a.created_at)}
+                          {a.author ? `${a.author.first_name ?? ''} ${a.author.last_name ?? ''}`.trim() : ''} · {relDate(a.created_at, locale)}
                         </span>
                       </div>
                       <h3 className="mb-0.5 truncate font-barlow text-base font-extrabold uppercase leading-tight text-kidville-green">{a.titolo}</h3>
@@ -221,11 +228,11 @@ function TeacherDashboardInner() {
                       {a.stats && (
                         <div className="mt-2 flex flex-wrap items-center gap-1.5">
                           <span className="inline-flex items-center gap-1 rounded-pill bg-kidville-success-soft px-2 py-0.5 font-barlow text-[10px] font-extrabold uppercase text-kidville-success">
-                            <Check size={11} strokeWidth={2.8} /> {a.stats.letti} letture
+                            <Check size={11} strokeWidth={2.8} /> {t('letture', { count: a.stats.letti })}
                           </span>
                           {isAdesione && (
                             <span className="inline-flex items-center gap-1 rounded-pill bg-kidville-info-soft px-2 py-0.5 font-barlow text-[10px] font-extrabold uppercase text-kidville-info">
-                              {a.stats.adesioni_si} sì · {a.stats.adesioni_no} no
+                              {t('adesioniSiNo', { si: a.stats.adesioni_si, no: a.stats.adesioni_no })}
                             </span>
                           )}
                         </div>
@@ -239,7 +246,7 @@ function TeacherDashboardInner() {
           <Link href={withUser('/teacher/avvisi')}
             className="mx-auto mt-3 flex h-9 w-fit items-center gap-1.5 rounded-pill px-4 font-barlow text-xs font-extrabold uppercase text-kidville-green"
             style={{ boxShadow: 'inset 0 0 0 1.5px rgba(0,106,95,.25)' }}>
-            <Megaphone size={14} /> Apri la bacheca <ChevronRight size={14} strokeWidth={2.4} />
+            <Megaphone size={14} /> {t('apriBacheca')} <ChevronRight size={14} strokeWidth={2.4} />
           </Link>
         </section>
       )}
@@ -255,9 +262,9 @@ function TeacherDashboardInner() {
                 <AlertTriangle size={20} />
               </span>
               <div className="min-w-0 flex-1">
-                <div className="font-barlow text-lg font-black uppercase leading-none text-kidville-green">Allergie e note mediche</div>
+                <div className="font-barlow text-lg font-black uppercase leading-none text-kidville-green">{t('allergieTitolo')}</div>
                 <div className="mt-0.5 font-maven text-[11.5px] text-kidville-yellow-dark">
-                  {allergie.length} {allergie.length === 1 ? nounFiglioSing : nounFigli} da seguire · {nounGruppo} {activeSection}
+                  {t(isPrimariaOnly ? 'allergieDaSeguireClasse' : 'allergieDaSeguireSezione', { count: allergie.length, sezione: activeSection })}
                 </div>
               </div>
             </div>
@@ -277,7 +284,7 @@ function TeacherDashboardInner() {
             <Link href={withUser(isPrimariaOnly ? '/teacher/primaria' : '/teacher/diary')}
               className="flex w-full items-center justify-center gap-1.5 border-t border-kidville-line bg-kidville-cream py-2.5 font-barlow text-xs font-extrabold uppercase tracking-wide text-kidville-green">
               {isPrimariaOnly ? <BookOpen size={15} /> : <NotebookPen size={15} />}
-              {isPrimariaOnly ? 'Vai al registro' : 'Vedi nel diario'}
+              {isPrimariaOnly ? t('allergieCtaRegistro') : t('allergieCtaDiario')}
               <ChevronRight size={14} strokeWidth={2.4} />
             </Link>
           </div>
@@ -295,18 +302,20 @@ function TeacherDashboardInner() {
               <ClipboardCheck size={24} />
             </span>
             <div className="min-w-0 flex-1">
-              <div className={`font-barlow text-lg font-black uppercase leading-none ${appelloFatto ? 'text-kidville-green' : 'text-white'}`}>Appello del giorno</div>
+              <div className={`font-barlow text-lg font-black uppercase leading-none ${appelloFatto ? 'text-kidville-green' : 'text-white'}`}>{t('appelloTitolo')}</div>
               <div className={`mt-1 font-maven text-xs ${appelloFatto ? 'text-kidville-ink' : 'text-white/80'}`}>
-                {appelloFatto ? `${presenti} presenti · ${assenti} assenti` : `Non ancora registrato · ${studentCount || ''} ${nounFigli}`}
+                {appelloFatto
+                  ? t('appelloPresentiAssenti', { presenti, assenti })
+                  : t(isPrimariaOnly ? 'appelloNonRegistratoClasse' : 'appelloNonRegistratoSezione', { count: studentCount })}
               </div>
             </div>
             <span className={`rounded-pill px-2.5 py-1 font-barlow text-[10.5px] font-extrabold uppercase tracking-wide ${appelloFatto ? 'bg-kidville-success-soft text-kidville-success' : 'bg-kidville-yellow text-kidville-green'}`}>
-              {appelloFatto ? 'Fatto' : 'Da fare'}
+              {appelloFatto ? t('appelloBadgeFatto') : t('appelloBadgeDaFare')}
             </span>
           </div>
           <Link href={withUser('/teacher/attendance')}
             className={`mt-3.5 flex h-11 w-full items-center justify-center gap-2 rounded-pill font-barlow text-sm font-extrabold uppercase ${appelloFatto ? 'bg-kidville-green-soft text-kidville-green' : 'bg-kidville-yellow text-kidville-green'}`}>
-            <ClipboardCheck size={18} /> {appelloFatto ? "Modifica appello" : "Fai l'appello ora"} <ChevronRight size={16} strokeWidth={2.4} />
+            <ClipboardCheck size={18} /> {appelloFatto ? t('appelloCtaModifica') : t('appelloCtaFai')} <ChevronRight size={16} strokeWidth={2.4} />
           </Link>
         </div>
       </section>
@@ -314,8 +323,8 @@ function TeacherDashboardInner() {
       {/* ── SCORCIATOIE (DR ScorciatoieBlock) ───────────── */}
       <section className="mt-6">
         <div className="mb-3 px-0.5">
-          <Eyebrow>Azioni rapide</Eyebrow>
-          <h2 className="font-barlow text-xl font-black uppercase leading-none text-kidville-green">Scorciatoie</h2>
+          <Eyebrow>{t('scorciatoieEyebrow')}</Eyebrow>
+          <h2 className="font-barlow text-xl font-black uppercase leading-none text-kidville-green">{t('scorciatoieTitolo')}</h2>
         </div>
         {loading ? (
           <div className="grid grid-cols-2 gap-3">
@@ -327,18 +336,12 @@ function TeacherDashboardInner() {
           <div className="grid grid-cols-2 gap-3">
             {shortcuts.map((s) => {
               const Icon = s.icon;
+              // Il dettaglio dell'appello dipende dallo stato + conteggio (ICU);
+              // per le altre scorciatoie la chiave è `shortcut_<key>_detail`.
               const detail =
                 s.key === 'appello'
-                  ? (appelloFatto ? `${presenti} presenti registrati` : 'Da registrare adesso')
-                  : s.key === 'comunica'
-                    ? 'Invia un avviso ai genitori'
-                    : s.key === 'attivita'
-                      ? 'Task e bacheca interna'
-                      : s.key === 'diario'
-                        ? 'Schede della giornata'
-                        : s.key === 'registro'
-                          ? 'Valutazioni e note'
-                          : 'Carica i momenti della giornata';
+                  ? (appelloFatto ? t('shortcut_appello_detailFatto', { count: presenti }) : t('shortcut_appello_detailDaFare'))
+                  : t(`shortcut_${s.key}_detail`);
               return (
                 <Link key={s.key} href={withUser(s.href)}
                   className="flex flex-col rounded-2xl bg-white p-3.5"
@@ -347,8 +350,8 @@ function TeacherDashboardInner() {
                     style={{ background: s.tint + '18', color: s.tint }}>
                     <Icon size={20} />
                   </span>
-                  <span className="font-barlow text-[10px] font-bold uppercase tracking-[0.08em]" style={{ color: s.tint }}>{s.eyebrow}</span>
-                  <span className="font-barlow text-[15px] font-extrabold uppercase leading-tight text-kidville-green">{s.title}</span>
+                  <span className="font-barlow text-[10px] font-bold uppercase tracking-[0.08em]" style={{ color: s.tint }}>{t(`shortcut_${s.key}_eyebrow`)}</span>
+                  <span className="font-barlow text-[15px] font-extrabold uppercase leading-tight text-kidville-green">{t(`shortcut_${s.key}_title`)}</span>
                   <span className="mt-0.5 font-maven text-[11.5px] leading-snug text-kidville-ink">{detail}</span>
                 </Link>
               );
@@ -360,23 +363,24 @@ function TeacherDashboardInner() {
       {/* ── AGENDA (DR AgendaCard · eventi_agenda M6) ── */}
       <section className="mt-6">
         <div className="mb-3 px-0.5">
-          <Eyebrow>Agenda</Eyebrow>
-          <h2 className="font-barlow text-xl font-black uppercase leading-none text-kidville-green">La giornata in {nounGruppo}</h2>
+          <Eyebrow>{t('agendaEyebrow')}</Eyebrow>
+          <h2 className="font-barlow text-xl font-black uppercase leading-none text-kidville-green">{t(isPrimariaOnly ? 'agendaTitoloClasse' : 'agendaTitoloSezione')}</h2>
         </div>
         <TeacherAgendaCard sezione={activeSection} userId={userId} gruppo={nounGruppo} />
       </section>
 
       {/* footer */}
       <div className="px-4 pb-2 pt-5 text-center font-maven text-[10.5px] text-kidville-muted">
-        Vista insegnante · {(me?.gradi ?? []).map((g) => GRADO_LABEL[g] ?? g).join(' · ') || 'Kidville'}
+        {t('footerVista')} · {(me?.gradi ?? []).map((g) => gradoLabel(g)).join(' · ') || 'Kidville'}
       </div>
     </div>
   );
 }
 
 export default function TeacherDashboardPage() {
+  const t = useTranslations('teacherNav');
   return (
-    <Suspense fallback={<div className="p-8 font-maven text-kidville-muted">Caricamento…</div>}>
+    <Suspense fallback={<div className="p-8 font-maven text-kidville-muted">{t('caricamento')}</div>}>
       <TeacherDashboardInner />
     </Suspense>
   );

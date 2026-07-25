@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { useTranslations } from 'next-intl';
 import { Tag, Euro, AlertTriangle, Ticket, FileText, Plus, Trash2, Save, Lock, BellRing } from 'lucide-react';
 import { livelliEffettivi, type LivelloSollecito, type SollecitiConfig } from '@/lib/pagamenti/solleciti';
 import { hdr, card, h3, input, label, btnPrimary } from './ui';
@@ -36,6 +37,7 @@ export function SettingsPanel({ userId, scuolaId }: Props) {
 // Template e cadenza dei solleciti: 3 livelli, testi con segnaposto. L'invio
 // automatico resta OFF finché non attivato (il run cron salta la scuola).
 function SollecitiSettings({ userId }: Props) {
+    const t = useTranslations('adminSettings');
     const [cfg, setCfg] = useState<SollecitiConfig | null>(null);
     const [saving, setSaving] = useState(false);
     useEffect(() => {
@@ -57,43 +59,43 @@ function SollecitiSettings({ userId }: Props) {
     };
     return (
         <section className={card}>
-            <h3 className={h3}><BellRing size={16} /> Solleciti di pagamento</h3>
+            <h3 className={h3}><BellRing size={16} /> {t('spSolleciti')}</h3>
             <div className="flex flex-wrap items-center gap-4">
                 <label className="flex items-center gap-2 cursor-pointer">
                     <input type="checkbox" checked={!!cfg.enabled} onChange={e => setCfg({ ...cfg, enabled: e.target.checked })} className="w-4 h-4 rounded text-kidville-green" />
-                    <span className="font-maven text-sm text-kidville-green">Invio automatico (cron) attivo</span>
+                    <span className="font-maven text-sm text-kidville-green">{t('spSollecitiCronAttivo')}</span>
                 </label>
                 <div className="flex items-center gap-2">
-                    <span className="font-maven text-xs text-kidville-muted">Cadenza minima fra due invii (gg)</span>
+                    <span className="font-maven text-xs text-kidville-muted">{t('spSollecitiCadenza')}</span>
                     <input type="number" min={1} value={cfg.cadenza_min_giorni ?? 7}
                         onChange={e => setCfg({ ...cfg, cadenza_min_giorni: Math.max(1, Number(e.target.value) || 1) })}
                         className={`${input} w-16`} />
                 </div>
             </div>
             <p className="font-maven text-[11px] text-kidville-muted mt-2">
-                Segnaposto: {'{alunno}'} {'{descrizione}'} {'{importo}'} {'{residuo}'} {'{scadenza}'} {'{scuola}'} {'{giorni_ritardo}'}
+                {t('spSegnaposto')} {'{alunno}'} {'{descrizione}'} {'{importo}'} {'{residuo}'} {'{scadenza}'} {'{scuola}'} {'{giorni_ritardo}'}
             </p>
             <div className="mt-3 space-y-4">
                 {livelli.map((l, i) => (
                     <div key={i} className="rounded-xl border-2 border-kidville-line p-3">
                         <div className="flex flex-wrap items-center gap-3 mb-2">
-                            <span className="font-barlow text-xs font-extrabold uppercase text-kidville-green">Livello {i + 1}</span>
+                            <span className="font-barlow text-xs font-extrabold uppercase text-kidville-green">{t('spLivello', { n: i + 1 })}</span>
                             <span className="flex items-center gap-1.5 font-maven text-xs text-kidville-muted">
-                                dopo
+                                {t('spDopo')}
                                 <input type="number" min={0} value={l.giorni_da_scadenza}
                                     onChange={e => setLivello(i, { giorni_da_scadenza: Math.max(0, Number(e.target.value) || 0) })}
                                     className={`${input} w-16`} />
-                                giorni dalla scadenza
+                                {t('spGiorniDallaScadenza')}
                             </span>
                         </div>
                         <input value={l.oggetto} onChange={e => setLivello(i, { oggetto: e.target.value })}
-                            placeholder="Oggetto email" className={`${input} w-full mb-2`} />
+                            placeholder={t('spOggettoEmail')} className={`${input} w-full mb-2`} />
                         <textarea value={l.testo} onChange={e => setLivello(i, { testo: e.target.value })} rows={3}
                             className={`${input} w-full`} />
                     </div>
                 ))}
             </div>
-            <div className="mt-4"><button onClick={save} disabled={saving} className={btnPrimary}><Save size={14} /> {saving ? 'Salvataggio…' : 'Salva'}</button></div>
+            <div className="mt-4"><button onClick={save} disabled={saving} className={btnPrimary}><Save size={14} /> {saving ? t('salvataggioInCorso') : t('salva')}</button></div>
         </section>
     );
 }
@@ -108,6 +110,7 @@ interface FiscaleCfg {
 // Dati struttura per ricevute/attestazioni (fallback: dati fiscali Aruba) e
 // marca da bollo sui documenti esenti IVA sopra soglia.
 function FiscaleSettings({ userId }: Props) {
+    const t = useTranslations('adminSettings');
     const [cfg, setCfg] = useState<FiscaleCfg | null>(null);
     const [saving, setSaving] = useState(false);
     useEffect(() => {
@@ -124,41 +127,42 @@ function FiscaleSettings({ userId }: Props) {
         setSaving(false);
     };
     const campi: [keyof FiscaleCfg, string][] = [
-        ['denominazione', 'Denominazione struttura'], ['piva', 'Partita IVA'], ['codice_fiscale', 'Codice fiscale'],
-        ['indirizzo', 'Indirizzo'], ['cap', 'CAP'], ['comune', 'Comune'], ['provincia', 'Provincia'],
+        ['denominazione', 'spFiscaleDenominazione'], ['piva', 'spFiscalePiva'], ['codice_fiscale', 'spFiscaleCf'],
+        ['indirizzo', 'spFiscaleIndirizzo'], ['cap', 'spFiscaleCap'], ['comune', 'spFiscaleComune'], ['provincia', 'spFiscaleProvincia'],
     ];
     return (
         <section className={card}>
-            <h3 className={h3}><FileText size={16} /> Dati fiscali &amp; bollo</h3>
+            <h3 className={h3}><FileText size={16} /> {t('spDatiFiscali')}</h3>
             <p className="font-maven text-[11px] text-kidville-muted -mt-2 mb-3">
-                Compaiono su ricevute numerate e attestazioni (Bonus Nido/730). I campi vuoti ricadono sui dati fiscali Aruba.
+                {t('spFiscaleDesc')}
             </p>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                {campi.map(([k, l]) => (
-                    <div key={k}><label className={label}>{l}</label>
+                {campi.map(([k, lk]) => (
+                    <div key={k}><label className={label}>{t(lk)}</label>
                         <input value={(cfg[k] as string) ?? ''} onChange={e => set(k, e.target.value)} className={`${input} w-full`} /></div>
                 ))}
             </div>
             <label className="flex items-center gap-2 cursor-pointer mt-4">
                 <input type="checkbox" checked={!!cfg.bollo_enabled} onChange={e => set('bollo_enabled', e.target.checked)} className="w-4 h-4 rounded text-kidville-green" />
-                <span className="font-maven text-sm text-kidville-green">Marca da bollo €2 su documenti esenti IVA oltre soglia</span>
+                <span className="font-maven text-sm text-kidville-green">{t('spBolloAttiva')}</span>
             </label>
             {cfg.bollo_enabled && (
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mt-3">
-                    <div><label className={label}>Soglia (€)</label>
+                    <div><label className={label}>{t('spBolloSoglia')}</label>
                         <input type="number" step="0.01" value={cfg.bollo_soglia ?? 77.47} onChange={e => set('bollo_soglia', Number(e.target.value))} className={`${input} w-full`} /></div>
-                    <div><label className={label}>Importo bollo (€)</label>
+                    <div><label className={label}>{t('spBolloImporto')}</label>
                         <input type="number" step="0.01" value={cfg.bollo_importo ?? 2} onChange={e => set('bollo_importo', Number(e.target.value))} className={`${input} w-full`} /></div>
-                    <div className="col-span-2 md:col-span-1"><label className={label}>Dicitura su ricevuta</label>
-                        <input value={cfg.dicitura_bollo_ricevuta ?? ''} placeholder="Imposta di bollo assolta in modo virtuale…" onChange={e => set('dicitura_bollo_ricevuta', e.target.value)} className={`${input} w-full`} /></div>
+                    <div className="col-span-2 md:col-span-1"><label className={label}>{t('spBolloDicitura')}</label>
+                        <input value={cfg.dicitura_bollo_ricevuta ?? ''} placeholder={t('spBolloDicituraPlaceholder')} onChange={e => set('dicitura_bollo_ricevuta', e.target.value)} className={`${input} w-full`} /></div>
                 </div>
             )}
-            <div className="mt-4"><button onClick={save} disabled={saving} className={btnPrimary}><Save size={14} /> {saving ? 'Salvataggio…' : 'Salva'}</button></div>
+            <div className="mt-4"><button onClick={save} disabled={saving} className={btnPrimary}><Save size={14} /> {saving ? t('salvataggioInCorso') : t('salva')}</button></div>
         </section>
     );
 }
 
 function CategorieManager({ userId }: Props) {
+    const t = useTranslations('adminSettings');
     const [cats, setCats] = useState<Categoria[]>([]);
     const [nuovo, setNuovo] = useState('');
     const load = useCallback(() => {
@@ -179,7 +183,7 @@ function CategorieManager({ userId }: Props) {
 
     return (
         <section className={card}>
-            <h3 className={h3}><Tag size={16} /> Categorie pagamento</h3>
+            <h3 className={h3}><Tag size={16} /> {t('spCategorie')}</h3>
             <div className="flex flex-wrap gap-2 mb-3">
                 {cats.map(c => (
                     <span key={c.id} className="flex items-center gap-1 bg-kidville-cream rounded-full pl-3 pr-2 py-1 font-maven text-sm text-kidville-green">
@@ -190,15 +194,16 @@ function CategorieManager({ userId }: Props) {
                 ))}
             </div>
             <div className="flex gap-2">
-                <input value={nuovo} onChange={e => setNuovo(e.target.value)} placeholder="Nuova categoria…" className={`${input} flex-1`} />
-                <button onClick={add} className={btnPrimary}><Plus size={14} /> Aggiungi</button>
+                <input value={nuovo} onChange={e => setNuovo(e.target.value)} placeholder={t('nuovaCategoriaPlaceholder')} className={`${input} flex-1`} />
+                <button onClick={add} className={btnPrimary}><Plus size={14} /> {t('aggiungi')}</button>
             </div>
-            <p className="font-maven text-[11px] text-kidville-muted mt-2"><Lock size={10} className="inline" /> = categoria di sistema (non eliminabile).</p>
+            <p className="font-maven text-[11px] text-kidville-muted mt-2"><Lock size={10} className="inline" />{t('spCategoriaSistemaHint')}</p>
         </section>
     );
 }
 
 function RettaMorositaSettings({ userId }: Props) {
+    const t = useTranslations('adminSettings');
     const [s, setS] = useState<Settings | null>(null);
     const [saving, setSaving] = useState(false);
     useEffect(() => {
@@ -218,35 +223,36 @@ function RettaMorositaSettings({ userId }: Props) {
     };
     return (
         <section className={card}>
-            <h3 className={h3}><Euro size={16} /> Retta e morosità</h3>
+            <h3 className={h3}><Euro size={16} /> {t('spRettaMorosita')}</h3>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                <div><label className={label}>Retta default (€)</label>
+                <div><label className={label}>{t('spRettaDefault')}</label>
                     <input type="number" value={s.retta_default_importo || ''} onChange={e => setS({ ...s, retta_default_importo: Number(e.target.value) })} className={`${input} w-full`} /></div>
-                <div><label className={label}>Giorno scadenza retta — default per tutti (1-28)</label>
+                <div><label className={label}>{t('spGiornoScadenza')}</label>
                     <input type="number" min={1} max={28} value={s.retta_giorno_scadenza} onChange={e => setS({ ...s, retta_giorno_scadenza: Number(e.target.value) })} className={`${input} w-full`} />
-                    <p className="font-maven text-[10px] text-kidville-muted mt-0.5">Personalizzabile per singolo alunno dall&apos;anagrafica (Dati economici).</p></div>
-                <div><label className={label}>Visibile dal giorno (mese prec.)</label>
+                    <p className="font-maven text-[10px] text-kidville-muted mt-0.5">{t('spGiornoScadenzaHint')}</p></div>
+                <div><label className={label}>{t('spVisibileDalGiorno')}</label>
                     <input type="number" min={1} max={28} value={s.retta_giorno_visibilita ?? 25} onChange={e => setS({ ...s, retta_giorno_visibilita: Number(e.target.value) })} className={`${input} w-full`} /></div>
-                <div><label className={label}><AlertTriangle size={11} className="inline" /> Tolleranza insoluti (gg)</label>
+                <div><label className={label}><AlertTriangle size={11} className="inline" /> {t('spTolleranzaInsoluti')}</label>
                     <input type="number" value={s.insoluto_tolleranza_giorni} onChange={e => setS({ ...s, insoluto_tolleranza_giorni: Number(e.target.value) })} className={`${input} w-full`} /></div>
             </div>
-            <p className="font-maven text-[11px] text-kidville-muted mt-1">La retta mensile compare al genitore dal giorno indicato del mese precedente alla competenza.</p>
+            <p className="font-maven text-[11px] text-kidville-muted mt-1">{t('spRettaVisibilitaHint')}</p>
             <label className="flex items-center gap-2 cursor-pointer mt-3">
                 <input type="checkbox" checked={s.retta_auto_enabled} onChange={e => setS({ ...s, retta_auto_enabled: e.target.checked })} className="w-4 h-4 rounded text-kidville-green" />
-                <span className="font-maven text-sm text-kidville-green">Generazione automatica rette mensili</span>
+                <span className="font-maven text-sm text-kidville-green">{t('spRettaAutoGen')}</span>
             </label>
             <div className="mt-4">
-                <label className={label}>Causale fattura (template)</label>
+                <label className={label}>{t('spCausaleFattura')}</label>
                 <input value={s.fattura_causale_template ?? ''} onChange={e => setS({ ...s, fattura_causale_template: e.target.value })}
                     placeholder="{descrizione} - {alunno}" className={`${input} w-full`} />
-                <p className="font-maven text-[11px] text-kidville-muted mt-1">Segnaposto disponibili: {'{descrizione}'}, {'{alunno}'}, {'{periodo}'}. Modificabile al momento dell&apos;emissione.</p>
+                <p className="font-maven text-[11px] text-kidville-muted mt-1">{t('spCausaleSegnaposto')} {'{descrizione}'}, {'{alunno}'}, {'{periodo}'}. {t('spCausaleModificabile')}</p>
             </div>
-            <div className="mt-4"><button onClick={save} disabled={saving} className={btnPrimary}><Save size={14} /> {saving ? 'Salvataggio…' : 'Salva'}</button></div>
+            <div className="mt-4"><button onClick={save} disabled={saving} className={btnPrimary}><Save size={14} /> {saving ? t('salvataggioInCorso') : t('salva')}</button></div>
         </section>
     );
 }
 
 function TicketSettings({ userId }: Props) {
+    const t = useTranslations('adminSettings');
     const [pacchetti, setPacchetti] = useState<{ label: string; pezzi: number; costo: number }[]>([]);
     const [saving, setSaving] = useState(false);
     useEffect(() => {
@@ -261,26 +267,27 @@ function TicketSettings({ userId }: Props) {
     const upd = (i: number, k: string, v: string | number) => setPacchetti(pacchetti.map((p, idx) => idx === i ? { ...p, [k]: v } : p));
     return (
         <section className={card}>
-            <h3 className={h3}><Ticket size={16} /> Pacchetti ticket mensa</h3>
+            <h3 className={h3}><Ticket size={16} /> {t('spTicketPacchetti')}</h3>
             <div className="space-y-2 mb-3">
                 {pacchetti.map((p, i) => (
                     <div key={i} className="flex gap-2 items-center">
-                        <input value={p.label} onChange={e => upd(i, 'label', e.target.value)} placeholder="Nome" className={`${input} flex-1`} />
-                        <input type="number" value={p.pezzi || ''} onChange={e => upd(i, 'pezzi', Number(e.target.value))} placeholder="Pezzi" className={`${input} w-24`} />
+                        <input value={p.label} onChange={e => upd(i, 'label', e.target.value)} placeholder={t('spTicketNome')} className={`${input} flex-1`} />
+                        <input type="number" value={p.pezzi || ''} onChange={e => upd(i, 'pezzi', Number(e.target.value))} placeholder={t('spTicketPezzi')} className={`${input} w-24`} />
                         <input type="number" value={p.costo || ''} onChange={e => upd(i, 'costo', Number(e.target.value))} placeholder="€" className={`${input} w-24`} />
                         <button onClick={() => setPacchetti(pacchetti.filter((_, idx) => idx !== i))} className="text-kidville-muted hover:text-kidville-error"><Trash2 size={15} /></button>
                     </div>
                 ))}
             </div>
             <div className="flex gap-2">
-                <button onClick={() => setPacchetti([...pacchetti, { label: '', pezzi: 10, costo: 50 }])} className="px-3 py-2 rounded-full border-2 border-kidville-line font-maven text-sm text-kidville-muted flex items-center gap-1"><Plus size={14} /> Pacchetto</button>
-                <button onClick={save} disabled={saving} className={btnPrimary}><Save size={14} /> {saving ? '…' : 'Salva'}</button>
+                <button onClick={() => setPacchetti([...pacchetti, { label: '', pezzi: 10, costo: 50 }])} className="px-3 py-2 rounded-full border-2 border-kidville-line font-maven text-sm text-kidville-muted flex items-center gap-1"><Plus size={14} /> {t('spTicketAggiungiPacchetto')}</button>
+                <button onClick={save} disabled={saving} className={btnPrimary}><Save size={14} /> {saving ? '…' : t('salva')}</button>
             </div>
         </section>
     );
 }
 
 function ArubaSettings({ userId }: Props) {
+    const t = useTranslations('adminSettings');
     const [cfg, setCfg] = useState<ArubaCfg | null>(null);
     const [saving, setSaving] = useState(false);
     const [pwd, setPwd] = useState('');
@@ -302,22 +309,22 @@ function ArubaSettings({ userId }: Props) {
     const f = cfg.fiscal || {};
     return (
         <section className={card}>
-            <h3 className={h3}><FileText size={16} /> Fatturazione Aruba <span className="text-[10px] bg-kidville-warn-soft text-kidville-warn px-2 py-0.5 rounded-full">Scaffold</span></h3>
-            <p className="font-maven text-xs text-kidville-muted mb-3">Predisposizione. La chiamata reale ad Aruba sarà attivata in produzione. Le credenziali non vengono salvate in chiaro (solo riferimento a vault/env).</p>
+            <h3 className={h3}><FileText size={16} /> {t('spArubaTitolo')} <span className="text-[10px] bg-kidville-warn-soft text-kidville-warn px-2 py-0.5 rounded-full">{t('spScaffold')}</span></h3>
+            <p className="font-maven text-xs text-kidville-muted mb-3">{t('spArubaDesc')}</p>
             <div className="grid grid-cols-2 gap-3">
-                <div><label className={label}>Username Aruba</label><input value={cfg.username} onChange={e => setCfg({ ...cfg, username: e.target.value })} className={`${input} w-full`} /></div>
-                <div><label className={label}>Password (riferimento vault){cfg.has_password && ' ✓ impostata'}</label><input type="password" value={pwd} onChange={e => setPwd(e.target.value)} placeholder={cfg.has_password ? '••••••' : 'es. ARUBA_PWD_REF'} className={`${input} w-full`} /></div>
-                <div><label className={label}>Partita IVA</label><input value={f.piva ?? ''} onChange={e => setCfg({ ...cfg, fiscal: { ...f, piva: e.target.value } })} className={`${input} w-full`} /></div>
-                <div><label className={label}>Codice Fiscale</label><input value={f.cf ?? ''} onChange={e => setCfg({ ...cfg, fiscal: { ...f, cf: e.target.value } })} className={`${input} w-full`} /></div>
-                <div className="col-span-2"><label className={label}>Ragione sociale</label><input value={f.ragione_sociale ?? ''} onChange={e => setCfg({ ...cfg, fiscal: { ...f, ragione_sociale: e.target.value } })} className={`${input} w-full`} /></div>
-                <div><label className={label}>Sede legale</label><input value={f.sede ?? ''} onChange={e => setCfg({ ...cfg, fiscal: { ...f, sede: e.target.value } })} className={`${input} w-full`} /></div>
-                <div><label className={label}>Regime fiscale</label><input value={f.regime ?? ''} onChange={e => setCfg({ ...cfg, fiscal: { ...f, regime: e.target.value } })} className={`${input} w-full`} /></div>
+                <div><label className={label}>{t('spArubaUsername')}</label><input value={cfg.username} onChange={e => setCfg({ ...cfg, username: e.target.value })} className={`${input} w-full`} /></div>
+                <div><label className={label}>{t('spArubaPassword')}{cfg.has_password && t('spArubaPasswordImpostata')}</label><input type="password" value={pwd} onChange={e => setPwd(e.target.value)} placeholder={cfg.has_password ? '••••••' : t('spArubaPasswordPlaceholder')} className={`${input} w-full`} /></div>
+                <div><label className={label}>{t('spFiscalePiva')}</label><input value={f.piva ?? ''} onChange={e => setCfg({ ...cfg, fiscal: { ...f, piva: e.target.value } })} className={`${input} w-full`} /></div>
+                <div><label className={label}>{t('spArubaCf')}</label><input value={f.cf ?? ''} onChange={e => setCfg({ ...cfg, fiscal: { ...f, cf: e.target.value } })} className={`${input} w-full`} /></div>
+                <div className="col-span-2"><label className={label}>{t('spArubaRagioneSociale')}</label><input value={f.ragione_sociale ?? ''} onChange={e => setCfg({ ...cfg, fiscal: { ...f, ragione_sociale: e.target.value } })} className={`${input} w-full`} /></div>
+                <div><label className={label}>{t('spArubaSedeLegale')}</label><input value={f.sede ?? ''} onChange={e => setCfg({ ...cfg, fiscal: { ...f, sede: e.target.value } })} className={`${input} w-full`} /></div>
+                <div><label className={label}>{t('spArubaRegime')}</label><input value={f.regime ?? ''} onChange={e => setCfg({ ...cfg, fiscal: { ...f, regime: e.target.value } })} className={`${input} w-full`} /></div>
             </div>
             <label className="flex items-center gap-2 cursor-pointer mt-3">
                 <input type="checkbox" checked={cfg.abilitato} onChange={e => setCfg({ ...cfg, abilitato: e.target.checked })} className="w-4 h-4 rounded text-kidville-green" />
-                <span className="font-maven text-sm text-kidville-green">Abilita invio fatture (in produzione)</span>
+                <span className="font-maven text-sm text-kidville-green">{t('spArubaAbilita')}</span>
             </label>
-            <div className="mt-4"><button onClick={save} disabled={saving} className={btnPrimary}><Save size={14} /> {saving ? 'Salvataggio…' : 'Salva'}</button></div>
+            <div className="mt-4"><button onClick={save} disabled={saving} className={btnPrimary}><Save size={14} /> {saving ? t('salvataggioInCorso') : t('salva')}</button></div>
         </section>
     );
 }

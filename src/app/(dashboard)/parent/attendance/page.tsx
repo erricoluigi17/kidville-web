@@ -1,13 +1,17 @@
 'use client';
 
 import { Suspense, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { CheckCircle, CalendarX2, AlertTriangle } from 'lucide-react';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { Btn } from '@/components/ui/Btn';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
+import { useDateFormat } from '@/lib/i18n/date';
 
 function AttendanceInner() {
+    const t = useTranslations('parentServizi');
     const { parentId, studentId, ready } = useParentIdentity();
+    const f = useDateFormat();
     const today = new Date().toISOString().slice(0, 10);
 
     const [data, setData] = useState(today);
@@ -33,10 +37,10 @@ function AttendanceInner() {
             if (res.ok) {
                 setIsSubmitted(true);
             } else {
-                setError(j.error || 'Impossibile comunicare l’assenza in questo momento.');
+                setError(j.error || t('attendanceErrGenerico'));
             }
         } catch {
-            setError('Errore di rete. Riprova.');
+            setError(t('attendanceErrRete'));
         } finally {
             setSubmitting(false);
         }
@@ -49,16 +53,16 @@ function AttendanceInner() {
                     <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-kidville-success-soft text-kidville-success">
                         <CheckCircle size={32} />
                     </div>
-                    <h2 className="mb-2 font-barlow text-2xl font-black uppercase text-kidville-green">Assenza comunicata</h2>
+                    <h2 className="mb-2 font-barlow text-2xl font-black uppercase text-kidville-green">{t('attendanceInviataTitolo')}</h2>
                     <p className="mb-6 font-maven text-kidville-muted">
-                        La scuola è stata notificata dell&apos;assenza del {new Date(data + 'T12:00:00').toLocaleDateString('it-IT')}. Grazie per la collaborazione.
+                        {t('attendanceInviataTesto', { data: f.dataBreve(data + 'T12:00:00') })}
                     </p>
                     <Btn
                         variant="ghost"
                         size="sm"
                         onClick={() => { setIsSubmitted(false); setReason(''); setData(today); }}
                     >
-                        Comunica un&apos;altra assenza
+                        {t('attendanceComunicaAltra')}
                     </Btn>
                 </div>
             </div>
@@ -68,9 +72,9 @@ function AttendanceInner() {
     return (
         <div className="px-4 pt-5 pb-24">
             <PageHeaderCard
-                eyebrow="La giornata"
-                title="Segnala assenza"
-                subtitle="Comunica un'assenza alla scuola"
+                eyebrow={t('attendanceEyebrow')}
+                title={t('attendanceTitolo')}
+                subtitle={t('attendanceSottotitolo')}
             />
 
             <form onSubmit={handleSubmit} className="mt-5 rounded-card bg-kidville-white p-6 shadow-sm">
@@ -79,10 +83,10 @@ function AttendanceInner() {
                     <span className="flex h-11 w-11 items-center justify-center rounded-[14px] bg-kidville-error-soft text-kidville-error">
                         <CalendarX2 size={22} />
                     </span>
-                    <p className="font-maven text-sm text-kidville-muted">Indica il giorno dell&apos;assenza e, se vuoi, il motivo.</p>
+                    <p className="font-maven text-sm text-kidville-muted">{t('attendanceIndicaGiorno')}</p>
                 </div>
 
-                <label className="mb-2 block font-maven font-medium text-kidville-green">Giorno</label>
+                <label className="mb-2 block font-maven font-medium text-kidville-green">{t('attendanceGiorno')}</label>
                 <input
                     type="date"
                     value={data}
@@ -91,12 +95,12 @@ function AttendanceInner() {
                     className="mb-4 w-full rounded-xl border border-kidville-line p-3 font-maven focus:border-kidville-green focus:outline-none focus:ring-1 focus:ring-kidville-green"
                 />
 
-                <label className="mb-2 block font-maven font-medium text-kidville-green">Motivo (facoltativo)</label>
+                <label className="mb-2 block font-maven font-medium text-kidville-green">{t('attendanceMotivo')}</label>
                 <textarea
                     value={reason}
                     onChange={(e) => setReason(e.target.value)}
                     className="h-28 w-full resize-none rounded-xl border border-kidville-line p-3 font-maven focus:border-kidville-green focus:outline-none focus:ring-1 focus:ring-kidville-green"
-                    placeholder="Es. febbre, visita medica, motivi familiari…"
+                    placeholder={t('attendanceMotivoPlaceholder')}
                 />
 
                 {error && (
@@ -112,16 +116,21 @@ function AttendanceInner() {
                     disabled={!ready || submitting}
                     className="mt-4 w-full"
                 >
-                    {submitting ? 'Invio…' : 'Comunica assenza'}
+                    {submitting ? t('attendanceInvio') : t('attendanceComunicaAssenza')}
                 </Btn>
             </form>
         </div>
     );
 }
 
+function AttendanceFallback() {
+    const t = useTranslations('parentServizi');
+    return <div className="px-4 pt-5 pb-24 font-maven text-kidville-muted">{t('caricamento')}</div>;
+}
+
 export default function ParentAttendancePage() {
     return (
-        <Suspense fallback={<div className="px-4 pt-5 pb-24 font-maven text-kidville-muted">Caricamento…</div>}>
+        <Suspense fallback={<AttendanceFallback />}>
             <AttendanceInner />
         </Suspense>
     );

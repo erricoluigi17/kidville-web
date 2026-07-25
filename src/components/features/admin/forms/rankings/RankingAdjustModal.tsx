@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { useSearchParams } from 'next/navigation'
+import { useTranslations } from 'next-intl'
 import { AnimatePresence, motion } from 'framer-motion'
 import { X, Plus, Minus, Loader2, ScrollText } from 'lucide-react'
 
@@ -21,10 +22,11 @@ export interface RankingRow {
   esito_ammissione?: string | null
 }
 
+// `v` è l'enum dell'esito (non tradotto), `labelKey` la chiave i18n mostrata.
 const ESITI = [
-  { v: 'ammesso', label: 'Ammesso', color: 'rgba(52,211,153,0.85)' },
-  { v: 'lista_attesa', label: "Lista d'attesa", color: 'rgba(230,114,10,0.85)' },
-  { v: 'non_ammesso', label: 'Non ammesso', color: 'rgba(244,114,128,0.85)' },
+  { v: 'ammesso', labelKey: 'esitoAmmesso', color: 'rgba(52,211,153,0.85)' },
+  { v: 'lista_attesa', labelKey: 'esitoListaAttesa', color: 'rgba(230,114,10,0.85)' },
+  { v: 'non_ammesso', labelKey: 'esitoNonAmmesso', color: 'rgba(244,114,128,0.85)' },
 ] as const
 
 interface Props {
@@ -36,6 +38,7 @@ interface Props {
 }
 
 export function RankingAdjustModal({ submission, label, onClose, onApplied }: Props) {
+  const t = useTranslations('adminModulistica')
   const userId = useSearchParams().get('userId') ?? ''
   const [delta, setDelta] = useState(0)
   const [reason, setReason] = useState('')
@@ -59,7 +62,7 @@ export function RankingAdjustModal({ submission, label, onClose, onApplied }: Pr
     if (res.ok) onApplied()
     else {
       const j = await res.json().catch(() => ({}))
-      setError(j.error || 'Impossibile aggiornare l’esito')
+      setError(j.error || t('radjErrEsito'))
     }
   }
 
@@ -77,11 +80,11 @@ export function RankingAdjustModal({ submission, label, onClose, onApplied }: Pr
   const handleSave = async () => {
     if (!submission) return
     if (delta === 0) {
-      setError('Inserisci un valore diverso da zero')
+      setError(t('radjErrDelta'))
       return
     }
     if (!reason.trim()) {
-      setError('La motivazione è obbligatoria')
+      setError(t('radjErrMotivazione'))
       return
     }
 
@@ -109,7 +112,7 @@ export function RankingAdjustModal({ submission, label, onClose, onApplied }: Pr
 
     if (!res.ok) {
       const j = await res.json().catch(() => ({}))
-      setError(j.error || 'Aggiornamento non riuscito')
+      setError(j.error || t('radjErrAggiornamento'))
       return
     }
 
@@ -158,7 +161,7 @@ export function RankingAdjustModal({ submission, label, onClose, onApplied }: Pr
                 style={{ borderBottom: '1px solid var(--color-kidville-line)' }}
               >
                 <div>
-                  <h2 className="text-kidville-green font-semibold text-base">Regola punteggio</h2>
+                  <h2 className="text-kidville-green font-semibold text-base">{t('radjRegolaPunteggio')}</h2>
                   <p className="text-kidville-muted text-sm mt-0.5">{label}</p>
                 </div>
                 <button
@@ -171,11 +174,11 @@ export function RankingAdjustModal({ submission, label, onClose, onApplied }: Pr
 
               {/* Score breakdown */}
               <div className="px-6 py-4 flex items-center justify-between text-sm">
-                <span className="text-kidville-muted">Punteggio base</span>
+                <span className="text-kidville-muted">{t('radjPunteggioBase')}</span>
                 <span className="text-kidville-ink tabular-nums">{baseScore}</span>
               </div>
               <div className="px-6 -mt-2 pb-2 flex items-center justify-between text-sm">
-                <span className="text-kidville-muted">Modifiche manuali</span>
+                <span className="text-kidville-muted">{t('radjModificheManuali')}</span>
                 <span
                   className={`tabular-nums ${manualTotal > 0 ? 'text-kidville-success' : manualTotal < 0 ? 'text-kidville-error' : 'text-kidville-muted'}`}
                 >
@@ -186,7 +189,7 @@ export function RankingAdjustModal({ submission, label, onClose, onApplied }: Pr
                 className="px-6 py-3 flex items-center justify-between"
                 style={{ borderTop: '1px solid var(--color-kidville-white)', borderBottom: '1px solid var(--color-kidville-white)' }}
               >
-                <span className="text-kidville-ink text-sm font-medium">Totale attuale</span>
+                <span className="text-kidville-ink text-sm font-medium">{t('radjTotaleAttuale')}</span>
                 <span className="text-kidville-success text-lg font-bold tabular-nums">
                   {submission.score}
                 </span>
@@ -195,7 +198,7 @@ export function RankingAdjustModal({ submission, label, onClose, onApplied }: Pr
               {/* Esito ammissione (override DL-025) */}
               <div className="px-6 py-3" style={{ borderBottom: '1px solid var(--color-kidville-white)' }}>
                 <label className="block text-[11px] font-bold text-kidville-muted uppercase tracking-widest mb-2">
-                  Esito ammissione
+                  {t('radjEsitoAmmissione')}
                 </label>
                 <div className="flex gap-2">
                   {ESITI.map(e => {
@@ -212,7 +215,7 @@ export function RankingAdjustModal({ submission, label, onClose, onApplied }: Pr
                           border: `1px solid ${active ? e.color : 'var(--color-kidville-line)'}`,
                         }}
                       >
-                        {e.label}
+                        {t(e.labelKey)}
                       </button>
                     )
                   })}
@@ -239,7 +242,7 @@ export function RankingAdjustModal({ submission, label, onClose, onApplied }: Pr
               <div className="px-6 py-4 space-y-4" style={{ borderTop: '1px solid var(--color-kidville-line)' }}>
                 <div>
                   <label className="block text-[11px] font-bold text-kidville-muted uppercase tracking-widest mb-2">
-                    Bonus / Malus
+                    {t('radjBonusMalus')}
                   </label>
                   <div className="flex items-center gap-2">
                     <button
@@ -268,7 +271,7 @@ export function RankingAdjustModal({ submission, label, onClose, onApplied }: Pr
 
                 <div>
                   <label className="block text-[11px] font-bold text-kidville-muted uppercase tracking-widest mb-2">
-                    Motivazione
+                    {t('radjMotivazione')}
                   </label>
                   <div className="relative">
                     <ScrollText className="absolute left-3 top-3 w-4 h-4 text-kidville-muted pointer-events-none" />
@@ -276,7 +279,7 @@ export function RankingAdjustModal({ submission, label, onClose, onApplied }: Pr
                       value={reason}
                       onChange={e => setReason(e.target.value)}
                       rows={2}
-                      placeholder="Es. Fratello già frequentante"
+                      placeholder={t('radjMotivazionePlaceholder')}
                       className="w-full pl-9 pr-3 py-2.5 rounded-lg text-kidville-ink placeholder-kidville-muted text-sm resize-none focus:outline-none"
                       style={{ background: 'var(--color-kidville-white)', border: '1px solid var(--color-kidville-line)' }}
                     />
@@ -296,7 +299,7 @@ export function RankingAdjustModal({ submission, label, onClose, onApplied }: Pr
                   className="flex-1 px-4 py-2.5 rounded-xl text-kidville-muted text-sm font-medium transition-all"
                   style={{ background: 'var(--color-kidville-white)', border: '1px solid var(--color-kidville-line)' }}
                 >
-                  Annulla
+                  {t('annulla')}
                 </button>
                 <button
                   onClick={handleSave}
@@ -305,7 +308,7 @@ export function RankingAdjustModal({ submission, label, onClose, onApplied }: Pr
                   style={{ background: 'rgba(0,106,95,0.8)', border: '1px solid rgba(0,106,95,0.25)' }}
                 >
                   {saving && <Loader2 className="w-4 h-4 animate-spin" />}
-                  Applica
+                  {t('radjApplica')}
                 </button>
               </div>
             </div>

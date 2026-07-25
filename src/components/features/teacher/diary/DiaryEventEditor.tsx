@@ -1,14 +1,15 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Plus, Minus, Moon, Sun } from 'lucide-react';
 import { DiaryEventType } from '@/lib/offline/db';
 import { EventTypeButton } from '@/components/features/teacher/diary/EventTypeButton';
-import { EVENT_CONFIG, BATHROOM_TYPES } from '@/components/features/teacher/diary/eventConfig';
+import { EVENT_CONFIG, BATHROOM_TYPES, useEventLabel } from '@/components/features/teacher/diary/eventConfig';
 import { MealDetailInline } from '@/components/features/teacher/diary/MealDetailInline';
 import { ActivityDetailInline, ActivityItem } from '@/components/features/teacher/diary/ActivityDetailInline';
-import { UMORE_VALUES, UMORE_CONFIG, umoreFromDettagli, umoreAttivo } from '@/lib/diary/umore';
+import { UMORE_VALUES, UMORE_CONFIG, useUmoreLabel, umoreFromDettagli, umoreAttivo } from '@/lib/diary/umore';
 
 // =============================================================================
 // Compilazione del diario 0-6 per una sezione: stato + handler (useDiaryDay) e
@@ -97,6 +98,7 @@ const itemVariants = {
 // ─── Hook: stato e handler della giornata ─────────────────────────────────────
 
 export function useDiaryDay(userId: string | null, sezione: string | null, opts?: { onSaved?: () => void }) {
+    const t = useTranslations('teacherDiario');
     const [students, setStudents] = useState<DiaryStudent[]>([]);
     const [selectedEvent, setSelectedEvent] = useState<DiaryEventType | null>(null);
     const [studentStates, setStudentStates] = useState<Record<string, Record<string, unknown>>>({});
@@ -353,7 +355,7 @@ export function useDiaryDay(userId: string | null, sezione: string | null, opts?
             opts?.onSaved?.();
         } catch (err) {
             console.error('Errore salvataggio:', err);
-            alert('Errore nel salvataggio. Controlla la console.');
+            alert(t('alertErroreSalvataggio'));
         } finally {
             setIsSaving(false);
         }
@@ -392,6 +394,9 @@ export type DiaryDay = ReturnType<typeof useDiaryDay>;
 // ─── UI di compilazione (griglia eventi + accordion + toast) ─────────────────
 
 export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: string | null }) {
+    const t = useTranslations('teacherDiario');
+    const eventLabel = useEventLabel();
+    const umoreLabel = useUmoreLabel();
     const {
         students, eventTypes, selectedEvent, setSelectedEvent, studentStates, savedStudentIds,
         activities, setActivities, notaLibera, setNotaLibera, notaBambino, updateNotaBambino,
@@ -415,7 +420,7 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
         <>
             {/* ── Riga eventi scorrevole (6-7 routine) ── */}
             <div className="mt-4 w-full rounded-3xl border border-kidville-line bg-white p-4 shadow-sm">
-                <p className="font-barlow font-bold text-kidville-green uppercase text-xs tracking-wide mb-3">Cosa vuoi registrare?</p>
+                <p className="font-barlow font-bold text-kidville-green uppercase text-xs tracking-wide mb-3">{t('cosaRegistrare')}</p>
                 <div className="-mx-4 px-4 pt-1 pb-1.5 flex gap-2 overflow-x-auto snap-x scroll-smooth scroll-pl-4 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
                     {eventTypes.map(type => {
                         const selected = selectedEvent === type;
@@ -454,8 +459,8 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
                                         {cfg.emoji}
                                     </div>
                                     <div>
-                                        <h2 className="font-barlow font-black text-lg text-kidville-green uppercase tracking-wide">{cfg.label}</h2>
-                                        <p className="font-maven text-[11px] text-kidville-muted">{students.length} bambini • {todayISO()}</p>
+                                        <h2 className="font-barlow font-black text-lg text-kidville-green uppercase tracking-wide">{eventLabel(selectedEvent ?? '')}</h2>
+                                        <p className="font-maven text-[11px] text-kidville-muted">{t('numBambini', { count: students.length })} • {todayISO()}</p>
                                     </div>
                                 </div>
                                 <button
@@ -497,7 +502,7 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
                                         onClick={bulkNannaOra}
                                         className="w-full mb-1 py-2.5 rounded-2xl bg-kidville-info-soft border border-kidville-info/30 text-kidville-info font-maven font-semibold text-sm flex items-center justify-center gap-2 hover:bg-kidville-info-soft transition-colors"
                                     >
-                                        <Moon size={14} strokeWidth={1.5} /> Tutti a nanna ora ({now()})
+                                        <Moon size={14} strokeWidth={1.5} /> {t('tuttiANannaOra', { ora: now() })}
                                     </button>
                                 )}
 
@@ -529,7 +534,7 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
                                                     ? <Moon size={12} className="text-kidville-info" strokeWidth={1.5} />
                                                     : <Sun size={12} className="text-kidville-yellow-dark" strokeWidth={1.5} />}
                                                 <p className="font-maven text-xs text-kidville-muted">
-                                                    {isInizio ? 'Si addormenta (inizio nanna)' : 'Si sveglia (fine nanna)'}
+                                                    {isInizio ? t('siAddormenta') : t('siSveglia')}
                                                 </p>
                                             </div>
                                             <input
@@ -677,11 +682,11 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
                                                                     : 'border-kidville-line bg-white hover:bg-kidville-cream'
                                                             }`}
                                                             aria-pressed={active}
-                                                            aria-label={`${student.firstName}: ${c.label}`}
+                                                            aria-label={`${student.firstName}: ${umoreLabel(v)}`}
                                                         >
                                                             <span className="text-xl leading-none">{c.emoji}</span>
                                                             <span className={`font-maven text-[10px] ${active ? 'font-bold text-kidville-yellow-dark' : 'text-kidville-muted'}`}>
-                                                                {c.label}
+                                                                {umoreLabel(v)}
                                                             </span>
                                                         </button>
                                                     );
@@ -695,14 +700,14 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
                             {/* ── Nota di SEZIONE (uguale per tutti i genitori) ── */}
                             <div className="px-4 pt-1 pb-2">
                                 <p className="font-barlow font-bold text-kidville-green uppercase text-[11px] tracking-wide mb-1.5">
-                                    Nota per tutta la sezione
+                                    {t('notaSezione')}
                                 </p>
                                 <textarea
                                     value={notaLibera}
                                     onChange={e => setNotaLibera(e.target.value)}
                                     rows={2}
-                                    aria-label="Nota per tutta la sezione, visibile a tutti i genitori"
-                                    placeholder="Nota per tutti i genitori della sezione (opzionale)…"
+                                    aria-label={t('notaSezioneAria')}
+                                    placeholder={t('notaSezionePlaceholder')}
                                     className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:ring-2 focus:ring-kidville-green/30 resize-none"
                                 />
                             </div>
@@ -711,7 +716,7 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
                             {students.length > 0 && (
                                 <div className="px-4 pt-1 pb-2">
                                     <p className="font-barlow font-bold text-kidville-green uppercase text-[11px] tracking-wide mb-1.5">
-                                        Nota privata per singolo bambino
+                                        {t('notaPrivataTitolo')}
                                     </p>
                                     <div className="space-y-2">
                                         {students.map(student => (
@@ -723,8 +728,8 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
                                                     type="text"
                                                     value={notaBambino[student.id] ?? ''}
                                                     onChange={e => updateNotaBambino(student.id, e.target.value)}
-                                                    placeholder={`Nota privata per ${student.firstName} (opzionale)…`}
-                                                    aria-label={`Nota privata per ${student.firstName} ${student.lastName}`}
+                                                    placeholder={t('notaPrivataPlaceholder', { nome: student.firstName })}
+                                                    aria-label={t('notaPrivataAria', { nome: `${student.firstName} ${student.lastName}` })}
                                                     className="flex-1 min-w-0 border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:ring-2 focus:ring-kidville-green/30"
                                                 />
                                             </div>
@@ -741,8 +746,8 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
                                     className="w-full py-3.5 rounded-2xl bg-kidville-green text-kidville-yellow font-barlow font-black text-lg uppercase tracking-wide hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-kidville-green/20"
                                 >
                                     {isSaving
-                                        ? <><div className="w-5 h-5 border-2 border-kidville-yellow/40 border-t-kidville-yellow rounded-full animate-spin" /> Salvataggio...</>
-                                        : <><span>{cfg.emoji}</span> Salva {cfg.label} per tutti</>
+                                        ? <><div className="w-5 h-5 border-2 border-kidville-yellow/40 border-t-kidville-yellow rounded-full animate-spin" /> {t('salvataggio')}</>
+                                        : <><span>{cfg.emoji}</span> {t('salvaPerTutti', { evento: eventLabel(selectedEvent ?? '') })}</>
                                     }
                                 </button>
                             </div>
@@ -760,7 +765,7 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
                     className="mt-6 text-center py-12"
                 >
                     <p className="font-maven text-kidville-muted text-sm">
-                        👆 Seleziona un evento per iniziare a compilare il diario
+                        {t('selezionaEvento')}
                     </p>
                 </motion.div>
             )}
@@ -774,7 +779,7 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
                         exit={{ opacity: 0, y: -10, scale: 0.95 }}
                         className="fixed top-6 left-1/2 -translate-x-1/2 z-[60] bg-kidville-green text-white font-maven font-semibold px-6 py-3 rounded-2xl shadow-xl flex items-center gap-2"
                     >
-                        ✅ Salvato con successo!
+                        {t('salvatoConSuccesso')}
                     </motion.div>
                 )}
             </AnimatePresence>

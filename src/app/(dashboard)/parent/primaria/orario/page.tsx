@@ -1,6 +1,7 @@
 'use client';
 
 import { Suspense, useEffect, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 
@@ -10,10 +11,10 @@ interface OrarioVoce {
   materie?: { nome: string | null; codice: string | null } | null;
 }
 
-const GIORNI = ['', 'Lunedì', 'Martedì', 'Mercoledì', 'Giovedì', 'Venerdì', 'Sabato'];
-
 function OrarioGenitore() {
   const { parentId, studentId, ready } = useParentIdentity();
+  const t = useTranslations('parentPrimaria');
+  const GIORNI = ['', t('giorno_1'), t('giorno_2'), t('giorno_3'), t('giorno_4'), t('giorno_5'), t('giorno_6')];
   const [campanelle, setCampanelle] = useState<Campanella[]>([]);
   const [orario, setOrario] = useState<OrarioVoce[]>([]);
   const [loading, setLoading] = useState(true);
@@ -34,19 +35,19 @@ function OrarioGenitore() {
 
   return (
     <div className="px-4 pt-5 pb-24">
-      <PageHeaderCard eyebrow="Didattica · Primaria" title="Orario settimanale" className="mb-4" />
+      <PageHeaderCard eyebrow={t('eyebrow')} title={t('orarioTitolo')} className="mb-4" />
 
       {loading ? (
-        <p className="font-maven text-sm text-kidville-muted">Caricamento…</p>
+        <p className="font-maven text-sm text-kidville-muted">{t('caricamento')}</p>
       ) : campanelle.length === 0 ? (
-        <p className="font-maven text-sm text-kidville-muted">Orario non ancora pubblicato.</p>
+        <p className="font-maven text-sm text-kidville-muted">{t('orarioVuoto')}</p>
       ) : (
         <div className="space-y-4">
           {giorniAttivi.map((g) => {
             const slot = campanelle.filter((c) => c.giorno_settimana === g).sort((a, b) => a.ordine - b.ordine);
             return (
               <div key={g} className="rounded-card border border-kidville-line bg-white p-4 shadow-sm">
-                <p className="font-barlow text-base font-extrabold uppercase tracking-wide text-kidville-green mb-2">{GIORNI[g] ?? `Giorno ${g}`}</p>
+                <p className="font-barlow text-base font-extrabold uppercase tracking-wide text-kidville-green mb-2">{GIORNI[g] ?? t('orarioGiornoFallback', { g })}</p>
                 <ul className="divide-y divide-kidville-line">
                   {slot.map((c) => {
                     const v = voce(g, c.id);
@@ -72,8 +73,9 @@ function OrarioGenitore() {
 }
 
 export default function OrarioGenitorePage() {
+  const t = useTranslations('parentPrimaria');
   return (
-    <Suspense fallback={<div className="px-4 pt-5 pb-24 font-maven text-kidville-muted">Caricamento…</div>}>
+    <Suspense fallback={<div className="px-4 pt-5 pb-24 font-maven text-kidville-muted">{t('caricamento')}</div>}>
       <OrarioGenitore />
     </Suspense>
   );

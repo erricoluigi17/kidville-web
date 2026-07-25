@@ -26,6 +26,7 @@
 import { useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { Home, Bell, Euro, UtensilsCrossed, LayoutGrid } from 'lucide-react';
 import { useAdminIdentity } from '@/lib/context/admin-identity';
 import { activeHref, visibleItem, NAV_GROUPS, type NavItem } from './admin-nav-config';
@@ -35,7 +36,8 @@ const FLAT: NavItem[] = NAV_GROUPS.flatMap((g) => g.items);
 
 interface Tab {
   href: string;
-  label: string;
+  /** chiave i18n della label (namespace adminNav). */
+  labelKey: string;
   icon: typeof Home;
   /** attivo dato l'href risolto da activeHref (match più lungo). */
   isActive: (current: string) => boolean;
@@ -44,12 +46,12 @@ interface Tab {
 // 4 tab reali del cockpit. Label proprie della nav mobile (Home invece di
 // "Dashboard"); href e gating (roles) restano quelli della config condivisa.
 const TABS: Tab[] = [
-  { href: '/admin', label: 'Home', icon: Home, isActive: (c) => c === '/admin' },
-  { href: '/admin/avvisi', label: 'Avvisi', icon: Bell, isActive: (c) => c === '/admin/avvisi' },
-  { href: '/admin/pagamenti', label: 'Contabilità', icon: Euro, isActive: (c) => c === '/admin/pagamenti' },
+  { href: '/admin', labelKey: 'tabHome', icon: Home, isActive: (c) => c === '/admin' },
+  { href: '/admin/avvisi', labelKey: 'tabAvvisi', icon: Bell, isActive: (c) => c === '/admin/avvisi' },
+  { href: '/admin/pagamenti', labelKey: 'tabContabilita', icon: Euro, isActive: (c) => c === '/admin/pagamenti' },
   {
     href: '/admin/mensa',
-    label: 'Mensa',
+    labelKey: 'tabMensa',
     icon: UtensilsCrossed,
     isActive: (c) => c === '/admin/mensa' || c === '/admin/mensa/cucina',
   },
@@ -61,6 +63,7 @@ const PILL_BASE =
 
 export function AdminBottomNav() {
   const pathname = usePathname();
+  const t = useTranslations('adminNav');
   const { ruolo, withUser } = useAdminIdentity();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuBtnRef = useRef<HTMLButtonElement>(null);
@@ -81,7 +84,7 @@ export function AdminBottomNav() {
         style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}
       >
         <div className="kv-admin-bottomnav bg-kidville-white/95 backdrop-blur-2xl rounded-[26px] border border-kidville-line shadow-[0_-2px_24px_rgba(0,106,95,0.10),0_8px_32px_rgba(0,0,0,0.08)]">
-          <nav aria-label="Navigazione cockpit" className="flex items-stretch justify-around px-1 h-[60px]">
+          <nav aria-label={t('navAria')} className="flex items-stretch justify-around px-1 h-[60px]">
             {TABS.map((tab) => {
               // Gating per ruolo dalla config (nessuno dei 4 tab ha `roles` oggi:
               // no-op, ma resta la sorgente di verità unica).
@@ -109,7 +112,7 @@ export function AdminBottomNav() {
                       active ? 'text-kidville-green' : 'text-kidville-sub'
                     }`}
                   >
-                    {tab.label}
+                    {t(tab.labelKey)}
                   </span>
                 </Link>
               );
@@ -126,7 +129,7 @@ export function AdminBottomNav() {
               // Contrasto (`[aria-current="true"]` → pill nero + icona gialla),
               // dato che `aria-expanded="true"` copre solo lo sheet aperto.
               aria-current={menuActive && !menuOpen ? 'true' : undefined}
-              aria-label="Menu · tutte le sezioni"
+              aria-label={t('menuAria')}
               className="flex flex-col items-center justify-center gap-[3px] flex-1 min-h-[44px] py-1"
             >
               <span className={`${PILL_BASE} ${menuActive ? 'bg-kidville-green' : ''}`}>
@@ -141,7 +144,7 @@ export function AdminBottomNav() {
                   menuActive ? 'text-kidville-green' : 'text-kidville-sub'
                 }`}
               >
-                Menu
+                {t('tabMenu')}
               </span>
             </button>
           </nav>

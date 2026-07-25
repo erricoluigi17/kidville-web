@@ -1,6 +1,8 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useTranslations } from 'next-intl';
+import { useDateFormat } from '@/lib/i18n/date';
 import { Search, Filter, AlertTriangle, CheckCircle2, Clock, RefreshCw, Plus, Pencil, Layers, Eye, FileText, Download, X } from 'lucide-react';
 import { RegistraIncassoModal, PagamentoRow } from './RegistraIncassoModal';
 import { FatturaButton } from './FatturaButton';
@@ -13,7 +15,7 @@ import { ModificaPagamentoModal } from './ModificaPagamentoModal';
 import { RateizzaModal } from './RateizzaModal';
 import { STATI_PAGAMENTO as STATI, calcolaTotaliPagamenti } from './stati';
 import { AgendaScadenze } from './AgendaScadenze';
-import { AGING_LABEL, bucketScadenze, isMoroso, residuoEffettivo, type AgingBucketId } from '@/lib/pagamenti/aging';
+import { useAgingLabel, bucketScadenze, isMoroso, residuoEffettivo, type AgingBucketId } from '@/lib/pagamenti/aging';
 import { Badge } from '@/components/ui/Badge';
 import { StatCard, TABLE_WRAP, TABLE, TH, TD, TROW } from '@/components/ui/cockpit';
 import { cx } from '@/lib/ui/cx';
@@ -49,19 +51,29 @@ interface Alunno {
     stato?: string; importo_retta_mensile?: number | null;
 }
 
-const MESI_IT = ['', 'Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic'];
+// Mese abbreviato localizzato con iniziale maiuscola. In IT riproduce ESATTAMENTE
+// il vecchio array hardcoded (Gen, Feb, … Dic); in EN diventa Jan, Feb, … Dec.
+function meseCorto(mese1a12: number, locale: string): string {
+    const s = new Intl.DateTimeFormat(locale, { month: 'short', timeZone: 'UTC' }).format(
+        new Date(Date.UTC(2020, mese1a12 - 1, 15)),
+    );
+    return s.charAt(0).toUpperCase() + s.slice(1);
+}
 
 // I 10 periodi (primo del mese) dell'anno scolastico set(annoInizio) -> giu(annoInizio+1)
-function periodiAnno(annoInizio: number): { periodo: string; label: string }[] {
+function periodiAnno(annoInizio: number, locale: string): { periodo: string; label: string }[] {
     const out: { periodo: string; label: string }[] = [];
-    for (let m = 9; m <= 12; m++) out.push({ periodo: `${annoInizio}-${String(m).padStart(2, '0')}-01`, label: `${MESI_IT[m]} ${annoInizio}` });
-    for (let m = 1; m <= 6; m++) out.push({ periodo: `${annoInizio + 1}-${String(m).padStart(2, '0')}-01`, label: `${MESI_IT[m]} ${annoInizio + 1}` });
+    for (let m = 9; m <= 12; m++) out.push({ periodo: `${annoInizio}-${String(m).padStart(2, '0')}-01`, label: `${meseCorto(m, locale)} ${annoInizio}` });
+    for (let m = 1; m <= 6; m++) out.push({ periodo: `${annoInizio + 1}-${String(m).padStart(2, '0')}-01`, label: `${meseCorto(m, locale)} ${annoInizio + 1}` });
     return out;
 }
 
 interface Props { userId: string; scuolaId: string }
 
 export function PaymentsDashboard({ userId, scuolaId }: Props) {
+    const t = useTranslations('adminContabilita');
+    const f = useDateFormat();
+    const agingLabel = useAgingLabel();
     const [pagamenti, setPagamenti] = useState<Pagamento[]>([]);
     const [alunni, setAlunni] = useState<Alunno[]>([]);
     const [categorie, setCategorie] = useState<Categoria[]>([]);
@@ -85,10 +97,10 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
     const oggiStr = now.toISOString().slice(0, 10);
     const annoScolasticoCorrente = now.getMonth() + 1 >= 9 ? now.getFullYear() : now.getFullYear() - 1;
     const [annoScolastico, setAnnoScolastico] = useState<number>(annoScolasticoCorrente);
-    const periodi = useMemo(() => periodiAnno(annoScolastico), [annoScolastico]);
+    const periodi = useMemo(() => periodiAnno(annoScolastico, f.locale), [annoScolastico, f.locale]);
     const [mese, setMese] = useState<string>(() => {
         const cur = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
-        return periodiAnno(annoScolasticoCorrente).some((p) => p.periodo === cur) ? cur : `${annoScolasticoCorrente}-09-01`;
+        return periodiAnno(annoScolasticoCorrente, f.locale).some((p) => p.periodo === cur) ? cur : `${annoScolasticoCorrente}-09-01`;
     });
 
     // NB: niente setLoading(true) sincrono qui dentro (react-hooks/set-state-in-effect):
@@ -100,13 +112,13 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                 fetch(`/api/admin/students?stato=iscritto&scuola_id=${scuolaId}&limit=1000`, { headers: { 'x-user-id': userId } }).then((r) => r.json()).catch(() => null),
             ]);
             if (pagRes?.success) { setPagamenti(pagRes.data); setError(null); }
-            else setError((pagRes && pagRes.error) || 'Impossibile caricare i pagamenti. Riprova.');
+            else setError((pagRes && pagRes.error) || t('dashErrCaricamento'));
             const lista: Alunno[] = Array.isArray(alRes) ? alRes : (alRes?.data || []);
             setAlunni(lista.filter((a) => a.classe_sezione != null || a.section_id != null));
         } finally {
             setLoading(false);
         }
-    }, [userId, scuolaId]);
+    }, [userId, scuolaId, t]);
 
     useEffect(() => { load(); }, [load]);
     useEffect(() => {
@@ -225,7 +237,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                     <span className="flex-1 font-maven text-sm font-bold">{error}</span>
                     <button onClick={() => { setLoading(true); load(); }}
                         className="rounded-pill border border-kidville-error/40 bg-kidville-white px-3 py-1 font-maven text-xs font-bold text-kidville-error transition-colors hover:bg-kidville-error-soft">
-                        Riprova
+                        {t('dashRiprova')}
                     </button>
                 </div>
             )}
@@ -233,9 +245,9 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
             {/* Gating Aruba/SDI (M2.4): segnale visibile quando la fatturazione non è configurata */}
             {arubaGated && (
                 <div className="mb-4 flex items-center gap-2 flex-wrap">
-                    <Badge tone="warn">Integrazione non configurata</Badge>
+                    <Badge tone="warn">{t('dashIntegrNonConfig')}</Badge>
                     <span className="font-maven text-xs text-kidville-muted">
-                        Fatturazione elettronica Aruba/SDI non attiva: le fatture non vengono trasmesse.
+                        {t('dashArubaNonAttiva')}
                     </span>
                 </div>
             )}
@@ -245,18 +257,18 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                 <div className="mb-4 flex items-center gap-2 rounded-xl border-2 border-kidville-error-soft bg-kidville-error-soft px-4 py-3 text-kidville-error">
                     <AlertTriangle size={18} />
                     <span className="font-maven text-sm font-bold">
-                        {fattureScartate} fattura{fattureScartate > 1 ? 'e' : ''} scartata{fattureScartate > 1 ? 'e' : ''} dallo SDI — verifica i dati dell’intestatario e premi “Riprova fattura”.
+                        {fattureScartate} {fattureScartate > 1 ? t('dashFattureScartatePlur') : t('dashFatturaScartataSing')}
                     </span>
                 </div>
             )}
 
             {/* KPI (StatCard cockpit): 1 colonna sotto sm, 2 da sm, 4 da lg */}
             <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <StatCard icon={CheckCircle2} label="Incassato" value={loading ? '—' : `€ ${totals.incassato.toFixed(2)}`} tone="success" />
-                <StatCard icon={Clock} label="Da incassare" value={loading ? '—' : `€ ${totals.daIncassare.toFixed(2)}`} tone="warn" />
-                <StatCard icon={AlertTriangle} label="Scaduto (morosità)" value={loading ? '—' : `€ ${totals.scaduto.toFixed(2)}`} tone="error" />
-                <StatCard icon={FileText} label="Da fatturare" value={loading ? '—' : `€ ${totals.daFatturare.toFixed(2)}`}
-                    sub={!loading && totals.nDaFatturare > 0 ? `${totals.nDaFatturare} pagament${totals.nDaFatturare === 1 ? 'o' : 'i'}` : undefined} tone="info" />
+                <StatCard icon={CheckCircle2} label={t('dashIncassato')} value={loading ? '—' : `€ ${totals.incassato.toFixed(2)}`} tone="success" />
+                <StatCard icon={Clock} label={t('dashDaIncassare')} value={loading ? '—' : `€ ${totals.daIncassare.toFixed(2)}`} tone="warn" />
+                <StatCard icon={AlertTriangle} label={t('dashScadutoMorosita')} value={loading ? '—' : `€ ${totals.scaduto.toFixed(2)}`} tone="error" />
+                <StatCard icon={FileText} label={t('dashDaFatturare')} value={loading ? '—' : `€ ${totals.daFatturare.toFixed(2)}`}
+                    sub={!loading && totals.nDaFatturare > 0 ? `${totals.nDaFatturare} ${totals.nDaFatturare === 1 ? t('dashPagamentoSing') : t('dashPagamentiPlur')}` : undefined} tone="info" />
             </div>
 
             {/* Agenda scadenze / aging: i bucket filtrano la lista sottostante */}
@@ -268,7 +280,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                 <div className="relative flex-1 min-w-[200px]">
                     <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-kidville-muted" />
                     <input
-                        value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cerca alunno o sezione…"
+                        value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('dashCercaAlunno')}
                         className="w-full rounded-input border-[1.5px] border-kidville-line bg-kidville-white pl-9 pr-3 py-2 font-maven text-sm text-kidville-ink outline-none transition-colors focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15"
                     />
                 </div>
@@ -283,7 +295,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                         <select value={annoScolastico} onChange={(e) => { const y = Number(e.target.value); setAnnoScolastico(y); setMese(`${y}-09-01`); }}
                             className={FILTER_SELECT}>
                             {[annoScolasticoCorrente - 1, annoScolasticoCorrente, annoScolasticoCorrente + 1].map((y) => (
-                                <option key={y} value={y}>A.S. {y}/{y + 1}</option>
+                                <option key={y} value={y}>{t('dashAsPrefix')} {y}/{y + 1}</option>
                             ))}
                         </select>
                         <select value={periodi.some((p) => p.periodo === mese) ? mese : periodi[0].periodo}
@@ -296,12 +308,12 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                 {/* Filtro Morosi: disponibile in tutte le categorie */}
                 <button onClick={() => setOnlyMorosi((v) => !v)}
                     className={cx('inline-flex items-center gap-1 rounded-pill px-3 py-2 font-maven text-sm font-bold transition-colors', onlyMorosi ? 'bg-kidville-error-soft text-kidville-error' : 'border-[1.5px] border-kidville-line bg-kidville-white text-kidville-muted hover:border-kidville-green hover:text-kidville-green')}>
-                    <Filter size={14} /> Morosi
+                    <Filter size={14} /> {t('dashMorosi')}
                 </button>
-                <button onClick={() => { setLoading(true); load(); }} aria-label="Aggiorna" title="Aggiorna" className="rounded-pill border-[1.5px] border-kidville-line bg-kidville-white px-3 py-2 text-kidville-muted transition-colors hover:border-kidville-green hover:text-kidville-green">
+                <button onClick={() => { setLoading(true); load(); }} aria-label={t('dashAggiorna')} title={t('dashAggiorna')} className="rounded-pill border-[1.5px] border-kidville-line bg-kidville-white px-3 py-2 text-kidville-muted transition-colors hover:border-kidville-green hover:text-kidville-green">
                     <RefreshCw size={14} />
                 </button>
-                <a href={`/api/pagamenti/export?tipo=scadenzario&userId=${userId}&scuola_id=${scuolaId}`} title="Esporta XLSX" aria-label="Esporta XLSX"
+                <a href={`/api/pagamenti/export?tipo=scadenzario&userId=${userId}&scuola_id=${scuolaId}`} title={t('dashEsportaXlsx')} aria-label={t('dashEsportaXlsx')}
                     className="rounded-pill border-[1.5px] border-kidville-line bg-kidville-white px-3 py-2 text-kidville-muted transition-colors hover:border-kidville-green hover:text-kidville-green">
                     <Download size={14} />
                 </a>
@@ -312,42 +324,42 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
             {isRettaView && !loading && mancantiRette > 0 && (
                 <div className="flex items-center justify-between gap-2 bg-kidville-warn-soft border border-kidville-warn/30 rounded-card px-3 py-2 mb-3">
                     <span className="font-maven text-xs text-kidville-warn">
-                        {mancantiRette} alunni senza retta generata per {periodi.find((p) => p.periodo === mese)?.label}.
+                        {mancantiRette} {t('dashAlunniSenzaRettaMid')} {periodi.find((p) => p.periodo === mese)?.label}.
                     </span>
                     <button onClick={generaMese} disabled={generando} className={BTN_PRIMARY_SM}>
-                        {generando ? 'Genero…' : 'Genera mancanti'}
+                        {generando ? t('dashGenerando') : t('dashGeneraMancanti')}
                     </button>
                 </div>
             )}
 
             {/* Corpo */}
             {loading ? (
-                <p className="font-maven text-sm text-kidville-muted py-8 text-center">Caricamento…</p>
+                <p className="font-maven text-sm text-kidville-muted py-8 text-center">{t('dashCaricamento')}</p>
             ) : agendaFiltro ? (
                 /* ---- Vista AGENDA: pagamenti aperti del bucket, per scadenza ---- */
                 <>
                 <div className="mb-2 flex items-center justify-between gap-2">
                     <p className="font-maven text-xs text-kidville-muted">
-                        <span className="font-bold text-kidville-green">{AGING_LABEL[agendaFiltro]}</span> · {agendaItems.length} pagament{agendaItems.length === 1 ? 'o' : 'i'} aperti
+                        <span className="font-bold text-kidville-green">{agingLabel(agendaFiltro)}</span> · {agendaItems.length} {agendaItems.length === 1 ? t('dashPagamentoApertiSing') : t('dashPagamentiApertiPlur')}
                     </p>
                     <button onClick={() => setAgendaFiltro(null)}
                         className="inline-flex items-center gap-1 rounded-pill border-[1.5px] border-kidville-line bg-kidville-white px-2.5 py-1 font-maven text-xs font-bold text-kidville-muted transition-colors hover:border-kidville-green hover:text-kidville-green">
-                        <X size={12} /> Chiudi
+                        <X size={12} /> {t('dashChiudi')}
                     </button>
                 </div>
                 {agendaItems.length === 0 ? (
-                    <EmptyRiga emoji="🗓️" testo="Nessun pagamento in questo intervallo." />
+                    <EmptyRiga emoji="🗓️" testo={t('dashVuotoIntervallo')} />
                 ) : (
                     <>
                     <div className={cx('hidden lg:block', TABLE_WRAP)}>
                         <table className={TABLE}>
                             <thead>
                                 <tr>
-                                    <th className={TH}>Alunno</th>
-                                    <th className={TH}>Descrizione</th>
-                                    <th className={TH}>Scadenza</th>
-                                    <th className={cx(TH, 'text-right')}>Residuo</th>
-                                    <th className={TH}>Stato</th>
+                                    <th className={TH}>{t('dashThAlunno')}</th>
+                                    <th className={TH}>{t('dashThDescrizione')}</th>
+                                    <th className={TH}>{t('dashThScadenza')}</th>
+                                    <th className={cx(TH, 'text-right')}>{t('dashThResiduo')}</th>
+                                    <th className={TH}>{t('dashThStato')}</th>
                                     <th className={TH}></th>
                                 </tr>
                             </thead>
@@ -359,7 +371,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                         <tr key={p.id} className={TROW}>
                                             <td className={cx(TD, 'font-semibold text-kidville-green')}>{p.alunni?.nome} {p.alunni?.cognome}</td>
                                             <td className={cx(TD, 'text-kidville-ink')}>{p.descrizione}</td>
-                                            <td className={cx(TD, 'text-kidville-muted')}>{p.scadenza ? new Date(p.scadenza).toLocaleDateString('it-IT') : '—'}</td>
+                                            <td className={cx(TD, 'text-kidville-muted')}>{p.scadenza ? f.dataBreve(p.scadenza) : '—'}</td>
                                             <td className={cx(TD, 'text-right font-bold text-kidville-green')}>€ {residuo.toFixed(2)}</td>
                                             <td className={TD}>
                                                 <Badge tone={st.tone}>{st.label}</Badge>
@@ -367,8 +379,8 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                             <td className={cx(TD, 'text-right')}>
                                                 <div className="flex items-center justify-end gap-2">
                                                     <button onClick={() => setSelected(p)}
-                                                        className={BTN_PRIMARY_SM}>Incassa</button>
-                                                    <button onClick={() => setDrawer(p)} title="Dettagli" className={ICON_BTN}><Eye size={15} /></button>
+                                                        className={BTN_PRIMARY_SM}>{t('dashIncassa')}</button>
+                                                    <button onClick={() => setDrawer(p)} title={t('dashDettagli')} className={ICON_BTN}><Eye size={15} /></button>
                                                 </div>
                                             </td>
                                         </tr>
@@ -394,18 +406,18 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
             ) : isRettaView ? (
                 /* ---- Vista RETTE: tabella su desktop, card-list su mobile ---- */
                 alunniFiltrati.length === 0 ? (
-                <EmptyRiga emoji="🧒" testo="Nessun alunno attivo trovato." />
+                <EmptyRiga emoji="🧒" testo={t('dashVuotoAlunni')} />
                 ) : (
                 <>
                 <div className={cx('hidden lg:block', TABLE_WRAP)}>
                     <table className={TABLE}>
                         <thead>
                             <tr>
-                                <th className={TH}>Alunno</th>
-                                <th className={TH}>Sezione</th>
-                                <th className={cx(TH, 'text-right')}>Importo</th>
-                                <th className={cx(TH, 'text-right')}>Pagato</th>
-                                <th className={TH}>Stato</th>
+                                <th className={TH}>{t('dashThAlunno')}</th>
+                                <th className={TH}>{t('dashThSezione')}</th>
+                                <th className={cx(TH, 'text-right')}>{t('dashThImporto')}</th>
+                                <th className={cx(TH, 'text-right')}>{t('dashThPagato')}</th>
+                                <th className={TH}>{t('dashThStato')}</th>
                                 <th className={TH}></th>
                             </tr>
                         </thead>
@@ -419,7 +431,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                         <td className={cx(TD, 'font-semibold text-kidville-green')}>
                                             {a.nome} {a.cognome}
                                             {sospesoByAlunno.get(a.id) && (
-                                                <Badge tone="error" className="ml-1 align-middle">sospeso</Badge>
+                                                <Badge tone="error" className="ml-1 align-middle">{t('dashSospeso')}</Badge>
                                             )}
                                         </td>
                                         <td className={cx(TD, 'text-kidville-muted')}>{a.classe_sezione || '—'}</td>
@@ -429,9 +441,9 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                             <span className="inline-flex flex-wrap items-center gap-1">
                                                 {st
                                                     ? <Badge tone={st.tone}>{st.label}</Badge>
-                                                    : <Badge tone="neutral">Non generata</Badge>}
+                                                    : <Badge tone="neutral">{t('dashNonGenerata')}</Badge>}
                                                 {p && moroso && Number(p.importo_pagato) > 0 && (
-                                                    <Badge tone="warn">Acconto € {Number(p.importo_pagato).toFixed(2)}</Badge>
+                                                    <Badge tone="warn">{t('dashAcconto')} € {Number(p.importo_pagato).toFixed(2)}</Badge>
                                                 )}
                                                 {p && <FatturaChip stato={p.stato} fatturaStato={p.fattura_stato} />}
                                             </span>
@@ -440,15 +452,15 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                             <div className="flex items-center justify-end gap-2">
                                                 {p && p.stato !== 'pagato' ? (
                                                     <button onClick={() => setSelected(p)}
-                                                        className={BTN_PRIMARY_SM}>Incassa</button>
+                                                        className={BTN_PRIMARY_SM}>{t('dashIncassa')}</button>
                                                 ) : p ? (
                                                     <FatturaButton pagamentoId={p.id} userId={userId} fatturaStato={p.fattura_stato} descrizione={p.descrizione} />
                                                 ) : null}
                                                 {p && (
-                                                    <button onClick={() => setDrawer(p)} title="Dettagli" className={ICON_BTN}><Eye size={15} /></button>
+                                                    <button onClick={() => setDrawer(p)} title={t('dashDettagli')} className={ICON_BTN}><Eye size={15} /></button>
                                                 )}
                                                 {p && (
-                                                    <button onClick={() => setEditing(p)} title="Modifica" className={ICON_BTN}><Pencil size={15} /></button>
+                                                    <button onClick={() => setEditing(p)} title={t('dashModifica')} className={ICON_BTN}><Pencil size={15} /></button>
                                                 )}
                                                 <SospensioneToggle alunnoId={a.id} userId={userId} sospeso={!!sospesoByAlunno.get(a.id)} onChange={load} />
                                             </div>
@@ -466,7 +478,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                             return (
                                 <div key={a.id} className="flex items-center justify-between rounded-card border-[1.5px] border-kidville-line bg-kidville-white p-3">
                                     <p className="font-maven text-sm font-bold text-kidville-green">{a.nome} {a.cognome}</p>
-                                    <Badge tone="neutral">Non generata</Badge>
+                                    <Badge tone="neutral">{t('dashNonGenerata')}</Badge>
                                 </div>
                             );
                         }
@@ -492,7 +504,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                 <div className="flex flex-wrap items-center gap-2 mb-3">
                     <select value={nuovoAcqId} onChange={(e) => setNuovoAcqId(e.target.value)}
                         className={FILTER_SELECT}>
-                        <option value="">Seleziona alunno…</option>
+                        <option value="">{t('dashSelezionaAlunno')}</option>
                         {alunniFiltrati.map((a) => (
                             <option key={a.id} value={a.id}>{a.nome} {a.cognome}{a.classe_sezione ? ` · ${a.classe_sezione}` : ''}</option>
                         ))}
@@ -501,23 +513,23 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                         disabled={!nuovoAcqId || !categoriaSel}
                         onClick={() => { const a = alunnoById.get(nuovoAcqId); if (a && categoriaSel) { setQuick({ alunno: a, categoria: categoriaSel }); setNuovoAcqId(''); } }}
                         className="inline-flex items-center gap-1 rounded-pill bg-kidville-green px-3 py-2 font-maven text-sm font-bold text-kidville-yellow transition-colors hover:bg-kidville-green-dark disabled:opacity-50">
-                        <Plus size={15} /> Nuovo acquisto
+                        <Plus size={15} /> {t('dashNuovoAcquisto')}
                     </button>
                 </div>
                 {righeCategoria.length === 0 ? (
-                    <EmptyRiga emoji="🧾" testo="Nessun pagamento in questa categoria." />
+                    <EmptyRiga emoji="🧾" testo={t('dashVuotoCategoria')} />
                 ) : (
                 <>
                 <div className={cx('hidden lg:block', TABLE_WRAP)}>
                     <table className={TABLE}>
                         <thead>
                             <tr>
-                                <th className={TH}>Alunno</th>
-                                <th className={TH}>Descrizione</th>
-                                <th className={TH}>Scadenza</th>
-                                <th className={cx(TH, 'text-right')}>Importo</th>
-                                <th className={cx(TH, 'text-right')}>Acconto</th>
-                                <th className={TH}>Stato</th>
+                                <th className={TH}>{t('dashThAlunno')}</th>
+                                <th className={TH}>{t('dashThDescrizione')}</th>
+                                <th className={TH}>{t('dashThScadenza')}</th>
+                                <th className={cx(TH, 'text-right')}>{t('dashThImporto')}</th>
+                                <th className={cx(TH, 'text-right')}>{t('dashAcconto')}</th>
+                                <th className={TH}>{t('dashThStato')}</th>
                                 <th className={TH}></th>
                             </tr>
                         </thead>
@@ -531,18 +543,18 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                         <td className={cx(TD, 'font-semibold text-kidville-green')}>
                                             {p.alunni?.nome} {p.alunni?.cognome}
                                             {sospesoByAlunno.get(p.alunno_id) && (
-                                                <Badge tone="error" className="ml-1 align-middle">sospeso</Badge>
+                                                <Badge tone="error" className="ml-1 align-middle">{t('dashSospeso')}</Badge>
                                             )}
                                         </td>
                                         <td className={cx(TD, 'text-kidville-ink')}>{p.descrizione}</td>
-                                        <td className={cx(TD, 'text-kidville-muted')}>{p.scadenza ? new Date(p.scadenza).toLocaleDateString('it-IT') : '—'}</td>
+                                        <td className={cx(TD, 'text-kidville-muted')}>{p.scadenza ? f.dataBreve(p.scadenza) : '—'}</td>
                                         <td className={cx(TD, 'text-right text-kidville-green')}>€ {Number(p.importo).toFixed(2)}</td>
                                         <td className={cx(TD, 'text-right text-kidville-muted')}>{acconto > 0 ? `€ ${acconto.toFixed(2)}` : '—'}</td>
                                         <td className={TD}>
                                             <span className="inline-flex flex-wrap items-center gap-1">
                                                 <Badge tone={st.tone}>{st.label}</Badge>
                                                 {moroso && acconto > 0 && (
-                                                    <Badge tone="warn">Acconto € {acconto.toFixed(2)}</Badge>
+                                                    <Badge tone="warn">{t('dashAcconto')} € {acconto.toFixed(2)}</Badge>
                                                 )}
                                                 <FatturaChip stato={p.stato} fatturaStato={p.fattura_stato} />
                                             </span>
@@ -551,15 +563,15 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                             <div className="flex items-center justify-end gap-2">
                                                 {p.stato !== 'pagato' ? (
                                                     <button onClick={() => setSelected(p)}
-                                                        className={BTN_PRIMARY_SM}>Incassa</button>
+                                                        className={BTN_PRIMARY_SM}>{t('dashIncassa')}</button>
                                                 ) : (
                                                     <FatturaButton pagamentoId={p.id} userId={userId} fatturaStato={p.fattura_stato} descrizione={p.descrizione} />
                                                 )}
                                                 {p.tipo === 'singolo' && p.stato !== 'pagato' && (
-                                                    <button onClick={() => { const a = alunnoById.get(p.alunno_id); if (a) setRateizza({ alunno: a, pagamento: p }); }} title="Dividi in acconti" className={ICON_BTN}><Layers size={15} /></button>
+                                                    <button onClick={() => { const a = alunnoById.get(p.alunno_id); if (a) setRateizza({ alunno: a, pagamento: p }); }} title={t('dashDividiAcconti')} className={ICON_BTN}><Layers size={15} /></button>
                                                 )}
-                                                <button onClick={() => setDrawer(p)} title="Dettagli" className={ICON_BTN}><Eye size={15} /></button>
-                                                <button onClick={() => setEditing(p)} title="Modifica" className={ICON_BTN}><Pencil size={15} /></button>
+                                                <button onClick={() => setDrawer(p)} title={t('dashDettagli')} className={ICON_BTN}><Eye size={15} /></button>
+                                                <button onClick={() => setEditing(p)} title={t('dashModifica')} className={ICON_BTN}><Pencil size={15} /></button>
                                             </div>
                                         </td>
                                     </tr>

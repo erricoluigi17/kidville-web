@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { Euro, ChevronRight, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { getSupabase } from '@/lib/supabase/browser-client';
@@ -22,6 +23,7 @@ interface Props { userId: string; href: string }
 // Un sovraincasso su una voce NON compensa lo scaduto di un'altra (finding #1).
 // Si aggiorna in realtime quando vengono registrati incassi/pagamenti.
 export function PagamentiSummary({ userId, href }: Props) {
+    const t = useTranslations('pagamenti');
     const [pagamenti, setPagamenti] = useState<Pagamento[]>([]);
     const [loading, setLoading] = useState(true);
 
@@ -64,14 +66,14 @@ export function PagamentiSummary({ userId, href }: Props) {
                     </span>
                     <div className="min-w-0 flex-1">
                         <p className="font-maven text-[11.5px] font-semibold text-kidville-error-strong">
-                            Pagamenti scaduti
+                            {t('scadutiEyebrow')}
                         </p>
                         <p className="font-barlow text-2xl font-black leading-none text-kidville-error-strong">
-                            {formatEuro(scaduto)} scaduti
+                            {t('importoScaduti', { importo: formatEuro(scaduto) })}
                         </p>
                         {prossima && (
                             <p className="mt-1 truncate font-maven text-[12px] text-kidville-error-strong">
-                                {prossima.descrizione} · scad. {isoToIt(prossima.scadenza) || prossima.scadenza}
+                                {prossima.descrizione} · {t('scadPrefix')} {isoToIt(prossima.scadenza) || prossima.scadenza}
                             </p>
                         )}
                     </div>
@@ -94,14 +96,14 @@ export function PagamentiSummary({ userId, href }: Props) {
                     </span>
                     <div className="min-w-0 flex-1">
                         <p className="font-maven text-[11.5px] font-semibold" style={{ color: 'rgba(255,255,255,0.78)' }}>
-                            Totale da pagare
+                            {t('totaleDaPagare')}
                         </p>
                         <p className="font-barlow text-2xl font-black leading-none text-kidville-yellow">
                             {formatEuro(daPagare)}
                         </p>
                         {prossima && (
                             <p className="mt-1 truncate font-maven text-[12px]" style={{ color: 'rgba(255,255,255,0.72)' }}>
-                                {prossima.descrizione} · scad. {isoToIt(prossima.scadenza) || prossima.scadenza}
+                                {prossima.descrizione} · {t('scadPrefix')} {isoToIt(prossima.scadenza) || prossima.scadenza}
                             </p>
                         )}
                     </div>
@@ -119,8 +121,8 @@ export function PagamentiSummary({ userId, href }: Props) {
                     <CheckCircle2 size={20} />
                 </span>
                 <div className="min-w-0 flex-1">
-                    <p className="font-barlow text-base font-black uppercase leading-none text-kidville-green">Pagamenti in regola</p>
-                    <p className="mt-1 font-maven text-[12px] text-kidville-green/70">Nessuna quota in scadenza.</p>
+                    <p className="font-barlow text-base font-black uppercase leading-none text-kidville-green">{t('inRegola')}</p>
+                    <p className="mt-1 font-maven text-[12px] text-kidville-green/70">{t('nessunaQuota')}</p>
                 </div>
                 <ChevronRight size={20} className="flex-shrink-0 text-kidville-green/40" />
             </div>

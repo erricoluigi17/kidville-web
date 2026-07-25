@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { useTranslations, useLocale } from 'next-intl';
 import { CalendarDays } from 'lucide-react';
 
 /**
@@ -19,21 +20,23 @@ interface EventoAgenda {
   visibile_genitori: boolean;
 }
 
+// Tipi dell'agenda: il `value` è il discriminatore persistito (dato, non
+// tradotto); l'etichetta è i18n, risolta a runtime dalla `labelKey`.
 const TIPI = [
-  { value: 'evento', label: 'Evento' },
-  { value: 'uscita', label: 'Uscita' },
-  { value: 'scadenza', label: 'Scadenza' },
-  { value: 'riunione', label: 'Riunione' },
+  { value: 'evento', labelKey: 'tipoEvento' },
+  { value: 'uscita', labelKey: 'tipoUscita' },
+  { value: 'scadenza', labelKey: 'tipoScadenza' },
+  { value: 'riunione', labelKey: 'tipoRiunione' },
 ] as const;
 
-const TIPO_LABEL: Record<string, string> = Object.fromEntries(TIPI.map((t) => [t.value, t.label]));
+const TIPO_LABEL_KEY: Record<string, string> = Object.fromEntries(TIPI.map((ti) => [ti.value, ti.labelKey]));
 
-function giornoMese(ymd: string): { giorno: string; mese: string } {
+function giornoMese(ymd: string, locale: string): { giorno: string; mese: string } {
   try {
     const d = new Date(`${ymd}T00:00:00`);
     return {
-      giorno: d.toLocaleDateString('it-IT', { day: 'numeric' }),
-      mese: d.toLocaleDateString('it-IT', { month: 'short' }).replace('.', ''),
+      giorno: d.toLocaleDateString(locale, { day: 'numeric' }),
+      mese: d.toLocaleDateString(locale, { month: 'short' }).replace('.', ''),
     };
   } catch {
     return { giorno: '—', mese: '' };
@@ -53,6 +56,9 @@ export function TeacherAgendaCard({
   /** Lessico per grado: "sezione" (0-6) o "classe" (primaria). */
   gruppo?: 'sezione' | 'classe';
 }) {
+  const t = useTranslations('teacherNav');
+  const locale = useLocale();
+  const isClasse = gruppo === 'classe';
   const [eventi, setEventi] = useState<EventoAgenda[]>([]);
   const [loading, setLoading] = useState(true);
   const [titolo, setTitolo] = useState('');
@@ -83,7 +89,7 @@ export function TeacherAgendaCard({
     return (
       <div className="rounded-2xl border border-dashed border-kidville-line bg-white/60 p-5 text-center">
         <p className="font-maven text-[12.5px] leading-snug text-kidville-muted">
-          Nessuna {gruppo} assegnata: l&apos;agenda apparirà qui.
+          {t(isClasse ? 'agendaNessunaAssegnataClasse' : 'agendaNessunaAssegnataSezione')}
         </p>
       </div>
     );
@@ -109,7 +115,7 @@ export function TeacherAgendaCard({
         setTitolo('');
         await load();
       } else {
-        setErrore('Salvataggio non riuscito. Riprova.');
+        setErrore(t('agendaErroreSalvataggio'));
       }
     } finally {
       setSaving(false);
@@ -132,13 +138,13 @@ export function TeacherAgendaCard({
             <CalendarDays size={20} />
           </span>
           <p className="font-maven text-[12.5px] leading-snug text-kidville-muted">
-            Nessun evento in programma per la {gruppo}.
+            {t(isClasse ? 'agendaNessunEventoClasse' : 'agendaNessunEventoSezione')}
           </p>
         </div>
       ) : (
         <div className="divide-y divide-kidville-line">
           {eventi.map((e) => {
-            const { giorno, mese } = giornoMese(e.data);
+            const { giorno, mese } = giornoMese(e.data, locale);
             return (
               <div key={e.id} className="flex items-center gap-3 py-2.5 first:pt-0 last:pb-0">
                 <span className="flex h-10 w-10 flex-shrink-0 flex-col items-center justify-center rounded-xl bg-kidville-yellow-soft text-kidville-yellow-dark">
@@ -150,10 +156,10 @@ export function TeacherAgendaCard({
                     {e.titolo}
                   </p>
                   <p className="mt-0.5 font-maven text-[12px] leading-snug text-kidville-muted">
-                    {TIPO_LABEL[e.tipo] ?? e.tipo}
-                    {e.orario_inizio ? ` · ore ${e.orario_inizio.slice(0, 5)}` : ''}
-                    {e.visibile_genitori ? '' : ' · solo staff'}
-                    {e.section_id === null ? ' · plesso' : ''}
+                    {TIPO_LABEL_KEY[e.tipo] ? t(TIPO_LABEL_KEY[e.tipo]) : e.tipo}
+                    {e.orario_inizio ? ` · ${t('agendaOre', { orario: e.orario_inizio.slice(0, 5) })}` : ''}
+                    {e.visibile_genitori ? '' : ` · ${t('agendaSoloStaff')}`}
+                    {e.section_id === null ? ` · ${t('agendaPlesso')}` : ''}
                   </p>
                 </div>
               </div>
@@ -165,13 +171,13 @@ export function TeacherAgendaCard({
       {/* composer inline (M6.4) */}
       <div className="mt-3 border-t border-kidville-line pt-3">
         <p className="font-barlow text-[10px] font-bold uppercase tracking-[0.08em] text-kidville-yellow-dark">
-          Nuovo evento
+          {t('agendaNuovoEvento')}
         </p>
         <input
           type="text"
           value={titolo}
           onChange={(e) => setTitolo(e.target.value)}
-          placeholder="Titolo (es. Uscita al parco)"
+          placeholder={t('agendaTitoloPlaceholder')}
           maxLength={200}
           className={`mt-2 ${inputCls}`}
         />
@@ -183,8 +189,8 @@ export function TeacherAgendaCard({
             className={inputCls}
           />
           <select value={tipo} onChange={(e) => setTipo(e.target.value)} className={inputCls}>
-            {TIPI.map((t) => (
-              <option key={t.value} value={t.value}>{t.label}</option>
+            {TIPI.map((ti) => (
+              <option key={ti.value} value={ti.value}>{t(ti.labelKey)}</option>
             ))}
           </select>
         </div>
@@ -196,7 +202,7 @@ export function TeacherAgendaCard({
               onChange={(e) => setVisibile(e.target.checked)}
               className="accent-kidville-green"
             />
-            Visibile ai genitori
+            {t('agendaVisibileGenitori')}
           </label>
           <button
             type="button"
@@ -204,7 +210,7 @@ export function TeacherAgendaCard({
             disabled={saving || !titolo.trim()}
             className="rounded-pill bg-kidville-green px-4 py-2 font-barlow text-[11.5px] font-extrabold uppercase tracking-wide text-white active:scale-95 disabled:opacity-60"
           >
-            {saving ? 'Salvataggio…' : 'Aggiungi'}
+            {saving ? t('agendaSalvataggio') : t('agendaAggiungi')}
           </button>
         </div>
         {errore && (

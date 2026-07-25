@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useTranslations } from 'next-intl';
 import { X, Save, Users, User, ChevronRight, KeyRound } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -58,6 +59,7 @@ interface Props {
 }
 
 export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 'drawer' }: Props) {
+    const t = useTranslations('adminStudents');
     const [parent, setParent] = useState<ParentProfile | null>(null);
     const [form, setForm] = useState<Partial<ParentProfile>>({});
     const [isLoading, setIsLoading] = useState(false);
@@ -105,7 +107,7 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
 
     const handleRegen = async () => {
         if (!parent) return;
-        if (!confirm('Rigenerare le credenziali di accesso? La password precedente non sarà più valida.')) return;
+        if (!confirm(t('parentConfermaRigenera'))) return;
         setRegen('loading');
         setRegenMsg('');
         try {
@@ -115,14 +117,14 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
                 body: JSON.stringify({ targetKind: 'parent', targetId: parent.id }),
             });
             const body = await res.json();
-            if (!res.ok) throw new Error(body.error || 'Errore');
+            if (!res.ok) throw new Error(body.error || t('errore'));
             setRegen('done');
             setRegenMsg(
                 body.pdf_notifica
-                    ? 'Fatto: email inviata e PDF disponibile nel centro notifiche.'
+                    ? t('credEmailPdf')
                     : body.email_inviata
-                        ? 'Fatto: email con le credenziali inviata.'
-                        : body.warning || 'Credenziali rigenerate.'
+                        ? t('credEmailInviata')
+                        : body.warning || t('credRigenerate')
             );
         } catch (e) {
             setRegen('error');
@@ -156,8 +158,8 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
                         <h2 className="font-barlow font-black text-xl text-kidville-green uppercase tracking-wide flex items-center gap-2">
                             <Users size={20} />
                             {form.citizenship === 'educator' || form.citizenship === 'coordinator'
-                                ? 'Membro dello Staff'
-                                : 'Anagrafica Genitore'}
+                                ? t('parentMembroStaff')
+                                : t('parentAnagrafica')}
                         </h2>
                         <p className="font-maven text-sm text-kidville-muted mt-0.5">
                             {form.first_name || ''} {form.last_name || ''}
@@ -176,18 +178,18 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
                 {isLoading ? (
                     <div className={`${isPage ? 'py-16' : 'flex-1'} flex flex-col items-center justify-center gap-4`}>
                         <div className="w-8 h-8 border-4 border-kidville-line border-t-kidville-green rounded-full animate-spin"></div>
-                        <p className="font-maven text-kidville-muted">Caricamento dettagli...</p>
+                        <p className="font-maven text-kidville-muted">{t('parentCaricamento')}</p>
                     </div>
                 ) : (
                     <div className={bodyCls}>
                         {/* Dati Anagrafici */}
                         <section>
                             <h3 className="font-barlow font-bold text-kidville-green uppercase text-xs tracking-wide mb-3">
-                                Dati Personali
+                                {t('datiPersonali')}
                             </h3>
                             <div className="grid grid-cols-2 gap-3">
                                 <div>
-                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">Nome</label>
+                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoNome')}</label>
                                     <input
                                         type="text"
                                         value={(form.first_name as string) ?? ''}
@@ -196,7 +198,7 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
                                     />
                                 </div>
                                 <div>
-                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">Cognome</label>
+                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoCognome')}</label>
                                     <input
                                         type="text"
                                         value={(form.last_name as string) ?? ''}
@@ -207,7 +209,7 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
                             </div>
                             <div className="grid grid-cols-2 gap-3 mt-3">
                                 <div>
-                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">Data di Nascita</label>
+                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoDataNascita')}</label>
                                     <input
                                         type="date"
                                         value={(form.birth_date as string) ?? ''}
@@ -216,7 +218,7 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
                                     />
                                 </div>
                                 <div>
-                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">Codice Fiscale</label>
+                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoCodiceFiscale')}</label>
                                     <input
                                         type="text"
                                         value={(form.fiscal_code as string) ?? ''}
@@ -231,23 +233,23 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
                         {/* Nascita e Cittadinanza */}
                         <section>
                             <h3 className="font-barlow font-bold text-kidville-green uppercase text-xs tracking-wide mb-3">
-                                Nascita e Cittadinanza
+                                {t('detailNascitaCittadinanza')}
                             </h3>
                             <div className="grid grid-cols-2 gap-3">
                                 <div>
-                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">Sesso</label>
+                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoSesso')}</label>
                                     <select
                                         value={(form.gender as string) ?? ''}
                                         onChange={e => updateForm('gender', e.target.value)}
                                         className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green bg-kidville-white focus:outline-none focus:border-kidville-green"
                                     >
                                         <option value="">—</option>
-                                        <option value="M">Maschio</option>
-                                        <option value="F">Femmina</option>
+                                        <option value="M">{t('optMaschio')}</option>
+                                        <option value="F">{t('optFemmina')}</option>
                                     </select>
                                 </div>
                                 <div>
-                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">Comune di Nascita</label>
+                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoComuneNascita')}</label>
                                     <input
                                         type="text"
                                         value={(form.birth_city as string) ?? ''}
@@ -256,7 +258,7 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
                                     />
                                 </div>
                                 <div>
-                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">Prov. Nascita (Sigla)</label>
+                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoProvNascita')}</label>
                                     <input
                                         type="text"
                                         value={(form.birth_province as string) ?? ''}
@@ -266,7 +268,7 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
                                     />
                                 </div>
                                 <div>
-                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">Nazione di Nascita</label>
+                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoNazioneNascita')}</label>
                                     <input
                                         type="text"
                                         value={(form.birth_nation as string) ?? ''}
@@ -275,7 +277,7 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
                                     />
                                 </div>
                                 <div className="col-span-2">
-                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">Cittadinanza</label>
+                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoCittadinanza')}</label>
                                     <input
                                         type="text"
                                         value={(form.citizenship as string) ?? ''}
@@ -289,11 +291,11 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
                         {/* Recapiti e Residenza */}
                         <section>
                             <h3 className="font-barlow font-bold text-kidville-green uppercase text-xs tracking-wide mb-3">
-                                Recapiti e Residenza
+                                {t('parentRecapitiResidenza')}
                             </h3>
                             <div className="grid grid-cols-2 gap-3">
                                 <div className="col-span-2">
-                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">Indirizzo di Residenza</label>
+                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoIndirizzoResidenza')}</label>
                                     <input
                                         type="text"
                                         value={(form.residence_address as string) ?? ''}
@@ -302,7 +304,7 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
                                     />
                                 </div>
                                 <div>
-                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">Numero Civico</label>
+                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoNumeroCivico')}</label>
                                     <input
                                         type="text"
                                         value={(form.residence_street_number as string) ?? ''}
@@ -312,7 +314,7 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
                                     />
                                 </div>
                                 <div>
-                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">Città</label>
+                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoCitta')}</label>
                                     <input
                                         type="text"
                                         value={(form.residence_city as string) ?? ''}
@@ -321,7 +323,7 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
                                     />
                                 </div>
                                 <div>
-                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">Prov. Residenza (Sigla)</label>
+                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoProvResidenza')}</label>
                                     <input
                                         type="text"
                                         value={(form.residence_province as string) ?? ''}
@@ -331,7 +333,7 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
                                     />
                                 </div>
                                 <div>
-                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">CAP</label>
+                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoCap')}</label>
                                     <input
                                         type="text"
                                         value={(form.zip_code as string) ?? ''}
@@ -341,7 +343,7 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
                                     />
                                 </div>
                                 <div>
-                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">Telefono</label>
+                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('campoTelefono')}</label>
                                     <input
                                         type="text"
                                         value={form.phone_numbers?.[0] || ''}
@@ -354,7 +356,7 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
                                     />
                                 </div>
                                 <div className="col-span-2">
-                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">Email Principale</label>
+                                    <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('parentEmailPrincipale')}</label>
                                     <input
                                         type="email"
                                         value={form.emails?.[0] || ''}
@@ -374,7 +376,7 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
                             <section>
                                 <h3 className="font-barlow font-bold text-kidville-green uppercase text-xs tracking-wide mb-3 flex items-center gap-2">
                                     <User size={12} className="text-kidville-green" />
-                                    Alunni Collegati
+                                    {t('parentAlunniCollegati')}
                                 </h3>
 
                                 <div className="space-y-3">
@@ -394,12 +396,12 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
                                                             {child.nome} {child.cognome}
                                                         </h4>
                                                         <p className="font-maven text-xs text-kidville-muted mt-0.5">
-                                                            {child.classe_sezione || 'Nessuna sezione'}
+                                                            {child.classe_sezione || t('detailNessunaSezione')}
                                                         </p>
                                                     </div>
                                                     <div className="flex items-center gap-2">
                                                         <span className="text-[10px] font-bold uppercase tracking-wider bg-kidville-green/10 text-kidville-green px-2 py-1 rounded-md">
-                                                            Figlio
+                                                            {t('parentFiglio')}
                                                         </span>
                                                         <ChevronRight size={16} className={`text-kidville-muted transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
                                                     </div>
@@ -417,7 +419,7 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
                                                             <div className="p-4 bg-kidville-white/50">
                                                                 {otherParents.length > 0 ? (
                                                                     <>
-                                                                        <h5 className="font-maven text-[10px] text-kidville-muted uppercase tracking-wider mb-2 font-bold">Altri familiari collegati</h5>
+                                                                        <h5 className="font-maven text-[10px] text-kidville-muted uppercase tracking-wider mb-2 font-bold">{t('parentAltriFamiliari')}</h5>
                                                                         <div className="space-y-2">
                                                                             {otherParents.map((sp) => (
                                                                                 <div key={sp.parents.id} className="flex items-center gap-3 p-3 bg-kidville-white border border-kidville-line rounded-lg shadow-sm">
@@ -429,7 +431,7 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
                                                                                             {sp.parents.first_name} {sp.parents.last_name}
                                                                                         </p>
                                                                                         <p className="font-maven text-[10px] text-kidville-muted capitalize mt-0.5">
-                                                                                            {sp.relation_type === 'mother' ? 'Madre' : sp.relation_type === 'father' ? 'Padre' : 'Delegato'}
+                                                                                            {sp.relation_type === 'mother' ? t('ruoloMadre') : sp.relation_type === 'father' ? t('ruoloPadre') : t('ruoloDelegato')}
                                                                                         </p>
                                                                                     </div>
                                                                                 </div>
@@ -437,7 +439,7 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
                                                                         </div>
                                                                     </>
                                                                 ) : (
-                                                                    <p className="font-maven text-xs text-kidville-muted text-center py-2">Nessun altro familiare configurato.</p>
+                                                                    <p className="font-maven text-xs text-kidville-muted text-center py-2">{t('parentNessunAltroFamiliare')}</p>
                                                                 )}
                                                             </div>
                                                         </motion.div>
@@ -464,7 +466,7 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
                         ) : (
                             <>
                                 <Save size={16} />
-                                Salva Modifiche
+                                {t('salvaModifiche')}
                             </>
                         )}
                     </button>
@@ -473,7 +475,7 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
                         disabled={regen === 'loading' || !parent}
                         className="w-full h-11 rounded-pill border-2 border-kidville-green/40 text-kidville-green font-barlow font-bold uppercase text-sm hover:bg-kidville-green/5 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
                     >
-                        <KeyRound size={15} /> {regen === 'loading' ? 'Rigenerazione…' : 'Rigenera credenziali'}
+                        <KeyRound size={15} /> {regen === 'loading' ? t('parentRigenerazione') : t('rigeneraCredenziali')}
                     </button>
                     {regenMsg && (
                         <p className={`text-xs text-center font-maven ${regen === 'error' ? 'text-kidville-error' : 'text-kidville-success'}`}>{regenMsg}</p>

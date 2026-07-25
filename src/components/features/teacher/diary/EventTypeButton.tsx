@@ -1,7 +1,8 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import { DiaryEventType } from '@/lib/offline/db';
-import { EVENT_CONFIG } from './eventConfig';
+import { EVENT_CONFIG, useEventLabel } from './eventConfig';
 
 interface EventTypeButtonProps {
     type: DiaryEventType;
@@ -12,6 +13,8 @@ interface EventTypeButtonProps {
 }
 
 export function EventTypeButton({ type, disabled = false, selected = false, onClick }: EventTypeButtonProps) {
+    const t = useTranslations('teacherDiario');
+    const eventLabel = useEventLabel();
     const config = EVENT_CONFIG[type];
     // Selezione: bordo pieno green al posto del border-…/25 di config — un anello
     // sul wrapper verrebbe coperto dallo sfondo opaco del bottone, mentre il bordo
@@ -36,11 +39,11 @@ export function EventTypeButton({ type, disabled = false, selected = false, onCl
                     : 'hover:scale-[1.03] hover:shadow-md active:scale-95 cursor-pointer'
                 }
             `}
-            aria-label={`Registra ${config.label}`}
+            aria-label={`${t('registra')} ${eventLabel(type)}`}
         >
             <span className="text-3xl leading-none">{config.emoji}</span>
             <span className="font-barlow font-semibold text-[10px] leading-tight px-1 text-center uppercase tracking-wide">
-                {config.label}
+                {eventLabel(type)}
             </span>
         </button>
     );

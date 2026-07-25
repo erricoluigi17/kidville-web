@@ -3,6 +3,7 @@
  * Il ruolo `genitore` NON è assegnabile dal pannello Staff (le famiglie sono
  * gestite a parte). Helper puri per validazione + label.
  */
+import { useTranslations } from 'next-intl'
 import type { AppRole } from './require-staff'
 
 export const RUOLI_ASSEGNABILI: { value: AppRole; label: string }[] = [
@@ -21,4 +22,19 @@ export function isRuoloAssegnabile(r: unknown): r is AppRole {
 
 export function labelRuolo(r: string): string {
   return RUOLI_ASSEGNABILI.find((x) => x.value === r)?.label ?? r
+}
+
+/**
+ * Hook locale-aware per l'etichetta di un ruolo (namespace `etichette`,
+ * chiavi `ruolo_<code>`). Da usare nei componenti client. Se la chiave non
+ * esiste (codice ignoto), degrada alla funzione pura `labelRuolo` — che
+ * restituisce l'etichetta IT o, in ultima istanza, il codice grezzo — MAI la
+ * chiave i18n. Retro-compatibile: `labelRuolo` resta la fonte per il server.
+ */
+export function useLabelRuolo(): (r: string) => string {
+  const t = useTranslations('etichette')
+  return (r: string) => {
+    const k = `ruolo_${r}`
+    return t.has(k) ? t(k) : labelRuolo(r)
+  }
 }

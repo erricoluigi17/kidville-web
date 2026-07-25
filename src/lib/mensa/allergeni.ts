@@ -1,6 +1,7 @@
 // Allergeni alimentari canonici (i 14 dell'allegato II Reg. UE 1169/2011).
 // Usati sia per taggare le portate del menu sia per le allergie degli alunni,
 // così il match è su chiavi normalizzate e non su confronto di testo libero.
+import { useTranslations } from 'next-intl'
 
 export type AllergeneKey =
   | 'glutine' | 'crostacei' | 'uova' | 'pesce' | 'arachidi' | 'soia' | 'latte'
@@ -40,6 +41,21 @@ export function isAllergeneKey(k: string): k is AllergeneKey {
 
 export function allergeneLabel(k: string): string {
   return BY_KEY.get(k as AllergeneKey)?.label ?? k
+}
+
+/**
+ * Hook locale-aware per l'etichetta di un allergene (namespace `etichette`,
+ * chiavi `allergene_<code>`). Da usare nei componenti client. Chiave assente
+ * → fallback alla funzione pura `allergeneLabel` (IT o codice grezzo), MAI la
+ * chiave i18n. `allergeneLabel`/`allergeneEmoji` restano per il server (route,
+ * notifiche): non tradurle lì.
+ */
+export function useAllergeneLabel(): (k: string) => string {
+  const t = useTranslations('etichette')
+  return (k: string) => {
+    const key = `allergene_${k}`
+    return t.has(key) ? t(key) : allergeneLabel(k)
+  }
 }
 
 export function allergeneEmoji(k: string): string {

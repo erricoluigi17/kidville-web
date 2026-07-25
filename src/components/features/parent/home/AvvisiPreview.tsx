@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useTranslations, useLocale } from 'next-intl'
 import { Megaphone, ClipboardList } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
 import { Badge, type BadgeTone } from '@/components/ui/Badge'
@@ -12,9 +13,9 @@ interface Props {
   studentId: string
 }
 
-const fmtDate = (iso: string) => {
+const fmtDate = (iso: string, locale: string) => {
   try {
-    return new Date(iso).toLocaleDateString('it-IT', { day: 'numeric', month: 'short' })
+    return new Date(iso).toLocaleDateString(locale, { day: 'numeric', month: 'short' })
   } catch {
     return ''
   }
@@ -26,6 +27,8 @@ const fmtDate = (iso: string) => {
  * esistente: GET /api/diary/students + GET /api/avvisi. Si nasconde se vuoto.
  */
 export function AvvisiPreview({ parentId, studentId }: Props) {
+  const t = useTranslations('home')
+  const locale = useLocale()
   const [items, setItems] = useState<Avviso[]>([])
   const [loaded, setLoaded] = useState(false)
 
@@ -79,14 +82,14 @@ export function AvvisiPreview({ parentId, studentId }: Props) {
         if (isAdesione) {
           if (answered) {
             tone = answered === 'si' ? 'success' : 'error'
-            label = answered === 'si' ? 'Hai aderito' : 'Non aderisci'
+            label = answered === 'si' ? t('avvisiHaiAderito') : t('avvisiNonAderisci')
           } else {
             tone = 'unread'
-            label = 'Richiede adesione'
+            label = t('avvisiRichiedeAdesione')
           }
         } else {
           tone = read ? 'read' : 'info'
-          label = read ? 'Letto' : 'Da leggere'
+          label = read ? t('avvisiLetto') : t('avvisiDaLeggere')
         }
         return (
           <Card key={a.id} className={cx('p-[14px]', !isAdesione && read && 'opacity-70')}>
@@ -102,7 +105,7 @@ export function AvvisiPreview({ parentId, studentId }: Props) {
               <div className="min-w-0 flex-1">
                 <div className="flex items-center justify-between gap-2">
                   <Badge tone={tone}>{label}</Badge>
-                  <span className="font-maven text-[11px] text-kidville-muted">{fmtDate(a.created_at)}</span>
+                  <span className="font-maven text-[11px] text-kidville-muted">{fmtDate(a.created_at, locale)}</span>
                 </div>
                 <h3 className="mt-1.5 line-clamp-1 font-barlow text-base font-extrabold uppercase leading-tight text-kidville-green">
                   {a.titolo}

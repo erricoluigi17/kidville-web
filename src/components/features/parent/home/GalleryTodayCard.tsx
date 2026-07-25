@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { useTranslations } from 'next-intl'
 import { Image as ImageIcon, ChevronRight } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
@@ -18,6 +19,7 @@ interface Props {
  * GET /api/gallery?studentId=&date=&parentId= → { total }. Si nasconde se 0.
  */
 export function GalleryTodayCard({ studentId, parentId, href }: Props) {
+  const t = useTranslations('home')
   const [total, setTotal] = useState(0)
   const [loaded, setLoaded] = useState(false)
 
@@ -48,7 +50,7 @@ export function GalleryTodayCard({ studentId, parentId, href }: Props) {
         <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-[14px] bg-kidville-green-soft text-kidville-green">
           <ImageIcon size={20} strokeWidth={1.8} />
         </span>
-        <p className="font-maven text-[13px] text-kidville-muted">Nessuna foto di oggi, per ora.</p>
+        <p className="font-maven text-[13px] text-kidville-muted">{t('galleryVuoto')}</p>
       </Card>
     )
   }
@@ -60,9 +62,9 @@ export function GalleryTodayCard({ studentId, parentId, href }: Props) {
           <ImageIcon size={21} strokeWidth={1.8} />
         </div>
         <div className="min-w-0 flex-1">
-          <p className="font-barlow text-base font-black uppercase leading-none text-kidville-green">Foto di oggi</p>
+          <p className="font-barlow text-base font-black uppercase leading-none text-kidville-green">{t('titoloFotoDiOggi')}</p>
           <p className="mt-1 font-maven text-[12.5px] text-[#55615c]">
-            {total} {total === 1 ? 'nuovo contenuto' : 'nuovi contenuti'} oggi
+            {t('galleryNuoviContenuti', { count: total })}
           </p>
         </div>
         <Badge tone="unread">+{total}</Badge>

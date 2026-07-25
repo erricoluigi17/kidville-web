@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useTranslations, useLocale } from 'next-intl';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import {
@@ -9,6 +10,7 @@ import {
     Paperclip, MessageSquare, Send, ExternalLink,
     CheckSquare, EyeOff
 } from 'lucide-react';
+import { ScattaFotoButton } from '@/components/features/native/ScattaFotoButton';
 
 interface TaskAttachment {
     name: string;
@@ -91,18 +93,19 @@ interface TaskCardProps {
     onUpdateTaskFields?: (taskId: string, updates: Record<string, unknown>, toastMessage?: string) => Promise<void>;
 }
 
+// Solo stile/pallino: le etichette (localizzate) sono risolte nel componente via t().
 const priorityConfig = {
-    low: { label: 'Bassa', style: 'bg-kidville-success-soft text-kidville-success', dot: 'bg-kidville-success' },
-    medium: { label: 'Media', style: 'bg-kidville-info-soft text-kidville-info', dot: 'bg-kidville-info' },
-    high: { label: 'Alta', style: 'bg-kidville-warn-soft text-kidville-warn', dot: 'bg-kidville-warn' },
-    urgent: { label: 'Urgente', style: 'bg-kidville-error text-white font-bold animate-pulse shadow-md shadow-kidville-error/20', dot: 'bg-kidville-error' }
+    low: { style: 'bg-kidville-success-soft text-kidville-success', dot: 'bg-kidville-success' },
+    medium: { style: 'bg-kidville-info-soft text-kidville-info', dot: 'bg-kidville-info' },
+    high: { style: 'bg-kidville-warn-soft text-kidville-warn', dot: 'bg-kidville-warn' },
+    urgent: { style: 'bg-kidville-error text-white font-bold animate-pulse shadow-md shadow-kidville-error/20', dot: 'bg-kidville-error' }
 };
 
 const statusConfig = {
-    todo: { label: 'Da Fare', dot: 'bg-kidville-muted', bar: 'bg-kidville-cream text-kidville-muted' },
-    in_progress: { label: 'In Corso', dot: 'bg-kidville-warn', bar: 'bg-kidville-warn-soft text-kidville-warn border-kidville-warn/30' },
-    completed: { label: 'Da Controllare', dot: 'bg-kidville-info', bar: 'bg-kidville-info-soft text-kidville-info border-kidville-info/30' },
-    approved: { label: 'Completato', dot: 'bg-kidville-success', bar: 'bg-kidville-success-soft text-kidville-success border-kidville-success/30' }
+    todo: { dot: 'bg-kidville-muted', bar: 'bg-kidville-cream text-kidville-muted' },
+    in_progress: { dot: 'bg-kidville-warn', bar: 'bg-kidville-warn-soft text-kidville-warn border-kidville-warn/30' },
+    completed: { dot: 'bg-kidville-info', bar: 'bg-kidville-info-soft text-kidville-info border-kidville-info/30' },
+    approved: { dot: 'bg-kidville-success', bar: 'bg-kidville-success-soft text-kidville-success border-kidville-success/30' }
 };
 
 export function TaskCard({
@@ -121,6 +124,21 @@ export function TaskCard({
     onUpdateSubtasks,
     onUpdateTaskFields
 }: TaskCardProps) {
+    const t = useTranslations('teacherTasks');
+    const locale = useLocale();
+    // Etichette localizzate per priorità/stato (chiavi letterali → sempre risolvibili).
+    const priorityLabel: Record<Task['priority'], string> = {
+        low: t('priorityLow'),
+        medium: t('priorityMedium'),
+        high: t('priorityHigh'),
+        urgent: t('priorityUrgent'),
+    };
+    const statusLabel: Record<Task['status'], string> = {
+        todo: t('statusTodo'),
+        in_progress: t('statusInProgress'),
+        completed: t('statusCompleted'),
+        approved: t('statusApproved'),
+    };
     const isOwner = task.author_id === currentUserId;
     const isManager = currentUserRole === 'admin' || currentUserRole === 'coordinator';
     const canDelete = onDelete && (isOwner || isManager);
@@ -161,20 +179,23 @@ export function TaskCard({
         }
     }, [expanded, isUpdated, onMarkRead]);
 
-    const createdDate = new Date(task.created_at).toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    const createdDate = new Date(task.created_at).toLocaleDateString(locale, { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
     const deadlineDate = task.deadline ? new Date(task.deadline) : null;
     const isExpired = deadlineDate ? deadlineDate.getTime() < now : false;
-    const formattedDeadline = deadlineDate ? deadlineDate.toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : null;
+    const formattedDeadline = deadlineDate ? deadlineDate.toLocaleDateString(locale, { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : null;
 
     const descrizione = task.descrizione || task.contenuto || '';
 
     const getTargetText = () => {
-        if (task.target_scope === 'global') return '🌍 Tutti lo staff';
-        if (task.target_scope === 'role') return `👥 Ruolo: ${task.target_role === 'educator' ? 'Insegnanti' : task.target_role === 'coordinator' ? 'Coordinatori' : 'Segreteria'}`;
-        if (task.target_scope === 'class') return `🏫 Classe: ${task.target_class}`;
+        if (task.target_scope === 'global') return t('targetGlobal');
+        if (task.target_scope === 'role') {
+            const role = task.target_role === 'educator' ? t('roleEducators') : task.target_role === 'coordinator' ? t('roleCoordinators') : t('roleSecretary');
+            return t('targetRole', { role });
+        }
+        if (task.target_scope === 'class') return t('targetClass', { classe: task.target_class ?? '' });
         const allAssignees = task.assignees || (task.assigned_to ? [task.assigned_to] : []);
-        if (allAssignees.length > 1) return `👥 ${allAssignees.length} persone`;
-        return task.assignee ? `👤 ${task.assignee.first_name} ${task.assignee.last_name}` : '👤 Non assegnato';
+        if (allAssignees.length > 1) return t('targetPersone', { count: allAssignees.length });
+        return task.assignee ? `👤 ${task.assignee.first_name} ${task.assignee.last_name}` : t('nonAssegnato');
     };
 
     // Helper to upload all files to backend
@@ -194,7 +215,7 @@ export function TaskCard({
                 const data = await res.json();
                 uploaded.push(data);
             } else {
-                throw new Error('Errore durante il caricamento del file');
+                throw new Error(t('erroreCaricamentoFile'));
             }
         }
         return uploaded;
@@ -228,7 +249,7 @@ export function TaskCard({
                                     {att.name}
                                 </p>
                                 <p className="text-[9px] text-kidville-muted font-medium">
-                                    {att.size ? `${(att.size / 1024).toFixed(0)} KB` : 'Dettagli non disponibili'}
+                                    {att.size ? `${(att.size / 1024).toFixed(0)} KB` : t('dettagliNonDisponibili')}
                                 </p>
                             </div>
                             <a
@@ -237,7 +258,7 @@ export function TaskCard({
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="p-1.5 text-kidville-muted hover:text-kidville-green transition-colors"
-                                title="Scarica o apri in nuova scheda"
+                                title={t('scaricaApri')}
                             >
                                 <ExternalLink size={13} />
                             </a>
@@ -281,7 +302,7 @@ export function TaskCard({
                     <div className="flex items-center gap-2 flex-wrap">
                         {isUpdated && (
                             <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-kidville-warn text-white rounded-full text-[10px] font-bold uppercase tracking-wider font-barlow animate-pulse">
-                                ⚡ Aggiornato
+                                {t('aggiornato')}
                             </span>
                         )}
                         <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-kidville-cream text-kidville-green rounded-full text-[10px] font-semibold uppercase tracking-wider font-barlow">
@@ -289,11 +310,11 @@ export function TaskCard({
                         </span>
                         <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wider font-barlow ${priorityConfig[task.priority].style}`}>
                             <span className={`w-1.5 h-1.5 rounded-full ${priorityConfig[task.priority].dot}`} />
-                            {priorityConfig[task.priority].label}
+                            {priorityLabel[task.priority]}
                         </span>
                         <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-semibold border ${statusConfig[task.status].bar}`}>
                             <span className={`w-1.5 h-1.5 rounded-full ${statusConfig[task.status].dot}`} />
-                            {statusConfig[task.status].label}
+                            {statusLabel[task.status]}
                         </span>
                     </div>
 
@@ -302,7 +323,7 @@ export function TaskCard({
                             <button
                                 onClick={() => onEdit!(task)}
                                 className="p-1.5 text-kidville-muted hover:text-kidville-green rounded-lg hover:bg-kidville-cream transition-colors"
-                                title="Modifica task"
+                                title={t('modificaTask')}
                             >
                                 <Edit2 size={13} />
                             </button>
@@ -311,7 +332,7 @@ export function TaskCard({
                             <button
                                 onClick={() => onDelete!(task.id)}
                                 className="p-1.5 text-kidville-muted hover:text-kidville-error rounded-lg hover:bg-kidville-error-soft transition-colors"
-                                title="Elimina task"
+                                title={t('eliminaTask')}
                             >
                                 <Trash2 size={13} />
                             </button>
@@ -327,7 +348,7 @@ export function TaskCard({
                 {/* Quick info line */}
                 <div className="flex items-center gap-3 text-[11px] text-kidville-muted mb-3">
                     <span className="flex items-center gap-1">
-                        <User size={10} /> {task.author ? `${task.author.first_name} ${task.author.last_name}` : 'Segreteria'}
+                        <User size={10} /> {task.author ? `${task.author.first_name} ${task.author.last_name}` : t('autoreFallback')}
                     </span>
                     <span>→</span>
                     <span>{getTargetText()}</span>
@@ -345,8 +366,8 @@ export function TaskCard({
                 {hasCompiti && (
                     <div className="mb-3">
                         <div className="flex items-center justify-between mb-1">
-                            <span className="text-[10px] font-bold text-kidville-muted uppercase tracking-wider">Compiti Approvati</span>
-                            <span className="text-[10px] font-bold text-kidville-green">{approvedSubtasks}/{totalSubtasks} (Risolti: {completedSubtasks})</span>
+                            <span className="text-[10px] font-bold text-kidville-muted uppercase tracking-wider">{t('compitiApprovati')}</span>
+                            <span className="text-[10px] font-bold text-kidville-green">{t('progressoRisolti', { approved: approvedSubtasks, total: totalSubtasks, resolved: completedSubtasks })}</span>
                         </div>
                         <div className="h-1.5 bg-kidville-cream rounded-full overflow-hidden">
                             <motion.div
@@ -365,7 +386,7 @@ export function TaskCard({
                     className="w-full flex items-center justify-center gap-1.5 py-1.5 text-[10px] font-bold text-kidville-green/60 hover:text-kidville-green uppercase tracking-wider transition-colors"
                 >
                     {expanded ? <EyeOff size={11} /> : <Eye size={11} />}
-                    {expanded ? 'Nascondi dettagli' : 'Vedi dettagli'}
+                    {expanded ? t('nascondiDettagli') : t('vediDettagli')}
                     {expanded ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
                 </button>
             </div>
@@ -385,7 +406,7 @@ export function TaskCard({
                             {descrizione && (
                                 <div className="p-4 bg-kidville-cream rounded-2xl border border-kidville-line text-left">
                                     <p className="text-[10px] font-bold text-kidville-muted uppercase tracking-wider mb-2 flex items-center gap-1">
-                                        📋 Istruzioni
+                                        {t('istruzioni')}
                                     </p>
                                     <p className="font-maven text-sm text-kidville-ink whitespace-pre-line leading-relaxed">
                                         {descrizione}
@@ -404,12 +425,12 @@ export function TaskCard({
                                     </div>
                                     <div className="flex-1 min-w-0 text-left">
                                         <p className="font-maven font-bold text-xs text-kidville-green">
-                                            👶 Alunno: {task.student.nome} {task.student.cognome}
+                                            {t('alunno', { nome: task.student.nome, cognome: task.student.cognome })}
                                         </p>
-                                        <p className="font-maven text-[10px] text-kidville-muted">Sezione: {task.student.classe_sezione}</p>
+                                        <p className="font-maven text-[10px] text-kidville-muted">{t('sezione', { sezione: task.student.classe_sezione })}</p>
                                         {task.student.allergie.length > 0 && (
                                             <p className="font-maven text-[10px] text-kidville-error font-bold mt-0.5">
-                                                ⚠️ Allergie: {task.student.allergie.join(', ')}
+                                                {t('allergie', { lista: task.student.allergie.join(', ') })}
                                             </p>
                                         )}
                                     </div>
@@ -419,8 +440,8 @@ export function TaskCard({
                             {/* Task level revision feedback if rejected */}
                             {!hasCompiti && task.revision_feedback && task.status !== 'approved' && (
                                 <div className="p-3 bg-kidville-error-soft border border-kidville-error/20 rounded-2xl text-[11px] text-kidville-error text-left leading-relaxed">
-                                    <strong>⚠️ Revisione Richiesta:</strong> &ldquo;{task.revision_feedback}&rdquo;
-                                    <p className="text-[9px] text-kidville-muted mt-1">Correggi e risolvi nuovamente il task allegando i file corretti.</p>
+                                    <strong>{t('revisioneRichiesta')}</strong> &ldquo;{task.revision_feedback}&rdquo;
+                                    <p className="text-[9px] text-kidville-muted mt-1">{t('correggiRisolviNuovo')}</p>
                                 </div>
                             )}
 
@@ -433,7 +454,7 @@ export function TaskCard({
                                         className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-kidville-cream hover:bg-kidville-cream-dark text-kidville-ink rounded-xl text-[10px] font-bold uppercase transition-all border border-kidville-line cursor-pointer"
                                     >
                                         <MessageSquare size={11} />
-                                        Chiarimenti ({(task.commenti || []).length})
+                                        {t('chiarimenti', { count: (task.commenti || []).length })}
                                     </button>
 
                                     {showTaskComments && (
@@ -444,7 +465,7 @@ export function TaskCard({
                                                         <div key={comm.id} className="p-2.5 bg-white rounded-xl border border-kidville-line text-xs text-left">
                                                             <div className="flex items-center justify-between text-[9px] text-kidville-muted mb-1">
                                                                 <span className="font-bold text-kidville-green">{comm.author_name}</span>
-                                                                <span>{new Date(comm.created_at).toLocaleDateString('it-IT', {day: '2-digit', month: '2-digit', hour:'2-digit', minute:'2-digit'})}</span>
+                                                                <span>{new Date(comm.created_at).toLocaleDateString(locale, {day: '2-digit', month: '2-digit', hour:'2-digit', minute:'2-digit'})}</span>
                                                             </div>
                                                             <p className="font-maven text-kidville-ink leading-relaxed whitespace-pre-line">{comm.testo}</p>
                                                             {renderAttachments(comm.attachments)}
@@ -452,21 +473,21 @@ export function TaskCard({
                                                     ))}
                                                 </div>
                                             ) : (
-                                                <p className="font-maven text-xs text-kidville-muted italic py-1">Nessun chiarimento presente per questo task.</p>
+                                                <p className="font-maven text-xs text-kidville-muted italic py-1">{t('nessunChiarimentoTask')}</p>
                                             )}
 
                                             {/* Form to submit task-level clarification */}
                                             <div className="space-y-2 border-t border-dashed border-kidville-line pt-2.5">
                                                 <textarea
                                                     rows={2}
-                                                    placeholder="Scrivi una domanda o chiedi chiarimenti su questo task..."
+                                                    placeholder={t('placeholderChiarimentoTask')}
                                                     value={commentText}
                                                     onChange={e => setCommentText(e.target.value)}
                                                     className="w-full border border-kidville-line rounded-xl px-3 py-2 font-maven text-xs text-kidville-green bg-white focus:outline-none focus:ring-1 focus:ring-kidville-green focus:border-transparent transition-all"
                                                 />
                                                 <div className="flex items-center justify-between gap-1">
                                                     <div className="flex items-center gap-1.5 flex-wrap">
-                                                        <label className="p-1.5 border border-kidville-line rounded-lg cursor-pointer hover:bg-kidville-cream text-kidville-muted hover:text-kidville-green transition-colors" title="Allega file">
+                                                        <label className="p-1.5 border border-kidville-line rounded-lg cursor-pointer hover:bg-kidville-cream text-kidville-muted hover:text-kidville-green transition-colors" title={t('allegaFile')}>
                                                             <Paperclip size={13} />
                                                             <input 
                                                                 type="file" 
@@ -511,19 +532,19 @@ export function TaskCard({
                                                                 if (onUpdateTaskFields) {
                                                                     await onUpdateTaskFields(task.id, {
                                                                         commenti: [...(task.commenti || []), newComm]
-                                                                    }, "Chiarimento inviato! 💬");
+                                                                    }, t('toastChiarimentoInviato'));
                                                                     setCommentText('');
                                                                     setCommentFiles([]);
                                                                 }
                                                             } catch (err) {
-                                                                alert(err instanceof Error && err.message ? err.message : 'Errore');
+                                                                alert(err instanceof Error && err.message ? err.message : t('errore'));
                                                             } finally {
                                                                 setIsUploadingCommentFile(false);
                                                             }
                                                         }}
                                                         className="px-3 py-1.5 bg-kidville-green text-kidville-yellow rounded-xl text-xs font-bold uppercase hover:opacity-90 transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
                                                     >
-                                                        {isUploadingCommentFile ? 'Invio...' : <><Send size={11} /> Invia</>}
+                                                        {isUploadingCommentFile ? t('invio') : <><Send size={11} /> {t('invia')}</>}
                                                     </button>
                                                 </div>
                                             </div>
@@ -536,7 +557,7 @@ export function TaskCard({
                             {hasCompiti && (
                                 <div className="space-y-2 text-left">
                                     <h4 className="font-barlow font-bold text-[10px] text-kidville-green uppercase tracking-wider flex items-center gap-1.5">
-                                        📋 Compiti Suddivisi ({approvedSubtasks}/{totalSubtasks})
+                                        {t('compitiSuddivisi', { approved: approvedSubtasks, total: totalSubtasks })}
                                     </h4>
                                     <div className="space-y-2">
                                         {task.compiti!.map((compito) => {
@@ -571,9 +592,9 @@ export function TaskCard({
                                                                     {compito.titolo}
                                                                 </p>
                                                                 <p className="font-maven text-[10px] text-kidville-muted mt-0.5">
-                                                                    👤 {compito.assignee_name || 'Non specificato'}
+                                                                    👤 {compito.assignee_name || t('nonSpecificato')}
                                                                     {isAssignedToMe && !isCompitoCompleted && (
-                                                                        <span className="ml-1 text-kidville-warn font-bold">(tu)</span>
+                                                                        <span className="ml-1 text-kidville-warn font-bold">{t('tu')}</span>
                                                                     )}
                                                                 </p>
                                                             </div>
@@ -581,7 +602,7 @@ export function TaskCard({
 
                                                         <div className="flex-shrink-0">
                                                             {!canResolve && !isCompitoCompleted && !isAssignedToMe && (
-                                                                <span className="text-kidville-ink" title="Solo la persona assegnata può completare">
+                                                                <span className="text-kidville-ink" title={t('soloAssegnato')}>
                                                                     <Lock size={11} />
                                                                 </span>
                                                             )}
@@ -595,7 +616,7 @@ export function TaskCard({
                                                                     }}
                                                                     className="px-2.5 py-1 bg-kidville-warn hover:bg-kidville-warn active:scale-[0.98] text-kidville-green font-barlow font-bold text-[10px] uppercase rounded-lg tracking-wider transition-all shadow-sm cursor-pointer"
                                                                 >
-                                                                    Completa Compito ✓
+                                                                    {t('completaCompito')}
                                                                 </button>
                                                             )}
                                                             {isResolvingThis && (
@@ -604,7 +625,7 @@ export function TaskCard({
                                                                     onClick={() => { setResolvingSubtaskId(null); setSubtaskNotes(''); setSelectedFiles([]); }}
                                                                     className="text-[10px] font-bold text-kidville-muted hover:text-kidville-ink uppercase tracking-wider"
                                                                 >
-                                                                    Annulla
+                                                                    {t('annulla')}
                                                                 </button>
                                                             )}
                                                         </div>
@@ -613,7 +634,7 @@ export function TaskCard({
                                                     {/* Revision Alert for Subtask */}
                                                     {!isCompitoCompleted && compito.revision_feedback && (
                                                         <div className="bg-kidville-error-soft border border-kidville-error/20 p-2.5 rounded-xl text-[10px] text-kidville-error">
-                                                            <strong>⚠️ Modifica richiesta:</strong> &ldquo;{compito.revision_feedback}&rdquo;
+                                                            <strong>{t('modificaRichiesta')}</strong> &ldquo;{compito.revision_feedback}&rdquo;
                                                         </div>
                                                     )}
 
@@ -622,7 +643,7 @@ export function TaskCard({
                                                         <div className="mt-2 pt-2 border-t border-dashed border-kidville-line space-y-3">
                                                             <textarea
                                                                 rows={2}
-                                                                placeholder="Come hai completato questo compito? Spiega cosa hai fatto... *"
+                                                                placeholder={t('placeholderCompletaCompito')}
                                                                 value={subtaskNotes}
                                                                 onChange={e => setSubtaskNotes(e.target.value)}
                                                                 className="w-full border border-kidville-line rounded-xl p-2 font-maven text-xs text-kidville-green bg-kidville-cream focus:outline-none focus:ring-1 focus:ring-kidville-warn"
@@ -633,8 +654,8 @@ export function TaskCard({
                                                             <div className="space-y-1.5">
                                                                 <div className="flex flex-wrap gap-1.5 items-center">
                                                                     <label className="flex items-center gap-1 px-2.5 py-1.5 border border-dashed border-kidville-line hover:border-kidville-green rounded-xl cursor-pointer font-maven text-[10px] font-bold text-kidville-muted hover:text-kidville-green transition-all uppercase">
-                                                                        <Paperclip size={11} /> Allega File
-                                                                        <input 
+                                                                        <Paperclip size={11} /> {t('allegaFileLabel')}
+                                                                        <input
                                                                             type="file" 
                                                                             multiple 
                                                                             onChange={e => {
@@ -646,6 +667,13 @@ export function TaskCard({
                                                                             accept="image/*,.pdf,.doc,.docx"
                                                                         />
                                                                     </label>
+                                                                    <ScattaFotoButton
+                                                                        multiplo
+                                                                        onFile={(f) => setSelectedFiles(prev => [...prev, f])}
+                                                                        label="Scatta foto"
+                                                                        iconSize={11}
+                                                                        className="flex items-center gap-1 px-2.5 py-1.5 border border-dashed border-kidville-line hover:border-kidville-green rounded-xl cursor-pointer font-maven text-[10px] font-bold text-kidville-muted hover:text-kidville-green transition-all uppercase"
+                                                                    />
                                                                     {selectedFiles.map((file, fIdx) => (
                                                                         <span key={fIdx} className="inline-flex items-center gap-0.5 px-2 py-1 bg-kidville-cream border border-kidville-line rounded-lg text-[9px] text-kidville-muted">
                                                                             {file.name.substring(0, 15)}...
@@ -664,7 +692,7 @@ export function TaskCard({
                                                                     type="button"
                                                                     disabled={isResolvingSubtask}
                                                                     onClick={async () => {
-                                                                        if (!subtaskNotes.trim()) { alert('Inserisci le note di risoluzione!'); return; }
+                                                                        if (!subtaskNotes.trim()) { alert(t('inserisciNote')); return; }
                                                                         setIsResolvingSubtask(true);
                                                                         try {
                                                                             let uploadedAttachments = [];
@@ -679,14 +707,14 @@ export function TaskCard({
                                                                                 setSelectedFiles([]);
                                                                             }
                                                                         } catch (err) {
-                                                                            alert(err instanceof Error && err.message ? err.message : 'Errore durante il completamento');
-                                                                        } finally { 
+                                                                            alert(err instanceof Error && err.message ? err.message : t('erroreCompletamento'));
+                                                                        } finally {
                                                                             setIsResolvingSubtask(false); 
                                                                         }
                                                                     }}
                                                                     className="px-3 py-1.5 bg-kidville-green text-kidville-yellow font-bold text-[10px] uppercase rounded-xl hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50"
                                                                 >
-                                                                    {isResolvingSubtask ? 'Salvataggio...' : 'Conferma'}
+                                                                    {isResolvingSubtask ? t('salvataggio') : t('conferma')}
                                                                 </button>
                                                             </div>
                                                         </div>
@@ -697,11 +725,11 @@ export function TaskCard({
                                                         <div className="mt-1.5 p-2.5 bg-kidville-success-soft/30 border border-kidville-success/50 rounded-xl text-[10px] space-y-1">
                                                             <div className="flex items-center justify-between">
                                                                 <span className={`font-bold font-barlow uppercase text-[9px] ${isCompitoApproved ? 'text-kidville-success' : 'text-kidville-info'}`}>
-                                                                    {isCompitoApproved ? '✅ Approvato' : '⏳ In Attesa Di Approvazione'}
+                                                                    {isCompitoApproved ? t('approvato') : t('inAttesaApprovazione')}
                                                                 </span>
                                                                 {compito.resolved_at && (
                                                                     <span className="text-kidville-muted text-[8px]">
-                                                                        {new Date(compito.resolved_at).toLocaleDateString('it-IT', {day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'})}
+                                                                        {new Date(compito.resolved_at).toLocaleDateString(locale, {day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'})}
                                                                     </span>
                                                                 )}
                                                             </div>
@@ -720,7 +748,7 @@ export function TaskCard({
                                                                         onClick={() => setRejectingSubtaskId(compito.id)}
                                                                         className="px-2 py-1 bg-kidville-error-soft hover:bg-kidville-error-soft text-kidville-error text-[9px] font-bold uppercase rounded-lg tracking-wider transition-colors"
                                                                     >
-                                                                        Richiedi Modifica
+                                                                        {t('richiediModifica')}
                                                                     </button>
                                                                     <button
                                                                         type="button"
@@ -736,19 +764,19 @@ export function TaskCard({
                                                                                 return c;
                                                                             });
                                                                             if (onUpdateSubtasks) {
-                                                                                await onUpdateSubtasks(task.id, updatedCompiti, "Compito approvato! ✓");
+                                                                                await onUpdateSubtasks(task.id, updatedCompiti, t('toastCompitoApprovato'));
                                                                             }
                                                                         }}
                                                                         className="px-2.5 py-1 bg-kidville-success hover:bg-kidville-success text-white text-[9px] font-bold uppercase rounded-lg tracking-wider transition-colors"
                                                                     >
-                                                                        Approva Compito
+                                                                        {t('approvaCompito')}
                                                                     </button>
                                                                 </div>
                                                             ) : (
                                                                 <div className="space-y-1.5 text-right">
                                                                     <textarea
                                                                         rows={2}
-                                                                        placeholder="Specifica cosa deve modificare l'insegnante... *"
+                                                                        placeholder={t('placeholderSpecificaModifica')}
                                                                         value={rejectFeedback}
                                                                         onChange={e => setRejectFeedback(e.target.value)}
                                                                         className="w-full border border-kidville-error/20 rounded-xl p-2 font-maven text-xs text-kidville-error bg-kidville-error-soft/20 focus:outline-none focus:ring-1 focus:ring-kidville-error"
@@ -760,7 +788,7 @@ export function TaskCard({
                                                                             onClick={() => { setRejectingSubtaskId(null); setRejectFeedback(''); }}
                                                                             className="px-2 py-1 text-[9px] font-bold text-kidville-muted uppercase"
                                                                         >
-                                                                            Annulla
+                                                                            {t('annulla')}
                                                                         </button>
                                                                         <button
                                                                             type="button"
@@ -780,14 +808,14 @@ export function TaskCard({
                                                                                     return c;
                                                                                 });
                                                                                 if (onUpdateSubtasks) {
-                                                                                    await onUpdateSubtasks(task.id, updatedCompiti, "Richiesta modifica inviata! ↺");
+                                                                                    await onUpdateSubtasks(task.id, updatedCompiti, t('toastRichiestaModifica'));
                                                                                     setRejectingSubtaskId(null);
                                                                                     setRejectFeedback('');
                                                                                 }
                                                                             }}
                                                                             className="px-2 py-1 bg-kidville-error hover:bg-kidville-error text-white text-[9px] font-bold uppercase rounded-lg"
                                                                         >
-                                                                            Invia Feedback
+                                                                            {t('inviaFeedback')}
                                                                         </button>
                                                                     </div>
                                                                 </div>
@@ -803,7 +831,7 @@ export function TaskCard({
                                                             className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-kidville-cream hover:bg-kidville-cream-dark text-kidville-ink rounded-xl text-[9px] font-bold uppercase transition-all border border-kidville-line cursor-pointer"
                                                         >
                                                             <MessageSquare size={10} />
-                                                            Chiarimenti ({(compito.commenti || []).length})
+                                                            {t('chiarimenti', { count: (compito.commenti || []).length })}
                                                         </button>
 
                                                         {showCommentsSubtaskId === compito.id && (
@@ -814,7 +842,7 @@ export function TaskCard({
                                                                             <div key={comm.id} className="p-2 bg-kidville-cream/85 rounded-xl border border-kidville-line/50 text-[10px] text-left">
                                                                                 <div className="flex items-center justify-between text-[8px] text-kidville-muted mb-0.5">
                                                                                     <span className="font-bold text-kidville-green">{comm.author_name}</span>
-                                                                                    <span>{new Date(comm.created_at).toLocaleDateString('it-IT', {hour:'2-digit', minute:'2-digit'})}</span>
+                                                                                    <span>{new Date(comm.created_at).toLocaleDateString(locale, {hour:'2-digit', minute:'2-digit'})}</span>
                                                                                 </div>
                                                                                 <p className="font-maven text-kidville-ink leading-snug">{comm.testo}</p>
                                                                                 {renderAttachments(comm.attachments)}
@@ -822,21 +850,21 @@ export function TaskCard({
                                                                         ))}
                                                                     </div>
                                                                 ) : (
-                                                                    <p className="font-maven text-[9px] text-kidville-muted italic py-1">Nessun chiarimento presente.</p>
+                                                                    <p className="font-maven text-[9px] text-kidville-muted italic py-1">{t('nessunChiarimento')}</p>
                                                                 )}
 
                                                                 {/* Form to submit clarification */}
                                                                 <div className="space-y-1.5 pt-1">
                                                                     <textarea
                                                                         rows={1}
-                                                                        placeholder="Chiedi o scrivi chiarimenti..."
+                                                                        placeholder={t('placeholderChiarimento')}
                                                                         value={commentText}
                                                                         onChange={e => setCommentText(e.target.value)}
                                                                         className="w-full border border-kidville-line rounded-xl px-2 py-1.5 font-maven text-xs text-kidville-green bg-white/50 focus:outline-none focus:ring-1 focus:ring-kidville-green focus:border-transparent transition-all"
                                                                     />
                                                                     <div className="flex items-center justify-between gap-1">
                                                                         <div className="flex items-center gap-1 flex-wrap">
-                                                                            <label className="p-1 border border-kidville-line rounded-lg cursor-pointer hover:bg-kidville-cream text-kidville-muted hover:text-kidville-green transition-colors" title="Allega file">
+                                                                            <label className="p-1 border border-kidville-line rounded-lg cursor-pointer hover:bg-kidville-cream text-kidville-muted hover:text-kidville-green transition-colors" title={t('allegaFile')}>
                                                                                 <Paperclip size={11} />
                                                                                 <input 
                                                                                     type="file" 
@@ -889,19 +917,19 @@ export function TaskCard({
                                                                                     });
 
                                                                                     if (onUpdateSubtasks) {
-                                                                                        await onUpdateSubtasks(task.id, updatedCompiti, "Chiarimento inviato! 💬");
+                                                                                        await onUpdateSubtasks(task.id, updatedCompiti, t('toastChiarimentoInviato'));
                                                                                         setCommentText('');
                                                                                         setCommentFiles([]);
                                                                                     }
                                                                                 } catch (err) {
-                                                                                    alert(err instanceof Error && err.message ? err.message : 'Errore');
+                                                                                    alert(err instanceof Error && err.message ? err.message : t('errore'));
                                                                                 } finally {
                                                                                     setIsUploadingCommentFile(false);
                                                                                 }
                                                                             }}
                                                                             className="px-2 py-1 bg-kidville-green text-kidville-yellow rounded-lg text-[9px] font-bold uppercase hover:opacity-90 transition-all flex items-center gap-1 disabled:opacity-50"
                                                                         >
-                                                                            {isUploadingCommentFile ? 'Invio...' : <><Send size={9} /> Invia</>}
+                                                                            {isUploadingCommentFile ? t('invio') : <><Send size={9} /> {t('invia')}</>}
                                                                         </button>
                                                                     </div>
                                                                 </div>
@@ -919,11 +947,11 @@ export function TaskCard({
                             {(task.status === 'completed' || task.status === 'approved') && (
                                 <div className="p-4 bg-kidville-success-soft/20 border border-kidville-success/30 rounded-2xl text-left">
                                     <p className="font-maven font-bold text-xs text-kidville-success flex items-center gap-1.5">
-                                        <CheckCircle size={12} /> {task.status === 'approved' ? 'Risolto e Approvato da:' : 'Risolto da (in attesa di verifica):'} {task.resolver ? `${task.resolver.first_name} ${task.resolver.last_name}` : 'Staff'}
+                                        <CheckCircle size={12} /> {task.status === 'approved' ? t('risoltoApprovatoDa') : t('risoltoInAttesa')} {task.resolver ? `${task.resolver.first_name} ${task.resolver.last_name}` : t('staffFallback')}
                                     </p>
                                     {task.resolved_at && (
                                         <p className="font-maven text-[10px] text-kidville-muted mt-0.5">
-                                            il {new Date(task.resolved_at).toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                            {t('ilData', { data: new Date(task.resolved_at).toLocaleDateString(locale, { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) })}
                                         </p>
                                     )}
                                     {task.resolution_notes && (
@@ -935,7 +963,7 @@ export function TaskCard({
                                     {/* Task Level Attachments */}
                                     {task.attachments && task.attachments.length > 0 && (
                                         <div className="mt-3 border-t border-dashed border-kidville-success/50 pt-3">
-                                            <p className="font-barlow font-bold text-[9px] text-kidville-green uppercase tracking-wider mb-1">📁 Documenti Allegati</p>
+                                            <p className="font-barlow font-bold text-[9px] text-kidville-green uppercase tracking-wider mb-1">{t('documentiAllegati')}</p>
                                             {renderAttachments(task.attachments)}
                                         </div>
                                     )}
@@ -947,7 +975,7 @@ export function TaskCard({
                                 <span className="flex items-center gap-1"><Clock size={9} /> {createdDate}</span>
                                 {isExpired && task.status !== 'approved' && (
                                     <span className="flex items-center gap-1 text-kidville-error font-bold animate-pulse">
-                                        <AlertCircle size={9} /> SCADUTO {formattedDeadline}
+                                        <AlertCircle size={9} /> {t('scaduto', { data: formattedDeadline ?? '' })}
                                     </span>
                                 )}
                             </div>
@@ -963,7 +991,7 @@ export function TaskCard({
                     <div>
                         {task.status === 'completed' && (
                             <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider bg-kidville-info-soft text-kidville-info border border-kidville-info/30">
-                                ⏳ In Attesa di Approvazione
+                                {t('inAttesaApprovazioneAzione')}
                             </span>
                         )}
                     </div>
@@ -975,7 +1003,7 @@ export function TaskCard({
                                 onClick={() => onTakeCharge(task.id)}
                                 className="flex items-center gap-1 px-3 py-2 border-2 border-kidville-warn/30 hover:bg-kidville-warn-soft text-kidville-warn font-barlow font-bold text-[10px] uppercase rounded-xl active:scale-[0.98] transition-all"
                             >
-                                <Play size={11} /> Prendo in carico
+                                <Play size={11} /> {t('prendoInCarico')}
                             </button>
                         )}
                         {/* Resolve task — only for managers/owners/direct assignees (not subtask tasks) when task is todo or in_progress */}
@@ -984,7 +1012,7 @@ export function TaskCard({
                                 onClick={() => onComplete(task)}
                                 className="flex items-center gap-1 px-3 py-2 bg-kidville-green text-kidville-yellow hover:opacity-90 font-barlow font-bold text-[10px] uppercase rounded-xl active:scale-[0.98] transition-all shadow shadow-kidville-green/20"
                             >
-                                <CheckCircle size={11} /> Risolvi Task
+                                <CheckCircle size={11} /> {t('risolviTask')}
                             </button>
                         )}
 
@@ -998,7 +1026,7 @@ export function TaskCard({
                                             onClick={() => setRejectingTaskId(task.id)}
                                             className="flex items-center gap-1 px-3 py-2 border-2 border-kidville-error/20 hover:bg-kidville-error-soft text-kidville-error font-barlow font-bold text-[10px] uppercase rounded-xl transition-all"
                                         >
-                                            Richiedi Modifica
+                                            {t('richiediModifica')}
                                         </button>
                                         
                                         {/* If it has subtasks, only allow approving if all subtasks are approved */}
@@ -1007,16 +1035,16 @@ export function TaskCard({
                                                 type="button"
                                                 onClick={async () => {
                                                     if (onUpdateTaskFields) {
-                                                        await onUpdateTaskFields(task.id, { status: 'approved' }, "Task approvato e archiviato! 🎉");
+                                                        await onUpdateTaskFields(task.id, { status: 'approved' }, t('toastTaskApprovato'));
                                                     }
                                                 }}
                                                 className="flex items-center gap-1 px-3 py-2 bg-kidville-success text-white hover:bg-kidville-success font-barlow font-bold text-[10px] uppercase rounded-xl transition-all shadow"
                                             >
-                                                Approva Task
+                                                {t('approvaTask')}
                                             </button>
                                         ) : (
-                                            <span className="flex items-center gap-1 px-3 py-2 bg-kidville-cream text-kidville-muted font-barlow font-bold text-[10px] uppercase rounded-xl border border-kidville-line cursor-not-allowed" title="Approva prima tutti i compiti suddivisi">
-                                                In attesa approvazione compiti
+                                            <span className="flex items-center gap-1 px-3 py-2 bg-kidville-cream text-kidville-muted font-barlow font-bold text-[10px] uppercase rounded-xl border border-kidville-line cursor-not-allowed" title={t('approvaPrimaCompiti')}>
+                                                {t('inAttesaCompiti')}
                                             </span>
                                         )}
                                     </>
@@ -1024,7 +1052,7 @@ export function TaskCard({
                                     <div className="flex flex-col gap-1.5 text-right w-64">
                                         <textarea
                                             rows={2}
-                                            placeholder="Motivo per la modifica del task... *"
+                                            placeholder={t('placeholderMotivoModifica')}
                                             value={rejectFeedback}
                                             onChange={e => setRejectFeedback(e.target.value)}
                                             className="w-full border border-kidville-error/20 rounded-xl p-2 font-maven text-xs text-kidville-error bg-kidville-error-soft/20 focus:outline-none focus:ring-1 focus:ring-kidville-error"
@@ -1036,7 +1064,7 @@ export function TaskCard({
                                                 onClick={() => { setRejectingTaskId(null); setRejectFeedback(''); }}
                                                 className="px-2.5 py-1 text-[9px] font-bold text-kidville-muted uppercase"
                                             >
-                                                Annulla
+                                                {t('annulla')}
                                             </button>
                                             <button
                                                 type="button"
@@ -1060,14 +1088,14 @@ export function TaskCard({
                                                                     resolution_notes: null
                                                                 }))
                                                             } : {})
-                                                        }, "Richiesta modifica inviata! ↺");
+                                                        }, t('toastRichiestaModifica'));
                                                         setRejectingTaskId(null);
                                                         setRejectFeedback('');
                                                     }
                                                 }}
                                                 className="px-3 py-1 bg-kidville-error text-white text-[9px] font-bold uppercase rounded-lg"
                                             >
-                                                Invia
+                                                {t('invia')}
                                             </button>
                                         </div>
                                     </div>
@@ -1088,7 +1116,7 @@ export function TaskCard({
                         ✕
                     </button>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={lightboxUrl} alt="Allegato" className="max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl animate-fade-in" />
+                    <img src={lightboxUrl} alt={t('altAllegato')} className="max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl animate-fade-in" />
                 </div>
             )}
         </motion.div>

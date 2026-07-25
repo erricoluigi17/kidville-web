@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useTranslations } from 'next-intl';
 import { Users, CalendarClock, Plus, Trash2, Sparkles } from 'lucide-react';
 import { card, h3, input, label, hint, checkbox, checkboxLabel, checkboxRow } from './ui';
 import { hdr } from './ui';
@@ -23,6 +24,7 @@ interface Props { userId: string; scuolaId: string }
 // L'ANTEPRIMA è calcolata con le stesse funzioni pure che replicano la SQL
 // (`genera_rette_mensili` v2), così ciò che si vede è ciò che verrà generato.
 export function RetteSettings({ userId, scuolaId }: Props) {
+    const t = useTranslations('adminSettings');
     const [cfg, setCfg] = useState<RetteConfig | null>(null);
     const [saving, setSaving] = useState(false);
     const [msg, setMsg] = useState('');
@@ -76,10 +78,10 @@ export function RetteSettings({ userId, scuolaId }: Props) {
                 body: JSON.stringify({ scuola_id: scuolaId, rette_config: normalizzaRetteConfig(cfg) }),
             });
             const j = await res.json();
-            if (j.success) { setMsg('Impostazioni salvate.'); setCfg(normalizzaRetteConfig(j.data?.rette_config)); }
-            else setError(j.error ?? 'Errore di salvataggio');
+            if (j.success) { setMsg(t('rtImpostazioniSalvate')); setCfg(normalizzaRetteConfig(j.data?.rette_config)); }
+            else setError(j.error ?? t('erroreSalvataggio'));
         } catch {
-            setError('Errore di rete');
+            setError(t('erroreRete'));
         } finally {
             setSaving(false);
         }
@@ -108,49 +110,48 @@ export function RetteSettings({ userId, scuolaId }: Props) {
         <div>
             {/* ── Sconto fratelli ── */}
             <section className={card}>
-                <h3 className={h3}><Users size={16} /> Sconto fratelli</h3>
+                <h3 className={h3}><Users size={16} /> {t('rtScontoFratelli')}</h3>
                 <label className={checkboxRow}>
                     <input type="checkbox" className={checkbox} checked={sf.enabled} onChange={e => setSF({ enabled: e.target.checked })} />
-                    <span className={checkboxLabel}>Attiva lo sconto per i fratelli</span>
+                    <span className={checkboxLabel}>{t('rtAttivaScontoFratelli')}</span>
                 </label>
                 <p className={hint}>
-                    Il 1° figlio della famiglia paga la retta intera. Dal 2° in poi si applica lo scaglione con
-                    posizione più alta ≤ della propria. I fratelli sono i figli che condividono un genitore.
+                    {t('rtScontoFratelliHint')}
                 </p>
 
                 {sf.enabled && (
                     <div className="mt-4 space-y-3">
                         <div className="flex items-center gap-2">
-                            <span className={label + ' mb-0'}>Tipo di sconto</span>
-                            {modoBtn('percentuale', 'Percentuale (%)')}
-                            {modoBtn('importo', 'Importo fisso (€)')}
+                            <span className={label + ' mb-0'}>{t('rtTipoSconto')}</span>
+                            {modoBtn('percentuale', t('rtModoPercentuale'))}
+                            {modoBtn('importo', t('rtModoImporto'))}
                         </div>
 
                         <div className="space-y-2">
                             {sf.scaglioni.map((s, i) => (
                                 <div key={i} className="flex flex-wrap items-end gap-2">
                                     <div>
-                                        <label htmlFor={`sf-pos-${i}`} className={label}>Dal figlio n°</label>
+                                        <label htmlFor={`sf-pos-${i}`} className={label}>{t('rtDalFiglioN')}</label>
                                         <input id={`sf-pos-${i}`} type="number" min={2} value={Number.isFinite(s.posizione) ? s.posizione : ''}
                                             onChange={e => updF(i, 'posizione', Math.max(2, Math.trunc(Number(e.target.value) || 2)))}
                                             className={`${input} w-28`} />
                                     </div>
                                     <div>
-                                        <label htmlFor={`sf-val-${i}`} className={label}>{sf.modo === 'importo' ? 'Sconto (€)' : 'Sconto (%)'}</label>
+                                        <label htmlFor={`sf-val-${i}`} className={label}>{sf.modo === 'importo' ? t('rtScontoEuro') : t('rtScontoPct')}</label>
                                         <input id={`sf-val-${i}`} type="number" min={0} max={sf.modo === 'importo' ? undefined : 100} step={sf.modo === 'importo' ? '0.01' : '1'}
                                             value={Number.isFinite(s.valore) ? s.valore : ''}
                                             onChange={e => updF(i, 'valore', Math.max(0, Number(e.target.value) || 0))}
                                             className={`${input} w-28`} />
                                     </div>
-                                    <button type="button" onClick={() => delF(i)} className="mb-1.5 text-kidville-muted hover:text-kidville-error" aria-label="Rimuovi scaglione">
+                                    <button type="button" onClick={() => delF(i)} className="mb-1.5 text-kidville-muted hover:text-kidville-error" aria-label={t('rtRimuoviScaglione')}>
                                         <Trash2 size={16} />
                                     </button>
                                 </div>
                             ))}
-                            {sf.scaglioni.length === 0 && <p className={hint}>Nessuno scaglione: aggiungine almeno uno.</p>}
+                            {sf.scaglioni.length === 0 && <p className={hint}>{t('rtNessunoScaglione')}</p>}
                         </div>
                         <button type="button" onClick={addF} className="inline-flex items-center gap-1 rounded-pill border-2 border-kidville-line px-3 py-1.5 font-maven text-sm text-kidville-muted hover:border-kidville-green hover:text-kidville-green">
-                            <Plus size={14} /> Aggiungi scaglione
+                            <Plus size={14} /> {t('rtAggiungiScaglione')}
                         </button>
                     </div>
                 )}
@@ -158,14 +159,13 @@ export function RetteSettings({ userId, scuolaId }: Props) {
 
             {/* ── Pro-rata iscrizione ── */}
             <section className={card}>
-                <h3 className={h3}><CalendarClock size={16} /> Retta proporzionale all&apos;iscrizione</h3>
+                <h3 className={h3}><CalendarClock size={16} /> {t('rtProRataTitolo')}</h3>
                 <label className={checkboxRow}>
                     <input type="checkbox" className={checkbox} checked={pr.enabled} onChange={e => setPR({ enabled: e.target.checked })} />
-                    <span className={checkboxLabel}>Applica il pro-rata per le iscrizioni tardive</span>
+                    <span className={checkboxLabel}>{t('rtApplicaProRata')}</span>
                 </label>
                 <p className={hint}>
-                    Vale SOLO per la retta del mese di iscrizione (mai per le assenze). La percentuale dovuta è
-                    quella dello scaglione con il giorno più alto ≤ al giorno di iscrizione (100% = retta intera).
+                    {t('rtProRataHint')}
                 </p>
 
                 {pr.enabled && (
@@ -174,26 +174,26 @@ export function RetteSettings({ userId, scuolaId }: Props) {
                             {pr.scaglioni.map((s, i) => (
                                 <div key={i} className="flex flex-wrap items-end gap-2">
                                     <div>
-                                        <label htmlFor={`pr-day-${i}`} className={label}>Iscritto dal giorno</label>
+                                        <label htmlFor={`pr-day-${i}`} className={label}>{t('rtIscrittoDalGiorno')}</label>
                                         <input id={`pr-day-${i}`} type="number" min={1} max={31} value={Number.isFinite(s.dal_giorno) ? s.dal_giorno : ''}
                                             onChange={e => updP(i, 'dal_giorno', Math.min(31, Math.max(1, Math.trunc(Number(e.target.value) || 1))))}
                                             className={`${input} w-32`} />
                                     </div>
                                     <div>
-                                        <label htmlFor={`pr-perc-${i}`} className={label}>Retta dovuta (%)</label>
+                                        <label htmlFor={`pr-perc-${i}`} className={label}>{t('rtRettaDovutaPct')}</label>
                                         <input id={`pr-perc-${i}`} type="number" min={0} max={100} value={Number.isFinite(s.percentuale) ? s.percentuale : ''}
                                             onChange={e => updP(i, 'percentuale', Math.min(100, Math.max(0, Number(e.target.value) || 0)))}
                                             className={`${input} w-32`} />
                                     </div>
-                                    <button type="button" onClick={() => delP(i)} className="mb-1.5 text-kidville-muted hover:text-kidville-error" aria-label="Rimuovi scaglione">
+                                    <button type="button" onClick={() => delP(i)} className="mb-1.5 text-kidville-muted hover:text-kidville-error" aria-label={t('rtRimuoviScaglione')}>
                                         <Trash2 size={16} />
                                     </button>
                                 </div>
                             ))}
-                            {pr.scaglioni.length === 0 && <p className={hint}>Nessuno scaglione: aggiungine almeno uno.</p>}
+                            {pr.scaglioni.length === 0 && <p className={hint}>{t('rtNessunoScaglione')}</p>}
                         </div>
                         <button type="button" onClick={addP} className="inline-flex items-center gap-1 rounded-pill border-2 border-kidville-line px-3 py-1.5 font-maven text-sm text-kidville-muted hover:border-kidville-green hover:text-kidville-green">
-                            <Plus size={14} /> Aggiungi scaglione
+                            <Plus size={14} /> {t('rtAggiungiScaglione')}
                         </button>
                     </div>
                 )}
@@ -201,40 +201,40 @@ export function RetteSettings({ userId, scuolaId }: Props) {
 
             {/* ── Anteprima ── */}
             <section className={card}>
-                <h3 className={h3}><Sparkles size={16} /> Anteprima sconto</h3>
+                <h3 className={h3}><Sparkles size={16} /> {t('rtAnteprimaSconto')}</h3>
                 <div className="flex flex-wrap items-end gap-3">
                     <div>
-                        <label htmlFor="pv-importo" className={label}>Retta (€)</label>
+                        <label htmlFor="pv-importo" className={label}>{t('rtRettaEuro')}</label>
                         <input id="pv-importo" type="number" min={0} value={Number.isFinite(pvImporto) ? pvImporto : ''}
                             onChange={e => setPvImporto(Math.max(0, Number(e.target.value) || 0))} className={`${input} w-28`} />
                     </div>
                     <div>
-                        <label htmlFor="pv-posizione" className={label}>Figlio n°</label>
+                        <label htmlFor="pv-posizione" className={label}>{t('rtFiglioN')}</label>
                         <input id="pv-posizione" type="number" min={1} value={Number.isFinite(pvPosizione) ? pvPosizione : ''}
                             onChange={e => setPvPosizione(Math.max(1, Math.trunc(Number(e.target.value) || 1)))} className={`${input} w-24`} />
                     </div>
                     <div>
-                        <label htmlFor="pv-giorno" className={label}>Iscritto il giorno</label>
+                        <label htmlFor="pv-giorno" className={label}>{t('rtIscrittoIlGiorno')}</label>
                         <input id="pv-giorno" type="number" min={1} max={31} value={Number.isFinite(pvGiorno) ? pvGiorno : ''}
                             onChange={e => setPvGiorno(Math.min(31, Math.max(1, Math.trunc(Number(e.target.value) || 1))))} className={`${input} w-28`} />
                     </div>
                 </div>
                 <div className="mt-4 rounded-card bg-kidville-cream p-4 space-y-1.5">
                     <div className="flex justify-between font-maven text-sm text-kidville-sub">
-                        <span>Sconto fratelli (figlio n° {pvPosizione})</span><span className="font-bold text-kidville-green">{formatEuro(pvF)}</span>
+                        <span>{t('rtScontoFratelliRiga', { pos: pvPosizione })}</span><span className="font-bold text-kidville-green">{formatEuro(pvF)}</span>
                     </div>
                     <div className="flex justify-between font-maven text-sm text-kidville-sub">
-                        <span>Pro-rata (iscritto il {pvGiorno})</span><span className="font-bold text-kidville-green">{formatEuro(pvP)}</span>
+                        <span>{t('rtProRataRiga', { giorno: pvGiorno })}</span><span className="font-bold text-kidville-green">{formatEuro(pvP)}</span>
                     </div>
                     <div className="flex justify-between border-t border-kidville-line pt-1.5 font-barlow font-black uppercase text-sm text-kidville-green">
-                        <span>Sconto totale</span><span>{formatEuro(pvTot.sconto)}</span>
+                        <span>{t('rtScontoTotale')}</span><span>{formatEuro(pvTot.sconto)}</span>
                     </div>
                     <div className="flex justify-between font-maven text-sm text-kidville-sub">
-                        <span>Retta da pagare</span><span className="font-bold text-kidville-green">{formatEuro(residuo)}</span>
+                        <span>{t('rtRettaDaPagare')}</span><span className="font-bold text-kidville-green">{formatEuro(residuo)}</span>
                     </div>
-                    {pvTot.motivo && <p className="font-maven text-[11px] text-kidville-muted pt-1">Motivo: {pvTot.motivo}</p>}
+                    {pvTot.motivo && <p className="font-maven text-[11px] text-kidville-muted pt-1">{t('rtMotivoPrefix')} {pvTot.motivo}</p>}
                 </div>
-                <p className={hint}>La posizione reale del figlio nella famiglia è calcolata alla generazione delle rette (per data di nascita).</p>
+                <p className={hint}>{t('rtAnteprimaHint')}</p>
             </section>
 
             <SaveRow onSave={save} saving={saving} msg={msg} error={error} />

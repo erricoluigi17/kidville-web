@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { Images } from 'lucide-react';
 import { useAdminSettings } from './useAdminSettings';
 import { card, h3, hint, label } from './ui';
@@ -14,52 +15,53 @@ interface GalleriaConfig {
     max_mb_per_file: number;
 }
 
-const RUOLI = [
-    { id: 'admin', label: 'Segreteria/Admin' },
-    { id: 'teacher', label: 'Docenti' },
-];
-
 export function GalleriaSettings({ userId }: { userId: string }) {
+    const t = useTranslations('adminSettings');
     const { settings, save, saving, error } = useAdminSettings(userId);
     const [draft, setDraft] = useState<GalleriaConfig | null>(null);
     const [msg, setMsg] = useState('');
 
-    if (!settings) return <p className="font-maven text-sm text-kidville-muted">Caricamento…</p>;
+    const RUOLI = [
+        { id: 'admin', label: t('ruoloSegreteriaAdmin') },
+        { id: 'teacher', label: t('ruoloDocenti') },
+    ];
+
+    if (!settings) return <p className="font-maven text-sm text-kidville-muted">{t('caricamento')}</p>;
     const cfg = draft ?? ((settings.galleria_config ?? {}) as GalleriaConfig);
     const set = (patch: Partial<GalleriaConfig>) => { setMsg(''); setDraft({ ...cfg, ...patch }); };
 
     const salva = async () => {
         const ok = await save({ galleria_config: cfg });
-        setMsg(ok ? 'Salvato ✓' : '');
+        setMsg(ok ? t('salvato') : '');
     };
 
     return (
         <section className={card}>
-            <h3 className={h3}><Images size={16} /> Galleria foto e video</h3>
+            <h3 className={h3}><Images size={16} /> {t('gaTitolo')}</h3>
 
-            <label className={label}>Chi può caricare media</label>
+            <label className={label}>{t('gaChiCarica')}</label>
             <PillMultiSelect options={RUOLI} selected={cfg.upload_ruoli ?? ['admin', 'teacher']} onChange={(v) => set({ upload_ruoli: v })} />
 
             <div className="mt-4 space-y-2">
                 <CheckField checked={cfg.consenso_privacy_richiesto ?? true} onChange={(v) => set({ consenso_privacy_richiesto: v })}>
-                    Mostra solo media di alunni con consenso privacy
+                    {t('gaConsensoPrivacy')}
                 </CheckField>
                 <CheckField checked={cfg.approvazione_admin_richiesta ?? false} onChange={(v) => set({ approvazione_admin_richiesta: v })}>
-                    <>Approvazione della segreteria prima della pubblicazione <ComingSoonBadge /></>
+                    <>{t('gaApprovazioneAdmin')} <ComingSoonBadge /></>
                 </CheckField>
                 <CheckField checked={cfg.download_genitori_abilitato ?? true} onChange={(v) => set({ download_genitori_abilitato: v })}>
-                    Download consentito ai genitori
+                    {t('gaDownloadGenitori')}
                 </CheckField>
             </div>
 
             <div className="grid grid-cols-2 gap-3 mt-4">
                 <NumberField value={cfg.max_mb_per_file ?? 25} min={1} max={500} onChange={(v) => set({ max_mb_per_file: v })}>
-                    Dimensione max per file (MB)
+                    {t('gaMaxMbFile')}
                 </NumberField>
             </div>
 
             <SaveRow onSave={salva} saving={saving} msg={msg} error={error} />
-            <p className={hint}>La visibilità della galleria per grado si gestisce in Funzioni &amp; moduli.</p>
+            <p className={hint}>{t('gaHint')}</p>
         </section>
     );
 }

@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import { Package, TrendingDown } from 'lucide-react';
 
 interface InventoryItem {
@@ -17,16 +18,25 @@ interface Props {
     onLoad: () => void;
 }
 
+// Lo stato (chiave i18n) è separato dai colori: la label tradotta si risolve nel
+// componente, dove è disponibile useTranslations (getSemaforoColor è una funzione pura).
+const STATO_LABEL_KEY = {
+    esaurito: 'lockerSemaforoEsaurito',
+    inEsaurimento: 'lockerSemaforoInEsaurimento',
+    ok: 'lockerSemaforoOk',
+} as const;
+
 function getSemaforoColor(qty: number, gialla: number | string, rossa: number | string) {
     const sogliaGialla = parseInt(String(gialla)) || 5;
     const sogliaRossa = parseInt(String(rossa)) || 2;
 
-    if (qty <= sogliaRossa) return { bg: 'bg-kidville-error-soft', border: 'border-kidville-error/25', text: 'text-kidville-error', bar: 'bg-kidville-error-soft0', label: '🔴 Esaurito' };
-    if (qty <= sogliaGialla) return { bg: 'bg-kidville-warn-soft', border: 'border-kidville-warn/30', text: 'text-kidville-warn', bar: 'bg-kidville-warn', label: '🟡 In esaurimento' };
-    return { bg: 'bg-kidville-success-soft', border: 'border-kidville-success/30', text: 'text-kidville-success', bar: 'bg-kidville-success-soft0', label: '🟢 Ok' };
+    if (qty <= sogliaRossa) return { bg: 'bg-kidville-error-soft', border: 'border-kidville-error/25', text: 'text-kidville-error', bar: 'bg-kidville-error-soft0', stato: 'esaurito' as const };
+    if (qty <= sogliaGialla) return { bg: 'bg-kidville-warn-soft', border: 'border-kidville-warn/30', text: 'text-kidville-warn', bar: 'bg-kidville-warn', stato: 'inEsaurimento' as const };
+    return { bg: 'bg-kidville-success-soft', border: 'border-kidville-success/30', text: 'text-kidville-success', bar: 'bg-kidville-success-soft0', stato: 'ok' as const };
 }
 
 export function InventoryCard({ item, onLoad }: Props) {
+    const t = useTranslations('teacherServizi');
     const semaforo = getSemaforoColor(item.quantita, item.livello_allerta, item.livello_emergenza);
 
     // Placeholder icona basata sul nome se non presente
@@ -58,7 +68,7 @@ export function InventoryCard({ item, onLoad }: Props) {
                     </div>
 
                     <div className="flex items-center justify-between">
-                        <span className={`text-xs font-maven ${semaforo.text}`}>{semaforo.label}</span>
+                        <span className={`text-xs font-maven ${semaforo.text}`}>{t(STATO_LABEL_KEY[semaforo.stato])}</span>
                         <TrendingDown size={12} className={item.quantita <= (parseInt(item.livello_allerta as string) || 5) ? semaforo.text : 'opacity-0'} />
                     </div>
                 </div>

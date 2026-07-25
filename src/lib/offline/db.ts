@@ -113,6 +113,17 @@ export interface LocalPrimariaRegistro {
     creato_il: string;
 }
 
+// Cache di LETTURA generica (v11) — snapshot dell'ultima risposta di rete per una
+// certa chiave, così il genitore può rivedere avvisi/diario/menu anche offline.
+// NON è una coda di scrittura (quella resta negli store per-dominio + syncEngine):
+// qui si conserva solo l'ultimo payload JSON per servirlo in fallback. `payload`
+// è opaco (unknown): chi legge sa quale forma attendersi dalla propria chiave.
+export interface CachedRead {
+    chiave: string;       // es. `avvisi:{userId}` — stabile per-alunno/finestra
+    payload: unknown;     // ultimo body JSON ricevuto (opaco)
+    aggiornato_il: string; // ISO — quando è stato messo in cache
+}
+
 const db = new Dexie('KidvilleOfflineDB') as Dexie & {
     presenze: EntityTable<LocalAttendanceLog, 'id'>;
     delegati: EntityTable<LocalDelegate, 'id'>;
@@ -124,6 +135,7 @@ const db = new Dexie('KidvilleOfflineDB') as Dexie & {
     galleria: EntityTable<LocalGalleryMedia, 'id'>; // Galleria multimediale (Fase 3)
     primaria_appello: EntityTable<LocalPrimariaAppello, 'id'>; // Appello primaria (Fase 1)
     primaria_registro: EntityTable<LocalPrimariaRegistro, 'id'>; // Registro primaria (Fase 1)
+    cache_read: EntityTable<CachedRead, 'chiave'>; // Cache di lettura offline (v11)
 };
 
 // v2: schema presenze + delegati (Fase 1)
@@ -214,6 +226,23 @@ db.version(10).stores({
     galleria: 'id, uploaded_by, sync_status',
     primaria_appello: 'id, section_id, alunno_id, data, sync_status',
     primaria_registro: 'id, section_id, data, sync_status'
+});
+
+// v11: cache di lettura generica (offline-first per avvisi/diario/menu genitore).
+// Replica tutti gli store della v10 (Dexie migra in modo incrementale) e aggiunge
+// cache_read, indicizzato per `chiave` (PK) e `aggiornato_il` (pulizia per età).
+db.version(11).stores({
+    presenze: 'id, alunno_id, data, sync_status',
+    delegati: 'id, alunno_id',
+    diario: 'id, alunno_id, classe_id, tipo_evento, timestamp_evento, sync_status',
+    armadietto: 'id, alunno_id, materiale, date, sync_status',
+    genitori: 'id, sync_status',
+    documenti_alunni: 'id, alunno_id, tipo_documento, sync_status',
+    adulti: 'id, role',
+    galleria: 'id, uploaded_by, sync_status',
+    primaria_appello: 'id, section_id, alunno_id, data, sync_status',
+    primaria_registro: 'id, section_id, data, sync_status',
+    cache_read: 'chiave, aggiornato_il'
 });
 
 export { db };

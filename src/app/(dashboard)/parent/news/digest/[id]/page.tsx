@@ -3,13 +3,17 @@
 import { Suspense, useCallback, useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
+import { useTranslations } from 'next-intl'
 import { ArrowLeft, RotateCcw } from 'lucide-react'
 import { useParentIdentity } from '@/lib/auth/use-parent-identity'
 import { withIdentity } from '@/lib/auth/current-user'
-import { MESI_IT, type NewsDigestEdizione } from '@/lib/news/tipi'
+import { useDateFormat } from '@/lib/i18n/date'
+import { type NewsDigestEdizione } from '@/lib/news/tipi'
 
 function ParentDigestDetail() {
   const { parentId, studentId, ready } = useParentIdentity()
+  const t = useTranslations('parentNews')
+  const { nomeMese } = useDateFormat()
   const params = useParams<{ id: string }>()
   const id = params?.id
 
@@ -36,8 +40,8 @@ function ParentDigestDetail() {
   }, [ready, carica])
 
   const titolo = edizione
-    ? edizione.titolo || `Kidville News — ${MESI_IT[(edizione.mese ?? 1) - 1] ?? ''} ${edizione.anno ?? ''}`.trim()
-    : 'Digest'
+    ? edizione.titolo || t('digestTitoloFallback', { mese: nomeMese(edizione.mese ?? 1), anno: edizione.anno ?? '' }).trim()
+    : t('digestTitoloDefault')
 
   return (
     <div className="px-4 pt-5 pb-28">
@@ -46,11 +50,11 @@ function ParentDigestDetail() {
         className="kv-news-onbody mb-4 inline-flex items-center gap-1.5 font-barlow text-[12.5px] font-extrabold uppercase tracking-wide text-kidville-green active:scale-95"
       >
         <ArrowLeft size={16} strokeWidth={2.4} />
-        Tutti i digest
+        {t('tuttiIDigest')}
       </Link>
 
       {loading || !ready ? (
-        <div className="h-[70vh] animate-pulse rounded-card bg-kidville-white" role="status" aria-label="Caricamento del digest" />
+        <div className="h-[70vh] animate-pulse rounded-card bg-kidville-white" role="status" aria-label={t('caricamentoDigest')} />
       ) : edizione && edizione.html && !errore ? (
         <div className="overflow-hidden rounded-card border border-kidville-line bg-kidville-white">
           {/* L'HTML è il template email generato dal server (src/lib/news/digest-email.ts):
@@ -59,7 +63,7 @@ function ParentDigestDetail() {
         </div>
       ) : (
         <div role="alert" className="flex flex-col items-center justify-center rounded-card bg-kidville-white py-12 text-center">
-          <p className="font-maven text-sm text-kidville-sub">Digest non disponibile.</p>
+          <p className="font-maven text-sm text-kidville-sub">{t('digestNonDisponibile')}</p>
           <button
             type="button"
             onClick={() => {
@@ -70,7 +74,7 @@ function ParentDigestDetail() {
             className="mt-3 inline-flex items-center gap-2 rounded-pill bg-kidville-green px-4 py-2 font-barlow text-sm font-extrabold uppercase tracking-wide text-white active:scale-95"
           >
             <RotateCcw size={15} strokeWidth={2.4} />
-            Riprova
+            {t('riprova')}
           </button>
         </div>
       )}

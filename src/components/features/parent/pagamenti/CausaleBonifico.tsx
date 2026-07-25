@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { Copy, Check, Info } from 'lucide-react';
 import { logClient } from '@/lib/logging/client';
 
@@ -27,6 +28,7 @@ export interface VoceCausale {
 // una nota invita a indicare comunque il nome. Il CF è del PROPRIO figlio: dato del
 // genitore, lecito da mostrargli.
 export function CausaleBonifico({ voci }: { voci: VoceCausale[] }) {
+    const t = useTranslations('pagamenti');
     const [copiato, setCopiato] = useState<string | null>(null);
     if (voci.length === 0) return null;
 
@@ -51,10 +53,10 @@ export function CausaleBonifico({ voci }: { voci: VoceCausale[] }) {
     return (
         <div className="rounded-card border border-kidville-line bg-kidville-white p-4">
             <p className="font-barlow font-bold uppercase text-xs tracking-wide text-kidville-green mb-1">
-                Causale consigliata per il bonifico
+                {t('causaleTitolo')}
             </p>
             <p className="font-maven text-xs text-kidville-sub mb-3">
-                Copia la causale della voce che stai pagando: contiene tutto per l&apos;abbinamento automatico del bonifico.
+                {t('causaleIntro')}
             </p>
             <div className="space-y-2">
                 {voci.map((v) => {
@@ -71,15 +73,15 @@ export function CausaleBonifico({ voci }: { voci: VoceCausale[] }) {
                                     type="button"
                                     className={BTN_COPIA_AA}
                                     onClick={() => copia(v.id, causale)}
-                                    aria-label={`Copia la causale di ${nome || 'questo pagamento'}`}
+                                    aria-label={t('ariaCopiaCausale', { nome: nome || t('questoPagamento') })}
                                 >
-                                    {done ? <><Check size={14} /> Copiato</> : <><Copy size={14} /> Copia</>}
+                                    {done ? <><Check size={14} /> {t('copiato')}</> : <><Copy size={14} /> {t('copia')}</>}
                                 </button>
                             </div>
                             {!v.hasCf && (
                                 <p className="mt-1.5 flex items-start gap-1 font-maven text-[11px] text-kidville-sub">
                                     <Info size={12} className="mt-0.5 shrink-0" />
-                                    <span>Codice fiscale non disponibile: indica comunque il nome e cognome del bambino nella causale.</span>
+                                    <span>{t('cfNonDisponibile')}</span>
                                 </p>
                             )}
                         </div>

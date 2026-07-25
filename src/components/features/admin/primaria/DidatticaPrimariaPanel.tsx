@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { BookOpen, Users, GraduationCap, SlidersHorizontal, Target, Plus } from 'lucide-react';
 import { MaterieManager } from '@/components/features/admin/primaria/MaterieManager';
@@ -17,6 +18,7 @@ interface Section { id: string; name: string; school_type: string; scholastic_ye
 // didattica della scuola primaria (materie, docenti&materie, giudizi, scrutinio,
 // classificazione docenti, abilitazione funzioni). Riusa i manager esistenti.
 export function DidatticaPrimariaPanel({ scuolaId, userId }: { scuolaId: string; userId: string }) {
+  const t = useTranslations('adminPrimaria');
   const [tab, setTab] = useState<Tab>('materie');
   const [sezioni, setSezioni] = useState<Section[]>([]);
   const [sezioneId, setSezioneId] = useState<string>('');
@@ -40,11 +42,11 @@ export function DidatticaPrimariaPanel({ scuolaId, userId }: { scuolaId: string;
   const linkSezioni = `/admin/students?tab=sections${userId ? `&userId=${userId}` : ''}`;
 
   const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
-    { id: 'materie', label: 'Materie', icon: <BookOpen size={15} /> },
-    { id: 'docenti', label: 'Docenti & Materie', icon: <Users size={15} /> },
-    { id: 'obiettivi', label: 'Obiettivi', icon: <Target size={15} /> },
-    { id: 'classificazione', label: 'Classificazione docenti', icon: <GraduationCap size={15} /> },
-    { id: 'vincoli', label: 'Vincoli & notifiche', icon: <SlidersHorizontal size={15} /> },
+    { id: 'materie', label: t('didatticaTabMaterie'), icon: <BookOpen size={15} /> },
+    { id: 'docenti', label: t('didatticaTabDocenti'), icon: <Users size={15} /> },
+    { id: 'obiettivi', label: t('didatticaTabObiettivi'), icon: <Target size={15} /> },
+    { id: 'classificazione', label: t('didatticaTabClassificazione'), icon: <GraduationCap size={15} /> },
+    { id: 'vincoli', label: t('didatticaTabVincoli'), icon: <SlidersHorizontal size={15} /> },
   ];
 
   const sezioneCorrente = sezioni.find((s) => s.id === sezioneId);
@@ -53,7 +55,7 @@ export function DidatticaPrimariaPanel({ scuolaId, userId }: { scuolaId: string;
     <div>
       {(tab === 'materie' || tab === 'docenti') && !noSezioniPrimaria && (
         <div className="mb-4 flex items-center gap-3">
-          <label className="font-maven text-sm text-kidville-ink">Classe/Sezione:</label>
+          <label className="font-maven text-sm text-kidville-ink">{t('comuneClasseSezione')}</label>
           <select
             value={sezioneId}
             onChange={(e) => setSezioneId(e.target.value)}
@@ -87,16 +89,15 @@ export function DidatticaPrimariaPanel({ scuolaId, userId }: { scuolaId: string;
             <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-kidville-info-soft">
               <BookOpen size={22} className="text-kidville-info" />
             </div>
-            <h4 className="font-barlow font-black text-lg text-kidville-ink">Nessuna classe di primaria</h4>
+            <h4 className="font-barlow font-black text-lg text-kidville-ink">{t('didatticaNessunaClasseTitolo')}</h4>
             <p className="font-maven text-sm text-kidville-muted mt-1 max-w-md mx-auto">
-              Le materie si gestiscono per classe: crea prima una sezione di tipo <b>Primaria</b> in
-              Anagrafica → Sezioni, poi torna qui per applicare il preset delle materie o aggiungerle a mano.
+              {t.rich('didatticaNessunaClasseTesto', { b: (chunks) => <b>{chunks}</b> })}
             </p>
             <Link
               href={linkSezioni}
               className="font-maven mt-4 inline-flex items-center gap-2 rounded-pill bg-kidville-green px-5 py-2.5 text-sm text-kidville-yellow"
             >
-              <Plus size={16} /> Crea una sezione primaria
+              <Plus size={16} /> {t('didatticaCreaSezione')}
             </Link>
           </div>
         ) : (

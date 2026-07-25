@@ -1,16 +1,16 @@
 'use client'
 
+import { useLocale, useTranslations } from 'next-intl'
 import { CalendarDays, Check } from 'lucide-react'
 import { Modal } from '@/components/ui/Modal'
 import { cx } from '@/lib/ui/cx'
-import { MESI_IT } from '@/lib/news/tipi'
+import { nomeMese } from '@/lib/i18n/date'
 
-/** 'YYYY-MM' → 'Mese Anno' in italiano; formato non valido → passthrough. */
-export function formattaMeseArchivio(mese: string): string {
+/** 'YYYY-MM' → 'Mese Anno' localizzato (default italiano); formato non valido → passthrough. */
+export function formattaMeseArchivio(mese: string, locale: string = 'it'): string {
   const m = /^(\d{4})-(\d{2})$/.exec(mese)
   if (!m) return mese
-  const idx = Number(m[2]) - 1
-  const nome = MESI_IT[idx]
+  const nome = nomeMese(Number(m[2]), locale)
   return nome ? `${nome} ${m[1]}` : mese
 }
 
@@ -23,6 +23,8 @@ interface Props {
 }
 
 export function NewsArchivioDrawer({ open, onClose, mesi, current, onSelect }: Props) {
+  const locale = useLocale()
+  const t = useTranslations('parentNews')
   const scegli = (mese: string | null) => {
     onSelect(mese)
     onClose()
@@ -32,7 +34,7 @@ export function NewsArchivioDrawer({ open, onClose, mesi, current, onSelect }: P
     <Modal
       open={open}
       onClose={onClose}
-      title="Archivio delle news per mese"
+      title={t('archivioModalTitolo')}
       className="w-full max-w-[400px] rounded-3xl bg-kidville-cream p-4"
     >
       <div className="mb-3 flex items-center gap-2 px-1">
@@ -40,8 +42,8 @@ export function NewsArchivioDrawer({ open, onClose, mesi, current, onSelect }: P
           <CalendarDays size={19} strokeWidth={1.9} />
         </span>
         <div>
-          <p className="font-barlow text-[10px] font-bold uppercase tracking-[0.14em] text-kidville-sub">Archivio</p>
-          <h3 className="font-barlow text-lg font-black uppercase leading-none tracking-wide text-kidville-green">Scegli un mese</h3>
+          <p className="font-barlow text-[10px] font-bold uppercase tracking-[0.14em] text-kidville-sub">{t('archivioEyebrow')}</p>
+          <h3 className="font-barlow text-lg font-black uppercase leading-none tracking-wide text-kidville-green">{t('archivioScegliMese')}</h3>
         </div>
       </div>
 
@@ -54,12 +56,12 @@ export function NewsArchivioDrawer({ open, onClose, mesi, current, onSelect }: P
               'flex w-full items-center justify-between gap-3 border-b border-kidville-line px-3 py-3 text-left active:bg-kidville-cream',
             )}
           >
-            <span className="font-barlow text-sm font-extrabold uppercase tracking-wide text-kidville-green">Tutti i mesi</span>
+            <span className="font-barlow text-sm font-extrabold uppercase tracking-wide text-kidville-green">{t('tuttiIMesi')}</span>
             {current === null && <Check size={16} strokeWidth={2.4} className="text-kidville-green" />}
           </button>
 
           {mesi.length === 0 && (
-            <p className="px-3 py-4 font-maven text-[13px] text-kidville-sub">Ancora nessun mese in archivio.</p>
+            <p className="px-3 py-4 font-maven text-[13px] text-kidville-sub">{t('archivioVuoto')}</p>
           )}
 
           {mesi.map((m, i) => {
@@ -76,7 +78,7 @@ export function NewsArchivioDrawer({ open, onClose, mesi, current, onSelect }: P
               >
                 <span className="flex items-center gap-2">
                   <span className="font-barlow text-sm font-extrabold uppercase tracking-wide text-kidville-green">
-                    {formattaMeseArchivio(m.mese)}
+                    {formattaMeseArchivio(m.mese, locale)}
                   </span>
                   <span className="rounded-pill bg-kidville-neutral-soft px-2 py-0.5 font-maven text-[11px] font-semibold text-kidville-sub">
                     {m.conteggio}

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { AlertTriangle, BookOpen } from 'lucide-react';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 
@@ -13,6 +14,7 @@ interface PresenzaRow { id: string; stato: string | null }
 const TINTS = ['#2A6FDB', '#C2487A', '#1F8A5B', '#E6720A', '#7A3FD0', '#2AA0C4', '#D14D8B', '#4E73C0'];
 
 export default function ClasseOverviewPage() {
+  const t = useTranslations('teacherPrimaria');
   const params = useParams();
   const search = useSearchParams();
   const sectionId = params?.sectionId as string;
@@ -54,12 +56,12 @@ export default function ClasseOverviewPage() {
     <div className="mx-auto flex max-w-[460px] flex-col gap-4">
       {/* Presenze di oggi (KPI) */}
       <div className="rounded-2xl bg-white p-4 shadow-sm">
-        <p className="font-barlow text-[11px] font-bold uppercase tracking-[0.1em] text-kidville-yellow-dark">Presenze di oggi</p>
+        <p className="font-barlow text-[11px] font-bold uppercase tracking-[0.1em] text-kidville-yellow-dark">{t('overviewPresenzeOggi')}</p>
         <div className="mt-2.5 flex gap-2.5">
           {[
-            { l: 'Presenti', n: presenti, c: 'var(--color-kidville-success)', s: 'var(--color-kidville-success-soft)' },
-            { l: 'Assenti', n: assenti, c: 'var(--color-kidville-error)', s: 'var(--color-kidville-error-soft)' },
-            { l: 'Ritardi', n: ritardi, c: 'var(--color-kidville-yellow-dark)', s: 'var(--color-kidville-yellow-soft)' },
+            { l: t('overviewPresenti'), n: presenti, c: 'var(--color-kidville-success)', s: 'var(--color-kidville-success-soft)' },
+            { l: t('overviewAssenti'), n: assenti, c: 'var(--color-kidville-error)', s: 'var(--color-kidville-error-soft)' },
+            { l: t('overviewRitardi'), n: ritardi, c: 'var(--color-kidville-yellow-dark)', s: 'var(--color-kidville-yellow-soft)' },
           ].map((b) => (
             <div key={b.l} className="flex-1 rounded-[13px] py-3 text-center" style={{ background: b.s }}>
               <div className="font-barlow text-2xl font-black leading-none" style={{ color: b.c }}>{b.n}</div>
@@ -71,22 +73,22 @@ export default function ClasseOverviewPage() {
 
       {/* Le mie materie */}
       <div>
-        <p className="mb-2.5 px-0.5 font-barlow text-[11px] font-extrabold uppercase tracking-[0.06em] text-kidville-muted">Le mie materie</p>
+        <p className="mb-2.5 px-0.5 font-barlow text-[11px] font-extrabold uppercase tracking-[0.06em] text-kidville-muted">{t('overviewMieMaterie')}</p>
         <div className="flex flex-wrap gap-2">
           {materie.map((m) => (
             <span key={m.id} className="inline-flex h-8 items-center gap-1.5 rounded-pill bg-kidville-green px-3.5 font-barlow text-[13px] font-extrabold uppercase tracking-wide text-kidville-yellow">
               <BookOpen size={13} /> {m.nome}
             </span>
           ))}
-          {materie.length === 0 && <span className="font-maven text-sm text-kidville-muted">Nessuna materia assegnata.</span>}
+          {materie.length === 0 && <span className="font-maven text-sm text-kidville-muted">{t('overviewNessunaMateria')}</span>}
         </div>
       </div>
 
       {/* Alunni */}
       <div>
         <div className="mb-2.5 flex items-center justify-between px-0.5">
-          <span className="font-barlow text-[11px] font-extrabold uppercase tracking-[0.06em] text-kidville-muted">Alunni</span>
-          <span className="rounded-pill bg-kidville-cream-dark px-2.5 py-0.5 font-barlow text-[10.5px] font-extrabold uppercase text-kidville-green">{alunni.length} in classe</span>
+          <span className="font-barlow text-[11px] font-extrabold uppercase tracking-[0.06em] text-kidville-muted">{t('overviewAlunni')}</span>
+          <span className="rounded-pill bg-kidville-cream-dark px-2.5 py-0.5 font-barlow text-[10.5px] font-extrabold uppercase text-kidville-green">{t('overviewInClasse', { count: alunni.length })}</span>
         </div>
         <div className="flex flex-col gap-2">
           {alunni.map((a, i) => {
@@ -109,13 +111,13 @@ export default function ClasseOverviewPage() {
             );
           })}
           {alunni.length === 0 && (
-            <div className="rounded-2xl bg-white p-4 text-center font-maven text-sm text-kidville-muted shadow-sm">Nessun alunno.</div>
+            <div className="rounded-2xl bg-white p-4 text-center font-maven text-sm text-kidville-muted shadow-sm">{t('overviewNessunAlunno')}</div>
           )}
         </div>
       </div>
 
       <div className="flex items-center justify-center gap-2 py-1 text-center">
-        <span className="font-maven text-[10.5px] text-kidville-muted">Usa le schede in alto per registro, valutazioni, scrutinio e fascicolo.</span>
+        <span className="font-maven text-[10.5px] text-kidville-muted">{t('overviewFooter')}</span>
       </div>
     </div>
   );

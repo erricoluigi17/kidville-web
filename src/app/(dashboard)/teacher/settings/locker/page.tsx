@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, Suspense } from 'react';
+import { useTranslations } from 'next-intl';
 import { useSearchParams } from 'next/navigation';
 import {
     Plus, Trash2, ToggleLeft, ToggleRight,
@@ -29,6 +30,7 @@ const ICONE_SUGGERITE = ['🧷', '🧻', '🧴', '👕', '🍼', '🧸', '📦',
 // ─────────────────────────────────────────────────────────────────────────────
 
 function LockerSettingsInner() {
+    const t = useTranslations('teacherServizi');
     const search = useSearchParams();
     const userId = getCurrentTeacherId(search);
     const [sezioniReali, setSezioniReali] = useState<string[]>([]);
@@ -132,7 +134,7 @@ function LockerSettingsInner() {
     // ── Elimina ───────────────────────────────────────────────────────────────
     const deleteMat = async (mat: MaterialeConfig) => {
         if (!userId) return;
-        if (!confirm(`Eliminare "${mat.nome}"? Questa azione non può essere annullata.`)) return;
+        if (!confirm(t('settingsConfermaElimina', { nome: mat.nome }))) return;
         setSaving(mat.id);
         try {
             await fetch(`/api/locker/materials?id=${mat.id}&userId=${userId}`, { method: 'DELETE', headers: { 'x-user-id': userId } });
@@ -143,9 +145,9 @@ function LockerSettingsInner() {
     // ── Aggiungi nuovo ────────────────────────────────────────────────────────
     const addMateriale = async () => {
         if (!userId) return;
-        if (!newMat.nome.trim()) { setAddError('Inserisci un nome'); return; }
+        if (!newMat.nome.trim()) { setAddError(t('settingsErrNome')); return; }
         const classi = targetClassi.length > 0 ? targetClassi : (classeFilter ? [classeFilter] : []);
-        if (classi.length === 0) { setAddError('Seleziona almeno una sezione'); return; }
+        if (classi.length === 0) { setAddError(t('settingsErrSezione')); return; }
         setSaving('new');
         try {
             const res = await fetch('/api/locker/materials', {
@@ -174,15 +176,15 @@ function LockerSettingsInner() {
         <div className="mx-auto max-w-[460px] px-4 pt-5">
             {/* Header verde (DR) */}
             <PageHeaderCard
-                eyebrow="Armadietto"
-                title="Materiali"
-                subtitle="Configura i materiali che i genitori consegnano quotidianamente"
+                eyebrow={t('settingsEyebrow')}
+                title={t('settingsTitolo')}
+                subtitle={t('settingsSottotitolo')}
             />
 
             {/* Filtro classe */}
             <div className="mt-5 mb-6 flex gap-2 overflow-x-auto pb-1">
                 {sezioniReali.length === 0 && (
-                    <span className="font-maven text-xs text-kidville-muted py-2">Nessuna sezione disponibile per l&apos;armadietto.</span>
+                    <span className="font-maven text-xs text-kidville-muted py-2">{t('settingsNessunaSezione')}</span>
                 )}
                 {sezioniReali.map(c => (
                     <button key={c} onClick={() => setClasseFilter(c)}
@@ -197,7 +199,7 @@ function LockerSettingsInner() {
             {loading ? (
                 <div className="flex items-center justify-center py-12 gap-2 text-kidville-muted">
                     <div className="w-4 h-4 border-2 border-kidville-line border-t-kidville-green rounded-full animate-spin" />
-                    Caricamento...
+                    {t('settingsCaricamento')}
                 </div>
             ) : (
                 <div className="space-y-3 mb-5">
@@ -231,10 +233,10 @@ function LockerSettingsInner() {
                                     </div>
                                     <div className="flex items-center gap-3 mt-1">
                                         <span className="text-xs text-kidville-warn">
-                                            🟡 Allerta: <strong>{mat.livello_allerta}</strong>
+                                            {t.rich('settingsAllertaInline', { valore: mat.livello_allerta, strong: (c) => <strong>{c}</strong> })}
                                         </span>
                                         <span className="text-xs text-kidville-error">
-                                            🔴 Urgente: <strong>{mat.livello_emergenza}</strong>
+                                            {t.rich('settingsUrgenteInline', { valore: mat.livello_emergenza, strong: (c) => <strong>{c}</strong> })}
                                         </span>
                                     </div>
                                 </div>
@@ -245,14 +247,14 @@ function LockerSettingsInner() {
                                         <div className="w-4 h-4 border-2 border-kidville-line border-t-kidville-green rounded-full animate-spin" />
                                     ) : (
                                         <>
-                                            <button onClick={() => toggleAttivo(mat)} title={mat.attivo ? 'Disattiva' : 'Attiva'}
+                                            <button onClick={() => toggleAttivo(mat)} title={mat.attivo ? t('settingsDisattiva') : t('settingsAttiva')}
                                                 className="text-kidville-muted hover:text-kidville-green transition-colors">
                                                 {mat.attivo
                                                     ? <ToggleRight size={24} className="text-kidville-green" />
                                                     : <ToggleLeft size={24} />}
                                             </button>
                                             {!mat.id.startsWith('default') && (
-                                                <button onClick={() => deleteMat(mat)} title="Elimina"
+                                                <button onClick={() => deleteMat(mat)} title={t('settingsElimina')}
                                                     className="text-kidville-muted hover:text-kidville-error transition-colors">
                                                     <Trash2 size={16} />
                                                 </button>
@@ -266,14 +268,14 @@ function LockerSettingsInner() {
                             {mat.attivo && (
                                 <div className="flex gap-4 mt-3 pt-3 border-t border-kidville-line">
                                     <div className="flex-1">
-                                        <label className="text-[10px] text-kidville-warn font-bold block mb-1">Soglia Allerta (🟡)</label>
+                                        <label className="text-[10px] text-kidville-warn font-bold block mb-1">{t('settingsSogliaAllerta')}</label>
                                         <input type="number" min={1} max={50}
                                             value={mat.livello_allerta}
                                             onChange={e => updateSoglie(mat, 'livello_allerta', parseInt(e.target.value) || 1)}
                                             className="w-full border border-kidville-line rounded-lg px-2 py-1 text-sm text-center" />
                                     </div>
                                     <div className="flex-1">
-                                        <label className="text-[10px] text-kidville-error font-bold block mb-1">Soglia Urgente (🔴)</label>
+                                        <label className="text-[10px] text-kidville-error font-bold block mb-1">{t('settingsSogliaUrgente')}</label>
                                         <input type="number" min={0} max={20}
                                             value={mat.livello_emergenza}
                                             onChange={e => updateSoglie(mat, 'livello_emergenza', parseInt(e.target.value) || 0)}
@@ -287,7 +289,7 @@ function LockerSettingsInner() {
                     {materiali.length === 0 && (
                         <div className="text-center py-10 text-kidville-muted">
                             <Package size={40} className="mx-auto mb-2 opacity-30" />
-                            <p className="text-sm">Nessun materiale configurato per {classeFilter}</p>
+                            <p className="text-sm">{t('settingsNessunMateriale', { sezione: classeFilter })}</p>
                         </div>
                     )}
                 </div>
@@ -296,11 +298,11 @@ function LockerSettingsInner() {
             {/* Form aggiungi */}
             {showAddForm ? (
                 <div className="bg-white border-2 border-kidville-green/20 rounded-2xl p-5 mb-4">
-                    <h3 className="font-maven font-bold text-kidville-green mb-4">Nuovo Materiale</h3>
+                    <h3 className="font-maven font-bold text-kidville-green mb-4">{t('settingsNuovoMateriale')}</h3>
 
                     {/* Icona */}
                     <div className="mb-4">
-                        <label className="text-xs font-bold text-kidville-muted mb-2 block">Icona</label>
+                        <label className="text-xs font-bold text-kidville-muted mb-2 block">{t('settingsIcona')}</label>
                         <div className="flex gap-2 flex-wrap">
                             {ICONE_SUGGERITE.map(ic => (
                                 <button key={ic} onClick={() => setNewMat(n => ({ ...n, icona: ic }))}
@@ -314,29 +316,29 @@ function LockerSettingsInner() {
 
                     {/* Nome */}
                     <div className="mb-3">
-                        <label className="text-xs font-bold text-kidville-muted mb-1 block">Nome materiale</label>
+                        <label className="text-xs font-bold text-kidville-muted mb-1 block">{t('settingsNomeMateriale')}</label>
                         <input
                             value={newMat.nome}
                             onChange={e => setNewMat(n => ({ ...n, nome: e.target.value }))}
-                            placeholder="es. Bavaglini"
+                            placeholder={t('settingsNomePlaceholder')}
                             className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 text-sm focus:border-kidville-green outline-none" />
                     </div>
 
                     {/* Unità + Soglie */}
                     <div className="grid grid-cols-3 gap-2 mb-4">
                         <div>
-                            <label className="text-xs text-kidville-muted block mb-1">Unità</label>
+                            <label className="text-xs text-kidville-muted block mb-1">{t('settingsUnita')}</label>
                             <input value={newMat.unita} onChange={e => setNewMat(n => ({ ...n, unita: e.target.value }))}
                                 className="w-full border border-kidville-line rounded-lg px-2 py-1.5 text-sm" />
                         </div>
                         <div>
-                            <label className="text-xs text-kidville-warn block mb-1">🟡 Allerta</label>
+                            <label className="text-xs text-kidville-warn block mb-1">{t('settingsAllertaLabel')}</label>
                             <input type="number" value={newMat.livello_allerta}
                                 onChange={e => setNewMat(n => ({ ...n, livello_allerta: parseInt(e.target.value) || 1 }))}
                                 className="w-full border border-kidville-line rounded-lg px-2 py-1.5 text-sm text-center" />
                         </div>
                         <div>
-                            <label className="text-xs text-kidville-error block mb-1">🔴 Urgente</label>
+                            <label className="text-xs text-kidville-error block mb-1">{t('settingsUrgenteLabel')}</label>
                             <input type="number" value={newMat.livello_emergenza}
                                 onChange={e => setNewMat(n => ({ ...n, livello_emergenza: parseInt(e.target.value) || 0 }))}
                                 className="w-full border border-kidville-line rounded-lg px-2 py-1.5 text-sm text-center" />
@@ -345,8 +347,8 @@ function LockerSettingsInner() {
 
                     {/* Sezioni destinatarie (multi-select reale) */}
                     <div className="mb-4">
-                        <label className="text-xs font-bold text-kidville-muted mb-2 block">Assegna alle classi</label>
-                        <SezioniMultiSelect withLivelloFilter value={targetClassi} onChange={setTargetClassi} emptyHint="Nessuna sezione: creale in Anagrafica → Sezioni." />
+                        <label className="text-xs font-bold text-kidville-muted mb-2 block">{t('settingsAssegnaClassi')}</label>
+                        <SezioniMultiSelect withLivelloFilter value={targetClassi} onChange={setTargetClassi} emptyHint={t('settingsEmptyHint')} />
                     </div>
 
                     {addError && <p className="text-kidville-error text-xs mb-3">{addError}</p>}
@@ -354,11 +356,11 @@ function LockerSettingsInner() {
                     <div className="flex gap-2">
                         <button onClick={addMateriale} disabled={saving === 'new'}
                             className="flex-1 bg-kidville-green text-kidville-yellow py-2.5 rounded-xl font-bold text-sm flex items-center justify-center gap-1 disabled:opacity-50">
-                            <Save size={14} /> {saving === 'new' ? 'Salvataggio...' : 'Salva Materiale'}
+                            <Save size={14} /> {saving === 'new' ? t('settingsSalvataggio') : t('settingsSalvaMateriale')}
                         </button>
                         <button onClick={() => { setShowAddForm(false); setAddError(''); }}
                             className="px-4 py-2.5 rounded-xl border text-kidville-muted text-sm">
-                            Annulla
+                            {t('settingsAnnulla')}
                         </button>
                     </div>
                 </div>
@@ -367,18 +369,18 @@ function LockerSettingsInner() {
                     id="add-material-btn"
                     onClick={() => { setTargetClassi(classeFilter ? [classeFilter] : []); setShowAddForm(true); }}
                     className="w-full py-3 border-2 border-dashed border-kidville-green/30 rounded-2xl text-kidville-green text-sm font-bold hover:bg-kidville-green/5 transition-colors flex items-center justify-center gap-2">
-                    <Plus size={16} /> Aggiungi Materiale
+                    <Plus size={16} /> {t('settingsAggiungiMateriale')}
                 </button>
             )}
 
             {/* Info */}
             <div className="mt-6 bg-kidville-info-soft rounded-2xl p-4 text-xs text-kidville-info font-maven">
-                <strong>ℹ️ Come funziona:</strong>
+                <strong>{t('settingsComeFunziona')}</strong>
                 <ul className="mt-1 space-y-1 list-disc list-inside opacity-80">
-                    <li>I materiali configurati qui appaiono nel form &quot;Carico Genitore&quot; e nel portale genitore</li>
-                    <li>Disattiva un materiale per nasconderlo senza perderlo</li>
-                    <li>Le soglie determinano il colore del semaforo (🟡 allerta, 🔴 urgente)</li>
-                    <li>Ogni classe può avere materiali diversi</li>
+                    <li>{t('settingsInfo1')}</li>
+                    <li>{t('settingsInfo2')}</li>
+                    <li>{t('settingsInfo3')}</li>
+                    <li>{t('settingsInfo4')}</li>
                 </ul>
             </div>
         </div>

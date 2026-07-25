@@ -1,9 +1,12 @@
 'use client';
 
 import { useState, useEffect, useCallback, Suspense } from 'react';
+import { useTranslations } from 'next-intl';
 import { AvvisoCard, Avviso } from '@/components/features/avvisi/AvvisoCard';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
+import { OfflineBadge } from '@/components/ui/OfflineBadge';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
+import { fetchConCache } from '@/lib/offline/read-cache';
 import { logClient } from '@/lib/logging/client';
 
 // m3: ogni avviso porta l'elenco dei FIGLI cui si riferisce (nome + student_id),
@@ -17,10 +20,13 @@ type AvvisoConFigli = Avviso & { figli?: FiglioRiferito[] };
 
 // Identità dalla sessione (URL → localStorage → /api/me), senza fallback demo (M4).
 function ParentAvvisiContent() {
+    const t = useTranslations('avvisi');
     const { parentId, studentId, ready } = useParentIdentity();
 
     const [avvisi, setAvvisi] = useState<AvvisoConFigli[]>([]);
     const [loading, setLoading] = useState(true);
+    // true quando gli avvisi mostrati arrivano dalla cache offline (rete assente).
+    const [offline, setOffline] = useState(false);
 
     // Feed UNIFICATO server-derived (G3): niente più parentId/classe/studentId nella
     // query — il server ricava figli, classi e plesso dalla sessione. Si passa solo
@@ -28,11 +34,18 @@ function ParentAvvisiContent() {
     // try/finally (NON try/catch): dentro un effect il catch farebbe scattare
     // react-hooks/set-state-in-effect. I fallimenti di rete/!res.ok sono comunque
     // registrati dal fetch strumentato globale (logClient) — l'osservabilità c'è.
+    // fetchConCache serve l'ultima copia salvata quando la rete manca (offline=true);
+    // se non c'è né rete né cache rilancia e il flusso resta identico a prima.
     const loadAvvisi = useCallback(async () => {
         if (!ready || !parentId) return;
         try {
-            const res = await fetch('/api/avvisi', { headers: { 'x-user-id': parentId } });
-            if (res.ok) setAvvisi(await res.json());
+            const { data, offline: off } = await fetchConCache<AvvisoConFigli[]>(
+                `avvisi:${parentId}`,
+                '/api/avvisi',
+                { headers: { 'x-user-id': parentId } },
+            );
+            setAvvisi(data);
+            setOffline(off);
         } finally {
             setLoading(false);
         }
@@ -99,17 +112,24 @@ function ParentAvvisiContent() {
         <div className="px-4 pt-5 pb-24">
             {/* Header */}
             <PageHeaderCard
-                eyebrow="Comunicazioni"
-                title="Avvisi"
-                subtitle={loading ? 'Comunicazioni dalla scuola' : daGestire > 0 ? `${daGestire} da gestire` : 'Tutto in regola ✓'}
+                eyebrow={t('pageEyebrow')}
+                title={t('pageTitle')}
+                subtitle={loading ? t('sottotitoloCaricamento') : daGestire > 0 ? t('sottotitoloDaGestire', { count: daGestire }) : t('sottotitoloOk')}
                 className="mb-6"
             />
+
+            {/* Indicatore offline: i dati vengono dall'ultima copia in cache */}
+            {offline && !loading && (
+                <div className="mb-4 flex justify-center">
+                    <OfflineBadge />
+                </div>
+            )}
 
             {/* Loading */}
             {loading && (
                 <div className="flex flex-col items-center justify-center py-20 gap-3">
                     <div className="w-7 h-7 border-[3px] border-kidville-green/20 border-t-kidville-green rounded-full animate-spin" />
-                    <p className="font-maven text-sm text-kidville-muted">Caricamento...</p>
+                    <p className="font-maven text-sm text-kidville-muted">{t('caricamento')}</p>
                 </div>
             )}
 
@@ -117,9 +137,9 @@ function ParentAvvisiContent() {
             {!loading && avvisi.length === 0 && (
                 <div className="flex flex-col items-center justify-center py-20 text-center">
                     <div className="w-20 h-20 bg-kidville-cream rounded-full flex items-center justify-center mb-4 text-4xl">📭</div>
-                    <h2 className="font-barlow font-bold text-xl text-kidville-green uppercase mb-2">Nessun avviso</h2>
+                    <h2 className="font-barlow font-bold text-xl text-kidville-green uppercase mb-2">{t('vuotoTitolo')}</h2>
                     <p className="font-maven text-kidville-muted text-sm max-w-xs">
-                        Non ci sono comunicazioni dalla scuola al momento
+                        {t('vuotoDescrizione')}
                     </p>
                 </div>
             )}
@@ -134,13 +154,13 @@ function ParentAvvisiContent() {
                             <div key={avviso.id}>
                                 {figli.length > 0 && (
                                     <div className="mb-1 flex flex-wrap items-center gap-1 px-1">
-                                        <span className="font-maven text-[10px] font-semibold text-kidville-green">Per</span>
+                                        <span className="font-maven text-[10px] font-semibold text-kidville-green">{t('perFigli')}</span>
                                         {figli.map((f) => (
                                             <span
                                                 key={f.student_id}
                                                 className="inline-flex items-center rounded-full bg-kidville-green-soft px-2 py-0.5 font-maven text-[10px] font-semibold text-kidville-green"
                                             >
-                                                {f.nome || 'Figlio'}
+                                                {f.nome || t('figlioFallback')}
                                             </span>
                                         ))}
                                     </div>
@@ -157,8 +177,8 @@ function ParentAvvisiContent() {
             {/* Footer */}
             <div className="mt-8 p-4 bg-white rounded-2xl border border-kidville-line text-center">
                 <p className="font-maven text-xs text-kidville-muted">
-                    📋 Gli avvisi restano visibili fino alla loro scadenza.<br />
-                    Le prese visione vengono registrate automaticamente.
+                    {t('footerRiga1')}<br />
+                    {t('footerRiga2')}
                 </p>
             </div>
         </div>

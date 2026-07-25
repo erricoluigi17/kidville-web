@@ -3,10 +3,12 @@
 import { Suspense, useEffect, useRef, useState } from 'react';
 import Image from 'next/image';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { getSupabase } from '@/lib/supabase/browser-client';
 import { useAccessibility } from '@/lib/accessibility/useAccessibility';
+import { LanguageSwitcher } from '@/components/features/i18n/LanguageSwitcher';
 import { areaFromPath, homePathForRole, isAreaAllowed } from '@/lib/auth/active-role';
-import { labelRuolo } from '@/lib/auth/ruoli';
+import { useLabelRuolo } from '@/lib/auth/ruoli';
 import styles from './page.module.css';
 
 /* ───────── Iconcine inline (leading/eye + decori) ───────── */
@@ -99,11 +101,6 @@ interface ProfiloDisponibile {
   area: string;
 }
 
-const ETICHETTE: Record<string, string> = { genitore: 'Genitore' };
-
-function etichettaProfilo(ruolo: string): string {
-  return ETICHETTE[ruolo] ?? labelRuolo(ruolo);
-}
 
 /** Destinazione post-login: `?next=` onorato solo se coerente col ruolo attivo. */
 function destinazione(ruolo: string, next: string | null): string {
@@ -138,6 +135,8 @@ function LoginForm() {
   // Arrivo dalla guardia d'area (M4B.4): utente già autenticato con doppio
   // profilo ma senza ruolo attivo → salta le credenziali, mostra la scelta.
   const scegli = params.get('scegli') === '1';
+  const t = useTranslations('auth');
+  const labelRuolo = useLabelRuolo();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -215,7 +214,7 @@ function LoginForm() {
     try {
       const ok = await impostaRuoloAttivo(ruolo);
       if (!ok) {
-        setError('Non riesco a impostare il ruolo. Riprova.');
+        setError(t('erroreRuolo'));
         return;
       }
       persisti('kv_user_role', ruolo);
@@ -234,7 +233,7 @@ function LoginForm() {
       const supabase = getSupabase();
       const { error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) {
-        setError('Credenziali non valide. L’accesso è solo su invito della Segreteria.');
+        setError(t('credenzialiNonValide'));
         return;
       }
 
@@ -265,7 +264,7 @@ function LoginForm() {
       router.replace(next && areaFromPath(next) ? next : '/');
       router.refresh();
     } catch {
-      setError('Errore di connessione. Riprova.');
+      setError(t('erroreConnessione'));
     } finally {
       setLoading(false);
     }
@@ -274,6 +273,9 @@ function LoginForm() {
   return (
     <div className={styles.page}>
       {!highContrast && <BackgroundDeco />}
+      <div style={{ position: 'absolute', top: 'max(12px, env(safe-area-inset-top))', right: 12, zIndex: 10 }}>
+        <LanguageSwitcher />
+      </div>
 
       <div className={styles.scene}>
         {/* logo trim su next/image; il CSS decide la larghezza reale. Resta anche in
@@ -288,15 +290,15 @@ function LoginForm() {
           </div>
         )}
 
-        <form onSubmit={onSubmit} className={styles.card} aria-label="Accesso a Kidville">
-          <h1 className={styles.title}>Benvenuto/a!</h1>
+        <form onSubmit={onSubmit} className={styles.card} aria-label={t('formLabel')}>
+          <h1 className={styles.title}>{t('title')}</h1>
           {/* nodo persistente: React ne muta solo il testo, così il passaggio al
               picker viene annunciato in modo affidabile */}
           <p className={styles.subtitle} role="status">
             {profili ? (
-              <>Sei registrato con più profili. Scegli con quale ruolo entrare.</>
+              <>{t('subtitlePicker')}</>
             ) : (
-              <>Accedi al tuo account Kidville</>
+              <>{t('subtitleLogin')}</>
             )}
           </p>
 
@@ -308,14 +310,14 @@ function LoginForm() {
 
           {attesa ? (
             <p className={styles.forgotNote} role="status" style={{ marginTop: 24 }}>
-              Caricamento dei profili…
+              {t('caricamentoProfili')}
             </p>
           ) : profili ? (
             <div
               ref={gruppoRuoli}
               tabIndex={-1}
               role="group"
-              aria-label="Scelta del ruolo"
+              aria-label={t('sceltaRuolo')}
               style={{ marginTop: 24 }}
             >
               {profili.map((p) => (
@@ -326,7 +328,7 @@ function LoginForm() {
                   onClick={() => void scegliRuolo(p.ruolo)}
                   className={styles.roleBtn}
                 >
-                  {etichettaProfilo(p.ruolo)}
+                  {labelRuolo(p.ruolo)}
                 </button>
               ))}
             </div>
@@ -334,7 +336,7 @@ function LoginForm() {
             <>
               <div className={styles.field}>
                 <label className={styles.label} htmlFor="email">
-                  Email
+                  {t('email')}
                 </label>
                 <div className={styles.inwrap}>
                   <span className={styles.lead}>
@@ -350,7 +352,7 @@ function LoginForm() {
                     autoCorrect="off"
                     spellCheck={false}
                     enterKeyHint="next"
-                    placeholder="nome@esempio.it"
+                    placeholder={t('emailPlaceholder')}
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     className={styles.input}
@@ -362,7 +364,7 @@ function LoginForm() {
 
               <div className={styles.field}>
                 <label className={styles.label} htmlFor="password">
-                  Password
+                  {t('password')}
                 </label>
                 <div className={`${styles.inwrap} ${styles.hasEye}`}>
                   <span className={styles.lead}>
@@ -377,7 +379,7 @@ function LoginForm() {
                     autoCorrect="off"
                     spellCheck={false}
                     enterKeyHint="go"
-                    placeholder="La tua password"
+                    placeholder={t('passwordPlaceholder')}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     className={styles.input}
@@ -391,7 +393,7 @@ function LoginForm() {
                     onClick={() => setShowPassword((s) => !s)}
                     className={styles.eye}
                     aria-pressed={showPassword}
-                    aria-label="Mostra password"
+                    aria-label={t('mostraPassword')}
                   >
                     <EyeIcon off={showPassword} />
                   </button>
@@ -405,16 +407,16 @@ function LoginForm() {
                 aria-expanded={showForgot}
                 aria-controls="forgot-note"
               >
-                Password dimenticata?
+                {t('passwordDimenticata')}
               </button>
               {showForgot && (
                 <p id="forgot-note" className={styles.forgotNote}>
-                  Contatta la Segreteria: riemette le credenziali via email. L’accesso è solo su invito.
+                  {t('forgotNote')}
                 </p>
               )}
 
               <button type="submit" disabled={loading} aria-busy={loading} className={styles.accedi}>
-                {loading ? 'Accesso…' : 'Accedi'}
+                {loading ? t('accesso') : t('accedi')}
               </button>
             </>
           )}

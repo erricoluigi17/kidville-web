@@ -4,6 +4,7 @@ import { Suspense, useCallback, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { CalendarClock, Euro, Layers, Settings, UtensilsCrossed } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { PaymentsDashboard } from '@/components/features/admin/pagamenti/PaymentsDashboard';
 import { ContabilitaNav, VISTE_CONTABILITA, type VistaContabilita } from '@/components/features/admin/pagamenti/ContabilitaNav';
@@ -14,21 +15,25 @@ import { SedeRequired } from '@/lib/context/sede-context';
 
 // Le viste secondarie si caricano on-demand: la pagina apre sempre sullo
 // scadenzario e non paga il bundle dei generatori/ticket finché non servono.
-const caricamento = () => <p className="py-8 text-center font-maven text-sm text-kidville-muted">Caricamento…</p>;
-const GeneratoreRette = dynamic(() => import('@/components/features/admin/pagamenti/GeneratoreRette').then((m) => m.GeneratoreRette), { loading: caricamento });
-const GeneratoreCategoria = dynamic(() => import('@/components/features/admin/pagamenti/GeneratoreCategoria').then((m) => m.GeneratoreCategoria), { loading: caricamento });
-const TicketMensaPanel = dynamic(() => import('@/components/features/admin/pagamenti/TicketMensaPanel').then((m) => m.TicketMensaPanel), { loading: caricamento });
-const FiscalePanel = dynamic(() => import('@/components/features/admin/pagamenti/FiscalePanel').then((m) => m.FiscalePanel), { loading: caricamento });
-const SollecitiPanel = dynamic(() => import('@/components/features/admin/pagamenti/SollecitiPanel').then((m) => m.SollecitiPanel), { loading: caricamento });
-const RiconciliazionePanel = dynamic(() => import('@/components/features/admin/pagamenti/RiconciliazionePanel').then((m) => m.RiconciliazionePanel), { loading: caricamento });
-const TransazioniPanel = dynamic(() => import('@/components/features/admin/pagamenti/TransazioniPanel').then((m) => m.TransazioniPanel), { loading: caricamento });
-const CausaliPanel = dynamic(() => import('@/components/features/admin/pagamenti/CausaliPanel').then((m) => m.CausaliPanel), { ssr: false, loading: caricamento });
-const CassaPanel = dynamic(() => import('@/components/features/admin/pagamenti/CassaPanel').then((m) => m.CassaPanel), { ssr: false, loading: caricamento });
+function Caricamento() {
+    const t = useTranslations('adminContabilita');
+    return <p className="py-8 text-center font-maven text-sm text-kidville-muted">{t('pagPageCaricamento')}</p>;
+}
+const GeneratoreRette = dynamic(() => import('@/components/features/admin/pagamenti/GeneratoreRette').then((m) => m.GeneratoreRette), { loading: Caricamento });
+const GeneratoreCategoria = dynamic(() => import('@/components/features/admin/pagamenti/GeneratoreCategoria').then((m) => m.GeneratoreCategoria), { loading: Caricamento });
+const TicketMensaPanel = dynamic(() => import('@/components/features/admin/pagamenti/TicketMensaPanel').then((m) => m.TicketMensaPanel), { loading: Caricamento });
+const FiscalePanel = dynamic(() => import('@/components/features/admin/pagamenti/FiscalePanel').then((m) => m.FiscalePanel), { loading: Caricamento });
+const SollecitiPanel = dynamic(() => import('@/components/features/admin/pagamenti/SollecitiPanel').then((m) => m.SollecitiPanel), { loading: Caricamento });
+const RiconciliazionePanel = dynamic(() => import('@/components/features/admin/pagamenti/RiconciliazionePanel').then((m) => m.RiconciliazionePanel), { loading: Caricamento });
+const TransazioniPanel = dynamic(() => import('@/components/features/admin/pagamenti/TransazioniPanel').then((m) => m.TransazioniPanel), { loading: Caricamento });
+const CausaliPanel = dynamic(() => import('@/components/features/admin/pagamenti/CausaliPanel').then((m) => m.CausaliPanel), { ssr: false, loading: Caricamento });
+const CassaPanel = dynamic(() => import('@/components/features/admin/pagamenti/CassaPanel').then((m) => m.CassaPanel), { ssr: false, loading: Caricamento });
 type PrecompilaTransazione = import('@/components/features/admin/pagamenti/TransazioniPanel').PrecompilaTransazione;
 
 const isVista = (v: string | null): v is VistaContabilita => !!v && VISTE_CONTABILITA.some((o) => o.id === v);
 
 function PagamentiInner() {
+    const t = useTranslations('adminContabilita');
     const { userId } = useSessionIdentity();
     const router = useRouter();
     const params = useSearchParams();
@@ -62,20 +67,20 @@ function PagamentiInner() {
         <CockpitPage max={1152}>
             <PageHeader
                 icon={Euro}
-                eyebrow="Amministrazione"
-                title="Contabilità"
-                subtitle="Scadenzario, incassi, fatture, solleciti e documenti fiscali."
+                eyebrow={t('pagPageEyebrow')}
+                title={t('pagPageTitolo')}
+                subtitle={t('pagPageSottotitolo')}
                 actions={
                     <>
-                        <Link href={withUser('/admin/mensa')} className={linkCls}><UtensilsCrossed size={15} /> Mensa &amp; Cucina</Link>
-                        <Link href={withUser('/admin/impostazioni')} className={linkCls}><Settings size={15} /> Impostazioni</Link>
+                        <Link href={withUser('/admin/mensa')} className={linkCls}><UtensilsCrossed size={15} /> {t('pagPageMensaCucina')}</Link>
+                        <Link href={withUser('/admin/impostazioni')} className={linkCls}><Settings size={15} /> {t('pagPageImpostazioni')}</Link>
                     </>
                 }
             />
 
             <ContabilitaNav value={vista} onChange={cambiaVista} />
 
-            <SedeRequired cosa="la contabilità">
+            <SedeRequired cosa={t('pagPageCosaContabilita')}>
                 {(scuolaId) => (
                     <Card className="p-4 md:p-6">
                         {vista === 'scadenzario' && userId && <PaymentsDashboard userId={userId} scuolaId={scuolaId} />}
@@ -85,11 +90,11 @@ function PagamentiInner() {
                         {vista === 'genera' && userId && (
                             <div className="space-y-8">
                                 <div>
-                                    <SectionTitle icon={CalendarClock} title="Rette mensili" sub="Anteprima e conferma: i duplicati vengono saltati automaticamente." />
+                                    <SectionTitle icon={CalendarClock} title={t('pagPageRetteMensili')} sub={t('pagPageRetteMensiliSub')} />
                                     <GeneratoreRette userId={userId} scuolaId={scuolaId} />
                                 </div>
                                 <div>
-                                    <SectionTitle icon={Layers} title="Addebiti per categoria" sub="Addebito massivo una-tantum su una classe o su tutti gli iscritti." />
+                                    <SectionTitle icon={Layers} title={t('pagPageAddebitiCategoria')} sub={t('pagPageAddebitiCategoriaSub')} />
                                     <GeneratoreCategoria userId={userId} scuolaId={scuolaId} />
                                 </div>
                             </div>
@@ -112,8 +117,9 @@ function PagamentiInner() {
 }
 
 export default function AdminPagamentiPage() {
+    const t = useTranslations('adminContabilita');
     return (
-        <Suspense fallback={<div className="p-8 font-maven text-kidville-muted">Caricamento…</div>}>
+        <Suspense fallback={<div className="p-8 font-maven text-kidville-muted">{t('pagPageCaricamento')}</div>}>
             <PagamentiInner />
         </Suspense>
     );

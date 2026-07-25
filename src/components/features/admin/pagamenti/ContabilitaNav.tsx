@@ -4,6 +4,7 @@ import type { LucideIcon } from 'lucide-react';
 import { Euro, Coins, CalendarClock, BellRing, Landmark, FileSpreadsheet, Ticket, Wallet, Pencil } from 'lucide-react';
 import { Tabs } from '@/components/ui/cockpit';
 import { cx } from '@/lib/ui/cx';
+import { useTranslations } from 'next-intl';
 
 export type VistaContabilita = 'scadenzario' | 'transazioni' | 'genera' | 'solleciti' | 'riconciliazione' | 'fiscale' | 'ticket' | 'cassa' | 'causali';
 
@@ -25,6 +26,7 @@ export const VISTE_CONTABILITA: { id: VistaContabilita; label: string; icon: Luc
  * vive nella pagina, qui solo value/onChange.
  */
 export function ContabilitaNav({ value, onChange }: { value: VistaContabilita; onChange: (v: VistaContabilita) => void }) {
+    const t = useTranslations('adminContabilita');
     return (
         <>
             <div className="md:hidden mb-4 min-w-0 overflow-x-auto">
@@ -46,7 +48,7 @@ export function ContabilitaNav({ value, onChange }: { value: VistaContabilita; o
                                         : 'bg-kidville-white text-kidville-ink/70 ring-[1.5px] ring-inset ring-kidville-line hover:text-kidville-green hover:ring-kidville-green/50'
                                 )}
                             >
-                                <Icon size={14} strokeWidth={2.2} /> {v.label}
+                                <Icon size={14} strokeWidth={2.2} /> {t(`cnav_${v.id}`)}
                             </button>
                         );
                     })}
@@ -56,7 +58,7 @@ export function ContabilitaNav({ value, onChange }: { value: VistaContabilita; o
                 <Tabs
                     value={value}
                     onChange={(id) => onChange(id as VistaContabilita)}
-                    options={VISTE_CONTABILITA.map(({ id, label, icon }) => ({ id, label, icon }))}
+                    options={VISTE_CONTABILITA.map(({ id, icon }) => ({ id, label: t(`cnav_${id}`), icon }))}
                 />
             </div>
         </>

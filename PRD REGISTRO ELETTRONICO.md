@@ -64,6 +64,44 @@
 
 ---
 
+## 🗓️ Changelog — Fase 3 i18n COMPLETA: app bilingue IT/EN (genitore · docente · admin · pubblico · condivisi · date) 2026-07-25 (branch `feat/native-fase2`)
+
+Terza fase: internazionalizzazione (inglese). **Fondazione** posata e **pilota** tradotto; la migrazione a tappeto delle restanti pagine/componenti procede a lotti.
+
+- **next-intl 4** *senza routing per-locale*: la lingua sta nel cookie `KV_LOCALE` (default `it`), risolta in `src/i18n/request.ts` — nessun `/[locale]` nell'albero delle rotte, middleware invariato. Plugin in `next.config.ts`, provider + `<html lang>` dinamico nel `RootLayout`.
+- **Cataloghi** `messages/it.json` (sorgente) + `messages/en.json` (traduzione), namespace `common` + `auth`.
+- **Selettore lingua** `LanguageSwitcher` (IT/EN: scrive il cookie e ricarica) sulla login e in «Profilo e deleghe».
+- **Pilota**: pagina di **login** interamente migrata a `useTranslations` (titoli, label, placeholder, errori, aria-label).
+- **Test**: mock globale di `next-intl` in `test/setup.ts` (risolve le chiavi sui testi italiani reali) → i test che renderizzano componenti tradotti passano senza wrapper.
+- **Cataloghi per-namespace**: `messages/<locale>/<ns>.json` (un file per area), assemblati in `src/i18n/request.ts` — abilita la migrazione in parallelo (più agenti) senza conflitti sui file dei messaggi.
+- **Tutta l'area GENITORE tradotta** (7 namespace, ~374 chiavi): `nav` (BottomNav + ChildSwitcher), `home` (dashboard + card), `avvisi` (page + AvvisoCard/DetailsContent/Drawer), `diario`, `mensa`, `pagamenti` (summary/storico/causale/push), `profilo`.
+- **Tutta l'area DOCENTE tradotta** (7 namespace, ~874 chiavi): `teacherNav`, `teacherDiario`, `teacherPresenze` (giorni via `Intl`), `teacherComunicazioni`, `teacherPrimaria` (10 pagine), `teacherTasks`, `teacherServizi`.
+- **Tutta l'area ADMIN/SEGRETERIA tradotta** (9 namespace, ~2673 chiavi): `adminNav` (shell+dashboard), `adminStudents` (anagrafiche), `adminContabilita` (pagamenti/riconciliazione/cassa/merch — 835 chiavi), `adminMensa`, `adminModulistica` (moduli + form builder), `adminComunicazioni` (avvisi+news+messaggi), `adminPrimaria`, `adminSettings` (impostazioni+scuole+SIDI), `adminAltro` (GDPR+protocolli+iscrizioni). **Catalogo totale: 3921 chiavi/lingua su 25 namespace, parità IT/EN verificata.** Gate verde: eslint 0 · tsc 0 · vitest 345 file / 2825 test · build ok. Aggiornato il lock `settings-sistema-design` per accettare l'eyebrow via i18n.
+
+- **Cornice condivisa** (`shared`, 77 chiavi): `ui/` (Esci, Alto Contrasto, DateField, cockpit, PageHeader), `shell/` (AppBar, campanella), `sede-context`, `BiometricGate`, e i componenti **galleria** (MediaGrid/StudentTagger/MediaUploader/ScattaFotoButton).
+- **Librerie di etichette** (`etichette`, 153 chiavi): ruoli, allergeni, tipi notifica, eventi diario, umore, aging pagamenti, config nav admin — via hook locale-aware (`useLabelRuolo`…), funzioni pure conservate come fallback.
+- **Formati data/ora** locale-aware: helper `src/lib/i18n/date.ts` (`useDateFormat`/`nomeMese` via `Intl`) applicato a tutti i display client; giorni/mesi si localizzano in EN.
+- **Area PUBBLICA** (`public`, 28 chiavi): pre-iscrizione (`EnrollmentWizard`, `/iscrizione`, compilazione modulo via magic-link `/m/[token]`).
+
+**Catalogo finale: ~4554 chiavi/lingua su 33 namespace, parità IT/EN verificata su tutti.** Selettore lingua (IT/EN) su login e in «Profilo e deleghe». Gate verde: eslint 0 · tsc 0 · vitest 348 file / 2851+ test · build ok. Sweep finale: 0 residui utente cablati.
+
+> ✅ **i18n completa lato UtenTE.** Restano in italiano **di proposito** (non-UI o contratti): i **PDF** e i documenti (ricevute/certificati/pagelle — atti legali), i **CSV/export** (formato-dato), i **log** applicativi, i **corpi delle notifiche persistite** (dato inviato; la localizzazione richiederebbe la lingua del destinatario al momento dell'invio), i **formati numero/valuta** (Euro), il **marchio «Kidville»** e i **placeholder-esempio**. Due form anagrafica sono dead-code (non renderizzati). **Non ancora in produzione** (Fase 2+3 da provare su dispositivo prima del deploy).
+
+## 🗓️ Changelog — Fase 2 native: offline (avvisi·diario·menu) + fotocamera nativa + login biometrico + badge/condivisione 2026-07-24 (branch `feat/native-fase2`)
+
+Seconda fase della preparazione allo store: **funzioni native**. Primo tassello, l'**offline** (l'unico pienamente verificabile col gate web; le altre native — fotocamera, biometria, badge — seguono e richiedono verifica su dispositivo).
+
+- **Service Worker con caching del guscio** (`public/sw.js`, prima solo Web Push): `install`/`activate`/`fetch` — asset statici cache-first, navigazioni network-first con fallback alla cache (l'app si apre anche senza rete), `/api/` sempre in rete (mai dati stale). Registrato ora su web **e** nativo (`ServiceWorkerRegister` in `RootProviders`).
+- **Cache dati con Dexie** (riuso di `KidvilleOfflineDB`, nuova `version(11)` con store `cache_read`): helper `fetchConCache` (`src/lib/offline/read-cache.ts`) che serve l'ultima copia salvata quando la rete manca. Agganciato a **avvisi**, **diario** (entries) e **menu mensa**; indicatore «Dati non aggiornati — offline» (`OfflineBadge`). Saldo ticket e prenotazioni NON cachati (stato mutabile).
+- **Fotocamera nativa** (`@capacitor/camera`): sull'app nativa il caricamento foto apre lo scatto/scelta nativo; su web resta l'`<input type=file>`. Agganciata a galleria e news (i punti che accettano anche PDF restano su input per non perdere l'allegato documento). Helper `src/lib/native/camera.ts` + hook `useImagePicker`.
+- **Login biometrico** (`@aparajita/capacitor-biometric-auth`, opt-in): interruttore in «Profilo e deleghe»; la sessione Supabase è su cookie, quindi la biometria **sblocca** l'app (overlay `BiometricGate` all'avvio e al ritorno in foreground), non ri-autentica. Anti-lockout con «Esci».
+- **Badge icona** (`@capawesome/capacitor-badge`) = numero di notifiche non lette (dal Centro Notifiche). **Condivisione nativa** (`@capacitor/share`, fallback Web Share/clipboard): pulsanti «Condividi» su news e avvisi.
+- **Gate** verde: eslint 0 · tsc 0 · vitest 341 file / 2809 test · build ok. Nuovi test: read-cache, ServiceWorkerRegister, camera, use-image-picker, share, biometric.
+
+- **Rifinitura nativa** (bottone condiviso `ScattaFotoButton`): ripristinato il caricamento **foto/video dalla galleria** sul nativo in galleria; aggiunto il bottone additivo **«Scatta foto»** accanto a **tutti i 9** gli input che accettano anche PDF (certificato medico, fascicolo, registro, giustificativo cassa, chat, avvisi, moduli, modulistica docente, incarichi/risoluzione sub-task) — l'allegato PDF resta intatto, il bottone appare solo su nativo dove `accept` ammette immagini.
+
+> ⚠️ **Non ancora in produzione.** Tutte e 4 le funzioni native della Fase 2 sono implementate e passano il gate web (eslint 0 · tsc 0 · vitest 343 file / 2815 test · build ok), ma il comportamento runtime (Service Worker nella WebView, scatto foto, prompt biometrico, badge sull'icona, foglio di condivisione) **va verificato su dispositivo/simulatore** (`npx cap sync` + build nativa) prima del deploy. Fase 3 (i18n EN completo) da avviare.
+
 ## 🗓️ Changelog — App Store & Play readiness (Fase 1): stringhe d'uso iOS, cancellazione account, pagine legali, privacy manifest, cleartext Android 2026-07-24 (branch `feat/app-store-readiness`)
 
 Prima fase di preparazione alla pubblicazione su App Store/Google Play (a valle di una review simulata «nei panni di Apple App Review»). Corregge i motivi di rigetto bloccanti e le carenze di privacy, senza toccare le fasi 2 (funzioni native) e 3 (i18n inglese completo), previste in cicli successivi.

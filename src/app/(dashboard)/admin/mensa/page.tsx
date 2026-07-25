@@ -1,6 +1,7 @@
 'use client';
 
 import { Suspense, useState, useEffect } from 'react';
+import { useTranslations } from 'next-intl';
 import { UtensilsCrossed, CalendarRange, ClipboardList, Settings, CalendarPlus, Ticket } from 'lucide-react';
 import Link from 'next/link';
 import { MenuBuilder } from '@/components/features/admin/mensa/MenuBuilder';
@@ -13,6 +14,7 @@ import { SedeRequired, useSediAttive } from '@/lib/context/sede-context';
 type Tab = 'menu' | 'report' | 'prenota';
 
 function MensaInner() {
+  const t = useTranslations('adminMensa');
   const { userId } = useSessionIdentity();
   const { sedeCorrente } = useSediAttive();
   // Identità di sessione (M4): con identità non risolta il parametro viene
@@ -37,14 +39,14 @@ function MensaInner() {
   return (
     <CockpitPage max={1152}>
       <PageHeader
-        eyebrow="Operativo"
+        eyebrow={t('eyebrowOperativo')}
         icon={UtensilsCrossed}
-        title="Mensa & Cucina"
-        subtitle="Menu, report cucina, ticket giornalieri e impostazioni."
+        title={t('mensaTitolo')}
+        subtitle={t('mensaSottotitolo')}
         actions={
           <>
-            <Link href={withUser('/admin/pagamenti')} className={linkCls}><Ticket size={15} /> Ricarica ticket</Link>
-            <Link href={withUser('/admin/impostazioni?sezione=mensa')} className={linkCls}><Settings size={15} /> Impostazioni mensa</Link>
+            <Link href={withUser('/admin/pagamenti')} className={linkCls}><Ticket size={15} /> {t('ricaricaTicket')}</Link>
+            <Link href={withUser('/admin/impostazioni?sezione=mensa')} className={linkCls}><Settings size={15} /> {t('impostazioniMensa')}</Link>
           </>
         }
       />
@@ -53,13 +55,13 @@ function MensaInner() {
         value={tab}
         onChange={(id) => setTab(id as Tab)}
         options={[
-          { id: 'menu', label: 'Menu', icon: CalendarRange },
-          { id: 'report', label: 'Report cucina', icon: ClipboardList },
-          { id: 'prenota', label: 'Inserisci ticket', icon: CalendarPlus },
+          { id: 'menu', label: t('tabMenu'), icon: CalendarRange },
+          { id: 'report', label: t('tabReportCucina'), icon: ClipboardList },
+          { id: 'prenota', label: t('tabInserisciTicket'), icon: CalendarPlus },
         ]}
       />
 
-      <SedeRequired cosa="mensa e cucina">
+      <SedeRequired cosa={t('sedeRequiredCosa')}>
         {(scuolaId) => (
           <div className="bg-kidville-white rounded-2xl shadow-sm p-4 md:p-6">
             {tab === 'menu' && userId && <MenuBuilder userId={userId} scuolaId={scuolaId} />}
@@ -73,8 +75,9 @@ function MensaInner() {
 }
 
 export default function AdminMensaPage() {
+  const t = useTranslations('adminMensa');
   return (
-    <Suspense fallback={<div className="p-8 font-maven text-kidville-muted">Caricamento…</div>}>
+    <Suspense fallback={<div className="p-8 font-maven text-kidville-muted">{t('caricamento')}</div>}>
       <MensaInner />
     </Suspense>
   );

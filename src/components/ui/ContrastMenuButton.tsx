@@ -1,6 +1,7 @@
 'use client';
 
 import { Contrast } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 import { useAccessibility } from '@/lib/accessibility/useAccessibility';
 
 // Voce "Alto contrasto" riutilizzabile per i menu account (drawer Direzione,
@@ -19,6 +20,7 @@ export function ContrastMenuButton({
   className?: string;
   iconSize?: number;
 }) {
+  const t = useTranslations('shared');
   const { highContrast, toggle } = useAccessibility();
   return (
     <button
@@ -28,7 +30,7 @@ export function ContrastMenuButton({
       className={className}
     >
       <Contrast size={iconSize} strokeWidth={2.2} className="shrink-0" />
-      <span>Alto contrasto</span>
+      <span>{t('altoContrasto')}</span>
     </button>
   );
 }

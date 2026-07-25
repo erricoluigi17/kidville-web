@@ -1,6 +1,7 @@
 'use client';
 
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { Baby, BookOpen } from 'lucide-react';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { useTeacherGradi } from '@/lib/auth/use-teacher-gradi';
@@ -9,6 +10,7 @@ import { useTeacherGradi } from '@/lib/auth/use-teacher-gradi';
 // Compare solo se il docente è abilitato a più di un grado (gradi via
 // useTeacherGradi: fetch condiviso con TeacherBottomNav e home).
 export function GradeWorldSwitch() {
+  const t = useTranslations('teacherNav');
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
@@ -28,7 +30,7 @@ export function GradeWorldSwitch() {
           !inPrimaria ? 'bg-kidville-green text-kidville-yellow' : 'text-kidville-muted'
         }`}
       >
-        <Baby size={14} /> Infanzia
+        <Baby size={14} /> {t('gradoInfanzia')}
       </button>
       <button
         onClick={() => router.push(`/teacher/primaria${suffix}`)}
@@ -36,7 +38,7 @@ export function GradeWorldSwitch() {
           inPrimaria ? 'bg-kidville-green text-kidville-yellow' : 'text-kidville-muted'
         }`}
       >
-        <BookOpen size={14} /> Primaria
+        <BookOpen size={14} /> {t('gradoPrimaria')}
       </button>
     </div>
   );

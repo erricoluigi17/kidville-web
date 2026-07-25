@@ -1,12 +1,14 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { Plus, Trash2 } from 'lucide-react';
 
 interface ScalaItem { id: string; etichetta: string; ordine: number; valore_numerico: number | null; giudizio_descrittivo: string | null; attivo: boolean }
 interface TemplateItem { id: string; scuola_id: string | null; dimensione: string; valore: string; frammento: string }
 
 export function GiudiziManager({ scuolaId, userId }: { scuolaId: string; userId: string }) {
+  const t = useTranslations('adminPrimaria');
   const [scala, setScala] = useState<ScalaItem[]>([]);
   const [template, setTemplate] = useState<TemplateItem[]>([]);
   const [nuova, setNuova] = useState('');
@@ -82,8 +84,8 @@ export function GiudiziManager({ scuolaId, userId }: { scuolaId: string; userId:
   return (
     <div className="grid gap-6 md:grid-cols-2">
       <section>
-        <h3 className="font-barlow text-base font-bold text-kidville-ink mb-2">Scala giudizi sintetici</h3>
-        <p className="font-maven text-xs text-kidville-muted mb-3">Usata in itinere e a scrutinio. Pre-impostata con i 6 giudizi ufficiali (Allegato A). Il valore numerico serve per la media in itinere; il giudizio descrittivo viene applicato in automatico nella pagella.</p>
+        <h3 className="font-barlow text-base font-bold text-kidville-ink mb-2">{t('giudiziScalaTitolo')}</h3>
+        <p className="font-maven text-xs text-kidville-muted mb-3">{t('giudiziScalaSottotitolo')}</p>
         <ul className="divide-y divide-kidville-line mb-3">
           {scala.map((s) => (
             <li key={s.id} className={`py-2 ${s.attivo ? '' : 'opacity-50'}`}>
@@ -99,12 +101,12 @@ export function GiudiziManager({ scuolaId, userId }: { scuolaId: string; userId:
                 </div>
                 <label className="font-maven inline-flex items-center gap-1 text-[11px] text-kidville-muted shrink-0">
                   <input type="checkbox" checked={s.attivo} onChange={() => toggleAttivo(s)} />
-                  attivo
+                  {t('giudiziAttivo')}
                 </label>
                 <button onClick={() => removeScala(s.id)} className="text-kidville-muted hover:text-kidville-error shrink-0"><Trash2 size={15} /></button>
               </div>
               <div className="mt-1.5 flex items-center gap-2">
-                <label className="font-maven text-[11px] text-kidville-muted w-14 shrink-0">Valore</label>
+                <label className="font-maven text-[11px] text-kidville-muted w-14 shrink-0">{t('giudiziValore')}</label>
                 <input
                   type="number"
                   step="0.5"
@@ -114,7 +116,7 @@ export function GiudiziManager({ scuolaId, userId }: { scuolaId: string; userId:
                 />
                 <input
                   defaultValue={s.giudizio_descrittivo ?? ''}
-                  placeholder="Giudizio descrittivo (pagella)"
+                  placeholder={t('giudiziPlaceholderDescrittivo')}
                   onBlur={(e) => { if (e.target.value !== (s.giudizio_descrittivo ?? '')) updateScala(s, 'giudizioDescrittivo', e.target.value); }}
                   className="font-maven flex-1 rounded border border-kidville-line px-2 py-1 text-xs"
                 />
@@ -123,14 +125,14 @@ export function GiudiziManager({ scuolaId, userId }: { scuolaId: string; userId:
           ))}
         </ul>
         <div className="flex gap-2">
-          <input value={nuova} onChange={(e) => setNuova(e.target.value)} placeholder="Nuovo giudizio" className="font-maven flex-1 rounded-pill border border-kidville-line px-3 py-1.5 text-sm" />
+          <input value={nuova} onChange={(e) => setNuova(e.target.value)} placeholder={t('giudiziPlaceholderNuovo')} className="font-maven flex-1 rounded-pill border border-kidville-line px-3 py-1.5 text-sm" />
           <button onClick={addScala} className="font-maven inline-flex items-center gap-1 rounded-pill bg-kidville-green px-3 py-1.5 text-sm text-kidville-yellow"><Plus size={14} /></button>
         </div>
       </section>
 
       <section>
-        <h3 className="font-barlow text-base font-bold text-kidville-ink mb-2">Template giudizio descrittivo</h3>
-        <p className="font-maven text-xs text-kidville-muted mb-3">Frammenti componibili per dimensione/valore. Modificandoli sovrascrivi il default per la tua scuola.</p>
+        <h3 className="font-barlow text-base font-bold text-kidville-ink mb-2">{t('giudiziTemplateTitolo')}</h3>
+        <p className="font-maven text-xs text-kidville-muted mb-3">{t('giudiziTemplateSottotitolo')}</p>
         <div className="space-y-1.5">
           {template.map((t) => (
             <div key={t.id} className="flex items-center gap-2">

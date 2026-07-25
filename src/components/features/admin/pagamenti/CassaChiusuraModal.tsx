@@ -8,6 +8,7 @@
 // li ricalcola il server (non ci si fida del client). Solo token `kidville-*`.
 
 import { useEffect, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { X, Wallet, Check } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
 import { Badge } from '@/components/ui/Badge';
@@ -41,6 +42,7 @@ const ERRORE_ID = 'cassa-chiusura-errore';
 const EPS = 0.005;
 
 export function CassaChiusuraModal({ userId, scuolaId, onClose, onDone, returnFocusRef }: Props) {
+  const t = useTranslations('adminContabilita');
   const [saldo, setSaldo] = useState<SaldoCassa | CassaNonDisponibile | null>(null);
   const [loading, setLoading] = useState(true);
   const [contatoStr, setContatoStr] = useState('');
@@ -58,13 +60,13 @@ export function CassaChiusuraModal({ userId, scuolaId, onClose, onDone, returnFo
         if (active) setSaldo(j);
       } catch (err) {
         logClient({ livello: 'error', evento: 'fetch', messaggio: `GET saldo cassa (chiusura) — ${testoErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
-        if (active) setError('Impossibile leggere il saldo di cassa.');
+        if (active) setError(t('cassaChiuErrSaldo'));
       } finally {
         if (active) setLoading(false);
       }
     })();
     return () => { active = false; };
-  }, [userId, scuolaId]);
+  }, [userId, scuolaId, t]);
 
   const disponibile = saldo?.disponibile === true;
   const atteso = disponibile ? (saldo as SaldoCassa).saldo_atteso : 0;
@@ -81,7 +83,7 @@ export function CassaChiusuraModal({ userId, scuolaId, onClose, onDone, returnFo
   const conferma = async () => {
     setError(null);
     setContatoInvalido(false);
-    if (!hasContato || contato < 0) { setError('Inserisci il totale contato (un numero maggiore o uguale a zero).'); setContatoInvalido(true); return; }
+    if (!hasContato || contato < 0) { setError(t('cassaChiuErrContato')); setContatoInvalido(true); return; }
     setSaving(true);
     try {
       const res = await fetch(`/api/pagamenti/cassa/chiusura?userId=${userId}`, {
@@ -90,14 +92,14 @@ export function CassaChiusuraModal({ userId, scuolaId, onClose, onDone, returnFo
         // SOLO questi tre campi: il server ricalcola saldo/differenza/prelievo.
         body: JSON.stringify({ scuola_id: scuolaId, contato, note: note.trim() || null }),
       });
-      if (res.status === 503) { setError('Il modulo cassa non è ancora attivo su questo ambiente.'); return; }
+      if (res.status === 503) { setError(t('cassaChiuErr503')); return; }
       const j = (await res.json()) as (EsitoChiusura & { error?: string });
-      if (res.status === 409) { setError(j.error ?? 'Chiusura non possibile in questo momento.'); return; }
-      if (!res.ok) { setError(j.error ?? 'Errore durante lo svuotamento.'); return; }
+      if (res.status === 409) { setError(j.error ?? t('cassaChiuErr409')); return; }
+      if (!res.ok) { setError(j.error ?? t('cassaChiuErrSvuot')); return; }
       setEsito(j);
     } catch (err) {
       logClient({ livello: 'error', evento: 'fetch', messaggio: `POST chiusura cassa — ${testoErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
-      setError('Errore di rete: riprova.');
+      setError(t('cassaChiuErroreRete'));
     } finally {
       setSaving(false);
     }
@@ -106,16 +108,16 @@ export function CassaChiusuraModal({ userId, scuolaId, onClose, onDone, returnFo
   // Differenza a parole (WCAG 1.4.1): il colore è un rinforzo, non l'unica indicazione.
   const diffBadge = () => {
     if (!hasContato) return null;
-    if (differenza > EPS) return <Badge tone="warn">Eccedenza di {formatEuro(differenza)}</Badge>;
-    if (differenza < -EPS) return <Badge tone="error">Ammanco di {formatEuro(Math.abs(differenza))}</Badge>;
-    return <Badge tone="success">Cassa quadrata</Badge>;
+    if (differenza > EPS) return <Badge tone="warn">{t('cassaChiuEccedenzaDi')} {formatEuro(differenza)}</Badge>;
+    if (differenza < -EPS) return <Badge tone="error">{t('cassaChiuAmmancoDi')} {formatEuro(Math.abs(differenza))}</Badge>;
+    return <Badge tone="success">{t('cassaChiuQuadrata')}</Badge>;
   };
 
   return (
     <Modal
       open
       onClose={onClose}
-      title="Svuota cassa"
+      title={t('cassaChiuSvuotaCassa')}
       labelledBy={TITLE_ID}
       className={MODAL_CARD}
       style={{ boxShadow: MODAL_SHADOW }}
@@ -123,56 +125,56 @@ export function CassaChiusuraModal({ userId, scuolaId, onClose, onDone, returnFo
     >
       <div className="mb-4 flex items-center justify-between">
         <h3 id={TITLE_ID} className="flex items-center gap-2 font-barlow text-lg font-black uppercase text-kidville-green">
-          <Wallet size={18} /> Svuota cassa
+          <Wallet size={18} /> {t('cassaChiuSvuotaCassa')}
         </h3>
-        <button onClick={onClose} aria-label="Chiudi" className="-mr-2 flex h-10 w-10 items-center justify-center rounded-pill text-kidville-sub hover:text-kidville-ink"><X size={20} /></button>
+        <button onClick={onClose} aria-label={t('cassaChiuChiudi')} className="-mr-2 flex h-10 w-10 items-center justify-center rounded-pill text-kidville-sub hover:text-kidville-ink"><X size={20} /></button>
       </div>
 
       {loading ? (
-        <p className="py-8 text-center font-maven text-sm text-kidville-sub">Caricamento del saldo…</p>
+        <p className="py-8 text-center font-maven text-sm text-kidville-sub">{t('cassaChiuCaricamentoSaldo')}</p>
       ) : !disponibile ? (
         <p className="rounded-card bg-kidville-cream/60 px-3 py-6 text-center font-maven text-sm text-kidville-sub">
-          Modulo cassa non ancora attivo su questo ambiente.
+          {t('cassaChiuNonAttivo')}
         </p>
       ) : esito ? (
         <div className="space-y-3">
           <div role="status" className="flex items-center gap-2 rounded-card bg-kidville-success-soft px-3 py-2.5">
             <Check size={18} className="text-kidville-success-strong" />
-            <span className="font-maven text-sm font-bold text-kidville-success-strong">Cassa svuotata correttamente.</span>
+            <span className="font-maven text-sm font-bold text-kidville-success-strong">{t('cassaChiuSvuotata')}</span>
           </div>
           <div className="rounded-card bg-kidville-cream/60 p-3 font-maven text-sm text-kidville-ink">
-            <RigaEsito etichetta="Saldo atteso" valore={formatEuro(esito.saldo_atteso)} />
-            <RigaEsito etichetta="Contato" valore={formatEuro(esito.contato)} />
+            <RigaEsito etichetta={t('cassaChiuEsitoSaldoAtteso')} valore={formatEuro(esito.saldo_atteso)} />
+            <RigaEsito etichetta={t('cassaChiuEsitoContato')} valore={formatEuro(esito.contato)} />
             <RigaEsito
-              etichetta="Differenza"
-              valore={esito.differenza === 0 ? 'Cassa quadrata' : `${esito.differenza > 0 ? 'Eccedenza' : 'Ammanco'} di ${formatEuro(Math.abs(esito.differenza))}`}
+              etichetta={t('cassaChiuEsitoDifferenza')}
+              valore={esito.differenza === 0 ? t('cassaChiuQuadrata') : `${esito.differenza > 0 ? t('cassaChiuEccedenzaDi') : t('cassaChiuAmmancoDi')} ${formatEuro(Math.abs(esito.differenza))}`}
             />
-            <RigaEsito etichetta="Prelevato" valore={formatEuro(esito.prelevato)} />
-            <RigaEsito etichetta="Fondo lasciato in cassa" valore={formatEuro(esito.fondo_lasciato)} />
+            <RigaEsito etichetta={t('cassaChiuEsitoPrelevato')} valore={formatEuro(esito.prelevato)} />
+            <RigaEsito etichetta={t('cassaChiuEsitoFondoLasciato')} valore={formatEuro(esito.fondo_lasciato)} />
           </div>
-          <button onClick={onDone} className={cx(BTN_PRIMARY_AA, 'w-full')}>Fatto</button>
+          <button onClick={onDone} className={cx(BTN_PRIMARY_AA, 'w-full')}>{t('cassaChiuFatto')}</button>
         </div>
       ) : (
         <div className="space-y-3">
           <div className="rounded-card bg-kidville-cream/60 p-3">
             <div className="flex items-center justify-between font-maven text-sm">
-              <span className="text-kidville-sub">Saldo atteso in cassa</span>
+              <span className="text-kidville-sub">{t('cassaChiuSaldoAttesoInCassa')}</span>
               <span className="font-bold text-kidville-green">{formatEuro(atteso)}</span>
             </div>
             <div className="mt-1 flex items-center justify-between font-maven text-xs">
-              <span className="text-kidville-sub">Fondo cassa (resta dopo lo svuotamento)</span>
+              <span className="text-kidville-sub">{t('cassaChiuFondoCassa')}</span>
               <span className="text-kidville-ink">{formatEuro(fondo)}</span>
             </div>
           </div>
 
           <div>
-            <label htmlFor="cassa-chiusura-contato" className="mb-1 block font-maven text-xs text-kidville-sub">Totale contato (€)</label>
+            <label htmlFor="cassa-chiusura-contato" className="mb-1 block font-maven text-xs text-kidville-sub">{t('cassaChiuTotaleContato')}</label>
             <input
               id="cassa-chiusura-contato"
               type="number" min="0" step="0.01" value={contatoStr}
               onChange={(e) => { setContatoStr(e.target.value); if (contatoInvalido) setContatoInvalido(false); }}
               className={INPUT}
-              placeholder="Quanto contante hai davvero contato"
+              placeholder={t('cassaChiuPlaceholderContato')}
               {...(contatoInvalido ? { 'aria-invalid': true as const, 'aria-describedby': ERRORE_ID } : {})}
             />
           </div>
@@ -180,28 +182,28 @@ export function CassaChiusuraModal({ userId, scuolaId, onClose, onDone, returnFo
           {hasContato && (
             <div className="rounded-card border-[1.5px] border-kidville-line p-3">
               <div className="mb-2 flex items-center gap-2">
-                <span className="font-maven text-xs text-kidville-sub">Differenza di cassa:</span>
+                <span className="font-maven text-xs text-kidville-sub">{t('cassaChiuDifferenzaDiCassa')}</span>
                 {diffBadge()}
               </div>
               <p className="font-maven text-sm text-kidville-ink">
                 {prelievo > EPS
-                  ? <>Preleva <strong>{formatEuro(prelievo)}</strong> e lascia <strong>{formatEuro(fondoLasciato)}</strong> di fondo in cassa.</>
-                  : <>Non c&apos;è nulla da prelevare: in cassa restano <strong>{formatEuro(fondoLasciato)}</strong> di fondo.</>}
+                  ? <>{t('cassaChiuPrelevaPre')}<strong>{formatEuro(prelievo)}</strong>{t('cassaChiuPrelevaMid')}<strong>{formatEuro(fondoLasciato)}</strong>{t('cassaChiuPrelevaPost')}</>
+                  : <>{t('cassaChiuNoPrelievoPre')}<strong>{formatEuro(fondoLasciato)}</strong>{t('cassaChiuNoPrelievoPost')}</>}
               </p>
             </div>
           )}
 
           <div>
-            <label htmlFor="cassa-chiusura-note" className="mb-1 block font-maven text-xs text-kidville-sub">Note (facoltative)</label>
+            <label htmlFor="cassa-chiusura-note" className="mb-1 block font-maven text-xs text-kidville-sub">{t('cassaChiuNote')}</label>
             <input id="cassa-chiusura-note" type="text" value={note} onChange={(e) => setNote(e.target.value)} className={INPUT} maxLength={500} />
           </div>
 
           {error && <p id={ERRORE_ID} role="alert" className="font-maven text-xs text-kidville-error-strong">{error}</p>}
 
           <div className="flex gap-2 pt-1">
-            <button onClick={onClose} className={cx(BTN_SECONDARY, 'flex-1')}>Annulla</button>
+            <button onClick={onClose} className={cx(BTN_SECONDARY, 'flex-1')}>{t('cassaChiuAnnulla')}</button>
             <button onClick={conferma} disabled={saving} className={cx(BTN_PRIMARY_AA, 'flex-1')}>
-              {saving ? 'Svuotamento…' : 'Conferma svuotamento'}
+              {saving ? t('cassaChiuSvuotamentoInCorso') : t('cassaChiuConfermaSvuotamento')}
             </button>
           </div>
         </div>

@@ -2,6 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useTranslations, useLocale } from 'next-intl';
 import { Bell, ClipboardList, Eye, Pencil, Plus, Trash2 } from 'lucide-react';
 import { CockpitPage, HEADER_BTN, PageHeader, StatCard, TABLE, TABLE_WRAP, TD, TH, TROW } from '@/components/ui/cockpit';
 import { Avviso } from '@/components/features/avvisi/AvvisoCard';
@@ -15,6 +16,8 @@ interface ScuolaScoped { scuolaId: string; scuolaNome: string; sezioni: { id: st
 
 function AdminAvvisiInner() {
     const router = useRouter();
+    const t = useTranslations('adminComunicazioni');
+    const locale = useLocale();
     const { userId } = useSessionIdentity();
 
     const [avvisi, setAvvisi] = useState<Avviso[]>([]);
@@ -83,7 +86,7 @@ function AdminAvvisiInner() {
 
     const handleDelete = async (avvisoId: string) => {
         if (!userId) return;
-        if (!window.confirm('Sei sicuro di voler eliminare definitivamente questo avviso? Questa azione eliminerà anche tutte le risposte associate.')) return;
+        if (!window.confirm(t('avvisiConfermaElimina'))) return;
         try {
             const res = await fetch(`/api/avvisi/${avvisoId}?userId=${userId}`, {
                 method: 'DELETE',
@@ -104,35 +107,35 @@ function AdminAvvisiInner() {
     return (
         <CockpitPage max={1360}>
             <PageHeader
-                eyebrow="Comunicazione"
+                eyebrow={t('eyebrow')}
                 icon={Bell}
-                title="Avvisi"
-                subtitle="Circolari e comunicazioni alle famiglie: pubblicazione, stato lettura e adesioni."
+                title={t('avvisiTitolo')}
+                subtitle={t('avvisiSottotitolo')}
                 actions={
                     <button
                         onClick={() => { setEditingAvviso(null); setShowForm(true); }}
                         className={HEADER_BTN}
                     >
-                        <Plus size={16} strokeWidth={1.8} /> Nuovo avviso
+                        <Plus size={16} strokeWidth={1.8} /> {t('avvisiNuovoAvviso')}
                     </button>
                 }
             />
 
             <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:max-w-[560px]">
-                <StatCard icon={Bell} label="Avvisi pubblicati" value={loading ? '…' : avvisi.length} />
-                <StatCard icon={ClipboardList} label="Con adesione" value={loading ? '…' : adesioni} tone="yellow" />
+                <StatCard icon={Bell} label={t('avvisiStatPubblicati')} value={loading ? '…' : avvisi.length} />
+                <StatCard icon={ClipboardList} label={t('avvisiStatConAdesione')} value={loading ? '…' : adesioni} tone="yellow" />
             </div>
 
             {loading ? (
                 <div className="flex items-center gap-3 rounded-card bg-kidville-white p-6 shadow-sm">
                     <div className="h-6 w-6 animate-spin rounded-full border-[3px] border-kidville-green/20 border-t-kidville-green" />
-                    <p className="font-maven text-sm text-kidville-muted">Caricamento avvisi…</p>
+                    <p className="font-maven text-sm text-kidville-muted">{t('avvisiCaricamento')}</p>
                 </div>
             ) : avvisi.length === 0 ? (
                 <div className="rounded-card bg-kidville-white p-10 text-center shadow-sm">
                     <div className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-full bg-kidville-cream text-3xl">📢</div>
-                    <h2 className="font-barlow text-lg font-bold uppercase text-kidville-green">Nessun avviso</h2>
-                    <p className="font-maven mt-1 text-sm text-kidville-muted">Crea il primo avviso per comunicare con le famiglie.</p>
+                    <h2 className="font-barlow text-lg font-bold uppercase text-kidville-green">{t('avvisiVuotoTitolo')}</h2>
+                    <p className="font-maven mt-1 text-sm text-kidville-muted">{t('avvisiVuotoDescrizione')}</p>
                 </div>
             ) : (
                 <div className="rounded-card bg-kidville-white p-4 shadow-sm">
@@ -140,12 +143,12 @@ function AdminAvvisiInner() {
                         <table className={TABLE}>
                             <thead>
                                 <tr>
-                                    <th className={TH}>Avviso</th>
-                                    <th className={TH}>Tipo</th>
-                                    <th className={TH}>Destinatari</th>
-                                    <th className={TH}>Scadenza</th>
-                                    <th className={TH}>Letture</th>
-                                    <th className={TH}>Adesioni</th>
+                                    <th className={TH}>{t('avvisiColAvviso')}</th>
+                                    <th className={TH}>{t('avvisiColTipo')}</th>
+                                    <th className={TH}>{t('avvisiColDestinatari')}</th>
+                                    <th className={TH}>{t('avvisiColScadenza')}</th>
+                                    <th className={TH}>{t('avvisiColLetture')}</th>
+                                    <th className={TH}>{t('avvisiColAdesioni')}</th>
                                     <th className={TH}></th>
                                 </tr>
                             </thead>
@@ -155,43 +158,43 @@ function AdminAvvisiInner() {
                                         <td className={TD}>
                                             <span className="font-maven block max-w-[360px] truncate text-sm font-semibold text-kidville-ink">{a.titolo}</span>
                                             <span className="font-maven block text-xs text-kidville-muted">
-                                                {a.author ? `${a.author.first_name} ${a.author.last_name}` : ''} · {new Date(a.created_at).toLocaleDateString('it-IT')}
+                                                {a.author ? `${a.author.first_name} ${a.author.last_name}` : ''} · {new Date(a.created_at).toLocaleDateString(locale)}
                                             </span>
                                         </td>
                                         <td className={TD}>
                                             <span className={`rounded-pill px-2.5 py-1 font-maven text-[11px] font-bold ${a.tipo === 'adesione' ? 'bg-kidville-info-soft text-kidville-info' : 'bg-kidville-green-soft text-kidville-green'}`}>
-                                                {a.tipo === 'adesione' ? 'Adesione' : 'Presa visione'}
+                                                {a.tipo === 'adesione' ? t('avvisiTipoAdesione') : t('avvisiTipoPresaVisione')}
                                             </span>
                                         </td>
                                         <td className={`${TD} font-maven text-sm text-kidville-ink`}>
-                                            {a.target_scope === 'globale' ? 'Tutto l\'istituto' : (a.target_classes ?? []).join(', ')}
+                                            {a.target_scope === 'globale' ? t('avvisiTuttoIstituto') : (a.target_classes ?? []).join(', ')}
                                         </td>
                                         <td className={`${TD} font-maven text-sm text-kidville-muted`}>
-                                            {a.scadenza ? new Date(a.scadenza).toLocaleDateString('it-IT') : '—'}
+                                            {a.scadenza ? new Date(a.scadenza).toLocaleDateString(locale) : '—'}
                                         </td>
                                         <td className={`${TD} font-maven text-sm text-kidville-ink`}>{a.stats?.letti ?? 0}</td>
                                         <td className={`${TD} font-maven text-sm text-kidville-ink`}>
-                                            {a.tipo === 'adesione' ? `${a.stats?.adesioni_si ?? 0} sì · ${a.stats?.adesioni_no ?? 0} no` : '—'}
+                                            {a.tipo === 'adesione' ? t('avvisiAdesioniSiNo', { si: a.stats?.adesioni_si ?? 0, no: a.stats?.adesioni_no ?? 0 }) : '—'}
                                         </td>
                                         <td className={TD}>
                                             <div className="flex items-center justify-end gap-1.5" onClick={e => e.stopPropagation()}>
                                                 <button
                                                     onClick={() => openDetail(a.id)}
-                                                    title="Apri dettaglio"
+                                                    title={t('avvisiAzioneApri')}
                                                     className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-kidville-cream text-kidville-green transition-colors hover:bg-kidville-green-soft"
                                                 >
                                                     <Eye size={14} strokeWidth={1.8} />
                                                 </button>
                                                 <button
                                                     onClick={() => { setEditingAvviso(a); setShowForm(true); }}
-                                                    title="Modifica"
+                                                    title={t('avvisiAzioneModifica')}
                                                     className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-kidville-cream text-kidville-green transition-colors hover:bg-kidville-green-soft"
                                                 >
                                                     <Pencil size={14} strokeWidth={1.8} />
                                                 </button>
                                                 <button
                                                     onClick={() => handleDelete(a.id)}
-                                                    title="Elimina"
+                                                    title={t('avvisiAzioneElimina')}
                                                     className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-kidville-error/10 text-kidville-error transition-colors hover:bg-kidville-error/20"
                                                 >
                                                     <Trash2 size={14} strokeWidth={1.8} />
@@ -221,9 +224,14 @@ function AdminAvvisiInner() {
     );
 }
 
+function AvvisiFallback() {
+    const t = useTranslations('adminComunicazioni');
+    return <div className="p-8 font-maven text-kidville-muted">{t('caricamento')}</div>;
+}
+
 export default function AdminAvvisiPage() {
     return (
-        <Suspense fallback={<div className="p-8 font-maven text-kidville-muted">Caricamento…</div>}>
+        <Suspense fallback={<AvvisiFallback />}>
             <AdminAvvisiInner />
         </Suspense>
     );

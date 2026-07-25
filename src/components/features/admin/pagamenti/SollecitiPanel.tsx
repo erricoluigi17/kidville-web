@@ -1,6 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { useTranslations } from 'next-intl';
+import { useDateFormat } from '@/lib/i18n/date';
 import { BellRing, RefreshCw, Send, X } from 'lucide-react';
 import { SectionTitle } from '@/components/ui/cockpit';
 import { Badge } from '@/components/ui/Badge';
@@ -32,11 +34,14 @@ interface EsitoSollecito {
 interface Props { userId: string; scuolaId: string }
 
 const hdr = (u: string) => ({ 'Content-Type': 'application/json', 'x-user-id': u });
-const dataIt = (d?: string | null) => (d ? new Date(d).toLocaleDateString('it-IT') : '—');
 const MS_GIORNO = 86_400_000;
 
 /** Vista Solleciti: coda dei morosi con anteprima OBBLIGATORIA prima dell'invio. */
 export function SollecitiPanel({ userId, scuolaId }: Props) {
+    const t = useTranslations('adminContabilita');
+    const f = useDateFormat();
+    // Data breve localizzata (IT identica a `toLocaleDateString('it-IT')`); '—' se assente.
+    const dataIt = (d?: string | null) => (d ? f.dataBreve(d) : '—');
     const [rows, setRows] = useState<Pagamento[]>([]);
     const [loading, setLoading] = useState(true);
     const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -91,7 +96,7 @@ export function SollecitiPanel({ userId, scuolaId }: Props) {
                 body: JSON.stringify({ pagamento_ids: [...selected], anteprima }),
             });
             const j = await r.json();
-            if (!r.ok || !j.success) { setError(j.error || "Errore nell'operazione"); return; }
+            if (!r.ok || !j.success) { setError(j.error || t('soll_err_operazione')); return; }
             if (anteprima) {
                 setAnteprime(j.data as EsitoSollecito[]);
             } else {
@@ -101,7 +106,7 @@ export function SollecitiPanel({ userId, scuolaId }: Props) {
                 await load();
             }
         } catch {
-            setError('Errore di rete');
+            setError(t('soll_err_rete'));
         } finally {
             setBusy(false);
         }
@@ -109,8 +114,8 @@ export function SollecitiPanel({ userId, scuolaId }: Props) {
 
     return (
         <div>
-            <SectionTitle icon={BellRing} title="Solleciti di pagamento"
-                sub="Pagamenti aperti oltre scadenza. Seleziona, guarda l'anteprima e conferma: l'email parte solo alla conferma."
+            <SectionTitle icon={BellRing} title={t('soll_titolo')}
+                sub={t('soll_sub')}
                 action={
                     <button onClick={() => { setLoading(true); load(); }}
                         className="rounded-pill border-[1.5px] border-kidville-line p-2 text-kidville-muted transition-colors hover:border-kidville-green hover:text-kidville-green">
@@ -120,20 +125,20 @@ export function SollecitiPanel({ userId, scuolaId }: Props) {
 
             {inviati != null && (
                 <p className="mb-3 flex items-center gap-1.5 rounded-xl bg-kidville-success-soft px-3 py-2 font-maven text-sm font-bold text-kidville-success">
-                    <SaveCheck size={16} /> {inviati} sollecit{inviati === 1 ? 'o inviato' : 'i inviati'}.
+                    <SaveCheck size={16} /> {inviati} {inviati === 1 ? t('soll_inviato_uno') : t('soll_inviati_molti')}
                 </p>
             )}
             {error && <p className="mb-3 font-maven text-xs text-kidville-error">{error}</p>}
 
             {loading ? (
-                <p className="py-8 text-center font-maven text-sm text-kidville-muted">Caricamento…</p>
+                <p className="py-8 text-center font-maven text-sm text-kidville-muted">{t('soll_caricamento')}</p>
             ) : rows.length === 0 ? (
-                <p className="py-8 text-center font-maven text-sm text-kidville-muted">Nessun pagamento scaduto: tutto in regola. 🎉</p>
+                <p className="py-8 text-center font-maven text-sm text-kidville-muted">{t('soll_vuoto')}</p>
             ) : (
                 <>
                     <label className="mb-2 flex cursor-pointer items-center gap-2">
                         <input type="checkbox" checked={tuttiSelezionati} onChange={toggleTutti} className="h-4 w-4 rounded text-kidville-green" />
-                        <span className="font-maven text-xs font-bold text-kidville-green">Seleziona tutti ({rows.length})</span>
+                        <span className="font-maven text-xs font-bold text-kidville-green">{t('soll_seleziona_tutti')} ({rows.length})</span>
                     </label>
                     <div className="space-y-2">
                         {rows.map((p) => {
@@ -147,7 +152,7 @@ export function SollecitiPanel({ userId, scuolaId }: Props) {
                                             {p.alunni?.nome} {p.alunni?.cognome} · {p.descrizione}
                                         </span>
                                         <span className="block font-maven text-[11px] text-kidville-muted">
-                                            Scaduto da {giorniRitardo(p)}gg ({dataIt(p.scadenza)}) · ultimo sollecito: {dataIt(p.ultimo_sollecito_il)}
+                                            {t('soll_scaduto_da')} {giorniRitardo(p)}{t('soll_gg_apri')}{dataIt(p.scadenza)}{t('soll_chiudi_ultimo')} {dataIt(p.ultimo_sollecito_il)}
                                         </span>
                                     </span>
                                     <span className="flex shrink-0 flex-col items-end gap-0.5 text-right">
@@ -162,34 +167,34 @@ export function SollecitiPanel({ userId, scuolaId }: Props) {
                     <div className="mt-4 flex flex-wrap items-center gap-2">
                         <button onClick={() => chiama(true)} disabled={busy || selected.size === 0}
                             className="rounded-pill bg-kidville-green px-5 py-2.5 font-maven text-sm font-bold text-kidville-yellow transition-colors hover:bg-kidville-green-dark disabled:opacity-50">
-                            {busy && !anteprime ? 'Preparo…' : `Anteprima (${selected.size})`}
+                            {busy && !anteprime ? t('soll_preparo') : `${t('soll_anteprima')} (${selected.size})`}
                         </button>
                         {anteprime && (
                             <button onClick={() => setAnteprime(null)}
                                 className="inline-flex items-center gap-1 rounded-pill border-[1.5px] border-kidville-line px-4 py-2 font-maven text-sm font-bold text-kidville-muted transition-colors hover:bg-kidville-cream">
-                                <X size={14} /> Annulla
+                                <X size={14} /> {t('soll_annulla')}
                             </button>
                         )}
                     </div>
 
                     {anteprime && (
                         <div className="mt-4 space-y-3 rounded-card border-[1.5px] border-kidville-line bg-kidville-cream/40 p-4">
-                            <p className="font-barlow text-sm font-black uppercase text-kidville-green">Anteprima — nessuna email è ancora partita</p>
+                            <p className="font-barlow text-sm font-black uppercase text-kidville-green">{t('soll_anteprima_banner')}</p>
                             {anteprime.map((e) => (
                                 <div key={e.pagamento_id} className="rounded-input bg-kidville-white p-3">
                                     {e.ok ? (
                                         <>
-                                            <p className="font-maven text-xs font-bold text-kidville-green">Livello {e.livello} · {e.oggetto}</p>
+                                            <p className="font-maven text-xs font-bold text-kidville-green">{t('soll_livello')} {e.livello} · {e.oggetto}</p>
                                             <pre className="mt-1 whitespace-pre-wrap font-maven text-[11px] leading-snug text-kidville-ink">{e.corpo}</pre>
                                         </>
                                     ) : (
-                                        <p className="font-maven text-xs text-kidville-warn">Saltato: {e.motivo}</p>
+                                        <p className="font-maven text-xs text-kidville-warn">{t('soll_saltato')} {e.motivo}</p>
                                     )}
                                 </div>
                             ))}
                             <button onClick={() => chiama(false)} disabled={busy || anteprime.every((e) => !e.ok)}
                                 className="inline-flex items-center gap-1.5 rounded-pill bg-kidville-green px-5 py-2.5 font-maven text-sm font-bold text-kidville-yellow transition-colors hover:bg-kidville-green-dark disabled:opacity-50">
-                                <Send size={14} /> {busy ? 'Invio…' : `Conferma e invia (${anteprime.filter((e) => e.ok).length})`}
+                                <Send size={14} /> {busy ? t('soll_invio') : `${t('soll_conferma_invia')} (${anteprime.filter((e) => e.ok).length})`}
                             </button>
                         </div>
                     )}

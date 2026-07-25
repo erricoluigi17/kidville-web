@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import { Users, ChevronDown, UtensilsCrossed } from 'lucide-react';
 
 interface Props {
@@ -30,6 +31,7 @@ export function BulkAssignBar({
     onTargetMensaChange,
     onAssignMensa,
 }: Props) {
+    const t = useTranslations('adminStudents');
     if (selectedCount === 0) return null;
     const showMensa = !!mensaGroups && mensaGroups.length > 0 && !!onAssignMensa;
 
@@ -44,7 +46,7 @@ export function BulkAssignBar({
                             onChange={e => onTargetMensaChange?.(e.target.value)}
                             className="w-full bg-kidville-white/10 border-2 border-kidville-yellow/30 rounded-input px-3 py-2 font-maven text-sm text-kidville-white appearance-none focus:outline-none focus:border-kidville-yellow cursor-pointer"
                         >
-                            <option value="" className="text-kidville-green">Gruppo mensa…</option>
+                            <option value="" className="text-kidville-green">{t('bulkGruppoMensa')}</option>
                             {mensaGroups!.map(g => (
                                 <option key={g.id} value={g.id} className="text-kidville-green">{g.nome}</option>
                             ))}
@@ -56,7 +58,7 @@ export function BulkAssignBar({
                         disabled={!targetMensa || isAssigning}
                         className="h-9 px-4 rounded-pill bg-kidville-yellow text-kidville-green font-barlow font-black uppercase tracking-wide text-xs hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50"
                     >
-                        Assegna mensa
+                        {t('bulkAssegnaMensa')}
                     </button>
                 </div>
             )}
@@ -68,7 +70,7 @@ export function BulkAssignBar({
                         {selectedCount}
                     </span>
                     <span className="font-maven text-xs text-kidville-yellow/80">
-                        selezionati
+                        {t('bulkSelezionati')}
                     </span>
                 </div>
 
@@ -81,7 +83,7 @@ export function BulkAssignBar({
                             onChange={e => onTargetClassChange(e.target.value)}
                             className="w-full bg-kidville-white/10 border-2 border-kidville-yellow/30 rounded-input px-3 py-2 font-maven text-sm text-kidville-white appearance-none focus:outline-none focus:border-kidville-yellow cursor-pointer"
                         >
-                            <option value="" className="text-kidville-green">Seleziona classe...</option>
+                            <option value="" className="text-kidville-green">{t('bulkSelezionaClasse')}</option>
                             {availableClasses.map(c => (
                                 <option key={c} value={c} className="text-kidville-green">
                                     {c}
@@ -101,7 +103,7 @@ export function BulkAssignBar({
                     {isAssigning ? (
                         <div className="w-4 h-4 border-2 border-kidville-green/40 border-t-kidville-green rounded-full animate-spin" />
                     ) : (
-                        'Assegna'
+                        t('bulkAssegna')
                     )}
                 </button>
 
@@ -110,7 +112,7 @@ export function BulkAssignBar({
                     onClick={onClear}
                     className="text-kidville-yellow/60 hover:text-kidville-yellow text-xs font-maven underline"
                 >
-                    Annulla
+                    {t('bulkAnnulla')}
                 </button>
             </div>
         </div>

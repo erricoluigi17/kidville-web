@@ -1,6 +1,7 @@
 'use client';
 
 import { motion, AnimatePresence } from 'framer-motion';
+import { useTranslations } from 'next-intl';
 import { MessageSquare } from 'lucide-react';
 
 export interface ChatThread {
@@ -22,26 +23,28 @@ interface Props {
     onSelect: (thread: ChatThread) => void;
 }
 
-function timeAgo(iso: string): string {
+function timeAgo(iso: string, t: (key: string, values?: Record<string, number>) => string): string {
     const diff = Date.now() - new Date(iso).getTime();
     const mins = Math.floor(diff / 60000);
-    if (mins < 1) return 'ora';
-    if (mins < 60) return `${mins}m`;
+    if (mins < 1) return t('timeNow');
+    if (mins < 60) return t('timeMinutes', { n: mins });
     const hrs = Math.floor(mins / 60);
-    if (hrs < 24) return `${hrs}h`;
+    if (hrs < 24) return t('timeHours', { n: hrs });
     const days = Math.floor(hrs / 24);
-    return `${days}g`;
+    return t('timeDays', { n: days });
 }
 
 export function ChatThreadList({ threads, selectedId, currentUserId, onSelect }: Props) {
+    const t = useTranslations('parentChat');
+
     if (threads.length === 0) {
         return (
             <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
                 <div className="w-16 h-16 bg-kidville-cream rounded-full flex items-center justify-center mb-4">
                     <MessageSquare size={24} className="text-kidville-green" strokeWidth={1.5} />
                 </div>
-                <p className="font-barlow font-bold text-base text-kidville-green uppercase mb-1">Nessuna chat</p>
-                <p className="font-maven text-sm text-kidville-muted">Le conversazioni appariranno qui</p>
+                <p className="font-barlow font-bold text-base text-kidville-green uppercase mb-1">{t('noChats')}</p>
+                <p className="font-maven text-sm text-kidville-muted">{t('noChatsHint')}</p>
             </div>
         );
     }
@@ -54,9 +57,9 @@ export function ChatThreadList({ threads, selectedId, currentUserId, onSelect }:
                 const initials = `${thread.other_user.first_name[0]}${thread.other_user.last_name[0]}`.toUpperCase();
                 const preview = thread.last_message
                     ? thread.last_message.sender_id === currentUserId
-                        ? `Tu: ${thread.last_message.content}`
+                        ? t('youPrefix', { content: thread.last_message.content })
                         : thread.last_message.content
-                    : 'Nessun messaggio';
+                    : t('noMessages');
 
                 return (
                     <motion.button
@@ -90,7 +93,7 @@ export function ChatThreadList({ threads, selectedId, currentUserId, onSelect }:
                                 </p>
                                 {thread.last_message && (
                                     <span className="flex-shrink-0 font-maven text-[11px] text-kidville-muted">
-                                        {timeAgo(thread.last_message.created_at)}
+                                        {timeAgo(thread.last_message.created_at, t)}
                                     </span>
                                 )}
                             </div>

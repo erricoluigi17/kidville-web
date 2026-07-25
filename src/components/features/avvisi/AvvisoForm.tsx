@@ -1,8 +1,10 @@
 import { useState, useRef } from 'react';
+import { useTranslations } from 'next-intl';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Send, Upload, Link } from 'lucide-react';
 import { Avviso } from './AvvisoCard';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
+import { ScattaFotoButton } from '@/components/features/native/ScattaFotoButton';
 
 interface Props {
     open: boolean;
@@ -26,6 +28,7 @@ interface Props {
 }
 
 export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], initialAvviso = null, soloClassiProprie = false }: Props) {
+    const t = useTranslations('teacherComunicazioni');
     const [titolo, setTitolo] = useState('');
     const [contenuto, setContenuto] = useState('');
     const [tipo, setTipo] = useState<'presa_visione' | 'adesione'>('presa_visione');
@@ -76,7 +79,7 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
                 }
                 setAttachmentUrl(fUrl);
                 setLinkUrl(lUrl);
-                setFileName(fUrl ? fUrl.split('/').pop() || 'File Allegato' : '');
+                setFileName(fUrl ? fUrl.split('/').pop() || t('formFileAllegatoFallback') : '');
             } else {
                 // Reset in caso di creazione
                 setTitolo('');
@@ -97,10 +100,15 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
         setSelectedClasses(prev => prev.includes(c) ? prev.filter(x => x !== c) : [...prev, c]);
     };
 
-    const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (!file) return;
+        void processaFile(file);
+    };
 
+    // Punto d'ingresso unico dell'upload: lo usano sia l'<input> (che accetta anche
+    // PDF/doc) sia il bottone «Scatta foto» nativo → stesso flusso, PDF intatto.
+    const processaFile = async (file: File) => {
         setFileUploading(true);
         setFileName(file.name);
         try {
@@ -120,12 +128,12 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
                 setAttachmentUrl(data.fileUrl);
             } else {
                 console.error("Errore caricamento file");
-                alert("Impossibile caricare il file. Riprova.");
+                alert(t('formAlertUploadFallito'));
                 setFileName('');
             }
         } catch (err) {
             console.error("Errore upload:", err);
-            alert("Errore durante il caricamento del file.");
+            alert(t('formAlertUploadErrore'));
             setFileName('');
         } finally {
             setFileUploading(false);
@@ -178,7 +186,7 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
                     >
                         <div className="flex items-center justify-between px-6 py-4 border-b border-kidville-line bg-white">
                             <h2 className="font-barlow font-black text-lg text-kidville-green uppercase tracking-wide">
-                                {initialAvviso ? '✏️ Modifica Avviso' : '📢 Nuovo Avviso'}
+                                {initialAvviso ? t('formTitoloModifica') : t('formTitoloNuovo')}
                             </h2>
                             <button onClick={onClose} className="w-8 h-8 rounded-xl bg-kidville-cream hover:bg-kidville-cream-dark flex items-center justify-center text-kidville-green transition-colors">
                                 <X size={14} strokeWidth={1.5} />
@@ -186,33 +194,33 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
                         </div>
                         <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4 bg-white">
                             <div>
-                                <label className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">Titolo</label>
-                                <input value={titolo} onChange={e => setTitolo(e.target.value)} placeholder="Es. Gita al parco"
+                                <label className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">{t('formLabelTitolo')}</label>
+                                <input value={titolo} onChange={e => setTitolo(e.target.value)} placeholder={t('formPlaceholderTitolo')}
                                     className="w-full border-2 border-kidville-line rounded-2xl px-4 py-2.5 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:ring-2 focus:ring-kidville-green/20 focus:border-kidville-green/40 transition-all" />
                             </div>
                             <div>
-                                <label className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">Contenuto</label>
-                                <textarea value={contenuto} onChange={e => setContenuto(e.target.value)} placeholder="Scrivi il testo dell'avviso..." rows={4}
+                                <label className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">{t('formLabelContenuto')}</label>
+                                <textarea value={contenuto} onChange={e => setContenuto(e.target.value)} placeholder={t('formPlaceholderContenuto')} rows={4}
                                     className="w-full border-2 border-kidville-line rounded-2xl px-4 py-2.5 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:ring-2 focus:ring-kidville-green/20 focus:border-kidville-green/40 transition-all resize-none" />
                             </div>
                             <div>
-                                <label className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">Tipo</label>
+                                <label className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">{t('formLabelTipo')}</label>
                                 <div className="flex gap-2">
-                                    <button onClick={() => setTipo('presa_visione')} className={`flex-1 py-2.5 rounded-2xl font-maven font-semibold text-sm transition-all ${tipo === 'presa_visione' ? 'bg-kidville-green text-kidville-yellow shadow-sm' : 'bg-kidville-cream text-kidville-muted border border-kidville-line hover:bg-kidville-cream-dark'}`}>📖 Presa visione</button>
-                                    <button onClick={() => setTipo('adesione')} className={`flex-1 py-2.5 rounded-2xl font-maven font-semibold text-sm transition-all ${tipo === 'adesione' ? 'bg-kidville-green text-kidville-yellow shadow-sm' : 'bg-kidville-cream text-kidville-muted border border-kidville-line hover:bg-kidville-cream-dark'}`}>📋 Adesione</button>
+                                    <button onClick={() => setTipo('presa_visione')} className={`flex-1 py-2.5 rounded-2xl font-maven font-semibold text-sm transition-all ${tipo === 'presa_visione' ? 'bg-kidville-green text-kidville-yellow shadow-sm' : 'bg-kidville-cream text-kidville-muted border border-kidville-line hover:bg-kidville-cream-dark'}`}>{t('formTipoPresaVisione')}</button>
+                                    <button onClick={() => setTipo('adesione')} className={`flex-1 py-2.5 rounded-2xl font-maven font-semibold text-sm transition-all ${tipo === 'adesione' ? 'bg-kidville-green text-kidville-yellow shadow-sm' : 'bg-kidville-cream text-kidville-muted border border-kidville-line hover:bg-kidville-cream-dark'}`}>{t('formTipoAdesione')}</button>
                                 </div>
                             </div>
                             {soloClassiProprie ? (
                                 <div>
-                                    <label className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">Le tue classi</label>
-                                    <p className="font-maven text-xs text-kidville-muted mb-2">Come docente pubblichi solo per le tue sezioni.</p>
+                                    <label className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">{t('formLabelLeTueClassi')}</label>
+                                    <p className="font-maven text-xs text-kidville-muted mb-2">{t('formNotaLeTueClassi')}</p>
                                 </div>
                             ) : (
                                 <div>
-                                    <label className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">Destinatari</label>
+                                    <label className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">{t('formLabelDestinatari')}</label>
                                     <div className="flex gap-2">
-                                        <button onClick={() => setScope('globale')} className={`flex-1 py-2.5 rounded-2xl font-maven font-semibold text-sm transition-all ${scope === 'globale' ? 'bg-kidville-green text-kidville-yellow shadow-sm' : 'bg-kidville-cream text-kidville-muted border border-kidville-line hover:bg-kidville-cream-dark'}`}>🌐 Tutti</button>
-                                        <button onClick={() => setScope('classe')} className={`flex-1 py-2.5 rounded-2xl font-maven font-semibold text-sm transition-all ${scope === 'classe' ? 'bg-kidville-green text-kidville-yellow shadow-sm' : 'bg-kidville-cream text-kidville-muted border border-kidville-line hover:bg-kidville-cream-dark'}`}>🏫 Per classe</button>
+                                        <button onClick={() => setScope('globale')} className={`flex-1 py-2.5 rounded-2xl font-maven font-semibold text-sm transition-all ${scope === 'globale' ? 'bg-kidville-green text-kidville-yellow shadow-sm' : 'bg-kidville-cream text-kidville-muted border border-kidville-line hover:bg-kidville-cream-dark'}`}>{t('formDestinatariTutti')}</button>
+                                        <button onClick={() => setScope('classe')} className={`flex-1 py-2.5 rounded-2xl font-maven font-semibold text-sm transition-all ${scope === 'classe' ? 'bg-kidville-green text-kidville-yellow shadow-sm' : 'bg-kidville-cream text-kidville-muted border border-kidville-line hover:bg-kidville-cream-dark'}`}>{t('formDestinatariPerClasse')}</button>
                                     </div>
                                 </div>
                             )}
@@ -226,7 +234,7 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
                             
                             <div>
                                 <label className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">
-                                    Scadenza {tipo === 'presa_visione' ? 'avviso' : 'adesione'} (opzionale)
+                                    {tipo === 'presa_visione' ? t('formScadenzaAvviso') : t('formScadenzaAdesione')}
                                 </label>
                                 <input type="date" value={scadenza} onChange={e => setScadenza(e.target.value)}
                                     className="w-full border-2 border-kidville-line rounded-2xl px-4 py-2.5 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:ring-2 focus:ring-kidville-green/20 focus:border-kidville-green/40 transition-all" />
@@ -234,7 +242,7 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
 
                             {/* Upload File */}
                             <div>
-                                <label className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">File Allegato (opzionale)</label>
+                                <label className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">{t('formLabelFileAllegato')}</label>
                                 <div className="flex items-center gap-3">
                                     <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" accept=".pdf,image/*,.doc,.docx" />
                                     <button
@@ -243,9 +251,17 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
                                         disabled={fileUploading}
                                         className="flex items-center gap-2 px-4 py-2.5 border-2 border-dashed border-kidville-line rounded-2xl font-maven text-xs font-semibold text-kidville-green hover:border-kidville-green hover:text-kidville-green transition-colors disabled:opacity-50"
                                     >
-                                        <Upload size={14} /> {fileUploading ? 'Caricamento...' : 'Carica File (PDF, Immagini)'}
+                                        <Upload size={14} /> {fileUploading ? t('formFileCaricamento') : t('formFileCarica')}
                                     </button>
-                                    
+
+                                    {/* Nativo: scatta la foto dell'allegato. Su web non compare. */}
+                                    <ScattaFotoButton
+                                        onFile={processaFile}
+                                        label="Scatta foto"
+                                        disabled={fileUploading}
+                                        className="flex items-center gap-2 px-4 py-2.5 border-2 border-dashed border-kidville-line rounded-2xl font-maven text-xs font-semibold text-kidville-green hover:border-kidville-green transition-colors disabled:opacity-50"
+                                    />
+
                                     {fileName && (
                                         <div className="flex items-center gap-2 bg-kidville-cream border border-kidville-line rounded-xl px-3 py-1.5 max-w-[200px] truncate text-xs font-maven text-kidville-green">
                                             <span className="truncate flex-1">{fileName}</span>
@@ -259,10 +275,10 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
 
                             {/* Link Esterno */}
                             <div>
-                                <label className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">Link Esterno (opzionale)</label>
+                                <label className="font-maven font-medium text-xs text-kidville-muted uppercase tracking-wide mb-1.5 block">{t('formLabelLinkEsterno')}</label>
                                 <div className="relative">
                                     <Link size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-kidville-muted" />
-                                    <input value={linkUrl} onChange={e => setLinkUrl(e.target.value)} placeholder="https://esempio.com/pagina-info"
+                                    <input value={linkUrl} onChange={e => setLinkUrl(e.target.value)} placeholder={t('formPlaceholderLink')}
                                         className="w-full border-2 border-kidville-line rounded-2xl pl-10 pr-4 py-2.5 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:ring-2 focus:ring-kidville-green/20 focus:border-kidville-green/40 transition-all" />
                                 </div>
                             </div>
@@ -273,12 +289,12 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
                                 {submitting ? (
                                     <>
                                         <div className="w-5 h-5 border-2 border-kidville-yellow/40 border-t-kidville-yellow rounded-full animate-spin" />
-                                        {initialAvviso ? 'Salvataggio...' : 'Pubblicazione...'}
+                                        {initialAvviso ? t('formSubmitSalvataggio') : t('formSubmitPubblicazione')}
                                     </>
                                 ) : (
                                     <>
                                         <Send size={16} strokeWidth={1.5} />
-                                        {initialAvviso ? 'Salva Modifiche' : 'Pubblica Avviso'}
+                                        {initialAvviso ? t('formSubmitSalvaModifiche') : t('formSubmitPubblicaAvviso')}
                                     </>
                                 )}
                             </button>

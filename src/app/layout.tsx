@@ -1,6 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import { Barlow_Condensed, Maven_Pro } from "next/font/google";
 import { cookies } from "next/headers";
+import { NextIntlClientProvider } from "next-intl";
+import { getLocale, getMessages } from "next-intl/server";
 import { readContrastCookie } from "@/lib/accessibility/cookie";
 import { RootProviders } from "@/components/providers/RootProviders";
 import "./globals.css";
@@ -39,14 +41,19 @@ export default async function RootLayout({
 }>) {
   // Alto contrasto da cookie, applicato server-side (no FOUC).
   const highContrast = readContrastCookie(await cookies());
+  // Lingua + messaggi (next-intl, locale dal cookie KV_LOCALE; default it).
+  const locale = await getLocale();
+  const messages = await getMessages();
   return (
     <html
-      lang="it"
+      lang={locale}
       data-contrast={highContrast ? "high" : undefined}
       className={`${barlow.variable} ${maven.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
-        <RootProviders initialHighContrast={highContrast}>{children}</RootProviders>
+        <NextIntlClientProvider messages={messages}>
+          <RootProviders initialHighContrast={highContrast}>{children}</RootProviders>
+        </NextIntlClientProvider>
       </body>
     </html>
   );

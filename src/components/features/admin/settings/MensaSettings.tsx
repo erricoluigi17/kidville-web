@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { useTranslations } from 'next-intl';
 import { Settings, Save, Plus, Trash2, ChevronDown, ChevronUp, UtensilsCrossed, BookOpen } from 'lucide-react';
 import { DateField } from '@/components/ui/DateField';
 import { SaveCheck } from '@/components/ui/SaveConfirmation';
@@ -10,9 +11,11 @@ interface MenuConfig { id: string; nome: string; ordine: number }
 interface ClassAssignment { id: string; classe: string; menu_config_id: string; attivo_dal: string; mensa_menu_config?: { nome: string } }
 
 const hdr = (u: string) => ({ 'Content-Type': 'application/json', 'x-user-id': u });
-const GIORNI = [{ n: 1, l: 'Lun' }, { n: 2, l: 'Mar' }, { n: 3, l: 'Mer' }, { n: 4, l: 'Gio' }, { n: 5, l: 'Ven' }, { n: 6, l: 'Sab' }, { n: 7, l: 'Dom' }];
+// `k` è la chiave i18n dell'abbreviazione del giorno (tradotta al render); `n` è il dato ISO.
+const GIORNI = [{ n: 1, k: 'giornoLun' }, { n: 2, k: 'giornoMar' }, { n: 3, k: 'giornoMer' }, { n: 4, k: 'giornoGio' }, { n: 5, k: 'giornoVen' }, { n: 6, k: 'giornoSab' }, { n: 7, k: 'giornoDom' }];
 
 export function MensaSettings({ userId, scuolaId }: Props) {
+  const t = useTranslations('adminSettings');
   const [cutoff, setCutoff] = useState('09:30');
   const [giorni, setGiorni] = useState<number[]>([1, 2, 3, 4, 5]);
   const [settimane, setSettimane] = useState(4);
@@ -92,7 +95,7 @@ export function MensaSettings({ userId, scuolaId }: Props) {
   };
 
   const eliminaMenu = async (id: string) => {
-    if (!confirm('Eliminare questo menu? Verranno rimossi anche i collegament alle classi.')) return;
+    if (!confirm(t('meConfermaEliminaMenu'))) return;
     setMenuLoading(true); setMenuMsg(null);
     const res = await fetch(`/api/mensa/menu-config?id=${id}`, { method: 'DELETE', headers: hdr(userId) });
     const j = await res.json();
@@ -133,23 +136,23 @@ export function MensaSettings({ userId, scuolaId }: Props) {
       {/* ── IMPOSTAZIONI GENERALI ── */}
       <div>
         <h3 className="font-barlow font-bold text-kidville-green uppercase text-sm mb-4 flex items-center gap-2">
-          <Settings size={14} /> Impostazioni mensa
+          <Settings size={14} /> {t('meImpostazioni')}
         </h3>
 
         <div className="space-y-4">
           <div>
-            <label className="font-maven text-xs text-kidville-muted block mb-1">Orario limite (cutoff) prenotazioni/disdette</label>
+            <label className="font-maven text-xs text-kidville-muted block mb-1">{t('meCutoffLabel')}</label>
             <input type="time" value={cutoff} onChange={e => setCutoff(e.target.value)}
               className="border-2 border-kidville-line rounded-lg px-3 py-1.5 font-maven text-sm text-kidville-green" />
           </div>
 
           <div>
-            <label className="font-maven text-xs text-kidville-muted block mb-1.5">Giorni mensa attivi</label>
+            <label className="font-maven text-xs text-kidville-muted block mb-1.5">{t('meGiorniAttivi')}</label>
             <div className="flex flex-wrap gap-1.5">
               {GIORNI.map(g => (
                 <button key={g.n} onClick={() => toggleGiorno(g.n)}
                   className={`px-3 py-1.5 rounded-full font-maven text-xs font-bold border-2 ${giorni.includes(g.n) ? 'bg-kidville-green text-kidville-white border-kidville-green' : 'bg-kidville-white text-kidville-muted border-kidville-line'}`}>
-                  {g.l}
+                  {t(g.k)}
                 </button>
               ))}
             </div>
@@ -157,21 +160,21 @@ export function MensaSettings({ userId, scuolaId }: Props) {
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="font-maven text-xs text-kidville-muted block mb-1">Settimane di rotazione menu</label>
+              <label className="font-maven text-xs text-kidville-muted block mb-1">{t('meSettimaneRotazione')}</label>
               <input type="number" min={1} max={8} value={settimane} onChange={e => setSettimane(Number(e.target.value))}
                 className="w-full border-2 border-kidville-line rounded-lg px-3 py-1.5 font-maven text-sm text-kidville-green" />
             </div>
             <div>
-              <label className="font-maven text-xs text-kidville-muted block mb-1">Soglia avviso saldo basso</label>
+              <label className="font-maven text-xs text-kidville-muted block mb-1">{t('meSogliaSaldoBasso')}</label>
               <input type="number" min={0} value={soglia} onChange={e => setSoglia(Number(e.target.value))}
                 className="w-full border-2 border-kidville-line rounded-lg px-3 py-1.5 font-maven text-sm text-kidville-green" />
             </div>
           </div>
 
           <button onClick={salva} className="px-4 py-2 rounded-full bg-kidville-green text-kidville-yellow font-maven font-bold text-sm flex items-center gap-1">
-            <Save size={15} /> Salva impostazioni
+            <Save size={15} /> {t('meSalvaImpostazioni')}
           </button>
-          {done && <p className="font-maven text-xs text-kidville-success flex items-center gap-1"><SaveCheck size={14} /> Impostazioni salvate.</p>}
+          {done && <p className="font-maven text-xs text-kidville-success flex items-center gap-1"><SaveCheck size={14} /> {t('meImpostazioniSalvate')}</p>}
         </div>
       </div>
 
@@ -182,7 +185,7 @@ export function MensaSettings({ userId, scuolaId }: Props) {
           className="w-full flex items-center justify-between mb-4"
         >
           <h3 className="font-barlow font-bold text-kidville-green uppercase text-sm flex items-center gap-2">
-            <UtensilsCrossed size={14} /> Menu mensa ({menus.length})
+            <UtensilsCrossed size={14} /> {t('meMenuTitolo', { count: menus.length })}
           </h3>
           {showMenuSection ? <ChevronUp size={16} className="text-kidville-muted" /> : <ChevronDown size={16} className="text-kidville-muted" />}
         </button>
@@ -190,7 +193,7 @@ export function MensaSettings({ userId, scuolaId }: Props) {
         {showMenuSection && (
           <div className="space-y-4">
             <p className="font-maven text-xs text-kidville-muted -mt-2">
-              Crea più menu per ordini scolastici diversi (es. Nido, Infanzia e Primaria). Ogni menu ha il suo piano di rotazione separato.
+              {t('meMenuDesc')}
             </p>
 
             {/* Lista menu esistenti */}
@@ -201,7 +204,7 @@ export function MensaSettings({ userId, scuolaId }: Props) {
                     <div className="flex-1 min-w-0">
                       <span className="font-maven font-bold text-sm text-kidville-green">{m.nome}</span>
                     </div>
-                    <button onClick={() => eliminaMenu(m.id)} className="p-1.5 rounded-lg text-kidville-error hover:bg-kidville-error-soft" title="Elimina menu">
+                    <button onClick={() => eliminaMenu(m.id)} className="p-1.5 rounded-lg text-kidville-error hover:bg-kidville-error-soft" title={t('meEliminaMenu')}>
                       <Trash2 size={14} />
                     </button>
                   </div>
@@ -213,7 +216,7 @@ export function MensaSettings({ userId, scuolaId }: Props) {
             <div className="flex gap-2">
               <input
                 type="text"
-                placeholder="Nome menu (es. Nido)"
+                placeholder={t('meNomeMenuPlaceholder')}
                 value={newMenuNome}
                 onChange={e => setNewMenuNome(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && creaMenu()}
@@ -224,7 +227,7 @@ export function MensaSettings({ userId, scuolaId }: Props) {
                 disabled={!newMenuNome.trim() || menuLoading}
                 className="px-3 py-1.5 rounded-lg bg-kidville-green text-kidville-yellow font-maven text-sm font-bold flex items-center gap-1 disabled:opacity-50"
               >
-                <Plus size={14} /> Aggiungi
+                <Plus size={14} /> {t('aggiungi')}
               </button>
             </div>
 
@@ -234,23 +237,22 @@ export function MensaSettings({ userId, scuolaId }: Props) {
             {menus.length > 0 && (
               <div className="border-t border-kidville-line pt-4 space-y-3">
                 <h4 className="font-barlow font-bold text-kidville-green uppercase text-xs flex items-center gap-1.5">
-                  <BookOpen size={12} /> Assegnazione classi ai menu
+                  <BookOpen size={12} /> {t('meAssegnazioneClassi')}
                 </h4>
                 <p className="font-maven text-xs text-kidville-muted">
-                  Specifica da quale data una classe passa a un determinato menu.
-                  La regola più recente (attivo_dal ≤ oggi) è quella in vigore.
+                  {t('meAssegnazioneDesc')}
                 </p>
 
                 {/* Assegnazioni esistenti raggruppate per classe */}
                 {Object.entries(assignmentsByClasse).map(([classe, list]) => (
                   <div key={classe} className="rounded-xl border border-kidville-line overflow-hidden">
                     <div className="px-3 py-2 bg-kidville-cream font-maven font-bold text-xs text-kidville-green">
-                      Classe: {classe}
+                      {t('meClasse', { classe })}
                     </div>
                     {list.map(a => (
                       <div key={a.id} className="flex items-center gap-2 px-3 py-2 border-t border-kidville-line text-xs">
                         <span className={`flex-1 font-maven ${a.attivo_dal > today ? 'text-kidville-muted italic' : 'text-kidville-ink'}`}>
-                          {a.attivo_dal > today ? '⏳ Dal ' : '✓ Dal '}
+                          {a.attivo_dal > today ? t('meDalFuturo') : t('meDalAttivo')}
                           <span className="font-bold">{a.attivo_dal}</span>
                           {' → '}
                           <span className="text-kidville-green font-bold">
@@ -267,32 +269,32 @@ export function MensaSettings({ userId, scuolaId }: Props) {
 
                 {/* Form nuova assegnazione */}
                 <div className="rounded-xl border-2 border-dashed border-kidville-line p-3 space-y-2">
-                  <p className="font-maven text-xs text-kidville-muted font-bold">Nuova assegnazione</p>
+                  <p className="font-maven text-xs text-kidville-muted font-bold">{t('meNuovaAssegnazione')}</p>
                   <div className="grid grid-cols-2 gap-2">
                     <div>
-                      <label className="font-maven text-[10px] text-kidville-muted block mb-0.5">Classe / sezione</label>
+                      <label className="font-maven text-[10px] text-kidville-muted block mb-0.5">{t('meClasseSezione')}</label>
                       <input
                         type="text"
-                        placeholder="es. 1A, Sezione B"
+                        placeholder={t('meClasseSezionePlaceholder')}
                         value={newClasse}
                         onChange={e => setNewClasse(e.target.value)}
                         className="w-full border border-kidville-line rounded-lg px-2 py-1.5 font-maven text-xs text-kidville-green"
                       />
                     </div>
                     <div>
-                      <label className="font-maven text-[10px] text-kidville-muted block mb-0.5">Menu</label>
+                      <label className="font-maven text-[10px] text-kidville-muted block mb-0.5">{t('meMenu')}</label>
                       <select
                         value={newMenuId}
                         onChange={e => setNewMenuId(e.target.value)}
                         className="w-full border border-kidville-line rounded-lg px-2 py-1.5 font-maven text-xs text-kidville-green bg-kidville-white"
                       >
-                        <option value="">Seleziona…</option>
+                        <option value="">{t('seleziona')}</option>
                         {menus.map(m => <option key={m.id} value={m.id}>{m.nome}</option>)}
                       </select>
                     </div>
                   </div>
                   <div>
-                    <label className="font-maven text-[10px] text-kidville-muted block mb-0.5">Attivo dal</label>
+                    <label className="font-maven text-[10px] text-kidville-muted block mb-0.5">{t('meAttivoDal')}</label>
                     <DateField
                       value={newAttivoDal}
                       onChange={setNewAttivoDal}
@@ -304,7 +306,7 @@ export function MensaSettings({ userId, scuolaId }: Props) {
                     disabled={!newClasse.trim() || !newMenuId || !newAttivoDal || menuLoading}
                     className="px-3 py-1.5 rounded-lg bg-kidville-green text-kidville-yellow font-maven text-xs font-bold flex items-center gap-1 disabled:opacity-50"
                   >
-                    <Plus size={13} /> Aggiungi assegnazione
+                    <Plus size={13} /> {t('meAggiungiAssegnazione')}
                   </button>
                 </div>
               </div>

@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
+import { useTranslations } from 'next-intl';
+import { useDateFormat } from '@/lib/i18n/date';
 import { GraduationCap, Check, Lock, Download, Upload, FileDown, FileText, Send } from 'lucide-react';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 
@@ -13,6 +15,8 @@ interface Comportamento { alunno_id: string; giudizio_testo: string | null; giud
 interface Scrutinio { id: string; stato: 'aperto' | 'chiuso'; chiuso_il: string | null; pubblicato?: boolean }
 
 export default function ScrutinioPage() {
+  const t = useTranslations('teacherPrimaria');
+  const f = useDateFormat();
   const params = useParams();
   const search = useSearchParams();
   const sectionId = params?.sectionId as string;
@@ -68,7 +72,7 @@ export default function ScrutinioPage() {
       const r = await fetch(`/api/primaria/scrutinio?sectionId=${sectionId}&periodoId=${periodoId}&userId=${userId}`);
       const d = await r.json();
       if (!d.success) {
-        setMsg(d.error || 'Errore');
+        setMsg(d.error || t('comuneErrore'));
       } else {
         setScrutinio(d.data.scrutinio);
         setAlunni(d.data.alunni);
@@ -90,7 +94,7 @@ export default function ScrutinioPage() {
     } finally {
       // nessuno stato di caricamento da azzerare
     }
-  }, [periodoId, sectionId, userId]);
+  }, [periodoId, sectionId, userId, t]);
 
   useEffect(() => { loadScrutinio(); }, [loadScrutinio]);
 
@@ -118,7 +122,7 @@ export default function ScrutinioPage() {
     });
     const d = await r.json();
     setSaving(false);
-    setMsg(r.ok ? 'Giudizi salvati ✓' : (d.error || 'Errore'));
+    setMsg(r.ok ? t('scrutinioGiudiziSalvati') : (d.error || t('comuneErrore')));
   };
 
   const salvaComportamento = async () => {
@@ -136,12 +140,12 @@ export default function ScrutinioPage() {
     });
     const d = await r.json();
     setSaving(false);
-    setMsg(r.ok ? 'Comportamento salvato ✓' : (d.error || 'Errore'));
+    setMsg(r.ok ? t('scrutinioComportamentoSalvato') : (d.error || t('comuneErrore')));
   };
 
   const chiudiScrutinio = async () => {
     if (!scrutinio || !userId) return;
-    if (!confirm('Chiudere lo scrutinio? Dopo la chiusura i giudizi non saranno più modificabili. Potrai poi generare le pagelle e pubblicarle ai genitori.')) return;
+    if (!confirm(t('scrutinioConfermaChiudi'))) return;
     setSaving(true); setMsg('');
     const r = await fetch(`/api/primaria/scrutinio/chiudi?userId=${userId}`, {
       method: 'POST',
@@ -151,11 +155,11 @@ export default function ScrutinioPage() {
     const d = await r.json();
     setSaving(false);
     if (!r.ok) {
-      if (d.incompleto) setMsg(`Scrutinio incompleto: mancano ${d.mancanti.length} giudizi.`);
-      else setMsg(d.error || 'Errore');
+      if (d.incompleto) setMsg(t('scrutinioIncompleto', { count: d.mancanti.length }));
+      else setMsg(d.error || t('comuneErrore'));
       return;
     }
-    setMsg('Scrutinio chiuso ✓');
+    setMsg(t('scrutinioChiuso'));
     loadScrutinio();
   };
 
@@ -201,14 +205,15 @@ export default function ScrutinioPage() {
         body: JSON.stringify({ scrutinioId: scrutinio.id, righe }),
       });
       const d = await res.json();
-      if (!res.ok) { setMsg(d.error || 'Errore import'); }
+      if (!res.ok) { setMsg(d.error || t('scrutinioErroreImport')); }
       else {
         const errCount = (d.errori ?? []).length;
-        setMsg(`Importate ${d.importate} righe${errCount ? `, ${errCount} con errori` : ''} ✓`);
+        const conErrori = errCount ? t('scrutinioImportateErrori', { count: errCount }) : '';
+        setMsg(`${t('scrutinioImportate', { count: d.importate })}${conErrori} ✓`);
         loadScrutinio();
       }
     } catch (e) {
-      setMsg(e instanceof Error ? e.message : 'Errore lettura file');
+      setMsg(e instanceof Error ? e.message : t('scrutinioErroreLettura'));
     } finally {
       setSaving(false);
       if (fileRef.current) fileRef.current.value = '';
@@ -226,13 +231,13 @@ export default function ScrutinioPage() {
     });
     const d = await r.json();
     setSaving(false);
-    setMsg(r.ok ? `Generate ${d.generate}/${d.totale} pagelle ✓` : (d.error || 'Errore'));
+    setMsg(r.ok ? `${t('scrutinioPagelleGenerate', { generate: d.generate, totale: d.totale })} ✓` : (d.error || t('comuneErrore')));
   };
 
   const togglePubblica = async () => {
     if (!scrutinio || !userId) return;
     const nuovo = !pubblicato;
-    if (nuovo && !confirm('Pubblicare i voti? I genitori potranno vedere le pagelle e riceveranno una notifica.')) return;
+    if (nuovo && !confirm(t('scrutinioConfermaPubblica'))) return;
     setSaving(true); setMsg('');
     const r = await fetch(`/api/primaria/scrutinio/pubblica?userId=${userId}`, {
       method: 'POST',
@@ -241,8 +246,8 @@ export default function ScrutinioPage() {
     });
     const d = await r.json();
     setSaving(false);
-    if (!r.ok) { setMsg(d.error || 'Errore'); return; }
-    setMsg(nuovo ? 'Voti pubblicati ✓' : 'Pubblicazione revocata ✓');
+    if (!r.ok) { setMsg(d.error || t('comuneErrore')); return; }
+    setMsg(nuovo ? t('scrutinioVotiPubblicati') : t('scrutinioPubblicazioneRevocata'));
     loadScrutinio();
   };
 
@@ -252,38 +257,38 @@ export default function ScrutinioPage() {
       <div className="flex items-start gap-2.5 rounded-xl border border-kidville-warn/25 bg-kidville-warn-soft px-3.5 py-3">
         <FileText size={16} className="mt-0.5 shrink-0 text-kidville-warn" />
         <span className="font-maven text-[12px] leading-snug text-kidville-warn">
-          <strong>Documento ufficiale.</strong> Solo giudizi sintetici testuali — nessun voto numerico, nessuna media. Chiusura e pubblicazione sono riservate al Dirigente.
+          {t.rich('scrutinioBanner', { strong: (c) => <strong>{c}</strong> })}
         </span>
       </div>
 
       <div className="rounded-card bg-white p-5 shadow-sm">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <h2 className="font-barlow text-lg font-bold text-kidville-ink flex items-center gap-2">
-            <GraduationCap size={18} className="text-kidville-green" /> Scrutinio
+            <GraduationCap size={18} className="text-kidville-green" /> {t('scrutinioTitolo')}
           </h2>
           <select
             value={periodoId}
             onChange={(e) => setPeriodoId(e.target.value)}
             className="font-maven rounded-pill border border-kidville-line px-3 py-2 text-sm"
           >
-            <option value="">Periodo…</option>
+            <option value="">{t('scrutinioPeriodoPlaceholder')}</option>
             {periodi.map((p) => <option key={p.id} value={p.id}>{p.nome} ({p.anno_scolastico})</option>)}
           </select>
         </div>
 
         {periodi.length === 0 && (
           <p className="font-maven text-sm text-kidville-warn">
-            Nessun periodo di scrutinio configurato.{' '}
+            {t('scrutinioNessunPeriodo')}{' '}
             {isStaff
-              ? 'Puoi configurarlo da Impostazioni → Didattica primaria (periodi di scrutinio).'
-              : 'Chiedi alla segreteria di crearne uno.'}
+              ? t('scrutinioConfiguraStaff')
+              : t('scrutinioConfiguraNonStaff')}
           </p>
         )}
 
         {scrutinio && (
           <div className={`mb-3 inline-flex items-center gap-2 rounded-pill px-3 py-1 text-xs font-maven ${chiuso ? 'bg-kidville-neutral-soft text-kidville-ink' : 'bg-kidville-yellow-soft text-kidville-yellow-dark'}`}>
             {chiuso ? <Lock size={13} /> : null}
-            {chiuso ? `Chiuso il ${scrutinio.chiuso_il ? new Date(scrutinio.chiuso_il).toLocaleDateString('it-IT') : ''}` : 'Aperto — proposta giudizi'}
+            {chiuso ? t('scrutinioChiusoIl', { data: scrutinio.chiuso_il ? f.dataBreve(scrutinio.chiuso_il) : '' }) : t('scrutinioAperto')}
           </div>
         )}
 
@@ -294,7 +299,7 @@ export default function ScrutinioPage() {
             <table className="w-full border-collapse text-sm">
               <thead>
                 <tr>
-                  <th className="sticky left-0 bg-white px-2 py-2 text-left font-maven text-xs text-kidville-muted">Alunno</th>
+                  <th className="sticky left-0 bg-white px-2 py-2 text-left font-maven text-xs text-kidville-muted">{t('scrutinioAlunno')}</th>
                   {materie.map((m) => (
                     <th key={m.id} className="px-2 py-2 text-left font-maven text-xs text-kidville-muted whitespace-nowrap">
                       {m.nome}{m.e_civica ? ' *' : ''}
@@ -329,13 +334,13 @@ export default function ScrutinioPage() {
         {scrutinio && !chiuso && alunni.length > 0 && (
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <button onClick={salvaGiudizi} disabled={saving} className="font-maven inline-flex items-center gap-1.5 rounded-pill bg-kidville-green px-5 py-2 text-sm text-kidville-yellow disabled:opacity-50">
-              <Check size={15} /> Salva giudizi
+              <Check size={15} /> {t('scrutinioSalvaGiudizi')}
             </button>
             <button onClick={scaricaTemplate} className="font-maven inline-flex items-center gap-1.5 rounded-pill bg-kidville-green/10 px-4 py-2 text-sm text-kidville-green">
-              <FileDown size={15} /> Template CSV
+              <FileDown size={15} /> {t('scrutinioTemplateCsv')}
             </button>
             <button onClick={() => fileRef.current?.click()} disabled={saving} className="font-maven inline-flex items-center gap-1.5 rounded-pill bg-kidville-green/10 px-4 py-2 text-sm text-kidville-green disabled:opacity-50">
-              <Upload size={15} /> Importa CSV
+              <Upload size={15} /> {t('scrutinioImportaCsv')}
             </button>
             <input
               ref={fileRef}
@@ -350,7 +355,7 @@ export default function ScrutinioPage() {
 
       {scrutinio && alunni.length > 0 && (
         <div className="rounded-card bg-white p-5 shadow-sm">
-          <h3 className="font-barlow text-base font-bold text-kidville-ink mb-3">Comportamento e giudizio globale</h3>
+          <h3 className="font-barlow text-base font-bold text-kidville-ink mb-3">{t('scrutinioComportamentoTitolo')}</h3>
           <div className="space-y-3">
             {alunni.map((a) => (
               <div key={a.id} className="rounded-card bg-kidville-cream/30 p-3">
@@ -361,7 +366,7 @@ export default function ScrutinioPage() {
                     disabled={chiuso}
                     onChange={(e) => setComp((p) => ({ ...p, [a.id]: { testo: e.target.value, globale: p[a.id]?.globale || '' } }))}
                     rows={2}
-                    placeholder="Giudizio del comportamento"
+                    placeholder={t('scrutinioPlaceholderComportamento')}
                     className="font-maven w-full rounded-card border border-kidville-line px-3 py-2 text-sm disabled:bg-kidville-cream"
                   />
                   <textarea
@@ -369,13 +374,13 @@ export default function ScrutinioPage() {
                     disabled={chiuso}
                     onChange={(e) => setComp((p) => ({ ...p, [a.id]: { testo: p[a.id]?.testo || '', globale: e.target.value } }))}
                     rows={2}
-                    placeholder="Giudizio globale (facoltativo)"
+                    placeholder={t('scrutinioPlaceholderGlobale')}
                     className="font-maven w-full rounded-card border border-kidville-line px-3 py-2 text-sm disabled:bg-kidville-cream"
                   />
                 </div>
                 {chiuso && (
                   <button onClick={() => scaricaPagella(a.id)} className="mt-2 font-maven inline-flex items-center gap-1.5 rounded-pill bg-kidville-green/10 px-3 py-1.5 text-xs text-kidville-green">
-                    <Download size={13} /> Pagella PDF
+                    <Download size={13} /> {t('scrutinioPagellaPdf')}
                   </button>
                 )}
               </div>
@@ -385,11 +390,11 @@ export default function ScrutinioPage() {
           {!chiuso && (
             <div className="mt-4 flex flex-wrap gap-2">
               <button onClick={salvaComportamento} disabled={saving} className="font-maven inline-flex items-center gap-1.5 rounded-pill bg-kidville-green px-5 py-2 text-sm text-kidville-yellow disabled:opacity-50">
-                <Check size={15} /> Salva comportamento
+                <Check size={15} /> {t('scrutinioSalvaComportamento')}
               </button>
               {isDirigente && (
                 <button onClick={chiudiScrutinio} disabled={saving} className="font-maven inline-flex items-center gap-1.5 rounded-pill bg-kidville-warn px-5 py-2 text-sm text-white disabled:opacity-50">
-                  <Lock size={15} /> Chiudi scrutinio
+                  <Lock size={15} /> {t('scrutinioChiudiScrutinio')}
                 </button>
               )}
             </div>
@@ -399,15 +404,15 @@ export default function ScrutinioPage() {
             <div className="mt-4 border-t border-kidville-line pt-4">
               <div className="mb-2 flex items-center gap-2">
                 <span className={`inline-flex items-center gap-1.5 rounded-pill px-3 py-1 text-xs font-maven ${pubblicato ? 'bg-kidville-success-soft text-kidville-success' : 'bg-kidville-neutral-soft text-kidville-ink'}`}>
-                  {pubblicato ? 'Pubblicato ai genitori' : 'Non pubblicato (visibile solo allo staff)'}
+                  {pubblicato ? t('scrutinioPubblicato') : t('scrutinioNonPubblicato')}
                 </span>
               </div>
               <div className="flex flex-wrap gap-2">
                 <button onClick={generaTutte} disabled={saving} className="font-maven inline-flex items-center gap-1.5 rounded-pill bg-kidville-green px-5 py-2 text-sm text-kidville-yellow disabled:opacity-50">
-                  <FileText size={15} /> Genera pagelle (tutte)
+                  <FileText size={15} /> {t('scrutinioGeneraPagelle')}
                 </button>
                 <button onClick={togglePubblica} disabled={saving} className={`font-maven inline-flex items-center gap-1.5 rounded-pill px-5 py-2 text-sm text-white disabled:opacity-50 ${pubblicato ? 'bg-kidville-neutral' : 'bg-kidville-green'}`}>
-                  <Send size={15} /> {pubblicato ? 'Revoca pubblicazione' : 'Pubblica ai genitori'}
+                  <Send size={15} /> {pubblicato ? t('scrutinioRevocaPubblicazione') : t('scrutinioPubblicaGenitori')}
                 </button>
               </div>
             </div>

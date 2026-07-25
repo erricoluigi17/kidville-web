@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
+import { useTranslations } from 'next-intl';
 import { LayoutGrid, User, GraduationCap, Baby, BookOpen, Building2, Plus, ChevronRight, Loader2 } from 'lucide-react';
 
 // Griglia sezioni dell'anagrafica: le sedi/sezioni arrivano dai plessi
@@ -35,7 +36,13 @@ export const schoolTypeConfig = {
     primaria: { label: 'Primaria', icon: BookOpen, color: 'text-kidville-info', bg: 'bg-kidville-info/10', border: 'border-kidville-info/30' },
 };
 
+// Etichetta tradotta del grado scolastico (schoolTypeConfig.label resta come
+// fallback statico; qui si usa il namespace i18n per il testo mostrato).
+const livelloLabelKey = (tipo: string) =>
+    tipo === 'nido' ? 'secTipoNido' : tipo === 'primaria' ? 'secTipoPrimaria' : 'secTipoInfanzia';
+
 export function SectionsView() {
+    const t = useTranslations('adminStudents');
     const [scuole, setScuole] = useState<ScuolaScoped[]>([]);
     const [students, setStudents] = useState<Student[]>([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -113,47 +120,47 @@ export function SectionsView() {
             <div className="flex items-center justify-between mb-6">
                 <div>
                     <h2 className="font-barlow font-black text-xl text-kidville-green uppercase tracking-wide flex items-center gap-2">
-                        <LayoutGrid size={22} /> Sezioni Scolastiche
+                        <LayoutGrid size={22} /> {t('secTitolo')}
                     </h2>
-                    <p className="font-maven text-sm text-kidville-muted mt-1">{sections.length} sezioni configurate</p>
+                    <p className="font-maven text-sm text-kidville-muted mt-1">{t('secConfigurate', { n: sections.length })}</p>
                 </div>
                 <button
                     onClick={() => setShowNewForm(!showNewForm)}
                     className="flex items-center gap-2 px-4 py-2 bg-kidville-green text-kidville-yellow rounded-pill font-barlow font-extrabold uppercase tracking-[0.03em] text-sm transition-transform hover:bg-kidville-green-dark active:scale-95 shadow-md"
                 >
-                    <Plus size={16} /> Nuova Sezione
+                    <Plus size={16} /> {t('secNuova')}
                 </button>
             </div>
 
             {/* New Section Form */}
             {showNewForm && (
                 <div className="bg-kidville-white rounded-card shadow-sm p-6 mb-6 border-2 border-kidville-green/20">
-                    <h3 className="font-barlow font-bold text-kidville-green uppercase mb-4">Crea Nuova Sezione</h3>
+                    <h3 className="font-barlow font-bold text-kidville-green uppercase mb-4">{t('secCreaNuova')}</h3>
                     <div className="flex flex-col md:flex-row gap-4 items-end">
                         <div className="flex-1">
-                            <label className="block text-sm font-bold text-kidville-ink mb-1">Nome Sezione</label>
+                            <label className="block text-sm font-bold text-kidville-ink mb-1">{t('secNomeSezione')}</label>
                             <input
                                 value={newSectionName}
                                 onChange={e => setNewSectionName(e.target.value)}
-                                placeholder="Es. Girasoli, Leoni, 1A..."
+                                placeholder={t('secNomePlaceholder')}
                                 className="w-full p-3 border-2 border-kidville-line rounded-input font-maven text-sm bg-kidville-white focus:outline-none focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15"
                             />
                         </div>
                         <div className="w-48">
-                            <label className="block text-sm font-bold text-kidville-ink mb-1">Tipo</label>
+                            <label className="block text-sm font-bold text-kidville-ink mb-1">{t('secTipo')}</label>
                             <select
                                 value={newSectionType}
                                 onChange={e => setNewSectionType(e.target.value as 'nido' | 'infanzia' | 'primaria')}
                                 className="w-full p-3 border-2 border-kidville-line rounded-input font-maven text-sm bg-kidville-white focus:outline-none focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15"
                             >
-                                <option value="nido">Nido</option>
-                                <option value="infanzia">Infanzia</option>
-                                <option value="primaria">Primaria</option>
+                                <option value="nido">{t('secTipoNido')}</option>
+                                <option value="infanzia">{t('secTipoInfanzia')}</option>
+                                <option value="primaria">{t('secTipoPrimaria')}</option>
                             </select>
                         </div>
                         {multiSede && (
                             <div className="w-56">
-                                <label className="block text-sm font-bold text-kidville-ink mb-1">Sede</label>
+                                <label className="block text-sm font-bold text-kidville-ink mb-1">{t('campoSede')}</label>
                                 <select
                                     value={newSectionScuola}
                                     onChange={e => setNewSectionScuola(e.target.value)}
@@ -171,7 +178,7 @@ export function SectionsView() {
                             className="px-6 py-3 bg-kidville-green text-kidville-yellow rounded-pill font-barlow font-extrabold uppercase tracking-[0.03em] transition-transform hover:bg-kidville-green-dark active:scale-95 disabled:opacity-50 disabled:pointer-events-none flex items-center gap-2"
                         >
                             {isCreating ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
-                            Crea
+                            {t('secCrea')}
                         </button>
                     </div>
                 </div>
@@ -194,18 +201,18 @@ export function SectionsView() {
                                     <Icon size={22} className={config.color} />
                                 </div>
                                 <span className={`text-xs font-bold uppercase tracking-wider px-2 py-1 rounded-lg ${config.bg} ${config.color}`}>
-                                    {config.label}
+                                    {t(livelloLabelKey(section.school_type))}
                                 </span>
                             </div>
                             <h3 className="font-barlow font-black text-lg text-kidville-ink mb-1">{section.name}</h3>
                             <div className="flex items-center gap-4 text-sm text-kidville-muted font-maven">
-                                <span className="flex items-center gap-1"><User size={14} /> {countStudents(section)} alunni</span>
+                                <span className="flex items-center gap-1"><User size={14} /> {t('contAlunni', { n: countStudents(section) })}</span>
                                 {multiSede && (
                                     <span className="flex items-center gap-1"><Building2 size={14} /> {section.scuolaNome}</span>
                                 )}
                             </div>
                             <div className="mt-3 flex items-center gap-1 text-xs font-bold text-kidville-green opacity-0 group-hover:opacity-100 transition-opacity">
-                                Apri la sezione <ChevronRight size={14} />
+                                {t('secApri')} <ChevronRight size={14} />
                             </div>
                         </Link>
                     );
@@ -214,8 +221,8 @@ export function SectionsView() {
                 {sections.length === 0 && (
                     <div className="col-span-full flex flex-col items-center py-12 text-center bg-kidville-white rounded-card border-2 border-dashed border-kidville-line">
                         <div className="mb-3 flex h-20 w-20 items-center justify-center rounded-full bg-kidville-cream text-4xl">🗂️</div>
-                        <p className="font-barlow font-bold text-lg text-kidville-green uppercase">Nessuna sezione configurata</p>
-                        <p className="font-maven text-sm text-kidville-muted mt-1">Clicca &ldquo;Nuova Sezione&rdquo; per iniziare</p>
+                        <p className="font-barlow font-bold text-lg text-kidville-green uppercase">{t('secVuoto')}</p>
+                        <p className="font-maven text-sm text-kidville-muted mt-1">{t('secVuotoHint')}</p>
                     </div>
                 )}
             </div>

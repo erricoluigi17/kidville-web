@@ -13,6 +13,8 @@
 // Solo token `kidville-*`; importi con formatEuro.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useTranslations } from 'next-intl';
+import { useDateFormat } from '@/lib/i18n/date';
 import { Wallet, TrendingDown, TrendingUp, Coins, CalendarDays, ArrowDownCircle, RotateCcw, Paperclip } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
@@ -46,13 +48,12 @@ interface TotaliCassa {
 
 const hdr = (u: string) => ({ 'Content-Type': 'application/json', 'x-user-id': u });
 const testoErrore = (e: unknown) => (e instanceof Error ? e.message : String(e));
-const dataIt = (d?: string | null) => (d ? new Date(d).toLocaleDateString('it-IT') : '—');
 
-const TIPO_INFO: Record<string, { label: string; tone: BadgeTone }> = {
-  entrata: { label: 'Entrata', tone: 'success' },
-  uscita: { label: 'Uscita', tone: 'error' },
-  prelievo: { label: 'Prelievo', tone: 'neutral' },
-  rettifica: { label: 'Rettifica', tone: 'warn' },
+const TIPO_INFO: Record<string, { labelKey: string; tone: BadgeTone }> = {
+  entrata: { labelKey: 'cassaTipoEntrata', tone: 'success' },
+  uscita: { labelKey: 'cassaTipoUscita', tone: 'error' },
+  prelievo: { labelKey: 'cassaTipoPrelievo', tone: 'neutral' },
+  rettifica: { labelKey: 'cassaTipoRettifica', tone: 'warn' },
 };
 
 const stornabile = (r: RigaMovimentoCassa) =>
@@ -83,6 +84,10 @@ export function importoTone(r: Pick<RigaMovimentoCassa, 'tipo' | 'importo'>): st
 }
 
 export function CassaPanel({ userId, scuolaId }: Props) {
+  const t = useTranslations('adminContabilita');
+  const f = useDateFormat();
+  // Data breve localizzata (IT identica a `toLocaleDateString('it-IT')`); '—' se assente.
+  const dataIt = (d?: string | null) => (d ? f.dataBreve(d) : '—');
   const { ruolo } = useAdminIdentity();
   const isAdmin = ruolo === 'admin'; // cosmetico: il gate vero è `mostraKpi` (server)
 
@@ -133,7 +138,8 @@ export function CassaPanel({ userId, scuolaId }: Props) {
         }
       } catch (err) {
         logClient({ livello: 'error', evento: 'fetch', messaggio: `GET movimenti cassa — ${testoErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
-        if (active) setErrore('Impossibile caricare i movimenti di cassa.');
+        // Chiave i18n (non testo): l'effetto non dipende da `t`; si traduce al render.
+        if (active) setErrore('cassaErroreCaricamento');
       }
     })();
     return () => { active = false; };
@@ -153,14 +159,14 @@ export function CassaPanel({ userId, scuolaId }: Props) {
   };
 
   if (disponibile === null && !errore) {
-    return <p className="py-8 text-center font-maven text-sm text-kidville-sub">Caricamento della cassa…</p>;
+    return <p className="py-8 text-center font-maven text-sm text-kidville-sub">{t('cassaLoading')}</p>;
   }
 
   if (disponibile === false) {
     return (
       <div className="rounded-card bg-kidville-cream/60 px-4 py-10 text-center">
         <Wallet size={28} className="mx-auto mb-2 text-kidville-sub" />
-        <p className="font-maven text-sm text-kidville-sub">Modulo cassa non ancora attivo su questo ambiente.</p>
+        <p className="font-maven text-sm text-kidville-sub">{t('cassaNonAttivo')}</p>
       </div>
     );
   }
@@ -171,30 +177,28 @@ export function CassaPanel({ userId, scuolaId }: Props) {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <h2 className="flex items-center gap-2 font-barlow text-[19px] font-extrabold uppercase leading-none tracking-[0.01em] text-kidville-green">
-            <Wallet size={20} /> Cassa
+            <Wallet size={20} /> {t('cassaTitolo')}
           </h2>
           <p className="mt-1 font-maven text-[12.5px] text-kidville-sub">
-            {isAdmin
-              ? 'Registro dei movimenti di cassa contanti, con report e chiusura.'
-              : 'Registra le entrate e le uscite di cassa. I totali e lo svuotamento sono riservati agli amministratori.'}
+            {isAdmin ? t('cassaSottotitoloAdmin') : t('cassaSottotitoloStaff')}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button ref={uscitaRef} type="button" onClick={() => setModalTipo('uscita')} className={cx(BTN_PRIMARY_AA, 'min-h-[44px] py-2 px-4 text-xs')}>
-            <TrendingDown size={15} /> Registra uscita
+            <TrendingDown size={15} /> {t('cassaRegistraUscita')}
           </button>
           <button ref={entrataRef} type="button" onClick={() => setModalTipo('entrata')} className={cx(BTN_SECONDARY, 'min-h-[44px] py-2 px-4 text-xs')}>
-            <TrendingUp size={15} /> Entrata manuale
+            <TrendingUp size={15} /> {t('cassaEntrataManuale')}
           </button>
           {mostraKpi && isAdmin && (
             <button ref={svuotaRef} type="button" onClick={() => setModalChiusura(true)} className={cx(BTN_SECONDARY, 'min-h-[44px] py-2 px-4 text-xs')}>
-              <ArrowDownCircle size={15} /> Svuota cassa
+              <ArrowDownCircle size={15} /> {t('cassaSvuotaCassa')}
             </button>
           )}
         </div>
       </div>
 
-      {errore && <p role="alert" className="rounded-card bg-kidville-error-soft px-3 py-2 font-maven text-xs text-kidville-error-strong">{errore}</p>}
+      {errore && <p role="alert" className="rounded-card bg-kidville-error-soft px-3 py-2 font-maven text-xs text-kidville-error-strong">{t(errore)}</p>}
 
       {/* KPI: SOLO se il payload ha `totali` (server decide) */}
       {mostraKpi && (
@@ -202,21 +206,21 @@ export function CassaPanel({ userId, scuolaId }: Props) {
           <StatCard
             icon={Wallet}
             tone="green"
-            label="Saldo atteso in cassa"
+            label={t('cassaKpiSaldoAtteso')}
             value={saldo ? formatEuro(saldo.saldo_atteso) : '…'}
-            sub={saldo ? `fondo ${formatEuro(saldo.fondo)}` : undefined}
+            sub={saldo ? `${t('cassaKpiFondo')} ${formatEuro(saldo.fondo)}` : undefined}
           />
           <StatCard
             icon={Coins}
             tone="success"
-            label="Entrato oggi"
+            label={t('cassaKpiEntratoOggi')}
             value={formatEuro(saldo ? saldo.entrato_oggi.reduce((s, v) => s + v.totale, 0) : 0)}
             sub={<EntratoOggiSub voci={saldo?.entrato_oggi ?? []} />}
           />
           <StatCard
             icon={TrendingDown}
             tone="error"
-            label="Uscite del mese"
+            label={t('cassaKpiUsciteMese')}
             value={formatEuro(usciteMese)}
           />
         </div>
@@ -224,12 +228,12 @@ export function CassaPanel({ userId, scuolaId }: Props) {
 
       {/* Lista movimenti — tabella desktop + card mobile */}
       <div>
-        <SectionTitle icon={CalendarDays} title="Movimenti" sub="Le entrate da incasso in contanti compaiono in automatico." />
+        <SectionTitle icon={CalendarDays} title={t('cassaSecMovimenti')} sub={t('cassaSecMovimentiSub')} />
         {movimenti.length === 0 ? (
           // Empty-state SOLO quando non c'è un errore di caricamento (l'alert
           // sopra ha già spiegato il fallimento): evita il fuorviante «nessun
           // movimento» quando in realtà la rete è caduta (P4).
-          !errore && <p className="rounded-card bg-kidville-cream/40 px-3 py-6 text-center font-maven text-sm text-kidville-sub">Nessun movimento di cassa registrato.</p>
+          !errore && <p className="rounded-card bg-kidville-cream/40 px-3 py-6 text-center font-maven text-sm text-kidville-sub">{t('cassaNessunMovimento')}</p>
         ) : (
           <>
             <div className="hidden lg:block">
@@ -237,13 +241,13 @@ export function CassaPanel({ userId, scuolaId }: Props) {
                 <table className={TABLE}>
                   <thead>
                     <tr>
-                      <th scope="col" className={TH}>Data</th>
-                      <th scope="col" className={TH}>Movimento</th>
-                      <th scope="col" className={TH}>Categoria</th>
-                      <th scope="col" className={TH}>Metodo</th>
-                      <th scope="col" className={TH}>Descrizione</th>
-                      <th scope="col" className={cx(TH, 'text-right')}>Importo</th>
-                      <th scope="col" className={cx(TH, 'text-right')}>Azioni</th>
+                      <th scope="col" className={TH}>{t('cassaThData')}</th>
+                      <th scope="col" className={TH}>{t('cassaThMovimento')}</th>
+                      <th scope="col" className={TH}>{t('cassaThCategoria')}</th>
+                      <th scope="col" className={TH}>{t('cassaThMetodo')}</th>
+                      <th scope="col" className={TH}>{t('cassaThDescrizione')}</th>
+                      <th scope="col" className={cx(TH, 'text-right')}>{t('cassaThImporto')}</th>
+                      <th scope="col" className={cx(TH, 'text-right')}>{t('cassaThAzioni')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -254,10 +258,10 @@ export function CassaPanel({ userId, scuolaId }: Props) {
                           <td className={TD}><span className="whitespace-nowrap font-maven text-sm text-kidville-ink">{dataIt(r.data)}</span></td>
                           <td className={TD}>
                             <span className="flex items-center gap-1.5">
-                              <Badge tone={info.tone}>{info.label}</Badge>
-                              {r.origine === 'incasso' && <Badge tone="info">da incasso</Badge>}
-                              {r.storno_di && <Badge tone="neutral">storno</Badge>}
-                              {r.stornato_il && <Badge tone="neutral">stornato</Badge>}
+                              <Badge tone={info.tone}>{t(info.labelKey)}</Badge>
+                              {r.origine === 'incasso' && <Badge tone="info">{t('cassaBadgeDaIncasso')}</Badge>}
+                              {r.storno_di && <Badge tone="neutral">{t('cassaBadgeStorno')}</Badge>}
+                              {r.stornato_il && <Badge tone="neutral">{t('cassaBadgeStornato')}</Badge>}
                             </span>
                           </td>
                           <td className={TD}><span className="font-maven text-sm text-kidville-ink">{r.categoria_nome ?? '—'}</span></td>
@@ -266,7 +270,7 @@ export function CassaPanel({ userId, scuolaId }: Props) {
                             <span className="flex items-center gap-1.5 font-maven text-sm text-kidville-ink">
                               {r.descrizione ?? '—'}
                               {r.allegato_path && (
-                                <button type="button" onClick={() => apriGiustificativo(r.allegato_path as string)} aria-label="Apri giustificativo" className="text-kidville-green hover:text-kidville-green-dark"><Paperclip size={13} /></button>
+                                <button type="button" onClick={() => apriGiustificativo(r.allegato_path as string)} aria-label={t('cassaApriGiustificativo')} className="text-kidville-green hover:text-kidville-green-dark"><Paperclip size={13} /></button>
                               )}
                             </span>
                           </td>
@@ -274,10 +278,10 @@ export function CassaPanel({ userId, scuolaId }: Props) {
                           <td className={cx(TD, 'text-right')}>
                             {stornabile(r) ? (
                               <button type="button" onClick={() => setStornoTarget(r)} className="inline-flex min-h-[32px] items-center gap-1 rounded-pill border-[1.5px] border-kidville-line px-2.5 py-1 font-maven text-xs font-bold text-kidville-sub transition-colors hover:border-kidville-error hover:text-kidville-error">
-                                <RotateCcw size={12} /> Storna
+                                <RotateCcw size={12} /> {t('cassaStorna')}
                               </button>
                             ) : r.origine === 'incasso' ? (
-                              <span className="font-maven text-[11px] text-kidville-sub">da incasso</span>
+                              <span className="font-maven text-[11px] text-kidville-sub">{t('cassaBadgeDaIncasso')}</span>
                             ) : (
                               <span className="font-maven text-[11px] text-kidville-sub">—</span>
                             )}
@@ -297,10 +301,10 @@ export function CassaPanel({ userId, scuolaId }: Props) {
                   <div key={r.id} className={cx('rounded-card border-[1.5px] border-kidville-line bg-kidville-white p-3', r.stornato_il && 'opacity-55')}>
                     <div className="flex items-start justify-between gap-2">
                       <span className="flex flex-wrap items-center gap-1.5">
-                        <Badge tone={info.tone}>{info.label}</Badge>
-                        {r.origine === 'incasso' && <Badge tone="info">da incasso</Badge>}
-                        {r.storno_di && <Badge tone="neutral">storno</Badge>}
-                        {r.stornato_il && <Badge tone="neutral">stornato</Badge>}
+                        <Badge tone={info.tone}>{t(info.labelKey)}</Badge>
+                        {r.origine === 'incasso' && <Badge tone="info">{t('cassaBadgeDaIncasso')}</Badge>}
+                        {r.storno_di && <Badge tone="neutral">{t('cassaBadgeStorno')}</Badge>}
+                        {r.stornato_il && <Badge tone="neutral">{t('cassaBadgeStornato')}</Badge>}
                       </span>
                       <span className={cx('whitespace-nowrap font-barlow font-bold', importoTone(r))}>{importoSegnato(r)}</span>
                     </div>
@@ -310,11 +314,11 @@ export function CassaPanel({ userId, scuolaId }: Props) {
                     </p>
                     <div className="mt-2 flex items-center justify-end gap-2">
                       {r.allegato_path && (
-                        <button type="button" onClick={() => apriGiustificativo(r.allegato_path as string)} className="inline-flex items-center gap-1 font-maven text-xs font-bold text-kidville-green"><Paperclip size={12} /> Giustificativo</button>
+                        <button type="button" onClick={() => apriGiustificativo(r.allegato_path as string)} className="inline-flex items-center gap-1 font-maven text-xs font-bold text-kidville-green"><Paperclip size={12} /> {t('cassaGiustificativo')}</button>
                       )}
                       {stornabile(r) && (
                         <button type="button" onClick={() => setStornoTarget(r)} className="inline-flex min-h-[32px] items-center gap-1 rounded-pill border-[1.5px] border-kidville-line px-2.5 py-1 font-maven text-xs font-bold text-kidville-sub hover:border-kidville-error hover:text-kidville-error">
-                          <RotateCcw size={12} /> Storna
+                          <RotateCcw size={12} /> {t('cassaStorna')}
                         </button>
                       )}
                     </div>
@@ -333,16 +337,16 @@ export function CassaPanel({ userId, scuolaId }: Props) {
 
           {chiusure.length > 0 && (
             <div>
-              <SectionTitle icon={ArrowDownCircle} title="Storico svuotamenti" />
+              <SectionTitle icon={ArrowDownCircle} title={t('cassaStoricoTitolo')} />
               <div className={TABLE_WRAP}>
                 <table className={TABLE}>
                   <thead>
                     <tr>
-                      <th scope="col" className={TH}>Data</th>
-                      <th scope="col" className={cx(TH, 'text-right')}>Saldo atteso</th>
-                      <th scope="col" className={cx(TH, 'text-right')}>Contato</th>
-                      <th scope="col" className={cx(TH, 'text-right')}>Differenza</th>
-                      <th scope="col" className={cx(TH, 'text-right')}>Prelevato</th>
+                      <th scope="col" className={TH}>{t('cassaThData')}</th>
+                      <th scope="col" className={cx(TH, 'text-right')}>{t('cassaStoricoSaldoAtteso')}</th>
+                      <th scope="col" className={cx(TH, 'text-right')}>{t('cassaStoricoContato')}</th>
+                      <th scope="col" className={cx(TH, 'text-right')}>{t('cassaStoricoDifferenza')}</th>
+                      <th scope="col" className={cx(TH, 'text-right')}>{t('cassaStoricoPrelevato')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -353,7 +357,7 @@ export function CassaPanel({ userId, scuolaId }: Props) {
                         <td className={cx(TD, 'text-right')}><span className="font-maven text-sm text-kidville-ink">{formatEuro(c.contato)}</span></td>
                         <td className={cx(TD, 'text-right')}>
                           <span className="font-maven text-sm text-kidville-ink">
-                            {c.differenza === 0 ? 'Cassa quadrata' : `${c.differenza > 0 ? 'Eccedenza' : 'Ammanco'} ${formatEuro(Math.abs(c.differenza))}`}
+                            {c.differenza === 0 ? t('cassaQuadrata') : `${c.differenza > 0 ? t('cassaEccedenza') : t('cassaAmmanco')} ${formatEuro(Math.abs(c.differenza))}`}
                           </span>
                         </td>
                         <td className={cx(TD, 'text-right')}><span className="font-maven text-sm text-kidville-ink">{formatEuro(c.prelevato)}</span></td>
@@ -403,12 +407,14 @@ export function CassaPanel({ userId, scuolaId }: Props) {
 }
 
 function EntratoOggiSub({ voci }: { voci: EntratoOggiVoce[] }) {
-  if (voci.length === 0) return <>nessun incasso oggi</>;
+  const t = useTranslations('adminContabilita');
+  if (voci.length === 0) return <>{t('cassaNessunIncassoOggi')}</>;
   return <>{voci.map((v) => `${metodoLabel(v.metodo)} ${formatEuro(v.totale)}`).join(' · ')}</>;
 }
 
 /** Modale di storno di un movimento di cassa: motivo obbligatorio (min 3), 409 gestito. */
 function StornoCassaModal({ userId, movimento, onClose, onDone }: { userId: string; movimento: RigaMovimentoCassa; onClose: () => void; onDone: () => void }) {
+  const t = useTranslations('adminContabilita');
   const STORNO_ERRORE_ID = 'cassa-storno-errore';
   const [motivo, setMotivo] = useState('');
   const [busy, setBusy] = useState(false);
@@ -417,7 +423,7 @@ function StornoCassaModal({ userId, movimento, onClose, onDone }: { userId: stri
 
   const conferma = async () => {
     setMotivoInvalido(false);
-    if (motivo.trim().length < 3) { setError('Indica il motivo dello storno (almeno 3 caratteri).'); setMotivoInvalido(true); return; }
+    if (motivo.trim().length < 3) { setError(t('cassaStornoMotivoCorto')); setMotivoInvalido(true); return; }
     setBusy(true);
     setError(null);
     try {
@@ -426,29 +432,29 @@ function StornoCassaModal({ userId, movimento, onClose, onDone }: { userId: stri
         body: JSON.stringify({ movimento_id: movimento.id, motivo: motivo.trim() }),
       });
       const j = (await res.json()) as { error?: string };
-      if (res.status === 409) { setError(j.error ?? 'Questo movimento non può essere stornato.'); return; }
-      if (!res.ok) { setError(j.error ?? 'Errore durante lo storno.'); return; }
+      if (res.status === 409) { setError(j.error ?? t('cassaStornoNoStorno')); return; }
+      if (!res.ok) { setError(j.error ?? t('cassaStornoErrore')); return; }
       onDone();
     } catch (err) {
       logClient({ livello: 'error', evento: 'fetch', messaggio: `POST storno cassa — ${testoErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
-      setError('Errore di rete: riprova.');
+      setError(t('cassaErroreRete'));
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <Modal open onClose={onClose} title="Storna movimento" labelledBy="cassa-storno-title" className={cx(MODAL_CARD, 'max-w-sm')} style={{ boxShadow: MODAL_SHADOW }}>
-      <h3 id="cassa-storno-title" className="mb-2 font-barlow text-base font-black uppercase text-kidville-green">Storna movimento</h3>
+    <Modal open onClose={onClose} title={t('cassaStornaMovimento')} labelledBy="cassa-storno-title" className={cx(MODAL_CARD, 'max-w-sm')} style={{ boxShadow: MODAL_SHADOW }}>
+      <h3 id="cassa-storno-title" className="mb-2 font-barlow text-base font-black uppercase text-kidville-green">{t('cassaStornaMovimento')}</h3>
       <p className="mb-3 font-maven text-sm text-kidville-ink">
-        Verrà creato un contro-movimento di <strong>{formatEuro(movimento.importo)}</strong>. L&apos;operazione è tracciata e non cancella la riga originale.
+        {t('cassaStornoPre')}<strong>{formatEuro(movimento.importo)}</strong>{t('cassaStornoPost')}
       </p>
-      <label htmlFor="cassa-storno-motivo" className="mb-1 block font-maven text-xs text-kidville-sub">Motivo dello storno</label>
+      <label htmlFor="cassa-storno-motivo" className="mb-1 block font-maven text-xs text-kidville-sub">{t('cassaMotivoStorno')}</label>
       <input id="cassa-storno-motivo" type="text" value={motivo} onChange={(e) => { setMotivo(e.target.value); if (motivoInvalido) setMotivoInvalido(false); }} className={INPUT} maxLength={300} {...(motivoInvalido ? { 'aria-invalid': true as const, 'aria-describedby': STORNO_ERRORE_ID } : {})} />
       {error && <p id={STORNO_ERRORE_ID} role="alert" className="mt-2 font-maven text-xs text-kidville-error-strong">{error}</p>}
       <div className="mt-4 flex gap-2">
-        <button onClick={onClose} className={cx(BTN_SECONDARY, 'flex-1')}>Annulla</button>
-        <button onClick={conferma} disabled={busy} className={cx(BTN_PRIMARY_AA, 'flex-1')}>{busy ? 'Storno…' : 'Conferma storno'}</button>
+        <button onClick={onClose} className={cx(BTN_SECONDARY, 'flex-1')}>{t('cassaAnnulla')}</button>
+        <button onClick={conferma} disabled={busy} className={cx(BTN_PRIMARY_AA, 'flex-1')}>{busy ? t('cassaStornoInCorso') : t('cassaConfermaStorno')}</button>
       </div>
     </Modal>
   );

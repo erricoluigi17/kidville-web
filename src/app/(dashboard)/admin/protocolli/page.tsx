@@ -10,6 +10,8 @@
  */
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import { useTranslations, useLocale } from 'next-intl';
+import { formatData } from '@/lib/i18n/date';
 import {
   Stamp, Inbox, Send, RefreshCw, Hash, Plus, FileText, Download, ShieldCheck,
   AlertTriangle, Search, Trash2, Ban, Link2, Paperclip, Settings2, X, FileDown,
@@ -24,6 +26,10 @@ import { DateField } from '@/components/ui/DateField';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { useAdminIdentity } from '@/lib/context/admin-identity';
 import { cx } from '@/lib/ui/cx';
+
+// Traduttore next-intl passato agli helper fuori dai componenti (stesso pattern
+// del resto del repo): il tipo del valore di ritorno di useTranslations.
+type Traduttore = ReturnType<typeof useTranslations>;
 
 // ============================ Tipi ============================
 type TipoProt = 'ingresso' | 'uscita' | 'interno';
@@ -56,7 +62,7 @@ function urlP(userId: string | null, path: string) {
 async function jfull<T = Record<string, unknown>>(userId: string | null, path: string): Promise<T | null> {
   try { const r = await fetch(urlP(userId, path)); return r.ok ? ((await r.json()) as T) : null; } catch { return null; }
 }
-async function jsend(userId: string | null, path: string, method: string, body?: unknown): Promise<{ ok: boolean; data?: unknown; error?: string }> {
+async function jsend(t: Traduttore, userId: string | null, path: string, method: string, body?: unknown): Promise<{ ok: boolean; data?: unknown; error?: string }> {
   try {
     const r = await fetch(urlP(userId, path), {
       method,
@@ -65,7 +71,7 @@ async function jsend(userId: string | null, path: string, method: string, body?:
     });
     const j = await r.json().catch(() => ({}));
     return { ok: r.ok, data: j.data, error: j.error };
-  } catch { return { ok: false, error: 'Errore di rete' }; }
+  } catch { return { ok: false, error: t('protErroreRete') }; }
 }
 
 const MIME_OK = ['application/pdf', 'image/jpeg', 'image/png'];
@@ -78,16 +84,30 @@ function mimeDaFile(f: File): string | null {
 const MAX_MB = 25;
 
 function numeroFmt(numero: number, anno: number) { return `${String(numero).padStart(7, '0')}/${anno}`; }
-function dataIt(s?: string | null) { return s ? new Date(s).toLocaleDateString('it-IT') : ''; }
-function oraIt(s?: string | null) { return s ? new Date(s).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' }) : ''; }
+// Data/ora localizzate (IT identiche a `toLocale*String('it-IT', …)`); il `locale`
+// arriva dai call-site (componenti con `useLocale()`).
+function dataIt(s: string | null | undefined, locale: string) { return s ? formatData(s, locale, 'breve') : ''; }
+function oraIt(s: string | null | undefined, locale: string) { return s ? formatData(s, locale, 'ora') : ''; }
 
-const TIPO_LABEL: Record<TipoProt, string> = { ingresso: 'In arrivo', uscita: 'In partenza', interno: 'Interno' };
+// Etichetta del tipo di registrazione tradotta (chiave i18n per tipo canonico).
+const TIPO_KEY: Record<TipoProt, string> = { ingresso: 'protTipoIngresso', uscita: 'protTipoUscita', interno: 'protTipoInterno' };
+function tipoLabel(t: Traduttore, tipo: TipoProt) { return t(TIPO_KEY[tipo]); }
 const TIPO_BADGE: Record<TipoProt, string> = {
   ingresso: 'bg-kidville-info-soft text-kidville-info',
   uscita: 'bg-kidville-green-soft text-kidville-green',
   interno: 'bg-kidville-neutral-soft text-kidville-neutral',
 };
+// Il valore del mezzo è DATO (salvato canonico in italiano): l'array resta la
+// fonte dei valori; l'etichetta mostrata viene tradotta via chiave i18n, con
+// fallback al valore grezzo per eventuali valori storici non mappati.
 const MEZZI = ['PEC', 'Email', 'Consegna a mano', 'Posta ordinaria', 'Posta raccomandata', 'Fax', 'Altro'];
+const MEZZO_KEY: Record<string, string> = {
+  'Consegna a mano': 'protMezzoConsegna',
+  'Posta ordinaria': 'protMezzoPostaOrdinaria',
+  'Posta raccomandata': 'protMezzoPostaRaccomandata',
+  Altro: 'protMezzoAltro',
+};
+function mezzoLabel(t: Traduttore, m: string) { const k = MEZZO_KEY[m]; return k ? t(k) : m; }
 
 // piccoli mattoni UI (stesse costanti del cockpit merchandise)
 const CARD = 'rounded-card bg-kidville-white p-4 shadow-sm';
@@ -97,8 +117,9 @@ const BTN_PRIMARY = 'inline-flex items-center justify-center gap-2 rounded-pill 
 const BTN_GHOST = 'inline-flex items-center gap-1.5 rounded-pill border border-kidville-line px-3 py-1.5 font-maven text-xs font-semibold text-kidville-ink/80 hover:border-kidville-green disabled:opacity-50';
 const BTN_DANGER = 'inline-flex items-center gap-1.5 rounded-pill border border-kidville-error px-3 py-1.5 font-maven text-xs font-semibold text-kidville-error hover:bg-kidville-error-soft disabled:opacity-50';
 
-function Spinner({ label = 'Caricamento…' }: { label?: string }) {
-  return <div className="flex items-center gap-3 py-6"><div className="h-5 w-5 animate-spin rounded-full border-[3px] border-kidville-green/20 border-t-kidville-green" /><p className="font-maven text-sm text-kidville-muted">{label}</p></div>;
+function Spinner({ label }: { label?: string }) {
+  const t = useTranslations('adminAltro');
+  return <div className="flex items-center gap-3 py-6"><div className="h-5 w-5 animate-spin rounded-full border-[3px] border-kidville-green/20 border-t-kidville-green" /><p className="font-maven text-sm text-kidville-muted">{label ?? t('caricamento')}</p></div>;
 }
 
 /** Indicatore di passo del wizard "Protocolla documento". */
@@ -121,26 +142,29 @@ function Campo({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 function TipoBadge({ tipo }: { tipo: TipoProt }) {
-  return <span className={cx('whitespace-nowrap rounded-pill px-2 py-0.5 font-maven text-[11px] font-semibold', TIPO_BADGE[tipo])}>{TIPO_LABEL[tipo]}</span>;
+  const t = useTranslations('adminAltro');
+  return <span className={cx('whitespace-nowrap rounded-pill px-2 py-0.5 font-maven text-[11px] font-semibold', TIPO_BADGE[tipo])}>{tipoLabel(t, tipo)}</span>;
 }
 
 // ============================ Upload diretto ============================
-async function caricaSuStaging(userId: string | null, file: File, scopo: 'principale' | 'allegato'): Promise<{ path: string } | { error: string }> {
+async function caricaSuStaging(t: Traduttore, userId: string | null, file: File, scopo: 'principale' | 'allegato'): Promise<{ path: string } | { error: string }> {
   const mime = mimeDaFile(file);
-  if (!mime) return { error: 'Formato non ammesso: carica un PDF o una foto JPG/PNG' };
-  if (file.size > MAX_MB * 1024 * 1024) return { error: `File troppo grande (max ${MAX_MB} MB)` };
-  const prep = await jsend(userId, 'upload-url', 'POST', { nome: file.name, mime, size: file.size, scopo });
-  if (!prep.ok || !prep.data) return { error: prep.error ?? 'Preparazione upload non riuscita' };
+  if (!mime) return { error: t('protFormatoNonAmmesso') };
+  if (file.size > MAX_MB * 1024 * 1024) return { error: t('protFileTroppoGrande', { mb: MAX_MB }) };
+  const prep = await jsend(t, userId, 'upload-url', 'POST', { nome: file.name, mime, size: file.size, scopo });
+  if (!prep.ok || !prep.data) return { error: prep.error ?? t('protPreparazioneUpload') };
   const { signedUrl, path } = prep.data as { signedUrl: string; path: string };
   try {
     const put = await fetch(signedUrl, { method: 'PUT', headers: { 'content-type': mime, 'x-upsert': 'false' }, body: file });
-    if (!put.ok) return { error: `Caricamento non riuscito (HTTP ${put.status})` };
-  } catch { return { error: 'Caricamento non riuscito (rete)' }; }
+    if (!put.ok) return { error: t('protCaricamentoHttp', { status: put.status }) };
+  } catch { return { error: t('protCaricamentoRete') }; }
   return { path };
 }
 
 // ============================ Pagina ============================
 function ProtocolliInner() {
+  const t = useTranslations('adminAltro');
+  const locale = useLocale();
   const { userId } = useSessionIdentity();
   const { ruolo } = useAdminIdentity();
   const isAdmin = ruolo === 'admin';
@@ -217,48 +241,48 @@ function ProtocolliInner() {
   return (
     <CockpitPage>
       <PageHeader
-        eyebrow="Amministrazione"
+        eyebrow={t('eyebrowAmministrazione')}
         icon={Stamp}
-        title="Registro protocolli"
-        subtitle="Corrispondenza in arrivo, in partenza e atti interni — numerazione a norma DPR 445/2000"
+        title={t('protTitle')}
+        subtitle={t('protSubtitle')}
         actions={
           <>
             <button type="button" className={BTN_GHOST} onClick={() => window.open(exportUrl('xlsx'), '_blank')}>
-              <FileSpreadsheet size={14} /> Excel
+              <FileSpreadsheet size={14} /> {t('protBtnExcel')}
             </button>
             <button type="button" className={BTN_GHOST} onClick={() => window.open(exportUrl('pdf'), '_blank')}>
-              <FileDown size={14} /> PDF registro
+              <FileDown size={14} /> {t('protBtnPdfRegistro')}
             </button>
             <button type="button" className={BTN_GHOST} onClick={() => setDrawerTitolario(true)}>
-              <Settings2 size={14} /> Categorie
+              <Settings2 size={14} /> {t('protBtnCategorie')}
             </button>
             <button type="button" className={cx(HEADER_BTN, 'px-3.5 py-2')} onClick={() => setDrawerGenera(true)}>
-              <FileText size={15} /> Genera documento
+              <FileText size={15} /> {t('protBtnGenera')}
             </button>
             <button type="button" className={cx(HEADER_BTN, 'px-3.5 py-2')} onClick={() => setDrawerNuovo(true)}>
-              <Plus size={16} /> Protocolla documento
+              <Plus size={16} /> {t('protBtnProtocolla')}
             </button>
           </>
         }
       />
 
       <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
-        <StatCard icon={Stamp} label={`Registrazioni ${anno}`} value={stats.totale} tone="green" />
-        <StatCard icon={Inbox} label="In arrivo" value={stats.ingresso} tone="info" />
-        <StatCard icon={Send} label="In partenza" value={stats.uscita} tone="success" />
-        <StatCard icon={RefreshCw} label="Interni" value={stats.interno} tone="neutral" />
-        <StatCard icon={Hash} label="Ultimo numero" value={stats.ultimoNumero > 0 ? numeroFmt(stats.ultimoNumero, anno) : '—'} tone="yellow" />
+        <StatCard icon={Stamp} label={t('protStatRegistrazioni', { anno })} value={stats.totale} tone="green" />
+        <StatCard icon={Inbox} label={t('protTipoIngresso')} value={stats.ingresso} tone="info" />
+        <StatCard icon={Send} label={t('protTipoUscita')} value={stats.uscita} tone="success" />
+        <StatCard icon={RefreshCw} label={t('protStatInterni')} value={stats.interno} tone="neutral" />
+        <StatCard icon={Hash} label={t('protStatUltimoNumero')} value={stats.ultimoNumero > 0 ? numeroFmt(stats.ultimoNumero, anno) : '—'} tone="yellow" />
       </div>
 
-      <Toolbar search={q} onSearch={setQ} placeholder="Cerca per oggetto, mittente, destinatario o numero…">
-        <CockpitSelect value={String(anno)} onChange={(v) => setAnno(Number(v))} options={anni.map((y) => ({ value: String(y), label: `Anno ${y}` }))} />
-        <CockpitSelect value={tipo} onChange={setTipo} options={[{ value: '', label: 'Tutti i tipi' }, { value: 'ingresso', label: 'In arrivo' }, { value: 'uscita', label: 'In partenza' }, { value: 'interno', label: 'Interni' }]} />
-        <CockpitSelect value={categoriaId} onChange={setCategoriaId} options={[{ value: '', label: 'Tutte le categorie' }, ...categorieAttive.map((c) => ({ value: c.id, label: c.nome }))]} />
-        <div className="w-[130px]"><DateField value={da} onChange={setDa} placeholder="Dal gg/mm/aaaa" className={INPUT} /></div>
-        <div className="w-[130px]"><DateField value={a} onChange={setA} placeholder="Al gg/mm/aaaa" className={INPUT} /></div>
+      <Toolbar search={q} onSearch={setQ} placeholder={t('protCercaPlaceholder')}>
+        <CockpitSelect value={String(anno)} onChange={(v) => setAnno(Number(v))} options={anni.map((y) => ({ value: String(y), label: t('protAnnoOption', { y }) }))} />
+        <CockpitSelect value={tipo} onChange={setTipo} options={[{ value: '', label: t('protTuttiTipi') }, { value: 'ingresso', label: t('protTipoIngresso') }, { value: 'uscita', label: t('protTipoUscita') }, { value: 'interno', label: t('protStatInterni') }]} />
+        <CockpitSelect value={categoriaId} onChange={setCategoriaId} options={[{ value: '', label: t('protTutteCategorie') }, ...categorieAttive.map((c) => ({ value: c.id, label: c.nome }))]} />
+        <div className="w-[130px]"><DateField value={da} onChange={setDa} placeholder={t('protDalPlaceholder')} className={INPUT} /></div>
+        <div className="w-[130px]"><DateField value={a} onChange={setA} placeholder={t('protAlPlaceholder')} className={INPUT} /></div>
         {(tipo || categoriaId || da || a || q) && (
           <button type="button" className={BTN_GHOST} onClick={() => { setTipo(''); setCategoriaId(''); setDa(''); setA(''); setQ(''); }}>
-            <X size={13} /> Pulisci filtri
+            <X size={13} /> {t('protPulisciFiltri')}
           </button>
         )}
       </Toolbar>
@@ -270,12 +294,12 @@ function ProtocolliInner() {
           <div className="flex flex-col items-center gap-2 py-12 text-center">
             <Stamp size={34} className="text-kidville-neutral" />
             <p className="font-barlow text-lg font-extrabold uppercase text-kidville-green">
-              {nonMigrato ? 'Registro non ancora attivo' : 'Nessuna registrazione'}
+              {nonMigrato ? t('protRegistroNonAttivo') : t('protNessunaRegistrazione')}
             </p>
             <p className="max-w-md font-maven text-sm text-kidville-muted">
               {nonMigrato
-                ? 'Le tabelle del registro non sono presenti su questo database.'
-                : 'Non ci sono protocolli per i filtri scelti. Premi «Protocolla documento» in alto per registrare il primo.'}
+                ? t('protTabelleAssenti')
+                : t('protNessunProtocolloFiltri')}
             </p>
           </div>
         ) : (
@@ -283,12 +307,12 @@ function ProtocolliInner() {
             <table className={TABLE}>
               <thead>
                 <tr>
-                  <th className={TH}>Numero</th>
-                  <th className={TH}>Data</th>
-                  <th className={TH}>Tipo</th>
-                  <th className={TH}>Oggetto</th>
-                  <th className={TH}>Mittente / Destinatario</th>
-                  <th className={TH}>Categoria</th>
+                  <th className={TH}>{t('protThNumero')}</th>
+                  <th className={TH}>{t('protThData')}</th>
+                  <th className={TH}>{t('protThTipo')}</th>
+                  <th className={TH}>{t('protThOggetto')}</th>
+                  <th className={TH}>{t('protThMittenteDest')}</th>
+                  <th className={TH}>{t('protThCategoria')}</th>
                   <th className={TH}></th>
                 </tr>
               </thead>
@@ -296,15 +320,15 @@ function ProtocolliInner() {
                 {records.map((r) => (
                   <tr key={r.id} className={cx(TROW, 'cursor-pointer', r.annullata_at && 'opacity-60')} onClick={() => setDettaglioId(r.id)}>
                     <td className={cx(TD, 'whitespace-nowrap font-mono text-[13px] font-bold text-kidville-green')}>{numeroFmt(r.numero, r.anno)}</td>
-                    <td className={cx(TD, 'whitespace-nowrap font-maven text-[13px] text-kidville-ink')}>{dataIt(r.data_registrazione)} <span className="text-kidville-muted">{oraIt(r.data_registrazione)}</span></td>
+                    <td className={cx(TD, 'whitespace-nowrap font-maven text-[13px] text-kidville-ink')}>{dataIt(r.data_registrazione, locale)} <span className="text-kidville-muted">{oraIt(r.data_registrazione, locale)}</span></td>
                     <td className={TD}><TipoBadge tipo={r.tipo} /></td>
                     <td className={cx(TD, 'max-w-[380px] font-maven text-sm text-kidville-ink')}>
                       <span className={cx('block truncate', r.annullata_at && 'line-through')}>{r.oggetto}</span>
                       <span className="mt-0.5 flex flex-wrap gap-1">
-                        {r.annullata_at && <span className="rounded-pill bg-kidville-error-soft px-2 py-0.5 font-maven text-[10.5px] font-semibold text-kidville-error">ANNULLATA</span>}
-                        {r.emergenza && <span className="rounded-pill bg-kidville-warn-soft px-2 py-0.5 font-maven text-[10.5px] font-semibold text-kidville-warn">DA EMERGENZA</span>}
+                        {r.annullata_at && <span className="rounded-pill bg-kidville-error-soft px-2 py-0.5 font-maven text-[10.5px] font-semibold text-kidville-error">{t('protBadgeAnnullata')}</span>}
+                        {r.emergenza && <span className="rounded-pill bg-kidville-warn-soft px-2 py-0.5 font-maven text-[10.5px] font-semibold text-kidville-warn">{t('protBadgeDaEmergenza')}</span>}
                         {(r.allegati?.length ?? 0) > 0 && <span className="inline-flex items-center gap-0.5 rounded-pill bg-kidville-neutral-soft px-2 py-0.5 font-maven text-[10.5px] font-semibold text-kidville-neutral"><Paperclip size={10} /> {r.allegati?.length}</span>}
-                        {r.collegato_a_id && <span className="inline-flex items-center gap-0.5 rounded-pill bg-kidville-info-soft px-2 py-0.5 font-maven text-[10.5px] font-semibold text-kidville-info"><Link2 size={10} /> collegato</span>}
+                        {r.collegato_a_id && <span className="inline-flex items-center gap-0.5 rounded-pill bg-kidville-info-soft px-2 py-0.5 font-maven text-[10.5px] font-semibold text-kidville-info"><Link2 size={10} /> {t('protBadgeCollegato')}</span>}
                       </span>
                     </td>
                     <td className={cx(TD, 'max-w-[220px] truncate font-maven text-[13px] text-kidville-ink/85')}>{r.mittente ?? r.destinatario ?? '—'}</td>
@@ -317,10 +341,10 @@ function ProtocolliInner() {
                           e.stopPropagation();
                           const res = await jfull<{ data?: { url: string } }>(userId, `file?id=${r.id}&versione=timbrato`);
                           if (res?.data?.url) window.open(res.data.url, '_blank');
-                          else mostraToast('❌ Download non riuscito');
+                          else mostraToast(t('protDownloadFallito'));
                         }}
                       >
-                        <Download size={13} /> Timbrato
+                        <Download size={13} /> {t('protBtnTimbrato')}
                       </button>
                     </td>
                   </tr>
@@ -390,6 +414,8 @@ function NuovoProtocolloDrawer({ userId, categorie, recenti, onClose, onFatto }:
   userId: string | null; categorie: Categoria[]; recenti: Protocollo[];
   onClose: () => void; onFatto: () => void;
 }) {
+  const t = useTranslations('adminAltro');
+  const locale = useLocale();
   const [passo, setPasso] = useState<PassoNuovo>(1);
   const [busy, setBusy] = useState('');
   const [errore, setErrore] = useState('');
@@ -419,15 +445,15 @@ function NuovoProtocolloDrawer({ userId, categorie, recenti, onClose, onFatto }:
   const scegliFile = async (file: File | null) => {
     if (!file) return;
     setErrore('');
-    setBusy('Carico il file…');
-    const up = await caricaSuStaging(userId, file, 'principale');
+    setBusy(t('protCaricoFile'));
+    const up = await caricaSuStaging(t, userId, file, 'principale');
     if ('error' in up) { setErrore(up.error); setBusy(''); return; }
     setFileNome(file.name);
     const mime = mimeDaFile(file) as string;
     setFileMime(mime);
     setStagingPath(up.path);
-    setBusy('Leggo il documento…');
-    const analisi = await jsend(userId, 'analizza', 'POST', { stagingPath: up.path, mime });
+    setBusy(t('protLeggoDocumento'));
+    const analisi = await jsend(t, userId, 'analizza', 'POST', { stagingPath: up.path, mime });
     if (analisi.ok && analisi.data) {
       const d = analisi.data as { duplicato: Duplicato | null; suggerimenti: Suggerimenti };
       setDuplicato(d.duplicato);
@@ -443,23 +469,23 @@ function NuovoProtocolloDrawer({ userId, categorie, recenti, onClose, onFatto }:
   const aggiungiAllegato = async (file: File | null) => {
     if (!file) return;
     setErrore('');
-    setBusy(`Carico l'allegato ${file.name}…`);
-    const up = await caricaSuStaging(userId, file, 'allegato');
+    setBusy(t('protCaricoAllegato', { nome: file.name }));
+    const up = await caricaSuStaging(t, userId, file, 'allegato');
     setBusy('');
     if ('error' in up) { setErrore(up.error); return; }
     const nuovo = [...allegati, { path: up.path, nome: file.name, mime: mimeDaFile(file) as string, size: file.size }];
     setAllegati(nuovo);
-    setAllegatiDescr(`${nuovo.length} allegat${nuovo.length === 1 ? 'o' : 'i'}: ${nuovo.map((x) => x.nome).join(', ')}`.slice(0, 480));
+    setAllegatiDescr(t('protAllegatoDescr', { count: nuovo.length, nomi: nuovo.map((x) => x.nome).join(', ') }).slice(0, 480));
   };
 
   const registra = async () => {
     setErrore('');
-    if (!oggetto.trim()) { setErrore("Scrivi l'oggetto del documento"); return; }
-    if (tipo === 'ingresso' && !mittente.trim()) { setErrore('Indica il mittente (chi ti ha inviato il documento)'); return; }
-    if (tipo === 'uscita' && !destinatario.trim()) { setErrore('Indica il destinatario (a chi mandi il documento)'); return; }
-    if (emergenza && !emergenzaQuando) { setErrore("Indica data e ora dell'evento annotato nel registro di emergenza"); return; }
-    setBusy('Assegno il numero e applico il timbro…');
-    const res = await jsend(userId, '', 'POST', {
+    if (!oggetto.trim()) { setErrore(t('protErrOggetto')); return; }
+    if (tipo === 'ingresso' && !mittente.trim()) { setErrore(t('protErrMittente')); return; }
+    if (tipo === 'uscita' && !destinatario.trim()) { setErrore(t('protErrDestinatario')); return; }
+    if (emergenza && !emergenzaQuando) { setErrore(t('protErrEmergenza')); return; }
+    setBusy(t('protAssegnoNumero'));
+    const res = await jsend(t, userId, '', 'POST', {
       stagingPath, nomeFile: fileNome, mime: fileMime, tipo,
       oggetto: oggetto.trim(),
       mittente: mittente.trim() || undefined,
@@ -476,7 +502,7 @@ function NuovoProtocolloDrawer({ userId, categorie, recenti, onClose, onFatto }:
       allegati: allegati.map((x) => ({ stagingPath: x.path, nome: x.nome, mime: x.mime })),
     });
     setBusy('');
-    if (!res.ok || !res.data) { setErrore(res.error ?? 'Registrazione non riuscita'); return; }
+    if (!res.ok || !res.data) { setErrore(res.error ?? t('protRegistrazioneFallita')); return; }
     const d = res.data as { numeroFormattato: string; downloadTimbrato: string | null };
     setEsito({ numeroFormattato: d.numeroFormattato, downloadTimbrato: d.downloadTimbrato });
     setPasso(3);
@@ -484,11 +510,11 @@ function NuovoProtocolloDrawer({ userId, categorie, recenti, onClose, onFatto }:
   };
 
   return (
-    <Drawer open onClose={onClose} title="Protocolla documento" subtitle="Carica il file, controlla i dati, ottieni il numero e il PDF timbrato" width={560}>
+    <Drawer open onClose={onClose} title={t('protBtnProtocolla')} subtitle={t('protNuovoSubtitle')} width={560}>
       <div className="mb-5 flex items-center gap-4">
-        <PassoDot corrente={passo} n={1} label="File" /><span className="h-px flex-1 bg-kidville-line" />
-        <PassoDot corrente={passo} n={2} label="Dati" /><span className="h-px flex-1 bg-kidville-line" />
-        <PassoDot corrente={passo} n={3} label="Numero" />
+        <PassoDot corrente={passo} n={1} label={t('protPassoFile')} /><span className="h-px flex-1 bg-kidville-line" />
+        <PassoDot corrente={passo} n={2} label={t('protPassoDati')} /><span className="h-px flex-1 bg-kidville-line" />
+        <PassoDot corrente={passo} n={3} label={t('protPassoNumero')} />
       </div>
 
       {errore && <div className="mb-4 flex items-start gap-2 rounded-card bg-kidville-error-soft px-3 py-2.5 font-maven text-sm text-kidville-error"><AlertTriangle size={16} className="mt-0.5 shrink-0" />{errore}</div>}
@@ -497,9 +523,9 @@ function NuovoProtocolloDrawer({ userId, categorie, recenti, onClose, onFatto }:
       {passo === 1 && (
         <label className={cx('flex cursor-pointer flex-col items-center gap-3 rounded-card border-2 border-dashed border-kidville-line bg-kidville-cream/50 px-6 py-12 text-center transition-colors hover:border-kidville-green', busy && 'pointer-events-none opacity-60')}>
           <UploadCloud size={38} className="text-kidville-green" />
-          <span className="font-barlow text-lg font-extrabold uppercase text-kidville-green">Scegli il documento</span>
-          <span className="font-maven text-sm text-kidville-muted">PDF oppure foto JPG/PNG (le foto vengono convertite in PDF) — max {MAX_MB} MB.<br />Se il PDF contiene testo, oggetto e mittente si compilano da soli.</span>
-          <span className={BTN_PRIMARY}>Sfoglia…</span>
+          <span className="font-barlow text-lg font-extrabold uppercase text-kidville-green">{t('protScegliDocumento')}</span>
+          <span className="font-maven text-sm text-kidville-muted">{t.rich('protUploadHint', { mb: MAX_MB, br: () => <br /> })}</span>
+          <span className={BTN_PRIMARY}>{t('protSfoglia')}</span>
           <input type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden" onChange={(e) => { void scegliFile(e.target.files?.[0] ?? null); e.target.value = ''; }} />
         </label>
       )}
@@ -512,43 +538,43 @@ function NuovoProtocolloDrawer({ userId, categorie, recenti, onClose, onFatto }:
           {duplicato && (
             <div className="flex items-start gap-2 rounded-card bg-kidville-warn-soft px-3 py-2.5 font-maven text-[13px] text-kidville-warn">
               <AlertTriangle size={16} className="mt-0.5 shrink-0" />
-              <span>Attenzione: questo file risulta GIÀ protocollato col n. <b>{duplicato.numeroFormattato}</b> del {dataIt(duplicato.dataRegistrazione)} («{duplicato.oggetto}»). Puoi comunque procedere.</span>
+              <span>{t.rich('protDuplicatoAvviso', { numero: duplicato.numeroFormattato, data: dataIt(duplicato.dataRegistrazione, locale), oggetto: duplicato.oggetto, b: (c) => <b>{c}</b> })}</span>
             </div>
           )}
 
           <div>
-            <span className={LABEL}>Tipo di registrazione</span>
+            <span className={LABEL}>{t('protTipoRegistrazione')}</span>
             <div className="mt-1 flex gap-2">
-              {(['ingresso', 'uscita', 'interno'] as TipoProt[]).map((t) => (
-                <button key={t} type="button" onClick={() => setTipo(t)}
-                  className={cx('flex-1 rounded-pill border-2 px-3 py-2 font-barlow text-[13px] font-extrabold uppercase', tipo === t ? 'border-kidville-green bg-kidville-green text-kidville-yellow' : 'border-kidville-line bg-kidville-white text-kidville-ink/70')}>
-                  {TIPO_LABEL[t]}
+              {(['ingresso', 'uscita', 'interno'] as TipoProt[]).map((tp) => (
+                <button key={tp} type="button" onClick={() => setTipo(tp)}
+                  className={cx('flex-1 rounded-pill border-2 px-3 py-2 font-barlow text-[13px] font-extrabold uppercase', tipo === tp ? 'border-kidville-green bg-kidville-green text-kidville-yellow' : 'border-kidville-line bg-kidville-white text-kidville-ink/70')}>
+                  {tipoLabel(t, tp)}
                 </button>
               ))}
             </div>
           </div>
 
           <div>
-            <label className={LABEL}>Oggetto *</label>
-            <input className={INPUT} value={oggetto} onChange={(e) => setOggetto(e.target.value)} placeholder="Di cosa parla il documento" maxLength={500} />
+            <label className={LABEL}>{t('protLabelOggetto')}</label>
+            <input className={INPUT} value={oggetto} onChange={(e) => setOggetto(e.target.value)} placeholder={t('protOggettoPlaceholder')} maxLength={500} />
           </div>
 
           {tipo !== 'interno' && (
             <div>
-              <label className={LABEL}>{tipo === 'ingresso' ? 'Mittente * (chi lo ha inviato)' : 'Destinatario * (a chi lo mandi)'}</label>
+              <label className={LABEL}>{tipo === 'ingresso' ? t('protLabelMittente') : t('protLabelDestinatario')}</label>
               {tipo === 'ingresso'
-                ? <input className={INPUT} value={mittente} onChange={(e) => setMittente(e.target.value)} placeholder="Es. Comune di Giugliano" maxLength={300} />
-                : <input className={INPUT} value={destinatario} onChange={(e) => setDestinatario(e.target.value)} placeholder="Es. USR Campania" maxLength={300} />}
+                ? <input className={INPUT} value={mittente} onChange={(e) => setMittente(e.target.value)} placeholder={t('protMittentePlaceholder')} maxLength={300} />
+                : <input className={INPUT} value={destinatario} onChange={(e) => setDestinatario(e.target.value)} placeholder={t('protDestinatarioPlaceholder')} maxLength={300} />}
             </div>
           )}
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className={LABEL}>Mezzo</label>
-              <CockpitSelect className="w-full" value={mezzo} onChange={setMezzo} options={[{ value: '', label: '—' }, ...MEZZI.map((m) => ({ value: m, label: m }))]} />
+              <label className={LABEL}>{t('protLabelMezzo')}</label>
+              <CockpitSelect className="w-full" value={mezzo} onChange={setMezzo} options={[{ value: '', label: '—' }, ...MEZZI.map((m) => ({ value: m, label: mezzoLabel(t, m) }))]} />
             </div>
             <div>
-              <label className={LABEL}>Categoria</label>
+              <label className={LABEL}>{t('protLabelCategoria')}</label>
               <CockpitSelect className="w-full" value={categoriaId} onChange={setCategoriaId} options={[{ value: '', label: '—' }, ...categorie.map((c) => ({ value: c.id, label: c.nome }))]} />
             </div>
           </div>
@@ -556,45 +582,45 @@ function NuovoProtocolloDrawer({ userId, categorie, recenti, onClose, onFatto }:
           {tipo === 'ingresso' && (
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className={LABEL}>Protocollo del mittente</label>
-                <input className={INPUT} value={rifProt} onChange={(e) => setRifProt(e.target.value)} placeholder="Es. 12345/2026" maxLength={60} />
+                <label className={LABEL}>{t('protLabelProtMittente')}</label>
+                <input className={INPUT} value={rifProt} onChange={(e) => setRifProt(e.target.value)} placeholder={t('protProtMittentePlaceholder')} maxLength={60} />
               </div>
               <div>
-                <label className={LABEL}>Data documento mittente</label>
+                <label className={LABEL}>{t('protLabelDataMittente')}</label>
                 <DateField value={rifData} onChange={setRifData} className={INPUT} />
               </div>
             </div>
           )}
 
           <div>
-            <label className={LABEL}>Collegato a un protocollo esistente (es. risposta)</label>
+            <label className={LABEL}>{t('protLabelCollegato')}</label>
             <CockpitSelect className="w-full" value={collegatoAId} onChange={setCollegatoAId}
-              options={[{ value: '', label: '— nessun collegamento —' }, ...recenti.filter((r) => !r.annullata_at).slice(0, 60).map((r) => ({ value: r.id, label: `${numeroFmt(r.numero, r.anno)} — ${r.oggetto.slice(0, 60)}` }))]} />
+              options={[{ value: '', label: t('protNessunCollegamento') }, ...recenti.filter((r) => !r.annullata_at).slice(0, 60).map((r) => ({ value: r.id, label: `${numeroFmt(r.numero, r.anno)} — ${r.oggetto.slice(0, 60)}` }))]} />
           </div>
 
           <div>
-            <span className={LABEL}>Allegati (facoltativi)</span>
+            <span className={LABEL}>{t('protAllegatiFacoltativi')}</span>
             {allegati.length > 0 && (
               <ul className="mt-1 flex flex-col gap-1">
                 {allegati.map((x, i) => (
                   <li key={x.path} className="flex items-center justify-between gap-2 rounded-input bg-kidville-cream px-3 py-1.5 font-maven text-[13px] text-kidville-ink">
                     <span className="flex min-w-0 items-center gap-1.5"><Paperclip size={13} className="shrink-0 text-kidville-green" /><span className="truncate">{x.nome}</span></span>
-                    <button type="button" aria-label={`Rimuovi ${x.nome}`} onClick={() => {
+                    <button type="button" aria-label={t('protRimuoviAllegato', { nome: x.nome })} onClick={() => {
                       const rimasti = allegati.filter((_, j) => j !== i);
                       setAllegati(rimasti);
-                      setAllegatiDescr(rimasti.length ? `${rimasti.length} allegat${rimasti.length === 1 ? 'o' : 'i'}: ${rimasti.map((y) => y.nome).join(', ')}`.slice(0, 480) : '');
+                      setAllegatiDescr(rimasti.length ? t('protAllegatoDescr', { count: rimasti.length, nomi: rimasti.map((y) => y.nome).join(', ') }).slice(0, 480) : '');
                     }} className="text-kidville-error"><X size={14} /></button>
                   </li>
                 ))}
               </ul>
             )}
             <label className={cx(BTN_GHOST, 'mt-1.5 cursor-pointer')}>
-              <Plus size={13} /> Aggiungi allegato
+              <Plus size={13} /> {t('protAggiungiAllegato')}
               <input type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden" onChange={(e) => { void aggiungiAllegato(e.target.files?.[0] ?? null); e.target.value = ''; }} />
             </label>
             {allegati.length > 0 && (
               <div className="mt-2">
-                <label className={LABEL}>Descrizione allegati (finisce nel registro)</label>
+                <label className={LABEL}>{t('protDescrizioneAllegati')}</label>
                 <input className={INPUT} value={allegatiDescr} onChange={(e) => setAllegatiDescr(e.target.value)} maxLength={500} />
               </div>
             )}
@@ -602,26 +628,26 @@ function NuovoProtocolloDrawer({ userId, categorie, recenti, onClose, onFatto }:
 
           <div className="rounded-card bg-kidville-warn-soft/60 p-3">
             <div className="flex items-center justify-between gap-3">
-              <span className="flex items-center gap-2 font-maven text-sm font-semibold text-kidville-warn"><Siren size={15} /> Da registro di emergenza</span>
+              <span className="flex items-center gap-2 font-maven text-sm font-semibold text-kidville-warn"><Siren size={15} /> {t('protDaEmergenza')}</span>
               <Toggle on={emergenza} onClick={() => setEmergenza(!emergenza)} />
             </div>
             {emergenza && (
               <div className="mt-2">
-                <label className={LABEL}>Data e ora dell&apos;evento (dal registro cartaceo)</label>
+                <label className={LABEL}>{t('protDataOraEvento')}</label>
                 <input type="datetime-local" className={INPUT} value={emergenzaQuando} onChange={(e) => setEmergenzaQuando(e.target.value)} />
               </div>
             )}
           </div>
 
           <div>
-            <label className={LABEL}>Note interne (modificabili anche dopo)</label>
+            <label className={LABEL}>{t('protNoteInterne')}</label>
             <textarea className={cx(INPUT, 'min-h-[64px]')} value={note} onChange={(e) => setNote(e.target.value)} maxLength={2000} />
           </div>
 
           <div className="flex items-center justify-between gap-3 pt-1">
-            <button type="button" className={BTN_GHOST} onClick={() => { setPasso(1); setStagingPath(''); setFileNome(''); setDuplicato(null); }}>← Cambia file</button>
+            <button type="button" className={BTN_GHOST} onClick={() => { setPasso(1); setStagingPath(''); setFileNome(''); setDuplicato(null); }}>{t('protCambiaFile')}</button>
             <button type="button" className={BTN_PRIMARY} disabled={!!busy} onClick={() => void registra()}>
-              <Stamp size={16} /> Registra e timbra
+              <Stamp size={16} /> {t('protRegistraTimbra')}
             </button>
           </div>
         </div>
@@ -631,15 +657,15 @@ function NuovoProtocolloDrawer({ userId, categorie, recenti, onClose, onFatto }:
         <div className="flex flex-col items-center gap-4 py-8 text-center">
           <SaveCheck size={44} />
           <div>
-            <p className="font-maven text-sm text-kidville-muted">Numero di protocollo assegnato</p>
+            <p className="font-maven text-sm text-kidville-muted">{t('protNumeroAssegnato')}</p>
             <p className="font-barlow text-[40px] font-black leading-tight text-kidville-green">{esito.numeroFormattato}</p>
           </div>
           {esito.downloadTimbrato ? (
             <a href={esito.downloadTimbrato} target="_blank" rel="noreferrer" className={BTN_PRIMARY}>
-              <Download size={16} /> Scarica il PDF timbrato
+              <Download size={16} /> {t('protScaricaTimbrato')}
             </a>
           ) : (
-            <p className="font-maven text-sm text-kidville-muted">Il PDF timbrato è archiviato: lo trovi nella scheda della registrazione.</p>
+            <p className="font-maven text-sm text-kidville-muted">{t('protTimbratoArchiviato')}</p>
           )}
           <div className="flex gap-2">
             <button type="button" className={BTN_GHOST} onClick={() => {
@@ -647,9 +673,9 @@ function NuovoProtocolloDrawer({ userId, categorie, recenti, onClose, onFatto }:
               setOggetto(''); setMittente(''); setDestinatario(''); setMezzo(''); setRifProt(''); setRifData('');
               setCollegatoAId(''); setNote(''); setEmergenza(false); setEmergenzaQuando(''); setAllegati([]); setAllegatiDescr('');
             }}>
-              <Plus size={13} /> Protocolla un altro documento
+              <Plus size={13} /> {t('protProtocollaAltro')}
             </button>
-            <button type="button" className={BTN_GHOST} onClick={onClose}>Chiudi</button>
+            <button type="button" className={BTN_GHOST} onClick={onClose}>{t('chiudi')}</button>
           </div>
         </div>
       )}
@@ -661,6 +687,7 @@ function NuovoProtocolloDrawer({ userId, categorie, recenti, onClose, onFatto }:
 function GeneraDocumentoDrawer({ userId, onClose, onFatto, mostraToast }: {
   userId: string | null; onClose: () => void; onFatto: () => void; mostraToast: (m: string) => void;
 }) {
+  const t = useTranslations('adminAltro');
   const [tipoDoc, setTipoDoc] = useState('frequenza');
   const [alunni, setAlunni] = useState<Alunno[]>([]);
   const [caricoAlunni, setCaricoAlunni] = useState(true);
@@ -696,63 +723,63 @@ function GeneraDocumentoDrawer({ userId, onClose, onFatto, mostraToast }: {
 
   const genera = async () => {
     setErrore('');
-    if (!alunnoId) { setErrore("Scegli l'alunno"); return; }
-    if (tipoDoc === 'libero' && (!titolo.trim() || !corpo.trim())) { setErrore('Per il documento libero servono titolo e testo'); return; }
+    if (!alunnoId) { setErrore(t('protErrAlunno')); return; }
+    if (tipoDoc === 'libero' && (!titolo.trim() || !corpo.trim())) { setErrore(t('protErrLibero')); return; }
     setBusy(true);
-    const res = await jsend(userId, 'genera-documento', 'POST', {
+    const res = await jsend(t, userId, 'genera-documento', 'POST', {
       tipoDocumento: tipoDoc, alunnoId,
       titolo: titolo.trim() || undefined, corpo: corpo.trim() || undefined,
     });
     setBusy(false);
-    if (!res.ok || !res.data) { setErrore(res.error ?? 'Generazione non riuscita'); return; }
+    if (!res.ok || !res.data) { setErrore(res.error ?? t('protGenerazioneFallita')); return; }
     const d = res.data as { numeroFormattato: string; downloadTimbrato: string | null };
     setEsito(d);
     onFatto();
-    mostraToast(`✅ Documento protocollato: n. ${d.numeroFormattato}`);
+    mostraToast(t('protToastProtocollato', { numero: d.numeroFormattato }));
   };
 
   return (
-    <Drawer open onClose={onClose} title="Genera documento" subtitle="Certificati e nulla osta su carta intestata, protocollati in uscita in un click" width={560}>
+    <Drawer open onClose={onClose} title={t('protBtnGenera')} subtitle={t('protGeneraSubtitle')} width={560}>
       {esito ? (
         <div className="flex flex-col items-center gap-4 py-8 text-center">
           <CheckCircle2 size={44} className="text-kidville-success" />
           <div>
-            <p className="font-maven text-sm text-kidville-muted">Documento generato e protocollato col numero</p>
+            <p className="font-maven text-sm text-kidville-muted">{t('protDocGenerato')}</p>
             <p className="font-barlow text-[40px] font-black leading-tight text-kidville-green">{esito.numeroFormattato}</p>
           </div>
           {esito.downloadTimbrato && (
-            <a href={esito.downloadTimbrato} target="_blank" rel="noreferrer" className={BTN_PRIMARY}><Download size={16} /> Scarica il PDF timbrato</a>
+            <a href={esito.downloadTimbrato} target="_blank" rel="noreferrer" className={BTN_PRIMARY}><Download size={16} /> {t('protScaricaTimbrato')}</a>
           )}
-          <button type="button" className={BTN_GHOST} onClick={() => { setEsito(null); setAlunnoId(''); setTitolo(''); setCorpo(''); }}>Genera un altro documento</button>
+          <button type="button" className={BTN_GHOST} onClick={() => { setEsito(null); setAlunnoId(''); setTitolo(''); setCorpo(''); }}>{t('protGeneraAltro')}</button>
         </div>
       ) : (
         <div className="flex flex-col gap-4">
           {errore && <div className="flex items-start gap-2 rounded-card bg-kidville-error-soft px-3 py-2.5 font-maven text-sm text-kidville-error"><AlertTriangle size={16} className="mt-0.5 shrink-0" />{errore}</div>}
 
           <div>
-            <label className={LABEL}>Tipo di documento</label>
+            <label className={LABEL}>{t('protTipoDocumento')}</label>
             <CockpitSelect className="w-full" value={tipoDoc} onChange={setTipoDoc} options={[
-              { value: 'frequenza', label: 'Certificato di frequenza' },
-              { value: 'iscrizione', label: 'Certificato di iscrizione' },
-              { value: 'nulla_osta', label: 'Nulla osta al trasferimento' },
-              { value: 'libero', label: 'Documento libero su carta intestata' },
+              { value: 'frequenza', label: t('protDocFrequenza') },
+              { value: 'iscrizione', label: t('protDocIscrizione') },
+              { value: 'nulla_osta', label: t('protDocNullaOsta') },
+              { value: 'libero', label: t('protDocLibero') },
             ]} />
           </div>
 
           <div>
-            <label className={LABEL}>Alunno *</label>
+            <label className={LABEL}>{t('protLabelAlunno')}</label>
             {scelto ? (
               <div className="flex items-center justify-between gap-2 rounded-input bg-kidville-green-soft px-3 py-2 font-maven text-sm text-kidville-green">
                 <span className="truncate font-semibold">{scelto.cognome} {scelto.nome}{scelto.classe_sezione ? ` — ${scelto.classe_sezione}` : ''}</span>
-                <button type="button" aria-label="Cambia alunno" onClick={() => setAlunnoId('')}><X size={15} /></button>
+                <button type="button" aria-label={t('protCambiaAlunno')} onClick={() => setAlunnoId('')}><X size={15} /></button>
               </div>
             ) : caricoAlunni ? (
-              <Spinner label="Carico gli alunni…" />
+              <Spinner label={t('protCaricoAlunni')} />
             ) : (
               <>
                 <div className="relative">
                   <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-kidville-neutral"><Search size={15} /></span>
-                  <input className={cx(INPUT, 'pl-9')} value={ricerca} onChange={(e) => setRicerca(e.target.value)} placeholder="Cerca per cognome o nome…" />
+                  <input className={cx(INPUT, 'pl-9')} value={ricerca} onChange={(e) => setRicerca(e.target.value)} placeholder={t('protCercaAlunno')} />
                 </div>
                 <ul className="mt-1 max-h-[180px] overflow-y-auto rounded-input border border-kidville-line">
                   {filtrati.map((s) => (
@@ -763,7 +790,7 @@ function GeneraDocumentoDrawer({ userId, onClose, onFatto, mostraToast }: {
                       </button>
                     </li>
                   ))}
-                  {filtrati.length === 0 && <li className="px-3 py-2 font-maven text-sm text-kidville-muted">Nessun alunno trovato</li>}
+                  {filtrati.length === 0 && <li className="px-3 py-2 font-maven text-sm text-kidville-muted">{t('protNessunAlunno')}</li>}
                 </ul>
               </>
             )}
@@ -772,20 +799,20 @@ function GeneraDocumentoDrawer({ userId, onClose, onFatto, mostraToast }: {
           {tipoDoc === 'libero' && (
             <>
               <div>
-                <label className={LABEL}>Titolo del documento *</label>
-                <input className={INPUT} value={titolo} onChange={(e) => setTitolo(e.target.value)} placeholder="Es. Attestazione di iscrizione al servizio mensa" maxLength={120} />
+                <label className={LABEL}>{t('protTitoloDocumento')}</label>
+                <input className={INPUT} value={titolo} onChange={(e) => setTitolo(e.target.value)} placeholder={t('protTitoloPlaceholder')} maxLength={120} />
               </div>
               <div>
-                <label className={LABEL}>Testo *</label>
-                <textarea className={cx(INPUT, 'min-h-[140px]')} value={corpo} onChange={(e) => setCorpo(e.target.value)} maxLength={4000} placeholder="Scrivi il testo: verrà impaginato su carta intestata Kidville" />
+                <label className={LABEL}>{t('protTesto')}</label>
+                <textarea className={cx(INPUT, 'min-h-[140px]')} value={corpo} onChange={(e) => setCorpo(e.target.value)} maxLength={4000} placeholder={t('protTestoPlaceholder')} />
               </div>
             </>
           )}
 
           <button type="button" className={BTN_PRIMARY} disabled={busy} onClick={() => void genera()}>
-            {busy ? <Loader2 size={16} className="animate-spin" /> : <Stamp size={16} />} Genera e protocolla
+            {busy ? <Loader2 size={16} className="animate-spin" /> : <Stamp size={16} />} {t('protGeneraProtocolla')}
           </button>
-          <p className="font-maven text-xs text-kidville-muted">Il documento nasce su carta intestata, riceve numero e fascia di segnatura in uscita ed è archiviato nel registro come tutti gli altri.</p>
+          <p className="font-maven text-xs text-kidville-muted">{t('protGeneraNota')}</p>
         </div>
       )}
     </Drawer>
@@ -796,25 +823,26 @@ function GeneraDocumentoDrawer({ userId, onClose, onFatto, mostraToast }: {
 function TitolarioDrawer({ userId, categorie, onClose, onChange, mostraToast }: {
   userId: string | null; categorie: Categoria[]; onClose: () => void; onChange: () => void; mostraToast: (m: string) => void;
 }) {
+  const t = useTranslations('adminAltro');
   const [nuovo, setNuovo] = useState('');
   const [busy, setBusy] = useState(false);
 
   const aggiungi = async () => {
     if (!nuovo.trim()) return;
     setBusy(true);
-    const res = await jsend(userId, 'categorie', 'POST', { nome: nuovo.trim() });
+    const res = await jsend(t, userId, 'categorie', 'POST', { nome: nuovo.trim() });
     setBusy(false);
-    if (!res.ok) { mostraToast(`❌ ${res.error ?? 'Errore'}`); return; }
+    if (!res.ok) { mostraToast(`❌ ${res.error ?? t('errore')}`); return; }
     setNuovo('');
     onChange();
   };
 
   return (
-    <Drawer open onClose={onClose} title="Categorie del registro" subtitle="Il titolario: organizza le registrazioni per argomento" width={480}>
+    <Drawer open onClose={onClose} title={t('protTitolarioTitolo')} subtitle={t('protTitolarioSubtitle')} width={480}>
       <div className="flex flex-col gap-2">
         {categorie.map((c) => <RigaCategoria key={c.id} userId={userId} categoria={c} onChange={onChange} mostraToast={mostraToast} />)}
         <div className="mt-3 flex gap-2">
-          <input className={INPUT} value={nuovo} onChange={(e) => setNuovo(e.target.value)} placeholder="Nuova categoria…" maxLength={80}
+          <input className={INPUT} value={nuovo} onChange={(e) => setNuovo(e.target.value)} placeholder={t('protNuovaCategoria')} maxLength={80}
             onKeyDown={(e) => { if (e.key === 'Enter') void aggiungi(); }} />
           <button type="button" className={BTN_PRIMARY} disabled={busy || !nuovo.trim()} onClick={() => void aggiungi()}><Plus size={15} /></button>
         </div>
@@ -826,15 +854,16 @@ function TitolarioDrawer({ userId, categorie, onClose, onChange, mostraToast }: 
 function RigaCategoria({ userId, categoria, onChange, mostraToast }: {
   userId: string | null; categoria: Categoria; onChange: () => void; mostraToast: (m: string) => void;
 }) {
+  const t = useTranslations('adminAltro');
   const [nome, setNome] = useState(categoria.nome);
   const [salvato, setSalvato] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const salva = async (patch: { nome?: string; attivo?: boolean }) => {
     setBusy(true);
-    const res = await jsend(userId, 'categorie', 'PATCH', { id: categoria.id, ...patch });
+    const res = await jsend(t, userId, 'categorie', 'PATCH', { id: categoria.id, ...patch });
     setBusy(false);
-    if (!res.ok) { mostraToast(`❌ ${res.error ?? 'Errore'}`); return; }
+    if (!res.ok) { mostraToast(`❌ ${res.error ?? t('errore')}`); return; }
     setSalvato(true); setTimeout(() => setSalvato(false), 1600);
     onChange();
   };
@@ -855,6 +884,8 @@ function DettaglioDrawer({ userId, id, isAdmin, categorie, onApri, onClose, onCh
   userId: string | null; id: string; isAdmin: boolean; categorie: Categoria[];
   onApri: (id: string) => void; onClose: () => void; onChange: () => void; mostraToast: (m: string) => void;
 }) {
+  const t = useTranslations('adminAltro');
+  const locale = useLocale();
   const [rec, setRec] = useState<Protocollo | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -889,36 +920,36 @@ function DettaglioDrawer({ userId, id, isAdmin, categorie, onApri, onClose, onCh
     const extra = allegatoId ? `&allegatoId=${allegatoId}` : '';
     const res = await jfull<{ data?: { url: string } }>(userId, `file?id=${id}&versione=${versione}${extra}`);
     if (res?.data?.url) window.open(res.data.url, '_blank');
-    else mostraToast('❌ Download non riuscito');
+    else mostraToast(t('protDownloadFallito'));
   };
 
   const verificaIntegrita = async () => {
     setBusy(true);
-    const res = await jsend(userId, 'verifica', 'POST', { id });
+    const res = await jsend(t, userId, 'verifica', 'POST', { id });
     setBusy(false);
-    if (!res.ok || !res.data) { mostraToast(`❌ ${res.error ?? 'Verifica non riuscita'}`); return; }
+    if (!res.ok || !res.data) { mostraToast(`❌ ${res.error ?? t('protVerificaFallita')}`); return; }
     setVerifica(res.data as { integro: boolean });
   };
 
   const annulla = async () => {
-    if (motivo.trim().length < 3) { mostraToast('❌ Scrivi il motivo dell’annullamento'); return; }
+    if (motivo.trim().length < 3) { mostraToast(t('protScriviMotivo')); return; }
     setBusy(true);
-    const res = await jsend(userId, '', 'PATCH', { id, azione: 'annulla', motivo: motivo.trim() });
+    const res = await jsend(t, userId, '', 'PATCH', { id, azione: 'annulla', motivo: motivo.trim() });
     setBusy(false);
-    if (!res.ok) { mostraToast(`❌ ${res.error ?? 'Annullamento non riuscito'}`); return; }
-    mostraToast('Registrazione annullata (resta visibile a registro)');
+    if (!res.ok) { mostraToast(`❌ ${res.error ?? t('protAnnullamentoFallito')}`); return; }
+    mostraToast(t('protRegistrazioneAnnullata'));
     onChange();
     void carica();
   };
 
   const elimina = async () => {
-    if (!window.confirm('Eliminare DEFINITIVAMENTE questa registrazione?\n\nSparirà dal registro insieme ai file e resterà un buco nella numerazione. L’operazione non lascia tracce e non è reversibile.')) return;
-    if (!window.confirm('Confermi? Questa è l’ultima conferma.')) return;
+    if (!window.confirm(t('protEliminaConferma1'))) return;
+    if (!window.confirm(t('protEliminaConferma2'))) return;
     setBusy(true);
-    const res = await jsend(userId, `?id=${id}`, 'DELETE');
+    const res = await jsend(t, userId, `?id=${id}`, 'DELETE');
     setBusy(false);
-    if (!res.ok) { mostraToast(`❌ ${res.error ?? 'Eliminazione non riuscita'}`); return; }
-    mostraToast('Registrazione eliminata definitivamente');
+    if (!res.ok) { mostraToast(`❌ ${res.error ?? t('protEliminazioneFallita')}`); return; }
+    mostraToast(t('protRegistrazioneEliminata'));
     onChange();
     onClose();
   };
@@ -929,13 +960,13 @@ function DettaglioDrawer({ userId, id, isAdmin, categorie, onApri, onClose, onCh
     if (!file || !rec) return;
     setSostituendo(true);
     try {
-      const up = await caricaSuStaging(userId, file, 'principale');
+      const up = await caricaSuStaging(t, userId, file, 'principale');
       if ('error' in up) { mostraToast(`❌ ${up.error}`); return; }
-      const res = await jsend(userId, 'rettifica', 'POST', {
+      const res = await jsend(t, userId, 'rettifica', 'POST', {
         id, stagingPath: up.path, nomeFile: file.name, mime: mimeDaFile(file),
       });
-      if (!res.ok) { mostraToast(`❌ ${res.error ?? 'Sostituzione non riuscita'}`); return; }
-      mostraToast(`✅ Documento sostituito — Prot. n. ${numeroFmt(rec.numero, rec.anno)} invariato`);
+      if (!res.ok) { mostraToast(`❌ ${res.error ?? t('protSostituzioneFallita')}`); return; }
+      mostraToast(t('protDocSostituito', { numero: numeroFmt(rec.numero, rec.anno) }));
       onChange();
       void carica();
     } finally {
@@ -972,10 +1003,10 @@ function DettaglioDrawer({ userId, id, isAdmin, categorie, onApri, onClose, onCh
     nullable('allegatiDescrizione', editVals.allegatiDescr, rec.allegati_descrizione);
     if (Object.keys(body).length === 1) { setInEdit(false); return; }
     setBusy(true);
-    const res = await jsend(userId, 'rettifica', 'POST', body);
+    const res = await jsend(t, userId, 'rettifica', 'POST', body);
     setBusy(false);
-    if (!res.ok) { mostraToast(`❌ ${res.error ?? 'Rettifica non riuscita'}`); return; }
-    mostraToast('✅ Dati rettificati — numero e data invariati');
+    if (!res.ok) { mostraToast(`❌ ${res.error ?? t('protRettificaFallita')}`); return; }
+    mostraToast(t('protDatiRettificati'));
     setInEdit(false);
     onChange();
     void carica();
@@ -983,9 +1014,9 @@ function DettaglioDrawer({ userId, id, isAdmin, categorie, onApri, onClose, onCh
 
   const salvaCampo = async (patch: { noteInterne?: string | null; categoriaId?: string | null; collegatoAId?: string | null }) => {
     setBusy(true);
-    const res = await jsend(userId, '', 'PATCH', { id, azione: 'aggiorna', ...patch });
+    const res = await jsend(t, userId, '', 'PATCH', { id, azione: 'aggiorna', ...patch });
     setBusy(false);
-    if (!res.ok) { mostraToast(`❌ ${res.error ?? 'Salvataggio non riuscito'}`); return; }
+    if (!res.ok) { mostraToast(`❌ ${res.error ?? t('protSalvataggioFallito')}`); return; }
     if (patch.noteInterne !== undefined) { setNoteSalvate(true); setTimeout(() => setNoteSalvate(false), 1600); }
     onChange();
     void carica();
@@ -993,91 +1024,91 @@ function DettaglioDrawer({ userId, id, isAdmin, categorie, onApri, onClose, onCh
 
   return (
     <Drawer open onClose={onClose} width={560}
-      title={rec ? `Prot. n. ${numeroFmt(rec.numero, rec.anno)}` : 'Registrazione'}
-      subtitle={rec ? `${TIPO_LABEL[rec.tipo]} · registrato il ${dataIt(rec.data_registrazione)} alle ${oraIt(rec.data_registrazione)}` : undefined}>
+      title={rec ? t('protDettaglioTitolo', { numero: numeroFmt(rec.numero, rec.anno) }) : t('protRegistrazione')}
+      subtitle={rec ? t('protDettaglioSubtitle', { tipo: tipoLabel(t, rec.tipo), data: dataIt(rec.data_registrazione, locale), ora: oraIt(rec.data_registrazione, locale) }) : undefined}>
       {loading ? <Spinner /> : !rec ? (
-        <p className="font-maven text-sm text-kidville-muted">Registrazione non trovata.</p>
+        <p className="font-maven text-sm text-kidville-muted">{t('protRegistrazioneNonTrovata')}</p>
       ) : (
         <div className="flex flex-col gap-4">
           {rec.annullata_at && (
             <div className="rounded-card bg-kidville-error-soft px-3 py-2.5 font-maven text-sm text-kidville-error">
-              <b>ANNULLATA</b> il {dataIt(rec.annullata_at)} alle {oraIt(rec.annullata_at)} — motivo: {rec.annullo_motivo ?? '—'}
-              <span className="mt-0.5 block text-[12px]">La riga resta a registro come previsto dall&apos;art. 54 DPR 445/2000.</span>
+              {t.rich('protAnnullataBanner', { data: dataIt(rec.annullata_at, locale), ora: oraIt(rec.annullata_at, locale), motivo: rec.annullo_motivo ?? '—', b: (c) => <b>{c}</b> })}
+              <span className="mt-0.5 block text-[12px]">{t('protAnnullataNota')}</span>
             </div>
           )}
           {rec.emergenza && (
             <div className="rounded-card bg-kidville-warn-soft px-3 py-2 font-maven text-[13px] text-kidville-warn">
-              <b>Da registro di emergenza</b>{rec.emergenza_dichiarata_il ? ` — evento del ${dataIt(rec.emergenza_dichiarata_il)} ore ${oraIt(rec.emergenza_dichiarata_il)}` : ''}
+              {t.rich('protEmergenzaBanner', { b: (c) => <b>{c}</b> })}{rec.emergenza_dichiarata_il ? t('protEmergenzaEvento', { data: dataIt(rec.emergenza_dichiarata_il, locale), ora: oraIt(rec.emergenza_dichiarata_il, locale) }) : ''}
             </div>
           )}
 
           {!inEdit ? (
             <>
-              <Campo label="Oggetto" value={<span className={cx(rec.annullata_at && 'line-through')}>{rec.oggetto}</span>} />
+              <Campo label={t('protCampoOggetto')} value={<span className={cx(rec.annullata_at && 'line-through')}>{rec.oggetto}</span>} />
               <div className="grid grid-cols-2 gap-3">
-                {rec.mittente && <Campo label="Mittente" value={rec.mittente} />}
-                {rec.destinatario && <Campo label="Destinatario" value={rec.destinatario} />}
-                {rec.mezzo && <Campo label="Mezzo" value={rec.mezzo} />}
-                {rec.rif_prot_mittente && <Campo label="Prot. mittente" value={`${rec.rif_prot_mittente}${rec.rif_data_mittente ? ` del ${dataIt(rec.rif_data_mittente)}` : ''}`} />}
-                {rec.file_nome_originale && <Campo label="File originale" value={rec.file_nome_originale} />}
-                {rec.allegati_descrizione && <Campo label="Allegati" value={rec.allegati_descrizione} />}
+                {rec.mittente && <Campo label={t('protCampoMittente')} value={rec.mittente} />}
+                {rec.destinatario && <Campo label={t('protCampoDestinatario')} value={rec.destinatario} />}
+                {rec.mezzo && <Campo label={t('protCampoMezzo')} value={mezzoLabel(t, rec.mezzo)} />}
+                {rec.rif_prot_mittente && <Campo label={t('protCampoProtMittente')} value={`${rec.rif_prot_mittente}${rec.rif_data_mittente ? t('protDelData', { data: dataIt(rec.rif_data_mittente, locale) }) : ''}`} />}
+                {rec.file_nome_originale && <Campo label={t('protCampoFileOriginale')} value={rec.file_nome_originale} />}
+                {rec.allegati_descrizione && <Campo label={t('protCampoAllegati')} value={rec.allegati_descrizione} />}
               </div>
             </>
           ) : (
             <div className="flex flex-col gap-3 rounded-card bg-kidville-warn-soft/40 p-3">
               <p className="font-barlow text-[12px] font-bold uppercase text-kidville-warn">
-                Rettifica dati (solo admin) — numero, data e tipo restano invariati
+                {t('protRettificaTitolo')}
               </p>
               <div>
-                <label className={LABEL}>Oggetto *</label>
+                <label className={LABEL}>{t('protLabelOggetto')}</label>
                 <input className={INPUT} value={editVals.oggetto} maxLength={500}
                   onChange={(e) => setEditVals((p) => ({ ...p, oggetto: e.target.value }))} />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className={LABEL}>Mittente</label>
+                  <label className={LABEL}>{t('protCampoMittente')}</label>
                   <input className={INPUT} value={editVals.mittente} maxLength={300}
                     onChange={(e) => setEditVals((p) => ({ ...p, mittente: e.target.value }))} />
                 </div>
                 <div>
-                  <label className={LABEL}>Destinatario</label>
+                  <label className={LABEL}>{t('protCampoDestinatario')}</label>
                   <input className={INPUT} value={editVals.destinatario} maxLength={300}
                     onChange={(e) => setEditVals((p) => ({ ...p, destinatario: e.target.value }))} />
                 </div>
                 <div>
-                  <label className={LABEL}>Mezzo</label>
+                  <label className={LABEL}>{t('protCampoMezzo')}</label>
                   <CockpitSelect className="w-full" value={editVals.mezzo}
                     onChange={(v) => setEditVals((p) => ({ ...p, mezzo: v }))}
-                    options={[{ value: '', label: '—' }, ...MEZZI.map((m) => ({ value: m, label: m }))]} />
+                    options={[{ value: '', label: '—' }, ...MEZZI.map((m) => ({ value: m, label: mezzoLabel(t, m) }))]} />
                 </div>
                 <div>
-                  <label className={LABEL}>Prot. mittente</label>
+                  <label className={LABEL}>{t('protCampoProtMittente')}</label>
                   <input className={INPUT} value={editVals.rifProt} maxLength={60}
                     onChange={(e) => setEditVals((p) => ({ ...p, rifProt: e.target.value }))} />
                 </div>
                 <div>
-                  <label className={LABEL}>Data doc. mittente</label>
+                  <label className={LABEL}>{t('protLabelDataDocMittente')}</label>
                   <DateField className={INPUT} value={editVals.rifData}
                     onChange={(iso) => setEditVals((p) => ({ ...p, rifData: iso }))} />
                 </div>
                 <div>
-                  <label className={LABEL}>Descrizione allegati</label>
+                  <label className={LABEL}>{t('protLabelDescrAllegati')}</label>
                   <input className={INPUT} value={editVals.allegatiDescr} maxLength={500}
                     onChange={(e) => setEditVals((p) => ({ ...p, allegatiDescr: e.target.value }))} />
                 </div>
               </div>
               <div className="flex gap-2">
                 <button type="button" className={BTN_PRIMARY} disabled={busy || !editVals.oggetto.trim()} onClick={() => void salvaRettifica()}>
-                  <Pencil size={14} /> Salva rettifica
+                  <Pencil size={14} /> {t('protSalvaRettifica')}
                 </button>
-                <button type="button" className={BTN_GHOST} onClick={() => setInEdit(false)}>Annulla modifiche</button>
+                <button type="button" className={BTN_GHOST} onClick={() => setInEdit(false)}>{t('protAnnullaModifiche')}</button>
               </div>
             </div>
           )}
 
           <div className="flex flex-wrap gap-2">
-            <button type="button" className={BTN_PRIMARY} onClick={() => void scarica('timbrato')}><Download size={14} /> PDF timbrato</button>
-            <button type="button" className={BTN_GHOST} onClick={() => void scarica('originale')}><Download size={13} /> Originale</button>
+            <button type="button" className={BTN_PRIMARY} onClick={() => void scarica('timbrato')}><Download size={14} /> {t('protPdfTimbrato')}</button>
+            <button type="button" className={BTN_GHOST} onClick={() => void scarica('originale')}><Download size={13} /> {t('protOriginale')}</button>
             {(rec.allegati ?? []).map((al) => (
               <button key={al.id} type="button" className={BTN_GHOST} onClick={() => void scarica('allegato', al.id)}>
                 <Paperclip size={12} /> {al.nome.length > 24 ? `${al.nome.slice(0, 22)}…` : al.nome}
@@ -1085,14 +1116,14 @@ function DettaglioDrawer({ userId, id, isAdmin, categorie, onApri, onClose, onCh
             ))}
             {isAdmin && !rec.annullata_at && (
               <>
-                <label className={cx(BTN_GHOST, 'cursor-pointer', sostituendo && 'pointer-events-none opacity-50')} title="Sostituisce il documento: stesso numero e stessa data, timbro rigenerato, impronta ricalcolata">
-                  {sostituendo ? <Loader2 size={13} className="animate-spin" /> : <UploadCloud size={13} />} Sostituisci file
+                <label className={cx(BTN_GHOST, 'cursor-pointer', sostituendo && 'pointer-events-none opacity-50')} title={t('protSostituisciTitle')}>
+                  {sostituendo ? <Loader2 size={13} className="animate-spin" /> : <UploadCloud size={13} />} {t('protSostituisciFile')}
                   <input type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden"
                     onChange={(e) => { void sostituisciFile(e.target.files?.[0] ?? null); e.target.value = ''; }} />
                 </label>
                 {!inEdit && (
                   <button type="button" className={BTN_GHOST} onClick={apriModifica}>
-                    <Pencil size={13} /> Modifica dati
+                    <Pencil size={13} /> {t('protModificaDati')}
                   </button>
                 )}
               </>
@@ -1101,31 +1132,31 @@ function DettaglioDrawer({ userId, id, isAdmin, categorie, onApri, onClose, onCh
 
           <div className="rounded-card bg-kidville-cream/70 p-3">
             <div className="flex items-center justify-between gap-2">
-              <span className="font-barlow text-[12px] font-bold uppercase text-kidville-neutral">Impronta del documento (art. 53)</span>
+              <span className="font-barlow text-[12px] font-bold uppercase text-kidville-neutral">{t('protImpronta')}</span>
               <button type="button" className={BTN_GHOST} disabled={busy} onClick={() => void verificaIntegrita()}>
-                <ShieldCheck size={13} /> Verifica integrità
+                <ShieldCheck size={13} /> {t('protVerificaIntegrita')}
               </button>
             </div>
             <p className="mt-1 break-all font-mono text-[11px] text-kidville-ink/70">{rec.impronta_sha256}</p>
             {verifica && (
               <p className={cx('mt-1.5 inline-flex items-center gap-1.5 rounded-pill px-2.5 py-1 font-maven text-[12.5px] font-bold', verifica.integro ? 'bg-kidville-success-soft text-kidville-success' : 'bg-kidville-error-soft text-kidville-error')}>
-                {verifica.integro ? <><CheckCircle2 size={14} /> Integro: il file è identico a quello protocollato</> : <><AlertTriangle size={14} /> NON corrisponde: il file archiviato è stato alterato!</>}
+                {verifica.integro ? <><CheckCircle2 size={14} /> {t('protIntegro')}</> : <><AlertTriangle size={14} /> {t('protNonCorrisponde')}</>}
               </p>
             )}
           </div>
 
           {(rec.collegato || (rec.risposte?.length ?? 0) > 0) && (
             <div>
-              <div className="mb-1 font-barlow text-[11px] font-bold uppercase tracking-[0.05em] text-kidville-neutral">Collegamenti</div>
+              <div className="mb-1 font-barlow text-[11px] font-bold uppercase tracking-[0.05em] text-kidville-neutral">{t('protCollegamenti')}</div>
               <div className="flex flex-col gap-1">
                 {rec.collegato && (
                   <button type="button" className="flex items-center gap-2 rounded-input bg-kidville-info-soft px-3 py-2 text-left font-maven text-[13px] text-kidville-info" onClick={() => onApri(rec.collegato!.id)}>
-                    <Link2 size={13} className="shrink-0" /> Collegato a <b>{numeroFmt(rec.collegato.numero, rec.collegato.anno)}</b> — {rec.collegato.oggetto.slice(0, 50)}
+                    <Link2 size={13} className="shrink-0" /> {t.rich('protCollegatoA', { numero: numeroFmt(rec.collegato.numero, rec.collegato.anno), oggetto: rec.collegato.oggetto.slice(0, 50), b: (c) => <b>{c}</b> })}
                   </button>
                 )}
                 {(rec.risposte ?? []).map((x) => (
                   <button key={x.id} type="button" className="flex items-center gap-2 rounded-input bg-kidville-info-soft px-3 py-2 text-left font-maven text-[13px] text-kidville-info" onClick={() => onApri(x.id)}>
-                    <Link2 size={13} className="shrink-0" /> Risposto da <b>{numeroFmt(x.numero, x.anno)}</b> — {x.oggetto.slice(0, 50)}
+                    <Link2 size={13} className="shrink-0" /> {t.rich('protRispostoDa', { numero: numeroFmt(x.numero, x.anno), oggetto: x.oggetto.slice(0, 50), b: (c) => <b>{c}</b> })}
                   </button>
                 ))}
               </div>
@@ -1134,12 +1165,12 @@ function DettaglioDrawer({ userId, id, isAdmin, categorie, onApri, onClose, onCh
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className={LABEL}>Categoria</label>
+              <label className={LABEL}>{t('protLabelCategoria')}</label>
               <CockpitSelect className="w-full" value={rec.categoria_id ?? ''} onChange={(v) => void salvaCampo({ categoriaId: v || null })}
                 options={[{ value: '', label: '—' }, ...categorie.map((c) => ({ value: c.id, label: c.nome }))]} />
             </div>
             <div>
-              <label className={cx(LABEL, 'flex items-center gap-1.5')}>Note interne {noteSalvate && <SaveCheck size={14} />}</label>
+              <label className={cx(LABEL, 'flex items-center gap-1.5')}>{t('protNoteInterneLabel')} {noteSalvate && <SaveCheck size={14} />}</label>
               <textarea className={cx(INPUT, 'min-h-[42px]')} value={note} onChange={(e) => setNote(e.target.value)} maxLength={2000}
                 onBlur={() => { if ((rec.note_interne ?? '') !== note) void salvaCampo({ noteInterne: note || null }); }} />
             </div>
@@ -1150,21 +1181,21 @@ function DettaglioDrawer({ userId, id, isAdmin, categorie, onApri, onClose, onCh
               {!annulloAperto ? (
                 <div className="flex flex-wrap items-center gap-2">
                   <button type="button" className={BTN_DANGER} onClick={() => setAnnulloAperto(true)}>
-                    <Ban size={13} /> Annulla registrazione
+                    <Ban size={13} /> {t('protAnnullaRegistrazione')}
                   </button>
                   {isAdmin && (
                     <button type="button" className={BTN_DANGER} disabled={busy} onClick={() => void elimina()}>
-                      <Trash2 size={13} /> Elimina definitivamente
+                      <Trash2 size={13} /> {t('protEliminaDefinitivamente')}
                     </button>
                   )}
                 </div>
               ) : (
                 <div className="flex flex-col gap-2 rounded-card bg-kidville-error-soft/50 p-3">
-                  <label className={LABEL}>Motivo dell&apos;annullamento * (resterà visibile a registro)</label>
-                  <input className={INPUT} value={motivo} onChange={(e) => setMotivo(e.target.value)} maxLength={500} placeholder="Es. errore di inserimento: oggetto sbagliato" />
+                  <label className={LABEL}>{t('protMotivoAnnullamento')}</label>
+                  <input className={INPUT} value={motivo} onChange={(e) => setMotivo(e.target.value)} maxLength={500} placeholder={t('protMotivoPlaceholder')} />
                   <div className="flex gap-2">
-                    <button type="button" className={BTN_DANGER} disabled={busy} onClick={() => void annulla()}><Ban size={13} /> Conferma annullamento</button>
-                    <button type="button" className={BTN_GHOST} onClick={() => { setAnnulloAperto(false); setMotivo(''); }}>Lascia stare</button>
+                    <button type="button" className={BTN_DANGER} disabled={busy} onClick={() => void annulla()}><Ban size={13} /> {t('protConfermaAnnullamento')}</button>
+                    <button type="button" className={BTN_GHOST} onClick={() => { setAnnulloAperto(false); setMotivo(''); }}>{t('protLasciaStare')}</button>
                   </div>
                 </div>
               )}
@@ -1173,7 +1204,7 @@ function DettaglioDrawer({ userId, id, isAdmin, categorie, onApri, onClose, onCh
           {rec.annullata_at && isAdmin && (
             <div className="border-t border-kidville-line pt-3">
               <button type="button" className={BTN_DANGER} disabled={busy} onClick={() => void elimina()}>
-                <Trash2 size={13} /> Elimina definitivamente (admin)
+                <Trash2 size={13} /> {t('protEliminaDefinitivamenteAdmin')}
               </button>
             </div>
           )}

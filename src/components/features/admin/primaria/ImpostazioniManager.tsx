@@ -1,11 +1,13 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { Save } from 'lucide-react';
 
 // Vincoli temporali e buffer notifiche della didattica primaria.
 // La matrice funzioni per grado si gestisce da Impostazioni → Funzioni & moduli.
 export function ImpostazioniManager({ scuolaId, userId }: { scuolaId: string; userId: string }) {
+  const t = useTranslations('adminPrimaria');
   const [classeOrale, setClasseOrale] = useState(2);
   const [scrittoPratico, setScrittoPratico] = useState(15);
   const [buffer, setBuffer] = useState(10);
@@ -47,27 +49,27 @@ export function ImpostazioniManager({ scuolaId, userId }: { scuolaId: string; us
       }),
     });
     const d = await r.json();
-    setMsg(r.ok ? 'Salvato ✓' : d.error || 'Errore');
+    setMsg(r.ok ? t('comuneSalvato') : d.error || t('comuneErrore'));
   };
 
   return (
     <div className="space-y-6">
       <section>
-        <h3 className="font-barlow text-base font-bold text-kidville-ink mb-2">Vincoli temporali e notifiche</h3>
+        <h3 className="font-barlow text-base font-bold text-kidville-ink mb-2">{t('impostazioniTitolo')}</h3>
         <p className="font-maven text-xs text-kidville-muted mb-3">
-          Finestre di modifica del registro e buffer di invio notifiche valutazioni. L&apos;attivazione dei moduli per grado si gestisce da Impostazioni → Funzioni &amp; moduli.
+          {t('impostazioniSottotitolo')}
         </p>
         <div className="flex flex-wrap gap-4">
           <label className="font-maven text-sm text-kidville-ink">
-            Registro/orali (giorni)
+            {t('impostazioniRegistroOrali')}
             <input type="number" value={classeOrale} onChange={(e) => setClasseOrale(Number(e.target.value))} className="ml-2 w-16 rounded-pill border border-kidville-line px-2 py-1" />
           </label>
           <label className="font-maven text-sm text-kidville-ink">
-            Scritti/pratici (giorni)
+            {t('impostazioniScrittiPratici')}
             <input type="number" value={scrittoPratico} onChange={(e) => setScrittoPratico(Number(e.target.value))} className="ml-2 w-16 rounded-pill border border-kidville-line px-2 py-1" />
           </label>
           <label className="font-maven text-sm text-kidville-ink">
-            Buffer notifiche (min)
+            {t('impostazioniBufferNotifiche')}
             <input type="number" value={buffer} onChange={(e) => setBuffer(Number(e.target.value))} className="ml-2 w-16 rounded-pill border border-kidville-line px-2 py-1" />
           </label>
         </div>
@@ -75,7 +77,7 @@ export function ImpostazioniManager({ scuolaId, userId }: { scuolaId: string; us
 
       <div className="flex items-center gap-3">
         <button onClick={salva} className="font-maven inline-flex items-center gap-1.5 rounded-pill bg-kidville-green px-5 py-2 text-sm text-kidville-yellow">
-          <Save size={15} /> Salva impostazioni
+          <Save size={15} /> {t('impostazioniSalva')}
         </button>
         {msg && <span className={`font-maven text-sm ${msg.includes('✓') ? 'text-kidville-success' : 'text-kidville-error'}`}>{msg}</span>}
       </div>

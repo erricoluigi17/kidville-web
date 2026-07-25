@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState, Suspense } from 'react';
 import Link from 'next/link';
+import { useTranslations, useLocale } from 'next-intl';
 import { motion } from 'framer-motion';
 import {
   Users,
@@ -47,6 +48,8 @@ interface DashboardData {
 const euroFmt = new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 });
 
 function AdminDashboardInner() {
+  const t = useTranslations('adminNav');
+  const locale = useLocale();
   const { userId, ready } = useSessionIdentity();
   // Identità di sessione (M4): con identità non risolta il parametro viene
   // omesso (href invariato), mai `userId=null`.
@@ -60,7 +63,8 @@ function AdminDashboardInner() {
     if (!ready || !userId) return; // in risoluzione o non autenticato (gestito nel render)
     let active = true;
     fetch(`/api/admin/dashboard?userId=${userId}`)
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('Errore caricamento'))))
+      // Marker interno (non mostrato): il testo d'errore è localizzato al render.
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('load'))))
       .then((d) => {
         if (active) setData(d);
       })
@@ -76,12 +80,12 @@ function AdminDashboardInner() {
     return [
       {
         key: 'studenti',
-        label: 'Alunni iscritti',
+        label: t('kpiAlunniIscritti'),
         value: data.studenti.iscritti,
         format: 'int' as const,
         // Scope esplicito: il KPI conta gli iscritti delle sole sedi selezionate
         // (SedeSelector). La card Presenze somma invece tutti i plessi accessibili.
-        sub: 'stato iscritto · sedi attive',
+        sub: t('kpiAlunniIscrittiSub'),
         icon: Users,
         accent: 'border-kidville-green',
         iconBg: 'bg-kidville-green/10 text-kidville-green',
@@ -89,10 +93,10 @@ function AdminDashboardInner() {
       },
       {
         key: 'scaduto',
-        label: 'Pagamenti scaduti',
+        label: t('kpiPagamentiScaduti'),
         value: data.pagamenti.scadutoImporto,
         format: 'euro' as const,
-        sub: `${data.pagamenti.scadutoCount} posizioni`,
+        sub: t('kpiPagamentiScadutiSub', { count: data.pagamenti.scadutoCount }),
         icon: AlertTriangle,
         accent: 'border-kidville-error',
         iconBg: 'bg-kidville-error-soft text-kidville-error',
@@ -100,7 +104,7 @@ function AdminDashboardInner() {
       },
       {
         key: 'incassato',
-        label: 'Incassato nel mese',
+        label: t('kpiIncassatoMese'),
         value: data.pagamenti.incassatoMese,
         format: 'euro' as const,
         icon: TrendingUp,
@@ -110,7 +114,7 @@ function AdminDashboardInner() {
       },
       {
         key: 'iscrizioni',
-        label: 'Iscrizioni in attesa',
+        label: t('kpiIscrizioniAttesa'),
         value: data.iscrizioni.pending,
         format: 'int' as const,
         icon: ClipboardList,
@@ -120,7 +124,7 @@ function AdminDashboardInner() {
       },
       {
         key: 'mensa',
-        label: 'Prenotazioni mensa oggi',
+        label: t('kpiPrenotazioniMensa'),
         value: data.mensa.oggiPrenotazioni,
         format: 'int' as const,
         icon: UtensilsCrossed,
@@ -130,7 +134,7 @@ function AdminDashboardInner() {
       },
       {
         key: 'fatture',
-        label: 'Fatture da emettere',
+        label: t('kpiFattureEmettere'),
         value: data.pagamenti.fattureInAttesa,
         format: 'int' as const,
         icon: ReceiptText,
@@ -139,16 +143,16 @@ function AdminDashboardInner() {
         href: '/admin/pagamenti',
       },
     ];
-  }, [data]);
+  }, [data, t]);
 
   const modules = [
-    { href: '/admin/students', label: 'Anagrafica', icon: Users },
-    { href: '/admin/pagamenti', label: 'Pagamenti', icon: Euro },
-    { href: '/admin/mensa', label: 'Mensa', icon: UtensilsCrossed },
-    { href: '/admin/primaria', label: 'Primaria', icon: GraduationCap },
-    { href: '/admin/modulistica', label: 'Modulistica', icon: FileText },
-    { href: '/admin/impostazioni', label: 'Impostazioni', icon: Settings },
-    { href: '/admin/tools', label: 'Strumenti', icon: Wrench },
+    { href: '/admin/students', label: t('moduloAnagrafica'), icon: Users },
+    { href: '/admin/pagamenti', label: t('moduloPagamenti'), icon: Euro },
+    { href: '/admin/mensa', label: t('moduloMensa'), icon: UtensilsCrossed },
+    { href: '/admin/primaria', label: t('moduloPrimaria'), icon: GraduationCap },
+    { href: '/admin/modulistica', label: t('moduloModulistica'), icon: FileText },
+    { href: '/admin/impostazioni', label: t('moduloImpostazioni'), icon: Settings },
+    { href: '/admin/tools', label: t('moduloStrumenti'), icon: Wrench },
   ];
 
   // Saluto neutro per fascia oraria, calcolato SOLO client-side (hydration-safe,
@@ -161,7 +165,7 @@ function AdminDashboardInner() {
       <HeroCard
         title={`${greeting}${greeting ? '!' : ''}`}
         loading={greeting === ''}
-        subtitle="Direzione & Segreteria"
+        subtitle={t('heroSubtitle')}
         showDate
         animate
       />
@@ -172,25 +176,25 @@ function AdminDashboardInner() {
       <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div className="min-w-0">
           <p className="font-barlow text-[11px] font-bold uppercase tracking-[0.14em] text-kidville-green">
-            Direzione
+            {t('eyebrowDirezione')}
           </p>
           <h2 className="mt-0.5 font-barlow text-2xl font-black uppercase tracking-wide text-kidville-green lg:text-[28px]">
-            Dashboard Direzione
+            {t('dashboardTitolo')}
           </h2>
         </div>
         <div className="flex flex-wrap gap-2">
           <Link href={withUser('/admin/modulistica?tab=ricevuti')} className={btnClass('ghost', 'sm')}>
-            <ClipboardList size={16} /> Iscrizioni
+            <ClipboardList size={16} /> {t('azioneIscrizioni')}
           </Link>
           <Link href={withUser('/admin/pagamenti')} className={btnClass('primary', 'sm')}>
-            <Plus size={16} /> Genera rette
+            <Plus size={16} /> {t('azioneGeneraRette')}
           </Link>
         </div>
       </div>
 
       {(error || (ready && !userId)) && (
         <div className="mt-6 rounded-2xl border border-kidville-error/30 bg-kidville-error-soft p-4 font-maven text-sm text-kidville-error">
-          {error ? `${error}. Verifica di essere autenticato come staff.` : 'Sessione non valida: effettua di nuovo l\'accesso.'}
+          {error ? t('erroreDashboard') : t('sessioneNonValida')}
         </div>
       )}
 
@@ -241,7 +245,7 @@ function AdminDashboardInner() {
           >
             <div className="flex items-center justify-between mb-3">
               <h2 className="font-barlow font-black uppercase tracking-wide text-kidville-green">
-                Incassi · ultimi 6 mesi
+                {t('graficoIncassiTitolo')}
               </h2>
               <TrendingUp size={18} className="text-kidville-success" />
             </div>
@@ -256,14 +260,14 @@ function AdminDashboardInner() {
           >
             <div className="flex items-center justify-between mb-3">
               <h2 className="font-barlow font-black uppercase tracking-wide text-kidville-green">
-                Alunni per classe
+                {t('graficoAlunniClasseTitolo')}
               </h2>
               <Users size={18} className="text-kidville-green" />
             </div>
             {data.studenti.perClasse.length ? (
               <StudentiPerClasseChart data={data.studenti.perClasse} />
             ) : (
-              <p className="font-maven text-sm text-kidville-muted py-12 text-center">Nessun alunno iscritto</p>
+              <p className="font-maven text-sm text-kidville-muted py-12 text-center">{t('nessunAlunnoIscritto')}</p>
             )}
           </motion.div>
         </div>
@@ -277,31 +281,31 @@ function AdminDashboardInner() {
       {data && (
         <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-4">
           <AlertPanel
-            title="Pagamenti scaduti"
+            title={t('kpiPagamentiScaduti')}
             icon={AlertTriangle}
             count={data.pagamenti.scadutoCount}
             tone="red"
             href={withUser('/admin/pagamenti')}
-            empty="Nessun pagamento scaduto 🎉"
+            empty={t('alertScadutiVuoto')}
             rows={data.alert.scaduti.map((s) => ({
               id: s.id,
               left: s.alunno,
               right: euroFmt.format(s.importo),
-              meta: new Date(s.scadenza).toLocaleDateString('it-IT'),
+              meta: new Date(s.scadenza).toLocaleDateString(locale),
             }))}
           />
           <AlertPanel
-            title="Iscrizioni da processare"
+            title={t('alertIscrizioniTitolo')}
             icon={ClipboardList}
             count={data.iscrizioni.pending}
             tone="amber"
             href={withUser('/admin/modulistica?tab=ricevuti')}
-            empty="Nessuna iscrizione in attesa"
+            empty={t('alertIscrizioniVuoto')}
             rows={data.alert.iscrizioni.map((s, i) => ({
               id: s.id,
-              left: `Richiesta #${i + 1}`,
-              right: 'Da gestire',
-              meta: s.data ? new Date(s.data).toLocaleDateString('it-IT') : '',
+              left: t('alertRichiesta', { n: i + 1 }),
+              right: t('alertDaGestire'),
+              meta: s.data ? new Date(s.data).toLocaleDateString(locale) : '',
             }))}
           />
         </div>
@@ -310,7 +314,7 @@ function AdminDashboardInner() {
       {/* Hub moduli */}
       <div className="mt-8">
         <h2 className="font-barlow font-black uppercase tracking-wide text-kidville-green mb-3">
-          Tutti i moduli
+          {t('tuttiIModuli')}
         </h2>
         <RevealGroup className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {modules.map((m) => {
@@ -341,6 +345,7 @@ function AdminDashboardInner() {
  * canali realtime). Stessa struttura DR del placeholder che sostituisce.
  */
 function PresenzeRealtimeCard({ userId }: { userId: string | null }) {
+  const t = useTranslations('adminNav');
   const [dati, setDati] = useState<PresenzeAggregate | null>(null);
   const [ready, setReady] = useState(false);
 
@@ -365,11 +370,11 @@ function PresenzeRealtimeCard({ userId }: { userId: string | null }) {
   const totale = dati?.totale;
   const pct = totale && totale.iscritti > 0 ? Math.round((totale.presenti / totale.iscritti) * 100) : null;
   const tiles = [
-    { label: 'Presenti oggi', value: totale?.presenti, cls: 'text-kidville-green' },
-    { label: 'Iscritti', value: totale?.iscritti, cls: 'text-kidville-green' },
-    { label: 'Assenti', value: totale?.assenti, cls: 'text-kidville-green' },
+    { label: t('presenzeTilePresenti'), value: totale?.presenti, cls: 'text-kidville-green' },
+    { label: t('presenzeTileIscritti'), value: totale?.iscritti, cls: 'text-kidville-green' },
+    { label: t('presenzeTileAssenti'), value: totale?.assenti, cls: 'text-kidville-green' },
     {
-      label: 'Appelli mancanti',
+      label: t('presenzeTileAppelli'),
       value: totale?.appelli_mancanti,
       cls: (totale?.appelli_mancanti ?? 0) > 0 ? 'text-kidville-warn' : 'text-kidville-green',
     },
@@ -379,9 +384,9 @@ function PresenzeRealtimeCard({ userId }: { userId: string | null }) {
     <div className="mt-6 rounded-2xl bg-kidville-white p-5 shadow-sm border border-kidville-line">
       <SectionTitle
         icon={Users}
-        title="Presenze in tempo reale"
-        sub="Monitoraggio multi-sede · per sede e per classe"
-        action={<Live label="Live · 60s" />}
+        title={t('presenzeTitolo')}
+        sub={t('presenzeSottotitolo')}
+        action={<Live label={t('presenzeLive')} />}
       />
       <div className="flex flex-col items-center gap-6 sm:flex-row">
         <Donut
@@ -389,7 +394,7 @@ function PresenzeRealtimeCard({ userId }: { userId: string | null }) {
           max={totale?.iscritti ?? 1}
           tone={pct == null ? 'neutral' : 'green'}
           label={pct == null ? '—' : `${pct}%`}
-          sub="presenti"
+          sub={t('presenzeDonutSub')}
         />
         <div className="grid flex-1 grid-cols-2 gap-3 sm:grid-cols-4">
           {tiles.map((t) => (
@@ -405,7 +410,7 @@ function PresenzeRealtimeCard({ userId }: { userId: string | null }) {
 
       {/* elenco per sede e per classe */}
       {ready && dati && dati.sedi.length === 0 && (
-        <p className="mt-3 font-maven text-xs text-kidville-muted">Nessun alunno iscritto nei plessi in gestione.</p>
+        <p className="mt-3 font-maven text-xs text-kidville-muted">{t('presenzeNessunPlesso')}</p>
       )}
       {dati && dati.sedi.length > 0 && (
         <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
@@ -414,7 +419,7 @@ function PresenzeRealtimeCard({ userId }: { userId: string | null }) {
               <div className="flex items-center justify-between gap-2">
                 <span className="truncate font-barlow text-[13.5px] font-extrabold uppercase text-kidville-green">{sede.scuola}</span>
                 <span className="shrink-0 font-maven text-xs font-semibold text-kidville-ink/70">
-                  {sede.presenti}/{sede.iscritti} presenti
+                  {t('sedePresenti', { presenti: sede.presenti, iscritti: sede.iscritti })}
                 </span>
               </div>
               {sede.classi.length > 0 && (
@@ -423,7 +428,7 @@ function PresenzeRealtimeCard({ userId }: { userId: string | null }) {
                     <li key={c.section_id} className="flex items-center justify-between gap-2 py-1.5">
                       <span className="truncate font-maven text-sm font-semibold text-kidville-ink/80">{c.classe}</span>
                       <span className="flex shrink-0 items-center gap-2">
-                        {!c.appello_fatto && <Badge tone="warn">Appello mancante</Badge>}
+                        {!c.appello_fatto && <Badge tone="warn">{t('appelloMancante')}</Badge>}
                         <span className="font-barlow text-sm font-black text-kidville-ink/80">
                           {c.presenti}/{c.iscritti}
                         </span>
@@ -464,6 +469,7 @@ function AlertPanel({
   rows: AlertRow[];
   empty: string;
 }) {
+  const t = useTranslations('adminNav');
   const toneCls = tone === 'red' ? 'bg-kidville-error' : 'bg-kidville-warn';
   return (
     <div className="rounded-2xl bg-kidville-white p-5 shadow-sm border border-kidville-line">
@@ -482,7 +488,7 @@ function AlertPanel({
           )}
         </div>
         <Link href={href} className="font-maven text-xs font-semibold text-kidville-green hover:underline inline-flex items-center gap-1">
-          Apri <ArrowRight size={14} />
+          {t('alertApri')} <ArrowRight size={14} />
         </Link>
       </div>
       {rows.length === 0 ? (
@@ -513,9 +519,14 @@ function AlertPanel({
   );
 }
 
+function DashboardFallback() {
+  const t = useTranslations('adminNav');
+  return <div className="p-8 font-maven text-kidville-muted">{t('caricamento')}</div>;
+}
+
 export default function AdminDashboardPage() {
   return (
-    <Suspense fallback={<div className="p-8 font-maven text-kidville-muted">Caricamento…</div>}>
+    <Suspense fallback={<DashboardFallback />}>
       <AdminDashboardInner />
     </Suspense>
   );

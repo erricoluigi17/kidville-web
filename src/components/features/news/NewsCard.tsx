@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import { useLocale, useTranslations } from 'next-intl'
 import { Pin, Newspaper, Megaphone, Camera } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
@@ -14,19 +15,21 @@ export function estrattoTesto(testo: string | null | undefined, max = 140): stri
   return t.slice(0, max - 1).trimEnd() + '…'
 }
 
-const fmtData = (iso: string | null): string => {
+const fmtData = (iso: string | null, locale: string): string => {
   if (!iso) return ''
   try {
-    return new Date(iso).toLocaleDateString('it-IT', { day: 'numeric', month: 'short', timeZone: 'Europe/Rome' })
+    return new Date(iso).toLocaleDateString(locale, { day: 'numeric', month: 'short', timeZone: 'Europe/Rome' })
   } catch {
     return ''
   }
 }
 
-const TIPO_META: Record<NewsTipo, { label: string; Icon: typeof Newspaper }> = {
-  articolo: { label: 'Articolo', Icon: Newspaper },
-  breve: { label: 'Comunicato', Icon: Megaphone },
-  instagram: { label: 'Instagram', Icon: Camera },
+// La label del tipo passa dall'i18n: la chiave è risolta dentro il componente
+// (gli hook non si usano a livello di modulo).
+const TIPO_META: Record<NewsTipo, { labelKey: string; Icon: typeof Newspaper }> = {
+  articolo: { labelKey: 'tipoArticolo', Icon: Newspaper },
+  breve: { labelKey: 'tipoComunicato', Icon: Megaphone },
+  instagram: { labelKey: 'tipoInstagram', Icon: Camera },
 }
 
 interface Props {
@@ -36,6 +39,8 @@ interface Props {
 }
 
 export function NewsCard({ post, categoriaNome, href }: Props) {
+  const locale = useLocale()
+  const t = useTranslations('parentNews')
   const meta = TIPO_META[post.tipo] ?? TIPO_META.articolo
   const Icon = meta.Icon
   const estratto = estrattoTesto(post.contenuto_testo)
@@ -55,12 +60,12 @@ export function NewsCard({ post, categoriaNome, href }: Props) {
             {post.pinned && (
               <Badge tone="evidenza" className="gap-1">
                 <Pin size={11} strokeWidth={2.4} />
-                In evidenza
+                {t('inEvidenza')}
               </Badge>
             )}
             <span className="inline-flex items-center gap-1 rounded-pill bg-kidville-green-soft px-[9px] py-1 font-barlow text-[11px] font-extrabold uppercase tracking-[0.06em] text-kidville-green">
               <Icon size={12} strokeWidth={2.2} />
-              {meta.label}
+              {t(meta.labelKey)}
             </span>
             {categoriaNome && (
               <span className="inline-flex items-center rounded-pill bg-kidville-yellow-soft px-[9px] py-1 font-barlow text-[11px] font-extrabold uppercase tracking-[0.06em] text-kidville-ink">
@@ -68,7 +73,7 @@ export function NewsCard({ post, categoriaNome, href }: Props) {
               </span>
             )}
             <span className="ml-auto font-maven text-[11px] text-kidville-sub">
-              {fmtData(post.pubblicata_il)}
+              {fmtData(post.pubblicata_il, locale)}
             </span>
           </div>
           <h3 className="mt-2 line-clamp-2 font-barlow text-base font-extrabold uppercase leading-tight text-kidville-green">

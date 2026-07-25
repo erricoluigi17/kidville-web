@@ -2,14 +2,23 @@
 
 import { useState, useEffect, useCallback, Suspense } from 'react';
 import Link from 'next/link';
+import { useTranslations } from 'next-intl';
+import { useDateFormat } from '@/lib/i18n/date';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronLeft, ChevronRight, Camera, ChevronDown, GraduationCap } from 'lucide-react';
-import { getEventConfig } from '@/components/features/teacher/diary/eventConfig';
+import { getEventConfig, useEventLabel } from '@/components/features/teacher/diary/eventConfig';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
+import { OfflineBadge } from '@/components/ui/OfflineBadge';
+import { fetchConCache } from '@/lib/offline/read-cache';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 import { useChildSchoolType } from '@/lib/auth/use-child-school-type';
-import { UMORE_CONFIG, umoreFromDettagli, umoreNarrative } from '@/lib/diary/umore';
+import { UMORE_CONFIG, useUmoreLabel, umoreFromDettagli, umoreNarrative } from '@/lib/diary/umore';
 import { MediaGrid, MediaItem } from '@/components/features/gallery/MediaGrid';
+
+// Tipo del traduttore next-intl: serve per passare `t` alle funzioni helper
+// (narrativa, etichetta del giorno) definite fuori dal componente, dove gli
+// hook non si possono chiamare.
+type Traduci = ReturnType<typeof useTranslations>;
 
 // ─── Tipi ─────────────────────────────────────────────────────────────────────
 
@@ -44,37 +53,24 @@ const MEAL_ICONS: Record<string, string> = {
     primo: '🍝', secondo: '🍖', contorno: '🥗', frutta: '🍎', merenda: '🍪',
 };
 
-const MEAL_NAMES: Record<string, string> = {
-    primo: 'la pasta', secondo: 'il secondo', contorno: 'il contorno',
-    frutta: 'la frutta', merenda: 'la merenda',
-};
-
-const QUANTITY_NARRATIVE: Record<string, string> = {
-    niente: 'non ne ho voluto assaggiare',
-    poco:   'ne ho mangiato solo un pochino',
-    meta:   'ne ho mangiato metà',
-    quasi:  'ne ho mangiato quasi tutto',
-    tutto:  'ho finito tutto! 🌟',
-};
-
 // Orario leggibile per l'entrata: un ISO (timestamp dell'appello) diventa 'HH:MM'
 // in ora locale; ciò che ISO non è (es. già 'HH:MM') passa invariato.
-function formatOrarioEntrata(raw: string | null | undefined): string | null {
+function formatOrarioEntrata(raw: string | null | undefined, locale: string): string | null {
     if (!raw) return null;
     const d = new Date(raw);
     return !isNaN(d.getTime())
-        ? d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })
+        ? new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(d)
         : raw;
 }
 
-function buildFirstPersonNarrative(tipo: string, dettagli: Record<string, unknown> | null): { lines: string[], emoji: string } {
+function buildFirstPersonNarrative(tipo: string, dettagli: Record<string, unknown> | null, t: Traduci, locale: string): { lines: string[], emoji: string } {
     if (tipo === 'entrata') {
-        const orario = formatOrarioEntrata((dettagli?.orario as string) ?? '') ?? '';
+        const orario = formatOrarioEntrata((dettagli?.orario as string) ?? '', locale) ?? '';
         return {
             emoji: '👋',
             lines: orario
-                ? [`Sono arrivato/a a scuola alle ${orario}!`]
-                : ['Sono arrivato/a a scuola stamattina!'],
+                ? [t('narrativaEntrataAlle', { orario })]
+                : [t('narrativaEntrataMattina')],
         };
     }
 
@@ -82,16 +78,6 @@ function buildFirstPersonNarrative(tipo: string, dettagli: Record<string, unknow
         const ACTIVITY_EMOJIS: Record<string, string> = {
             pittura: '🎨', musica: '🎵', lettura: '📚', motoria: '🏃',
             gioco: '🧩', natura: '🌿', cucina: '🍪', teatro: '🎭', altro: '✨',
-        };
-        const ACTIVITY_LABELS: Record<string, string> = {
-            pittura: 'Pittura', musica: 'Musica', lettura: 'Lettura', motoria: 'Attività motoria',
-            gioco: 'Gioco libero', natura: 'Natura', cucina: 'Cucina', teatro: 'Teatro', altro: 'Attività speciale',
-        };
-        const PART_PHRASES: Record<string, string> = {
-            non_fatta:  "ma oggi non l'ho fatta",
-            difficolta: "ma ho avuto qualche difficoltà",
-            aiuto:      "con l'aiuto della maestra",
-            autonomia:  "e l'ho svolta in autonomia! ⭐",
         };
 
         const rawActivities = dettagli?.activities as Array<{
@@ -101,17 +87,22 @@ function buildFirstPersonNarrative(tipo: string, dettagli: Record<string, unknow
         if (rawActivities && rawActivities.length > 0) {
             const lines = rawActivities.map(a => {
                 const emoji = ACTIVITY_EMOJIS[a.tipo] ?? '✨';
-                const label = ACTIVITY_LABELS[a.tipo] ?? a.tipo;
-                const partPhrase = a.partecipazione ? PART_PHRASES[a.partecipazione] ?? '' : '';
+                // Etichetta e frase di partecipazione da i18n, con fallback ai dati
+                // grezzi (attività ignota → il tipo così com'è; partecipazione
+                // ignota → nessuna frase), come prima delle chiavi.
+                const label = t.has(`attivita_${a.tipo}`) ? t(`attivita_${a.tipo}`) : a.tipo;
+                const partPhrase = a.partecipazione && t.has(`partecipazione_${a.partecipazione}`)
+                    ? t(`partecipazione_${a.partecipazione}`)
+                    : '';
                 const descPart = a.descrizione ? `: ${a.descrizione}` : '';
-                return `${emoji} Ho fatto ${label}${descPart}${partPhrase ? ' ' + partPhrase : ''}`;
+                return `${emoji} ${t('attivitaHoFatto', { label })}${descPart}${partPhrase ? ' ' + partPhrase : ''}`;
             });
             const firstEmoji = ACTIVITY_EMOJIS[rawActivities[0].tipo] ?? '🎨';
             return { emoji: rawActivities.length > 1 ? '🎭' : firstEmoji, lines };
         }
 
         // Fallback testo generico
-        return { emoji: '🎨', lines: ['Oggi ho fatto delle belle attività con i miei amici!'] };
+        return { emoji: '🎨', lines: [t('attivitaGenerica')] };
     }
 
     if (tipo === 'pranzo' || tipo === 'merenda') {
@@ -121,19 +112,17 @@ function buildFirstPersonNarrative(tipo: string, dettagli: Record<string, unknow
         if (corsi) {
             Object.entries(corsi).forEach(([k, v]) => {
                 if (!v) return;
-                const name = MEAL_NAMES[k] ?? k;
+                // Nome portata e narrativa della quantità da i18n, con fallback ai
+                // dati grezzi (portata/quantità ignota) come prima delle chiavi.
+                const name = t.has(`pasto_${k}`) ? t(`pasto_${k}`) : k;
                 const icon = MEAL_ICONS[k] ?? '🍽️';
-                const narrative = QUANTITY_NARRATIVE[v] ?? `ne ho mangiato ${v}`;
-                if (v === 'niente') {
-                    lines.push(`${icon} ${name.charAt(0).toUpperCase() + name.slice(1)}: ${narrative}`);
-                } else {
-                    lines.push(`${icon} ${name.charAt(0).toUpperCase() + name.slice(1)}: ${narrative}`);
-                }
+                const narrative = t.has(`quantita_${v}`) ? t(`quantita_${v}`) : t('quantitaGenerica', { quantita: v });
+                lines.push(`${icon} ${name.charAt(0).toUpperCase() + name.slice(1)}: ${narrative}`);
             });
         }
 
         if (lines.length === 0) {
-            return { emoji: tipo === 'merenda' ? '🍎' : '🍽️', lines: ['Ho mangiato con i miei amici!'] };
+            return { emoji: tipo === 'merenda' ? '🍎' : '🍽️', lines: [t('pastoGenerico')] };
         }
 
         return { emoji: tipo === 'merenda' ? '🍎' : '🍽️', lines };
@@ -143,9 +132,9 @@ function buildFirstPersonNarrative(tipo: string, dettagli: Record<string, unknow
         const ini = dettagli?.orario_inizio as string | undefined;
         const fin = dettagli?.orario_fine   as string | undefined;
         const lines: string[] = [];
-        if (ini && fin) lines.push(`Ho dormito dalle ${ini} alle ${fin} 😴`);
-        else if (ini)   lines.push(`Mi sono addormentato/a alle ${ini} 😴`);
-        else            lines.push('Ho fatto un bel sonnellino! 😴');
+        if (ini && fin) lines.push(t('nannaDurata', { inizio: ini, fine: fin }));
+        else if (ini)   lines.push(t('nannaInizio', { inizio: ini }));
+        else            lines.push(t('nannaGenerica'));
         return { emoji: '😴', lines };
     }
 
@@ -153,7 +142,7 @@ function buildFirstPersonNarrative(tipo: string, dettagli: Record<string, unknow
         const fin = dettagli?.orario_fine as string | undefined;
         return {
             emoji: '☀️',
-            lines: fin ? [`Mi sono svegliato/a alle ${fin} ☀️`] : ['Mi sono svegliato/a dal sonnellino! ☀️'],
+            lines: fin ? [t('nannaFine', { fine: fin })] : [t('nannaFineGenerica')],
         };
     }
 
@@ -162,14 +151,14 @@ function buildFirstPersonNarrative(tipo: string, dettagli: Record<string, unknow
         const cacca  = Number(dettagli?.cacca  ?? 0);
         const vasino = Number(dettagli?.vasino ?? 0);
         const lines: string[] = [];
-        if (pipi   > 0) lines.push(`💧 Ho fatto pipì ${pipi === 1 ? 'una volta' : `${pipi} volte`}`);
-        if (cacca  > 0) lines.push(`💩 Ho fatto cacca ${cacca === 1 ? 'una volta' : `${cacca} volte`}`);
-        if (vasino > 0) lines.push(`🚽 Ho usato il vasino ${vasino === 1 ? 'una volta' : `${vasino} volte`}`);
-        if (lines.length === 0) lines.push('Sono stato/a al bagno oggi!');
+        if (pipi   > 0) lines.push(t('bagnoPipi',   { count: pipi }));
+        if (cacca  > 0) lines.push(t('bagnoCacca',  { count: cacca }));
+        if (vasino > 0) lines.push(t('bagnoVasino', { count: vasino }));
+        if (lines.length === 0) lines.push(t('bagnoGenerico'));
         return { emoji: '🚿', lines };
     }
 
-    return { emoji: '📝', lines: ['Evento registrato dalla maestra.'] };
+    return { emoji: '📝', lines: [t('eventoGenerico')] };
 }
 
 // ─── Utilities data ────────────────────────────────────────────────────────────
@@ -178,17 +167,17 @@ function toDateKey(d: Date): string {
     return d.toISOString().split('T')[0];
 }
 
-function formatDayLabel(dateKey: string): string {
+function formatDayLabel(dateKey: string, t: Traduci, locale: string): string {
     const d = new Date(dateKey + 'T12:00:00');
     const today = toDateKey(new Date());
     const yesterday = toDateKey(new Date(Date.now() - 86400000));
-    if (dateKey === today)     return 'Oggi';
-    if (dateKey === yesterday) return 'Ieri';
-    return d.toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' });
+    if (dateKey === today)     return t('giornoOggi');
+    if (dateKey === yesterday) return t('giornoIeri');
+    return new Intl.DateTimeFormat(locale, { weekday: 'long', day: 'numeric', month: 'long' }).format(d);
 }
 
-function formatTime(iso: string): string {
-    return new Date(iso).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+function formatTime(iso: string, locale: string): string {
+    return new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(new Date(iso));
 }
 
 function deduplicateAndSort(entries: DiaryEntry[]): DiaryEntry[] {
@@ -205,10 +194,15 @@ function deduplicateAndSort(entries: DiaryEntry[]): DiaryEntry[] {
 // ─── Componenti ───────────────────────────────────────────────────────────────
 
 function EventCard({ entry, index }: { entry: DiaryEntry; index: number }) {
+    const t = useTranslations('diario');
+    const f = useDateFormat();
+    const eventLabel = useEventLabel();
     const config = getEventConfig(entry.tipo_evento);
     const { lines, emoji } = buildFirstPersonNarrative(
         entry.tipo_evento,
         entry.dettagli,
+        t,
+        f.locale,
     );
     const borderColor = config.accentColor.split(' ').find(c => c.startsWith('border-')) ?? 'border-kidville-line';
 
@@ -226,10 +220,10 @@ function EventCard({ entry, index }: { entry: DiaryEntry; index: number }) {
                 </div>
                 <div className="flex-1">
                     <p className={`font-barlow font-black text-sm uppercase tracking-wide ${config.accentColor.split(' ').find(c => c.startsWith('text-')) ?? 'text-kidville-green'}`}>
-                        {config.label}
+                        {eventLabel(entry.tipo_evento)}
                     </p>
                     <p className="font-maven text-[11px] text-kidville-muted">
-                        {formatTime(entry.timestamp_evento)}
+                        {formatTime(entry.timestamp_evento, f.locale)}
                     </p>
                 </div>
                 <span className="text-2xl">{emoji}</span>
@@ -252,7 +246,7 @@ function EventCard({ entry, index }: { entry: DiaryEntry; index: number }) {
                 {entry.notaBambino && (
                     <div className="mt-2 rounded-xl bg-kidville-cream px-3 py-2">
                         <p className="font-barlow font-bold uppercase text-[10px] tracking-wide text-kidville-green">
-                            Nota per te
+                            {t('notaPerTe')}
                         </p>
                         <p className="font-maven text-sm text-kidville-ink leading-relaxed mt-0.5">
                             💬 &ldquo;{entry.notaBambino}&rdquo;
@@ -265,6 +259,7 @@ function EventCard({ entry, index }: { entry: DiaryEntry; index: number }) {
 }
 
 function PhotosSection({ photos }: { photos: MediaItem[] }) {
+    const t = useTranslations('diario');
     const [open, setOpen] = useState(false);
     if (photos.length === 0) return null;
     return (
@@ -284,10 +279,10 @@ function PhotosSection({ photos }: { photos: MediaItem[] }) {
                     </div>
                     <div>
                         <p className="font-barlow font-black text-sm uppercase tracking-wide text-pink-600">
-                            Le foto di oggi
+                            {t('fotoTitolo')}
                         </p>
                         <p className="font-maven text-[11px] text-kidville-muted">
-                            {photos.length} {photos.length === 1 ? 'foto' : 'foto'} scattate dalla maestra
+                            {t('fotoScattate', { count: photos.length })}
                         </p>
                     </div>
                 </div>
@@ -318,12 +313,17 @@ function PhotosSection({ photos }: { photos: MediaItem[] }) {
 
 // Identità dalla sessione (URL → localStorage → /api/me), senza fallback demo (M4).
 function ParentDiaryContent() {
+    const t = useTranslations('diario');
+    const f = useDateFormat();
+    const umoreLabel = useUmoreLabel();
     const { parentId, studentId: alunnoId, ready } = useParentIdentity();
     // Guardia grado: il diario giornaliero esiste solo per nido/infanzia.
     const { schoolType, ready: schoolTypeReady } = useChildSchoolType();
 
     const [dateKey, setDateKey] = useState<string>(toDateKey(new Date()));
     const [entries, setEntries] = useState<DiaryEntry[]>([]);
+    // true quando il diario del giorno viene dalla cache offline (rete assente).
+    const [offline, setOffline] = useState(false);
     const [photos, setPhotos] = useState<MediaItem[]>([]);
     // Il giorno di cui abbiamo completato il caricamento: lo spinner è derivato
     // (loading = giorno richiesto ≠ giorno caricato), niente setState sincroni.
@@ -349,19 +349,29 @@ function ParentDiaryContent() {
     const load = useCallback(async (dk: string) => {
         if (!ready || !alunnoId) return; // identità non risolta: lo spinner resta
         try {
-            // Carica eventi diario (errore di rete ⇒ stato vuoto, come prima)
-            const res = await fetch(`/api/diary/entries?alunno_id=${alunnoId}&from=${dk}&to=${dk}`).catch(() => null);
-            if (res?.ok) {
-                const data: DiaryEntry[] = await res.json();
-                setEntries(deduplicateAndSort(data));
-            } else {
-                setEntries([]);
+            // Carica eventi diario con cache offline. Il fallback serve l'ultima copia
+            // salvata (entriesOffline=true); rete giù e nessuna cache ⇒ stato vuoto,
+            // come prima. La cache viene isolata in un try/catch interno così un
+            // fallimento totale NON salta le fetch successive (checkin, foto).
+            let entriesData: DiaryEntry[] | null = null;
+            let entriesOffline = false;
+            try {
+                const r = await fetchConCache<DiaryEntry[]>(
+                    `diario:${alunnoId}:${dk}:${dk}`,
+                    `/api/diary/entries?alunno_id=${alunnoId}&from=${dk}&to=${dk}`,
+                );
+                entriesData = r.data;
+                entriesOffline = r.offline;
+            } catch {
+                // Rete assente e nessuna copia in cache: nessuna voce, come prima.
             }
+            setEntries(entriesData ? deduplicateAndSort(entriesData) : []);
+            setOffline(entriesOffline);
 
             // "Entrata" dal modulo Presenze (orario di check-in del giorno)
             const ciRes = await fetch(`/api/diary/checkin?alunno_id=${alunnoId}&date=${dk}`).catch(() => null);
             const ci = ciRes?.ok ? await ciRes.json().catch(() => null) : null;
-            setCheckIn(formatOrarioEntrata(ci?.orario_entrata));
+            setCheckIn(formatOrarioEntrata(ci?.orario_entrata, f.locale));
 
             // Carica foto reali associate a questo alunno per il giorno selezionato
             // (GET gated: identità anche via header, oltre alla sessione)
@@ -377,7 +387,7 @@ function ParentDiaryContent() {
         } finally {
             setLoadedKey(dk);
         }
-    }, [ready, alunnoId, parentId]);
+    }, [ready, alunnoId, parentId, f.locale]);
 
     useEffect(() => { load(dateKey); }, [dateKey, load]);
 
@@ -417,9 +427,9 @@ function ParentDiaryContent() {
             <div className="min-h-screen bg-kidville-cream/40 p-6">
                 <div className="max-w-md mx-auto rounded-card bg-white p-8 text-center shadow-sm">
                     <GraduationCap className="mx-auto mb-3 text-kidville-green" size={40} />
-                    <h2 className="font-barlow text-xl font-bold text-kidville-ink">Sezione non disponibile</h2>
-                    <p className="font-maven text-sm text-kidville-muted mt-1 mb-4">Il diario giornaliero riguarda solo nido e infanzia.</p>
-                    <Link href="/parent/primaria" className="font-maven inline-block rounded-pill bg-kidville-green px-5 py-2 text-sm text-kidville-yellow">Vai alla sezione Primaria</Link>
+                    <h2 className="font-barlow text-xl font-bold text-kidville-ink">{t('primariaTitolo')}</h2>
+                    <p className="font-maven text-sm text-kidville-muted mt-1 mb-4">{t('primariaTesto')}</p>
+                    <Link href="/parent/primaria" className="font-maven inline-block rounded-pill bg-kidville-green px-5 py-2 text-sm text-kidville-yellow">{t('primariaLink')}</Link>
                 </div>
             </div>
         );
@@ -430,9 +440,9 @@ function ParentDiaryContent() {
 
             {/* Header verde (DR): titolo + chip nome bambino */}
             <PageHeaderCard
-                eyebrow="La giornata"
-                title="Il mio diario"
-                subtitle="La giornata a scuola, raccontata da me 🌈"
+                eyebrow={t('headerEyebrow')}
+                title={t('headerTitle')}
+                subtitle={t('headerSubtitle')}
                 className="mb-6"
                 action={
                     <div className="flex items-center gap-2 rounded-pill bg-white/15 py-1 pl-1 pr-3">
@@ -453,6 +463,13 @@ function ParentDiaryContent() {
                 }
             />
 
+            {/* Indicatore offline: il diario del giorno viene dalla cache */}
+            {offline && !loading && (
+                <div className="mb-4 flex justify-center">
+                    <OfflineBadge />
+                </div>
+            )}
+
             {/* Navigazione giorno */}
             <div className="flex items-center justify-between mb-5 bg-white rounded-2xl border border-kidville-line shadow-sm px-4 py-3">
                 <button
@@ -464,12 +481,12 @@ function ParentDiaryContent() {
 
                 <div className="text-center">
                     <p className="font-barlow font-black text-base text-kidville-green uppercase tracking-wide">
-                        {formatDayLabel(dateKey)}
+                        {formatDayLabel(dateKey, t, f.locale)}
                     </p>
                     <p className="font-maven text-xs text-kidville-muted">
-                        {new Date(dateKey + 'T12:00:00').toLocaleDateString('it-IT', {
+                        {new Intl.DateTimeFormat(f.locale, {
                             day: 'numeric', month: 'long', year: 'numeric',
-                        })}
+                        }).format(new Date(dateKey + 'T12:00:00'))}
                     </p>
                 </div>
 
@@ -501,7 +518,7 @@ function ParentDiaryContent() {
                     {loading && (
                         <div className="flex flex-col items-center justify-center py-20 gap-3">
                             <div className="w-7 h-7 border-[3px] border-kidville-green/20 border-t-kidville-green rounded-full animate-spin" />
-                            <p className="font-maven text-sm text-kidville-muted">Un attimo...</p>
+                            <p className="font-maven text-sm text-kidville-muted">{t('caricamento')}</p>
                         </div>
                     )}
 
@@ -512,10 +529,10 @@ function ParentDiaryContent() {
                                 📖
                             </div>
                             <h2 className="font-barlow font-bold text-xl text-kidville-green uppercase mb-2">
-                                Nessuna voce
+                                {t('vuotoTitolo')}
                             </h2>
                             <p className="font-maven text-kidville-muted max-w-xs text-sm">
-                                La maestra non ha ancora compilato il diario per questo giorno.
+                                {t('vuotoTesto')}
                             </p>
                         </div>
                     )}
@@ -530,12 +547,14 @@ function ParentDiaryContent() {
                                 <span className="text-[26px] leading-none">{umoreCfg?.emoji ?? '🙂'}</span>
                                 <div className="min-w-0">
                                     <p className="font-barlow text-[15px] font-black uppercase leading-none tracking-wide text-kidville-green">
-                                        Umore della giornata{umoreCfg ? `: ${umoreCfg.label}` : ''}
+                                        {t('umoreTitolo')}{umoreCfg ? `: ${umoreLabel(umore ?? '')}` : ''}
                                     </p>
                                     <p className="mt-1 font-maven text-[12px] text-kidville-green/75">
                                         {umore
                                             ? umoreNarrative(umore)
-                                            : `Presto la maestra potrà segnalare come è andata${studentName ? ` per ${studentName.split(' ')[0]}` : ''}.`}
+                                            : studentName
+                                                ? t('umoreAttesaPer', { nome: studentName.split(' ')[0] })
+                                                : t('umoreAttesa')}
                                     </p>
                                 </div>
                             </div>
@@ -551,13 +570,13 @@ function ParentDiaryContent() {
                                             🚪
                                         </div>
                                         <div className="flex-1">
-                                            <p className="font-barlow font-black text-sm uppercase tracking-wide text-kidville-success">Entrata</p>
+                                            <p className="font-barlow font-black text-sm uppercase tracking-wide text-kidville-success">{t('entrataLabel')}</p>
                                             <p className="font-maven text-[11px] text-kidville-muted">{checkIn}</p>
                                         </div>
                                         <span className="text-2xl">👋</span>
                                     </div>
                                     <p className="font-maven text-sm text-kidville-ink leading-relaxed pl-1 mt-2">
-                                        Sono arrivato/a a scuola alle {checkIn}!
+                                        {t('narrativaEntrataAlle', { orario: checkIn })}
                                     </p>
                                 </motion.div>
                             )}
@@ -574,8 +593,8 @@ function ParentDiaryContent() {
             {/* Footer */}
             <div className="mt-8 p-4 bg-white rounded-2xl border border-kidville-line text-center">
                 <p className="font-maven text-xs text-kidville-muted">
-                    📋 Le informazioni sono visibili per i 14 giorni precedenti.<br />
-                    Per lo storico completo contatta la segreteria.
+                    {t('footerVisibilita')}<br />
+                    {t('footerStorico')}
                 </p>
             </div>
         </div>

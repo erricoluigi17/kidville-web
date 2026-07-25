@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { LocalDelegate } from '@/lib/offline/db';
 import { X, AlertTriangle, User } from 'lucide-react';
 
@@ -13,6 +14,7 @@ interface Props {
 }
 
 export function CheckoutModal({ studentName, delegates, onClose, onConfirmCheckout, onPanicAlert }: Props) {
+    const t = useTranslations('teacherPresenze');
     const [isPanicLoading, setIsPanicLoading] = useState(false);
 
     const handlePanic = async () => {
@@ -27,7 +29,7 @@ export function CheckoutModal({ studentName, delegates, onClose, onConfirmChecko
                 
                 <div className="p-4 border-b border-kidville-line flex items-center justify-between">
                     <h2 className="font-barlow font-bold text-xl text-kidville-green uppercase">
-                        Uscita: {studentName}
+                        {t('uscita')}: {studentName}
                     </h2>
                     <button onClick={onClose} className="p-2 text-kidville-muted hover:text-kidville-error transition-colors">
                         <X size={24} />
@@ -36,11 +38,11 @@ export function CheckoutModal({ studentName, delegates, onClose, onConfirmChecko
 
                 <div className="p-4 overflow-y-auto flex-1">
                     <h3 className="font-maven font-medium text-sm text-kidville-muted mb-3 uppercase tracking-wider">
-                        Delegati Autorizzati
+                        {t('delegatiAutorizzati')}
                     </h3>
-                    
+
                     {delegates.length === 0 ? (
-                        <p className="text-sm text-kidville-muted italic text-center py-4">Nessun delegato registrato.</p>
+                        <p className="text-sm text-kidville-muted italic text-center py-4">{t('nessunDelegato')}</p>
                     ) : (
                         <div className="flex flex-col gap-3">
                             {delegates.map(delegate => (
@@ -58,11 +60,11 @@ export function CheckoutModal({ studentName, delegates, onClose, onConfirmChecko
                                         <div className="font-barlow font-semibold text-kidville-green text-lg">{delegate.nome}</div>
                                         <div className="text-xs font-maven text-kidville-muted uppercase">{delegate.relazione}</div>
                                     </div>
-                                    <button 
+                                    <button
                                         onClick={() => onConfirmCheckout(delegate.id)}
                                         className="h-8 px-3 text-sm font-maven rounded-pill bg-kidville-green text-kidville-yellow hover:opacity-90"
                                     >
-                                        Conferma
+                                        {t('conferma')}
                                     </button>
                                 </div>
                             ))}
@@ -71,16 +73,16 @@ export function CheckoutModal({ studentName, delegates, onClose, onConfirmChecko
                 </div>
 
                 <div className="p-4 bg-kidville-cream border-t border-kidville-line rounded-b-card">
-                    <button 
+                    <button
                         onClick={handlePanic}
                         disabled={isPanicLoading}
                         className="w-full h-12 font-barlow font-bold text-lg rounded-pill bg-kidville-error text-white flex items-center justify-center gap-2 hover:bg-red-700 transition-colors disabled:opacity-50"
                     >
                         <AlertTriangle size={20} />
-                        {isPanicLoading ? 'Invio Allarme...' : 'PANIC ALERT - Ritiro Non Autorizzato'}
+                        {isPanicLoading ? t('invioAllarme') : t('panicAlert')}
                     </button>
                     <p className="text-xs font-maven text-center text-kidville-muted mt-2">
-                        Blocca l&apos;uscita e invia una notifica immediata alla Segreteria e al Genitore.
+                        {t('panicDescrizione')}
                     </p>
                 </div>
             </div>

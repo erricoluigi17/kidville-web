@@ -10,6 +10,7 @@ import { ChatListSkeleton } from '@/components/features/chat/ChatListSkeleton';
 import { useUnreadNotifications } from '@/components/features/chat/useUnreadNotifications';
 import { useChatRealtime } from '@/components/features/chat/useChatRealtime';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
+import { useTranslations } from 'next-intl';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { Btn } from '@/components/ui/Btn';
 
@@ -24,6 +25,7 @@ interface Contact {
 
 // Identità dalla sessione (URL → localStorage → /api/me), senza fallback demo (M4).
 function TeacherChatContent() {
+    const t = useTranslations('teacherComunicazioni');
     const { userId: teacherId, ready } = useSessionIdentity();
 
     const [threads, setThreads] = useState<ChatThread[]>([]);
@@ -271,8 +273,8 @@ function TeacherChatContent() {
         <div className="max-w-5xl mx-auto p-4 sm:p-6">
             {/* Header verde (DR) */}
             <PageHeaderCard
-                eyebrow="Comunicazioni"
-                title="Messaggi"
+                eyebrow={t('chatEyebrow')}
+                title={t('chatTitolo')}
                 badge={
                     <AnimatePresence>
                         {unreadCount > 0 && (
@@ -288,14 +290,14 @@ function TeacherChatContent() {
                         )}
                     </AnimatePresence>
                 }
-                subtitle="Messaggi con le famiglie"
+                subtitle={t('chatSottotitolo')}
                 action={
                     <Btn
                         variant="secondary"
                         size="sm"
                         onClick={() => { setShowNewChat(true); setLoadingContacts(true); loadContacts(); }}
                     >
-                        <Plus size={16} strokeWidth={1.5} /> Nuova Chat
+                        <Plus size={16} strokeWidth={1.5} /> {t('chatNuova')}
                     </Btn>
                 }
                 className="mb-4"
@@ -308,7 +310,7 @@ function TeacherChatContent() {
                 {/* Thread list */}
                 <div className="w-80 flex-shrink-0 bg-white rounded-3xl border border-kidville-line shadow-sm overflow-hidden flex flex-col">
                     <div className="px-4 py-3 border-b border-kidville-line">
-                        <p className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide">Conversazioni</p>
+                        <p className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide">{t('chatConversazioni')}</p>
                     </div>
                     <div className="flex-1 overflow-y-auto">
                         <ChatThreadList threads={threads} selectedId={selectedThread?.id ?? null}
@@ -329,7 +331,7 @@ function TeacherChatContent() {
                                         {selectedThread.other_user.first_name} {selectedThread.other_user.last_name}
                                     </p>
                                     <p className="font-maven text-[11px] text-kidville-muted">
-                                        Genitore di {selectedThread.student.nome} {selectedThread.student.cognome}
+                                        {t('chatGenitoreDi', { nome: selectedThread.student.nome, cognome: selectedThread.student.cognome })}
                                     </p>
                                 </div>
                             </div>
@@ -350,10 +352,10 @@ function TeacherChatContent() {
                                     <MessageSquare size={32} className="text-kidville-green" strokeWidth={1.5} />
                                 </div>
                                 <p className="font-barlow font-bold text-lg text-kidville-green uppercase mb-1">
-                                    Seleziona una conversazione
+                                    {t('chatSelezionaConversazione')}
                                 </p>
                                 <p className="font-maven text-sm text-kidville-muted">
-                                    Scegli un genitore dalla lista o premi &quot;Nuova Chat&quot;
+                                    {t('chatSelezionaConversazioneAiuto', { azione: t('chatNuova') })}
                                 </p>
                             </div>
                         </div>
@@ -377,7 +379,7 @@ function TeacherChatContent() {
                         className="fixed inset-0 z-[60] bg-kidville-cream flex flex-col overflow-hidden pb-[env(safe-area-inset-bottom)]">
                         {/* Header conversazione del design: barra verde, back white/15, avatar tinta persona */}
                         <div className="flex items-center gap-2.5 bg-kidville-green px-3 py-2.5 pt-[max(10px,env(safe-area-inset-top))]">
-                            <button onClick={() => setShowMobile('list')} aria-label="Torna alla lista"
+                            <button onClick={() => setShowMobile('list')} aria-label={t('chatTornaAllaLista')}
                                 className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-full bg-white/15 text-white transition-transform active:scale-95">
                                 <ArrowLeft size={18} strokeWidth={2.2} />
                             </button>
@@ -419,7 +421,7 @@ function TeacherChatContent() {
                             <div className="flex items-center justify-between px-6 py-4 border-b border-kidville-line">
                                 <div className="flex items-center gap-2">
                                     <UserPlus size={18} className="text-kidville-green" strokeWidth={1.5} />
-                                    <h2 className="font-barlow font-black text-lg text-kidville-green uppercase tracking-wide">Nuova Chat</h2>
+                                    <h2 className="font-barlow font-black text-lg text-kidville-green uppercase tracking-wide">{t('chatNuova')}</h2>
                                 </div>
                                 <button onClick={() => setShowNewChat(false)}
                                     className="w-8 h-8 rounded-xl bg-kidville-cream hover:bg-kidville-cream-dark flex items-center justify-center text-kidville-green">
@@ -430,18 +432,18 @@ function TeacherChatContent() {
                                 {loadingContacts ? (
                                     <div className="flex flex-col items-center py-8 gap-3">
                                         <div className="w-7 h-7 border-[3px] border-kidville-green/20 border-t-kidville-green rounded-full animate-spin" />
-                                        <p className="font-maven text-sm text-kidville-muted">Caricamento contatti...</p>
+                                        <p className="font-maven text-sm text-kidville-muted">{t('chatCaricamentoContatti')}</p>
                                     </div>
                                 ) : contacts.length === 0 ? (
                                     <div className="flex flex-col items-center py-8 text-center">
                                         <p className="font-maven text-sm text-kidville-muted">
-                                            Hai già una conversazione con tutti i genitori disponibili! 🎉
+                                            {t('chatContattiVuoto')}
                                         </p>
                                     </div>
                                 ) : (
                                     <div className="space-y-2">
                                         <p className="font-maven text-xs text-kidville-muted mb-3">
-                                            Seleziona un genitore per iniziare una conversazione
+                                            {t('chatSelezionaGenitore')}
                                         </p>
                                         {contacts.map((contact, idx) => {
                                             const initials = contact.user_name.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase();
@@ -462,7 +464,7 @@ function TeacherChatContent() {
                                                             {contact.user_name}
                                                         </p>
                                                         <p className="font-maven text-xs text-kidville-muted truncate">
-                                                            Genitore di {contact.student_name} • {contact.sezione}
+                                                            {t('chatGenitoreDiContatto', { nome: contact.student_name, sezione: contact.sezione })}
                                                         </p>
                                                     </div>
                                                     <Plus size={16} className="text-kidville-green flex-shrink-0" strokeWidth={1.5} />

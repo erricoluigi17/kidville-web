@@ -107,6 +107,10 @@ describe('formattaMeseArchivio', () => {
     expect(formattaMeseArchivio('boom')).toBe('boom')
     expect(formattaMeseArchivio('2026-13')).toBe('2026-13')
   })
+  it('localizza il mese quando è passato il locale (EN)', () => {
+    expect(formattaMeseArchivio('2026-07', 'en')).toBe('July 2026')
+    expect(formattaMeseArchivio('2026-01', 'en')).toBe('January 2026')
+  })
 })
 
 describe('estraiYoutubeId', () => {

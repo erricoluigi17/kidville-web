@@ -2,10 +2,12 @@
 
 import { useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { OrarioGrid } from '@/components/features/primaria/OrarioGrid';
 
 export default function OrarioPage() {
+  const t = useTranslations('teacherPrimaria');
   const params = useParams();
   const search = useSearchParams();
   const sectionId = params?.sectionId as string;
@@ -24,9 +26,9 @@ export default function OrarioPage() {
 
   return (
     <div className="rounded-card bg-white p-5 shadow-sm">
-      <h2 className="font-barlow text-lg font-bold text-kidville-ink mb-4">Orario settimanale</h2>
+      <h2 className="font-barlow text-lg font-bold text-kidville-ink mb-4">{t('orarioTitolo')}</h2>
       {loading ? (
-        <p className="font-maven text-kidville-muted text-sm">Caricamento…</p>
+        <p className="font-maven text-kidville-muted text-sm">{t('comuneCaricamento')}</p>
       ) : (
         <OrarioGrid campanelle={data.campanelle} orario={data.orario} />
       )}

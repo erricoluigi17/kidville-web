@@ -2,6 +2,7 @@
 
 import { motion, AnimatePresence } from 'framer-motion';
 import { X } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 import { Avviso } from './AvvisoCard';
 import { AvvisoDetailsContent } from './AvvisoDetailsContent';
 
@@ -17,6 +18,8 @@ interface Props {
 }
 
 export function AvvisoDetailsDrawer({ open, avviso, onClose, availableClasses = [] }: Props) {
+    // Hook prima dell'early return: le regole degli hook vietano chiamate condizionate.
+    const t = useTranslations('avvisi');
     if (!avviso) return null;
 
     const isAdesione = avviso.tipo === 'adesione';
@@ -46,13 +49,13 @@ export function AvvisoDetailsDrawer({ open, avviso, onClose, availableClasses = 
                         <div className="px-6 py-5 border-b border-gray-100 flex items-start justify-between bg-white">
                             <div>
                                 <span className="px-2 py-0.5 rounded-full text-[10px] font-barlow font-bold uppercase tracking-wider bg-kidville-info-soft text-kidville-info">
-                                    {isAdesione ? 'Adesione Interattiva' : 'Presa Visione'}
+                                    {isAdesione ? t('adesioneInterattiva') : t('presaVisione')}
                                 </span>
                                 <h2 className="font-barlow font-black text-xl text-kidville-green uppercase tracking-wide mt-1.5 line-clamp-1">
                                     {avviso.titolo}
                                 </h2>
                                 <p className="font-maven text-xs text-gray-400 mt-0.5">
-                                    Target: {avviso.target_scope === 'globale' ? 'Tutto l\'Istituto' : `Classi (${avviso.target_classes?.join(', ') || ''})`}
+                                    {avviso.target_scope === 'globale' ? t('targetIstituto') : t('targetClassi', { classi: avviso.target_classes?.join(', ') || '' })}
                                 </p>
                             </div>
                             <button

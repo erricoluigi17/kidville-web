@@ -2,6 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useState } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { ArrowLeft, Loader2 } from 'lucide-react';
 import { CockpitPage } from '@/components/ui/cockpit';
 import { StudentDetailPanel } from '@/components/features/admin/StudentDetailPanel';
@@ -18,6 +19,7 @@ type Kind = 'child' | 'adult' | 'staff';
 interface StudentRecord { id: string; nome?: string; cognome?: string; [k: string]: unknown }
 
 function AnagraficaDetailInner() {
+    const t = useTranslations('adminStudents');
     const params = useParams<{ id: string }>();
     const search = useSearchParams();
     const router = useRouter();
@@ -73,7 +75,7 @@ function AnagraficaDetailInner() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data),
         }).catch(() => null);
-        flash(res?.ok ? '✅ Alunno aggiornato con successo' : '❌ Errore nel salvataggio');
+        flash(res?.ok ? `✅ ${t('detailPageSalvaOk')}` : `❌ ${t('erroreSalvataggio')}`);
     };
 
     const handleDeleteStudent = async (delId: string) => {
@@ -82,7 +84,7 @@ function AnagraficaDetailInner() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ id: delId }),
         }).catch(() => null);
-        flash(res?.ok ? '✅ Alunno eliminato definitivamente (GDPR)' : '❌ Errore nell\'eliminazione');
+        flash(res?.ok ? `✅ ${t('detailPageEliminato')}` : `❌ ${t('detailPageEliminaErr')}`);
     };
 
     const handleSaveParent = async (data: Record<string, unknown> & { id: string }) => {
@@ -91,7 +93,7 @@ function AnagraficaDetailInner() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data),
         }).catch(() => null);
-        flash(res?.ok ? '✅ Anagrafica aggiornata con successo' : '❌ Errore nel salvataggio');
+        flash(res?.ok ? `✅ ${t('detailPageAnagAgg')}` : `❌ ${t('erroreSalvataggio')}`);
     };
 
     const Back = (
@@ -99,7 +101,7 @@ function AnagraficaDetailInner() {
             onClick={goBack}
             className="mb-4 inline-flex items-center gap-1.5 font-maven text-sm font-semibold text-kidville-green hover:underline"
         >
-            <ArrowLeft size={15} strokeWidth={2} /> Torna all&apos;anagrafica
+            <ArrowLeft size={15} strokeWidth={2} /> {t('detailPageBack')}
         </button>
     );
 
@@ -120,8 +122,8 @@ function AnagraficaDetailInner() {
                 {Back}
                 <div className="flex flex-col items-center rounded-card bg-kidville-white p-10 text-center shadow-sm">
                     <div className="mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-kidville-cream text-4xl">🧒</div>
-                    <h2 className="font-barlow text-lg font-bold uppercase text-kidville-green">Anagrafica non disponibile</h2>
-                    <p className="font-maven mt-1 text-sm text-kidville-muted">L&apos;alunno non esiste o non appartiene ai tuoi plessi.</p>
+                    <h2 className="font-barlow text-lg font-bold uppercase text-kidville-green">{t('detailPageNonDisp')}</h2>
+                    <p className="font-maven mt-1 text-sm text-kidville-muted">{t('detailPageNonDispHint')}</p>
                 </div>
             </CockpitPage>
         );

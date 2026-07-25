@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { useTranslations } from 'next-intl';
 
 interface Docente {
   id: string;
@@ -10,13 +11,15 @@ interface Docente {
   gradi?: string[];
 }
 
-const GRADI: { key: string; label: string }[] = [
-  { key: 'nido', label: 'Nido' },
-  { key: 'infanzia', label: 'Infanzia' },
-  { key: 'primaria', label: 'Primaria' },
+// `key` è il valore persistito/confrontato (grado); labelKey è solo display.
+const GRADI: { key: string; labelKey: string }[] = [
+  { key: 'nido', labelKey: 'classificazioneGradoNido' },
+  { key: 'infanzia', labelKey: 'classificazioneGradoInfanzia' },
+  { key: 'primaria', labelKey: 'classificazioneGradoPrimaria' },
 ];
 
 export function ClassificazioneDocenti({ scuolaId, userId }: { scuolaId: string; userId: string }) {
+  const t = useTranslations('adminPrimaria');
   const [docenti, setDocenti] = useState<Docente[]>([]);
   const [saving, setSaving] = useState<string | null>(null);
 
@@ -56,15 +59,14 @@ export function ClassificazioneDocenti({ scuolaId, userId }: { scuolaId: string;
   return (
     <div className="space-y-2">
       <p className="font-maven text-sm text-kidville-muted">
-        Imposta a quali gradi è abilitato ciascun docente. Le funzioni visibili (registro/valutazioni vs diario)
-        dipendono da questa classificazione e dalla matrice funzioni.
+        {t('classificazioneSottotitolo')}
       </p>
       <table className="w-full text-sm font-maven">
         <thead>
           <tr className="text-left text-kidville-muted">
-            <th className="py-2">Docente</th>
+            <th className="py-2">{t('classificazioneColDocente')}</th>
             {GRADI.map((g) => (
-              <th key={g.key} className="py-2 text-center">{g.label}</th>
+              <th key={g.key} className="py-2 text-center">{t(g.labelKey)}</th>
             ))}
           </tr>
         </thead>
@@ -87,7 +89,7 @@ export function ClassificazioneDocenti({ scuolaId, userId }: { scuolaId: string;
             </tr>
           ))}
           {docenti.length === 0 && (
-            <tr><td colSpan={4} className="py-3 text-kidville-muted">Nessun docente trovato.</td></tr>
+            <tr><td colSpan={4} className="py-3 text-kidville-muted">{t('classificazioneNessunDocente')}</td></tr>
           )}
         </tbody>
       </table>

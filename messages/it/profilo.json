@@ -1,0 +1,22 @@
+{
+  "titolo": "Profilo e deleghe",
+  "sottotitolo": "Gestisci l’account, la privacy e la cancellazione dei dati.",
+  "linkPrivacy": "Informativa sulla privacy",
+  "linkTermini": "Termini di servizio",
+  "linkAssistenza": "Assistenza",
+  "bioTitolo": "Sblocco con Face ID / impronta",
+  "bioDescDisponibile": "Richiede il riconoscimento biometrico all’apertura dell’app.",
+  "bioDescNonDisponibile": "Non disponibile su questo dispositivo.",
+  "bioSwitchAria": "Attiva lo sblocco biometrico",
+  "bioPromptVerifica": "Attiva lo sblocco con Face ID o impronta",
+  "eliminaTitolo": "Elimina account",
+  "caricamento": "Caricamento…",
+  "pendingBody": "La tua richiesta di cancellazione è <strong>in lavorazione</strong>. La Direzione la evaderà a breve (entro 30 giorni). Puoi ancora <strong>annullarla</strong> se hai cambiato idea.",
+  "annullaRichiesta": "Annulla la richiesta",
+  "eliminaSpiegazione": "La richiesta viene inviata alla Direzione, che <strong>anonimizza in modo irreversibile</strong> i tuoi dati personali (nome, contatti, documenti) e sgancia l’accesso. I dati dei figli ancora iscritti restano gestiti dalla scuola; i documenti fiscali sono conservati per obbligo di legge.",
+  "confermaIstruzione": "Per confermare, digita",
+  "richiediCancellazione": "Richiedi la cancellazione",
+  "esci": "Esci dall’account",
+  "erroreGenerico": "Operazione non riuscita.",
+  "erroreRete": "Errore di rete. Riprova."
+}

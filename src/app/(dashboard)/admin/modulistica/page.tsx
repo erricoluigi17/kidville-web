@@ -2,6 +2,8 @@
 
 import { Suspense, useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { useTranslations } from 'next-intl';
+import { useDateFormat } from '@/lib/i18n/date';
 import {
   FileText, Plus, UserCheck, Settings, Calendar, Users,
   Trash2, Download, CheckCircle, ArrowRight, Upload, Shield, Inbox, Send, Stamp, X
@@ -49,18 +51,20 @@ interface ProtocollaItem {
   created_at?: string;
 }
 
-// Metadati dei tre tipi di modulo per genitori iscritti
-const FORM_TYPE_META: Record<FormType, { label: string; desc: string; otp: boolean }> = {
-  sondaggio: { label: 'Sondaggio', desc: 'Domande aperte o a scelta. Nessuna firma richiesta.', otp: false },
-  gradimento: { label: 'Gradimento', desc: 'Valutazioni e feedback (scala 1-5). Nessuna firma.', otp: false },
-  autorizzazione: { label: 'Autorizzazione', desc: 'Consenso con firma OTP via email (valore legale).', otp: true },
+// Metadati dei tre tipi di modulo per genitori iscritti. `labelKey`/`descKey`
+// sono chiavi i18n; le chiavi enum (sondaggio/gradimento/autorizzazione) restano.
+const FORM_TYPE_META: Record<FormType, { labelKey: string; descKey: string; otp: boolean }> = {
+  sondaggio: { labelKey: 'modFormTypeSondaggio', descKey: 'modFormTypeSondaggioDesc', otp: false },
+  gradimento: { labelKey: 'modFormTypeGradimento', descKey: 'modFormTypeGradimentoDesc', otp: false },
+  autorizzazione: { labelKey: 'modFormTypeAutorizzazione', descKey: 'modFormTypeAutorizzazioneDesc', otp: true },
 };
 
-// Tipi di campo disponibili per ciascun tipo di modulo
+// Tipi di campo disponibili per ciascun tipo di modulo. Il primo elemento è il
+// valore enum del tipo, il secondo la chiave i18n dell'etichetta mostrata.
 const INPUT_TYPES_BY_FORM: Record<FormType, [FormField['type'], string][]> = {
-  sondaggio: [['text', 'Testo breve'], ['textarea', 'Testo lungo'], ['radio', 'Scelta singola'], ['date', 'Data']],
-  gradimento: [['rating', 'Valutazione 1-5'], ['radio', 'Scelta singola'], ['textarea', 'Commento']],
-  autorizzazione: [['checkbox', 'Consenso (Sì/No)'], ['text', 'Testo'], ['date', 'Data']],
+  sondaggio: [['text', 'modInputTestoBreve'], ['textarea', 'modInputTestoLungo'], ['radio', 'modInputSceltaSingola'], ['date', 'modInputData']],
+  gradimento: [['rating', 'modInputValutazione'], ['radio', 'modInputSceltaSingola'], ['textarea', 'modInputCommento']],
+  autorizzazione: [['checkbox', 'modInputConsenso'], ['text', 'modInputTesto'], ['date', 'modInputData']],
 };
 
 // Campo di default coerente con il tipo di modulo
@@ -98,6 +102,8 @@ interface PreInscription {
 type ModulisticaTab = 'inviabili' | 'ricevuti' | 'moduli-genitori' | 'attesa' | 'odt';
 
 function ModulisticaInner() {
+  const t = useTranslations('adminModulistica');
+  const f = useDateFormat();
   const { sedeCorrente, loading: sediLoading } = useSediAttive();
   const searchParams = useSearchParams();
   const tabParam = searchParams.get('tab');
@@ -222,7 +228,7 @@ function ModulisticaInner() {
 
   const handleSaveForm = async () => {
     if (!formTitle.trim()) {
-      showToastMsg('❌ Titolo del modulo richiesto');
+      showToastMsg(t('modToastTitoloRichiesto'));
       return;
     }
 
@@ -245,9 +251,9 @@ function ModulisticaInner() {
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || 'Errore di salvataggio');
+        throw new Error(data.error || t('modErroreSalvataggio'));
       }
-      showToastMsg('✅ Modulo creato con successo!');
+      showToastMsg(t('modToastModuloCreato'));
       setShowBuilder(false);
 
       // Reset
@@ -261,12 +267,12 @@ function ModulisticaInner() {
 
       fetchInitialData();
     } catch {
-      showToastMsg('❌ Errore nel salvataggio del modulo');
+      showToastMsg(t('modToastErroreSalvataggio'));
     }
   };
 
   const handleDeleteForm = async (id: string) => {
-    if (!confirm('Sei sicuro di voler eliminare questo modulo?')) return;
+    if (!confirm(t('modConfermaEliminaModulo'))) return;
     try {
       const res = await fetch('/api/admin/forms', {
         method: 'DELETE',
@@ -274,11 +280,11 @@ function ModulisticaInner() {
         body: JSON.stringify({ id })
       });
       if (res.ok) {
-        showToastMsg('✅ Modulo eliminato');
+        showToastMsg(t('modToastModuloEliminato'));
         fetchInitialData();
       }
     } catch {
-      showToastMsg('❌ Errore eliminazione');
+      showToastMsg(t('modToastErroreEliminazione'));
     }
   };
 
@@ -297,9 +303,9 @@ function ModulisticaInner() {
       });
 
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Errore approvazione');
+      if (!res.ok) throw new Error(data.error || t('modErroreApprovazione'));
 
-      showToastMsg('✅ Pre-iscrizione approvata con successo!');
+      showToastMsg(t('modToastPreApprovata'));
       setShowConfirmApproval(false);
       setSelectedPre(null);
       setAssignedClass('');
@@ -311,13 +317,13 @@ function ModulisticaInner() {
 
       fetchInitialData();
     } catch (err) {
-      showToastMsg(`❌ ${(err as { message?: string })?.message || 'Errore approvazione'}`);
+      showToastMsg(`❌ ${(err as { message?: string })?.message || t('modErroreApprovazione')}`);
       setShowConfirmApproval(false);
     }
   };
 
   const handleRejectPreInscription = async (id: string) => {
-    if (!confirm('Rifiutare definitivamente questa pre-iscrizione?')) return;
+    if (!confirm(t('modConfermaRifiuto'))) return;
     try {
       const res = await fetch('/api/admin/pre-inscriptions', {
         method: 'PATCH',
@@ -328,17 +334,17 @@ function ModulisticaInner() {
         })
       });
       if (res.ok) {
-        showToastMsg('❌ Pre-iscrizione rifiutata');
+        showToastMsg(t('modToastPreRifiutata'));
         fetchInitialData();
         setSelectedPre(null);
       }
     } catch {
-      showToastMsg('❌ Errore durante l\'azione');
+      showToastMsg(t('modToastErroreAzione'));
     }
   };
 
   const handleExtendScadenza = async (form: FormTemplate) => {
-    const nuovaScadenza = prompt('Inserisci nuova data di scadenza (AAAA-MM-GG):', '2026-06-30');
+    const nuovaScadenza = prompt(t('modPromptNuovaScadenza'), '2026-06-30');
     if (!nuovaScadenza) return;
     
     try {
@@ -351,30 +357,30 @@ function ModulisticaInner() {
         })
       });
       if (res.ok) {
-        showToastMsg('✅ Scadenza aggiornata');
+        showToastMsg(t('modToastScadenzaAggiornata'));
         fetchInitialData();
       }
     } catch {
-      showToastMsg('❌ Errore estensione scadenza');
+      showToastMsg(t('modToastErroreScadenza'));
     }
   };
 
   // «Protocolla» (registro protocolli): elenca i moduli FIRMATI con PDF
   // archiviato e li registra in INGRESSO con numero e fascia di segnatura.
   const apriProtocolla = async (form: FormTemplate, className: string) => {
-    showToastMsg('⏳ Cerco i moduli firmati…');
+    showToastMsg(t('modToastCercoModuli'));
     try {
       const res = await fetch(`/api/admin/documents-merge?form_id=${form.id}&class_name=${className}`);
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Errore caricamento moduli');
+      if (!res.ok) throw new Error(data.error || t('modErroreCaricamentoModuli'));
       const firmati = ((data.results || []) as ProtocollaItem[]).filter((r) => r.signed && r.pdf_path && r.submission_id);
       if (firmati.length === 0) {
-        showToastMsg('❌ Nessun modulo firmato con PDF da protocollare in questa classe');
+        showToastMsg(t('modToastNessunModuloFirmato'));
         return;
       }
       setProtocollaTarget({ form, className, items: firmati });
     } catch {
-      showToastMsg('❌ Errore nel caricamento dei moduli firmati');
+      showToastMsg(t('modToastErroreCaricamentoModuli'));
     }
   };
 
@@ -387,12 +393,12 @@ function ModulisticaInner() {
         body: JSON.stringify({ sorgente: 'modulo_firmato', id: submissionId }),
       });
       const data = await res.json();
-      if (!res.ok) { showToastMsg(`❌ ${data.error ?? 'Protocollazione non riuscita'}`); return; }
+      if (!res.ok) { showToastMsg(`❌ ${data.error ?? t('modProtocollazioneNonRiuscita')}`); return; }
       const numero = data.data?.numeroFormattato ?? '';
       setProtocollati((prev) => ({ ...prev, [submissionId]: numero }));
-      showToastMsg(`✅ Modulo protocollato in ingresso: n. ${numero}`);
+      showToastMsg(t('modToastProtocollato', { numero }));
     } catch {
-      showToastMsg('❌ Errore di rete nella protocollazione');
+      showToastMsg(t('modToastErroreReteProtocollo'));
     } finally {
       setProtocollaBusy(null);
     }
@@ -400,12 +406,12 @@ function ModulisticaInner() {
 
   // Merge PDF Simulator & Exporter (Client-side jsPDF)
   const handleExportMergePDF = async (form: FormTemplate, className: string) => {
-    showToastMsg('⏳ Generazione report FES cumulativo...');
+    showToastMsg(t('modToastGenerazioneReport'));
     try {
       const res = await fetch(`/api/admin/documents-merge?form_id=${form.id}&class_name=${className}`);
       const data = await res.json();
-      
-      if (!res.ok) throw new Error(data.error || 'Errore caricamento dati per merge');
+
+      if (!res.ok) throw new Error(data.error || t('modErroreCaricamentoMerge'));
 
       // M9.4: jsPDF caricato on-demand solo quando si esporta (fuori dal bundle
       // della pagina). L'import statico di jspdf-autotable è stato RIMOSSO:
@@ -416,12 +422,12 @@ function ModulisticaInner() {
 
       doc.setFont('Helvetica', 'bold');
       doc.setFontSize(18);
-      doc.text(`REPORT CUMULATIVO AUTORIZZAZIONI — ${className}`, 20, 20);
-      
+      doc.text(t('modPdfTitolo', { classe: className }), 20, 20);
+
       doc.setFontSize(12);
-      doc.text(`Modulo: ${form.title}`, 20, 30);
-      doc.text(`Descrizione: ${form.description || 'Nessuna'}`, 20, 37);
-      doc.text(`Data di Stampa: ${new Date().toLocaleString('it-IT')}`, 20, 44);
+      doc.text(t('modPdfModulo', { titolo: form.title }), 20, 30);
+      doc.text(t('modPdfDescrizione', { descrizione: form.description || t('modPdfNessuna') }), 20, 37);
+      doc.text(t('modPdfDataStampa', { data: new Date().toLocaleString('it-IT') }), 20, 44);
       
       doc.setDrawColor(0, 106, 95); // Kidville Green
       doc.setLineWidth(1);
@@ -440,34 +446,34 @@ function ModulisticaInner() {
 
         doc.setFont('Helvetica', 'bold');
         doc.setFontSize(11);
-        doc.text(`${i + 1}. ALUNNO: ${item.cognome_alunno} ${item.nome_alunno}`, 20, yOffset);
-        
+        doc.text(t('modPdfAlunno', { n: i + 1, cognome: item.cognome_alunno, nome: item.nome_alunno }), 20, yOffset);
+
         doc.setFont('Helvetica', 'normal');
         doc.setFontSize(10);
-        
+
         if (item.signed) {
           doc.setTextColor(67, 160, 71); // Success Green
           doc.text(
             item.origine === 'cartaceo'
-              ? 'STATO: AUTORIZZATO (MODULO CARTACEO ACQUISITO DALLO STAFF)'
-              : 'STATO: AUTORIZZATO (FES FIRMATA DIGITALMENTE)',
+              ? t('modPdfStatoAutorizzatoCartaceo')
+              : t('modPdfStatoAutorizzatoFes'),
             20, yOffset + 6
           );
-          
+
           doc.setTextColor(80, 80, 80);
-          doc.text(`Timestamp: ${new Date(item.created_at).toLocaleString('it-IT', { timeZone: 'UTC' })}`, 20, yOffset + 12);
-          doc.text(`IP del Client: ${item.signature_log?.ip || 'N.D.'}`, 20, yOffset + 18);
-          doc.text(`User Agent: ${item.signature_log?.user_agent?.substring(0, 70) || 'N.D.'}...`, 20, yOffset + 24);
-          doc.text(`Hash FES (SHA-256): ${item.signature_log?.hash || fallbackFesHash()}`, 20, yOffset + 30);
-          
+          doc.text(t('modPdfTimestamp', { ts: new Date(item.created_at).toLocaleString('it-IT', { timeZone: 'UTC' }) }), 20, yOffset + 12);
+          doc.text(t('modPdfIpClient', { ip: item.signature_log?.ip || t('modNd') }), 20, yOffset + 18);
+          doc.text(t('modPdfUserAgent', { ua: item.signature_log?.user_agent?.substring(0, 70) || t('modNd') }), 20, yOffset + 24);
+          doc.text(t('modPdfHashFes', { hash: item.signature_log?.hash || fallbackFesHash() }), 20, yOffset + 30);
+
           yOffset += 40;
         } else {
           doc.setTextColor(229, 57, 53); // Error Red
-          doc.text('STATO: NON AUTORIZZATO (FIRMA MANCANTE)', 20, yOffset + 6);
-          
+          doc.text(t('modPdfStatoNonAutorizzato'), 20, yOffset + 6);
+
           doc.setTextColor(120, 120, 120);
-          doc.text('In attesa di compilazione e firma FES da parte del genitore.', 20, yOffset + 12);
-          
+          doc.text(t('modPdfInAttesa'), 20, yOffset + 12);
+
           yOffset += 22;
         }
 
@@ -478,9 +484,9 @@ function ModulisticaInner() {
       }
 
       doc.save(`Cumulative_${form.title.replace(/\s+/g, '_')}_${className}.pdf`);
-      showToastMsg('✅ Report cumulativo PDF scaricato!');
+      showToastMsg(t('modToastReportScaricato'));
     } catch (err) {
-      showToastMsg(`❌ ${(err as { message?: string })?.message || 'Errore esportazione'}`);
+      showToastMsg(`❌ ${(err as { message?: string })?.message || t('modErroreEsportazione')}`);
     }
   };
 
@@ -491,14 +497,14 @@ function ModulisticaInner() {
     <div className="flex-1 flex flex-col p-4 sm:p-6 max-w-6xl mx-auto w-full">
       {/* Header */}
       <PageHeader
-        eyebrow="Amministrazione"
+        eyebrow={t('eyebrowAmministrazione')}
         icon={FileText}
-        title="Modulistica & Onboarding"
-        subtitle="Gestione moduli di consenso, sala d'attesa pre-iscrizioni e carta intestata."
+        title={t('modPageTitle')}
+        subtitle={t('modPageSubtitle')}
         actions={
           activeTab === 'moduli-genitori' ? (
             <button onClick={() => openBuilder('class')} className={HEADER_BTN}>
-              <Plus size={18} /> Nuovo Modulo Genitori
+              <Plus size={18} /> {t('modNuovoModuloGenitori')}
             </button>
           ) : undefined
         }
@@ -509,10 +515,10 @@ function ModulisticaInner() {
         value={activeTab}
         onChange={(id) => setActiveTab(id as ModulisticaTab)}
         options={[
-          { id: 'inviabili', label: 'Moduli inviabili', icon: Send },
-          { id: 'ricevuti', label: 'Moduli ricevuti', icon: Inbox },
-          { id: 'moduli-genitori', label: 'Moduli Genitori', icon: Users },
-          { id: 'odt', label: 'Template Certificati ODT', icon: Settings },
+          { id: 'inviabili', label: t('modTabInviabili'), icon: Send },
+          { id: 'ricevuti', label: t('modTabRicevuti'), icon: Inbox },
+          { id: 'moduli-genitori', label: t('modTabModuliGenitori'), icon: Users },
+          { id: 'odt', label: t('modTabOdt'), icon: Settings },
         ]}
       />
 
@@ -524,14 +530,14 @@ function ModulisticaInner() {
       ) : sediLoading ? (
         <div className="flex-1 flex flex-col items-center justify-center min-h-[40vh] gap-3">
           <div className="w-10 h-10 border-4 border-kidville-green/30 border-t-kidville-green rounded-full animate-spin" />
-          <p className="font-maven text-kidville-muted">Caricamento in corso...</p>
+          <p className="font-maven text-kidville-muted">{t('modCaricamento')}</p>
         </div>
       ) : !sedeCorrente ? (
-        <SedeNotice cosa="i moduli per i genitori" />
+        <SedeNotice cosa={t('modSedeNoticeCosa')} />
       ) : isLoading ? (
         <div className="flex-1 flex flex-col items-center justify-center min-h-[40vh] gap-3">
           <div className="w-10 h-10 border-4 border-kidville-green/30 border-t-kidville-green rounded-full animate-spin" />
-          <p className="font-maven text-kidville-muted">Caricamento in corso...</p>
+          <p className="font-maven text-kidville-muted">{t('modCaricamento')}</p>
         </div>
       ) : (
         <>
@@ -542,7 +548,7 @@ function ModulisticaInner() {
                 <div className="bg-white rounded-card p-10 text-center border border-kidville-line">
                   <FileText className="mx-auto text-kidville-muted mb-3" size={48} />
                   <p className="font-maven text-kidville-muted">
-                    Nessun modulo per i genitori iscritti creato finora.
+                    {t('modNessunModuloGenitori')}
                   </p>
                 </div>
               ) : (
@@ -553,24 +559,24 @@ function ModulisticaInner() {
                         {form.title}
                       </h3>
                       <p className="font-maven text-xs text-kidville-muted line-clamp-2 max-w-xl mt-1">
-                        {form.description || 'Nessuna descrizione.'}
+                        {form.description || t('modNessunaDescrizione')}
                       </p>
-                      
+
                       <div className="flex flex-wrap items-center gap-3 mt-3">
                         {form.form_type && (
                           <span className="bg-kidville-green text-kidville-yellow px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider flex items-center gap-1">
                             {FORM_TYPE_META[form.form_type]?.otp && <Shield size={11} />}
-                            {FORM_TYPE_META[form.form_type]?.label ?? form.form_type}
+                            {FORM_TYPE_META[form.form_type] ? t(FORM_TYPE_META[form.form_type].labelKey) : form.form_type}
                           </span>
                         )}
                         <span className="bg-kidville-cream text-kidville-green px-2.5 py-1 rounded-full text-xs font-semibold">
-                          Destinatari: {form.target_scope === 'external' ? 'Esterni (Pre-iscrizione)' : form.target_classes.join(', ')}
+                          {t('modDestinatari')} {form.target_scope === 'external' ? t('modEsterniPreiscrizione') : form.target_classes.join(', ')}
                         </span>
-                        
+
                         {form.expiration_date && (
                           <span className={`px-2.5 py-1 rounded-full text-xs font-semibold flex items-center gap-1 ${new Date(form.expiration_date) < new Date() ? 'bg-kidville-error-soft text-kidville-error' : 'bg-kidville-warn-soft text-kidville-warn'}`}>
                             <Calendar size={12} />
-                            Scadenza: {new Date(form.expiration_date).toLocaleDateString('it-IT')}
+                            {t('modScadenza')} {f.dataBreve(form.expiration_date)}
                           </span>
                         )}
                       </div>
@@ -582,9 +588,9 @@ function ModulisticaInner() {
                           key={clsName}
                           onClick={() => handleExportMergePDF(form, clsName)}
                           className="flex items-center gap-1.5 px-3.5 py-1.5 bg-kidville-cream text-kidville-green rounded-pill font-barlow font-bold text-xs uppercase hover:bg-kidville-green hover:text-kidville-yellow transition-colors"
-                          title={`Esporta consensi classe ${clsName}`}
+                          title={t('modEsportaConsensiClasse', { classe: clsName })}
                         >
-                          <Download size={14} /> Merge {clsName}
+                          <Download size={14} /> {t('modMergeClasse', { classe: clsName })}
                         </button>
                       ))}
                       {form.target_scope !== 'external' && form.target_classes.map(clsName => (
@@ -592,16 +598,16 @@ function ModulisticaInner() {
                           key={`prot-${clsName}`}
                           onClick={() => apriProtocolla(form, clsName)}
                           className="flex items-center gap-1.5 px-3.5 py-1.5 bg-kidville-info-soft text-kidville-info rounded-pill font-barlow font-bold text-xs uppercase hover:bg-kidville-info hover:text-white transition-colors"
-                          title={`Protocolla i moduli firmati della classe ${clsName}`}
+                          title={t('modProtocollaClasseTitle', { classe: clsName })}
                         >
-                          <Stamp size={14} /> Protocolla {clsName}
+                          <Stamp size={14} /> {t('modProtocollaClasse', { classe: clsName })}
                         </button>
                       ))}
 
                       <button
                         onClick={() => handleExtendScadenza(form)}
                         className="p-2 text-kidville-muted hover:text-kidville-green hover:bg-kidville-cream rounded-lg transition-all"
-                        title="Modifica Scadenza"
+                        title={t('modModificaScadenza')}
                       >
                         <Calendar size={18} />
                       </button>
@@ -609,7 +615,7 @@ function ModulisticaInner() {
                       <button
                         onClick={() => handleDeleteForm(form.id)}
                         className="p-2 text-kidville-muted hover:text-kidville-error hover:bg-kidville-error-soft rounded-lg transition-all"
-                        title="Elimina Modulo"
+                        title={t('modEliminaModulo')}
                       >
                         <Trash2 size={18} />
                       </button>
@@ -626,7 +632,7 @@ function ModulisticaInner() {
               {preInscriptions.filter(p => p.status === 'pending').length === 0 ? (
                 <div className="bg-white rounded-card p-10 text-center border border-kidville-line">
                   <UserCheck className="mx-auto text-kidville-muted mb-3" size={48} />
-                  <p className="font-maven text-kidville-muted">Nessuna pre-iscrizione in attesa di approvazione.</p>
+                  <p className="font-maven text-kidville-muted">{t('modNessunaPreiscrizione')}</p>
                 </div>
               ) : (
                 preInscriptions.filter(p => p.status === 'pending').map(pre => (
@@ -634,19 +640,19 @@ function ModulisticaInner() {
                     <div>
                       <div className="flex items-center gap-2">
                         <h3 className="font-barlow font-bold text-xl text-kidville-green uppercase tracking-wide">
-                          Famiglia {pre.parent_last_name}
+                          {t('modFamiglia', { cognome: pre.parent_last_name })}
                         </h3>
                         <span className="bg-kidville-warn-soft text-kidville-warn px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider">
-                          Nuovo
+                          {t('modNuovo')}
                         </span>
                       </div>
-                      
+
                       <p className="font-maven text-xs text-kidville-muted mt-1">
-                        Genitore: {pre.parent_first_name} {pre.parent_last_name} ({pre.parent_email} - {pre.parent_phone || 'N.D.'})
+                        {t('modGenitoreRiga', { nome: pre.parent_first_name, cognome: pre.parent_last_name, email: pre.parent_email, telefono: pre.parent_phone || t('modNd') })}
                       </p>
-                      
+
                       <div className="mt-3 flex items-center gap-1 text-xs text-kidville-green font-semibold">
-                        <Users size={14} /> Figli da iscrivere: {pre.students?.map(s => `${s.cognome} ${s.nome}`).join(', ')}
+                        <Users size={14} /> {t('modFigliDaIscrivere', { figli: pre.students?.map(s => `${s.cognome} ${s.nome}`).join(', ') ?? '' })}
                       </div>
                     </div>
 
@@ -658,7 +664,7 @@ function ModulisticaInner() {
                       }}
                       className="flex items-center gap-1.5 px-4.5 py-2 bg-kidville-green text-kidville-yellow rounded-pill font-barlow font-black uppercase text-xs sm:text-sm tracking-wider hover:opacity-90 transition-opacity shadow-sm self-start md:self-auto"
                     >
-                      Gestisci <ArrowRight size={16} />
+                      {t('modGestisci')} <ArrowRight size={16} />
                     </button>
                   </div>
                 ))
@@ -673,19 +679,19 @@ function ModulisticaInner() {
               <div className="bg-white rounded-card p-6 border border-kidville-line shadow-sm text-center">
                 <Settings className="mx-auto text-kidville-green/20 mb-4" size={48} />
                 <h3 className="font-barlow font-bold text-lg text-kidville-green uppercase mb-2">
-                  Carta Intestata Scuola
+                  {t('modCartaIntestata')}
                 </h3>
                 <p className="font-maven text-xs text-kidville-muted mb-6 leading-relaxed">
-                  Trascina il file ODT della carta intestata contenente i loghi istituzionali e l&apos;intestazione personalizzata.
+                  {t('modCartaIntestataDesc')}
                 </p>
-                
+
                 {odtLetterhead ? (
                   <div className="bg-kidville-success-soft text-kidville-success p-3 rounded-xl text-xs font-semibold mb-4 border border-kidville-success/30">
-                    📄 {odtLetterhead} caricato
+                    {t('modOdtCaricato', { nome: odtLetterhead })}
                   </div>
                 ) : (
                   <label className="w-full h-11 border-2 border-dashed border-kidville-line hover:border-kidville-green rounded-xl flex items-center justify-center gap-2 cursor-pointer text-sm font-semibold text-kidville-ink transition-colors mb-4">
-                    <Upload size={16} /> Carica .ODT
+                    <Upload size={16} /> {t('modCaricaOdt')}
                     <input
                       type="file"
                       accept=".odt"
@@ -700,19 +706,19 @@ function ModulisticaInner() {
               <div className="bg-white rounded-card p-6 border border-kidville-line shadow-sm text-center">
                 <FileText className="mx-auto text-kidville-green/20 mb-4" size={48} />
                 <h3 className="font-barlow font-bold text-lg text-kidville-green uppercase mb-2">
-                  Prestampato Certificato Frequenza
+                  {t('modCertFrequenza')}
                 </h3>
                 <p className="font-maven text-xs text-kidville-muted mb-6 leading-relaxed">
-                  Carica il modello ODT con i tag per autocompilazione: `{"{nome}"}`, `{"{cognome}"}`, `{"{data_nascita}"}`.
+                  {t('modCertFrequenzaDesc')} `{"{nome}"}`, `{"{cognome}"}`, `{"{data_nascita}"}`.
                 </p>
-                
+
                 {odtFrequenza ? (
                   <div className="bg-kidville-success-soft text-kidville-success p-3 rounded-xl text-xs font-semibold mb-4 border border-kidville-success/30">
-                    📄 {odtFrequenza} caricato
+                    {t('modOdtCaricato', { nome: odtFrequenza })}
                   </div>
                 ) : (
                   <label className="w-full h-11 border-2 border-dashed border-kidville-line hover:border-kidville-green rounded-xl flex items-center justify-center gap-2 cursor-pointer text-sm font-semibold text-kidville-ink transition-colors mb-4">
-                    <Upload size={16} /> Carica .ODT
+                    <Upload size={16} /> {t('modCaricaOdt')}
                     <input
                       type="file"
                       accept=".odt"
@@ -727,19 +733,19 @@ function ModulisticaInner() {
               <div className="bg-white rounded-card p-6 border border-kidville-line shadow-sm text-center">
                 <FileText className="mx-auto text-kidville-green/20 mb-4" size={48} />
                 <h3 className="font-barlow font-bold text-lg text-kidville-green uppercase mb-2">
-                  Prestampato Certificato Iscrizione
+                  {t('modCertIscrizione')}
                 </h3>
                 <p className="font-maven text-xs text-kidville-muted mb-6 leading-relaxed">
-                  Modello predefinito ODT da far scaricare in autonomia alle famiglie per bonus INPS.
+                  {t('modCertIscrizioneDesc')}
                 </p>
-                
+
                 {odtIscrizione ? (
                   <div className="bg-kidville-success-soft text-kidville-success p-3 rounded-xl text-xs font-semibold mb-4 border border-kidville-success/30">
-                    📄 {odtIscrizione} caricato
+                    {t('modOdtCaricato', { nome: odtIscrizione })}
                   </div>
                 ) : (
                   <label className="w-full h-11 border-2 border-dashed border-kidville-line hover:border-kidville-green rounded-xl flex items-center justify-center gap-2 cursor-pointer text-sm font-semibold text-kidville-ink transition-colors mb-4">
-                    <Upload size={16} /> Carica .ODT
+                    <Upload size={16} /> {t('modCaricaOdt')}
                     <input
                       type="file"
                       accept=".odt"
@@ -759,32 +765,32 @@ function ModulisticaInner() {
         <div className="fixed inset-0 bg-kidville-green/30 z-50 flex items-center justify-center p-4 animate-fadeIn">
           <div className="bg-white w-full max-w-2xl rounded-card p-6 shadow-2xl flex flex-col max-h-[90vh]">
             <h2 className="font-barlow font-black text-2xl text-kidville-green uppercase tracking-wide mb-4">
-              {formScope === 'external' ? 'Nuovo Modulo Esterni' : `Nuovo Modulo · ${FORM_TYPE_META[formType].label}`}
+              {formScope === 'external' ? t('modNuovoModuloEsterni') : t('modNuovoModuloTipo', { tipo: t(FORM_TYPE_META[formType].labelKey) })}
             </h2>
 
             <div className="flex-1 overflow-y-auto space-y-5 pr-1">
               {formScope === 'class' && (
                 <div>
                   <label className="block font-maven text-sm font-semibold text-kidville-green mb-1.5">
-                    Tipo di Modulo
+                    {t('modTipoModulo')}
                   </label>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                    {(Object.keys(FORM_TYPE_META) as FormType[]).map(t => {
-                      const meta = FORM_TYPE_META[t];
-                      const active = formType === t;
+                    {(Object.keys(FORM_TYPE_META) as FormType[]).map(tipo => {
+                      const meta = FORM_TYPE_META[tipo];
+                      const active = formType === tipo;
                       return (
                         <button
-                          key={t}
+                          key={tipo}
                           type="button"
-                          onClick={() => selectFormType(t)}
+                          onClick={() => selectFormType(tipo)}
                           className={`text-left p-3 rounded-xl border-2 transition-all ${active ? 'border-kidville-green bg-kidville-green-light' : 'border-kidville-line hover:border-kidville-muted'}`}
                         >
                           <span className="flex items-center gap-1.5 font-barlow font-bold text-sm uppercase text-kidville-green">
-                            {t === 'autorizzazione' && <Shield size={14} className="text-kidville-yellow" />}
-                            {meta.label}
+                            {tipo === 'autorizzazione' && <Shield size={14} className="text-kidville-yellow" />}
+                            {t(meta.labelKey)}
                             {meta.otp && <span className="ml-auto text-[9px] bg-kidville-green text-kidville-yellow px-1.5 py-0.5 rounded-full tracking-wider">OTP</span>}
                           </span>
-                          <span className="block font-maven text-[11px] text-kidville-muted mt-1 leading-snug">{meta.desc}</span>
+                          <span className="block font-maven text-[11px] text-kidville-muted mt-1 leading-snug">{t(meta.descKey)}</span>
                         </button>
                       );
                     })}
@@ -794,7 +800,7 @@ function ModulisticaInner() {
 
               <div>
                 <label className="block font-maven text-sm font-semibold text-kidville-green mb-1.5">
-                  Titolo Modulo *
+                  {t('modTitoloModulo')}
                 </label>
                 <input
                   type="text"
@@ -802,42 +808,42 @@ function ModulisticaInner() {
                   value={formTitle}
                   onChange={e => setFormTitle(e.target.value)}
                   className="w-full border-2 border-kidville-line rounded-xl px-4 py-2.5 font-maven text-sm focus:outline-none focus:border-kidville-green"
-                  placeholder="Es. Consenso Uscita Didattica Museo Scienza"
+                  placeholder={t('modTitoloPlaceholder')}
                 />
               </div>
 
               <div>
                 <label className="block font-maven text-sm font-semibold text-kidville-green mb-1.5">
-                  Descrizione / Istruzioni *
+                  {t('modDescrizioneIstruzioni')}
                 </label>
                 <textarea
                   value={formDesc}
                   onChange={e => setFormDesc(e.target.value)}
                   className="w-full border-2 border-kidville-line rounded-xl p-3 font-maven text-sm focus:outline-none focus:border-kidville-green resize-none h-20"
-                  placeholder="Specificare le note informative per il genitore..."
+                  placeholder={t('modDescrizionePlaceholder')}
                 />
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block font-maven text-sm font-semibold text-kidville-green mb-1.5">
-                    Ambito d&apos;Uso (Scope)
+                    {t('modAmbitoUso')}
                   </label>
                   <div className="w-full border-2 border-kidville-green/15 rounded-xl px-3 py-2.5 font-maven text-sm text-kidville-green bg-kidville-cream flex items-center gap-2">
                     {formScope === 'external'
-                      ? <><FileText size={14} /> Esterni (Pre-Iscrizione)</>
-                      : <><Users size={14} /> Genitori iscritti (Classi/Sezioni)</>}
+                      ? <><FileText size={14} /> {t('modAmbitoEsterni')}</>
+                      : <><Users size={14} /> {t('modAmbitoGenitori')}</>}
                   </div>
                 </div>
 
                 <div>
                   <label className="block font-maven text-sm font-semibold text-kidville-green mb-1.5">
-                    Scadenza Modulo
+                    {t('modScadenzaModulo')}
                   </label>
                   <DateField
                     value={formExpiration}
                     onChange={setFormExpiration}
-                    aria-label="Data di scadenza del modulo"
+                    aria-label={t('modScadenzaAriaLabel')}
                     className="w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-ink focus:outline-none"
                   />
                 </div>
@@ -852,9 +858,9 @@ function ModulisticaInner() {
                   className="mt-0.5 h-4 w-4 accent-kidville-green"
                 />
                 <span className="font-maven text-sm text-kidville-green">
-                  <span className="font-semibold">Modulo essenziale (salute/sicurezza)</span>
+                  <span className="font-semibold">{t('modEssenziale')}</span>
                   <span className="block text-xs text-kidville-muted">
-                    Resta firmabile anche da un genitore sospeso per morosità.
+                    {t('modEssenzialeDesc')}
                   </span>
                 </span>
               </label>
@@ -862,7 +868,7 @@ function ModulisticaInner() {
               {formScope === 'class' && (
                 <div>
                   <label className="block font-maven text-sm font-semibold text-kidville-green mb-1.5">
-                    Seleziona Classi Target
+                    {t('modSelezionaClassi')}
                   </label>
                   <div className="flex flex-wrap gap-2">
                     {sections.map(sec => (
@@ -882,12 +888,12 @@ function ModulisticaInner() {
               {/* Dynamic Fields Editor */}
               <div className="space-y-4">
                 <div className="flex items-center justify-between border-t border-kidville-line pt-4">
-                  <h4 className="font-barlow font-bold text-lg text-kidville-green uppercase">Campi Dinamici Richiesti</h4>
+                  <h4 className="font-barlow font-bold text-lg text-kidville-green uppercase">{t('modCampiDinamici')}</h4>
                   <button
                     onClick={handleAddField}
                     className="flex items-center gap-1 px-3 py-1 bg-kidville-cream text-kidville-green border border-kidville-green/10 rounded-pill font-barlow font-bold text-xs uppercase"
                   >
-                    <Plus size={14} /> Aggiungi Campo
+                    <Plus size={14} /> {t('modAggiungiCampo')}
                   </button>
                 </div>
 
@@ -896,39 +902,39 @@ function ModulisticaInner() {
                     <div className="flex-1 w-full grid grid-cols-1 md:grid-cols-2 gap-3">
                       <div>
                         <label className="block font-maven text-xs font-semibold text-kidville-muted mb-1">
-                          {formType === 'autorizzazione' ? 'Testo del consenso / domanda' : 'Domanda'}
+                          {formType === 'autorizzazione' ? t('modTestoConsensoDomanda') : t('modDomanda')}
                         </label>
                         <input
                           type="text"
                           value={field.label}
                           onChange={e => handleFieldChange(idx, 'label', e.target.value)}
                           className="w-full border border-kidville-line rounded-lg px-2.5 py-1.5 font-maven text-xs bg-white focus:outline-none focus:border-kidville-green"
-                          placeholder={formType === 'autorizzazione' ? 'Es. Autorizzo l\'uscita didattica' : formType === 'gradimento' ? 'Es. Come valuti il servizio mensa?' : 'Es. Quali attività preferite?'}
+                          placeholder={formType === 'autorizzazione' ? t('modPlaceholderAutorizzazione') : formType === 'gradimento' ? t('modPlaceholderGradimento') : t('modPlaceholderSondaggio')}
                         />
                       </div>
 
                       <div>
-                        <label className="block font-maven text-xs font-semibold text-kidville-muted mb-1">Tipo Input</label>
+                        <label className="block font-maven text-xs font-semibold text-kidville-muted mb-1">{t('modTipoInput')}</label>
                         <select
                           value={field.type}
                           onChange={e => handleFieldChange(idx, 'type', e.target.value as FormField['type'])}
                           className="w-full border border-kidville-line rounded-lg px-2 py-1.5 font-maven text-xs bg-white text-kidville-green focus:outline-none focus:border-kidville-green"
                         >
-                          {INPUT_TYPES_BY_FORM[formType].map(([val, lbl]) => (
-                            <option key={val} value={val}>{lbl}</option>
+                          {INPUT_TYPES_BY_FORM[formType].map(([val, lblKey]) => (
+                            <option key={val} value={val}>{t(lblKey)}</option>
                           ))}
                         </select>
                       </div>
 
                       {field.type === 'radio' && (
                         <div className="md:col-span-2">
-                          <label className="block font-maven text-xs font-semibold text-kidville-muted mb-1">Opzioni di scelta (separate da virgola)</label>
+                          <label className="block font-maven text-xs font-semibold text-kidville-muted mb-1">{t('modOpzioniScelta')}</label>
                           <input
                             type="text"
                             value={(field.options ?? []).map(o => o.label).join(', ')}
                             onChange={e => handleFieldOptions(idx, e.target.value)}
                             className="w-full border border-kidville-line rounded-lg px-2.5 py-1.5 font-maven text-xs bg-white focus:outline-none focus:border-kidville-green"
-                            placeholder="Es. Sì, No, Forse"
+                            placeholder={t('modOpzioniPlaceholder')}
                           />
                         </div>
                       )}
@@ -942,7 +948,7 @@ function ModulisticaInner() {
                           onChange={e => handleFieldChange(idx, 'required', e.target.checked)}
                           className="rounded text-kidville-green focus:ring-kidville-green"
                         />
-                        Obblig.
+                        {t('modObblig')}
                       </label>
 
                       {formFields.length > 1 && (
@@ -964,13 +970,13 @@ function ModulisticaInner() {
                 onClick={() => setShowBuilder(false)}
                 className="px-4 py-2 font-maven rounded-pill border border-kidville-line text-kidville-muted text-sm hover:bg-kidville-cream transition-colors"
               >
-                Annulla
+                {t('annulla')}
               </button>
               <button
                 onClick={handleSaveForm}
                 className="px-5 py-2.5 bg-kidville-green text-kidville-yellow rounded-pill font-barlow font-black uppercase tracking-wider text-sm hover:opacity-90 transition-all shadow-md"
               >
-                Salva Modulo
+                {t('modSalvaModulo')}
               </button>
             </div>
           </div>
@@ -983,7 +989,7 @@ function ModulisticaInner() {
           <div className="bg-white w-full max-w-xl rounded-card p-6 shadow-2xl flex flex-col max-h-[90vh]">
             <div className="flex items-center justify-between border-b border-kidville-line pb-3 mb-4">
               <h2 className="font-barlow font-black text-2xl text-kidville-green uppercase tracking-wide">
-                Scheda Onboarding Famiglia
+                {t('modSchedaOnboarding')}
               </h2>
               <button 
                 onClick={() => setSelectedPre(null)}
@@ -996,27 +1002,27 @@ function ModulisticaInner() {
             <div className="flex-1 overflow-y-auto space-y-6 pr-1">
               {/* Genitore info */}
               <div className="bg-kidville-cream/30 p-4 rounded-xl border border-kidville-green/5">
-                <h4 className="font-barlow font-bold text-sm text-kidville-green uppercase tracking-wide mb-2">Contatti Genitore</h4>
+                <h4 className="font-barlow font-bold text-sm text-kidville-green uppercase tracking-wide mb-2">{t('modContattiGenitore')}</h4>
                 <div className="grid grid-cols-2 gap-y-2 text-xs font-maven text-kidville-ink">
-                  <div><strong>Nome:</strong> {selectedPre.parent_first_name} {selectedPre.parent_last_name}</div>
-                  <div><strong>Email:</strong> {selectedPre.parent_email}</div>
-                  <div><strong>Telefono:</strong> {selectedPre.parent_phone || 'N.D.'}</div>
-                  <div><strong>CF:</strong> {selectedPre.parent_fiscal_code || 'N.D.'}</div>
-                  <div className="col-span-2"><strong>Indirizzo:</strong> {selectedPre.parent_address || 'N.D.'}</div>
+                  <div><strong>{t('modLabelNome')}</strong> {selectedPre.parent_first_name} {selectedPre.parent_last_name}</div>
+                  <div><strong>{t('modLabelEmail')}</strong> {selectedPre.parent_email}</div>
+                  <div><strong>{t('modLabelTelefono')}</strong> {selectedPre.parent_phone || t('modNd')}</div>
+                  <div><strong>{t('modLabelCf')}</strong> {selectedPre.parent_fiscal_code || t('modNd')}</div>
+                  <div className="col-span-2"><strong>{t('modLabelIndirizzo')}</strong> {selectedPre.parent_address || t('modNd')}</div>
                 </div>
               </div>
 
               {/* Figli */}
               <div>
-                <h4 className="font-barlow font-bold text-sm text-kidville-green uppercase tracking-wide mb-3">Figli da Registrare</h4>
+                <h4 className="font-barlow font-bold text-sm text-kidville-green uppercase tracking-wide mb-3">{t('modFigliDaRegistrare')}</h4>
                 <div className="space-y-3">
                   {selectedPre.students?.map((s, idx) => (
                     <div key={idx} className="p-3 bg-kidville-cream border border-kidville-line rounded-xl text-xs font-maven">
                       <div className="font-semibold text-kidville-ink text-sm">{s.cognome} {s.nome}</div>
-                      <div className="text-kidville-muted mt-1">Data Nascita: {new Date(s.data_nascita).toLocaleDateString('it-IT')} | CF: {s.codice_fiscale || 'N.D.'}</div>
+                      <div className="text-kidville-muted mt-1">{t('modDataNascitaCf', { data: f.dataBreve(s.data_nascita), cf: s.codice_fiscale || t('modNd') })}</div>
                       {s.note_mediche && (
                         <div className="mt-2 text-kidville-error bg-kidville-error-soft p-1.5 rounded-lg font-semibold flex items-start gap-1">
-                          ⚠️ Allergie/Note: {s.note_mediche}
+                          {t('modAllergieNote')} {s.note_mediche}
                         </div>
                       )}
                     </div>
@@ -1027,14 +1033,14 @@ function ModulisticaInner() {
               {/* Assegnazione Classe */}
               <div className="border-t border-kidville-line pt-4">
                 <label className="block font-maven text-sm font-semibold text-kidville-green mb-1.5">
-                  Assegna Sezione Didattica *
+                  {t('modAssegnaSezione')}
                 </label>
                 <select
                   value={assignedClass}
                   onChange={e => setAssignedClass(e.target.value)}
                   className="w-full border-2 border-kidville-line rounded-xl px-3 py-2.5 font-maven text-sm text-kidville-ink focus:outline-none bg-white"
                 >
-                  <option value="">Seleziona Sezione...</option>
+                  <option value="">{t('modSelezionaSezione')}</option>
                   {sections.map(sec => (
                     <option key={sec.id} value={sec.name}>{sec.name}</option>
                   ))}
@@ -1047,7 +1053,7 @@ function ModulisticaInner() {
                 onClick={() => handleRejectPreInscription(selectedPre.id)}
                 className="px-4 py-2 font-barlow font-bold text-xs uppercase tracking-wider rounded-pill border border-kidville-error-soft text-kidville-error hover:bg-kidville-error-soft"
               >
-                Rifiuta Iscrizione
+                {t('modRifiutaIscrizione')}
               </button>
 
               <div className="flex gap-3">
@@ -1055,14 +1061,14 @@ function ModulisticaInner() {
                   onClick={() => setSelectedPre(null)}
                   className="px-4 py-2 font-maven rounded-pill border border-kidville-line text-kidville-muted text-sm hover:bg-kidville-cream"
                 >
-                  Annulla
+                  {t('annulla')}
                 </button>
                 <button
                   disabled={!assignedClass}
                   onClick={() => setShowConfirmApproval(true)}
                   className="px-5 py-2.5 bg-kidville-green text-kidville-yellow rounded-pill font-barlow font-black uppercase tracking-wider text-sm hover:opacity-90 disabled:opacity-50 transition-all shadow-md"
                 >
-                  Approva ed Importa
+                  {t('modApprovaImporta')}
                 </button>
               </div>
             </div>
@@ -1074,23 +1080,27 @@ function ModulisticaInner() {
       {showConfirmApproval && selectedPre && (
         <div className="fixed inset-0 bg-kidville-green/30 z-[60] flex items-center justify-center p-4 animate-fadeIn">
           <div className="bg-white w-full max-w-sm rounded-card p-6 shadow-2xl text-center">
-            <h3 className="font-barlow font-black text-xl text-kidville-green uppercase tracking-wide mb-3">Conferma Approvazione</h3>
+            <h3 className="font-barlow font-black text-xl text-kidville-green uppercase tracking-wide mb-3">{t('modConfermaApprovazione')}</h3>
             <p className="font-maven text-sm text-kidville-muted mb-6">
-              Stai per approvare l&apos;onboarding di <strong>Famiglia {selectedPre.parent_last_name}</strong> e importare <strong>{selectedPre.students?.length}</strong> alunni nella sezione <strong>{assignedClass}</strong>. 
-              Questo creerà automaticamente gli account utente. Vuoi procedere?
+              {t.rich('modConfermaApprovazioneTesto', {
+                cognome: selectedPre.parent_last_name,
+                n: selectedPre.students?.length ?? 0,
+                sezione: assignedClass,
+                strong: (c) => <strong>{c}</strong>,
+              })}
             </p>
             <div className="flex gap-3 justify-center">
               <button
                 onClick={() => setShowConfirmApproval(false)}
                 className="px-4 py-2 font-maven rounded-pill border border-kidville-line text-kidville-muted text-sm hover:bg-kidville-cream"
               >
-                Indietro
+                {t('modIndietro')}
               </button>
               <button
                 onClick={handleApprovePreInscription}
                 className="px-6 py-2.5 bg-kidville-green text-kidville-yellow rounded-pill font-barlow font-black uppercase tracking-wider text-sm hover:opacity-90"
               >
-                Sì, Approva!
+                {t('modSiApprova')}
               </button>
             </div>
           </div>
@@ -1102,19 +1112,19 @@ function ModulisticaInner() {
         <div className="fixed inset-0 bg-kidville-green/30 z-[60] flex items-center justify-center p-4 animate-fadeIn">
           <div className="bg-white w-full max-w-sm rounded-card p-6 shadow-2xl text-center border-t-4 border-kidville-green">
             <CheckCircle className="text-kidville-success mx-auto mb-3" size={48} />
-            <h3 className="font-barlow font-black text-xl text-kidville-green uppercase tracking-wide mb-1">Account Creato!</h3>
+            <h3 className="font-barlow font-black text-xl text-kidville-green uppercase tracking-wide mb-1">{t('modAccountCreato')}</h3>
             <p className="font-maven text-xs text-kidville-muted mb-6">
-              Invia queste credenziali di accesso provvisorie alla famiglia:
+              {t('modInviaCredenziali')}
             </p>
             <div className="bg-kidville-cream p-4 rounded-xl text-left font-maven text-sm border border-kidville-line mb-6 space-y-2 select-all">
-              <div><strong>Email:</strong> {showCredentials.email}</div>
-              <div><strong>Password:</strong> {showCredentials.pass}</div>
+              <div><strong>{t('modLabelEmail')}</strong> {showCredentials.email}</div>
+              <div><strong>{t('modLabelPassword')}</strong> {showCredentials.pass}</div>
             </div>
             <button
               onClick={() => setShowCredentials(null)}
               className="w-full h-11 font-barlow font-black uppercase tracking-wider rounded-pill bg-kidville-green text-kidville-yellow hover:opacity-90 transition-opacity"
             >
-              Fatto / Chiudi
+              {t('modFattoChiudi')}
             </button>
           </div>
         </div>
@@ -1127,13 +1137,13 @@ function ModulisticaInner() {
             <div className="mb-4 flex items-start justify-between gap-3">
               <div>
                 <h3 className="font-barlow text-xl font-black uppercase text-kidville-green flex items-center gap-2">
-                  <Stamp size={20} /> Protocolla moduli firmati
+                  <Stamp size={20} /> {t('modProtocollaModuli')}
                 </h3>
                 <p className="mt-0.5 font-maven text-sm text-kidville-muted">
-                  {protocollaTarget.form.title} — classe {protocollaTarget.className}
+                  {t('modProtocollaSottotitolo', { titolo: protocollaTarget.form.title, classe: protocollaTarget.className })}
                 </p>
               </div>
-              <button onClick={() => setProtocollaTarget(null)} aria-label="Chiudi" className="p-2 rounded-lg text-kidville-muted hover:bg-kidville-cream">
+              <button onClick={() => setProtocollaTarget(null)} aria-label={t('chiudi')} className="p-2 rounded-lg text-kidville-muted hover:bg-kidville-cream">
                 <X size={18} />
               </button>
             </div>
@@ -1143,12 +1153,12 @@ function ModulisticaInner() {
                   <div className="min-w-0">
                     <p className="truncate font-maven text-sm font-semibold text-kidville-ink">{item.cognome_alunno} {item.nome_alunno}</p>
                     <p className="font-maven text-[11.5px] text-kidville-muted">
-                      Firmato {item.origine === 'cartaceo' ? '(cartaceo acquisito)' : '(FES digitale)'}{item.created_at ? ` il ${new Date(item.created_at).toLocaleDateString('it-IT')}` : ''}
+                      {t('modFirmato')} {item.origine === 'cartaceo' ? t('modCartaceoAcquisito') : t('modFesDigitale')}{item.created_at ? ` ${t('modIlData', { data: f.dataBreve(item.created_at) })}` : ''}
                     </p>
                   </div>
                   {protocollati[item.submission_id ?? ''] ? (
                     <span className="shrink-0 rounded-pill bg-kidville-success-soft px-2.5 py-1 font-maven text-[11.5px] font-bold text-kidville-success">
-                      n. {protocollati[item.submission_id ?? '']}
+                      {t('modNumeroProt', { numero: protocollati[item.submission_id ?? ''] })}
                     </span>
                   ) : (
                     <button
@@ -1156,14 +1166,14 @@ function ModulisticaInner() {
                       disabled={protocollaBusy === item.submission_id}
                       className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-kidville-green text-kidville-yellow rounded-pill font-barlow font-bold text-[11px] uppercase disabled:opacity-50"
                     >
-                      <Stamp size={12} /> {protocollaBusy === item.submission_id ? 'In corso…' : 'Protocolla'}
+                      <Stamp size={12} /> {protocollaBusy === item.submission_id ? t('modInCorso') : t('modProtocolla')}
                     </button>
                   )}
                 </li>
               ))}
             </ul>
             <p className="mt-3 font-maven text-[11.5px] text-kidville-muted">
-              Ogni modulo viene registrato in INGRESSO nel registro protocolli con numero e fascia di segnatura.
+              {t('modProtocollaHint')}
             </p>
           </div>
         </div>

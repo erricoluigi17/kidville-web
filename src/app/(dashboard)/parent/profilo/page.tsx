@@ -24,6 +24,9 @@ interface RichiestaStato {
 
 function Inner() {
   const t = useTranslations('profilo');
+  // I testi del prompt NATIVO stanno nel namespace condiviso (li usa anche il
+  // BiometricGate): una copia sola, così non possono divergere.
+  const tShared = useTranslations('shared');
   const { userId } = useSessionIdentity();
   const [richiesta, setRichiesta] = useState<RichiestaStato | null>(null);
   const [loading, setLoading] = useState(true);
@@ -62,7 +65,13 @@ function Inner() {
         setBioAttiva(false);
       } else {
         // Verifica di prova prima di attivare l'opt-in.
-        const ok = await verificaBiometria(t('bioPromptVerifica'));
+        const { ok } = await verificaBiometria({
+          motivo: t('bioPromptVerifica'),
+          annulla: tShared('bioAnnulla'),
+          titoloAndroid: tShared('bioTitoloAndroid'),
+          sottotitoloAndroid: tShared('bioSottotitoloAndroid'),
+          fallbackIos: tShared('bioFallbackIos'),
+        });
         if (ok) {
           impostaBiometria(true);
           setBioAttiva(true);

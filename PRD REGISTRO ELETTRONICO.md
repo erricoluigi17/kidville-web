@@ -64,6 +64,45 @@
 
 ---
 
+## 🗓️ Changelog — Correzione dei difetti del collaudo native: biometria, offline, privacy nei log, pagine legali 2026-07-25 (branch `fix/collaudo-native-fase2`)
+
+Le Fasi 2 e 3 sono andate in produzione col gate verde — eslint 0, tsc 0, 2859 test, build ok — e poi l'app è stata provata **sui telefoni**: 5 simulatori iOS e 2 emulatori Android. Sono usciti 6 difetti bloccanti e 9 minori, **nessuno dei quali era visibile ai test**: vivono tutti nel confine fra la WebView e il sistema operativo, dove jsdom non arriva. Due chiudevano l'utente fuori dall'app (si usciva solo col force-stop), uno stampava la foto di un bambino in chiaro nei log del telefono, uno lasciava in produzione pagine legali con i segnaposto. Sono chiusi tutti, e **ogni correzione porta con sé il test che l'avrebbe colta**.
+
+### I sei bloccanti
+
+- **Loop infinito del prompt biometrico su Android** (`BiometricGate.tsx`): l'`AuthActivity` del plugin è **traslucida**, quindi la MainActivity riceve `onPause`/`onResume` anche quando il prompt si apre e si chiude — e il listener `resume` ri-bloccava incondizionatamente, annullando lo sblocco appena riuscito. Passare ad `appStateChange` non risolveva (su Android l'`isActive:false` non viene mai emesso, su iOS l'evento scatta persino per il Centro di Controllo): la correzione **pretende di aver visto un'uscita vera** prima di ri-bloccare — guardia di reentrancy, `pause` accettato solo se nessuna verifica è in volo, più una finestra di grazia di 1,5 s per le ROM che consegnano il ciclo di vita fuori ordine. Il re-lock legittimo resta intatto.
+- **Face ID morto su ogni iPhone**: mancava `NSFaceIDUsageDescription`. Non era un crash — il plugin forza `isAvailable=false` e la UI diceva «non disponibile su questo dispositivo», anche al revisore Apple.
+- **L'opt-in biometrico sopravviveva al logout e bloccava il LOGIN**: `doLogout()` ora chiama `impostaBiometria(false)` (non aggiunge la chiave a `LOCAL_KEYS`: sarebbe una seconda fonte di verità), e il gate si arma solo con una sessione — flag dai cookie nel root layout **+** `!isPublicPath(pathname)`, che rende impossibile coprire `/auth/*` qualunque cosa dicano le altre condizioni.
+- **Offline rotto su entrambe le piattaforme** (`public/sw.js` v1→v2): una navigazione ha `redirect:'manual'`, quindi il 307 della root produceva una **opaqueredirect** che `if (res.ok)` scartava — nessun documento entrava mai in cache, e `install` non pre-cachava nulla. Ora: pre-cache di `/offline`, chiave di cache **senza query**, ricostruzione della Response (una risposta `redirected` il browser la rifiuta), catena di ripiego che non rigetta mai. Su iOS mancava anche `WKAppBoundDomains`, senza cui WKWebView **non registra alcun Service Worker**. Le richieste RSC restano **deliberatamente non intercettate**: è il loro fallimento a far scattare il fallback a navigazione MPA di Next, ed è così che funziona la navigazione interna offline.
+- **Pagine legali con i segnaposto in produzione**: `/privacy`, `/termini` e `/assistenza` riportano ora i dati reali del Titolare (Scuola dell'Infanzia La Favola Soc. Coop., Cesa CE, P.IVA 03394870616). In `/privacy` due sezioni nuove su ciò che l'app fa davvero: **dati conservati sul dispositivo** (cache offline, cancellata al logout e comunque dopo 7 giorni, esclusa dai backup Android) e **sblocco biometrico** (facoltativo, i dati biometrici non lasciano mai il telefono).
+- **La foto scattata nei log in chiaro**: la causa era il **bridge di Capacitor**, non codice applicativo (`native-bridge.js` stampa il payload intero di ogni risposta nativa quando `isLoggingEnabled`). Chiuso con `loggingBehavior: 'none'` — e **non** `'production'`, che nel codice nativo significa «log sempre attivi, anche nelle build di rilascio».
+
+### I nove minori
+
+- **TTL e pulizia della cache offline** (`src/lib/offline/pulizia-cache.ts`): l'indice `aggiornato_il`, dichiarato «per pulizia per età» dalla `version(11)`, non era mai stato interrogato. Ora 7 giorni di TTL più un tetto di 200 voci, con svuotamento al logout. Si tocca **solo** `cache_read`: gli altri store contengono scritture `pending`, cancellarle butterebbe via il lavoro offline di una docente.
+- **Badge dell'icona azzerato al logout**, con `await` **prima** del redirect (dopo, la hard navigation cancellerebbe il lavoro in volo).
+- **Doppio prompt del permesso notifiche**: `Badge.requestPermissions()` su iOS chiedeva la sola autorizzazione *badge* mentre la push chiedeva `[alert, sound, badge]`; se vinceva la prima, l'app restava autorizzata al solo badge, i banner non arrivavano **mai** e la push rispondeva comunque `granted`. Ora `badge.ts` non chiede alcun permesso e ne verifica solo lo stato. Invariante: **`registerNativePush` è l'unico punto che chiede il permesso notifiche**.
+- **Overlay biometrico a `z-[9999]`** (era `z-[100]`, sotto chrome admin e toast), con lock che impedisce a chiunque di superarlo.
+- **Foto ridimensionata a 1600 px** + `correctOrientation` (che ri-codificando lascia indietro l'EXIF, GPS compreso) + `saveToGallery: false`; e nel fascicolo il `try/finally` che mancava — un 413 risponde HTML, il `r.json()` lanciava e **lo spinner restava appeso per sempre**.
+- **Etichette del picker e prompt biometrico localizzate**: `camera.ts` e `biometric.ts` sono lib e non possono tradurre da sé, quindi i testi arrivano come parametro dai componenti.
+- **I 5 bottoni «Scatta foto» cablati**: il testo visibile viene ora dalla **stessa** chiave dell'`aria-label` (`shared.scattaFoto`). Zero chiavi nuove, e le due etichette dello stesso bottone non possono più divergere.
+- **Backup Android disattivato** (`allowBackup="false"` + `data_extraction_rules.xml` con `<device-transfer>` + `backup_rules.xml`): l'IndexedDB della WebView contiene presenze, diario, armadietto, galleria, appello e registro — dati di minori che finivano su Google Drive.
+- **Bonifica dei `console.*` a rischio**: scoperto un `eslint-suppressions.json` con **94 violazioni `no-console` su 38 file**. Bonificati i 6 file che girano nel client e stampavano oggetti o errori con dati di minori (43 violazioni, fra cui 25 nel motore di sincronizzazione offline): si scende a **51**, congelate da un lock che le rende monotone decrescenti.
+
+### Test e lock
+
+Nuovi: `sw.test.ts` (il Service Worker si carica con `vm` in uno scope finto: 19 casi), `BiometricGate.test.tsx` (il ciclo di vita nativo si simula con un registro di listener), `pulizia-cache`, `native-badge`, `session-cookie`, `scatta-foto-i18n`. Estesi: `native-biometric`, `native-camera`, `logout`, `ServiceWorkerRegister`, `middleware-rules`. Quattro lock architetturali nuovi: `native-privacy-lock` (loggingBehavior, WKAppBoundDomains, Face ID, backup Android, z-index) e `console-suppressions`.
+
+**Prova di validità eseguita**, non dichiarata: rimettendo a mano la vecchia `networkFirst` **6** test del Service Worker tornano rossi; rimettendo il listener `resume` incondizionato ne tornano rossi **6** del gate biometrico. Un test che non fallisce sul bug originale non è un test — e la prima stesura di quei test *non* falliva, perché `waitFor` su «è stata chiamata una volta» passa prima che la seconda chiamata parta.
+
+- **Gate** verde: eslint 0 · tsc 0 · vitest 357 file / 2959 test · build ok.
+
+> ✅ **I 6 bloccanti e i 9 minori sono chiusi.** Limiti dichiarati, non risolti: l'**oblio GDPR non raggiunge l'IndexedDB di un telefono** (`gdpr/esegui.ts` gira sul server) — lo coprono logout e TTL; su **iOS il backup iCloud resta scoperto** (l'esclusione richiede codice nativo su `Library/WebKit`); su **iOS l'offline non si collauda in dev su IP di LAN**; dopo un logout l'interruttore biometrico **va riattivato** (è per dispositivo, e il prossimo utente di quel telefono non deve ereditarlo).
+
+> ⚠️ **Due rilasci distinti.** Le correzioni dentro `src/` arrivano **col deploy Vercel**, anche sui telefoni già installati (la WebView carica `server.url`). Quelle in `Info.plist`, `AndroidManifest.xml` e `capacitor.config.ts` — Face ID, `WKAppBoundDomains`, backup Android, log del bridge — arrivano **solo col prossimo build nativo** (`cap sync` + Xcode/Android Studio + store).
+
+> ⚠️ **Resta prima della submission:** la **validazione legale** di informativa e termini; la sostituzione della **PEC** con una casella ordinaria in `/assistenza` (quasi tutti i gestori PEC rifiutano la posta ordinaria: un genitore che scrive da Gmail — e il revisore Apple — riceverebbe un errore di consegna); account demo e App Privacy labels.
+
 ## 🗓️ Changelog — Fase 3 i18n COMPLETA: app bilingue IT/EN (genitore · docente · admin · pubblico · condivisi · date) 2026-07-25 (branch `feat/native-fase2`)
 
 Terza fase: internazionalizzazione (inglese). **Fondazione** posata e **pilota** tradotto; la migrazione a tappeto delle restanti pagine/componenti procede a lotti.

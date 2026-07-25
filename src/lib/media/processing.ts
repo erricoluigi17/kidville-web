@@ -1,3 +1,5 @@
+import { logClient } from '@/lib/logging/client';
+
 /**
  * Utility per l'elaborazione dei file multimediali lato client (ridimensionamento, watermark e validazioni).
  */
@@ -79,7 +81,7 @@ export function processImageWithWatermark(file: File, watermarkUrl: string = '/w
             };
 
             wm.onerror = () => {
-                console.warn('Impossibile caricare il watermark, esporto solo immagine ridimensionata.');
+                logClient({ livello: 'warn', evento: 'js', messaggio: 'watermark-immagine-non-caricato' });
                 canvas.toBlob((blob) => {
                     if (blob) {
                         const processedFile = new File([blob], file.name.replace(/\.[^/.]+$/, "") + ".jpg", {
@@ -185,7 +187,7 @@ export function processVideoWithWatermark(
         };
         
         wm.onerror = () => {
-            console.warn("Impossibile caricare il logo per il video, procedo solo con la compressione.");
+            logClient({ livello: 'warn', evento: 'js', messaggio: 'watermark-video-non-caricato' });
             startProcessing(true); // Esegui solo compressione senza watermark
         };
 
@@ -248,8 +250,8 @@ export function processVideoWithWatermark(
                         source.connect(dest);
                         audioTrack = dest.stream.getAudioTracks()[0] || null;
                     }
-                } catch (audioErr) {
-                    console.warn("Impossibile catturare la traccia audio del video:", audioErr);
+                } catch {
+                    logClient({ livello: 'warn', evento: 'js', messaggio: 'traccia-audio-non-catturata' });
                     // Cattura Web Audio fallita: qui NON c'è alcuna traccia da preservare, quindi
                     // silenziare l'elemento è sicuro. Si azzera il VOLUME (non la proprietà
                     // `muted`, coerentemente con la scelta qui sopra) così l'elemento non suona

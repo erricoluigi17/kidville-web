@@ -131,6 +131,10 @@ export function ChatInput({ onSend, disabled, placeholder }: Props) {
                 {/* Nativo: scatta una foto da inviare in chat. Su web non compare. */}
                 <ScattaFotoButton
                     onFile={processaFile}
+                    // Nella barra della chat c'è spazio solo per l'icona:
+                    // `soloIcona` lo dichiara invece di dedurlo dall'assenza di
+                    // `label`, che ora vale «usa il testo tradotto».
+                    soloIcona
                     iconSize={18}
                     disabled={disabled || uploading}
                     className="w-10 h-10 rounded-full flex-shrink-0 flex items-center justify-center bg-kidville-green-soft text-kidville-green transition-transform active:scale-95 disabled:opacity-50"

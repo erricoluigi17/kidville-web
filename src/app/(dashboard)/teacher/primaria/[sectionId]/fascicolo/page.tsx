@@ -8,6 +8,11 @@ import { FolderLock, Upload, Download, ShieldAlert, FileText, ChevronDown, Chevr
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { DateField } from '@/components/ui/DateField';
 import { ScattaFotoButton } from '@/components/features/native/ScattaFotoButton';
+import { logClient } from '@/lib/logging/client';
+
+/** Limite pratico dell'upload: è il body massimo della funzione serverless,
+ *  non `MAX_SIZE` della route (che è più alto e non è il vincolo che scatta). */
+const LIMITE_UPLOAD_BYTE = 4 * 1024 * 1024;
 
 interface Alunno { id: string; nome: string; cognome: string }
 interface Documento {
@@ -108,24 +113,41 @@ export default function FascicoloPage() {
     if (!alunnoId) { setMsg(t('fascicoloMsgSelezionaAlunno')); return; }
     if (!file) { setMsg(t('fascicoloMsgSelezionaFile')); return; }
     if (!userId) { setMsg(t('comuneIdentitaNonRisolta')); return; }
+    // Il collo di bottiglia NON è MAX_SIZE della route: è il limite di body
+    // della funzione serverless. Dirlo subito, invece che dopo venti secondi di
+    // upload su rete mobile e un errore che non arriva.
+    if (file.size > LIMITE_UPLOAD_BYTE) { setMsg(t('fascicoloMsgFileTroppoGrande')); return; }
     setUploading(true);
-    const fd = new FormData();
-    fd.append('file', file);
-    fd.append('alunnoId', alunnoId);
-    fd.append('documentType', documentType);
-    if (descrizione) fd.append('descrizione', descrizione);
-    if (expiry) fd.append('expiryDate', expiry);
-    if (finalitaRef.current) fd.append('finalita', finalitaRef.current);
-    fd.append('userId', userId);
-    const r = await fetch(`/api/primaria/fascicolo?userId=${userId}`, { method: 'POST', headers: { 'x-user-id': userId }, body: fd });
-    const d = await r.json();
-    setUploading(false);
-    if (!r.ok) { setMsg(d.error || t('comuneErrore')); return; }
-    setMsg(t('fascicoloDocumentoCaricato'));
-    setDescrizione(''); setExpiry('');
-    if (fileRef.current) fileRef.current.value = '';
-    setFotoScattata(null);
-    loadDocs();
+    // try/catch/finally: senza, un 413 (che risponde HTML, non JSON) faceva
+    // LANCIARE `r.json()`, quindi `setUploading(false)` non veniva mai eseguito
+    // e lo spinner restava appeso per sempre, senza alcun messaggio.
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('alunnoId', alunnoId);
+      fd.append('documentType', documentType);
+      if (descrizione) fd.append('descrizione', descrizione);
+      if (expiry) fd.append('expiryDate', expiry);
+      if (finalitaRef.current) fd.append('finalita', finalitaRef.current);
+      fd.append('userId', userId);
+      const r = await fetch(`/api/primaria/fascicolo?userId=${userId}`, { method: 'POST', headers: { 'x-user-id': userId }, body: fd });
+      const d = await r.json().catch(() => ({} as { error?: string }));
+      if (!r.ok) {
+        setMsg(r.status === 413 ? t('fascicoloMsgFileTroppoGrande') : (d.error || t('comuneErrore')));
+        return;
+      }
+      setMsg(t('fascicoloDocumentoCaricato'));
+      setDescrizione(''); setExpiry('');
+      if (fileRef.current) fileRef.current.value = '';
+      setFotoScattata(null);
+      loadDocs();
+    } catch {
+      // Nessun dato nel messaggio: è il fascicolo di un minore.
+      logClient({ livello: 'error', evento: 'fetch', messaggio: 'fascicolo-upload-fallito', route: '/teacher/primaria/fascicolo' });
+      setMsg(t('fascicoloMsgUploadFallito'));
+    } finally {
+      setUploading(false);
+    }
   };
 
   const scarica = async (documentoId: string) => {
@@ -242,7 +264,6 @@ export default function FascicoloPage() {
               {/* Nativo: scatta la foto del documento cartaceo. Su web non compare. */}
               <ScattaFotoButton
                 onFile={setFotoScattata}
-                label="Scatta foto"
                 className="inline-flex items-center gap-1.5 rounded-pill border border-kidville-line px-4 py-2 font-maven text-sm font-semibold text-kidville-green transition-colors hover:border-kidville-green"
               />
             </div>

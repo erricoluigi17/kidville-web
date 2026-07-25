@@ -86,7 +86,9 @@ export default function RegistroPage() {
     fd.append('userId', userId);
     const r = await fetch(`/api/primaria/allegati?userId=${userId}`, { method: 'POST', headers: { 'x-user-id': userId }, body: fd });
     if (r.ok) load();
-    else { const d = await r.json(); alert(d.error || t('registroErroreUpload')); }
+    // `.catch(() => ({}))`: un 413 (file troppo grande) risponde HTML, non JSON,
+    // e senza questo il parse lanciava una promise rifiutata non gestita.
+    else { const d = await r.json().catch(() => ({} as { error?: string })); alert(d.error || t('registroErroreUpload')); }
   };
 
   const rigaDi = (ordine: number) => righe.find((r) => r.ora_lezione === ordine);
@@ -207,7 +209,6 @@ export default function RegistroPage() {
                         {/* Nativo: scatta la foto (compito/documento) come allegato. Su web non compare. */}
                         <ScattaFotoButton
                           onFile={(f) => uploadAllegato(riga.id, f)}
-                          label="Scatta foto"
                           iconSize={11}
                           className="inline-flex items-center gap-1 text-[11px] text-kidville-green"
                         />

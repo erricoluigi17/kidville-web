@@ -48,7 +48,14 @@ describe('useImagePicker', () => {
     const onFiles = vi.fn()
     const { result } = setup(onFiles)
     await act(async () => { await result.current.picker.apri() })
-    expect(scegliMock).toHaveBeenCalledWith({ multiplo: false })
+    expect(scegliMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        multiplo: false,
+        // L'hook traduce le etichette del foglio nativo: prima il picker
+        // Capacitor compariva in inglese dentro un'app italiana.
+        etichette: expect.objectContaining({ scatta: 'Scatta una foto' }),
+      }),
+    )
     expect(onFiles).toHaveBeenCalledWith([file])
     expect(result.current.click).not.toHaveBeenCalled()
   })

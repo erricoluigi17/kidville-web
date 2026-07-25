@@ -2,6 +2,7 @@
 
 import { motion } from 'framer-motion';
 import { useTranslations } from 'next-intl';
+import { logClient } from '@/lib/logging/client';
 import { Download, Share2, Play, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useState, useEffect, useCallback } from 'react';
 
@@ -180,15 +181,17 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                                                     url: item.file_url,
                                                     title: item.caption ?? t('galleryFotoDaKidville')
                                                 });
-                                            } catch (err) {
-                                                console.error(err);
+                                            } catch {
+                                                // Annullamento del foglio di condivisione: UX attesa,
+                                                // non un guasto (stesso principio di @/lib/native/share).
+                                                // L'oggetto errore conteneva l'URL FIRMATO della foto.
                                             }
                                         } else {
                                             try {
                                                 await navigator.clipboard.writeText(item.file_url);
                                                 alert(t('mediaLinkCopiato'));
-                                            } catch (err) {
-                                                console.error(err);
+                                            } catch {
+                                                // Copia negata dal browser: l'utente lo vede subito.
                                             }
                                         }
                                     }}
@@ -314,8 +317,8 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                                                         await onUpdateTags?.(lightbox.id, tempTagged);
                                                         setLightbox({ ...lightbox, tag_students: tempTagged });
                                                         setEditMode(false);
-                                                    } catch (err) {
-                                                        console.error(err);
+                                                    } catch {
+                                                        logClient({ livello: 'error', evento: 'fetch', messaggio: 'gallery-salva-tag-fallito', route: '/gallery' });
                                                     } finally {
                                                         setSavingTags(false);
                                                     }
@@ -366,8 +369,8 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                                             a.click();
                                             document.body.removeChild(a);
                                             window.URL.revokeObjectURL(blobUrl);
-                                        } catch (err) {
-                                            console.warn('Direct download failed, opening in new tab', err);
+                                        } catch {
+                                            logClient({ livello: 'warn', evento: 'fetch', messaggio: 'gallery-download-diretto-fallito', route: '/gallery' });
                                             window.open(lightbox.file_url, '_blank');
                                         }
                                     }}
@@ -382,15 +385,15 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                                                     url: lightbox.file_url,
                                                     title: lightbox.caption ?? t('galleryFotoDaKidville')
                                                 });
-                                            } catch (err) {
-                                                console.error('Share aborted', err);
+                                            } catch {
+                                                // Annullamento della condivisione: UX attesa.
                                             }
                                         } else {
                                             try {
                                                 await navigator.clipboard.writeText(lightbox.file_url);
                                                 alert(t('mediaLinkCopiatoLungo'));
-                                            } catch (err) {
-                                                console.error('Clipboard copy failed', err);
+                                            } catch {
+                                                // Copia negata dal browser: l'utente lo vede subito.
                                             }
                                         }
                                     }}

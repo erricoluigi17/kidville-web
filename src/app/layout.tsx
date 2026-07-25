@@ -4,6 +4,7 @@ import { cookies } from "next/headers";
 import { NextIntlClientProvider } from "next-intl";
 import { getLocale, getMessages } from "next-intl/server";
 import { readContrastCookie } from "@/lib/accessibility/cookie";
+import { haCookieSessione } from "@/lib/auth/session-cookie";
 import { RootProviders } from "@/components/providers/RootProviders";
 import "./globals.css";
 
@@ -39,8 +40,13 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const cookieStore = await cookies();
   // Alto contrasto da cookie, applicato server-side (no FOUC).
-  const highContrast = readContrastCookie(await cookies());
+  const highContrast = readContrastCookie(cookieStore);
+  // Sessione presente? Serve SOLO al gate biometrico, per non armarsi sopra la
+  // schermata di login. Non è un controllo di autorizzazione: quello resta al
+  // middleware e ai gate applicativi.
+  const autenticato = haCookieSessione(cookieStore);
   // Lingua + messaggi (next-intl, locale dal cookie KV_LOCALE; default it).
   const locale = await getLocale();
   const messages = await getMessages();
@@ -52,7 +58,9 @@ export default async function RootLayout({
     >
       <body className="min-h-full flex flex-col">
         <NextIntlClientProvider messages={messages}>
-          <RootProviders initialHighContrast={highContrast}>{children}</RootProviders>
+          <RootProviders initialHighContrast={highContrast} autenticato={autenticato}>
+            {children}
+          </RootProviders>
         </NextIntlClientProvider>
       </body>
     </html>

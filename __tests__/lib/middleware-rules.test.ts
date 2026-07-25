@@ -23,6 +23,10 @@ describe('middleware-rules', () => {
         '/privacy',
         '/termini',
         '/assistenza',
+        // Il ripiego offline pre-cachato dal Service Worker: se non fosse
+        // pubblica, `install` scaricherebbe il 307 verso il login invece della
+        // pagina, e offline l'app mostrerebbe un redirect al posto del ripiego.
+        '/offline',
       ]) {
         expect(isPublicPath(p), p).toBe(true);
       }

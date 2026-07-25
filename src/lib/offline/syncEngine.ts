@@ -1,6 +1,28 @@
 import { db, LocalAttendanceLog, LocalDiaryEntry, LocalGalleryMedia, LocalPrimariaAppello, LocalPrimariaRegistro } from './db';
 import { createBrowserClient } from '@supabase/ssr';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
+import { logClient } from '@/lib/logging/client';
+
+// Motore di sincronizzazione offline: gira NEL CLIENT, quindi dentro la WebView
+// nativa. Per questo qui non c'è (e non deve tornare) nessun `console.*`: nella
+// shell Capacitor la console della WebView finisce nei log di sistema del
+// telefono, e gli errori PostgREST riecheggiano la riga che si stava scrivendo
+// — `alunno_id`, `stato`, `panic_alert`, il nome file di una foto. Erano dati di
+// minori a finire nel logcat, e nessun test lo vedeva.
+//
+// Al loro posto `logSync`, che manda alla pipeline ufficiale (redazione,
+// deduplica, tabella `app_log`). Il messaggio è SEMPRE un codice statico: mai
+// l'oggetto errore, mai un id, mai un nome file. `logClient` persiste per 30
+// giorni ed è interrogabile in SQL, quindi un leak qui sarebbe peggiore di uno
+// nel logcat, non migliore.
+//
+// Le vecchie `console.log` di avanzamento («Trovati N record…») sono state
+// tolte e non sostituite: partivano a ogni riconnessione, non dicevano nulla
+// che un errore non dica meglio, e sarebbero state un flusso continuo verso
+// /api/logs.
+function logSync(codice: string): void {
+    logClient({ livello: 'error', evento: 'offline', messaggio: codice });
+}
 
 function getSupabaseClient() {
     return createBrowserClient(
@@ -11,7 +33,6 @@ function getSupabaseClient() {
 
 export async function syncPendingLogs() {
     if (typeof window !== 'undefined' && !navigator.onLine) {
-        console.log('Sync abortito: Dispositivo Offline');
         return;
     }
 
@@ -25,7 +46,6 @@ export async function syncPendingLogs() {
 
         if (pendingLogs.length === 0) return;
 
-        console.log(`Trovati ${pendingLogs.length} record da sincronizzare...`);
 
         const payload = pendingLogs.map(log => ({
             id: log.id,
@@ -50,9 +70,8 @@ export async function syncPendingLogs() {
             updatedIds.map(id => ({ key: id, changes: { sync_status: 'synced' } }))
         );
 
-        console.log('Sincronizzazione completata con successo!');
-    } catch (error) {
-        console.error('Errore nel motore di sincronizzazione:', error);
+    } catch {
+        logSync('sync-presenze-fallito');
     }
 }
 
@@ -65,7 +84,8 @@ export async function saveLocalAttendanceLog(logData: Omit<LocalAttendanceLog, '
             syncPendingLogs();
         }
     } catch (error) {
-        console.error('Errore nel salvataggio locale:', error);
+        logSync('salvataggio-locale-presenza-fallito');
+        // Rilancia: il chiamante deve poter mostrare l'errore all'utente.
         throw error;
     }
 }
@@ -83,14 +103,14 @@ export async function saveLocalDiaryEntry(entryData: Omit<LocalDiaryEntry, 'sync
             syncPendingDiaryEntries();
         }
     } catch (error) {
-        console.error('Errore nel salvataggio locale del diario:', error);
+        logSync('salvataggio-locale-diario-fallito');
+        // Rilancia: il chiamante deve poter mostrare l'errore all'utente.
         throw error;
     }
 }
 
 export async function syncPendingDiaryEntries() {
     if (typeof window !== 'undefined' && !navigator.onLine) {
-        console.log('Sync diario abortito: Dispositivo Offline');
         return;
     }
 
@@ -104,7 +124,6 @@ export async function syncPendingDiaryEntries() {
 
         if (pending.length === 0) return;
 
-        console.log(`Diario: ${pending.length} record da sincronizzare...`);
 
         const payload = pending.map(entry => ({
             id: entry.id,
@@ -129,9 +148,8 @@ export async function syncPendingDiaryEntries() {
             ids.map(id => ({ key: id, changes: { sync_status: 'synced' } }))
         );
 
-        console.log('Sincronizzazione diario completata!');
-    } catch (error) {
-        console.error('Errore sync diario:', error);
+    } catch {
+        logSync('sync-diario-fallito');
     }
 }
 
@@ -141,7 +159,6 @@ export async function syncPendingDiaryEntries() {
 
 export async function syncLockerInventory(classeSezione: string) {
     if (typeof window !== 'undefined' && !navigator.onLine) {
-        console.log('Sync armadietto abortito: Dispositivo Offline');
         return;
     }
 
@@ -170,9 +187,8 @@ export async function syncLockerInventory(classeSezione: string) {
             }
         }
 
-        console.log('Cache armadietto aggiornata!');
-    } catch (error) {
-        console.error('Errore sync armadietto:', error);
+    } catch {
+        logSync('sync-armadietto-fallito');
     }
 }
 
@@ -198,8 +214,8 @@ export async function getLocalStudentDetails(studentId: string) {
             student_parents: [],
             adults: adults // nuova proprietà
         };
-    } catch (error) {
-        console.error('Errore fetch locale anagrafica:', error);
+    } catch {
+        logSync('lettura-locale-anagrafica-fallita');
         return { delegates: [], student_parents: [], adults: [] };
     }
 }
@@ -228,10 +244,9 @@ export async function syncAdults() {
                 last_name: u.last_name || u.cognome || '',
                 role: u.ruolo || 'educator',
             })));
-            console.log(`Cache adulti aggiornata: ${data.length} record offline.`);
         }
-    } catch (error) {
-        console.error('Errore sync adulti:', error);
+    } catch {
+        logSync('sync-adulti-fallito');
     }
 }
 
@@ -248,14 +263,14 @@ export async function saveLocalGalleryMedia(mediaData: Omit<LocalGalleryMedia, '
             syncPendingGalleryMedia();
         }
     } catch (error) {
-        console.error('Errore nel salvataggio locale della galleria:', error);
+        logSync('salvataggio-locale-galleria-fallito');
+        // Rilancia: il chiamante deve poter mostrare l'errore all'utente.
         throw error;
     }
 }
 
 export async function syncPendingGalleryMedia() {
     if (typeof window !== 'undefined' && !navigator.onLine) {
-        console.log('Sync galleria abortito: Dispositivo Offline');
         return;
     }
 
@@ -267,7 +282,6 @@ export async function syncPendingGalleryMedia() {
 
         if (pending.length === 0) return;
 
-        console.log(`Galleria: ${pending.length} record da sincronizzare...`);
 
         for (const item of pending) {
             try {
@@ -288,8 +302,9 @@ export async function syncPendingGalleryMedia() {
                 });
 
                 if (!uploadRes.ok) {
-                    const uploadErrData = await uploadRes.json();
-                    console.error('Errore caricamento storage (API) per item:', item.id, uploadErrData.error);
+                    // Il corpo della risposta NON si legge: conteneva il nome del
+                    // file (una foto di minori). Basta lo stato per la diagnosi.
+                    logSync('sync-galleria-upload-fallito');
                     await db.galleria.update(item.id, { sync_status: 'error' });
                     continue;
                 }
@@ -318,14 +333,13 @@ export async function syncPendingGalleryMedia() {
 
                 // 4. Rimuovi dal database offline dopo il successo
                 await db.galleria.delete(item.id);
-                console.log(`Media ${item.file_name} sincronizzato con successo.`);
-            } catch (itemErr) {
-                console.error(`Errore nel sync del media ${item.id}:`, itemErr);
+            } catch {
+                logSync('sync-galleria-item-fallito');
                 await db.galleria.update(item.id, { sync_status: 'error' });
             }
         }
-    } catch (error) {
-        console.error('Errore sync galleria:', error);
+    } catch {
+        logSync('sync-galleria-fallito');
     }
 }
 
@@ -369,8 +383,8 @@ export async function syncPendingAppello() {
             });
             await db.primaria_appello.update(r.id, { sync_status: res.ok ? 'synced' : 'error' });
         }
-    } catch (e) {
-        console.error('Errore sync appello primaria:', e);
+    } catch {
+        logSync('sync-appello-primaria-fallito');
     }
 }
 
@@ -399,7 +413,7 @@ export async function syncPendingRegistro() {
             });
             await db.primaria_registro.update(r.id, { sync_status: res.ok ? 'synced' : 'error' });
         }
-    } catch (e) {
-        console.error('Errore sync registro primaria:', e);
+    } catch {
+        logSync('sync-registro-primaria-fallito');
     }
 }

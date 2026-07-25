@@ -286,7 +286,6 @@ export function CassaMovimentoModal({ userId, scuolaId, tipoIniziale, onClose, o
             {/* Nativo: scatta la foto dello scontrino/ricevuta. Su web non compare. */}
             <ScattaFotoButton
               onFile={setFile}
-              label="Scatta foto"
               className="inline-flex items-center gap-1.5 rounded-pill bg-kidville-green-soft px-3 py-1.5 font-barlow text-xs font-bold uppercase text-kidville-green transition-colors hover:bg-kidville-green/20"
             />
           </div>

@@ -107,8 +107,8 @@ function TeacherGalleryContent() {
                     // Nessuna sezione (o errore API): niente da caricare → spegni lo spinner.
                     setLoading(false);
                 }
-            } catch (err) {
-                console.error('Errore caricamento sezioni educatore:', err);
+            } catch {
+                logClient({ livello: 'error', evento: 'fetch', messaggio: 'gallery-sezioni-fallito', route: '/teacher/gallery' });
                 setLoading(false);
             }
         };
@@ -132,8 +132,8 @@ function TeacherGalleryContent() {
                 const me = await res.json().catch(() => null);
                 const ruolo = me?.ruolo ?? me?.role;
                 if (ruolo) setUserRole(ruolo);
-            } catch (err) {
-                console.error('Errore fetch ruolo:', err);
+            } catch {
+                logClient({ livello: 'error', evento: 'fetch', messaggio: 'gallery-ruolo-fallito', route: '/teacher/gallery' });
             }
         };
         fetchUserRole();
@@ -365,7 +365,10 @@ function TeacherGalleryContent() {
             setUploadedFiles([]);
             setActiveFileIndex(0);
         } catch (err) {
-            console.error('Errore durante l\'upload:', err);
+            // Nel messaggio SOLO un codice: l'errore poteva contenere il nome
+            // del file, cioè la foto di un minore. All'utente si mostra il testo
+            // dell'errore, che resta a schermo e non finisce in nessuna tabella.
+            logClient({ livello: 'error', evento: 'fetch', messaggio: 'gallery-upload-fallito', route: '/teacher/gallery' });
             alert(err instanceof Error && err.message ? err.message : t('galleryErrCaricamentoGenerico'));
         } finally {
             setUploading(false);
@@ -386,8 +389,8 @@ function TeacherGalleryContent() {
                 const errData = await res.json();
                 alert(errData.error || t('galleryErrEliminazione'));
             }
-        } catch (err) {
-            console.error('Errore DELETE:', err);
+        } catch {
+            logClient({ livello: 'error', evento: 'fetch', messaggio: 'gallery-delete-fallito', route: '/teacher/gallery' });
             alert(t('galleryErrReteEliminazione'));
         }
     };
@@ -411,8 +414,8 @@ function TeacherGalleryContent() {
                 const errData = await res.json();
                 alert(errData.error || t('galleryErrTag'));
             }
-        } catch (err) {
-            console.error('Errore update tags:', err);
+        } catch {
+            logClient({ livello: 'error', evento: 'fetch', messaggio: 'gallery-tag-fallito', route: '/teacher/gallery' });
             alert(t('galleryErrReteTag'));
         }
     };

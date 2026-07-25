@@ -3,8 +3,12 @@ import Link from 'next/link';
 
 // Pagina PUBBLICA (nessun login): informativa GDPR. Serve anche come
 // "Privacy Policy URL" per gli store. È un server component statico: nessun
-// dato personale reale, i riferimenti dell'ente sono segnaposto tra parentesi
-// quadre che il Titolare compilerà.
+// dato personale, solo i riferimenti societari del Titolare (dati pubblici
+// d'impresa), forniti dal Titolare stesso.
+//
+// RESTA DA FARE prima della submission: la validazione legale del testo. E la
+// PEC va bene come contatto del Titolare/DPO, ma NON come recapito di supporto
+// per un genitore che scrive da una casella ordinaria — vedi /assistenza.
 export const metadata: Metadata = {
   title: 'Informativa sulla privacy — Kidville',
   description:
@@ -38,9 +42,12 @@ export default function PrivacyPage() {
               Titolare del trattamento
             </h2>
             <p className="font-maven text-[15px] leading-relaxed text-kidville-ink">
-              Il Titolare del trattamento è <strong>[Ragione sociale del Titolare]</strong>, con
-              sede in <strong>[indirizzo sede]</strong>. Per ogni richiesta relativa al trattamento
-              dei dati è possibile scrivere a <strong>[email del Titolare/DPO]</strong>.
+              Il Titolare del trattamento è{' '}
+              <strong>Scuola dell&rsquo;Infanzia La Favola Soc. Coop.</strong>, P.IVA{' '}
+              <strong>03394870616</strong>, con sede in{' '}
+              <strong>Via Silvio Pellico 7, 81030 Cesa (CE)</strong>. Per ogni richiesta relativa
+              al trattamento dei dati è possibile scrivere a{' '}
+              <strong>scuolalafavola@pec.it</strong>.
             </p>
           </section>
 
@@ -133,6 +140,57 @@ export default function PrivacyPage() {
 
           <section className="mt-8 space-y-3">
             <h2 className="font-barlow text-xl font-bold uppercase tracking-wide text-kidville-green sm:text-2xl">
+              Dati conservati sul dispositivo
+            </h2>
+            <p className="font-maven text-[15px] leading-relaxed text-kidville-ink">
+              Per far funzionare l&rsquo;app anche senza connessione, una copia di alcune
+              informazioni già visualizzate — comunicazioni, diario e menu della mensa — viene
+              salvata <strong>sul dispositivo</strong>, nella memoria riservata all&rsquo;app. Non
+              viene inviata a nessuno: serve solo a mostrare l&rsquo;ultimo aggiornamento
+              disponibile quando la rete manca, e in quel caso l&rsquo;app segnala che i dati non
+              sono aggiornati.
+            </p>
+            <ul className="list-disc space-y-1.5 pl-5 font-maven text-[15px] leading-relaxed text-kidville-ink">
+              <li>
+                la copia viene <strong>cancellata quando si esce dall&rsquo;account</strong> e,
+                comunque, dopo <strong>sette giorni</strong>;
+              </li>
+              <li>
+                sui dispositivi Android questi dati sono <strong>esclusi dai backup</strong>
+                automatici del sistema;
+              </li>
+              <li>
+                disinstallando l&rsquo;app la copia viene rimossa insieme ad essa.
+              </li>
+            </ul>
+            <p className="font-maven text-[15px] leading-relaxed text-kidville-ink">
+              Le richieste di cancellazione dei dati riguardano gli archivi del Titolare: la copia
+              presente su un dispositivo personale si rimuove uscendo dall&rsquo;account o
+              disinstallando l&rsquo;app.
+            </p>
+          </section>
+
+          <section className="mt-8 space-y-3">
+            <h2 className="font-barlow text-xl font-bold uppercase tracking-wide text-kidville-green sm:text-2xl">
+              Sblocco con impronta o volto
+            </h2>
+            <p className="font-maven text-[15px] leading-relaxed text-kidville-ink">
+              Nell&rsquo;app è possibile attivare, <strong>a scelta</strong>, lo sblocco con
+              impronta digitale o riconoscimento del volto. È una protezione in più nel caso in cui
+              il telefono finisca in altre mani, e <strong>non sostituisce</strong>
+              l&rsquo;accesso con email e password.
+            </p>
+            <p className="font-maven text-[15px] leading-relaxed text-kidville-ink">
+              L&rsquo;impronta e i dati biometrici <strong>non lasciano mai il dispositivo</strong>
+              e non sono accessibili all&rsquo;app: il confronto lo esegue il sistema operativo del
+              telefono, che comunica soltanto l&rsquo;esito. L&rsquo;impostazione si può disattivare
+              in qualsiasi momento da &laquo;Profilo e deleghe&raquo;, e viene comunque azzerata
+              quando si esce dall&rsquo;account.
+            </p>
+          </section>
+
+          <section className="mt-8 space-y-3">
+            <h2 className="font-barlow text-xl font-bold uppercase tracking-wide text-kidville-green sm:text-2xl">
               Diritti dell&rsquo;interessato
             </h2>
             <p className="font-maven text-[15px] leading-relaxed text-kidville-ink">
@@ -152,7 +210,7 @@ export default function PrivacyPage() {
             <p className="font-maven text-[15px] leading-relaxed text-kidville-ink">
               La <strong>cancellazione dell&rsquo;account</strong> può essere avviata direttamente
               dall&rsquo;app, nella sezione <strong>&laquo;Profilo e deleghe&raquo;</strong>. Per
-              le altre richieste è possibile scrivere a <strong>[email del Titolare/DPO]</strong>.
+              le altre richieste è possibile scrivere a <strong>scuolalafavola@pec.it</strong>.
             </p>
           </section>
 
@@ -175,7 +233,7 @@ export default function PrivacyPage() {
             <p className="font-maven text-[15px] leading-relaxed text-kidville-ink">
               Per ogni informazione relativa alla presente informativa e al trattamento dei dati è
               possibile contattare il Titolare all&rsquo;indirizzo{' '}
-              <strong>[email del Titolare/DPO]</strong> oppure rivolgersi alla Segreteria.
+              <strong>scuolalafavola@pec.it</strong> oppure rivolgersi alla Segreteria.
             </p>
           </section>
         </article>

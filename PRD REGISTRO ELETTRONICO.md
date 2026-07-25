@@ -85,7 +85,11 @@ Terza fase: internazionalizzazione (inglese). **Fondazione** posata e **pilota**
 
 **Catalogo finale: ~4554 chiavi/lingua su 33 namespace, parità IT/EN verificata su tutti.** Selettore lingua (IT/EN) su login e in «Profilo e deleghe». Gate verde: eslint 0 · tsc 0 · vitest 348 file / 2851+ test · build ok. Sweep finale: 0 residui utente cablati.
 
-> ✅ **i18n completa lato UtenTE.** Restano in italiano **di proposito** (non-UI o contratti): i **PDF** e i documenti (ricevute/certificati/pagelle — atti legali), i **CSV/export** (formato-dato), i **log** applicativi, i **corpi delle notifiche persistite** (dato inviato; la localizzazione richiederebbe la lingua del destinatario al momento dell'invio), i **formati numero/valuta** (Euro), il **marchio «Kidville»** e i **placeholder-esempio**. Due form anagrafica sono dead-code (non renderizzati). **Non ancora in produzione** (Fase 2+3 da provare su dispositivo prima del deploy).
+> ✅ **i18n completa lato UtenTE.** Restano in italiano **di proposito** (non-UI o contratti): i **PDF** e i documenti (ricevute/certificati/pagelle — atti legali), i **CSV/export** (formato-dato), i **log** applicativi, i **corpi delle notifiche persistite** (dato inviato; la localizzazione richiederebbe la lingua del destinatario al momento dell'invio), i **formati numero/valuta** (Euro), il **marchio «Kidville»** e i **placeholder-esempio**. Due form anagrafica sono dead-code (non renderizzati).
+
+> 🚀 **IN PRODUZIONE** dal 2026-07-25 — Fase 2 (native) + Fase 3 (i18n) mergiate in `main` via **PR #42** (squash `c6dde7d`) e deployate su Vercel. CI verde: «Lint · Typecheck · Unit» + **E2E Playwright** (la suite runtime nel browser gira con i18n e Service Worker attivi). Nessuna nuova migrazione DB. **Fix CI:** `npm ci` falliva per `package-lock.json` fuori sync (dipendenze optional/Linux dei plugin nativi omesse — npm bug 4828); lock rigenerato da zero.
+>
+> ⚠️ **Le funzioni native** (fotocamera/biometria/badge) diventano operative sui **telefoni** solo col prossimo **build nativo** dell'app (`npx cap sync` + Xcode/Android Studio + store): il deploy web serve i18n, offline (Service Worker) e la UI a web e WebView. La **prova su dispositivo** di Fase 2 resta da fare prima della submission agli store.
 
 ## 🗓️ Changelog — Fase 2 native: offline (avvisi·diario·menu) + fotocamera nativa + login biometrico + badge/condivisione 2026-07-24 (branch `feat/native-fase2`)
 

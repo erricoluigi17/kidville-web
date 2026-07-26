@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { AppRole } from '@/lib/auth/require-staff'
 import { scuoleDiUtente } from '@/lib/auth/scope'
+import { logEvento } from '@/lib/logging/logger'
 
 /**
  * RBAC ristretto per il Fascicolo personale (PEI/PDP/documenti sanitari).
@@ -86,7 +87,10 @@ export async function logAccessoFascicolo(
   try {
     const ip = opts.request?.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || null
     const userAgent = opts.request?.headers.get('user-agent') || null
-    await supabase.from('fascicolo_accessi_audit').insert({
+    // PostgREST NON lancia: senza questo controllo un audit rifiutato spariva
+    // del tutto. È il registro degli accessi al fascicolo (PEI/PDP, documenti
+    // sanitari): se non viene scritto, va saputo.
+    const res = await supabase.from('fascicolo_accessi_audit').insert({
       alunno_id: opts.alunnoId,
       documento_id: opts.documentoId ?? null,
       utente_id: opts.utenteId,
@@ -95,7 +99,23 @@ export async function logAccessoFascicolo(
       ip,
       user_agent: userAgent,
     })
+    if (res?.error) segnalaAuditFascicoloFallito(opts.azione, opts.alunnoId, res.error)
   } catch (e) {
-    console.error('logAccessoFascicolo:', e)
+    segnalaAuditFascicoloFallito(opts.azione, opts.alunnoId, e)
   }
+}
+
+/**
+ * A log vanno SOLO l'azione e l'id dell'alunno (uuid, canale strutturato).
+ * Restano fuori `finalita` (testo libero scritto dall'operatore), `documentoId`
+ * — che direbbe QUALE documento del fascicolo — e ip/user-agent. Serve sapere
+ * quale accesso è rimasto non tracciato, non cosa contenesse.
+ */
+function segnalaAuditFascicoloFallito(azione: AzioneFascicolo, alunnoId: string, err: unknown): void {
+  logEvento(
+    'fascicolo',
+    'error',
+    { operazione: 'logAccessoFascicolo', azione, esito: 'audit-non-registrato', alunno_id: alunnoId },
+    err,
+  )
 }

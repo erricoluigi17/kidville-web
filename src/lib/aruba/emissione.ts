@@ -17,6 +17,7 @@ import { determinaQuoteFatturazione, resolveParentRegistry } from '@/lib/pagamen
 import { bolloDovuto, type FiscaleConfig } from '@/lib/pagamenti/fiscale'
 import { getModuleConfig } from '@/lib/settings/module-config'
 import { annoFiscale, oggiFiscaleISO } from '@/lib/format/fiscal-date'
+import { logEvento } from '@/lib/logging/logger'
 
 export interface AttoreEmissione {
   id: string
@@ -88,9 +89,16 @@ export async function emettiFatturaPagamento(
   const fiscal = (cfg.fiscal ?? {}) as Record<string, unknown>
   const creds = resolveArubaCredentials(cfg)
   if (!cfg.abilitato || !creds) {
-    console.warn(
-      `[ARUBA] emissione fattura gated per scuola ${pag.scuola_id}: credenziali_non_configurate (abilitato=${Boolean(cfg.abilitato)})`
-    )
+    // Livello `error`, non `warn`: AGENTS.md — configurazione mancante è un
+    // incidente, non una nota a piè di pagina. Qui significa che una fattura
+    // dovuta NON parte. `scuola_id` va nel contesto strutturato (uuid), non
+    // interpolato nel messaggio.
+    logEvento('fattura', 'error', {
+      operazione: 'emettiFatturaPagamento',
+      esito: 'credenziali-non-configurate',
+      scuola_id: pag.scuola_id,
+      abilitato: Boolean(cfg.abilitato),
+    })
     return {
       ok: false,
       motivo: 'non_configurato',
@@ -160,7 +168,21 @@ export async function emettiFatturaPagamento(
         vatcodeSender: s(fiscal.piva) || undefined,
       })) || 0
   } catch (e) {
-    console.warn(`[ARUBA] lettura ultimo numero fattura fallita per scuola ${pag.scuola_id}, uso il contatore interno:`, e)
+    // Non bloccante: si prosegue col contatore interno. Resta a `warn` perché il
+    // flusso continua, ma il corpo dell'errore del provider va conservato — è
+    // l'unica cosa che dice se è un token scaduto o un 5xx di Aruba.
+    logEvento(
+      'fattura',
+      'warn',
+      {
+        operazione: 'emettiFatturaPagamento:ultimoNumeroAruba',
+        provider: 'aruba',
+        esito: 'fallback-contatore-interno',
+        scuola_id: pag.scuola_id,
+        anno,
+      },
+      e,
+    )
   }
 
   const esiti: EsitoQuota[] = []

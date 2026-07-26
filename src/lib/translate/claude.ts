@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk'
+import { logEvento } from '@/lib/logging/logger'
 
 // P4/DL-042 — Traduzione automatica chat (insegnante↔famiglie straniere) via Claude.
 // Servizio gated su ANTHROPIC_API_KEY (dipendenza esterna, come Aruba): se la chiave
@@ -45,7 +46,23 @@ export async function translateText(
     const out = res.content.find((b) => b.type === 'text')?.text?.trim() ?? null
     return { translated: out }
   } catch (e) {
-    console.error('[translate] errore:', e)
+    // Provider esterno: l'errore va conservato INTERO (l'SDK porta status e corpo
+    // della risposta) — uno status nudo non distingue "chiave scaduta" da "rate
+    // limit". Il TESTO da tradurre non va mai a log: è un messaggio di chat fra
+    // una famiglia e un docente. A log restano la lingua di destinazione e la
+    // lunghezza, che bastano a riprodurre il caso.
+    logEvento(
+      'traduzione',
+      'error',
+      {
+        operazione: 'translateText',
+        provider: 'anthropic',
+        esito: 'traduzione-fallita',
+        lingua: targetLang,
+        caratteri: trimmed.length,
+      },
+      e,
+    )
     return { translated: null }
   }
 }

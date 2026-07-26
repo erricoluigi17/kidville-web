@@ -11,6 +11,8 @@
  * tracciati sono placeholder sostituibili.
  */
 
+import { logEvento } from '@/lib/logging/logger'
+
 export type SidiFlusso = 'fase_a' | 'frequentanti' | 'piattaforma_unica'
 
 export interface SidiConfig {
@@ -66,9 +68,14 @@ export async function sidiTransmit(
 ): Promise<SidiTransmitResult> {
   const creds = resolveSidiCredentials(config)
   if (!config.abilitato || !creds) {
-    console.warn(
-      `[SIDI] trasmissione ${flusso} gated: non_configurato (abilitato=${Boolean(config.abilitato)})`
-    )
+    // Configurazione mancante = `error` (AGENTS.md): un flusso ministeriale che
+    // non parte per credenziali assenti è un incidente amministrativo.
+    logEvento('sidi', 'error', {
+      operazione: 'sidiTransmit',
+      tipo: flusso,
+      esito: 'non-configurato',
+      abilitato: Boolean(config.abilitato),
+    })
     return {
       ok: false,
       motivo: 'non_configurato',
@@ -77,7 +84,15 @@ export async function sidiTransmit(
     }
   }
   // Accreditamento ministeriale non ancora ottenuto → egress gated.
-  console.warn(`[SIDI] trasmissione ${flusso} gated: non_accreditato (payload ${payload.length} byte)`)
+  // Resta `warn` e NON diventa `error`: non è una configurazione dimenticata, è
+  // lo stato noto e dichiarato del progetto. Il `payload` non va a log — porta
+  // l'anagrafica degli alunni; ne va solo la dimensione.
+  logEvento('sidi', 'warn', {
+    operazione: 'sidiTransmit',
+    tipo: flusso,
+    esito: 'non-accreditato',
+    byte: payload.length,
+  })
   return {
     ok: false,
     motivo: 'non_accreditato',

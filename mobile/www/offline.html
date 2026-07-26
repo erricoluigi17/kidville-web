@@ -14,6 +14,20 @@
       (onReceivedHttpError), cioè anche con la rete perfettamente funzionante.
       Dire una cosa falsa all'utente sarebbe un modo di nascondere un guasto.
 
+      «Riprova» NON naviga alla cieca. Prima sonda l'host con una HEAD a timeout
+      breve e va avanti solo se risponde: senza rete la navigazione fallirebbe,
+      la WebView ricaricherebbe questo stesso errorPath e l'utente resterebbe
+      inchiodato su un pulsante che non fa nulla e non spiega niente.
+
+      La sonda è CROSS-ORIGIN: questa pagina vive sullo schema locale di
+      Capacitor, l'app sta su un altro host e non manda header CORS. Serve
+      quindi `mode: 'no-cors'`, e la risposta è per forza OPACA — `ok` false,
+      `status` 0. Vale come «raggiungibile» il fatto stesso che la promise si
+      risolva: un controllo su `res.ok` qui non navigherebbe MAI.
+
+      Niente log: la pagina è su un'altra origine e per ipotesi senza rete, un
+      log non arriverebbe da nessuna parte. L'esito lo racconta la UI.
+
       Nessuna dipendenza esterna: né font, né CSS, né JS. È il ripiego del ripiego.
     -->
     <style>
@@ -62,6 +76,18 @@
       button:active {
         transform: scale(0.96);
       }
+      button[disabled] {
+        opacity: 0.6;
+      }
+      /* Bianco pieno e non giallo: #fdc400 su #006a5f sta a 4,0:1, sotto la
+         soglia AA per il testo normale. Opacità 1 per lo stesso motivo. */
+      .stato {
+        min-height: 1.4em;
+        font-size: 14px;
+        font-weight: 700;
+        color: #fff;
+        opacity: 1;
+      }
       .en {
         display: none;
       }
@@ -78,20 +104,90 @@
     <h1 class="en">Kidville is unreachable</h1>
     <p class="it">Controlla la connessione e riprova.</p>
     <p class="en">Check your connection and try again.</p>
-    <button class="it" type="button" onclick="location.href='https://app.kidville.it/'">
-      Riprova
-    </button>
-    <button class="en" type="button" onclick="location.href='https://app.kidville.it/'">
-      Try again
-    </button>
+    <button class="it" type="button">Riprova</button>
+    <button class="en" type="button">Try again</button>
+    <p id="kv-stato" class="stato" role="status" aria-live="polite"></p>
     <script>
-      // La lingua del sistema è l'unico segnale disponibile: il cookie KV_LOCALE
-      // vive sull'origine remota, che qui non è raggiungibile.
-      try {
-        if (/^en/i.test(navigator.language || '')) document.documentElement.lang = 'en';
-      } catch (e) {
-        /* lingua non determinabile: resta l'italiano */
-      }
+      (function () {
+        var URL_APP = 'https://app.kidville.it/';
+        // Abbastanza per una 3G stanca, abbastanza poco perché l'attesa non
+        // sembri un blocco: oltre, l'utente ritocca il pulsante comunque.
+        var ATTESA_MS = 6000;
+
+        // La lingua del sistema è l'unico segnale disponibile: il cookie
+        // KV_LOCALE vive sull'origine remota, che qui non è raggiungibile.
+        var inglese = false;
+        try {
+          inglese = /^en/i.test(navigator.language || '');
+        } catch (e) {
+          inglese = false; /* lingua non determinabile: resta l'italiano */
+        }
+        if (inglese) document.documentElement.lang = 'en';
+
+        var stato = document.getElementById('kv-stato');
+        var bottoni = document.querySelectorAll('button');
+        var occupato = false;
+
+        function testo(it, en) {
+          return inglese ? en : it;
+        }
+
+        function abilita(si) {
+          for (var i = 0; i < bottoni.length; i++) bottoni[i].disabled = !si;
+        }
+
+        function raggiungibile() {
+          if (typeof fetch !== 'function') {
+            // WebView senza fetch: non c'è modo di sondare. Meglio tentare la
+            // navigazione che lasciare l'utente su un pulsante inerte.
+            return Promise.resolve(true);
+          }
+          var controllo = typeof AbortController === 'function' ? new AbortController() : null;
+          var scaduta = false;
+          var timer = setTimeout(function () {
+            scaduta = true;
+            if (controllo) controllo.abort();
+          }, ATTESA_MS);
+
+          var opzioni = { method: 'HEAD', mode: 'no-cors', cache: 'no-store' };
+          if (controllo) opzioni.signal = controllo.signal;
+
+          return fetch(URL_APP, opzioni).then(
+            function () {
+              clearTimeout(timer);
+              return !scaduta;
+            },
+            function () {
+              clearTimeout(timer);
+              return false;
+            }
+          );
+        }
+
+        function riprova() {
+          if (occupato) return;
+          occupato = true;
+          abilita(false);
+          stato.textContent = testo('Verifico la connessione…', 'Checking the connection…');
+
+          raggiungibile().then(function (ok) {
+            if (ok) {
+              // La pagina sta per essere sostituita: i pulsanti restano
+              // disabilitati di proposito, così un secondo tocco non fa
+              // ripartire nulla a navigazione già avviata.
+              location.href = URL_APP;
+              return;
+            }
+            occupato = false;
+            abilita(true);
+            stato.textContent = testo('Ancora nessuna connessione.', 'Still no connection.');
+          });
+        }
+
+        for (var b = 0; b < bottoni.length; b++) {
+          bottoni[b].addEventListener('click', riprova);
+        }
+      })();
     </script>
   </body>
 </html>

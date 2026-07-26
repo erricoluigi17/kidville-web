@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { AppUser } from '@/lib/auth/require-staff'
+import { logEvento } from '@/lib/logging/logger'
 
 // =============================================================================
 // Audit delle scritture sulle funzioni docente (diff prima/dopo).
@@ -38,8 +39,14 @@ export async function logScrittura(
   supabase: SupabaseClient,
   input: LogScritturaInput,
 ): Promise<void> {
+  // NB: il diff `valore_prima`/`valore_dopo` NON va mai a log — è il dato applicativo
+  // (voti, note, diario). A log ci vanno solo i metadati: chi/cosa/che azione.
   try {
-    await supabase.from('audit_scritture_docente').insert({
+    // PostgREST NON lancia: ritorna `{ error }`. Il solo try/catch qui non
+    // scattava mai, quindi un audit rifiutato (RLS, colonna mancante, vincolo)
+    // spariva in silenzio — e questo è il registro immodificabile delle
+    // scritture: se tace, non si distingue "nessuna scrittura" da "audit rotto".
+    const res = await supabase.from('audit_scritture_docente').insert({
       attore_id: input.attore.id,
       attore_ruolo: input.attore.role ?? null,
       scuola_id: input.scuolaId ?? input.attore.scuola_id ?? null,
@@ -50,7 +57,30 @@ export async function logScrittura(
       valore_prima: (input.valorePrima ?? null) as never,
       valore_dopo: (input.valoreDopo ?? null) as never,
     })
+    if (res?.error) {
+      logEvento(
+        'audit',
+        'error',
+        {
+          operazione: 'logScrittura',
+          entita_tipo: input.entitaTipo,
+          azione: input.azione,
+          esito: 'audit-non-registrato',
+        },
+        res.error,
+      )
+    }
   } catch (err) {
-    console.error('[audit_scritture_docente] log fallito (non bloccante):', err)
+    logEvento(
+      'audit',
+      'error',
+      {
+        operazione: 'logScrittura',
+        entita_tipo: input.entitaTipo,
+        azione: input.azione,
+        esito: 'audit-non-registrato',
+      },
+      err,
+    )
   }
 }

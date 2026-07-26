@@ -180,6 +180,18 @@ Perciò `cap sync` va lanciato **sempre** con `CAP_SERVER_URL` esplicita, e
      android/app/src/main/assets/capacitor.config.json
    ```
 
+2. **iOS — controlla l'entitlement APNs nell'export dell'Archive.** Il sorgente
+   `ios/App/App/App.entitlements` ha `aps-environment` = `development`; con la
+   firma **Automatic** Xcode lo promuove a `production` nella distribuzione.
+   Nell'export dell'Archive verifica che l'entitlement `aps-environment` risulti
+   effettivamente **`production`**: altrimenti le push native non arrivano in
+   produzione.
+
+3. **Il resto della submission** — account demo per il revisore, note di review,
+   App Privacy labels, screenshot per classe di device (**iPad compreso**, oggi
+   `TARGETED_DEVICE_FAMILY = "1,2"`) e checklist finale — sta in
+   **`docs/store-submission.md`**.
+
 ### Service Worker, offline e log nativi
 
 - **`loggingBehavior: 'none'`** in `capacitor.config.ts` spegne i log del bridge
@@ -187,7 +199,9 @@ Perciò `cap sync` va lanciato **sempre** con `CAP_SERVER_URL` esplicita, e
   log di sistema il payload intero di ogni risposta nativa, compreso il dataUrl
   base64 di una foto scattata e il suo EXIF. Su Android spegne anche l'inoltro
   della console della WebView verso logcat. **Per il debug** si usano
-  `chrome://inspect` (Android) e Safari → Sviluppo (iOS); il canale strutturato
+  `chrome://inspect` (Android) e Safari → Sviluppo (iOS) — oppure, senza GUI e
+  quindi scriptabile, il Chrome DevTools Protocol: vedi «Come si ispeziona la
+  WebView» più sotto; il canale strutturato
   dell'app resta `@/lib/logging/client` → `/api/logs` → tabella `app_log`, che è
   redatto e interrogabile. Se serve davvero il logcat, si mette `'debug'` in
   locale **senza committare**.
@@ -199,15 +213,163 @@ Perciò `cap sync` va lanciato **sempre** con `CAP_SERVER_URL` esplicita, e
   `ios.limitsNavigationsToAppBoundDomains` si accende **solo** contro
   `https://app.kidville.it` — in dev l'URL è un IP di LAN, che non è un dominio
   registrabile. Conseguenza: **su iOS l'offline non si collauda in dev su IP di
-  LAN**, serve una build puntata al dominio di produzione.
-- **`server.errorPath: 'offline.html'`** copre l'unico caso che il Service Worker
-  non può coprire: app appena installata, dispositivo offline, SW mai registrato.
-  Su Android scatta anche sui 4xx/5xx di main frame, per questo il testo della
-  pagina dice «non raggiungibile» e non «sei offline».
+  LAN**, serve una build puntata al dominio di produzione — e nemmeno lì basta il
+  simulatore, vedi «iOS» più sotto. I **7 domini** della lista sono bloccati per
+  intero dal lock `__tests__/architecture/native-privacy-lock.test.ts`: toglierne
+  uno non fa fallire niente in locale e non si vede in code review, si scopre su
+  un telefono con un embed nero e si ripara **solo** con un aggiornamento sullo
+  store. Verificato sul simulatore: con la lista attuale **YouTube
+  (`youtube-nocookie.com`), Vimeo e Instagram** caricano dentro la WebView.
+- **`server.errorPath: 'offline.html'`** è la rete di **ultima** istanza, non il
+  meccanismo di offline dell'app. Copre un caso solo, e va detto **quando** si
+  verifica: **il Service Worker non esiste ancora** — app appena installata e mai
+  aperta online, oppure dati dell'app cancellati. In quella finestra, e solo in
+  quella, un avvio senza rete mostra `https://localhost/offline.html`. Appena il
+  SW è installato è **lui** a rispondere, e il ripiego nativo non compare più.
 
-2. **iOS — controlla l'entitlement APNs nell'export dell'Archive.** Il sorgente
-   `ios/App/App/App.entitlements` ha `aps-environment` = `development`; con la
-   firma **Automatic** Xcode lo promuove a `production` nella distribuzione.
-   Nell'export dell'Archive verifica che l'entitlement `aps-environment` risulti
-   effettivamente **`production`**: altrimenti le push native non arrivano in
-   produzione.
+#### Cosa fa davvero il Service Worker nella WebView (misurato)
+
+Misurato su **emulatore Android**, con una build puntata a
+`https://app.kidville.it`, ispezionando la WebView via Chrome DevTools Protocol
+(metodo qui sotto). Serve a smentire due convinzioni comode e sbagliate: che nella
+WebView il Service Worker non giri, e che il ripiego nativo sia «l'offline».
+
+- **Il Service Worker si registra, si attiva e controlla la pagina** anche dentro
+  la WebView Android. Non è una funzione da solo-browser.
+- **Intercetta le navigazioni di main frame.** Dopo un giro nell'app, nella cache
+  `kidville-shell-v2` risultavano `/auth/login`, `/parent`, `/parent/avvisi` e
+  `/parent/diary`, oltre a `/offline` pre-cachato in `install` e agli asset
+  statici. Cioè: le pagine visitate restano leggibili senza rete — verificato
+  aprendo `/parent/avvisi` a rete spenta, che si è disegnata dai dati Dexie con
+  la pill «Dati non aggiornati — offline».
+- **A freddo, senza rete e con il SW installato, vince il Service Worker**:
+  compare `/offline` **sull'origine dell'app** (`https://app.kidville.it/offline`),
+  **non** il ripiego nativo. È il modo più rapido per capire cosa si sta guardando:
+  se l'origine è `https://localhost`, si sta vedendo `errorPath`; se è
+  `https://app.kidville.it`, si sta vedendo il Service Worker.
+- **Un 404 di main frame NON dirotta al ripiego nativo**: mostra la **pagina 404
+  dell'app** (misurato). Il meccanismo è coerente: se il SW controlla la pagina, la
+  risposta 404 gliela consegna lui al browser, e per il livello nativo la
+  navigazione è riuscita. Il testo di `offline.html` resta comunque neutro
+  («non raggiungibile» e non «sei offline») perché il ripiego nativo serve proprio
+  ai casi in cui il SW non c'è, dove il motivo del fallimento non si conosce.
+- ⚠️ **La root `/` non è mai in cache.** Risponde **307** verso `/auth/login`, e il
+  Service Worker la lascia passare intatta: una navigazione ha per specifica
+  `redirect: 'manual'`, quindi produce una *opaqueredirect* — che non è un
+  documento e non si può né cachare né ricostruire (`public/sw.js`, ramo
+  `res.type === 'opaqueredirect'`). Il browser segue il redirect da sé ed emette
+  una **seconda** navigazione, ed è quella a finire in cache. Conseguenza pratica:
+  **non usare `/` come indicatore** che la cache funziona — non ci sarà mai.
+
+#### Come si ispeziona la WebView (Chrome DevTools Protocol)
+
+`loggingBehavior: 'none'` spegne l'inoltro `console` → logcat: durante un collaudo
+nativo **logcat non dice più nulla** della WebView, e i `logOk`/`logErrore`
+applicativi finiscono su `app_log`, non sul telefono. L'unico canale affidabile per
+interrogare lo stato *dentro* la WebView è il **Chrome DevTools Protocol**.
+`chrome://inspect` apre la stessa porta, ma passa da una GUI; questa via è
+scriptabile e si usa anche da un agente.
+
+```bash
+# 1. pid del processo dell'app
+adb shell pidof it.kidville.app
+
+# 2. nome esatto del socket dei DevTools (se il pid non bastasse)
+adb shell cat /proc/net/unix | grep webview_devtools
+
+# 3. inoltra il socket della WebView su una porta locale
+adb forward tcp:9222 localabstract:webview_devtools_remote_<pid>
+
+# 4. elenca i target: da qui si prende il `webSocketDebuggerUrl` della pagina
+curl -s http://127.0.0.1:9222/json/list
+```
+
+Sul WebSocket del target si valutano espressioni con **`Runtime.evaluate`**
+(qualunque client WebSocket va bene — `websocat`, o venti righe di Node):
+
+```json
+{ "id": 1, "method": "Runtime.evaluate",
+  "params": { "expression": "(async () => { … })()",
+              "awaitPromise": true, "returnByValue": true } }
+```
+
+Espressioni che rispondono alle domande giuste:
+
+| Domanda | Espressione |
+|---|---|
+| Che pagina sto guardando? SW o ripiego nativo? | `location.href` (origine `localhost` = `errorPath`) |
+| Il SW controlla la pagina? | `navigator.serviceWorker.controller?.scriptURL ?? null` |
+| In che stato è? | `(await navigator.serviceWorker.getRegistrations()).map(r => r.active?.state)` |
+| Quali cache esistono? | `await caches.keys()` |
+| **Cosa** c'è in cache? | `(await (await caches.open(k)).keys()).map(r => r.url)` |
+
+Il collaudo dell'offline è poi: giro nell'app **online** (per popolare la cache) →
+rete spenta sull'emulatore → **riavvio a freddo** dell'app → si guarda `location.href`.
+Con SW installato deve comparire `/offline` sull'origine dell'app; il ripiego nativo
+si vede solo cancellando i dati dell'app prima della prova (`adb shell pm clear
+it.kidville.app`).
+
+#### iOS — cosa è verificato, cosa no, e dov'è davvero la CacheStorage
+
+Misurato su **simulatore iPhone 17 Pro (iOS 26.2)** con una build pulita puntata a
+`https://app.kidville.it`.
+
+- ✅ Il **Service Worker è registrato** anche in WKWebView: `scopeURL` `/`,
+  `scriptURL` `/sw.js`. La **CacheStorage è popolata** — `kidville-shell-v2` con
+  circa 70 record.
+- ✅ **Face ID riconosciuto**: lo switch «Attiva lo sblocco biometrico» **compare**
+  in `/parent/profilo`, e compare solo se `checkBiometry()` riporta la biometria
+  disponibile.
+- ✅ **Gli embed reggono `WKAppBoundDomains`**: YouTube, Vimeo e Instagram
+  caricano dentro la WebView.
+- ⚠️ **Il comportamento offline vero e proprio su iOS NON è dimostrato.** Il
+  simulatore condivide la rete del Mac e **il Network Link Conditioner non esiste
+  sul simulatore**: non c'è modo di spegnere la rete alla sola app. Spegnere il
+  Wi-Fi del Mac stacca anche `simctl`, e le precondizioni verificate non sono la
+  prova. **La prova va chiusa su iPhone fisico in modalità aereo**, ed è l'unico
+  modo di chiuderla.
+
+**Dove sta la CacheStorage sul simulatore (iOS 26).** Il percorso «di scuola»
+
+```
+~/Library/Developer/CoreSimulator/Devices/<UDID>/data/Containers/Data/Application/*/\
+  Library/Caches/it.kidville.app/WebKit/CacheStorage
+```
+
+**è fuorviante**: su iOS 26 contiene **solo `salt`** anche quando il Service Worker
+sta lavorando regolarmente. Chi guarda lì conclude — **sbagliando** — che su iOS
+l'offline non funziona. Il percorso reale è:
+
+```
+~/Library/Developer/CoreSimulator/Devices/<UDID>/data/Containers/Data/Application/*/\
+  Library/WebKit/it.kidville.app/WebsiteData/Default/<hash>/<hash>/CacheStorage
+```
+
+dentro cui sta `cacheslist` (nomi delle cache e conteggio dei record). La prova
+forense sui file è comunque **secondaria**: la risposta autorevole la dà la
+WebView interrogata da Safari → Sviluppo, con le stesse espressioni della tabella
+qui sopra.
+
+#### Selettori Maestro: Android e iOS non espongono la stessa cosa
+
+I flow stanno in `.claude/maestro-flows/` e sono **separati per piattaforma** non
+per pigrizia: lo stesso DOM viene tradotto in albero di accessibilità in due modi
+diversi, e un selettore che funziona di qua non esiste di là.
+
+| | Android | iOS |
+|---|---|---|
+| Tab «Menu» della bottom nav | testo **`MENU`** — la WebView espone il testo **CSS-trasformato** in maiuscolo, e l'`aria-label` **non** diventa `contentDescription` | **`Menu · tutte le sezioni`** — l'`aria-label` completo (chiave i18n `nav.ariaMenu`) |
+| Voci del Menu-sheet | nodi distinti | **un solo nodo** con l'`accessibilityText` concatenato (titolo + sottotitolo) → selettori in **regex non ancorata** `".*testo.*"`, il full-match fallisce |
+| Chiudere la tastiera | `hideKeyboard` funziona | `hideKeyboard` **non funziona** in WebView: si tocca un testo statico della pagina (es. `tapOn: "Benvenuto/a!"`) |
+
+**I deep link sono il modo più affidabile di navigare in un collaudo**: lo schema
+`kidville://` è registrato su entrambe le piattaforme e funziona **sul simulatore**,
+saltando bottom nav, sheet e selettori fragili.
+
+```bash
+# iOS (simulatore)
+xcrun simctl openurl booted kidville://parent/avvisi
+
+# Android (emulatore)
+adb shell am start -a android.intent.action.VIEW -d "kidville://parent/avvisi"
+```

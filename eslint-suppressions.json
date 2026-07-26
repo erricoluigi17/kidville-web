@@ -94,66 +94,6 @@
       "count": 1
     }
   },
-  "src/lib/anagrafiche/parents.ts": {
-    "no-console": {
-      "count": 1
-    }
-  },
-  "src/lib/aruba/emissione.ts": {
-    "no-console": {
-      "count": 2
-    }
-  },
-  "src/lib/audit/scrittura.ts": {
-    "no-console": {
-      "count": 1
-    }
-  },
-  "src/lib/auth/profili.ts": {
-    "no-console": {
-      "count": 2
-    }
-  },
-  "src/lib/competenze/certificato-store.ts": {
-    "no-console": {
-      "count": 1
-    }
-  },
-  "src/lib/fea/audit.ts": {
-    "no-console": {
-      "count": 1
-    }
-  },
-  "src/lib/merch/notify.ts": {
-    "no-console": {
-      "count": 1
-    }
-  },
-  "src/lib/primaria/fascicolo-rbac.ts": {
-    "no-console": {
-      "count": 1
-    }
-  },
-  "src/lib/primaria/notifiche.ts": {
-    "no-console": {
-      "count": 2
-    }
-  },
-  "src/lib/primaria/pagella-store.ts": {
-    "no-console": {
-      "count": 1
-    }
-  },
-  "src/lib/sidi/client.ts": {
-    "no-console": {
-      "count": 2
-    }
-  },
-  "src/lib/translate/claude.ts": {
-    "no-console": {
-      "count": 1
-    }
-  },
   "src/lib/utils/fiscalCodeApi.ts": {
     "no-console": {
       "count": 2

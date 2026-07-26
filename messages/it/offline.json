@@ -1,6 +1,50 @@
 {
   "titolo": "Kidville non è raggiungibile",
   "corpo": "Non riusciamo a collegarci. Controlla la connessione: le pagine che hai già aperto restano consultabili, con i dati dell'ultimo aggiornamento.",
+  "corpoSenzaCache": "Non riusciamo a collegarci. Controlla la connessione e riprova: su questo dispositivo non c'è ancora nessuna pagina salvata da consultare.",
   "riprova": "Riprova",
-  "nota": "Se il problema continua, riapri l'app tra qualche minuto."
+  "nessunaRete": "Ancora nessuna connessione. Riprova tra qualche istante.",
+  "disponibili": "Pagine già aperte, consultabili adesso",
+  "nota": "Se il problema continua, riapri l'app tra qualche minuto.",
+  "etichette": {
+    "esatte": {
+      "/": "Home",
+      "/parent": "Home famiglia",
+      "/teacher": "Home docente",
+      "/admin": "Home segreteria",
+      "/segreteria": "Home segreteria",
+      "/auth/login": "Accesso",
+      "/privacy": "Privacy",
+      "/termini": "Termini",
+      "/assistenza": "Assistenza"
+    },
+    "segmenti": {
+      "attendance": "Presenze",
+      "avvisi": "Avvisi",
+      "chat": "Chat",
+      "compiti": "Compiti",
+      "diary": "Diario",
+      "forms": "Moduli",
+      "gallery": "Galleria",
+      "gdpr": "Privacy",
+      "impostazioni": "Impostazioni",
+      "iscrizioni": "Iscrizioni",
+      "lezioni": "Lezioni",
+      "locker": "Armadietto",
+      "mensa": "Mensa",
+      "merchandise": "Merchandise",
+      "messaggi": "Messaggi",
+      "modulistica": "Modulistica",
+      "news": "News",
+      "onboarding": "Primo accesso",
+      "pagamenti": "Pagamenti",
+      "primaria": "Primaria",
+      "profilo": "Profilo",
+      "register": "Registro",
+      "settings": "Impostazioni",
+      "staff": "Personale",
+      "students": "Alunni",
+      "tasks": "Attività"
+    }
+  }
 }

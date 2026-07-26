@@ -64,6 +64,51 @@
 
 ---
 
+## 🗓️ Changelog — Offline dimostrato sul device: il Service Worker funziona, il vicolo cieco no 2026-07-26 (branch `fix/offline-device-store`)
+
+Il collaudo del 2026-07-25 aveva concluso che a freddo, senza rete, rispondeva il **ripiego nativo** (`mobile/www/offline.html`) invece della pagina `/offline` del Service Worker. La misura diretta sulla WebView dice l'opposto: **il Service Worker funziona**, e quel ripiego compariva perché l'app era stata **appena installata** — senza un SW già registrato non c'è nulla da servire. La diagnosi era sbagliata, ma sotto c'era un difetto vero e più fastidioso: la pagina offline **prometteva** pagine consultabili e non offriva alcun modo di raggiungerle. Per il genitore la differenza è tutta qui: prima, senza rete, l'app diceva «le pagine che hai già aperto restano consultabili» e poi lo lasciava a premere «Riprova» all'infinito; adesso gliele **elenca** e ce lo porta.
+
+### Android — misurato sulla WebView via Chrome DevTools Protocol (emulatore, build su `https://app.kidville.it`)
+
+- **Il Service Worker si registra, si attiva e controlla il documento** dentro la WebView (`controller` presente, stato `activated`): non è una funzione da solo-browser.
+- **Intercetta le navigazioni di main frame.** Dopo un giro nell'app la cache `kidville-shell-v2` conteneva `/auth/login`, `/parent`, `/parent/avvisi` e `/parent/diary` oltre a `/offline` precachata, più gli asset statici.
+- **A freddo, senza rete e con il SW installato, vince il Service Worker**: compare `/offline` sull'origine `https://app.kidville.it`, **non** il ripiego nativo. È anche il modo più rapido di capire cosa si sta guardando: origine `localhost` = `errorPath`, origine dell'app = Service Worker.
+- **Le pagine già visitate sono davvero consultabili offline**: `/parent/avvisi` si apre dai dati Dexie con la pill «Dati non aggiornati — offline».
+- Il ripiego nativo `https://localhost/offline.html` compare **solo** quando il SW non esiste ancora — prima installazione o dati cancellati: riprodotto con `pm clear`. È il comportamento voluto, non un guasto.
+- Un **404 di main frame non dirotta** al ripiego nativo: mostra la pagina 404 dell'app.
+
+### Il vicolo cieco della pagina offline — il difetto vero
+
+La pagina `/offline` prometteva «le pagine che hai già aperto restano consultabili», ma l'unico link era «Riprova» con `href="/"`, e la root **non è mai in cache** (risponde 307 e `public/sw.js` la lascia passare senza salvarla). Misurato: «Riprova» → `/` → di nuovo la pagina offline → **loop**. Una promessa che l'interfaccia non permette di mantenere è un difetto, non un dettaglio di copy.
+
+- **`src/app/offline/page.tsx`** + nuovo **`src/app/offline/script-offline.ts`**: la pagina ora **elenca le pagine davvero disponibili offline**, leggendole dalla CacheStorage, con etichette tradotte. Se in cache non c'è nulla, la sezione resta nascosta **e il paragrafo che prometteva sparisce**: senza cache non si promette niente.
+- **«Riprova» non naviga più alla cieca**: **sonda la rete** e prosegue solo se risponde, altrimenti mostra «Ancora nessuna connessione» **senza far sparire l'elenco**. La sonda è una `HEAD` su `/offline`, e la scelta è tecnica: `public/sw.js` esce subito sulle richieste non-GET, quindi la sonda **misura la rete e non la cache** — una GET avrebbe letto la copia salvata, avrebbe detto «c'è rete» e avrebbe rimesso l'utente nel loop da cui la pagina lo sta tirando fuori.
+- **`mobile/www/offline.html`**: stesso criterio per il ripiego nativo, che prima faceva `location.href` alla cieca. Nota tecnica: lì la sonda è **cross-origin senza CORS**, quindi la risposta è **opaca** (`ok:false`, `status:0`) e un `if (res.ok)` non navigherebbe **mai** — vale come «raggiungibile» il fatto stesso che la promise si risolva.
+- **`messages/{it,en}/offline.json`**: chiavi nuove, incluse le **etichette leggibili delle rotte** (l'elenco è bilingue come il resto della pagina).
+
+### iOS — simulatore iPhone 17 Pro (iOS 26.2), build pulita
+
+- **Face ID riconosciuto**: lo switch «Attiva lo sblocco biometrico» **compare** in `/parent/profilo`, e compare solo se `checkBiometry()` riporta la biometria disponibile. La correzione del 25 luglio (`NSFaceIDUsageDescription`) regge sul dispositivo.
+- **`WKAppBoundDomains` non ha rotto gli embed**: verificati in una news di collaudo temporanea (creata e **cancellata** a fine prova) — **YouTube** (`youtube-nocookie.com`), **Vimeo** e **Instagram** caricano tutti dentro la WebView.
+- Il **Service Worker è registrato** (`scopeURL` `/`, `scriptURL` `/sw.js`) e la **CacheStorage è popolata**: `cacheslist` riporta `kidville-shell-v2` con circa 70 record.
+- ⚠️ **Il comportamento offline vero e proprio su iOS non è stato dimostrato**: il simulatore condivide la rete del Mac e il **Network Link Conditioner non esiste sul simulatore**. Le precondizioni sono tutte verificate, ma la prova va chiusa su **iPhone fisico in modalità aereo**.
+
+### Un errore di metodo corretto, che valeva per ogni collaudo futuro
+
+La prova forense della CacheStorage su iOS puntava a `…/data/Containers/Data/Application/*/Library/Caches/it.kidville.app/WebKit/CacheStorage`, che su **iOS 26 contiene solo `salt`** anche quando il Service Worker sta lavorando. Il percorso reale è `…/Library/WebKit/it.kidville.app/WebsiteData/Default/<hash>/<hash>/CacheStorage`. Con il percorso vecchio si sarebbe concluso — **sbagliando** — che su iOS l'offline non funziona. Il percorso giusto, i selettori Maestro per piattaforma e il metodo di ispezione della WebView sono ora in **`docs/mobile.md`**.
+
+### Privacy manifest, log e lock
+
+- **`ios/App/App/PrivacyInfo.xcprivacy`**: `NSPrivacyCollectedDataTypes` non è più **vuoto** — 8 categorie (nome, email, telefono, foto, dati di pagamento, ID utente, crash e diagnostica), tutte `Linked` e **nessuna** per tracciamento; aggiunte le API types `FileTimestamp`, `DiskSpace` e `SystemBootTime` accanto a `UserDefaults`. Un manifest vuoto su un'app che tratta dati di minori non è una svista formale: è la dichiarazione che non si raccoglie nulla, ed è un rischio concreto di rigetto in review.
+- **16 `console.*` lato server bonificati** e portati su `logErrore`/`logEvento`: finivano nei **Runtime Logs di Vercel non redatti**, e alcuni interpolavano identificativi in chiaro dentro il messaggio (`src/lib/anagrafiche/parents.ts`, `src/lib/primaria/fascicolo-rbac.ts` sul percorso del fascicolo BES/DSA). Il tetto del lock `__tests__/architecture/console-suppressions.test.ts` **scende da 51 a 35**, e il lock ora legge anche il **sorgente** dei 12 moduli bonificati: rigenerare le soppressioni non basta più a farle ricomparire.
+- **`__tests__/architecture/native-privacy-lock.test.ts`** blinda ora **tutti e 7** i domini di `WKAppBoundDomains` (prima ne verificava 2: togliere `vimeo.com` non faceva fallire nulla) e il contenuto del privacy manifest. Una voce tolta lì non si vede in review, si scopre su un telefono con un embed nero, e si ripara solo con un aggiornamento sullo store.
+- **Nuovo `docs/store-submission.md`**: account demo per il revisore, note di review, mappa delle App Privacy labels dato per dato, screenshot per classe di device (**iPad compreso**, l'app è universale) e checklist di submission.
+- **Gate** verde: eslint 0 · tsc 0 · vitest 360 file / 3003 test · build ok.
+
+> ✅ **L'offline è dimostrato su Android, non più solo implementato**, e il vicolo cieco della pagina offline è chiuso. Su iOS sono verificate tutte le precondizioni (Face ID, embed con `WKAppBoundDomains`, SW registrato, cache popolata).
+
+> ⚠️ **Resta prima della submission:** la **validazione legale** di informativa e termini; l'**account demo** e le **App Privacy labels** da compilare in App Store Connect; la verifica che `aps-environment` risulti **`production`** nell'export dell'Archive; e la **prova offline su iPhone fisico in modalità aereo** — sul simulatore non è dimostrabile.
+
 ## 🗓️ Changelog — Recapito di supporto: casella ordinaria al posto della PEC 2026-07-26 (branch `fix/email-supporto`)
 
 Le tre pagine legali riportavano una **PEC** come unico recapito. Come contatto del Titolare era corretto, ma come recapito di **supporto** no: quasi tutti i gestori PEC rifiutano la posta ordinaria, quindi un genitore che scrive da Gmail — e il revisore Apple, che usa `/assistenza` come Support URL — avrebbe ricevuto un errore di consegna. Un recapito che rimbalza è peggio di nessun recapito, perché sembra funzionare.

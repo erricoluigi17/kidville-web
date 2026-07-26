@@ -445,6 +445,56 @@ Tutti gli screenshot vanno catturati con **dati fittizi** (classe TEST). Nessun 
 volto o dato di un bambino reale può finire in una scheda di uno store — è pubblica e
 indicizzata.
 
+### ✅ Prodotti e caricati il 2026-07-26 — e le trappole della cattura
+
+**12 screenshot**: 6 da iPhone 17 Pro Max (**1320×2868**) e 6 da iPad Pro 13" M5
+(**2064×2752**), su *home · menu · diario · mensa · pagamenti · avvisi*. Barra di stato
+normalizzata con `xcrun simctl status_bar … --time 9:41 --batteryLevel 100`.
+
+**La classe TEST era vuota, ed è stata popolata** (§«Dati demo», sotto): senza quello, sei
+schermate su sei dicevano «nessuna voce», «nessun avviso», «menu non ancora pubblicato»,
+«saldo ticket esaurito». Non era un problema di grafica: **il revisore Apple entra con lo
+stesso account e vede la stessa app vuota**, ed è esattamente ciò che alimenta la
+contestazione 4.2 *minimum functionality*.
+
+Quattro trappole di automazione, **tutte con l'aria di aver funzionato** (flow commentato
+in `.claude/maestro-flows/`, se lo si vuole rendere stabile):
+
+1. **I deep link `kidville://` aprono un alert nativo iOS a ogni apertura, e gli alert si
+   accodano.** Senza conferma la navigazione non avviene e ogni cattura successiva è la
+   *stessa identica immagine*. Si naviga invece con la barra inferiore e il foglio MENU.
+2. **Nel foglio MENU i titoli brevi non bastano**: `MENSA` corrisponde anche alla barra
+   inferiore che sta *dietro* l'overlay, e il tap finisce sulla pagina sbagliata (una
+   cattura «diario» conteneva News). Serve l'etichetta completa,
+   `MENSA Menu e ticket pasto`.
+3. **`waitForAnimationToEnd` non aspetta i dati**: una cattura ha colto «Caricamento…».
+   Serve un'attesa esplicita che il testo sparisca.
+4. **Il pulsante del menu espone l'aria-label completo**: `MENU` non lo trova, serve
+   `Menu · tutte le sezioni`.
+
+### Dati demo scritti in produzione (solo classe TEST Infanzia)
+
+`219cab6a-2bf3-48d6-a443-b7aecda40f42`, sede Giugliano. Nessuna riga di alunni, famiglie
+o classi reali è stata toccata.
+
+- **50 eventi di diario** per i 10 alunni (umore, merenda, attività con partecipazione,
+  pranzo, bagno) con nota della maestra e «nota per te»;
+- **menù della settimana** 20–24 luglio con allergeni;
+- **20 ticket mensa** a testa + movimento di ricarica;
+- **3 avvisi** e **3 news** pubblicate;
+- **retta scaduta saldata**, storico con 3 pagate e 1 in scadenza.
+
+> ⚠️ **Due regole che rendono invisibili i dati appena inseriti**, e che vanno conosciute
+> prima di rifare il seed:
+>
+> 1. **Il diario ha una finestra di correzione.** Il genitore vede una voce solo trascorsi
+>    `buffer_visibilita_min` minuti (default **10**) da `creato_il`. Un seed appena scritto
+>    è invisibile per costruzione: va **retrodatato `creato_il`**.
+> 2. **Il menù dipende da `mensa_class_menu_assignment`, che qui è VUOTA.** Senza
+>    assegnazione la scuola lavora in modalità «menù unico» e il server filtra
+>    `menu_config_id IS NULL`: una riga con `menu_config_id` valorizzato viene **esclusa in
+>    silenzio**, e la pagina continua a dire «menu non ancora pubblicato».
+
 ---
 
 ## 5. ✅ Firma di distribuzione — sbloccata il 2026-07-26
@@ -592,6 +642,30 @@ dato all'identificativo, non «Kidville».
 > `createHash('sha256')`, `timingSafeEqual` e `randomBytes`; HTTPS e biometria vengono dal
 > sistema, ed entrambi sono esenti.
 
+### ✅ Scheda compilata e screenshot caricati — 2026-07-26
+
+Tutto quanto segue è **già su App Store Connect**, caricato via API:
+
+| Voce | Valore |
+|---|---|
+| Build agganciata alla versione 1.0 | `1.0 (1)` — **l'upload non la aggancia**, sono due passi distinti |
+| Categoria primaria | `EDUCATION` |
+| Descrizione · keyword · testo promozionale | compilati in italiano |
+| URL di assistenza | `https://app.kidville.it/assistenza` |
+| Classificazione per età | compilata (`messagingAndChat: true`, `userGeneratedContent: true`, tutto il resto `NONE`/`false`) |
+| Informazioni per la revisione | note in inglese (§2) + **account demo** `test.inf.genitore1@kidville.test` |
+| Screenshot | **12**, tutti `assetDeliveryState: COMPLETE`, zero errori |
+
+> ⚠️ **`APP_IPHONE_69` non esiste.** Il codice del formato per gli screenshot iPhone 6,9"
+> è **`APP_IPHONE_67`**: è lì che App Store Connect vuole le catture a 1320×2868. Per
+> l'iPad 13" (2064×2752) il codice è `APP_IPAD_PRO_3GEN_129`. L'API risponde `409` con
+> l'elenco completo dei valori validi, ed è il modo più rapido per scoprirli.
+
+Il caricamento di uno screenshot è in **tre passi**, e saltarne uno lascia una voce
+fantasma che l'interfaccia mostra vuota senza spiegare perché: `POST /v1/appScreenshots`
+(prenota e restituisce le `uploadOperations`) → `PUT` dei byte, una richiesta per
+operazione → `PATCH uploaded:true` con `sourceFileChecksum` MD5, che Apple riverifica.
+
 ### Cosa resta aperto su questo fronte
 
 **La push in ambiente `production` è ancora plausibile, non dimostrata.** La firma è
@@ -633,36 +707,26 @@ osservare da un simulatore. Stessa cosa per l'**offline in modalità aereo**.
 - [ ] **Password dedicata all'account demo**, diversa da quella comune degli account TEST,
       così che ruotarla dopo la review non rompa gli altri accessi (§1). Serve una
       decisione del titolare.
-- [ ] **Account demo** compilato in App Store Connect (*Sign-in required*) e in Play
-      Console (*Accesso all'app*) — solo l'account **genitore**.
-- [ ] **Dati demo rinfrescati** e classi TEST **non ripulite** per tutta la finestra di
-      review.
+- [x] ~~**Account demo** compilato in App Store Connect (*Sign-in required*)~~ — **fatto il
+      2026-07-26**: `test.inf.genitore1@kidville.test` in `appStoreReviewDetails`, con le note
+      di review in inglese (§2). ⚠️ Resta da compilare in **Play Console** (*Accesso all'app*).
+- [x] ~~**Dati demo rinfrescati**~~ — **fatto il 2026-07-26** (§4): diario, menù, ticket,
+      avvisi, news e pagamenti sulla sola classe TEST Infanzia. ⚠️ Le classi TEST **non vanno
+      ripulite** per tutta la finestra di review.
 - [ ] **App Privacy labels** compilate (§3) e **coerenti** con
       `ios/App/App/PrivacyInfo.xcprivacy`; deciso il punto aperto su salute / categorie
       particolari.
+- [ ] **Descrizione, keyword e categoria per Google Play** — su App Store sono compilate
+      (§5); la scheda Play è ancora vuota.
 - [ ] **Modulo «Sicurezza dei dati»** di Google Play compilato, incluso l'URL per la
       cancellazione dell'account.
-- [ ] **Scelta iPad**: universale con screenshot iPad, **oppure**
-      `TARGETED_DEVICE_FAMILY = "1"` (§4). La resa su iPad Pro 13" è stata **vista il
-      2026-07-26 ed è accettabile** (§4): la scelta resta aperta, ma non è più al buio.
-- [ ] **Screenshot** prodotti per tutte le classi richieste, con soli dati fittizi — e
-      **catturati dai simulatori giusti**: iPad Pro 13" e iPhone 17 Pro **Max** (§4).
-- [x] ~~**`aps-environment` = `production` nell'export dell'Archive**~~ — **verificato il
-      2026-07-26** sull'`.ipa` esportato (§5): `production`, con `get-task-allow = false`.
-      ⚠️ **Va controllato sull'`.ipa`, non sull'`.xcarchive`**: l'app dentro l'Archive resta
-      firmata in sviluppo (`development` + `get-task-allow = true`) ed è **corretto** — è
-      l'export a rifirmare in distribuzione. Anche il sorgente
-      `ios/App/App/App.entitlements` dice `development`, e va lasciato così. Resta da
-      dimostrare che una push **arrivi davvero** su un device con build di produzione: serve
-      TestFlight, quindi il caricamento (voce sopra).
-
-      ```bash
-      # sull'.app estratto dall'Archive o dall'.ipa
-      codesign -d --entitlements :- /percorso/App.app | grep -A1 aps-environment
-      # in alternativa, dal profilo incorporato
-      security cms -D -i /percorso/App.app/embedded.mobileprovision | grep -A1 aps-environment
-      ```
-
+- [x] ~~**Scelta iPad**~~ — **decisa il 2026-07-26**: l'app resta **universale** e gli
+      screenshot iPad sono stati prodotti e caricati. `TARGETED_DEVICE_FAMILY` resta `"1,2"`.
+- [x] ~~**Screenshot** prodotti per tutte le classi richieste, con soli dati fittizi~~ —
+      **fatto il 2026-07-26**: 12 screenshot caricati (6 iPhone a 1320×2868 nel formato
+      `APP_IPHONE_67`, 6 iPad a 2064×2752 in `APP_IPAD_PRO_3GEN_129`), tutti
+      `assetDeliveryState: COMPLETE`. ⚠️ Restano da produrre quelli di **Google Play**
+      (telefono, icona 512×512, immagine in evidenza 1024×500).
 - [ ] **Build costruita con `CAP_SERVER_URL` HTTPS di produzione** e config rigenerati —
       procedura e verifiche in `docs/mobile.md`, §«Prima della build per lo store».
 - [x] ~~**Face ID provato dall'inizio alla fine su iOS**~~ — **fatto il 2026-07-26** su

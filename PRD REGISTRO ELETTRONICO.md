@@ -64,6 +64,46 @@
 
 ---
 
+## 🗓️ Changelog — Scheda App Store compilata: 12 screenshot, dati demo, e la classe TEST che era vuota 2026-07-26 (branch `feat/scheda-app-store`)
+
+La scheda dell'app **non è più vuota**. Su App Store Connect ci sono ora: **12 screenshot** (6 iPhone a **1320×2868**, 6 iPad a **2064×2752**, tutti `assetDeliveryState: COMPLETE`), descrizione, keyword, testo promozionale, URL di assistenza, categoria **Istruzione**, classificazione per età compilata, note di review in inglese con l'**account demo**, e la **build `1.0 (1)` agganciata alla versione** — che è un passo a sé: caricare una build non la seleziona.
+
+### Il problema vero non erano gli screenshot: era che l'app non aveva niente dentro
+
+Alla prima cattura, **sei schermate su sei** dicevano «NESSUNA VOCE», «NESSUN AVVISO», «ANCORA NESSUNA NEWS», «Menu non ancora pubblicato», «Saldo ticket esaurito» in rosso e «€ 150,00 scaduti» in rosso sulla home. È il 26 luglio, non c'è scuola, e il diario mostra solo 14 giorni indietro: la classe TEST era legittimamente vuota.
+
+E qui la cosa che conta più della vetrina: **il revisore Apple entra con quello stesso account e vede quella stessa app vuota.** Un'app che a ogni schermata dice «non c'è niente» è precisamente ciò che alimenta la contestazione **4.2 *minimum functionality***. Non era un problema di grafica, era un problema di collaudo.
+
+Sono stati scritti dati fittizi sulla **sola classe TEST Infanzia** (`219cab6a-…`): 50 eventi di diario per i 10 alunni (umore, merenda, attività con partecipazione, pranzo, bagno, con nota della maestra e «nota per te»), il menù della settimana con gli allergeni, 20 ticket mensa a testa, 3 avvisi, 3 news, la retta scaduta saldata e uno storico credibile. **Nessuna riga di alunni, famiglie o classi reali è stata toccata.**
+
+### Due regole che rendono invisibili i dati appena inseriti
+
+Entrambe hanno fatto sembrare rotto ciò che era corretto, e vanno sapute prima di rifare un seed:
+
+- **Il diario ha una finestra di correzione.** Il genitore vede una voce solo trascorsi `buffer_visibilita_min` minuti (default **10**) da `creato_il`: un seed appena scritto è **invisibile per costruzione**. Va retrodatato `creato_il`.
+- **Il menù dipende da `mensa_class_menu_assignment`, che in questa scuola è VUOTA.** Senza assegnazione si lavora in modalità «menù unico» e il server filtra `menu_config_id IS NULL`: una riga con quel campo valorizzato viene **esclusa in silenzio**, e la pagina continua a dire «menu non ancora pubblicato».
+
+### Quattro trappole della cattura automatica, tutte con l'aria di funzionare
+
+1. I **deep link `kidville://`** aprono un alert nativo iOS a ogni apertura, e gli alert **si accodano**: senza conferma la navigazione non avviene e ogni cattura successiva è la *stessa identica immagine*.
+2. Nel foglio **MENU** i titoli brevi corrispondono anche alla barra inferiore che sta **dietro** l'overlay: una cattura chiamata «diario» conteneva News, una chiamata «avvisi» conteneva Pagamenti. Serve l'etichetta completa (`MENSA Menu e ticket pasto`).
+3. **`waitForAnimationToEnd` non aspetta i dati**: una cattura ha colto «Caricamento…».
+4. Il pulsante del menu espone l'**aria-label completo**: `MENU` non lo trova, serve `Menu · tutte le sezioni`.
+
+### Un dettaglio dell'API che fa perdere tempo
+
+**`APP_IPHONE_69` non esiste.** Il formato per gli screenshot iPhone 6,9" è **`APP_IPHONE_67`**; per l'iPad 13" è `APP_IPAD_PRO_3GEN_129`. L'API risponde `409` elencando tutti i valori validi, ed è il modo più rapido per scoprirli. Il caricamento è in **tre passi** (prenota → `PUT` dei byte → `PATCH uploaded:true` con checksum MD5): saltarne uno lascia una voce fantasma che l'interfaccia mostra vuota senza spiegare perché.
+
+### Password degli account TEST
+
+Su decisione esplicita del titolare la password comune dei **41 account `test.*`** è stata riportata a un valore facile da ricordare, **inclusi i tre account che leggono l'anagrafica reale della sede** (`test.segreteria`, `test.pri.segreteria`, `test.cuoca`). Il rischio è stato illustrato e accettato; resta valida la voce aperta in `docs/store-submission.md` §1: dare all'account demo una **password dedicata**, così ruotarla dopo la review non rompe nient'altro. Gli account `*.e2e` non sono stati toccati.
+
+- **Gate** verde: eslint 0 · tsc 0 · vitest 365 file / 3041 test · build ok.
+
+> ✅ **La scheda App Store è compilata e gli screenshot sono caricati.** Restano fuori solo le voci che richiedono una persona: DSA, validazione legale, App Privacy labels, e le due prove col telefono in mano.
+
+> ⚠️ **Resta prima della submission:** lo **stato di operatore commerciale DSA** (bloccante); le **App Privacy labels** (con la decisione aperta sui dati sanitari); la **validazione legale** di informativa e termini; la **prova che una push arrivi in ambiente `production`** e l'**offline in modalità aereo**, entrambe da fare con un **iPhone fisico** e la build TestFlight; e tutta la **scheda Google Play** (descrizione, screenshot, modulo «Sicurezza dei dati», accesso all'app).
+
 ## 🗓️ Changelog — La build è su TestFlight: scheda app, upload, e la trappola «Missing Compliance» 2026-07-26 (branch `fix/conformita-export-ios`)
 
 La build **è su App Store Connect**. Nell'ordine: creata la scheda app (`Kidville`, Apple ID **`6794883055`**), validato il pacchetto (**`VERIFY SUCCEEDED with no errors`**), caricato (**`UPLOAD SUCCEEDED`**, 5.027.386 byte in 3,0s, Delivery UUID `c912710a-…`), elaborato da Apple in circa due minuti e mezzo → **`processingState: VALID`**. Creato il gruppo TestFlight interno `Interni` con il titolare come tester.

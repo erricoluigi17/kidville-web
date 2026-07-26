@@ -9,6 +9,7 @@ import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { Btn } from '@/components/ui/Btn';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { useTranslations } from 'next-intl';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 
 // Identità dalla sessione (URL → localStorage → /api/me), senza fallback demo (M4).
 function TeacherAvvisiContent() {
@@ -83,7 +84,7 @@ function TeacherAvvisiContent() {
                 if (res.ok) await loadAvvisi();
             }
         } catch (err) {
-            console.error('Errore nel salvataggio dell\'avviso:', err);
+            logClient({ livello: 'error', evento: 'fetch', messaggio: `avviso-salvataggio-fallito: ${nomeErrore(err)}`, route: '/teacher/avvisi' });
         }
     };
 
@@ -97,7 +98,7 @@ function TeacherAvvisiContent() {
             });
             if (res.ok) await loadAvvisi();
         } catch (err) {
-            console.error('Errore eliminazione avviso:', err);
+            logClient({ livello: 'error', evento: 'fetch', messaggio: `avviso-eliminazione-fallita: ${nomeErrore(err)}`, route: '/teacher/avvisi' });
         }
     };
 

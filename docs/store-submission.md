@@ -61,28 +61,40 @@ L'account da mettere nel campo demo è quindi **`test.inf.genitore1@kidville.tes
 anche il percorso che il revisore giudica (la app che usa una famiglia), e i suoi dati
 sono tutti fittizi.
 
-### La password — dove sta, e perché è un rischio aperto
+### La password — dove sta (rischio chiuso il 2026-07-26)
 
-**La password non è scritta in questo file, e non va scritta in nessun file del repo.**
-Il repository è **pubblico**.
+**La password non è scritta in questo file, e non è più scritta in nessun file del repo.**
+Si reperisce nel **gestore di credenziali del titolare**; gli script di collaudo la leggono
+dalla variabile d'ambiente **`KV_TEST_PASSWORD`** (`e2e/lib/test-password.mjs`) e falliscono
+subito se manca.
 
-Si reperisce nel **PRD** (`PRD REGISTRO ELETTRONICO.md`, sezione **«Classi di prova
-(produzione, sede Kidville Giugliano)»**): è la password comune di tutti gli account TEST.
-
-> 🔴 **RISCHIO DA CHIUDERE PRIMA DELLA SUBMISSION.** Quella password è scritta **in
-> chiaro** dentro il PRD, che è committato in un **repository pubblico**, e apre account
-> **attivi in produzione**. Chiunque legga il repo entra nel registro elettronico come
-> genitore, come docente e — con `test.segreteria` — come segreteria, cioè con vista
-> sull'anagrafica dell'intera sede. Il fatto che le classi TEST siano fittizie non
-> protegge nulla: l'account di segreteria vede anche le classi vere.
+> ✅ **RISCHIO CHIUSO il 2026-07-26.** Fino a quel giorno la password comune degli account
+> TEST era scritta **in chiaro** in **9 file committati** (PRD, una spec, gli script e i
+> report della campagna 360°) di un repository **pubblico**, e apriva account **attivi in
+> produzione**: chiunque leggesse il repo entrava nel registro come genitore, come docente
+> e — con `test.segreteria` — con vista sull'anagrafica dell'intera sede, classi reali
+> comprese. Cosa è stato fatto:
 >
-> **Azione richiesta (non è lavoro da agente, serve una decisione):**
-> 1. **ruotare** la password di tutti gli account TEST **prima** della submission;
-> 2. **togliere** il valore dal PRD e da qualunque altro file committato, sostituendolo
->    con un rimando («la password è nel gestore di credenziali del titolare»);
-> 3. dare al revisore una password **dedicata all'account demo**, diversa da quella
->    degli altri account TEST, così che ruotarla dopo la review non rompa nient'altro;
-> 4. valutare se `test.segreteria` debba restare attivo in produzione.
+> 1. **password ruotata** su tutti i 41 account `test.*@kidville.test` (login nuovo
+>    verificato, vecchio respinto). Gli account `*.e2e@kidville.test` **non** sono stati
+>    toccati: vivono sul progetto Supabase usa-e-getta della CI, non in produzione;
+> 2. **valori rimossi** da tutti e 9 i file; negli script la password arriva da
+>    `KV_TEST_PASSWORD`, nei documenti resta solo il rimando;
+> 3. **i report generati non la stampano più** (`build-artifact.mjs`,
+>    `build-report-fresh.mjs`): un report circola in allegato, e un allegato con dentro
+>    una password è un segreto che viaggia;
+> 4. **lock di regressione** `__tests__/architecture/niente-password-nel-repo.test.ts`:
+>    scandisce i file tracciati e fallisce se una password in chiaro rientra.
+>
+> ⚠️ **Quel che resta aperto.** La password vecchia è ancora nella **storia git**, e il
+> repository è stato pubblico fino al 2026-07-26: va considerata **compromessa per sempre**
+> (è morta perché ruotata, non perché cancellata — riscriverla toccando la storia non
+> servirebbe, le copie e i fork già esistenti restano). Restano quindi due decisioni del
+> titolare, **non lavoro da agente**:
+>
+> - dare al revisore una password **dedicata all'account demo**, diversa da quella degli
+>   altri account TEST, così che ruotarla dopo la review non rompa nient'altro;
+> - valutare se `test.segreteria` debba restare attivo in produzione.
 
 ### In che stato devono essere i dati
 
@@ -406,8 +418,12 @@ indicizzata.
 - [ ] **Validazione legale di informativa e termini** (`/privacy`, `/termini`) da parte di
       un legale. **Non è lavoro da agente.** È l'ultima voce ancora aperta dal changelog
       del 2026-07-26.
-- [ ] **Rotazione della password degli account TEST** e rimozione del valore dal PRD
-      (vedi §1: oggi è in chiaro in un repository pubblico e apre account di produzione).
+- [x] ~~**Rotazione della password degli account TEST** e rimozione del valore dal PRD~~
+      — **fatto il 2026-07-26** (vedi §1): password ruotata sui 41 account `test.*`, valore
+      tolto da tutti e 9 i file, script su `KV_TEST_PASSWORD`, lock di regressione attivo.
+- [ ] **Password dedicata all'account demo**, diversa da quella comune degli account TEST,
+      così che ruotarla dopo la review non rompa gli altri accessi (§1). Serve una
+      decisione del titolare.
 - [ ] **Account demo** compilato in App Store Connect (*Sign-in required*) e in Play
       Console (*Accesso all'app*) — solo l'account **genitore**.
 - [ ] **Dati demo rinfrescati** e classi TEST **non ripulite** per tutta la finestra di

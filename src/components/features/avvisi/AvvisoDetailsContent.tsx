@@ -5,6 +5,7 @@ import { useTranslations, useLocale } from 'next-intl';
 import { Search, AlertCircle, Users, ThumbsUp, ThumbsDown, Eye, HelpCircle } from 'lucide-react';
 import { Avviso } from './AvvisoCard';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 
 // Monitoraggio di un avviso (stato lettura + adesioni con filtri): contenuto
 // condiviso tra il drawer mobile del docente (AvvisoDetailsDrawer) e la pagina
@@ -91,7 +92,12 @@ export function AvvisoDetailsContent({ avviso, availableClasses = [], userId, la
                             return (await res.json()) as StudentBasic[];
                         }
                     } catch (e) {
-                        console.error(`Errore caricamento studenti per classe ${classe}:`, e);
+                        // Il NOME DELLA CLASSE non entra nel messaggio. Era il caso peggiore
+                        // del lotto: una template string che stampava «Primavera A» nella
+                        // console del telefono, cioè un dato scolastico in un canale senza
+                        // redazione. Del guasto interessa la classe dell'errore, non quale
+                        // sezione l'ha innescato — se falliscono tutte, si vede lo stesso.
+                        logClient({ livello: 'error', evento: 'fetch', messaggio: `avviso-studenti-classe-caricamento-fallito: ${nomeErrore(e)}` });
                     }
                     return [];
                 });
@@ -106,7 +112,7 @@ export function AvvisoDetailsContent({ avviso, availableClasses = [], userId, la
 
                 setTargetStudents(uniqueStudents);
             } catch (err) {
-                console.error('Errore nel caricamento dei dettagli avviso:', err);
+                logClient({ livello: 'error', evento: 'fetch', messaggio: `avviso-dettagli-caricamento-fallito: ${nomeErrore(err)}` });
             } finally {
                 setLoading(false);
             }

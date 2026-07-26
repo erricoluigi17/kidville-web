@@ -14,6 +14,7 @@ import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { Btn } from '@/components/ui/Btn';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 import { useDateFormat } from '@/lib/i18n/date';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 
 interface LockerRequest {
     id: string;
@@ -196,7 +197,9 @@ function LockerInner() {
             showToastMsg(t('lockerToastPresoInCarico'));
             fetchData();
         } catch (err) {
-            console.error('Errore:', err);
+            // L'id della richiesta resta fuori dal messaggio: il log dice COSA è fallito,
+            // il toast dice all'utente che è fallito. Nessuno dei due nomina il bambino.
+            logClient({ livello: 'error', evento: 'fetch', messaggio: `armadietto-presa-in-carico-fallita: ${nomeErrore(err)}`, route: '/parent/locker' });
             showToastMsg(t('lockerToastErrSalvataggio'));
         } finally {
             setSavingId(null);

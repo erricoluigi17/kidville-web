@@ -14,9 +14,11 @@
  *
  * Uso (dalla root): node e2e/primaria-360/scripts/seed-primaria-360.mjs
  * Env (.env.local): NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+ * Env (shell):      KV_TEST_PASSWORD — password comune degli account TEST, non è nel repo.
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createClient } from '@supabase/supabase-js';
+import { requireTestPassword } from '../../lib/test-password.mjs';
 
 function loadEnvLocal() {
   const env = {};
@@ -40,7 +42,7 @@ const db = createClient(URL_, SERVICE_KEY, { auth: { persistSession: false } });
 
 const SECTION = 'bb4e9f8a-c737-4d41-8634-02f8f8e48601';
 const SCUOLA = 'd53b0fbc-a9eb-4073-b302-73d1d5abd529';
-const PASSWORD = 'KidvilleTest.2026!';
+const PASSWORD = requireTestPassword();
 
 // Città/CAP di comodo per i dati anagrafici di test (Giugliano in Campania).
 const RES = { city: 'Giugliano in Campania', prov: 'NA', zip: '80014', nation: 'Italia', cittad: 'Italiana' };
@@ -242,13 +244,19 @@ async function main() {
       { email: `test.pri.genitore${a.n}@kidville.test`, ruolo: 'Genitore · Madre', alunno: `Alunno${a.n} Test PRI` },
       { email: `test.pri.genitore${a.n}p@kidville.test`, ruolo: 'Genitore · Padre', alunno: `Alunno${a.n} Test PRI` },
     ])),
-  ].map((c) => ({ ...c, password: PASSWORD }));
+  ];
 
-  console.log('\n=== LISTA CREDENZIALI (TEST 1A) ===');
-  for (const c of creds) console.log(`${c.email}  |  ${PASSWORD}  |  ${c.ruolo}  |  ${c.alunno}`);
+  // La password è comune a tutti questi account ed è la stessa di produzione: non si
+  // stampa a terminale e non si scrive su file (finirebbe in un log di CI o in un
+  // artefatto allegato). Sta solo in KV_TEST_PASSWORD.
+  console.log('\n=== LISTA CREDENZIALI (TEST 1A) — password: vedi $KV_TEST_PASSWORD ===');
+  for (const c of creds) console.log(`${c.email}  |  ${c.ruolo}  |  ${c.alunno}`);
 
   const outPath = new URL('../run-credentials.json', import.meta.url);
-  writeFileSync(outPath, JSON.stringify({ section: SECTION, password: PASSWORD, accounts: creds }, null, 2));
+  writeFileSync(
+    outPath,
+    JSON.stringify({ section: SECTION, passwordSorgente: 'KV_TEST_PASSWORD', accounts: creds }, null, 2),
+  );
   console.log(`\n✓ Seed completo. Credenziali salvate in ${outPath.pathname}`);
 }
 

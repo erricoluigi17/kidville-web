@@ -73,6 +73,7 @@ a iOS passa da FCM, quindi lato server bastano le `FCM_*`.
 |---|---|
 | `SUPABASE_URL` | Alias server-only dell'URL progetto usato da `scripts/*.mjs` e dalle edge function (fallback: `NEXT_PUBLIC_SUPABASE_URL`). |
 | `DATABASE_URL` | Connection string Postgres diretta, SOLO per lo script legacy `scripts/apply-enrollment-migration.mjs` (le migrazioni correnti passano da RPC `exec_sql`). **Segreto.** |
+| `KV_TEST_PASSWORD` | Password comune degli account TEST `test.*@kidville.test` (**account attivi in PRODUZIONE**, sezioni TEST della sede Giugliano). La leggono le campagne di collaudo `e2e/primaria-360/**` e `e2e/collaudo-giornata/**` (helper `e2e/lib/test-password.mjs`) e i flow Maestro (`export MAESTRO_KV_PASSWORD="$KV_TEST_PASSWORD"`). **Assente → gli script escono subito con exit 1** e il messaggio che dice cosa esportare: nessun default, nessuna stringa vuota. **Segreto: non è scritta in nessun file del repo** (ruotata il 2026-07-26, sta nel gestore di credenziali del titolare). L'app non la legge mai. |
 
 La suite E2E (`npm run e2e`) legge `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY`
 da `.env.local` per il seed idempotente (scuola dedicata `e2e00000-*`);

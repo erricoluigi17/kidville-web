@@ -7,9 +7,11 @@
  *
  * Uso (dalla root): node e2e/collaudo-giornata/seed/seed-giornata.mjs
  * Env (.env.local): NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+ * Env (shell):      KV_TEST_PASSWORD — password comune degli account TEST, non è nel repo.
  */
 import { readFileSync } from 'node:fs';
 import { createClient } from '@supabase/supabase-js';
+import { requireTestPassword } from '../../lib/test-password.mjs';
 
 function loadEnvLocal() {
   const env = {};
@@ -29,7 +31,7 @@ if (!URL_ || !SERVICE_KEY) { console.error('Mancano env Supabase'); process.exit
 const db = createClient(URL_, SERVICE_KEY, { auth: { persistSession: false } });
 
 const SCUOLA = 'd53b0fbc-a9eb-4073-b302-73d1d5abd529';
-const PASSWORD = 'KidvilleTest.2026!';
+const PASSWORD = requireTestPassword();
 
 const ACCOUNTS = [
   { email: 'test.cuoca@kidville.test', nome: 'Cuoca', cognome: 'Test E2E', ruolo: 'cuoca', gradi: [] },

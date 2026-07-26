@@ -200,6 +200,41 @@ function tronca(s: string, max: number): string {
 }
 
 /**
+ * La forma di un nome di classe d'errore: `Error`, `TypeError`, `AbortError`, `DOMException`,
+ * `PostgrestError`, `ZodError`, `ERR_NETWORK`. Niente spazi, niente punteggiatura, niente
+ * accenti — cioè niente di ciò che ha la forma del TESTO.
+ */
+const NOME_ERRORE_RX = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
+
+/**
+ * L'UNICO pezzo di un errore che può lasciare il dispositivo.
+ *
+ * PERCHÉ ESISTE. Nel client questo repo aveva ~35 righe `console.error('Errore X:', err)`.
+ * `err` lì è quasi sempre un errore PostgREST o una `Error` costruita dal server, e il suo
+ * `.message` riecheggia filtri, colonne e valori: `alunno_id=eq.<uuid>`, «studenti per classe
+ * Primavera A», «CF non valido per Mario Rossi». Nessuna whitelist lo guardava, perché
+ * `console` non passa da `redact()` — e quei log finivano nella console di un telefono, cioè
+ * in un posto dove nessuno li avrebbe mai letti e da cui chiunque avrebbe potuto leggerli.
+ *
+ * Il `.name` invece è STRUTTURA, non contenuto: lo decide la classe, non il dato. E porta
+ * l'unica distinzione che serve davvero al triage — `TypeError` (la rete è giù: il genitore è
+ * in metropolitana) contro `Error` (il server ha risposto e ha detto di no: è un nostro bug).
+ *
+ * Non lancia mai: la chiamano dei `catch`, ed è l'ultimo posto in cui si può permettere di
+ * aprire una seconda eccezione (un getter `name` ostile esiste, e in jsdom è banale da avere).
+ */
+export function nomeErrore(e: unknown): string {
+    try {
+        if (!(e instanceof Error)) return 'errore';
+        const nome = e.name;
+        if (typeof nome !== 'string' || !NOME_ERRORE_RX.test(nome)) return 'errore';
+        return nome;
+    } catch {
+        return 'errore';
+    }
+}
+
+/**
  * Accoda un evento. NON LANCIA MAI: è chiamata da `window.onerror`, cioè dal gestore che si
  * attiva quando l'app è GIÀ rotta — è l'ultimo posto del sistema in cui ci si può permettere
  * di sollevare una seconda eccezione.

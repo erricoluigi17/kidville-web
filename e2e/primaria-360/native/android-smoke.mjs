@@ -6,13 +6,15 @@
  *
  * Uso: node e2e/primaria-360/native/android-smoke.mjs <key> <email> [routes csv]
  * Prereq: emulatore avviato + APK installato + appium su :4723 + dev server :3000.
+ * Env: KV_TEST_PASSWORD — password comune degli account TEST, non è nel repo.
  */
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { execSync } from 'node:child_process';
+import { requireTestPassword } from '../../lib/test-password.mjs';
 
 const BASE = 'http://localhost:4723';
 const SERVER = 'http://10.0.2.2:3000';
-const PASSWORD = 'KidvilleTest.2026!';
+const PASSWORD = requireTestPassword();
 const ADB = `${process.env.HOME}/Library/Android/sdk/platform-tools/adb`;
 
 const [key = 'docente1', email = 'test.pri.docente1@kidville.test', routesCsv = ''] = process.argv.slice(2);

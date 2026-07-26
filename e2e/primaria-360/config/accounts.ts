@@ -2,7 +2,24 @@ import path from 'node:path';
 
 // Costanti del test 360° Primaria (prod, sezione TEST 1A).
 export const BASE_URL = process.env.KV360_BASE || 'http://localhost:3000';
-export const PASSWORD = 'KidvilleTest.2026!';
+
+// Password comune degli account TEST: MAI nel repo (sono account attivi in produzione,
+// e il repository è stato pubblico). Si passa dall'ambiente; se manca si fallisce subito,
+// altrimenti il difetto riemerge più tardi come un misterioso login rifiutato.
+// Vedi e2e/lib/test-password.mjs.
+function requireTestPassword(): string {
+  const valore = (process.env.KV_TEST_PASSWORD || '').trim();
+  if (!valore) {
+    throw new Error(
+      "Manca la variabile d'ambiente KV_TEST_PASSWORD (password comune degli account TEST " +
+        'test.*@kidville.test, non scritta nel repo). Prendila dal gestore di credenziali del ' +
+        "titolare ed esportala prima di rilanciare:  export KV_TEST_PASSWORD='…'",
+    );
+  }
+  return valore;
+}
+
+export const PASSWORD = requireTestPassword();
 export const SECTION_1A = 'bb4e9f8a-c737-4d41-8634-02f8f8e48601';
 export const SCUOLA_GIUGLIANO = 'd53b0fbc-a9eb-4073-b302-73d1d5abd529';
 

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { motion } from 'framer-motion';
 import { X, Tag, Shield, Calendar, Users, FileText, AlertTriangle } from 'lucide-react';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 
 export interface TaskFormData {
     titolo: string;
@@ -174,7 +175,7 @@ export function TaskForm({
             await onSubmit(data);
             onClose();
         } catch (err) {
-            console.error('Errore creazione task:', err);
+            logClient({ livello: 'error', evento: 'fetch', messaggio: `task-creazione-fallita: ${nomeErrore(err)}` });
             alert(t('erroreCreazione'));
         } finally {
             setIsSaving(false);

@@ -1479,11 +1479,23 @@ pushato/mergeato al momento della scrittura.
 
 **Classi di prova (produzione, sede Kidville Giugliano `d53b0fbc-…`).** Create 2 sezioni etichettate
 TEST — **"TEST Infanzia"** (school_type infanzia) e **"TEST 1A"** (primaria) — ognuna con 10 alunni,
-2 insegnanti e 10 genitori con login (password comune `KidvilleTest.2026!`, hash verificato). Email:
+2 insegnanti e 10 genitori con login (password comune a tutti gli account TEST). Email:
 `test.inf.docente{1,2}` / `test.inf.genitore{1..10}` / `test.pri.*` `@kidville.test`. Dati fittizi
 ripulibili (etichetta TEST). In più (dal collaudo del 2026-07-13): **`test.segreteria@kidville.test`**
 (ruolo `segreteria`, stessa password) per verificare i flussi di sportello (anagrafica Staff, mensa,
 report cucina).
+
+> 🔐 **La password non è più scritta qui — e non va scritta in nessun file del repo.** Fino al
+> 2026-07-26 era in chiaro in questo PRD e in altri 8 file committati, con il repository
+> **pubblico**: chiunque leggesse il repo entrava nel registro come genitore, come docente e —
+> con `test.segreteria` — con vista sull'anagrafica dell'intera sede, comprese le famiglie
+> **reali**. Il 2026-07-26 la password è stata **ruotata** su tutti i 41 account `test.*` e i
+> valori sono stati tolti dai file. Ora si reperisce nel **gestore di credenziali del titolare**;
+> gli script di collaudo la leggono dalla variabile d'ambiente **`KV_TEST_PASSWORD`** (vedi
+> `e2e/lib/test-password.mjs`) e falliscono subito se manca. Il lock
+> `__tests__/architecture/niente-password-nel-repo.test.ts` impedisce che ne rientri una.
+> Resta il fatto che **la password vecchia è nella storia git**: è morta perché ruotata, non
+> perché cancellata.
 
 **Nota di regressione nota (aggiornata 2026-07-13):** in `parents` la colonna `citizenship` conserva in
 realtà il *ruolo* (`mother`/`father`/`educator`…) come workaround storico; la cittadinanza reale digitata

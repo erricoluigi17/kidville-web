@@ -8,6 +8,7 @@ import { DiaryEventType } from '@/lib/offline/db';
 import { EventTypeButton } from '@/components/features/teacher/diary/EventTypeButton';
 import { EVENT_CONFIG, BATHROOM_TYPES, useEventLabel } from '@/components/features/teacher/diary/eventConfig';
 import { MealDetailInline } from '@/components/features/teacher/diary/MealDetailInline';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 import { ActivityDetailInline, ActivityItem } from '@/components/features/teacher/diary/ActivityDetailInline';
 import { UMORE_VALUES, UMORE_CONFIG, useUmoreLabel, umoreFromDettagli, umoreAttivo } from '@/lib/diary/umore';
 
@@ -223,7 +224,9 @@ export function useDiaryDay(userId: string | null, sezione: string | null, opts?
             setStudentStates(newState);
             setSavedStudentIds(savedIds);
         } catch (err) {
-            console.error('Errore ripristino dati:', err);
+            // Il diario è il posto con i dati più delicati dell'app (pasti, bagno, sonno,
+            // partecipazione di ogni bambino): dell'errore esce la classe e basta.
+            logClient({ livello: 'error', evento: 'fetch', messaggio: `diario-ripristino-dati-fallito: ${nomeErrore(err)}` });
             setSavedStudentIds(new Set());
         }
     };
@@ -354,7 +357,7 @@ export function useDiaryDay(userId: string | null, sezione: string | null, opts?
             setTimeout(() => setShowSavedToast(false), 2500);
             opts?.onSaved?.();
         } catch (err) {
-            console.error('Errore salvataggio:', err);
+            logClient({ livello: 'error', evento: 'fetch', messaggio: `diario-salvataggio-fallito: ${nomeErrore(err)}` });
             alert(t('alertErroreSalvataggio'));
         } finally {
             setIsSaving(false);

@@ -1,3 +1,11 @@
+import { logClient, nomeErrore } from '@/lib/logging/client';
+
+/**
+ * Calcolo del codice fiscale. Gira SOLO nel browser: lo importano i tre form dell'anagrafica
+ * (alunno, adulto, registro), e i suoi `params` sono nome, cognome e luogo di nascita di una
+ * persona reale — spesso di un bambino. Per questo qui non si logga MAI un parametro, e degli
+ * errori esce soltanto la classe: il resto è, letteralmente, il dato.
+ */
 export interface FiscalCodeParams {
     nome: string;
     cognome: string;
@@ -35,9 +43,13 @@ export async function fetchFiscalCode(params: FiscalCodeParams): Promise<string>
         }
         
         throw new Error('API non disponibile o errore di validazione');
-    } catch {
-        console.warn("API esterna fallita o irraggiungibile. Utilizzo algoritmo di fallback offline...");
-        
+    } catch (e) {
+        // `warn` e non `error`: questo ramo è PREVISTO — c'è un fallback offline subito sotto e
+        // l'utente non vede nulla di rotto. Ma loggato sì: un catch muto è un bug (AGENTS.md,
+        // regola 6), e senza questa riga non sapremmo mai che l'API esterna è morta e che
+        // stiamo calcolando tutti i codici fiscali col fallback.
+        logClient({ livello: 'warn', evento: 'fetch', messaggio: `cf-api-esterna-non-raggiungibile-uso-fallback: ${nomeErrore(e)}` });
+
         // Simulo un leggero delay di rete per mantenere la UX di caricamento
         await new Promise(resolve => setTimeout(resolve, 600));
         
@@ -57,8 +69,12 @@ export async function fetchFiscalCode(params: FiscalCodeParams): Promise<string>
                 prov: params.provincia_nascita,
             });
             return cf.code;
-        } catch {
-            console.warn("Impossibile calcolare il CF automaticamente coi dati forniti.");
+        } catch (errLocale) {
+            // Anche qui `warn`: il campo CF resta compilabile a mano, quindi per l'utente non
+            // è un guasto. `evento: 'js'` perché a fallire è la libreria locale, non la rete —
+            // ed è la distinzione che dice se il problema è nostro o del comune di nascita
+            // che non sta in tabella. I dati inseriti NON si loggano: sono di un minore.
+            logClient({ livello: 'warn', evento: 'js', messaggio: `cf-fallback-locale-non-calcolabile: ${nomeErrore(errLocale)}` });
             return "";
         }
     }

@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { LayoutGrid, User, GraduationCap, Baby, BookOpen, Building2, Plus, ChevronRight, Loader2 } from 'lucide-react';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 
 // Griglia sezioni dell'anagrafica: le sedi/sezioni arrivano dai plessi
 // consentiti (/api/admin/sections/scoped, niente scuola hardcoded) e il
@@ -94,7 +95,9 @@ export function SectionsView() {
                 fetchData();
             }
         } catch (err) {
-            console.error('Errore creazione sezione:', err);
+            // Niente nome della sezione né scuola_id nel messaggio: sono contesto scolastico,
+            // e il messaggio è testo libero — nessuna whitelist lo filtra.
+            logClient({ livello: 'error', evento: 'fetch', messaggio: `sezione-creazione-fallita: ${nomeErrore(err)}` });
         } finally {
             setIsCreating(false);
         }

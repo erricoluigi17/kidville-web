@@ -37,18 +37,26 @@ Non è un bug dell'app, è un errore di configurazione della prova.
 ## Credenziali — mai dentro un file
 
 I flow leggono le credenziali da variabili d'ambiente. **Non scriverle nei YAML**: questo
-repository è pubblico.
+repository è stato pubblico fino al 2026-07-26.
+
+La password degli account TEST ha una sola sorgente in tutto il repo — la variabile
+**`KV_TEST_PASSWORD`**, la stessa che usano gli script di collaudo
+(`e2e/lib/test-password.mjs`). I flow Maestro la ricevono da lì:
 
 ```bash
 export MAESTRO_KV_EMAIL_GENITORE="test.inf.genitore1@kidville.test"
 export MAESTRO_KV_EMAIL_DOCENTE="test.inf.docente1@kidville.test"
 export MAESTRO_KV_EMAIL_SEGRETERIA="test.segreteria@kidville.test"
-export MAESTRO_KV_PASSWORD="<password degli account TEST>"
+export KV_TEST_PASSWORD='…'                        # gestore di credenziali del titolare
+export MAESTRO_KV_PASSWORD="$KV_TEST_PASSWORD"     # è il nome che i YAML si aspettano
 ```
 
 Gli account TEST vivono in **produzione** sulle sezioni "TEST Infanzia" / "TEST 1A"
-(sede Kidville Giugliano). L'elenco completo e la password stanno in
-`e2e/primaria-360/config/accounts.ts` e nel PRD — **non duplicarli qui**.
+(sede Kidville Giugliano): la loro password è un segreto vero, non un valore di comodo.
+L'elenco degli account sta nel PRD (sezione «Classi di prova»); **la password non sta in
+nessun file** — è stata ruotata il 2026-07-26 e vive solo nel gestore di credenziali del
+titolare. Il lock `__tests__/architecture/niente-password-nel-repo.test.ts` fallisce se
+qualcuno la riscrive in un file tracciato.
 
 ## Preparazione
 

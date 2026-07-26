@@ -436,3 +436,77 @@ describe('invarianti del patch di `fetch`', () => {
         flush();
     });
 });
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * `nomeErrore` — L'UNICO PEZZO DI UN ERRORE CHE PUÒ USCIRE DAL DISPOSITIVO.
+ *
+ * Le ~35 righe `console.error('Errore X:', err)` rimaste nel client passavano l'oggetto
+ * errore GREZZO. Nel browser di un genitore quell'oggetto è, quasi sempre, un errore
+ * PostgREST o una `Error` costruita dal server: il suo `.message` riecheggia filtri,
+ * colonne e valori (`alunno_id=eq.<uuid>`, «studenti per classe Primavera A»). Nessuna
+ * whitelist lo guarda, perché `console` non passa da `redact`.
+ *
+ * Il `.name`, invece, è l'unica parte STRUTTURALE: dice `TypeError` (rete giù) contro
+ * `Error` (il server ha risposto e ha detto di no) — che è esattamente la distinzione che
+ * serve per triage — e non può contenere un dato di un minore, perché lo decide la classe,
+ * non il dato. Da qui la funzione: si estrae il nome, si butta tutto il resto, e ciò che
+ * non ha la forma di un identificatore non passa comunque.
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+describe('nomeErrore — estrae la classe, mai il contenuto', () => {
+    it('distingue la rete giù dal rifiuto del server', async () => {
+        const { nomeErrore } = await carica();
+        expect(nomeErrore(new TypeError('Failed to fetch'))).toBe('TypeError');
+        expect(nomeErrore(new Error('Errore salvataggio'))).toBe('Error');
+    });
+
+    it('il messaggio dell’errore NON esce: è lì che vivono i dati del minore', async () => {
+        const { nomeErrore } = await carica();
+        const err = new Error('alunno_id=eq.8f14e45f — Mario Rossi, classe Primavera A');
+
+        const uscita = nomeErrore(err);
+
+        expect(uscita).toBe('Error');
+        expect(uscita).not.toContain('Mario');
+        expect(uscita).not.toContain('Primavera');
+        expect(uscita).not.toContain('8f14e45f');
+    });
+
+    it('tiene il nome delle classi d’errore vere (è l’informazione utile)', async () => {
+        const { nomeErrore } = await carica();
+        const pg = Object.assign(new Error('column alunni.stato does not exist'), {
+            name: 'PostgrestError',
+        });
+        expect(nomeErrore(pg)).toBe('PostgrestError');
+    });
+
+    it('ciò che non è un errore non diventa un messaggio', async () => {
+        const { nomeErrore } = await carica();
+        // `throw 'stringa'` e `throw {codice: 42}` esistono, e in un catch arrivano qui.
+        expect(nomeErrore('CF di Mario Rossi non valido')).toBe('errore');
+        expect(nomeErrore({ dettaglio: 'diagnosi' })).toBe('errore');
+        expect(nomeErrore(undefined)).toBe('errore');
+        expect(nomeErrore(null)).toBe('errore');
+    });
+
+    it('un `name` che non ha forma di identificatore viene scartato, non ripulito a metà', async () => {
+        const { nomeErrore } = await carica();
+        // Un provider può scrivere qualunque cosa in `name`. Se dentro c'è uno spazio, una
+        // chiocciola o un accento, non è il nome di una classe: è TESTO — e il testo, in
+        // questo repo, è la forma in cui viaggiano i dati delle famiglie. Si scarta tutto,
+        // non si «ripulisce»: una ripulitura parziale lascia passare il pezzo rimasto.
+        expect(nomeErrore(Object.assign(new Error('x'), { name: 'mario.rossi@example.com' }))).toBe('errore');
+        expect(nomeErrore(Object.assign(new Error('x'), { name: 'Errore classe Primavera A' }))).toBe('errore');
+        expect(nomeErrore(Object.assign(new Error('x'), { name: 'A'.repeat(200) }))).toBe('errore');
+        expect(nomeErrore(Object.assign(new Error('x'), { name: '' }))).toBe('errore');
+        // Le classi d'errore vere passano — comprese quelle in SCREAMING_CASE di Node.
+        expect(nomeErrore(Object.assign(new Error('x'), { name: 'FunctionsHttpError' }))).toBe('FunctionsHttpError');
+        expect(nomeErrore(Object.assign(new Error('x'), { name: 'ERR_NETWORK' }))).toBe('ERR_NETWORK');
+    });
+
+    it('non lancia mai: è chiamata dentro un catch, non può aprirne un secondo', async () => {
+        const { nomeErrore } = await carica();
+        const ostile = { get name() { throw new Error('boom'); } };
+        expect(nomeErrore(ostile)).toBe('errore');
+    });
+});

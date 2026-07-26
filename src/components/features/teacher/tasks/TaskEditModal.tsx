@@ -5,6 +5,7 @@ import { useTranslations } from 'next-intl';
 import { motion } from 'framer-motion';
 import { X, FileText, Tag, AlertTriangle, Calendar, Save, CheckSquare } from 'lucide-react';
 import { Task } from './TaskCard';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 
 interface StaffMember {
     id: string;
@@ -76,7 +77,7 @@ export function TaskEditModal({ task, open, onClose, onSave, currentUserId }: Ta
             await onSave(task.id, updates);
             onClose();
         } catch (err) {
-            console.error('Errore modifica task:', err);
+            logClient({ livello: 'error', evento: 'fetch', messaggio: `task-modifica-fallita: ${nomeErrore(err)}` });
             alert(t('erroreSalvataggio'));
         } finally {
             setIsSaving(false);

@@ -14,7 +14,7 @@ import {
 import type { FormField } from '@/types/database.types'
 import { validateField, isProvinceField } from '@/lib/forms/validate-fields'
 import { normalizzaProvincia } from '@/lib/anagrafiche/province'
-import { logClient } from '@/lib/logging/client'
+import { logClient, nomeErrore } from '@/lib/logging/client'
 import { ScattaFotoButton } from '@/components/features/native/ScattaFotoButton'
 
 export const FIELD_BASE =
@@ -363,7 +363,7 @@ export function FileField({
       logClient({
         livello: 'error',
         evento: 'fetch',
-        messaggio: `upload allegato modulo fallito — ${err instanceof Error ? err.message : 'errore sconosciuto'}`,
+        messaggio: `modulo-allegato-upload-fallito: ${nomeErrore(err)}`,
         stack: err instanceof Error ? err.stack : undefined,
       })
       setUploadError(t('caricamentoNonRiuscito'))

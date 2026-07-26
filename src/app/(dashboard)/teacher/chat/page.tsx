@@ -13,6 +13,7 @@ import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { useTranslations } from 'next-intl';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { Btn } from '@/components/ui/Btn';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 
 interface Contact {
     user_id: string;
@@ -96,7 +97,9 @@ function TeacherChatContent() {
                 setFirstUnreadId(firstUnread?.id ?? null);
             }
         } catch (err) {
-            console.error('Errore caricamento messaggi:', err);
+            // Solo la CLASSE dell'errore: il `.message` di una chat riecheggia il testo dei
+            // messaggi fra la maestra e una famiglia, che è il dato più sensibile della pagina.
+            logClient({ livello: 'error', evento: 'fetch', messaggio: `chat-caricamento-messaggi-fallito: ${nomeErrore(err)}`, route: '/teacher/chat' });
         } finally {
             setLoadingMessages(false);
         }
@@ -186,7 +189,7 @@ function TeacherChatContent() {
                 setUnreadCount(prev => Math.max(0, prev - ids.length));
             }
         } catch (err) {
-            console.error('Errore mark-as-read:', err);
+            logClient({ livello: 'error', evento: 'fetch', messaggio: `chat-segna-letti-fallito: ${nomeErrore(err)}`, route: '/teacher/chat' });
         }
     }, [teacherId]);
 
@@ -228,7 +231,7 @@ function TeacherChatContent() {
                 }
             }
         } catch (err) {
-            console.error('Errore creazione thread:', err);
+            logClient({ livello: 'error', evento: 'fetch', messaggio: `chat-creazione-conversazione-fallita: ${nomeErrore(err)}`, route: '/teacher/chat' });
         }
     };
 
@@ -257,7 +260,7 @@ function TeacherChatContent() {
                 ).sort((a, b) => new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime()));
             }
         } catch (err) {
-            console.error('Errore invio messaggio:', err);
+            logClient({ livello: 'error', evento: 'fetch', messaggio: `chat-invio-messaggio-fallito: ${nomeErrore(err)}`, route: '/teacher/chat' });
         }
     };
 

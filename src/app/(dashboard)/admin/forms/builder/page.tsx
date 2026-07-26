@@ -23,6 +23,7 @@ import { motion } from 'framer-motion'
 import { useTranslations } from 'next-intl'
 import Link from 'next/link'
 import { useSessionIdentity } from '@/lib/auth/use-session-identity'
+import { logClient, nomeErrore } from '@/lib/logging/client'
 import { FormBuilderCanvas } from '@/components/features/admin/forms/builder/FormBuilderCanvas'
 import { PropertiesPanel } from '@/components/features/admin/forms/builder/PropertiesPanel'
 import type { FormSchemaConfig, FormField, FormFieldType, FormPage } from '@/types/database.types'
@@ -437,7 +438,12 @@ function FormBuilderInner() {
       setEditingId(newId)
       setSaveState('saved')
     } catch (err) {
-      console.error('Errore salvataggio form_models:', err)
+      logClient({
+        livello: 'error',
+        evento: 'fetch',
+        messaggio: `form-model-salvataggio-fallito: ${nomeErrore(err)}`,
+        route: '/admin/forms/builder',
+      })
       setSaveState('error')
     } finally {
       setTimeout(() => setSaveState('idle'), 3000)
@@ -458,7 +464,12 @@ function FormBuilderInner() {
       if (!res.ok) throw new Error(json.error ?? 'Errore pubblicazione')
       setPub(action === 'publish' ? { token: json.public_token, url: json.url, access_mode: json.access_mode } : null)
     } catch (err) {
-      console.error('Errore pubblicazione:', err)
+      logClient({
+        livello: 'error',
+        evento: 'fetch',
+        messaggio: `form-model-pubblicazione-fallita: ${nomeErrore(err)}`,
+        route: '/admin/forms/builder',
+      })
     } finally {
       setPublishing(false)
     }

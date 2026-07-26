@@ -315,7 +315,7 @@ footer{padding:26px 0 50px;color:var(--muted);font-size:12.5px;text-align:center
     <thead><tr><th>Email</th><th>Ruolo</th><th>Alunno collegato</th></tr></thead>
     <tbody>${credRows}</tbody>
   </table></div>
-  <p class="lead" style="margin-top:10px">Password unica di test: <span class="mono-sm">KidvilleTest.2026!</span></p>
+  <p class="lead" style="margin-top:10px">Gli account condividono un'unica password, che <b>non è riportata in questo report</b> (un report circola in allegato): sta nella variabile d'ambiente <span class="mono-sm">KV_TEST_PASSWORD</span>, dal gestore di credenziali del titolare.</p>
 </div></section>
 
 <footer><div class="wrap">Kidville · Registro Elettronico — Test 360° ULTRA Scuola Primaria · 09/07/2026 · classe TEST 1A · DB produzione · findings totali: ${allFindings.length}</div></footer>`;

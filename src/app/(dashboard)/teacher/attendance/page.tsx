@@ -11,6 +11,7 @@ import { MonthlyAttendanceTable } from '@/components/features/teacher/attendance
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { useOnlineStatus } from '@/lib/hooks/use-online-status';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 
 // ─── Scala stati (token brand DR) ──────────────────────────────────────────────
 
@@ -311,7 +312,9 @@ function TodayView({ sezione }: { sezione: string }) {
             const saved = await res.json();
             setRecords(prev => ({ ...prev, [studentId]: saved }));
         } catch (err) {
-            console.error('Errore salvataggio presenza:', err);
+            // `err` qui è spesso l'errore del server sul record presenza: il suo `.message`
+            // riecheggia `alunno_id` e lo stato del bambino. Esce solo la classe dell'errore.
+            logClient({ livello: 'error', evento: 'fetch', messaggio: `presenza-salvataggio-fallito: ${nomeErrore(err)}`, route: '/teacher/attendance' });
             // Rollback ottimistico
             setRecords(prev => {
                 const next = { ...prev };

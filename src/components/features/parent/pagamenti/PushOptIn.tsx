@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useTranslations } from 'next-intl';
 import { Bell, BellOff } from 'lucide-react';
 import { isNativeApp, registerNativePush, unregisterNativePush } from '@/lib/push/native-register';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 
 interface Props { userId: string }
 
@@ -60,7 +61,10 @@ export function PushOptIn({ userId }: Props) {
             });
             setSubscribed(true);
         } catch (e) {
-            console.error('Errore opt-in push', e);
+            // `evento: 'js'` e non `'fetch'`: qui a rompersi è quasi sempre un'API del browser
+            // (`Notification.requestPermission`, `serviceWorker.register`, `pushManager.subscribe`),
+            // non una chiamata HTTP — e la classe dell'errore è l'unica cosa che lo distingue.
+            logClient({ livello: 'error', evento: 'js', messaggio: `push-optin-fallito: ${nomeErrore(e)}` });
         } finally {
             setBusy(false);
         }

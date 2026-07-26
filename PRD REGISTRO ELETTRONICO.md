@@ -64,6 +64,66 @@
 
 ---
 
+## 🗓️ Changelog — Repository privato, password ruotata, e le verifiche iOS che mancavano 2026-07-26 (branch `fix/chiusura-pendenze`)
+
+Questa voce chiude le pendenze rimaste aperte dai due changelog precedenti, e ne apre una sola — ma è quella che oggi **blocca davvero** la submission all'App Store. Il repository è diventato **privato**, la password degli account TEST è stata **ruotata**, e le verifiche iOS che il collaudo precedente aveva lasciato «da provare» sono state **fatte sul simulatore**: Face ID dall'inizio alla fine, gli embed dentro `WKAppBoundDomains`, e la resa dell'app su iPad. In compenso, il tentativo di produrre un pacchetto per lo store si è fermato al primo passo: **sulla macchina non esiste un certificato di distribuzione Apple**, e senza quello non si esporta niente e non si verifica niente.
+
+### Il repository è privato — e con GitHub Free la protezione di `main` non esiste più
+
+Il repository è stato reso **privato**. Era la cosa giusta da fare — fino a oggi conteneva in chiaro la password di account attivi in produzione — ma porta con sé una conseguenza che va scritta, non lasciata implicita: **su GitHub Free le branch protection rules non valgono sui repository privati**. L'API risponde `403` con «Upgrade to GitHub Pro», e la protezione che `main` aveva **non è più attiva**.
+
+- Cosa c'era e non c'è più: check obbligatori **`Lint · Typecheck · Unit`** ed **`E2E (Playwright)`**, con `strict: true` (cioè: il branch doveva essere aggiornato rispetto a `main` prima del merge).
+- **La CI continua a girare** su ogni push e su ogni PR, e continua a dire la verità. Quello che è sparito è l'**imposizione**: oggi niente impedisce *tecnicamente* un push diretto su `main` con i check rossi.
+- Le opzioni sono due, ed è una decisione del titolare: **GitHub Pro** (che rimette le regole sui repository privati), oppure accettare che il gate resti quello che è sempre stato nella pratica — la **disciplina di `AGENTS.md`** più l'**hook locale** `.claude/hooks/verify_gate.sh`, che rigira eslint · tsc · vitest · build a ogni tentativo di chiudere un ciclo.
+
+### Password degli account TEST — ruotata e verificata
+
+La rotazione è **fatta**: nuova password accettata, vecchia respinta, su tutti e **41 gli account `test.*@kidville.test`**. Gli account **`*.e2e@kidville.test` non sono stati toccati**: li crea il seed della CI su un progetto Supabase usa-e-getta, spostarli romperebbe l'E2E finché non esiste il secret corrispondente. Il dettaglio completo — cosa era esposto, cosa resta nella storia git, cosa deve decidere il titolare — sta in **`docs/store-submission.md` §1**.
+
+### Le verifiche iOS che mancavano — simulatore iPhone 17 Pro (iOS 26.2), build pulita
+
+Il changelog precedente si fermava a «Face ID **riconosciuto**»: lo switch compariva, e questo dimostrava soltanto che `checkBiometry()` non rispondeva più «non disponibile». Ora il percorso è stato **percorso tutto**, e vale come **controprova su iOS del bloccante corretto su Android** (il loop infinito del prompt biometrico):
+
+- **Attivazione**: tap sullo switch in **`/parent/profilo`** → compare il **prompt Face ID nativo** → match simulato (`notifyutil -p com.apple.BiometricKit_Sim.pearl.match`) → **lo switch resta attivato**.
+- **Sblocco**: riavvio dell'app → **il gate biometrico compare** → un match **sblocca** → l'app è usabile.
+- **Nessun loop**: dopo lo sblocco, **per 15 secondi non riparte alcun prompt**. È esattamente il sintomo che su Android chiudeva l'utente fuori dall'app, e su iOS non si presenta.
+- **`WKAppBoundDomains` non ha rotto gli embed**: verificato con una news di collaudo temporanea (creata e **cancellata** a fine prova) — **YouTube**, **Vimeo** e **Instagram** caricano tutti dentro la WebView. Era il rischio implicito di quella chiave: dieci slot, sette occupati, e un embed fuori elenco diventa un riquadro nero che si scopre solo su un telefono.
+- Nota di metodo per i collaudi futuri: il **deep link `kidville://parent/<rotta>`** funziona sul simulatore ed è **il modo più affidabile di navigare** durante una prova — non dipende dal tap su una coordinata né dal fatto che una schermata sia già stata renderizzata.
+
+### iPad — l'app si vede bene, anche se non è ottimizzata per iPad
+
+Provata sul simulatore **iPad Pro 13" (M5)**, che produce screenshot a **2064×2752** — esattamente la risoluzione che App Store Connect richiede per la classe iPad 13". Login e dashboard genitore verificati:
+
+- la UI è **centrata in colonna, non stirata**: sfondo crema uniforme, topbar a tutta larghezza, bottom nav centrata;
+- **non è «ottimizzata» per iPad**: niente split view, niente colonne multiple, nessun uso dello spazio orizzontale in più;
+- ma **non è rotta**, e la resa è dignitosa. Il rischio sulla **linea guida 4.2** resta **moderato**, non trascurabile e non grave.
+
+La decisione registrata in `docs/store-submission.md` §4 — **produrre gli screenshot iPad** *oppure* dichiarare l'app **solo-iPhone** (`TARGETED_DEVICE_FAMILY = "1"`) — **resta aperta**. Cambia però di natura: prima era una scommessa al buio su come si vedesse l'app, adesso è una **scelta informata**.
+
+### 🔴 Il blocco vero alla submission: manca il certificato di distribuzione
+
+È stato eseguito un **Archive vero** (`xcodebuild archive -configuration Release`), ed è **riuscito**. È lì che si è fermato tutto:
+
+- nell'Archive **`aps-environment` risulta `development`** (insieme a `get-task-allow`), perché la firma automatica ha usato il profilo di **sviluppo** — l'unico disponibile;
+- l'**export per l'App Store** (`xcodebuild -exportArchive` con `method: app-store-connect`) **FALLISCE**: *«No signing certificate "iOS Distribution" found»* e *«No profiles for 'it.kidville.app' were found»*;
+- sulla macchina c'è **una sola identità di firma**: `Apple Development: lerrico7@icloud.com`.
+
+**La conseguenza è netta.** Finché non esiste un certificato **Apple Distribution** e il relativo **provisioning profile** per `it.kidville.app`, **non si può esportare per l'App Store** e **non si può verificare che `aps-environment` diventi `production`** — quindi non si può nemmeno accertare che **le push funzionino in produzione**, che è la verifica lasciata aperta dal changelog precedente. Non è un adempimento di fine corsa da sbrigare il giorno dell'invio: è il **primo** passo pratico della submission, e tutto il resto della catena (build firmata, upload, TestFlight, review) ci passa attraverso. Si crea da **Xcode → Settings → Accounts → Manage Certificates → + → Apple Distribution**, oppure dal portale Apple Developer. **Non è lavoro da agente**: richiede le credenziali dell'account sviluppatore del titolare.
+
+### Zero `console.*` in `src/` e password fuori dal repo (già in `073e9c8`)
+
+Le **soppressioni ESLint sono passate da 94 a 51, poi a 35, e ora a 0**: `eslint-suppressions.json` **non esiste più**, e il lock è diventato **doppio** — guarda il sorgente *e* l'assenza del file — perché `eslint --suppress-all` da solo si lascia zittire, ricreando il file e riportando il verde senza toccare una riga di codice. In parallelo, la password degli account TEST è **fuori da tutti i file committati**: gli script la leggono da **`KV_TEST_PASSWORD`** e falliscono subito se manca.
+
+### Un rilievo aperto sui dati in produzione — da decidere, non da eseguire
+
+In produzione ci sono **3 alunni senza sezione** e con **zero presenze** (id `a4e1fa70-…`, `64160569-…`, `a6220363-…`): due hanno un genitore collegato, uno ha il codice fiscale valorizzato, e **nessuno dei tre è riconducibile ai seed** di collaudo. Sembrano **iscrizioni o prove incomplete**. **Non sono stati cancellati**, di proposito: sono anagrafiche **potenzialmente reali** — e potenzialmente di minori — e la cancellazione è irreversibile. La decisione spetta al titolare, che è l'unico a poter dire se quei tre nomi corrispondono a qualcuno.
+
+- **Gate** verde: eslint 0 · tsc 0 · vitest 365 file / 3039 test · build ok.
+
+> ✅ **Repository privato, password ruotata, e le tre verifiche iOS rimaste in sospeso ora sono chiuse**: Face ID dall'attivazione allo sblocco senza loop, embed funzionanti con `WKAppBoundDomains`, resa su iPad vista e accettabile.
+
+> ⚠️ **Resta prima della submission:** il **certificato Apple Distribution** (bloccante, primo passo — senza non si esporta né si verifica `aps-environment = production`); la **validazione legale** di informativa e termini; l'**account demo** e le **App Privacy labels** in App Store Connect; la **scelta iPad** (screenshot o solo-iPhone); la **prova offline su iPhone fisico in modalità aereo**. E due decisioni del titolare fuori dallo store: **GitHub Pro** o gate solo disciplinare, e cosa fare dei **3 alunni orfani** in produzione.
+
 ## 🗓️ Changelog — Offline dimostrato sul device: il Service Worker funziona, il vicolo cieco no 2026-07-26 (branch `fix/offline-device-store`)
 
 Il collaudo del 2026-07-25 aveva concluso che a freddo, senza rete, rispondeva il **ripiego nativo** (`mobile/www/offline.html`) invece della pagina `/offline` del Service Worker. La misura diretta sulla WebView dice l'opposto: **il Service Worker funziona**, e quel ripiego compariva perché l'app era stata **appena installata** — senza un SW già registrato non c'è nulla da servire. La diagnosi era sbagliata, ma sotto c'era un difetto vero e più fastidioso: la pagina offline **prometteva** pagine consultabili e non offriva alcun modo di raggiungerle. Per il genitore la differenza è tutta qui: prima, senza rete, l'app diceva «le pagine che hai già aperto restano consultabili» e poi lo lasciava a premere «Riprova» all'infinito; adesso gliele **elenca** e ce lo porta.
@@ -1479,11 +1539,23 @@ pushato/mergeato al momento della scrittura.
 
 **Classi di prova (produzione, sede Kidville Giugliano `d53b0fbc-…`).** Create 2 sezioni etichettate
 TEST — **"TEST Infanzia"** (school_type infanzia) e **"TEST 1A"** (primaria) — ognuna con 10 alunni,
-2 insegnanti e 10 genitori con login (password comune `KidvilleTest.2026!`, hash verificato). Email:
+2 insegnanti e 10 genitori con login (password comune a tutti gli account TEST). Email:
 `test.inf.docente{1,2}` / `test.inf.genitore{1..10}` / `test.pri.*` `@kidville.test`. Dati fittizi
 ripulibili (etichetta TEST). In più (dal collaudo del 2026-07-13): **`test.segreteria@kidville.test`**
 (ruolo `segreteria`, stessa password) per verificare i flussi di sportello (anagrafica Staff, mensa,
 report cucina).
+
+> 🔐 **La password non è più scritta qui — e non va scritta in nessun file del repo.** Fino al
+> 2026-07-26 era in chiaro in questo PRD e in altri 8 file committati, con il repository
+> **pubblico**: chiunque leggesse il repo entrava nel registro come genitore, come docente e —
+> con `test.segreteria` — con vista sull'anagrafica dell'intera sede, comprese le famiglie
+> **reali**. Il 2026-07-26 la password è stata **ruotata** su tutti i 41 account `test.*` e i
+> valori sono stati tolti dai file. Ora si reperisce nel **gestore di credenziali del titolare**;
+> gli script di collaudo la leggono dalla variabile d'ambiente **`KV_TEST_PASSWORD`** (vedi
+> `e2e/lib/test-password.mjs`) e falliscono subito se manca. Il lock
+> `__tests__/architecture/niente-password-nel-repo.test.ts` impedisce che ne rientri una.
+> Resta il fatto che **la password vecchia è nella storia git**: è morta perché ruotata, non
+> perché cancellata.
 
 **Nota di regressione nota (aggiornata 2026-07-13):** in `parents` la colonna `citizenship` conserva in
 realtà il *ruolo* (`mother`/`father`/`educator`…) come workaround storico; la cittadinanza reale digitata

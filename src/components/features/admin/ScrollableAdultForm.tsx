@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useTranslations } from 'next-intl';
 import { UserPlus, Shield, Mail, Phone, Loader2, MapPin, Plus, Trash2, Fingerprint } from 'lucide-react';
 import { fetchFiscalCode } from '@/lib/utils/fiscalCodeApi';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 import { z } from 'zod';
 import { DateField } from '@/components/ui/DateField';
 
@@ -96,7 +97,12 @@ export const ScrollableAdultForm = forwardRef<AdultFormHandle, { defaultRole?: s
                         setTimeout(() => setIsCfAutoCalculated(false), 3000);
                     }
                 } catch (error) {
-                    console.error("CF calculation error", error);
+                    // Il calcolo automatico del CF è un AIUTO, non un requisito: se fallisce,
+                    // il campo resta compilabile a mano e l'utente non vede nulla di rotto.
+                    // Perciò `warn` e non `error` — ma loggato lo stesso, perché un catch muto
+                    // è un bug (AGENTS.md, regola 6) e perché se l'API esterna muore vogliamo
+                    // saperlo. Il CF calcolato NON entra nel log: è il dato, non l'errore.
+                    logClient({ livello: 'warn', evento: 'fetch', messaggio: `cf-adulto-calcolo-fallito: ${nomeErrore(error)}` });
                 } finally {
                     setIsCfLoading(false);
                 }

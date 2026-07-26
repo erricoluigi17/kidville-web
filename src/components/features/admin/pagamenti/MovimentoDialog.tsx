@@ -20,7 +20,7 @@ import { FatturaButton } from './FatturaButton';
 import { MODAL_CARD, MODAL_SHADOW, INPUT, BTN_PRIMARY_AA, BTN_SECONDARY } from './ui';
 import { cx } from '@/lib/ui/cx';
 import { formatEuro } from '@/lib/format/valuta';
-import { logClient } from '@/lib/logging/client';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 import {
   labelPagamentoAperto,
   movimentoMultiCf,
@@ -46,7 +46,6 @@ interface Props {
 }
 
 const hdr = (u: string) => ({ 'Content-Type': 'application/json', 'x-user-id': u });
-const testoErrore = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 const TITLE_ID = 'movimento-dialog-title';
 
@@ -93,7 +92,7 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
         if (active && j?.success) setPagamentoStato((j.data as { stato?: string } | null)?.stato ?? null);
       } catch (err) {
         // Il dialog resta usabile senza lo stato: si logga, non si rompe.
-        logClient({ livello: 'error', evento: 'fetch', messaggio: `GET pagamento (stato ricevuta) — ${testoErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
+        logClient({ livello: 'error', evento: 'fetch', messaggio: `pagamento-stato-ricevuta-caricamento-fallito: ${nomeErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
       } finally {
         if (active) setLoadingPag(false);
       }
@@ -126,7 +125,7 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
       onDone();
       onClose();
     } catch (err) {
-      logClient({ livello: 'error', evento: 'fetch', messaggio: `PATCH riconciliazione (${az}) — ${testoErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
+      logClient({ livello: 'error', evento: 'fetch', messaggio: `riconciliazione-${az}-fallita: ${nomeErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
       setError(t('movdlgErroreRete'));
     } finally {
       setBusy(false);

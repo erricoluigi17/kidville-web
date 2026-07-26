@@ -5,6 +5,7 @@ import { useTranslations } from 'next-intl';
 import { Upload, Download, Loader2, CheckCircle, FileSpreadsheet, FileDown, AlertTriangle } from 'lucide-react';
 import { createBrowserClient } from '@supabase/ssr';
 import { buildTemplateCsv } from '@/lib/import/template';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 
 interface ImportOutcome {
     totale: number;
@@ -39,7 +40,9 @@ export function ImportExportClient() {
             XLSX.utils.book_append_sheet(workbook, worksheet, 'Alunni');
             XLSX.writeFile(workbook, `Esportazione_Alunni_${new Date().toISOString().split('T')[0]}.xlsx`);
         } catch (error) {
-            console.error('Errore esportazione:', error);
+            // `error` qui è l'errore PostgREST di `select * from alunni`: il suo `.message`
+            // riecheggia colonne e filtri dell'anagrafica dei bambini. Esce solo la classe.
+            logClient({ livello: 'error', evento: 'fetch', messaggio: `anagrafica-esportazione-fallita: ${nomeErrore(error)}`, route: '/admin/tools' });
             alert(t('ieErroreEsportazione'));
         } finally {
             setIsExporting(false);
@@ -86,7 +89,9 @@ export function ImportExportClient() {
 
             setOutcome(body as ImportOutcome);
         } catch (error) {
-            console.error('Errore importazione:', error);
+            // Il messaggio d'errore resta a schermo per chi sta importando (è lì che serve,
+            // e lì l'operatore ha già i dati davanti). Nel log ci va solo la classe.
+            logClient({ livello: 'error', evento: 'fetch', messaggio: `anagrafica-importazione-fallita: ${nomeErrore(error)}`, route: '/admin/tools' });
             setImportError((error as Error).message);
         } finally {
             setIsImporting(false);

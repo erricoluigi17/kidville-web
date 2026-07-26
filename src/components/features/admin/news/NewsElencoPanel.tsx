@@ -10,7 +10,7 @@ import { Pin, PinOff, Pencil, Trash2, EyeOff, RotateCcw, BarChart3, Newspaper } 
 import { hdr } from '@/components/features/admin/settings/ui';
 import { SELECT, BTN_SECONDARY } from '@/components/features/admin/pagamenti/ui';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
-import { logClient } from '@/lib/logging/client';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 import { cx } from '@/lib/ui/cx';
 import { useTranslations, useLocale } from 'next-intl';
 import { NEWS_STATI, NEWS_TIPI, type NewsPost, type NewsStato, type NewsTipo } from '@/lib/news/tipi';
@@ -34,7 +34,6 @@ const STATO_LABEL_KEY: Record<NewsStato, string> = {
 
 const TIPO_LABEL_KEY: Record<NewsTipo, string> = { articolo: 'elencoTipoArticolo', breve: 'elencoTipoBreve', instagram: 'elencoTipoInstagram' };
 
-const testoErrore = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const fmtData = (iso: string | null, locale: string): string => {
   if (!iso) return '';
   try {
@@ -88,7 +87,7 @@ export function NewsElencoPanel({ userId, onModifica }: Props) {
       const res = await fetch(`/api/news/${id}/pubblica?userId=${userId}`, { method: 'POST', headers: hdr(userId), body: JSON.stringify({ azione }) });
       if (res.ok) void carica();
     } catch (err) {
-      logClient({ livello: 'error', evento: 'fetch', messaggio: `azione news ${azione} — ${testoErrore(err)}`, route: '/admin/news', stato: 0 });
+      logClient({ livello: 'error', evento: 'fetch', messaggio: `news-azione-${azione}-fallita: ${nomeErrore(err)}`, route: '/admin/news', stato: 0 });
     }
   };
 
@@ -98,7 +97,7 @@ export function NewsElencoPanel({ userId, onModifica }: Props) {
       const res = await fetch(`/api/news/${id}?userId=${userId}`, { method: 'DELETE', headers: hdr(userId) });
       if (res.ok) void carica();
     } catch (err) {
-      logClient({ livello: 'error', evento: 'fetch', messaggio: `elimina news — ${testoErrore(err)}`, route: '/admin/news', stato: 0 });
+      logClient({ livello: 'error', evento: 'fetch', messaggio: `news-eliminazione-fallita: ${nomeErrore(err)}`, route: '/admin/news', stato: 0 });
     }
   };
 
@@ -110,7 +109,7 @@ export function NewsElencoPanel({ userId, onModifica }: Props) {
         if (j) setStats((s) => ({ ...s, [id]: { visualizzazioni: j.visualizzazioni ?? 0, famiglie_target: j.famiglie_target ?? 0 } }));
       }
     } catch (err) {
-      logClient({ livello: 'error', evento: 'fetch', messaggio: `stat news — ${testoErrore(err)}`, route: '/admin/news', stato: 0 });
+      logClient({ livello: 'error', evento: 'fetch', messaggio: `news-statistiche-caricamento-fallito: ${nomeErrore(err)}`, route: '/admin/news', stato: 0 });
     }
   };
 

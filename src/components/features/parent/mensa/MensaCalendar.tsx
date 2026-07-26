@@ -125,15 +125,24 @@ export function MensaCalendar({ userId, studentId }: Props) {
       const azione = pRaw ? decidiAzioneMensaAuth(pRaw.status, recuperoTentato.current) : ({ tipo: 'ok' } as const);
 
       if (azione.tipo === 'sessioneScaduta') {
-        // Solo uuid nel messaggio (nessun nome/email): passano la redazione.
-        logClient({ livello: 'warn', evento: 'fetch', stato: 401, messaggio: `mensa: 401 prenotazioni, sessione scaduta (genitore=${userId} alunno=${activeStudent})` });
+        /*
+         * Messaggio-SLUG, senza gli uuid che stavano qui dentro. Non perché fossero PII —
+         * un uuid passa la lista bianca di `redact` — ma perché il `messaggio` è anche la
+         * CHIAVE del throttle di `logClient` (`evento|messaggio|stato`): con l'id
+         * dell'alunno nel testo la chiave è diversa per ogni famiglia, quindi la deduplica
+         * a 60 secondi non scatta mai e la mappa `visti` cresce a ogni utente nuovo — cioè
+         * il contrario di quello che serve quando la sessione scade a tutti insieme.
+         * L'identità non si perde: `flush()` la spedisce come `?userId=`, ed è il SERVER a
+         * decidere quale sia (`getRequestUserId`), che è l'unico che può rifiutarla.
+         */
+        logClient({ livello: 'warn', evento: 'fetch', stato: 401, messaggio: 'mensa-prenotazioni-sessione-scaduta' });
         setAuthError({ tipo: 'scaduta' });
         setSaldo(null);
         return;
       }
 
       if (azione.tipo === 'autorecupero') {
-        logClient({ livello: 'warn', evento: 'fetch', stato: 403, messaggio: `mensa: 403 prenotazioni, autorecupero figlio (genitore=${userId} alunno=${activeStudent})` });
+        logClient({ livello: 'warn', evento: 'fetch', stato: 403, messaggio: 'mensa-prenotazioni-autorecupero-figlio' });
         recuperoTentato.current = true;
         const nuovo = await recuperaPrimoFiglio(userId);
         if (nuovo && nuovo !== activeStudent) {
@@ -148,7 +157,7 @@ export function MensaCalendar({ userId, studentId }: Props) {
       }
 
       if (azione.tipo === 'nonCollegato') {
-        logClient({ livello: 'warn', evento: 'fetch', stato: 403, messaggio: `mensa: 403 prenotazioni persistente, alunno non collegato (genitore=${userId} alunno=${activeStudent})` });
+        logClient({ livello: 'warn', evento: 'fetch', stato: 403, messaggio: 'mensa-prenotazioni-alunno-non-collegato' });
         setAuthError({ tipo: 'nonCollegato' });
         setSaldo(null);
         return;

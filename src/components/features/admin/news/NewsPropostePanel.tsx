@@ -8,12 +8,10 @@ import { useCallback, useEffect, useState } from 'react';
 import { Inbox, Check, X, CalendarClock } from 'lucide-react';
 import { hdr } from '@/components/features/admin/settings/ui';
 import { INPUT, BTN_PRIMARY_AA, BTN_SECONDARY } from '@/components/features/admin/pagamenti/ui';
-import { logClient } from '@/lib/logging/client';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 import { cx } from '@/lib/ui/cx';
 import { useTranslations } from 'next-intl';
 import type { NewsPost } from '@/lib/news/tipi';
-
-const testoErrore = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 interface Props {
   userId: string;
@@ -61,7 +59,7 @@ export function NewsPropostePanel({ userId }: Props) {
         void carica();
       }
     } catch (err) {
-      logClient({ livello: 'error', evento: 'fetch', messaggio: `approva news — ${testoErrore(err)}`, route: '/admin/news', stato: 0 });
+      logClient({ livello: 'error', evento: 'fetch', messaggio: `news-proposta-approvazione-fallita: ${nomeErrore(err)}`, route: '/admin/news', stato: 0 });
     }
   };
 

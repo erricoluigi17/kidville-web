@@ -8,6 +8,7 @@ import { CockpitPage, HEADER_BTN, PageHeader, StatCard, TABLE, TABLE_WRAP, TD, T
 import { Avviso } from '@/components/features/avvisi/AvvisoCard';
 import { AvvisoForm } from '@/components/features/avvisi/AvvisoForm';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 
 // Bacheca avvisi nel cockpit: lista full-width; il dettaglio/monitoraggio apre
 // a tutta area su /admin/avvisi/[id] (niente più drawer laterale mobile).
@@ -80,7 +81,12 @@ function AdminAvvisiInner() {
                 if (res.ok) await loadAvvisi();
             }
         } catch (err) {
-            console.error('Errore nel salvataggio dell\'avviso:', err);
+            logClient({
+                livello: 'error',
+                evento: 'fetch',
+                messaggio: `avviso-salvataggio-fallito: ${nomeErrore(err)}`,
+                route: '/admin/avvisi',
+            });
         }
     };
 
@@ -94,7 +100,12 @@ function AdminAvvisiInner() {
             });
             if (res.ok) await loadAvvisi();
         } catch (err) {
-            console.error('Errore eliminazione avviso:', err);
+            logClient({
+                livello: 'error',
+                evento: 'fetch',
+                messaggio: `avviso-eliminazione-fallita: ${nomeErrore(err)}`,
+                route: '/admin/avvisi',
+            });
         }
     };
 

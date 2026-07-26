@@ -7,7 +7,7 @@ import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { OfflineBadge } from '@/components/ui/OfflineBadge';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 import { fetchConCache } from '@/lib/offline/read-cache';
-import { logClient } from '@/lib/logging/client';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 
 // m3: ogni avviso porta l'elenco dei FIGLI cui si riferisce (nome + student_id),
 // così il feed unificato può mostrare a chi si riferisce ogni comunicazione senza
@@ -83,7 +83,8 @@ function ParentAvvisiContent() {
             logClient({
                 livello: 'warn',
                 evento: 'fetch',
-                messaggio: `parent/avvisi: presa visione fallita (${err instanceof Error ? err.message : 'errore'})`,
+                messaggio: `avviso-presa-visione-fallita: ${nomeErrore(err)}`,
+                route: '/parent/avvisi',
             });
         }
     };
@@ -98,7 +99,8 @@ function ParentAvvisiContent() {
             logClient({
                 livello: 'warn',
                 evento: 'fetch',
-                messaggio: `parent/avvisi: adesione fallita (${err instanceof Error ? err.message : 'errore'})`,
+                messaggio: `avviso-adesione-fallita: ${nomeErrore(err)}`,
+                route: '/parent/avvisi',
             });
         }
     };

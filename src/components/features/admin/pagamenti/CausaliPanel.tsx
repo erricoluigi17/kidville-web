@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { Pencil, Save, Star } from 'lucide-react';
-import { logClient } from '@/lib/logging/client';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 import {
   DEFAULT_CAUSALE_TEMPLATE,
   PLACEHOLDER_CAUSALE,
@@ -49,8 +49,6 @@ const DATI_ESEMPIO: DatiCausale = {
   scadenza: '30/09/2026',
 };
 
-const testoErrore = (e: unknown) => (e instanceof Error ? e.message : String(e));
-
 /**
  * Sezione «Causali» della Contabilità: un MODELLO di causale bonifico
  * personalizzabile PER CATEGORIA (chiave = slug) più un «Predefinito»
@@ -75,14 +73,14 @@ export function CausaliPanel({ userId, scuolaId }: Props) {
   useEffect(() => {
     let active = true;
     const onErr = (op: string) => (err: unknown): null => {
-      logClient({ livello: 'error', evento: 'fetch', messaggio: `${op} — ${testoErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
+      logClient({ livello: 'error', evento: 'fetch', messaggio: `${op}: ${nomeErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
       return null;
     };
     Promise.all([
       fetch(`/api/admin/settings/categorie?userId=${userId}&scuola_id=${scuolaId}`, { headers: hdr(userId) })
-        .then((r) => r.json()).catch(onErr('GET categorie (causali)')),
+        .then((r) => r.json()).catch(onErr('causali-categorie-caricamento-fallito')),
       fetch(`/api/admin/settings?userId=${userId}&scuola_id=${scuolaId}`, { headers: hdr(userId) })
-        .then((r) => r.json()).catch(onErr('GET settings (causali)')),
+        .then((r) => r.json()).catch(onErr('causali-impostazioni-caricamento-fallito')),
     ]).then(([catRes, cfgRes]) => {
       if (!active) return;
       const raw: CategoriaRaw[] = catRes?.success ? (catRes.data ?? []) : [];
@@ -160,7 +158,7 @@ export function CausaliPanel({ userId, scuolaId }: Props) {
       if (j.success) setMsg(t('caus_msg_salvati'));
       else setError(j.error ?? t('caus_err_salvataggio'));
     } catch (err) {
-      logClient({ livello: 'error', evento: 'fetch', messaggio: `PATCH settings causali — ${testoErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
+      logClient({ livello: 'error', evento: 'fetch', messaggio: `causali-impostazioni-salvataggio-fallito: ${nomeErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
       setError(t('caus_err_rete'));
     } finally {
       setSaving(false);

@@ -15,7 +15,7 @@ import { Badge } from '@/components/ui/Badge';
 import { MODAL_CARD, MODAL_SHADOW, INPUT, BTN_PRIMARY_AA, BTN_SECONDARY } from './ui';
 import { cx } from '@/lib/ui/cx';
 import { formatEuro } from '@/lib/format/valuta';
-import { logClient } from '@/lib/logging/client';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 import type { SaldoCassa, CassaNonDisponibile } from '@/lib/cassa/tipi';
 
 interface Props {
@@ -36,7 +36,6 @@ interface EsitoChiusura {
 }
 
 const hdr = (u: string) => ({ 'Content-Type': 'application/json', 'x-user-id': u });
-const testoErrore = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const TITLE_ID = 'cassa-chiusura-title';
 const ERRORE_ID = 'cassa-chiusura-errore';
 const EPS = 0.005;
@@ -59,7 +58,7 @@ export function CassaChiusuraModal({ userId, scuolaId, onClose, onDone, returnFo
         const j = (await r.json()) as SaldoCassa | CassaNonDisponibile;
         if (active) setSaldo(j);
       } catch (err) {
-        logClient({ livello: 'error', evento: 'fetch', messaggio: `GET saldo cassa (chiusura) — ${testoErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
+        logClient({ livello: 'error', evento: 'fetch', messaggio: `cassa-saldo-caricamento-fallito: ${nomeErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
         if (active) setError(t('cassaChiuErrSaldo'));
       } finally {
         if (active) setLoading(false);
@@ -98,7 +97,7 @@ export function CassaChiusuraModal({ userId, scuolaId, onClose, onDone, returnFo
       if (!res.ok) { setError(j.error ?? t('cassaChiuErrSvuot')); return; }
       setEsito(j);
     } catch (err) {
-      logClient({ livello: 'error', evento: 'fetch', messaggio: `POST chiusura cassa — ${testoErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
+      logClient({ livello: 'error', evento: 'fetch', messaggio: `cassa-chiusura-fallita: ${nomeErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
       setError(t('cassaChiuErroreRete'));
     } finally {
       setSaving(false);

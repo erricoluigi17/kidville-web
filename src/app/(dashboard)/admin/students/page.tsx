@@ -10,6 +10,7 @@ import { SectionsView } from '@/components/features/admin/SectionsView';
 import { CockpitPage, HEADER_BTN, PageHeader, Tabs, StatCard } from '@/components/ui/cockpit';
 import { useLabelRuolo } from '@/lib/auth/ruoli';
 import { useSediAttive } from '@/lib/context/sede-context';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 
 interface Student {
   id: string;
@@ -220,7 +221,14 @@ function AdminStudentsInner() {
       setSelectedIds(new Set());
       setTargetClass('');
     } catch (err) {
-      console.error('Errore bulk assign:', err);
+      // Il nome della classe di destinazione NON entra nel log: è un dato di
+      // contesto scolastico, e il messaggio è testo libero (nessuna whitelist lo guarda).
+      logClient({
+        livello: 'error',
+        evento: 'fetch',
+        messaggio: `assegnazione-classe-massiva-fallita: ${nomeErrore(err)}`,
+        route: '/admin/students',
+      });
       showToastMsg(`❌ ${t('toastErrAssegnazione')}`);
     } finally {
       setIsAssigning(false);
@@ -243,7 +251,12 @@ function AdminStudentsInner() {
       setSelectedIds(new Set());
       setTargetMensa('');
     } catch (err) {
-      console.error('Errore bulk mensa:', err);
+      logClient({
+        livello: 'error',
+        evento: 'fetch',
+        messaggio: `assegnazione-mensa-massiva-fallita: ${nomeErrore(err)}`,
+        route: '/admin/students',
+      });
       showToastMsg(`❌ ${t('toastErrMensa')}`);
     } finally {
       setIsAssigning(false);

@@ -5,6 +5,7 @@ import { X, Send, Upload, Link } from 'lucide-react';
 import { Avviso } from './AvvisoCard';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { ScattaFotoButton } from '@/components/features/native/ScattaFotoButton';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 
 interface Props {
     open: boolean;
@@ -127,12 +128,15 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
                 const data = await res.json();
                 setAttachmentUrl(data.fileUrl);
             } else {
-                console.error("Errore caricamento file");
+                // Lo STATO è un numero: passa la whitelist di `redact` ed è l'unica cosa che
+                // distingue «401, l'identità non è arrivata» da «413, il file è troppo grosso».
+                // Il nome del file NON si logga: è quello di un allegato di una comunicazione.
+                logClient({ livello: 'error', evento: 'fetch', messaggio: 'avviso-upload-allegato-rifiutato', stato: res.status });
                 alert(t('formAlertUploadFallito'));
                 setFileName('');
             }
         } catch (err) {
-            console.error("Errore upload:", err);
+            logClient({ livello: 'error', evento: 'fetch', messaggio: `avviso-upload-allegato-fallito: ${nomeErrore(err)}` });
             alert(t('formAlertUploadErrore'));
             setFileName('');
         } finally {

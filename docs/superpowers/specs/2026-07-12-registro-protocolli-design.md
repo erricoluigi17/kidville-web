@@ -107,7 +107,7 @@ Bucket privato `protocollo` lazy-create (`fileSizeLimit` 25 MB, mime pdf/jpeg/pn
 9. Gate: eslint 0 warning · vitest verdi · build ok · push → E2E CI.
 
 ## Verifica end-to-end (dopo l'implementazione)
-Dev server + account TEST admin (PRD ~riga 754, pwd `KidvilleTest.2026!`) su `/admin/protocolli`:
+Dev server + account TEST admin (PRD, sezione «Classi di prova»; la password sta nel gestore di credenziali del titolare / variabile `KV_TEST_PASSWORD`, ruotata il 2026-07-26 e non più scritta nel repo) su `/admin/protocolli`:
 1. Carica un PDF >5 MB con riga "Oggetto:" → verifica upload diretto + campi precompilati → conferma → scarica timbrato: fascia con logo, `Prot. n. 0000001/2026`, ora italiana corretta.
 2. Carica un JPG → conversione in PDF + timbro. 3. Ricarica lo stesso file → avviso duplicato non bloccante.
 4. Annulla con motivo → riga visibile barrata. 5. Da admin: elimina → sparita, numerazione con buco, file rimossi.

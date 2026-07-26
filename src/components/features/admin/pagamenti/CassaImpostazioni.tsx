@@ -10,7 +10,7 @@
 import { useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { Save, SlidersHorizontal } from 'lucide-react';
-import { logClient } from '@/lib/logging/client';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 import { hdr, card, h3, input, label, hint } from '../settings/ui';
 import { BTN_PRIMARY_AA } from './ui';
 import type { CassaConfig } from '@/lib/cassa/tipi';
@@ -19,8 +19,6 @@ interface Props {
   userId: string;
   scuolaId: string;
 }
-
-const testoErrore = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 export function CassaImpostazioni({ userId, scuolaId }: Props) {
   const t = useTranslations('adminContabilita');
@@ -43,7 +41,7 @@ export function CassaImpostazioni({ userId, scuolaId }: Props) {
         setCaricato(true);
       })
       .catch((err) => {
-        logClient({ livello: 'error', evento: 'fetch', messaggio: `GET settings cassa — ${testoErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
+        logClient({ livello: 'error', evento: 'fetch', messaggio: `cassa-impostazioni-caricamento-fallito: ${nomeErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
         if (active) setCaricato(true);
       });
     return () => { active = false; };
@@ -68,7 +66,7 @@ export function CassaImpostazioni({ userId, scuolaId }: Props) {
       if (j.success) setMsg(t('cassaCfgSalvato'));
       else setError(j.error ?? t('cassaCfgErrSalvataggio'));
     } catch (err) {
-      logClient({ livello: 'error', evento: 'fetch', messaggio: `PATCH settings cassa — ${testoErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
+      logClient({ livello: 'error', evento: 'fetch', messaggio: `cassa-impostazioni-salvataggio-fallito: ${nomeErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
       setError(t('cassaCfgErroreRete'));
     } finally {
       setSaving(false);

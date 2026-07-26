@@ -13,6 +13,7 @@ import { useChatRealtime } from '@/components/features/chat/useChatRealtime';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { Btn } from '@/components/ui/Btn';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 
 interface Contact {
     user_id: string;
@@ -122,7 +123,9 @@ function ParentChatContent() {
                 setFirstUnreadId(firstUnread?.id ?? null);
             }
         } catch (err) {
-            console.error('Errore caricamento messaggi:', err);
+            // Solo la CLASSE dell'errore: il `.message` di una chat riecheggia il testo dei
+            // messaggi fra un genitore e la maestra, che è il dato più sensibile della pagina.
+            logClient({ livello: 'error', evento: 'fetch', messaggio: `chat-caricamento-messaggi-fallito: ${nomeErrore(err)}`, route: '/parent/chat' });
         } finally {
             setLoadingMessages(false);
         }
@@ -220,7 +223,7 @@ function ParentChatContent() {
                 setUnreadCount(prev => Math.max(0, prev - ids.length));
             }
         } catch (err) {
-            console.error('Errore mark-as-read:', err);
+            logClient({ livello: 'error', evento: 'fetch', messaggio: `chat-segna-letti-fallito: ${nomeErrore(err)}`, route: '/parent/chat' });
         }
     }, [parentId]);
 
@@ -263,7 +266,7 @@ function ParentChatContent() {
                 }
             }
         } catch (err) {
-            console.error('Errore creazione thread:', err);
+            logClient({ livello: 'error', evento: 'fetch', messaggio: `chat-creazione-conversazione-fallita: ${nomeErrore(err)}`, route: '/parent/chat' });
         }
     };
 
@@ -293,7 +296,7 @@ function ParentChatContent() {
                 ).sort((a, b) => new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime()));
             }
         } catch (err) {
-            console.error('Errore invio messaggio:', err);
+            logClient({ livello: 'error', evento: 'fetch', messaggio: `chat-invio-messaggio-fallito: ${nomeErrore(err)}`, route: '/parent/chat' });
         }
     };
 

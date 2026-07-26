@@ -11,13 +11,11 @@ import { hdr } from '@/components/features/admin/settings/ui';
 import { SELECT, BTN_PRIMARY_AA, BTN_SECONDARY } from '@/components/features/admin/pagamenti/ui';
 import { Badge } from '@/components/ui/Badge';
 import { Modal } from '@/components/ui/Modal';
-import { logClient } from '@/lib/logging/client';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 import { cx } from '@/lib/ui/cx';
 import { useTranslations } from 'next-intl';
 import { useDateFormat } from '@/lib/i18n/date';
 import { type NewsDigestEdizione } from '@/lib/news/tipi';
-
-const testoErrore = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 interface EsitoEdizione {
   scuola_id: string;
@@ -85,7 +83,7 @@ export function NewsDigestPanel({ userId, scuolaId }: Props) {
       else setEsito(t('digestGiaPresente'));
       void carica();
     } catch (err) {
-      logClient({ livello: 'error', evento: 'fetch', messaggio: `genera digest — ${testoErrore(err)}`, route: '/admin/news', stato: 0 });
+      logClient({ livello: 'error', evento: 'fetch', messaggio: `news-digest-generazione-fallita: ${nomeErrore(err)}`, route: '/admin/news', stato: 0 });
       setEsito(t('erroreRete'));
     } finally {
       setGenerando(false);

@@ -11,7 +11,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { BarChart3, Download } from 'lucide-react';
-import { logClient } from '@/lib/logging/client';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 import { formatEuro } from '@/lib/format/valuta';
 import { cx } from '@/lib/ui/cx';
 import { TABLE_WRAP, TABLE, TH, TD, TROW } from '@/components/ui/cockpit';
@@ -49,8 +49,6 @@ interface ReportData {
 }
 interface CategoriaPag { id: string; nome: string; slug?: string }
 
-const testoErrore = (e: unknown) => (e instanceof Error ? e.message : String(e));
-
 export function CassaReport({ userId, scuolaId }: Props) {
   const t = useTranslations('adminContabilita');
   const [da, setDa] = useState('');
@@ -72,7 +70,7 @@ export function CassaReport({ userId, scuolaId }: Props) {
           setCategoriePag([...perSlug.values()]);
         }
       })
-      .catch((err) => logClient({ livello: 'error', evento: 'fetch', messaggio: `GET categorie pagamento (report) — ${testoErrore(err)}`, route: '/admin/pagamenti', stato: 0 }));
+      .catch((err) => logClient({ livello: 'error', evento: 'fetch', messaggio: `cassa-report-categorie-caricamento-fallito: ${nomeErrore(err)}`, route: '/admin/pagamenti', stato: 0 }));
   }, [userId, scuolaId]);
 
   // Query dei filtri correnti (intero azzera il periodo → totale cross-mese).
@@ -97,7 +95,7 @@ export function CassaReport({ userId, scuolaId }: Props) {
         const d = (await r.json()) as ReportData;
         if (active) { setDati(d); setErrore(false); }
       } catch (err) {
-        logClient({ livello: 'error', evento: 'fetch', messaggio: `GET report cassa — ${testoErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
+        logClient({ livello: 'error', evento: 'fetch', messaggio: `cassa-report-caricamento-fallito: ${nomeErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
         if (active) setErrore(true);
       }
     })();

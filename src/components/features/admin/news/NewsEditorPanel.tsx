@@ -11,7 +11,7 @@ import type { JSONContent } from '@tiptap/react';
 import { Save, Send, CalendarClock, Megaphone, ExternalLink, ShieldCheck, CheckCircle2, X } from 'lucide-react';
 import { hdr } from '@/components/features/admin/settings/ui';
 import { INPUT, SELECT, BTN_PRIMARY_AA, BTN_SECONDARY } from '@/components/features/admin/pagamenti/ui';
-import { logClient } from '@/lib/logging/client';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 import { cx } from '@/lib/ui/cx';
 import { useTranslations } from 'next-intl';
 import { parseInstagramUrl, buildEmbedUrl } from '@/lib/news/instagram';
@@ -31,8 +31,6 @@ interface Props {
   onSalvato?: () => void;
   onAnnulla?: () => void;
 }
-
-const testoErrore = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 // `labelKey` = chiave i18n (namespace adminComunicazioni), risolta nel componente.
 const TIPI: { id: NewsTipo; labelKey: string }[] = [
@@ -127,7 +125,7 @@ export function NewsEditorPanel({ userId, scuolaId, modalita, canAllSedi = false
         setErrore(j?.error ?? t('editorIgVerificaFallita'));
       }
     } catch (err) {
-      logClient({ livello: 'error', evento: 'fetch', messaggio: `POST news/instagram/valida — ${testoErrore(err)}`, route: '/admin/news', stato: 0 });
+      logClient({ livello: 'error', evento: 'fetch', messaggio: `news-instagram-validazione-fallita: ${nomeErrore(err)}`, route: '/admin/news', stato: 0 });
       setErrore(t('editorIgErroreRete'));
     } finally {
       setIgVerificando(false);
@@ -177,7 +175,7 @@ export function NewsEditorPanel({ userId, scuolaId, modalita, canAllSedi = false
       }
       onSalvato?.();
     } catch (err) {
-      logClient({ livello: 'error', evento: 'fetch', messaggio: `salva post news — ${testoErrore(err)}`, route: '/admin/news', stato: 0 });
+      logClient({ livello: 'error', evento: 'fetch', messaggio: `news-post-salvataggio-fallito: ${nomeErrore(err)}`, route: '/admin/news', stato: 0 });
       setErrore(t('erroreReteRiprova'));
     } finally {
       setSalvando(false);

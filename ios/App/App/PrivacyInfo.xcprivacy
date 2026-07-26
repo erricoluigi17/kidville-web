@@ -1,21 +1,221 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+	Privacy manifest dell'app (Apple, obbligatorio per la submission).
+
+	Dichiarava un `NSPrivacyCollectedDataTypes` VUOTO: su un registro elettronico
+	che tratta nomi, foto e pagamenti di MINORI, «non raccolgo nulla» non è una
+	svista di forma — è una dichiarazione falsa, ed è la specie di dettaglio su
+	cui una review di App Store si ferma.
+
+	Ogni voce qui sotto è stata verificata sullo schema del database e sul
+	codice, non sulle intenzioni. Se un giorno una categoria smette di essere
+	raccolta va TOLTA: un manifest gonfio è sbagliato quanto uno vuoto.
+
+	Chi tocca questo file aggiorni anche le App Privacy labels su App Store
+	Connect: sono due dichiarazioni separate e Apple confronta la seconda con
+	quello che l'app fa davvero.
+-->
 <plist version="1.0">
 <dict>
+	<!-- Nessun tracciamento: niente pubblicità, niente data broker, niente
+	     identificatori condivisi con terzi a fini pubblicitari. -->
 	<key>NSPrivacyTracking</key>
 	<false/>
 	<key>NSPrivacyTrackingDomains</key>
 	<array/>
+
+	<!--
+		DATI RACCOLTI. Tutti `Linked` = true: nell'app non esiste un dato
+		anonimo, ogni riga passa da un account (`utenti`, `parents`, `students`).
+		Tutti `Tracking` = false, coerentemente con NSPrivacyTracking.
+		Scopo unico: far funzionare il prodotto (AppFunctionality) — nessuna
+		analytics di prodotto, nessuna profilazione.
+	-->
 	<key>NSPrivacyCollectedDataTypes</key>
-	<array/>
+	<array>
+		<!-- Nome e cognome di bambini e genitori: students.nome/cognome,
+		     parents.first_name/last_name, utenti.nome_completo. -->
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeName</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+
+		<!-- Email: credenziali di accesso (utenti.email) e recapiti di famiglia
+		     (parents.emails), usate anche per gli invii di servizio. -->
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeEmailAddress</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+
+		<!-- Telefono: parents.phone_numbers, recapiti per le urgenze e per le
+		     persone autorizzate al ritiro. -->
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypePhoneNumber</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+
+		<!-- Foto e video: galleria della classe (galleria_media), allegati del
+		     diario e dei moduli, scatti da @capacitor/camera.
+		     La grafia con la «or» minuscola è quella di Apple, non un refuso. -->
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypePhotosorVideos</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+
+		<!-- Informazioni di pagamento: forma del pagamento (incassi.metodo →
+		     contanti/bonifico/pos/assegno) e controparte dell'accredito
+		     bancario in riconciliazione. Nessun numero di carta transita
+		     dall'app: non c'è alcun gateway di pagamento integrato. -->
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypePaymentInfo</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+
+		<!-- Identificativi utente: utenti.id, parents.auth_user_id e il token
+		     di dispositivo salvato in push_subscriptions per le notifiche. -->
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeUserID</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+
+		<!-- Crash: window.onerror e unhandledrejection finiscono in app_log con
+		     lo stack (src/lib/logging/client.ts). `Linked` = true perché la riga
+		     porta con sé utente_id: a differenza di quanto dichiarano le SDK di
+		     Firebase, la nostra diagnostica NON è anonima. -->
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeCrashData</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+
+		<!-- Altra diagnostica: tabella app_log (livello, evento, route come
+		     PATTERN, stato HTTP, durata). I contenuti sono redatti a lista
+		     bianca da src/lib/logging/redact.ts. -->
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeOtherDiagnosticData</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+	</array>
+
+	<!--
+		API A MOTIVAZIONE OBBLIGATORIA (required reason API).
+		Vanno dichiarate a livello di APP perché i manifest di Capacitor e di
+		CapacitorCordova sono spediti VUOTI: nessuna dipendenza le copre al posto
+		nostro, e una dichiarazione mancante è l'ITMS-91053 che blocca l'upload.
+	-->
 	<key>NSPrivacyAccessedAPITypes</key>
 	<array>
+		<!-- CA92.1 — dati leggibili e scrivibili solo dall'app stessa.
+		     Capacitor tiene qui la propria configurazione e lo stato dei plugin. -->
 		<dict>
 			<key>NSPrivacyAccessedAPIType</key>
 			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
 			<key>NSPrivacyAccessedAPITypeReasons</key>
 			<array>
 				<string>CA92.1</string>
+			</array>
+		</dict>
+
+		<!-- C617.1 — metadati (data, dimensione) di file DENTRO il container
+		     dell'app: bundle web servito dalla WebView, allegati scelti o
+		     scattati, archivio offline. Nessun file fuori dal container. -->
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>C617.1</string>
+			</array>
+		</dict>
+
+		<!-- E174.1 — verifica che ci sia spazio per scrivere, e potatura della
+		     cache quando non ce n'è: src/lib/offline/pulizia-cache.ts cancella
+		     le voci scadute e quelle oltre il tetto, e l'effetto è visibile
+		     all'utente (i contenuti offline più vecchi spariscono).
+		     Il dato non lascia il dispositivo. -->
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryDiskSpace</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>E174.1</string>
+			</array>
+		</dict>
+
+		<!-- 35F9.1 — tempo trascorso fra eventi interni all'app e timer: il
+		     ritardo di rientro del gate biometrico, i backoff della coda di
+		     sincronizzazione. Il dato NON esce dal dispositivo, come impone
+		     questa motivazione. -->
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategorySystemBootTime</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>35F9.1</string>
 			</array>
 		</dict>
 	</array>

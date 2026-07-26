@@ -64,6 +64,33 @@
 
 ---
 
+## 🗓️ Changelog — La build è su TestFlight: scheda app, upload, e la trappola «Missing Compliance» 2026-07-26 (branch `fix/conformita-export-ios`)
+
+La build **è su App Store Connect**. Nell'ordine: creata la scheda app (`Kidville`, Apple ID **`6794883055`**), validato il pacchetto (**`VERIFY SUCCEEDED with no errors`**), caricato (**`UPLOAD SUCCEEDED`**, 5.027.386 byte in 3,0s, Delivery UUID `c912710a-…`), elaborato da Apple in circa due minuti e mezzo → **`processingState: VALID`**. Creato il gruppo TestFlight interno `Interni` con il titolare come tester.
+
+### La trappola: una build valida che non arriva a nessuno, e nessun errore
+
+Appena caricata, la build era `VALID` — e **non distribuibile**. Il motivo sta in un campo che nessuno guarda: **`usesNonExemptEncryption: null`**, cioè lo stato *«Missing Compliance»*. Né TestFlight né la revisione la vedono, e **l'upload non dà un solo errore**: riesce, la build risulta valida, e semplicemente non raggiunge nessuno. È lo stesso schema del `loggingBehavior` e delle email a `403`: **niente è rosso e niente funziona.**
+
+Si sblocca rispondendo alla domanda sulla crittografia, e ora la risposta è **cablata nel sorgente** invece di essere ripetuta a mano a ogni build: `ios/App/App/Info.plist` → **`ITSAppUsesNonExemptEncryption = false`**, con un lock in `__tests__/architecture/native-privacy-lock.test.ts` (due test: la chiave esiste e vale `false`; e non è `true`, che farebbe scattare la richiesta dei documenti di esportazione bloccando la pubblicazione a tempo indefinito). **Prova di validità eseguita**: rimossa la chiave, il lock diventa rosso; ripristinata, torna verde.
+
+**La dichiarazione `false` è verificata sul codice, non supposta**: nessuna cifratura applicativa in `src/`, `supabase/`, `scripts/` — zero `createCipheriv`, zero `crypto.subtle.encrypt`, nessuna dipendenza crittografica (né `crypto-js`, né `node-forge`, né `jose`, né `bcrypt`); ci sono solo `createHash('sha256')`, `timingSafeEqual` e `randomBytes`, cioè hashing, confronti e casualità. Il traffico è HTTPS/TLS fornito dal sistema, la biometria passa dal plugin di piattaforma: entrambi esenti. Se un domani l'app cifrasse dati per conto proprio, **la dichiarazione va rifatta**.
+
+### Due cose da sapere per la prossima volta
+
+- **La scheda app non si crea via API.** `POST /v1/apps` non esiste: si passa da *Apps → + → New App*. E nel menu «ID pacchetto» la voce da scegliere si chiama **`XC it kidville app - it.kidville.app`**, che è il nome dato da Xcode all'identificativo — non «Kidville».
+- **I moduli di App Store Connect sono React controllati.** Impostare il valore di un `<select>` dal DOM non basta: il campo mostra ancora «Scegli» e la validazione lo segna come vuoto **pur avendo il valore dentro**. Va usato il setter nativo di `HTMLSelectElement` più gli eventi `input`/`change`.
+
+### Un nuovo bloccante, e non è tecnico
+
+App Store Connect avvisa che **manca lo stato di operatore commerciale (DSA)**: *«gli sviluppatori devono fornire il loro stato di operatore commerciale per inviare nuove app […] altrimenti le tue app verranno rimosse dall'App Store nell'UE»*. Non ha impedito il caricamento, **impedisce l'invio in revisione**, e riguarda proprio il mercato in cui l'app deve funzionare. Si compila in *Azienda* → conformità DSA e **non è lavoro da agente**: sono dichiarazioni legali sull'identità del titolare del conto.
+
+- **Gate** verde: eslint 0 · tsc 0 · vitest 365 file / 3041 test · build ok.
+
+> ✅ **La build è installabile da TestFlight.** Scheda app creata, pacchetto validato e caricato, elaborazione riuscita, conformità all'esportazione dichiarata e ora cablata nel sorgente con lock.
+
+> ⚠️ **Resta prima della submission:** lo **stato di operatore commerciale DSA** (nuovo bloccante); la **prova che una push arrivi in ambiente `production`** e l'**offline in modalità aereo**, entrambe da fare con un **iPhone fisico** e la build TestFlight installata; la **validazione legale** di informativa e termini; le **App Privacy labels** e le note di review; la **scelta iPad** (screenshot o solo-iPhone) e gli **screenshot**. Invariate le decisioni fuori dallo store: **GitHub Pro** o gate solo disciplinare, e i **3 alunni orfani** in produzione.
+
 ## 🗓️ Changelog — Firma di distribuzione iOS: il pacchetto per l'App Store si produce (`aps-environment = production`) 2026-07-26 (branch `feat/firma-distribuzione-ios`)
 
 Il changelog precedente dichiarava **bloccata a monte** la submission: «sulla macchina non esiste un certificato di distribuzione Apple». Quel blocco **non c'è più**. L'`.ipa` per l'App Store è stato **prodotto**, è firmato **`Apple Distribution: luigi errico (B5ULCGG2V3)`**, e porta **`aps-environment = production`** — la verifica che la catena delle push native aspettava da due changelog.

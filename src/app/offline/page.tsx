@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import it from '../../../messages/it/offline.json';
 import en from '../../../messages/en/offline.json';
+import ContenutoOffline from './ContenutoOffline';
 import { costruisciScriptOffline } from './script-offline';
 
 // Pagina di ripiego OFFLINE: è ciò che il Service Worker pre-cacha in `install`
@@ -60,80 +61,13 @@ const SCRIPT_OFFLINE = costruisciScriptOffline({
 export default function OfflinePage() {
   return (
     <main className="flex min-h-screen flex-col items-center justify-center gap-5 bg-kidville-green px-8 text-center">
-      {([
-        ['it', it],
-        ['en', en],
-      ] as const).map(([lingua, testi]) => (
-        <div
-          key={lingua}
-          data-kv-lang={lingua}
-          hidden={lingua === 'en'}
-          className="flex w-full max-w-sm flex-col items-center gap-5"
-        >
-          <h1 className="font-barlow text-3xl font-black uppercase tracking-wide text-white">
-            {testi.titolo}
-          </h1>
-          {/* Due varianti del paragrafo, entrambe già nel documento: senza JS —
-              e quando in cache non c'è nulla — resta visibile quella che NON
-              promette pagine consultabili. Lo script scambia le due solo dopo
-              aver trovato davvero qualcosa. */}
-          <p
-            data-kv-corpo="cache"
-            hidden
-            className="font-maven text-[15px] leading-relaxed text-white/85"
-          >
-            {testi.corpo}
-          </p>
-          <p
-            data-kv-corpo="vuota"
-            className="font-maven text-[15px] leading-relaxed text-white/85"
-          >
-            {testi.corpoSenzaCache}
-          </p>
-
-          {/* L'elenco lo riempie lo script leggendo la cache dello shell: qui
-              non si può sapere a build time cosa l'utente ha visitato. */}
-          <nav
-            data-kv-disponibili=""
-            hidden
-            aria-labelledby={`kv-disponibili-${lingua}`}
-            className="w-full"
-          >
-            <h2
-              id={`kv-disponibili-${lingua}`}
-              className="mb-2 font-barlow text-xs font-bold uppercase tracking-wide text-kidville-yellow"
-            >
-              {testi.disponibili}
-            </h2>
-            <ul data-kv-elenco={lingua} className="flex flex-col gap-2 text-left" />
-          </nav>
-
-          {/* `<a>` e NON `<Link>`, di proposito: questo documento viene servito
-              dal Service Worker quando la rete manca, quindi non c'è alcun
-              router idratato e una navigazione client-side non partirebbe. Serve
-              una navigazione VERA, che ripassi dal SW.
-              `href="/"` resta il comportamento senza JS; con JS lo script
-              intercetta il click e naviga solo se la rete risponde davvero,
-              altrimenti si resterebbe nel loop. */}
-          {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
-          <a
-            href="/"
-            data-kv-riprova=""
-            className="inline-flex items-center rounded-pill bg-kidville-yellow px-7 py-3 font-barlow text-sm font-black uppercase tracking-wide text-kidville-green active:scale-95"
-          >
-            {testi.riprova}
-          </a>
-          <p
-            data-kv-nessuna-rete=""
-            hidden
-            role="status"
-            className="font-maven text-sm font-semibold text-kidville-yellow"
-          >
-            {testi.nessunaRete}
-          </p>
-          <p className="font-maven text-xs text-white/60">{testi.nota}</p>
-        </div>
-      ))}
+      {/* Il corpo è un componente CLIENT: elenco e lingua sono stato di React.
+          Quando la scrittura nel DOM la faceva solo lo script inline,
+          l'idratazione la disfaceva — vedi il commento in testa a
+          `ContenutoOffline.tsx` e i test in
+          `__tests__/offline/idratazione-offline.test.tsx`. Un componente client
+          NON rende dinamica la pagina: `force-static` resta valido. */}
+      <ContenutoOffline testi={{ it, en }} />
       {/* Nessuna CSP nel progetto: gli script inline sono ammessi. Vedi sopra. */}
       <script dangerouslySetInnerHTML={{ __html: SCRIPT_LINGUA }} />
       <script dangerouslySetInnerHTML={{ __html: SCRIPT_OFFLINE }} />

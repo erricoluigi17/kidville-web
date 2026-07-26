@@ -27,7 +27,31 @@
 // offline si rompe in un modo che nessuno collega a questa riga. Il test
 // `__tests__/offline/sw.test.ts` la difende.
 
-const VERSIONE = 'v2';
+// ─── PERCHÉ `VERSIONE` È PASSATA A v3 (e perché sotto c'è un hash) ──────────
+// La PR #46 ha riscritto la pagina /offline senza toccare questo file. Il
+// browser reinstalla un Service Worker solo se ne cambiano i BYTE: nessuna
+// reinstallazione, nessun `activate`, `precarica()` mai rieseguita — e la copia
+// di /offline nella CacheStorage dei dispositivi è rimasta quella VECCHIA.
+// Misurato sull'emulatore Android contro la produzione appena rilasciata: in
+// rete c'era la pagina nuova (267.987 byte, con `data-kv-elenco`), sul telefono
+// la vecchia (252.415 byte, senza). La correzione non era arrivata a nessuno di
+// quelli che avevano già usato l'app.
+//
+// L'IMPRONTA qui sotto è lo sha256 dei cinque file che compongono il documento
+// /offline (page.tsx, ContenutoOffline.tsx, script-offline.ts,
+// messages/{it,en}/offline.json). Il lock
+// `__tests__/architecture/sw-versione-offline.test.ts` la ricalcola a ogni run:
+// se qualcuno tocca la pagina senza passare di qui il gate diventa rosso e dice
+// cosa fare. Quando la si aggiorna, si alza ANCHE `VERSIONE`: cambiare l'hash
+// basta a far reinstallare il SW (i byte del file cambiano), ma solo il bump di
+// `VERSIONE` cambia `CACHE_SHELL` e fa buttare ad `activate` la cache
+// precedente, asset statici stantii compresi.
+// (In questo stesso branch la pagina è stata poi corretta di nuovo — l'elenco
+// che l'idratazione di React annullava: l'impronta è cambiata, `VERSIONE` no,
+// perché `v3` non è ancora stata rilasciata. Il bump vale per rilascio, non per
+// modifica.)
+const VERSIONE = 'v3';
+// IMPRONTA-PAGINA-OFFLINE: 4850a3d0226675b3761c5cdb606986e11e871bd29a74c23306ccc123ba23236a
 const CACHE_SHELL = 'kidville-shell-' + VERSIONE;
 
 /** Pagina di ripiego, pre-cachata in `install`. Pubblica: vedi PUBLIC_PREFIXES. */

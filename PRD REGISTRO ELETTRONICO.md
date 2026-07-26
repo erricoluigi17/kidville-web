@@ -86,6 +86,41 @@ La pagina `/offline` prometteva «le pagine che hai già aperto restano consulta
 - **`mobile/www/offline.html`**: stesso criterio per il ripiego nativo, che prima faceva `location.href` alla cieca. Nota tecnica: lì la sonda è **cross-origin senza CORS**, quindi la risposta è **opaca** (`ok:false`, `status:0`) e un `if (res.ok)` non navigherebbe **mai** — vale come «raggiungibile» il fatto stesso che la promise si risolva.
 - **`messages/{it,en}/offline.json`**: chiavi nuove, incluse le **etichette leggibili delle rotte** (l'elenco è bilingue come il resto della pagina).
 
+### La correzione che non arrivava a nessuno — due difetti indipendenti, uno sopra l'altro
+
+La riscrittura della pagina `/offline` è andata in produzione con il gate verde, 21 test nuovi verdi e il deploy riuscito. Poi è stata provata **sul device**, ed era **inefficace per due motivi distinti**, ciascuno sufficiente da solo ad annullarla: (1) la copia precachata non si aggiornava, perché `public/sw.js` non era cambiato; (2) anche con la pagina nuova, **l'idratazione di React cancellava il lavoro dello script inline**. Il primo si vedeva solo confrontando rete e CacheStorage, il secondo solo guardando il DOM nel tempo. Nessuno dei due era visibile ai test — ora entrambi hanno il proprio lock.
+
+#### 1. La copia precachata non si aggiorna senza bump di `VERSIONE`
+
+La misura sull'emulatore Android **contro la produzione appena rilasciata**: `https://app.kidville.it/offline` serviva la pagina **nuova** (267.987 byte, con `data-kv-elenco` e `data-kv-riprova`), ma la voce `/offline` nella **CacheStorage del dispositivo** era ancora la **vecchia** (252.415 byte, senza nessuno dei due). La correzione non stava raggiungendo **nessuno** di quelli che avevano già usato l'app — cioè tutti quelli per cui era stata scritta.
+
+**Causa radice**: `precarica()` gira solo in `install` e `activate`, e quei due eventi scattano solo quando il browser si accorge che **i byte di `public/sw.js`** sono cambiati. Il confronto è sul file del Service Worker, non sulle pagine che quel Service Worker mette in cache: la PR non aveva toccato `sw.js`, quindi nessuna reinstallazione, nessun `activate`, copia precachata vecchia **a tempo indeterminato**. Nessun test poteva vederlo, perché non c'era niente di sbagliato nel codice — mancava solo il segnale di aggiornamento. È il tipo di difetto che si vede **solo sul device, e solo dopo il deploy**.
+
+- **`public/sw.js`**: `VERSIONE` passa da `v2` a `v3`. Cambia i byte del file (il browser reinstalla) e cambia `CACHE_SHELL` (`activate` cancella la cache precedente e `precarica()` riscarica `/offline`). Da ora la cache dello shell si chiama **`kidville-shell-v3`**.
+- **Nuovo lock `__tests__/architecture/sw-versione-offline.test.ts`**: calcola lo **sha256 dei quattro file** che compongono il documento `/offline` (`page.tsx`, `script-offline.ts`, `messages/{it,en}/offline.json`) e lo confronta con l'impronta dichiarata **nella riga subito sotto `VERSIONE`**, dentro `public/sw.js`. Se qualcuno tocca la pagina senza passare di lì, il gate diventa rosso e **spiega cosa fare e perché**.
+- L'impronta sta in `sw.js` e non nel test **di proposito**: tenerla nel test si potrebbe aggiornare senza mai aprire `sw.js`, cioè commettendo esattamente il difetto che il lock deve impedire. Lì invece per rimettere il verde bisogna aprire il file, e `VERSIONE` è la riga immediatamente sopra. In più, aggiornare l'impronta **cambia da sé i byte di `sw.js`** — che è precisamente il segnale che mancava.
+- Il caso «activate cancella le cache vecchie» in `__tests__/offline/sw.test.ts` non cabla più `v1`/`v2`: **legge la versione corrente dal sorgente**, così continua a dimostrare la cancellazione a ogni bump futuro invece di diventare rosso per conto suo. Accanto, un caso nuovo dimostra che dopo il bump `activate` **butta la copia vecchia di `/offline` e riscarica quella nuova**.
+
+#### 2. L'idratazione di React annullava lo script inline
+
+Tracciata la pagina in produzione con un `MutationObserver` installato **prima** del caricamento del documento (CDP `Page.addScriptToEvaluateOnNewDocument`):
+
+```
+t=  33ms  DOMContentLoaded   elenco nascosto, 0 voci
+t= 134ms  mutazione          elenco visibile, 2 voci   ← lo script inline funziona
+t= 151ms  load               elenco visibile, 2 voci
+t= 500ms  tick               elenco nascosto, 0 voci   ← annullato
+t=1000…8500ms                elenco nascosto, 0 voci   (resta annullato)
+```
+
+Lo script inline trovava `/auth/login` e `/parent` in cache e disegnava l'elenco; poi React idratava, trovava un DOM diverso da quello reso dal server e lo riportava allo stato del server. Al genitore restava l'elenco nascosto **e** il paragrafo «su questo dispositivo non c'è ancora nessuna pagina salvata da consultare» — la variante sbagliata, perché le pagine c'erano. **La regola generale, che vale ben oltre questa pagina: su un documento che React idrata, chi scrive nel DOM da fuori perde.** I 21 test non potevano vederlo perché eseguono lo script su markup statico in un contesto `vm`: niente React, niente idratazione.
+
+- **Nuovo `src/app/offline/ContenutoOffline.tsx`** (`'use client'`): elenco e lingua diventano **stato di React**. Il primo render è identico byte per byte a quello del server (lingua `it`, elenco vuoto), così l'idratazione combacia; subito dopo un effetto rilegge la CacheStorage, e la lingua si legge con `useSyncExternalStore` (snapshot server `it`, snapshot client dal cookie `KV_LOCALE`). `/offline` **resta statica**: la build la riporta ancora come `○ (Static)`.
+- **Lo script inline resta**, e non è ridondanza: quando l'app è appena installata e non c'è rete, il Service Worker ha in cache il **documento** `/offline` ma non i chunk di Next (`precarica()` salva la pagina, non il suo bundle). Lì React non idrata affatto e l'unico codice che gira è quello inline. Copre il pre-idratazione e il senza-bundle; il componente client copre tutto il resto.
+- **Anche la lingua era esposta allo stesso difetto** (`SCRIPT_LINGUA` mostra e nasconde i blocchi `data-kv-lang` toccando `hidden` da fuori). Misurato: con il codice vecchio sopravviveva, ma solo perché React non riconcilia gli attributi dei nodi che non ricostruisce — un dettaglio non contrattuale, cioè una garanzia che non esiste. Ora la lingua è stato di React, quindi il comportamento è deterministico, e c'è il test che lo dimostra.
+- **Nuovo `__tests__/offline/idratazione-offline.test.tsx`**: idrata **davvero** con `hydrateRoot` su jsdom e verifica che dopo l'idratazione l'elenco sia ancora lì, che il paragrafo mostrato sia quello giusto e che la lingua scelta regga. Un caso ricostruisce l'intera sequenza del device: lo script disegna, React idrata, l'elenco resta.
+- **Nuovo `__tests__/offline/equivalenza-offline.test.ts`**: due implementazioni (ES5 inline e TS) sullo stesso ingresso devono dare lo **stesso** elenco, in entrambe le lingue, su 8 casi (filtri, duplicati, ordine, query, escape malformata, path ostile). Il rischio di avere due strade non è che esistano — servono entrambe — ma che divergano in silenzio.
+
 ### iOS — simulatore iPhone 17 Pro (iOS 26.2), build pulita
 
 - **Face ID riconosciuto**: lo switch «Attiva lo sblocco biometrico» **compare** in `/parent/profilo`, e compare solo se `checkBiometry()` riporta la biometria disponibile. La correzione del 25 luglio (`NSFaceIDUsageDescription`) regge sul dispositivo.
@@ -103,7 +138,7 @@ La prova forense della CacheStorage su iOS puntava a `…/data/Containers/Data/A
 - **16 `console.*` lato server bonificati** e portati su `logErrore`/`logEvento`: finivano nei **Runtime Logs di Vercel non redatti**, e alcuni interpolavano identificativi in chiaro dentro il messaggio (`src/lib/anagrafiche/parents.ts`, `src/lib/primaria/fascicolo-rbac.ts` sul percorso del fascicolo BES/DSA). Il tetto del lock `__tests__/architecture/console-suppressions.test.ts` **scende da 51 a 35**, e il lock ora legge anche il **sorgente** dei 12 moduli bonificati: rigenerare le soppressioni non basta più a farle ricomparire.
 - **`__tests__/architecture/native-privacy-lock.test.ts`** blinda ora **tutti e 7** i domini di `WKAppBoundDomains` (prima ne verificava 2: togliere `vimeo.com` non faceva fallire nulla) e il contenuto del privacy manifest. Una voce tolta lì non si vede in review, si scopre su un telefono con un embed nero, e si ripara solo con un aggiornamento sullo store.
 - **Nuovo `docs/store-submission.md`**: account demo per il revisore, note di review, mappa delle App Privacy labels dato per dato, screenshot per classe di device (**iPad compreso**, l'app è universale) e checklist di submission.
-- **Gate** verde: eslint 0 · tsc 0 · vitest 360 file / 3003 test · build ok.
+- **Gate** verde: eslint 0 · tsc 0 · vitest 363 file / 3029 test · build ok.
 
 > ✅ **L'offline è dimostrato su Android, non più solo implementato**, e il vicolo cieco della pagina offline è chiuso. Su iOS sono verificate tutte le precondizioni (Face ID, embed con `WKAppBoundDomains`, SW registrato, cache popolata).
 

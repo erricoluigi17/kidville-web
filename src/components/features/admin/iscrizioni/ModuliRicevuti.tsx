@@ -11,7 +11,7 @@ import { ADULT_ROLE_LABELS } from '@/lib/forms/enrollment-template'
 import type { EnrollmentSubmissionData, EnrollmentChild, EnrollmentAdult } from '@/types/database.types'
 import { StatCard } from '@/components/ui/cockpit'
 import { useSediAttive } from '@/lib/context/sede-context'
-import { logClient } from '@/lib/logging/client'
+import { logClient, nomeErrore } from '@/lib/logging/client'
 
 // Esito dell'import. `success:false` = almeno un errore BLOCCANTE (referente/figlio non
 // creati): l'invio resta tra i "Da importare" e va mostrato il pannello d'errore in evidenza.
@@ -66,7 +66,7 @@ export function ModuliRicevuti() {
       logClient({
         livello: 'error',
         evento: 'react',
-        messaggio: `Caricamento moduli iscrizione fallito: ${e instanceof Error ? e.message : String(e)}`,
+        messaggio: `moduli-iscrizione-caricamento-fallito: ${nomeErrore(e)}`,
         route: '/admin/iscrizioni',
       })
     } finally {
@@ -115,7 +115,7 @@ export function ModuliRicevuti() {
       logClient({
         livello: 'error',
         evento: 'react',
-        messaggio: `Import iscrizione fallito: ${e instanceof Error ? e.message : String(e)}`,
+        messaggio: `iscrizione-import-fallito: ${nomeErrore(e)}`,
         route: '/admin/iscrizioni',
       })
       alert(t('ricevutiErroreImport'))

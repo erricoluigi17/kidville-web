@@ -15,7 +15,7 @@ import { BTN_PRIMARY_AA, BTN_SECONDARY } from '@/components/features/admin/pagam
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { useTranslations } from 'next-intl';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
-import { logClient } from '@/lib/logging/client';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 import { cx } from '@/lib/ui/cx';
 import type { NewsPost, NewsStato } from '@/lib/news/tipi';
 
@@ -44,7 +44,6 @@ const STATO_LABEL_KEY: Record<NewsStato, string> = {
   nascosta: 'newsStatoNascosta',
 };
 
-const testoErrore = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const modificabile = (s: NewsStato) => s === 'bozza' || s === 'proposta';
 
 function TeacherNewsContent() {
@@ -99,7 +98,7 @@ function TeacherNewsContent() {
       const res = await fetch(`/api/news/${id}?userId=${teacherId}`, { method: 'DELETE', headers: hdr(teacherId) });
       if (res.ok) void carica();
     } catch (err) {
-      logClient({ livello: 'error', evento: 'fetch', messaggio: `elimina news docente — ${testoErrore(err)}`, route: '/teacher/news', stato: 0 });
+      logClient({ livello: 'error', evento: 'fetch', messaggio: `news-eliminazione-fallita: ${nomeErrore(err)}`, route: '/teacher/news', stato: 0 });
     }
   };
 

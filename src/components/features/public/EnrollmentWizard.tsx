@@ -15,7 +15,7 @@ import {
 import { extractEnrollmentTemplates } from '@/lib/forms/enrollment-default-schema'
 import { validateField, isProvinceField } from '@/lib/forms/validate-fields'
 import { normalizzaProvincia } from '@/lib/anagrafiche/province'
-import { logClient } from '@/lib/logging/client'
+import { logClient, nomeErrore } from '@/lib/logging/client'
 import type { FormField, EnrollmentSubmissionData } from '@/types/database.types'
 
 const UPLOAD_ENDPOINT = '/api/iscrizione/upload'
@@ -191,7 +191,7 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
       logClient({
         livello: 'error',
         evento: 'fetch',
-        messaggio: `invio iscrizione fallito — ${err instanceof Error ? err.message : 'errore sconosciuto'}`,
+        messaggio: `iscrizione-invio-fallito: ${nomeErrore(err)}`,
         stack: err instanceof Error ? err.stack : undefined,
       })
       alert(t('wizardErroreInvio'))

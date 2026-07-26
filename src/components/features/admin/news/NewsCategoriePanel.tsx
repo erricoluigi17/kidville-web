@@ -9,12 +9,10 @@ import { useCallback, useEffect, useState } from 'react';
 import { Tag, Plus, Trash2, Lock } from 'lucide-react';
 import { hdr } from '@/components/features/admin/settings/ui';
 import { INPUT, BTN_PRIMARY_AA } from '@/components/features/admin/pagamenti/ui';
-import { logClient } from '@/lib/logging/client';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 import { cx } from '@/lib/ui/cx';
 import { useTranslations } from 'next-intl';
 import type { NewsCategoria } from '@/lib/news/tipi';
-
-const testoErrore = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 interface Props {
   userId: string;
@@ -64,7 +62,7 @@ export function NewsCategoriePanel({ userId, scuolaId }: Props) {
       setNuovoNome('');
       void carica();
     } catch (err) {
-      logClient({ livello: 'error', evento: 'fetch', messaggio: `crea categoria news — ${testoErrore(err)}`, route: '/admin/news', stato: 0 });
+      logClient({ livello: 'error', evento: 'fetch', messaggio: `news-categoria-creazione-fallita: ${nomeErrore(err)}`, route: '/admin/news', stato: 0 });
       setErrore(t('erroreRete'));
     } finally {
       setSalvando(false);
@@ -80,7 +78,7 @@ export function NewsCategoriePanel({ userId, scuolaId }: Props) {
         setErrore(j?.error ?? t('categorieErroreRinomina'));
       }
     } catch (err) {
-      logClient({ livello: 'error', evento: 'fetch', messaggio: `rinomina categoria news — ${testoErrore(err)}`, route: '/admin/news', stato: 0 });
+      logClient({ livello: 'error', evento: 'fetch', messaggio: `news-categoria-rinomina-fallita: ${nomeErrore(err)}`, route: '/admin/news', stato: 0 });
     }
   };
 
@@ -94,7 +92,7 @@ export function NewsCategoriePanel({ userId, scuolaId }: Props) {
         setErrore(j?.error ?? t('categorieErroreEliminazione'));
       }
     } catch (err) {
-      logClient({ livello: 'error', evento: 'fetch', messaggio: `elimina categoria news — ${testoErrore(err)}`, route: '/admin/news', stato: 0 });
+      logClient({ livello: 'error', evento: 'fetch', messaggio: `news-categoria-eliminazione-fallita: ${nomeErrore(err)}`, route: '/admin/news', stato: 0 });
     }
   };
 

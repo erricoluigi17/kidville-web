@@ -21,7 +21,7 @@ import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { StatCard, SectionTitle, TABLE_WRAP, TABLE, TH, TD, TROW } from '@/components/ui/cockpit';
 import { cx } from '@/lib/ui/cx';
 import { formatEuro } from '@/lib/format/valuta';
-import { logClient } from '@/lib/logging/client';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 import { useAdminIdentity } from '@/lib/context/admin-identity';
 import { MODAL_CARD, MODAL_SHADOW, INPUT, BTN_PRIMARY_AA, BTN_SECONDARY } from './ui';
 import { CassaMovimentoModal } from './CassaMovimentoModal';
@@ -47,7 +47,6 @@ interface TotaliCassa {
 }
 
 const hdr = (u: string) => ({ 'Content-Type': 'application/json', 'x-user-id': u });
-const testoErrore = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 const TIPO_INFO: Record<string, { labelKey: string; tone: BadgeTone }> = {
   entrata: { labelKey: 'cassaTipoEntrata', tone: 'success' },
@@ -137,7 +136,7 @@ export function CassaPanel({ userId, scuolaId }: Props) {
           setChiusure([]);
         }
       } catch (err) {
-        logClient({ livello: 'error', evento: 'fetch', messaggio: `GET movimenti cassa — ${testoErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
+        logClient({ livello: 'error', evento: 'fetch', messaggio: `cassa-movimenti-caricamento-fallito: ${nomeErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
         // Chiave i18n (non testo): l'effetto non dipende da `t`; si traduce al render.
         if (active) setErrore('cassaErroreCaricamento');
       }
@@ -154,7 +153,7 @@ export function CassaPanel({ userId, scuolaId }: Props) {
       const j = (await r.json()) as { url?: string };
       if (j?.url) window.open(j.url, '_blank', 'noopener');
     } catch (err) {
-      logClient({ livello: 'error', evento: 'fetch', messaggio: `GET allegato cassa — ${testoErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
+      logClient({ livello: 'error', evento: 'fetch', messaggio: `cassa-allegato-apertura-fallita: ${nomeErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
     }
   };
 
@@ -436,7 +435,7 @@ function StornoCassaModal({ userId, movimento, onClose, onDone }: { userId: stri
       if (!res.ok) { setError(j.error ?? t('cassaStornoErrore')); return; }
       onDone();
     } catch (err) {
-      logClient({ livello: 'error', evento: 'fetch', messaggio: `POST storno cassa — ${testoErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
+      logClient({ livello: 'error', evento: 'fetch', messaggio: `cassa-storno-fallito: ${nomeErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
       setError(t('cassaErroreRete'));
     } finally {
       setBusy(false);

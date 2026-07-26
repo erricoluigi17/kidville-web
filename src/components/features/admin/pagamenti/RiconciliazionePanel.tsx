@@ -8,7 +8,7 @@ import { SectionTitle } from '@/components/ui/cockpit';
 import { SaveCheck } from '@/components/ui/SaveConfirmation';
 import { cx } from '@/lib/ui/cx';
 import { formatEuro } from '@/lib/format/valuta';
-import { logClient } from '@/lib/logging/client';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 import { MovimentoDialog } from './MovimentoDialog';
 import type { PrecompilaTransazione } from './TransazioniPanel';
 import { BTN_PRIMARY_AA } from './ui';
@@ -36,7 +36,6 @@ interface Props {
 }
 
 const hdr = (u: string) => ({ 'Content-Type': 'application/json', 'x-user-id': u });
-const testoErrore = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /**
  * Vista Riconciliazione bancaria — lista a SEMAFORO del registro cumulativo.
@@ -75,7 +74,7 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
     // nell'effetto e violerebbe react-hooks/set-state-in-effect. Gli errori di
     // rete li assorbe (e LOGGA) il `.catch` di ogni fetch, restituendo null.
     const onErr = (err: unknown): null => {
-      logClient({ livello: 'error', evento: 'fetch', messaggio: `GET riconciliazione/pagamenti — ${testoErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
+      logClient({ livello: 'error', evento: 'fetch', messaggio: `riconciliazione-caricamento-fallito: ${nomeErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
       return null;
     };
     try {
@@ -122,7 +121,7 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
       setEsito(j.data as EsitoImport);
       await load();
     } catch (err) {
-      logClient({ livello: 'error', evento: 'fetch', messaggio: `POST riconciliazione import — ${testoErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
+      logClient({ livello: 'error', evento: 'fetch', messaggio: `riconciliazione-import-fallito: ${nomeErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
       setError(t('reconErroreLetturaFile'));
     } finally {
       setBusy(false);
@@ -148,7 +147,7 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
         if (r.ok && j?.success) parent = (j.data?.parent_id as string | null) ?? null;
       } catch (err) {
         // Ponte non raggiungibile: si apre comunque «scegli pagante» (parent null).
-        logClient({ livello: 'error', evento: 'fetch', messaggio: `GET pagante-comune — ${testoErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
+        logClient({ livello: 'error', evento: 'fetch', messaggio: `riconciliazione-pagante-comune-caricamento-fallito: ${nomeErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
       }
     }
     onIncassoUnico?.({ parent, rif, tot: m.importo, alunni });

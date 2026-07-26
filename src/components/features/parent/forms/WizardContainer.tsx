@@ -13,7 +13,7 @@ import { OtpSignatureModal } from './OtpSignatureModal'
 import { campoVisibile, pulisciNascosti, type FormValues } from '@/lib/forms/conditional'
 import { validateField, isProvinceField } from '@/lib/forms/validate-fields'
 import { normalizzaProvincia } from '@/lib/anagrafiche/province'
-import { logClient } from '@/lib/logging/client'
+import { logClient, nomeErrore } from '@/lib/logging/client'
 import type { FormField, FormSchemaConfig, FormSubmissionData } from '@/types/database.types'
 
 interface Props {
@@ -188,7 +188,7 @@ export function WizardContainer({
       logClient({
         livello: 'error',
         evento: 'fetch',
-        messaggio: `invio modulo fallito — ${err instanceof Error ? err.message : 'errore sconosciuto'}`,
+        messaggio: `modulo-invio-fallito: ${nomeErrore(err)}`,
         stack: err instanceof Error ? err.stack : undefined,
       })
       alert(t('erroreInvioModulo'))

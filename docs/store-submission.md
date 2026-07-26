@@ -17,6 +17,10 @@ Il PRD dichiara questo documento mancante da due voci di changelog:
 > account demo e App Privacy labels.
 > — *Changelog correzione collaudo native, 2026-07-25*
 
+> ⚠️ **Resta prima della submission:** il **certificato Apple Distribution** (bloccante,
+> primo passo — senza non si esporta né si verifica `aps-environment = production`); […]
+> — *Changelog «Repository privato, password ruotata…», 2026-07-26*
+
 Dati di riferimento dell'app: `appId` **`it.kidville.app`**, nome **Kidville**, URL
 caricato dalla WebView **`https://app.kidville.it`**, sede unica di produzione
 **Kidville Giugliano**.
@@ -361,8 +365,20 @@ TARGETED_DEVICE_FAMILY = "1,2";
    left e right), mentre su iPhone c'è **solo il verticale**. Il revisore ruoterà il
    dispositivo: il layout in orizzontale su iPad va guardato prima che lo guardi lui.
 
+#### Come si vede davvero l'app su iPad — verificato il 2026-07-26
+
+La resa su iPad non è più un'incognita. Provata sul simulatore **iPad Pro 13" (M5)**, con
+login e dashboard genitore:
+
+- la UI è **centrata in colonna, non stirata**: sfondo crema uniforme, topbar a tutta
+  larghezza, bottom nav centrata;
+- **non è ottimizzata per iPad** — niente split view, niente colonne multiple, lo spazio
+  orizzontale in più resta inutilizzato;
+- ma **non è rotta**, e la resa è dignitosa. Il rischio sulla linea guida **4.2** resta
+  **moderato**: non trascurabile, non grave.
+
 > ⚠️ **Scelta da fare, e da fare adesso** (non è lavoro da agente, cambia il perimetro del
-> prodotto):
+> prodotto). Resta aperta, ma ora è **informata**: si sa come si vede l'app.
 >
 > - **(A) Restare universali** → produrre gli screenshot iPad, verificare la resa su iPad
 >   nei quattro orientamenti e sistemare ciò che non regge; oppure
@@ -387,11 +403,27 @@ TARGETED_DEVICE_FAMILY = "1,2";
 | Google Play | **Tablet 7"** e **Tablet 10"** | facoltativo | servono solo per essere valorizzati nella scheda «ottimizzata per tablet» |
 | Google Play | **Icona** 512×512 e **immagine in evidenza** (*feature graphic*) 1024×500 | ✅ | l'immagine in evidenza è obbligatoria a prescindere |
 
-> Le **dimensioni esatte in pixel** dei set iPhone/iPad **non sono cablate qui di
-> proposito**: Apple le cambia a ogni generazione di dispositivi, e un numero sbagliato in
-> un documento è peggio di nessun numero. Vanno lette al momento dell'invio dalla pagina
+> Le **dimensioni esatte in pixel** richieste da Apple **non sono cablate qui di
+> proposito**: le cambia a ogni generazione di dispositivi, e un numero sbagliato in un
+> documento è peggio di nessun numero. Vanno lette al momento dell'invio dalla pagina
 > *Screenshot specifications* di App Store Connect, che elenca la classe richiesta e le
 > risoluzioni accettate per quella versione.
+
+#### Da quale simulatore catturare — misurato il 2026-07-26
+
+Quello che invece **si può cablare** è cosa produce ciascun simulatore, perché non dipende
+da App Store Connect ma dal dispositivo. Misurato con `xcrun simctl io … screenshot`:
+
+| Simulatore | Screenshot prodotto | Verdetto |
+|---|---|---|
+| **iPad Pro 13" (M5)** | **2064 × 2752** *(misurato)* | ✅ è **esattamente** la dimensione richiesta per la classe **iPad 13"** |
+| **iPhone 17 Pro Max** | non misurato | ✅ è **il modello da usare** per il set **iPhone 6.9"** |
+| **iPhone 17 Pro** | **1206 × 2622** *(misurato)* | ❌ **non è una dimensione accettata** — è il "Pro", non il "Pro Max" |
+
+> ⚠️ **L'errore facile è catturare con l'iPhone 17 Pro.** È il simulatore che si usa per i
+> collaudi funzionali, ha lo stesso nome a colpo d'occhio, e produce **1206×2622**: App
+> Store Connect lo rifiuta. Per il set **6.9"** serve **iPhone 17 Pro Max**. Vale la pena
+> ricontrollare le dimensioni dei file catturati *prima* di caricarli, non dopo il rifiuto.
 
 ### Cosa mostrare negli screenshot
 
@@ -411,13 +443,91 @@ indicizzata.
 
 ---
 
-## 5. Checklist di submission
+## 5. 🔴 Firma di distribuzione — il primo passo, ed è bloccato
+
+**Oggi non è possibile produrre un pacchetto per l'App Store.** Non per un difetto del
+codice: manca il **certificato di distribuzione Apple**. È la prima voce della checklist
+perché tutto il resto — build firmata, upload, TestFlight, review, e persino la verifica
+che le push funzionino in produzione — ci passa attraverso.
+
+### Cosa è stato accertato (2026-07-26), e come riprodurlo
+
+**1. L'Archive si costruisce.** Non c'è nulla di rotto a monte:
+
+```bash
+xcodebuild -workspace ios/App/App.xcworkspace -scheme App \
+  -configuration Release -destination 'generic/platform=iOS' \
+  -archivePath /percorso/App.xcarchive archive
+# → ARCHIVE SUCCEEDED
+```
+
+**2. Ma l'Archive è firmato in sviluppo.** Negli entitlements dell'app archiviata:
+
+```bash
+codesign -d --entitlements :- /percorso/App.xcarchive/Products/Applications/App.app
+# → aps-environment = development
+# → get-task-allow = true
+```
+
+`aps-environment` risulta **`development`**, insieme a `get-task-allow`, perché la firma
+automatica ha usato l'**unico** profilo disponibile, che è quello di sviluppo.
+
+**3. E l'export per lo store fallisce.** Con un `exportOptions.plist` che dichiara
+`method: app-store-connect`:
+
+```bash
+xcodebuild -exportArchive -archivePath /percorso/App.xcarchive \
+  -exportPath /percorso/export -exportOptionsPlist /percorso/exportOptions.plist
+# → error: exportArchive No signing certificate "iOS Distribution" found
+# → error: exportArchive No profiles for 'it.kidville.app' were found
+```
+
+**4. Perché: sulla macchina c'è una sola identità di firma.**
+
+```bash
+security find-identity -v -p codesigning
+# → 1) …  "Apple Development: lerrico7@icloud.com (…)"
+#    1 valid identity found
+```
+
+### Conseguenza
+
+Finché non esistono un certificato **Apple Distribution** e il relativo **provisioning
+profile** per **`it.kidville.app`**:
+
+- **non si esporta** alcun `.ipa` per l'App Store;
+- **non si può verificare** che `aps-environment` diventi **`production`** — e quindi non
+  si può accertare che le **push native funzionino in produzione**. Un token APNs di
+  sviluppo non riceve le notifiche inviate all'ambiente di produzione, e **nessun test lo
+  vede**: il codice è identico, cambia solo l'ambiente su cui è firmato;
+- **non si carica niente** su App Store Connect, quindi non parte nemmeno TestFlight.
+
+### Come si sblocca — non è lavoro da agente
+
+Serve l'accesso all'account sviluppatore Apple del titolare. Due strade equivalenti:
+
+- **Xcode** → *Settings* → *Accounts* → selezionare il team → *Manage Certificates* →
+  **+** → **Apple Distribution**;
+- **portale Apple Developer** (*Certificates, Identifiers & Profiles*) → nuovo certificato
+  *Apple Distribution*, poi un provisioning profile *App Store* per `it.kidville.app`.
+
+Fatto questo, si ripetono i comandi 1-3 qui sopra: l'export deve riuscire e il controllo
+del punto 2 deve dire **`aps-environment = production`**. È quella la prova, non la
+riuscita dell'Archive.
+
+---
+
+## 6. Checklist di submission
 
 ### Bloccanti — da chiudere prima di inviare
 
+- [ ] 🔴 **Certificato di distribuzione Apple** (`Apple Distribution` + provisioning
+      profile *App Store* per `it.kidville.app`). **È il primo passo: senza, non esiste
+      nessun pacchetto da inviare.** Accertato mancante il 2026-07-26 — comandi e prove in
+      §5. Richiede le credenziali dell'account sviluppatore del titolare.
 - [ ] **Validazione legale di informativa e termini** (`/privacy`, `/termini`) da parte di
-      un legale. **Non è lavoro da agente.** È l'ultima voce ancora aperta dal changelog
-      del 2026-07-26.
+      un legale. **Non è lavoro da agente.** Aperta dal changelog del 2026-07-26 e mai
+      chiusa: le pagine ci sono e sono complete, ma nessun legale le ha lette.
 - [x] ~~**Rotazione della password degli account TEST** e rimozione del valore dal PRD~~
       — **fatto il 2026-07-26** (vedi §1): password ruotata sui 41 account `test.*`, valore
       tolto da tutti e 9 i file, script su `KV_TEST_PASSWORD`, lock di regressione attivo.
@@ -434,13 +544,18 @@ indicizzata.
 - [ ] **Modulo «Sicurezza dei dati»** di Google Play compilato, incluso l'URL per la
       cancellazione dell'account.
 - [ ] **Scelta iPad**: universale con screenshot iPad, **oppure**
-      `TARGETED_DEVICE_FAMILY = "1"` (§4).
-- [ ] **Screenshot** prodotti per tutte le classi richieste, con soli dati fittizi.
-- [ ] **`aps-environment` = `production` nell'export dell'Archive.** Il sorgente
-      `ios/App/App/App.entitlements` dice **`development`**; con la firma *Automatic* è
-      Xcode a promuoverlo in distribuzione, ma va **verificato sull'artefatto**, non
-      dato per scontato: se resta `development`, le push native **non arrivano** in
-      produzione e non se ne accorge nessun test.
+      `TARGETED_DEVICE_FAMILY = "1"` (§4). La resa su iPad Pro 13" è stata **vista il
+      2026-07-26 ed è accettabile** (§4): la scelta resta aperta, ma non è più al buio.
+- [ ] **Screenshot** prodotti per tutte le classi richieste, con soli dati fittizi — e
+      **catturati dai simulatori giusti**: iPad Pro 13" e iPhone 17 Pro **Max** (§4).
+- [ ] **`aps-environment` = `production` nell'export dell'Archive.** 🔴 **Oggi bloccato
+      dalla voce §5**: l'Archive del 2026-07-26 riporta **`development`** (misurato, non
+      supposto), perché la firma automatica ha solo il profilo di sviluppo. Il sorgente
+      `ios/App/App/App.entitlements` dice anch'esso `development`; con la firma
+      *Automatic* è Xcode a promuoverlo in distribuzione **quando il certificato di
+      distribuzione esiste**, e va comunque **verificato sull'artefatto**, non dato per
+      scontato: se resta `development`, le push native **non arrivano** in produzione e
+      non se ne accorge nessun test.
 
       ```bash
       # sull'.app estratto dall'Archive o dall'.ipa
@@ -451,9 +566,32 @@ indicizzata.
 
 - [ ] **Build costruita con `CAP_SERVER_URL` HTTPS di produzione** e config rigenerati —
       procedura e verifiche in `docs/mobile.md`, §«Prima della build per lo store».
+- [x] ~~**Face ID provato dall'inizio alla fine su iOS**~~ — **fatto il 2026-07-26** su
+      simulatore iPhone 17 Pro (iOS 26.2): attivazione dello switch in `/parent/profilo`
+      con prompt nativo e match, gate biometrico al riavvio, sblocco riuscito, **e nessun
+      prompt che riparte** nei 15 secondi successivi. È la controprova su iOS del loop
+      infinito corretto su Android.
+- [x] ~~**Gli embed non sono stati rotti da `WKAppBoundDomains`**~~ — **verificato il
+      2026-07-26** con una news di collaudo temporanea (poi cancellata): **YouTube**,
+      **Vimeo** e **Instagram** caricano dentro la WebView.
 - [ ] **Prova su dispositivo reale** delle funzioni native (fotocamera, biometria, badge,
       condivisione, offline): il collaudo del 2026-07-25 è stato fatto su simulatori ed
       emulatori, e i sei bloccanti che ha trovato **non erano visibili a nessun test**.
+      Restano da chiudere **su telefono fisico** la fotocamera iOS (non provabile su
+      simulatore) e l'**offline in modalità aereo** (il Network Link Conditioner non
+      esiste sul simulatore).
+
+### Nota di metodo per i collaudi su simulatore
+
+Due scorciatoie che hanno funzionato il 2026-07-26 e vale la pena riusare:
+
+- **Navigare con i deep link**, non a tentoni: `xcrun simctl openurl booted
+  kidville://parent/<rotta>` porta l'app dove serve senza dipendere dal tap su una
+  coordinata né dal fatto che la schermata sia già renderizzata. È il modo più affidabile.
+- **Simulare il match Face ID** dopo aver fatto comparire il prompt:
+  `xcrun simctl spawn booted notifyutil -p com.apple.BiometricKit_Sim.pearl.match`
+  (l'equivalente «non riconosciuto» è `…pearl.nomatch`). Da riga di comando è ripetibile;
+  dal menu *Features → Face ID* non lo è.
 
 ### Da sapere — limiti dichiarati, non difetti
 

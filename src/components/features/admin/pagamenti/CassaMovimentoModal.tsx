@@ -17,7 +17,7 @@ import { MODAL_CARD, MODAL_SHADOW, INPUT, SELECT, BTN_PRIMARY_AA, BTN_SECONDARY 
 import { cx } from '@/lib/ui/cx';
 import { formatEuro } from '@/lib/format/valuta';
 import { oggiFiscaleISO } from '@/lib/format/fiscal-date';
-import { logClient } from '@/lib/logging/client';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 import { ScattaFotoButton } from '@/components/features/native/ScattaFotoButton';
 import type { CassaCategoria, CassaMetodo } from '@/lib/cassa/tipi';
 
@@ -35,7 +35,6 @@ interface Props {
 type Traduttore = ReturnType<typeof useTranslations>;
 
 const hdr = (u: string) => ({ 'Content-Type': 'application/json', 'x-user-id': u });
-const testoErrore = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 const ERRORE_ID = 'cassa-mov-errore';
 
@@ -90,7 +89,7 @@ async function caricaAllegato(userId: string, scuolaId: string, file: File, t: T
     if (!put.ok) return { error: `${t('cassaMovFotoHttpPre')}${put.status}${t('cassaMovFotoHttpPost')}` };
     return { path: payload.path };
   } catch (err) {
-    logClient({ livello: 'error', evento: 'fetch', messaggio: `upload allegato cassa — ${testoErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
+    logClient({ livello: 'error', evento: 'fetch', messaggio: `cassa-allegato-upload-fallito: ${nomeErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
     return { error: t('cassaMovFotoRete') };
   }
 }
@@ -133,7 +132,7 @@ export function CassaMovimentoModal({ userId, scuolaId, tipoIniziale, onClose, o
         setCategorie([...perSlug.values()].sort((a, b) => a.ordine - b.ordine));
       })
       .catch((err) => {
-        logClient({ livello: 'error', evento: 'fetch', messaggio: `GET categorie cassa — ${testoErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
+        logClient({ livello: 'error', evento: 'fetch', messaggio: `cassa-categorie-caricamento-fallito: ${nomeErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
       });
     return () => { active = false; };
   }, [userId, scuolaId]);
@@ -179,7 +178,7 @@ export function CassaMovimentoModal({ userId, scuolaId, tipoIniziale, onClose, o
       }
       onDone();
     } catch (err) {
-      logClient({ livello: 'error', evento: 'fetch', messaggio: `POST movimento cassa — ${testoErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
+      logClient({ livello: 'error', evento: 'fetch', messaggio: `cassa-movimento-salvataggio-fallito: ${nomeErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
       setError(t('cassaMovErroreRete'));
     } finally {
       setSaving(false);

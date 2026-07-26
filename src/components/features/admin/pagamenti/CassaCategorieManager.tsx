@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { Tag, Plus, Trash2, Lock } from 'lucide-react';
-import { logClient } from '@/lib/logging/client';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 import { hdr, card, h3, input, hint } from '../settings/ui';
 import { BTN_PRIMARY_AA } from './ui';
 import type { CassaCategoria } from '@/lib/cassa/tipi';
@@ -18,8 +18,6 @@ interface Props {
   userId: string;
   scuolaId: string;
 }
-
-const testoErrore = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 export function CassaCategorieManager({ userId, scuolaId }: Props) {
   const t = useTranslations('adminContabilita');
@@ -36,7 +34,7 @@ export function CassaCategorieManager({ userId, scuolaId }: Props) {
         setCats((j?.categorie ?? []).slice().sort((a, b) => a.ordine - b.ordine));
       })
       .catch((err) => {
-        logClient({ livello: 'error', evento: 'fetch', messaggio: `GET categorie cassa — ${testoErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
+        logClient({ livello: 'error', evento: 'fetch', messaggio: `cassa-categorie-caricamento-fallito: ${nomeErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
       });
   }, [userId, scuolaId]);
 
@@ -55,7 +53,7 @@ export function CassaCategorieManager({ userId, scuolaId }: Props) {
       setNuovo('');
       load();
     } catch (err) {
-      logClient({ livello: 'error', evento: 'fetch', messaggio: `POST categoria cassa — ${testoErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
+      logClient({ livello: 'error', evento: 'fetch', messaggio: `cassa-categoria-creazione-fallita: ${nomeErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
       setError(t('cassaCatErroreRete'));
     }
   };
@@ -70,7 +68,7 @@ export function CassaCategorieManager({ userId, scuolaId }: Props) {
       }
       load();
     } catch (err) {
-      logClient({ livello: 'error', evento: 'fetch', messaggio: `DELETE categoria cassa — ${testoErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
+      logClient({ livello: 'error', evento: 'fetch', messaggio: `cassa-categoria-eliminazione-fallita: ${nomeErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
       setError(t('cassaCatErroreRete'));
     }
   };

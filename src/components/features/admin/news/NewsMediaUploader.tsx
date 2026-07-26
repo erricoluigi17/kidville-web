@@ -12,7 +12,7 @@ import { useRef, useState } from 'react';
 import { Upload, ShieldQuestion } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { Modal } from '@/components/ui/Modal';
-import { logClient } from '@/lib/logging/client';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 import { useImagePicker } from '@/lib/native/use-image-picker';
 import { MODAL_CARD, MODAL_SHADOW, BTN_PRIMARY_AA, BTN_SECONDARY } from '@/components/features/admin/pagamenti/ui';
 
@@ -27,8 +27,6 @@ interface Props {
   label?: string;
   disabled?: boolean;
 }
-
-const testoErrore = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 export function NewsMediaUploader({
   userId,
@@ -71,7 +69,7 @@ export function NewsMediaUploader({
         setErrore(j?.error ?? t('uploaderImpossibileCaricare'));
       }
     } catch (err) {
-      logClient({ livello: 'error', evento: 'fetch', messaggio: `POST news/upload — ${testoErrore(err)}`, route: '/admin/news', stato: 0 });
+      logClient({ livello: 'error', evento: 'fetch', messaggio: `news-media-upload-fallito: ${nomeErrore(err)}`, route: '/admin/news', stato: 0 });
       setErrore(t('erroreReteRiprova'));
     } finally {
       setBusy(false);

@@ -1,6 +1,50 @@
 {
   "titolo": "Kidville is unreachable",
   "corpo": "We can't connect right now. Check your connection: the pages you already opened are still available, showing data from their last update.",
+  "corpoSenzaCache": "We can't connect right now. Check your connection and try again: no page has been saved on this device yet.",
   "riprova": "Try again",
-  "nota": "If this keeps happening, reopen the app in a few minutes."
+  "nessunaRete": "Still no connection. Try again in a moment.",
+  "disponibili": "Pages you already opened, available now",
+  "nota": "If this keeps happening, reopen the app in a few minutes.",
+  "etichette": {
+    "esatte": {
+      "/": "Home",
+      "/parent": "Family home",
+      "/teacher": "Teacher home",
+      "/admin": "Office home",
+      "/segreteria": "Office home",
+      "/auth/login": "Sign in",
+      "/privacy": "Privacy",
+      "/termini": "Terms",
+      "/assistenza": "Support"
+    },
+    "segmenti": {
+      "attendance": "Attendance",
+      "avvisi": "Notices",
+      "chat": "Chat",
+      "compiti": "Homework",
+      "diary": "Diary",
+      "forms": "Forms",
+      "gallery": "Gallery",
+      "gdpr": "Privacy",
+      "impostazioni": "Settings",
+      "iscrizioni": "Enrolments",
+      "lezioni": "Lessons",
+      "locker": "Locker",
+      "mensa": "Canteen",
+      "merchandise": "Merchandise",
+      "messaggi": "Messages",
+      "modulistica": "Forms",
+      "news": "News",
+      "onboarding": "Getting started",
+      "pagamenti": "Payments",
+      "primaria": "Primary school",
+      "profilo": "Profile",
+      "register": "Register",
+      "settings": "Settings",
+      "staff": "Staff",
+      "students": "Students",
+      "tasks": "Tasks"
+    }
+  }
 }

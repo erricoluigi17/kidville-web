@@ -146,6 +146,31 @@ describe('lock — Face ID', () => {
     });
 });
 
+describe('lock — conformità all’esportazione (crittografia)', () => {
+    it('ITSAppUsesNonExemptEncryption esiste ed è false', () => {
+        // Senza questa chiave OGNI build caricata resta in stato «Missing Compliance»:
+        // `processingState` risulta `VALID`, l'upload non dà un solo errore, e la build
+        // NON è distribuibile — né TestFlight né revisione — finché qualcuno non risponde
+        // a mano alla domanda su App Store Connect. È un guasto silenzioso, come il
+        // `loggingBehavior` sopra: nulla è rosso e nulla funziona.
+        //
+        // `false` è verificato sul codice (2026-07-26): nessuna cifratura applicativa, solo
+        // hashing/confronti/casualità; HTTPS e biometria vengono dal sistema, ed è esente.
+        const plist = leggi('ios/App/App/Info.plist');
+        expect(plist).toContain('<key>ITSAppUsesNonExemptEncryption</key>');
+        const dopo = plist.split('<key>ITSAppUsesNonExemptEncryption</key>')[1];
+        expect(dopo.trimStart().startsWith('<false/>')).toBe(true);
+    });
+
+    it('NON è dichiarata true: sarebbe una dichiarazione diversa, con obblighi diversi', () => {
+        // Un `true` messo per sbaglio non rompe la build: fa scattare la richiesta dei
+        // documenti di esportazione (CCATS/ERN) e blocca la pubblicazione a tempo indefinito.
+        const plist = leggi('ios/App/App/Info.plist');
+        const dopo = plist.split('<key>ITSAppUsesNonExemptEncryption</key>')[1] ?? '';
+        expect(dopo.trimStart().startsWith('<true/>')).toBe(false);
+    });
+});
+
 describe('lock — privacy manifest iOS (PrivacyInfo.xcprivacy)', () => {
     const manifest = leggi('ios/App/App/PrivacyInfo.xcprivacy');
 

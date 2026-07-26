@@ -27,6 +27,21 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<!-- Conformità all'esportazione (normativa USA sulla crittografia). Senza questa chiave
+	     OGNI build caricata resta in stato «Missing Compliance» su App Store Connect: la build
+	     risulta `VALID` ma NON è distribuibile — né TestFlight né revisione — finché qualcuno
+	     non risponde a mano alla domanda. Costa un giro completo per accorgersene, perché
+	     l'upload riesce e nessun errore lo dice.
+
+	     `false` = l'app non usa crittografia NON esente. Verificato sul codice il 2026-07-26:
+	     nessuna cifratura applicativa (zero `createCipheriv`/`crypto.subtle.encrypt`, nessuna
+	     dipendenza crittografica), solo `createHash('sha256')`, `timingSafeEqual` e
+	     `randomBytes` — cioè hashing, confronti e generazione di casualità. Il traffico è
+	     HTTPS/TLS fornito dal sistema e la biometria passa dal plugin di piattaforma:
+	     entrambi esenti. Se un domani l'app cifrasse dati per conto proprio, questa
+	     dichiarazione va rifatta. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>NSCameraUsageDescription</key>
 	<string>Kidville usa la fotocamera per scattare foto da allegare al diario, alla galleria della classe, alle comunicazioni e ai moduli.</string>
 	<key>NSPhotoLibraryUsageDescription</key>

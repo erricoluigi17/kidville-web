@@ -552,13 +552,52 @@ Corollari, tutti verificati il 2026-07-26:
   l'unico `.p8` presente è la chiave **APNs** `G2XN848ZNY`, che serve alle push e **non**
   autentica l'API di App Store Connect).
 
+### ✅ Caricata su App Store Connect — 2026-07-26
+
+L'`.ipa` è stato **validato, caricato ed elaborato**. Sequenza e prove:
+
+```bash
+# credenziale: API key in ~/.appstoreconnect/private_keys/AuthKey_36YQ6HDAN3.p8 (permessi 600)
+xcrun altool --validate-app -f export/App.ipa -t ios \
+  --apiKey 36YQ6HDAN3 --apiIssuer <issuer-id>
+# → VERIFY SUCCEEDED with no errors
+
+xcrun altool --upload-app -f export/App.ipa -t ios --apiKey … --apiIssuer …
+# → UPLOAD SUCCEEDED   ·   Delivery UUID c912710a-d734-4460-8bef-852a3c6da277
+#   Transferred 5027386 bytes in 3.021 seconds
+```
+
+| Cosa | Valore |
+|---|---|
+| Scheda app | `Kidville` — **Apple ID `6794883055`** · SKU `kidville-app` · locale `it` |
+| Build | versione `1.0`, build `1` — `processingState: VALID` (elaborata in ~2,5 min) |
+| Scadenza build | **2026-10-24** (90 giorni: le build TestFlight scadono) |
+| Gruppo TestFlight | `Interni` (`9a11311d-…`), interno, `hasAccessToAllBuilds: true` |
+| Tester | `lerrico7@icloud.com` (`ACCOUNT_HOLDER`) |
+
+**La scheda app va creata a mano.** L'API di App Store Connect **non** ha un
+`POST /v1/apps`: si passa da *Apps → + → New App*. Nel menu «ID pacchetto» la voce da
+scegliere si chiama **`XC it kidville app - it.kidville.app`** — è il nome che Xcode ha
+dato all'identificativo, non «Kidville».
+
+> ⚠️ **Trappola pagata: «Missing Compliance».** Appena caricata, la build era
+> `processingState: VALID` con **`usesNonExemptEncryption: null`** — cioè **non
+> distribuibile**, né TestFlight né revisione, e *nessun errore lo diceva*: l'upload
+> riesce, la build risulta valida, e semplicemente non arriva a nessuno. Si sblocca
+> rispondendo alla domanda sulla crittografia. Ora la risposta è **cablata nel sorgente**
+> (`ios/App/App/Info.plist` → `ITSAppUsesNonExemptEncryption = false`) con un lock in
+> `__tests__/architecture/native-privacy-lock.test.ts`, così non ricompare a ogni build.
+> La dichiarazione `false` è verificata sul codice: nessuna cifratura applicativa (zero
+> `createCipheriv` / `crypto.subtle.encrypt`, nessuna dipendenza crittografica), solo
+> `createHash('sha256')`, `timingSafeEqual` e `randomBytes`; HTTPS e biometria vengono dal
+> sistema, ed entrambi sono esenti.
+
 ### Cosa resta aperto su questo fronte
 
-L'`.ipa` è firmato per la produzione, ma **non è ancora stato caricato**. Perciò la push
-in ambiente `production` è **plausibile, non dimostrata**: la prova richiede una build
-installata da TestFlight su un device fisico, e per caricarla serve una credenziale che
-oggi non c'è — App Store Connect API key (*Users and Access → Integrations*), oppure una
-password specifica per l'app con `xcrun altool`, oppure l'Organizer di Xcode a mano.
+**La push in ambiente `production` è ancora plausibile, non dimostrata.** La firma è
+giusta e la build è su TestFlight, ma finché non è **installata su un iPhone fisico** e non
+arriva una notifica vera, resta un'ipotesi: un token APNs di produzione non lo si può
+osservare da un simulatore. Stessa cosa per l'**offline in modalità aereo**.
 
 ---
 
@@ -572,10 +611,19 @@ password specifica per l'app con `xcrun altool`, oppure l'Organizer di Xcode a m
       `aps-environment = production`. Il certificato è **cloud managed** e per questo
       **`security find-identity` non lo mostra**: era quello il tranello che l'aveva fatto
       dichiarare mancante. ⏰ **Scade il 2027-07-26** (durata un anno, non tre).
-- [ ] **Caricare la build su App Store Connect** — serve una credenziale che oggi **non
-      c'è**: App Store Connect API key (*Users and Access → Integrations*), oppure password
-      specifica per l'app con `xcrun altool`, oppure l'Organizer di Xcode a mano. Finché la
-      build non è caricata, **la push in ambiente `production` resta non dimostrata** (§5).
+- [x] ~~**Caricare la build su App Store Connect**~~ — **fatto il 2026-07-26** (§5):
+      `VERIFY SUCCEEDED` + `UPLOAD SUCCEEDED`, build `1.0 (1)` in stato `VALID`, scheda app
+      Apple ID `6794883055`, gruppo TestFlight interno con tester. API key in
+      `~/.appstoreconnect/private_keys/`.
+- [ ] **Prova che una push arrivi davvero in ambiente `production`** — richiede la build
+      **installata da TestFlight su un iPhone fisico**. Non è osservabile da simulatore: è
+      l'ultima verifica che la catena delle push aspetta.
+- [ ] 🔴 **Stato di operatore commerciale (DSA)** — App Store Connect avvisa: *«Gli
+      sviluppatori devono fornire il loro stato di operatore commerciale per inviare nuove
+      app […] altrimenti le tue app verranno rimosse dall'App Store nell'UE»*. Non blocca il
+      **caricamento** (già riuscito), blocca l'**invio in revisione**, e riguarda proprio il
+      mercato italiano. Si compila in *Azienda* → conformità DSA. **Non è lavoro da agente:**
+      sono dichiarazioni legali d'identità del titolare del conto.
 - [ ] **Validazione legale di informativa e termini** (`/privacy`, `/termini`) da parte di
       un legale. **Non è lavoro da agente.** Aperta dal changelog del 2026-07-26 e mai
       chiusa: le pagine ci sono e sono complete, ma nessun legale le ha lette.

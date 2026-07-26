@@ -64,6 +64,50 @@
 
 ---
 
+## 🗓️ Changelog — Firma di distribuzione iOS: il pacchetto per l'App Store si produce (`aps-environment = production`) 2026-07-26 (branch `feat/firma-distribuzione-ios`)
+
+Il changelog precedente dichiarava **bloccata a monte** la submission: «sulla macchina non esiste un certificato di distribuzione Apple». Quel blocco **non c'è più**. L'`.ipa` per l'App Store è stato **prodotto**, è firmato **`Apple Distribution: luigi errico (B5ULCGG2V3)`**, e porta **`aps-environment = production`** — la verifica che la catena delle push native aspettava da due changelog.
+
+### Come si è sbloccato — e perché era stato diagnosticato male
+
+Il certificato di distribuzione **esiste** (emesso il **2026-07-26 alle 14:19:23 GMT**, cioè dieci minuti prima che questa sessione lanciasse il primo comando: non è stato creato da un agente). Il punto interessante è **perché la diagnosi precedente aveva concluso il contrario**, perché è un errore che si può ripetere:
+
+> Il certificato è **cloud managed** — gestito da Apple, non un file `.p12` in un keychain locale. E **`security find-identity -v -p codesigning` non lo mostra, nemmeno quando c'è e funziona**: continua a rispondere «1 valid identity found», elencando solo `Apple Development`. Nemmeno `security find-certificate -a -c "Apple Distribution"` lo trova.
+
+L'assenza da quell'elenco **non è la prova che il certificato manchi**. La prova è l'export: se `xcodebuild -exportArchive` con `method: app-store-connect` riesce, il certificato c'è. Il collaudo precedente si era fermato a `find-identity`, e aveva letto come «manca il certificato» quello che era invece «il certificato è invisibile a questo comando».
+
+Mancava però davvero una cosa: il **provisioning profile *App Store*** per `it.kidville.app`. Lo crea Xcode al volo, ma **solo** se glielo si consente — ed è tutta qui la differenza fra l'export che falliva e quello che riesce:
+
+- `xcodebuild archive` **`-allowProvisioningUpdates`** → `ARCHIVE SUCCEEDED`
+- `xcodebuild -exportArchive` … **`-allowProvisioningUpdates`** → `EXPORT SUCCEEDED`
+
+Il profilo generato è **`iOS Team Store Provisioning Profile: it.kidville.app`** (`IsXcodeManaged = true`, creato dall'export stesso).
+
+### La prova, misurata sull'artefatto
+
+Sull'app estratta dall'`.ipa`, non sull'Archive:
+
+- **`aps-environment = production`** (era `development`) · **`get-task-allow = false`** (era `true`) · **`beta-reports-active = true`** (TestFlight abilitato) · `application-identifier = B5ULCGG2V3.it.kidville.app`;
+- catena di firma: **`Apple Distribution: luigi errico (B5ULCGG2V3)`** → *Apple Worldwide Developer Relations CA* → *Apple Root CA*.
+
+### Due trappole da non ripagare
+
+- **L'app dentro l'`.xcarchive` resta firmata in sviluppo, ed è corretto.** Anche con `-allowProvisioningUpdates`, l'Archive porta `aps-environment = development` e `get-task-allow = true`: è l'**export** a rifirmare in distribuzione. Controllare gli entitlement dell'Archive non dice nulla di utile — **vanno letti sull'`.ipa`**. Anche il sorgente `ios/App/App/App.entitlements` dice `development` e **va lasciato così**.
+- **Scadenza a un anno, non a tre.** Certificato e profilo scadono entrambi il **2027-07-26**: è la durata dei certificati *cloud managed*. Da rinnovare prima, o non si firma più nulla per lo store.
+
+Nota per una futura CI: non esiste un `.p12` da salvare (Xcode recupera il certificato dall'account su qualunque macchina autenticata sul team), ma **una pipeline senza sessione Xcode autenticata non firma**. Servirebbe una **App Store Connect API key**, che sulla macchina **non c'è**: cercata in `~/.appstoreconnect/private_keys/`, `~/private_keys/`, fastlane e variabili `ASC_*`; l'unico `.p8` presente è la chiave **APNs** `G2XN848ZNY`, che serve alle push e **non** autentica l'API di App Store Connect.
+
+### Cosa resta su questo fronte
+
+L'`.ipa` è firmato per la produzione, ma **non è ancora stato caricato** — e quindi la push in ambiente `production` è oggi **plausibile, non dimostrata**: la prova richiede una build installata da **TestFlight** su un device fisico. Per caricarla serve una credenziale che ancora non esiste: **App Store Connect API key** (*Users and Access → Integrations*), oppure una **password specifica per l'app** con `xcrun altool`, oppure l'**Organizer di Xcode** a mano.
+
+- Dettaglio completo, comandi e `exportOptions.plist` in **`docs/store-submission.md` §5** (la sezione era marcata 🔴 bloccante: ora è ✅).
+- **Gate** verde: eslint 0 · tsc 0 · vitest 365 file / 3039 test · build ok.
+
+> ✅ **Il bloccante numero uno della submission è chiuso**: il pacchetto per l'App Store si produce, firmato in distribuzione, con `aps-environment = production` verificato sull'artefatto.
+
+> ⚠️ **Resta prima della submission:** il **caricamento** della build su App Store Connect (serve una credenziale da creare) e con esso la **prova che una push arrivi** su un device di produzione; la **validazione legale** di informativa e termini; l'**account demo** e le **App Privacy labels**; la **scelta iPad** (screenshot o solo-iPhone); la **prova offline su iPhone fisico in modalità aereo**. Invariate le due decisioni del titolare fuori dallo store: **GitHub Pro** o gate solo disciplinare, e cosa fare dei **3 alunni orfani** in produzione.
+
 ## 🗓️ Changelog — Repository privato, password ruotata, e le verifiche iOS che mancavano 2026-07-26 (branch `fix/chiusura-pendenze`)
 
 Questa voce chiude le pendenze rimaste aperte dai due changelog precedenti, e ne apre una sola — ma è quella che oggi **blocca davvero** la submission all'App Store. Il repository è diventato **privato**, la password degli account TEST è stata **ruotata**, e le verifiche iOS che il collaudo precedente aveva lasciato «da provare» sono state **fatte sul simulatore**: Face ID dall'inizio alla fine, gli embed dentro `WKAppBoundDomains`, e la resa dell'app su iPad. In compenso, il tentativo di produrre un pacchetto per lo store si è fermato al primo passo: **sulla macchina non esiste un certificato di distribuzione Apple**, e senza quello non si esporta niente e non si verifica niente.
@@ -100,7 +144,9 @@ Provata sul simulatore **iPad Pro 13" (M5)**, che produce screenshot a **2064×2
 
 La decisione registrata in `docs/store-submission.md` §4 — **produrre gli screenshot iPad** *oppure* dichiarare l'app **solo-iPhone** (`TARGETED_DEVICE_FAMILY = "1"`) — **resta aperta**. Cambia però di natura: prima era una scommessa al buio su come si vedesse l'app, adesso è una **scelta informata**.
 
-### 🔴 Il blocco vero alla submission: manca il certificato di distribuzione
+### 🔴 ~~Il blocco vero alla submission: manca il certificato di distribuzione~~ — SUPERATO
+
+> ⚠️ **Questa diagnosi era sbagliata**, e il changelog del 2026-07-26 «Firma di distribuzione iOS» (in cima) la corregge: il certificato **c'era**, ma è *cloud managed* e **`security find-identity` non lo mostra**. Mancava solo il provisioning profile *App Store*, che Xcode crea con **`-allowProvisioningUpdates`**. L'`.ipa` è stato prodotto con `aps-environment = production`. Il testo che segue resta per memoria del percorso.
 
 È stato eseguito un **Archive vero** (`xcodebuild archive -configuration Release`), ed è **riuscito**. È lì che si è fermato tutto:
 

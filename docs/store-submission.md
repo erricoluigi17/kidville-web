@@ -21,6 +21,10 @@ Il PRD dichiara questo documento mancante da due voci di changelog:
 > primo passo — senza non si esporta né si verifica `aps-environment = production`); […]
 > — *Changelog «Repository privato, password ruotata…», 2026-07-26*
 
+**Quest'ultima voce è chiusa** (§5): il 2026-07-26 l'`.ipa` è stato esportato firmato
+`Apple Distribution` con `aps-environment = production`. Il bloccante non c'è più; resta il
+**caricamento** su App Store Connect, che richiede una credenziale ancora da creare.
+
 Dati di riferimento dell'app: `appId` **`it.kidville.app`**, nome **Kidville**, URL
 caricato dalla WebView **`https://app.kidville.it`**, sede unica di produzione
 **Kidville Giugliano**.
@@ -443,77 +447,118 @@ indicizzata.
 
 ---
 
-## 5. 🔴 Firma di distribuzione — il primo passo, ed è bloccato
+## 5. ✅ Firma di distribuzione — sbloccata il 2026-07-26
 
-**Oggi non è possibile produrre un pacchetto per l'App Store.** Non per un difetto del
-codice: manca il **certificato di distribuzione Apple**. È la prima voce della checklist
-perché tutto il resto — build firmata, upload, TestFlight, review, e persino la verifica
-che le push funzionino in produzione — ci passa attraverso.
+**Il pacchetto per l'App Store si produce.** L'`.ipa` esce firmato
+**`Apple Distribution: luigi errico (B5ULCGG2V3)`** e — questa è la prova che conta —
+porta **`aps-environment = production`**. Il blocco dichiarato in questa sezione fino al
+2026-07-26 non c'è più.
 
-### Cosa è stato accertato (2026-07-26), e come riprodurlo
+### La procedura che funziona, per intero
 
-**1. L'Archive si costruisce.** Non c'è nulla di rotto a monte:
+Due comandi. La chiave è **`-allowProvisioningUpdates`**: senza, l'export fallisce perché
+il provisioning profile *App Store* non esiste ancora; con, Xcode lo crea al volo.
 
 ```bash
-xcodebuild -workspace ios/App/App.xcworkspace -scheme App \
-  -configuration Release -destination 'generic/platform=iOS' \
-  -archivePath /percorso/App.xcarchive archive
+# 1. Archive (Release, device generico)
+xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Release \
+  -destination 'generic/platform=iOS' -archivePath /percorso/App.xcarchive \
+  -allowProvisioningUpdates archive
 # → ARCHIVE SUCCEEDED
-```
 
-**2. Ma l'Archive è firmato in sviluppo.** Negli entitlements dell'app archiviata:
-
-```bash
-codesign -d --entitlements :- /percorso/App.xcarchive/Products/Applications/App.app
-# → aps-environment = development
-# → get-task-allow = true
-```
-
-`aps-environment` risulta **`development`**, insieme a `get-task-allow`, perché la firma
-automatica ha usato l'**unico** profilo disponibile, che è quello di sviluppo.
-
-**3. E l'export per lo store fallisce.** Con un `exportOptions.plist` che dichiara
-`method: app-store-connect`:
-
-```bash
+# 2. Export per l'App Store
 xcodebuild -exportArchive -archivePath /percorso/App.xcarchive \
-  -exportPath /percorso/export -exportOptionsPlist /percorso/exportOptions.plist
-# → error: exportArchive No signing certificate "iOS Distribution" found
-# → error: exportArchive No profiles for 'it.kidville.app' were found
+  -exportOptionsPlist /percorso/exportOptions.plist \
+  -exportPath /percorso/export -allowProvisioningUpdates
+# → Exported App to: /percorso/export   ·   ** EXPORT SUCCEEDED **
 ```
 
-**4. Perché: sulla macchina c'è una sola identità di firma.**
+`exportOptions.plist` usato:
+
+```xml
+<dict>
+  <key>method</key><string>app-store-connect</string>
+  <key>teamID</key><string>B5ULCGG2V3</string>
+  <key>signingStyle</key><string>automatic</string>
+  <key>uploadSymbols</key><true/>
+  <key>destination</key><string>export</string>
+</dict>
+```
+
+### La prova — misurata sull'artefatto, non dedotta
+
+Sull'app estratta dall'`.ipa` (`unzip App.ipa` → `Payload/App.app`):
+
+```bash
+codesign -d --entitlements :- Payload/App.app
+# → aps-environment        = production   ← era development
+# → get-task-allow         = false        ← era true
+# → beta-reports-active    = true         ← TestFlight abilitato
+# → application-identifier = B5ULCGG2V3.it.kidville.app
+
+codesign -dvvv Payload/App.app | grep Authority
+# → Authority=Apple Distribution: luigi errico (B5ULCGG2V3)
+# → Authority=Apple Worldwide Developer Relations Certification Authority
+# → Authority=Apple Root CA
+```
+
+Profilo incorporato: **`iOS Team Store Provisioning Profile: it.kidville.app`**
+(UUID `167d816d-4812-47c7-8063-fe453719e66b`, `IsXcodeManaged = true`, creato dall'export
+stesso, scadenza **2027-07-26**).
+
+Certificato: `Apple Distribution: luigi errico (B5ULCGG2V3)`, SHA-1
+`0B:8C:B6:78:7F:A0:BF:D6:E1:2B:72:91:06:DB:AD:D5:5B:FF:97:77`, valido dal **2026-07-26**
+al **2027-07-26**.
+
+> ⚠️ **La scadenza è a un anno, non a tre.** Sia il certificato sia il profilo scadono il
+> **2027-07-26**: è la durata dei certificati *cloud managed*. Va rinnovato prima di
+> quella data, altrimenti non si firma più nulla per lo store.
+
+### ⚠️ Il tranello che aveva fatto diagnosticare «manca il certificato»
+
+Il certificato è **cloud managed** (gestito da Apple, non un file `.p12` sulla macchina).
+Conseguenza pratica, e va saputa perché costa tempo:
 
 ```bash
 security find-identity -v -p codesigning
 # → 1) …  "Apple Development: lerrico7@icloud.com (…)"
-#    1 valid identity found
+#    1 valid identity found          ← il certificato di DISTRIBUZIONE non compare
 ```
 
-### Conseguenza
+**`security find-identity` non lo vede, nemmeno quando c'è e funziona.** Non interroga i
+keychain in cui vive un certificato cloud managed:
 
-Finché non esistono un certificato **Apple Distribution** e il relativo **provisioning
-profile** per **`it.kidville.app`**:
+```bash
+security find-certificate -a -c "Apple Distribution"   # → nulla
+security list-keychains                                 # → solo login.keychain-db e System.keychain
+```
 
-- **non si esporta** alcun `.ipa` per l'App Store;
-- **non si può verificare** che `aps-environment` diventi **`production`** — e quindi non
-  si può accertare che le **push native funzionino in produzione**. Un token APNs di
-  sviluppo non riceve le notifiche inviate all'ambiente di produzione, e **nessun test lo
-  vede**: il codice è identico, cambia solo l'ambiente su cui è firmato;
-- **non si carica niente** su App Store Connect, quindi non parte nemmeno TestFlight.
+L'assenza da quell'elenco **non è la prova che il certificato manchi**. La prova è
+l'export: se `-exportArchive` con `method: app-store-connect` riesce, il certificato c'è.
+La diagnosi precedente si era fermata a `find-identity` e aveva concluso il falso.
 
-### Come si sblocca — non è lavoro da agente
+Corollari, tutti verificati il 2026-07-26:
 
-Serve l'accesso all'account sviluppatore Apple del titolare. Due strade equivalenti:
+- **l'Archive resta firmato in sviluppo, ed è normale.** Anche con
+  `-allowProvisioningUpdates`, l'app dentro l'`.xcarchive` è firmata
+  *Apple Development* con `aps-environment = development` e `get-task-allow = true`. È
+  l'**export** a rifirmare in distribuzione. **Controllare gli entitlement dell'Archive
+  non dice niente: vanno controllati sull'`.ipa`.**
+- **niente da salvare, niente da esportare.** Non esiste un `.p12` di cui fare backup:
+  Xcode recupera il certificato dall'account su qualunque macchina autenticata sul team.
+  Il rovescio è che **una CI senza sessione Xcode autenticata non firma**: per una pipeline
+  serve una App Store Connect API key (assente sulla macchina — cercata in
+  `~/.appstoreconnect/private_keys/`, `~/private_keys/`, fastlane, variabili `ASC_*`;
+  l'unico `.p8` presente è la chiave **APNs** `G2XN848ZNY`, che serve alle push e **non**
+  autentica l'API di App Store Connect).
 
-- **Xcode** → *Settings* → *Accounts* → selezionare il team → *Manage Certificates* →
-  **+** → **Apple Distribution**;
-- **portale Apple Developer** (*Certificates, Identifiers & Profiles*) → nuovo certificato
-  *Apple Distribution*, poi un provisioning profile *App Store* per `it.kidville.app`.
+### Cosa resta aperto su questo fronte
 
-Fatto questo, si ripetono i comandi 1-3 qui sopra: l'export deve riuscire e il controllo
-del punto 2 deve dire **`aps-environment = production`**. È quella la prova, non la
-riuscita dell'Archive.
+L'`.ipa` è firmato per la produzione, ma **non è ancora stato caricato**. Perciò la push
+in ambiente `production` è **plausibile, non dimostrata**: la prova richiede una build
+installata da TestFlight su un device fisico, e per caricarla serve una credenziale che
+oggi non c'è — App Store Connect API key (*Users and Access → Integrations*), oppure una
+password specifica per l'app con `xcrun altool`, oppure l'Organizer di Xcode a mano.
 
 ---
 
@@ -521,10 +566,16 @@ riuscita dell'Archive.
 
 ### Bloccanti — da chiudere prima di inviare
 
-- [ ] 🔴 **Certificato di distribuzione Apple** (`Apple Distribution` + provisioning
-      profile *App Store* per `it.kidville.app`). **È il primo passo: senza, non esiste
-      nessun pacchetto da inviare.** Accertato mancante il 2026-07-26 — comandi e prove in
-      §5. Richiede le credenziali dell'account sviluppatore del titolare.
+- [x] ~~🔴 **Certificato di distribuzione Apple** (`Apple Distribution` + provisioning
+      profile *App Store* per `it.kidville.app`)~~ — **sbloccato il 2026-07-26** (§5):
+      l'`.ipa` esce firmato `Apple Distribution: luigi errico (B5ULCGG2V3)` con
+      `aps-environment = production`. Il certificato è **cloud managed** e per questo
+      **`security find-identity` non lo mostra**: era quello il tranello che l'aveva fatto
+      dichiarare mancante. ⏰ **Scade il 2027-07-26** (durata un anno, non tre).
+- [ ] **Caricare la build su App Store Connect** — serve una credenziale che oggi **non
+      c'è**: App Store Connect API key (*Users and Access → Integrations*), oppure password
+      specifica per l'app con `xcrun altool`, oppure l'Organizer di Xcode a mano. Finché la
+      build non è caricata, **la push in ambiente `production` resta non dimostrata** (§5).
 - [ ] **Validazione legale di informativa e termini** (`/privacy`, `/termini`) da parte di
       un legale. **Non è lavoro da agente.** Aperta dal changelog del 2026-07-26 e mai
       chiusa: le pagine ci sono e sono complete, ma nessun legale le ha lette.
@@ -548,14 +599,14 @@ riuscita dell'Archive.
       2026-07-26 ed è accettabile** (§4): la scelta resta aperta, ma non è più al buio.
 - [ ] **Screenshot** prodotti per tutte le classi richieste, con soli dati fittizi — e
       **catturati dai simulatori giusti**: iPad Pro 13" e iPhone 17 Pro **Max** (§4).
-- [ ] **`aps-environment` = `production` nell'export dell'Archive.** 🔴 **Oggi bloccato
-      dalla voce §5**: l'Archive del 2026-07-26 riporta **`development`** (misurato, non
-      supposto), perché la firma automatica ha solo il profilo di sviluppo. Il sorgente
-      `ios/App/App/App.entitlements` dice anch'esso `development`; con la firma
-      *Automatic* è Xcode a promuoverlo in distribuzione **quando il certificato di
-      distribuzione esiste**, e va comunque **verificato sull'artefatto**, non dato per
-      scontato: se resta `development`, le push native **non arrivano** in produzione e
-      non se ne accorge nessun test.
+- [x] ~~**`aps-environment` = `production` nell'export dell'Archive**~~ — **verificato il
+      2026-07-26** sull'`.ipa` esportato (§5): `production`, con `get-task-allow = false`.
+      ⚠️ **Va controllato sull'`.ipa`, non sull'`.xcarchive`**: l'app dentro l'Archive resta
+      firmata in sviluppo (`development` + `get-task-allow = true`) ed è **corretto** — è
+      l'export a rifirmare in distribuzione. Anche il sorgente
+      `ios/App/App/App.entitlements` dice `development`, e va lasciato così. Resta da
+      dimostrare che una push **arrivi davvero** su un device con build di produzione: serve
+      TestFlight, quindi il caricamento (voce sopra).
 
       ```bash
       # sull'.app estratto dall'Archive o dall'.ipa

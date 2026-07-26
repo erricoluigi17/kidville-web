@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { enqueueNotifiche } from '@/lib/push/enqueue'
+import { logEvento } from '@/lib/logging/logger'
 
 // Notifiche Merchandise ai genitori (arrivo/consegna). Best-effort: gli errori
 // non bloccano il flusso logistico. Destinatari = tutori dell'alunno
@@ -9,12 +10,33 @@ import { enqueueNotifiche } from '@/lib/push/enqueue'
 
 async function genitoriDiAlunno(supabase: SupabaseClient, alunnoId: string): Promise<string[]> {
   try {
-    const { data } = await supabase
+    // PostgREST NON lancia: l'errore sta in `{ error }`. Senza questo controllo
+    // "nessun destinatario" e "lettura fallita" erano indistinguibili, ed è la
+    // differenza fra «l'alunno non ha tutori a sistema» e «la notifica non è
+    // partita per un guasto».
+    const { data, error } = await supabase
       .from('legame_genitori_alunni')
       .select('genitore_id')
       .eq('alunno_id', alunnoId)
+    if (error) {
+      logEvento(
+        'notifica',
+        'error',
+        { operazione: 'merch/notify:genitoriDiAlunno', esito: 'destinatari-non-letti', alunno_id: alunnoId },
+        error,
+      )
+      return []
+    }
     return (data ?? []).map((l) => l.genitore_id as string).filter(Boolean)
-  } catch {
+  } catch (err) {
+    // Un catch muto è un bug (AGENTS.md): qui si degrada a "nessun destinatario",
+    // ma la ragione va scritta da qualche parte.
+    logEvento(
+      'notifica',
+      'error',
+      { operazione: 'merch/notify:genitoriDiAlunno', esito: 'destinatari-non-letti', alunno_id: alunnoId },
+      err,
+    )
     return []
   }
 }
@@ -40,7 +62,14 @@ async function notifica(
       scuolaId: (alunno?.scuola_id as string | undefined) ?? null,
     })
   } catch (err) {
-    console.error('[merch/notify] fallita (non bloccante):', err)
+    // `titolo`/`corpo` restano fuori dal log: contengono il nome dell'alunno e
+    // l'elenco degli articoli. A log solo il tipo di notifica e l'esito.
+    logEvento(
+      'notifica',
+      'error',
+      { operazione: 'merch/notify', tipo: n.tipo, esito: 'notifica-non-accodata', alunno_id: alunnoId },
+      err,
+    )
   }
 }
 

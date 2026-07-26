@@ -20,9 +20,12 @@ const FILE = path.join(process.cwd(), 'eslint-suppressions.json');
 
 /**
  * Tetto congelato dopo la bonifica dei 6 file «P0» (quelli che girano nel client
- * e stampavano oggetti o errori con dati di minori). Può solo scendere.
+ * e stampavano oggetti o errori con dati di minori) e delle 16 violazioni LATO
+ * SERVER (51 → 35): quelle finivano nei Runtime Logs di Vercel **non redatte**,
+ * e alcune interpolavano identificativi in chiaro nel messaggio (parentId,
+ * scuola_id). Può solo scendere.
  */
-const TETTO = 51;
+const TETTO = 35;
 
 /** Cartelle in cui un `console.*` non può MAI tornare. */
 const VIETATE = [
@@ -42,6 +45,34 @@ const BONIFICATI = [
     'src/components/features/teacher/tasks/useTasks.ts',
     'src/lib/media/processing.ts',
     'src/components/features/admin/ParentDetailPanel.tsx',
+];
+
+/**
+ * I 12 moduli SERVER bonificati (16 violazioni). Erano i più pericolosi del lotto:
+ * girano nelle funzioni Vercel, dove `console.*` scrive nei Runtime Logs SENZA
+ * passare da `redact()` — e tre di loro interpolavano un identificativo dentro la
+ * template string (`parentId`, `scuola_id`), cioè fuori da qualunque canale
+ * strutturato. Ora passano tutti da `@/lib/logging/logger`.
+ *
+ * Il lock è DOPPIO di proposito: qui si legge il SORGENTE, non
+ * `eslint-suppressions.json`. Un `console.*` rimesso in uno di questi file
+ * fallirebbe già `npx eslint . --max-warnings 0`, ma chi rigenerasse le
+ * soppressioni per «far passare il gate» le farebbe semplicemente ricomparire nel
+ * JSON: quel giro qui non funziona, perché il test guarda il codice.
+ */
+const SERVER_BONIFICATI = [
+    'src/lib/anagrafiche/parents.ts',
+    'src/lib/aruba/emissione.ts',
+    'src/lib/audit/scrittura.ts',
+    'src/lib/auth/profili.ts',
+    'src/lib/competenze/certificato-store.ts',
+    'src/lib/fea/audit.ts',
+    'src/lib/merch/notify.ts',
+    'src/lib/primaria/fascicolo-rbac.ts',
+    'src/lib/primaria/notifiche.ts',
+    'src/lib/primaria/pagella-store.ts',
+    'src/lib/sidi/client.ts',
+    'src/lib/translate/claude.ts',
 ];
 
 type Soppressioni = Record<string, Record<string, { count: number }>>;
@@ -88,6 +119,31 @@ describe('lock — soppressioni ESLint', () => {
 
     it('i file bonificati non tornano indietro', () => {
         const presenti = Object.keys(leggi());
-        for (const f of BONIFICATI) expect(presenti).not.toContain(f);
+        for (const f of [...BONIFICATI, ...SERVER_BONIFICATI]) expect(presenti).not.toContain(f);
+    });
+
+    it('i moduli server bonificati non chiamano più console', () => {
+        for (const f of SERVER_BONIFICATI) {
+            const sorgente = fs.readFileSync(path.join(process.cwd(), f), 'utf8');
+            const righe = sorgente
+                .split('\n')
+                .map((riga, i) => ({ n: i + 1, riga }))
+                .filter(({ riga }) => {
+                    // Si cerca la CHIAMATA (`console.qualcosa(`), non la parola: quei file
+                    // spiegano nei commenti perché il `console.*` è stato tolto, e un test
+                    // che vietasse anche di NOMINARLO punirebbe la documentazione.
+                    const trovato = riga.search(/\bconsole\s*\.\s*\w+\s*\(/);
+                    if (trovato === -1) return false;
+                    const prima = riga.slice(0, trovato);
+                    // Fuori dai commenti (`//`, `/* … */`, riga JSDoc che apre con `*`).
+                    return !prima.includes('//') && !prima.includes('/*') && !/^\s*\*/.test(riga);
+                });
+            expect(
+                righe.map(({ n, riga }) => `${f}:${n} ${riga.trim()}`),
+                `${f} è un modulo SERVER: un console.* qui finisce nei Runtime Logs di Vercel ` +
+                    `NON redatto. Usa logOk/logErrore/logEvento da @/lib/logging/logger e passa ` +
+                    `gli identificativi nel contesto strutturato, mai dentro il messaggio.`,
+            ).toEqual([]);
+        }
     });
 });

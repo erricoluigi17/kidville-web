@@ -3,6 +3,7 @@ import type { AppUser } from '@/lib/auth/require-staff';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { ensureParentIdentity, firstEmail } from '@/lib/auth/parent-identity';
 import { sendEmailDetailed, credentialsEmailBody } from '@/lib/email/send';
+import { logEvento } from '@/lib/logging/logger';
 
 // =============================================================================
 // Helper condiviso creazione/collegamento genitore (anagrafica).
@@ -227,7 +228,19 @@ export async function linkOrCreateParent(
     } else if (!identita.ok && identita.reason !== 'no_email') {
       // Senza email è il caso normale "solo anagrafica": nessun rumore.
       identitaErrore = identita.message;
-      console.warn(`[anagrafiche/parents] identità genitore non completata (${parentId}): ${identita.message}`);
+      // `identita.message` NON va a log: nel ramo `email_conflict` contiene
+      // l'INDIRIZZO EMAIL del genitore in chiaro (parent-identity.ts), e questo
+      // codice gira in una funzione Vercel, dove `console.*` scrive nei Runtime
+      // Logs senza passare da `redact()`. A log va solo `reason`, che è un enum
+      // chiuso ('no_email' | 'email_conflict' | 'error'). Il messaggio esteso
+      // resta dov'era già: nella risposta al chiamante, per la Segreteria.
+      // `parent_id` è un uuid e passa dal canale strutturato, non dal messaggio.
+      logEvento('anagrafica', 'warn', {
+        operazione: 'linkOrCreateParent:identita',
+        azione: 'identita-non-completata',
+        esito: identita.reason,
+        parent_id: parentId,
+      });
     }
   }
 

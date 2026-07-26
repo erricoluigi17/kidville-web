@@ -4,6 +4,7 @@ import { COMPETENZE_CHIAVE, COMPETENZE_SIGNIFICATIVE_CODICE } from './modello'
 import { suggerisciLivello, type GiudizioPerMateria } from './livello-mapping'
 import { recordSignerSlot } from '@/lib/fea/slots'
 import { logFeaEvent } from '@/lib/fea/audit'
+import { logEvento } from '@/lib/logging/logger'
 
 export const CERTIFICATI_BUCKET = 'certificati-competenze'
 
@@ -260,7 +261,20 @@ export async function generaCertificato(
     try {
       await persistCertificato(supabase, certificatoId, pdf, userId, data)
     } catch (e) {
-      console.error('persist certificato:', e)
+      // Non bloccante: il PDF viene comunque restituito al chiamante, ma NON è
+      // stato archiviato — cioè la copia firmata non esiste a sistema. È un
+      // errore, non una nota. `data` non va a log: contiene i livelli di
+      // competenza dell'alunno (D.M. 14/2024), che sono la sua valutazione.
+      logEvento(
+        'competenze',
+        'error',
+        {
+          operazione: 'generaCertificato:persist',
+          esito: 'certificato-non-archiviato',
+          certificato_id: certificatoId,
+        },
+        e,
+      )
     }
   }
   return { pdf }

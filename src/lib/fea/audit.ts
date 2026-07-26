@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { logEvento } from '@/lib/logging/logger'
 
 // =============================================================================
 // Audit immutabile degli eventi di firma FEA (DL-009).
@@ -24,7 +25,10 @@ export interface LogFeaEventInput {
 
 export async function logFeaEvent(supabase: SupabaseClient, input: LogFeaEventInput): Promise<void> {
   try {
-    await supabase.from('fea_audit_log').insert({
+    // PostgREST NON lancia: senza il controllo su `{ error }` la perdita
+    // dell'evidenza di firma restava invisibile. Questa tabella è la prova
+    // giuridica del consenso (CAD Art. 20): un buco qui va saputo subito.
+    const res = await supabase.from('fea_audit_log').insert({
       entita_tipo: input.entitaTipo,
       entita_id: input.entitaId ?? null,
       signer_user_id: input.signerUserId ?? null,
@@ -34,7 +38,27 @@ export async function logFeaEvent(supabase: SupabaseClient, input: LogFeaEventIn
       ip: input.ip ?? null,
       user_agent: input.userAgent ?? null,
     })
+    if (res?.error) segnalaFeaAuditFallito(input, res.error)
   } catch (err) {
-    console.error('[fea_audit_log] log fallito (non bloccante):', err)
+    segnalaFeaAuditFallito(input, err)
   }
+}
+
+/**
+ * A log solo i metadati dell'evidenza: tipo di evento e tipo di entità firmata.
+ * Restano fuori `email` e `hash` della firma (il primo è un dato personale, il
+ * secondo è fra le radici segrete della redazione) e ip/user-agent.
+ */
+function segnalaFeaAuditFallito(input: LogFeaEventInput, err: unknown): void {
+  logEvento(
+    'fea',
+    'error',
+    {
+      operazione: 'logFeaEvent',
+      tipo_evento: input.evento,
+      entita_tipo: input.entitaTipo,
+      esito: 'audit-non-registrato',
+    },
+    err,
+  )
 }

@@ -4,6 +4,7 @@ import { getModuleConfig } from '@/lib/settings/module-config'
 import { docentiDiSezione } from '@/lib/sezioni/docenti'
 import { enqueueNotifiche } from '@/lib/push/enqueue'
 import { isNotificaAbilitata } from '@/lib/notifiche/config'
+import { logEvento } from '@/lib/logging/logger'
 
 interface EnqueueParams {
   alunnoIds: string[]
@@ -82,14 +83,18 @@ export async function enqueueDiarioGenitori(
   if (!(await isNotificaAbilitata(supabase, 'diario', scuola))) return
   // Debounce: elimina le notifiche diario pending (non inviate) di questo figlio.
   try {
-    await supabase
+    // PostgREST NON lancia: il delete fallito tornava in `{ error }` e il catch
+    // non scattava. Un debounce che non cancella non rompe niente, ma manda al
+    // genitore N notifiche invece di una: va visto, non subìto.
+    const res = await supabase
       .from('notifiche')
       .delete()
       .eq('entita_tipo', 'diario')
       .eq('entita_id', alunnoId)
       .is('push_inviata_il', null)
+    if (res?.error) segnalaDebounceDiarioFallito(alunnoId, res.error)
   } catch (e) {
-    console.error('[enqueueDiarioGenitori] debounce fallito (non bloccante):', e)
+    segnalaDebounceDiarioFallito(alunnoId, e)
   }
   await enqueueNotifichePerAlunni(supabase, {
     alunnoIds: [alunnoId],
@@ -148,6 +153,33 @@ export async function notificaTitolariScrittura(
       bufferMin: 0,
     })
   } catch (e) {
-    console.error('notificaTitolariScrittura:', e)
+    // `nome` (attore) e `corpo` restano fuori dal log: sono dati personali dello
+    // staff. A log vanno l'area toccata e l'esito.
+    logEvento(
+      'notifica',
+      'error',
+      {
+        operazione: 'notificaTitolariScrittura',
+        tipo: 'segreteria_scrittura',
+        entita_tipo: opts.area,
+        esito: 'notifica-non-accodata',
+      },
+      e,
+    )
   }
+}
+
+/** Il nome del figlio (`nome`) NON va a log: a log basta l'uuid dell'alunno. */
+function segnalaDebounceDiarioFallito(alunnoId: string, err: unknown): void {
+  logEvento(
+    'notifica',
+    'error',
+    {
+      operazione: 'enqueueDiarioGenitori:debounce',
+      tipo: 'diario',
+      esito: 'debounce-fallito',
+      alunno_id: alunnoId,
+    },
+    err,
+  )
 }

@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { buildPagellaPdf, type PagellaData } from '@/lib/primaria/pagella-pdf'
+import { logEvento } from '@/lib/logging/logger'
 
 export const PAGELLE_BUCKET = 'pagelle'
 
@@ -161,7 +162,22 @@ export async function generaPagella(
   const pdf = buildPagellaPdf(loaded.data!)
   if (persist) {
     try { await persistPagella(supabase, scrutinioId, alunnoId, pdf, userId, loaded.data!) }
-    catch (e) { console.error('persist pagella:', e) }
+    catch (e) {
+      // Il PDF torna comunque al chiamante, ma la copia archiviata non c'è: la
+      // pagella "esiste" per chi l'ha scaricata e non per il fascicolo. A log
+      // solo gli id (uuid): `loaded.data` porta i giudizi dell'alunno.
+      logEvento(
+        'pagella',
+        'error',
+        {
+          operazione: 'generaPagella:persist',
+          esito: 'pagella-non-archiviata',
+          scrutinio_id: scrutinioId,
+          alunno_id: alunnoId,
+        },
+        e,
+      )
+    }
   }
   return { pdf }
 }

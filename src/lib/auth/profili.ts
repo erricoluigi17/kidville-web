@@ -1,4 +1,5 @@
 import { createAdminClient, createClient } from '@/lib/supabase/server-client'
+import { logEvento } from '@/lib/logging/logger'
 import { areaForRole, type Area } from './active-role'
 import type { AppRole } from './require-staff'
 
@@ -36,7 +37,11 @@ export async function getProfiliForAuthUid(authUid: string): Promise<Profilo[]> 
     .select('id, role, ruolo')
     .eq('id', authUid)
     .maybeSingle()
-  if (errStaff) console.warn('[profili] lettura utenti fallita:', errStaff.message)
+  // L'errore va passato INTERO al logger, non il solo `.message`: un errore
+  // PostgREST porta `code`/`details`/`hint`, ed è quella la terna che dice se è
+  // una colonna mancante (42703) o un permesso negato. Il messaggio da solo no.
+  if (errStaff)
+    logEvento('auth', 'warn', { operazione: 'getProfiliForAuthUid', esito: 'utenti-non-letti' }, errStaff)
   const ruoloStaff = (staff?.role || staff?.ruolo) as AppRole | undefined
   if (ruoloStaff) profili.push({ ruolo: ruoloStaff, area: areaForRole(ruoloStaff) })
 
@@ -45,7 +50,8 @@ export async function getProfiliForAuthUid(authUid: string): Promise<Profilo[]> 
     .select('id')
     .eq('auth_user_id', authUid)
     .maybeSingle()
-  if (errParent) console.warn('[profili] lettura parents fallita:', errParent.message)
+  if (errParent)
+    logEvento('auth', 'warn', { operazione: 'getProfiliForAuthUid', esito: 'parents-non-letti' }, errParent)
   if (parent && !profili.some((p) => p.ruolo === 'genitore')) {
     profili.push({ ruolo: 'genitore', area: 'parent' })
   }

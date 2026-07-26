@@ -199,6 +199,20 @@ function opaqueRedirect(): Response {
 
 const CHIAVE_OFFLINE = `${ORIGIN}/offline`;
 
+/**
+ * Nome della cache corrente, LETTO dal sorgente invece che copiato.
+ *
+ * Prima qui c'erano `kidville-shell-v1` e `-v2` scritti a mano, e il bump a `v3`
+ * ha reso rosso un test che parlava di tutt'altro. Peggio: la tentazione, in quel
+ * momento, è aggiornare i due letterali senza chiedersi se il caso stia ancora
+ * dimostrando la cancellazione — che è l'unica cosa che deve dimostrare.
+ */
+const CACHE_CORRENTE = (() => {
+    const trovato = SORGENTE.match(/const VERSIONE = '([^']+)'/);
+    if (!trovato) throw new Error('VERSIONE non più leggibile da public/sw.js');
+    return 'kidville-shell-' + trovato[1];
+})();
+
 describe('service worker — installazione', () => {
     let s: ScopeSW;
     beforeEach(() => {
@@ -221,11 +235,38 @@ describe('service worker — installazione', () => {
 
     it('activate cancella le cache vecchie e conserva la corrente', async () => {
         s.fetch.mockResolvedValue(html('<html>offline</html>'));
-        await s.caches.open('kidville-shell-v1');
-        await s.caches.open('kidville-shell-v2');
+        // Le versioni storiche più una sintetica: così il caso resta VALIDO
+        // qualunque sia la versione corrente — c'è sempre almeno una cache da
+        // cancellare, e non è quella che deve sopravvivere.
+        const vecchie = [
+            'kidville-shell-v1',
+            'kidville-shell-v2',
+            'kidville-shell-v3',
+            'kidville-shell-di-una-versione-futura',
+        ].filter((n) => n !== CACHE_CORRENTE);
+        expect(vecchie.length).toBeGreaterThan(0);
+        for (const nome of vecchie) await s.caches.open(nome);
+        await s.caches.open(CACHE_CORRENTE);
+
         await scatenaActivate(s);
-        expect(await s.caches.keys()).toEqual(['kidville-shell-v2']);
+
+        expect(await s.caches.keys()).toEqual([CACHE_CORRENTE]);
         expect(s.claim).toHaveBeenCalled();
+    });
+
+    it('activate ri-precarica /offline: è così che un bump di VERSIONE consegna la pagina nuova', async () => {
+        // Il difetto della PR #46 al contrario. Una cache di una versione
+        // precedente contiene la copia VECCHIA di /offline; dopo il bump,
+        // `activate` deve cancellarla e riscaricare il documento — altrimenti
+        // l'aggiornamento non arriva a chi ha già il Service Worker installato.
+        const vecchia = await s.caches.open('kidville-shell-v1');
+        await vecchia.put(new Request(CHIAVE_OFFLINE), html('<html>offline VECCHIA</html>'));
+        s.fetch.mockResolvedValue(html('<html>offline NUOVA</html>'));
+
+        await scatenaActivate(s);
+
+        expect(await s.caches.keys()).toEqual([CACHE_CORRENTE]);
+        expect(await (await s.caches.match(CHIAVE_OFFLINE))!.text()).toContain('offline NUOVA');
     });
 });
 

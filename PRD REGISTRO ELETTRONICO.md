@@ -64,6 +64,16 @@
 
 ---
 
+## 🗓️ Changelog — Recapito di supporto: casella ordinaria al posto della PEC 2026-07-26 (branch `fix/email-supporto`)
+
+Le tre pagine legali riportavano una **PEC** come unico recapito. Come contatto del Titolare era corretto, ma come recapito di **supporto** no: quasi tutti i gestori PEC rifiutano la posta ordinaria, quindi un genitore che scrive da Gmail — e il revisore Apple, che usa `/assistenza` come Support URL — avrebbe ricevuto un errore di consegna. Un recapito che rimbalza è peggio di nessun recapito, perché sembra funzionare.
+
+- **`lerrico7@gmail.com`** sostituisce la PEC in `/privacy` (3 punti), `/termini` e `/assistenza`. Recapito unico per tutte e tre.
+- **Nuovo lock** `__tests__/architecture/pagine-legali.test.ts`: niente segnaposto, nessuna PEC come recapito, stesso indirizzo sulle tre pagine, il Titolare resta identificato, le sezioni «Dati conservati sul dispositivo» e «Sblocco con impronta o volto» non spariscono, e le tre rotte restano in `PUBLIC_PREFIXES`. Queste pagine erano già andate in produzione **coi segnaposto dentro**, senza che nessun test le guardasse.
+- **Gate** verde: eslint 0 · tsc 0 · vitest 358 file / 2967 test · build ok.
+
+> ⚠️ **Resta** la validazione legale di informativa e termini.
+
 ## 🗓️ Changelog — Correzione dei difetti del collaudo native: biometria, offline, privacy nei log, pagine legali 2026-07-25 (branch `fix/collaudo-native-fase2`)
 
 Le Fasi 2 e 3 sono andate in produzione col gate verde — eslint 0, tsc 0, 2859 test, build ok — e poi l'app è stata provata **sui telefoni**: 5 simulatori iOS e 2 emulatori Android. Sono usciti 6 difetti bloccanti e 9 minori, **nessuno dei quali era visibile ai test**: vivono tutti nel confine fra la WebView e il sistema operativo, dove jsdom non arriva. Due chiudevano l'utente fuori dall'app (si usciva solo col force-stop), uno stampava la foto di un bambino in chiaro nei log del telefono, uno lasciava in produzione pagine legali con i segnaposto. Sono chiusi tutti, e **ogni correzione porta con sé il test che l'avrebbe colta**.

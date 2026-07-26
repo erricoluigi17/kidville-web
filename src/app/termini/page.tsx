@@ -144,7 +144,7 @@ export default function TerminiPage() {
               Per informazioni sui presenti termini è possibile contattare{' '}
               <strong>Scuola dell&rsquo;Infanzia La Favola Soc. Coop.</strong>, Via Silvio Pellico
               7, 81030 Cesa (CE), P.IVA 03394870616, all&rsquo;indirizzo{' '}
-              <strong>scuolalafavola@pec.it</strong> oppure rivolgersi alla Segreteria.
+              <strong>lerrico7@gmail.com</strong> oppure rivolgersi alla Segreteria.
             </p>
           </section>
         </article>

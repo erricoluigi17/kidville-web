@@ -97,7 +97,16 @@ function TeacherChatContent() {
             if (res.ok) {
                 const data = await res.json();
                 const msgs: ChatMessage[] = data.messages ?? [];
-                setMessages(msgs);
+                // Merge, non replace: vedi il commento gemello in parent/chat/page.tsx
+                // (un fetch partito prima di un invio e risolto dopo non deve
+                // cancellare dalla UI il messaggio appena aggiunto in locale).
+                setMessages(prev => {
+                    const serverIds = new Set(msgs.map(m => m.id));
+                    const pendingLocali = prev.filter(m => !serverIds.has(m.id));
+                    return [...msgs, ...pendingLocali].sort(
+                        (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+                    );
+                });
                 const firstUnread = msgs.find(
                     m => m.sender_id !== teacherId && m.read_at === null
                 );

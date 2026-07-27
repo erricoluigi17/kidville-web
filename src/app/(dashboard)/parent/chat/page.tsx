@@ -124,7 +124,20 @@ function ParentChatContent() {
             if (res.ok) {
                 const data = await res.json();
                 const msgs: ChatMessage[] = data.messages ?? [];
-                setMessages(msgs);
+                // Merge, non replace: se questo fetch è partito PRIMA di un invio
+                // (es. subito dopo la creazione di un nuovo thread) e risolve DOPO
+                // che handleSendMessage ha già aggiunto il messaggio in locale, un
+                // replace secco lo cancellerebbe dalla UI (il messaggio resta
+                // comunque salvato server-side, ma sparirebbe dalla vista finché
+                // non arriva il prossimo refresh). Si preservano i messaggi locali
+                // non ancora presenti nella risposta del server.
+                setMessages(prev => {
+                    const serverIds = new Set(msgs.map(m => m.id));
+                    const pendingLocali = prev.filter(m => !serverIds.has(m.id));
+                    return [...msgs, ...pendingLocali].sort(
+                        (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+                    );
+                });
                 // Blocca il separatore al primo messaggio non letto al momento
                 // dell'apertura — non cambierà finché l'utente non invia o cambia chat
                 const firstUnread = msgs.find(

@@ -68,6 +68,64 @@
 
 ---
 
+## 🗓️ Changelog — L'oblio self-service non anonimizzava nessuno: spazio-id `parents.id` vs `auth.user.id` 2026-07-27 (branch `fix/gdpr-oblio-parent-id-space`)
+
+Il diritto alla cancellazione (art. 17 GDPR, App Store 5.1.1(v), Google Play Data safety) era
+**funzionante solo in apparenza**, su **entrambi** i canali. Nessuna migrazione, nessuna colonna
+nuova: è un difetto di sola logica applicativa, e il residuo dello stesso refuso già corretto in
+`parent/onboarding` e `onboarding/consensi.ts` con C5.
+
+**Causa radice — due spazi-id confusi per uno.** `parents.id` è un uuid indipendente
+(`gen_random_uuid()`); `auth.user.id` è l'id della riga `utenti` con `ruolo='genitore'`. Non
+coincidono mai: verificato in produzione (sola lettura) — **46 righe `parents`, 35 con
+`auth_user_id` valorizzato, 0 coincidenze fra un `parents.id` e un `utenti.id` qualsiasi**. Il
+ponte è `parents.auth_user_id`, ed è il pattern già in produzione in `/api/me` e in
+`lib/pagamenti/intestatari.ts`. `richieste_cancellazione.parent_id` è per contratto un
+**`parents.id`**: è così che lo leggono `/admin/gdpr` e `anonimizzaParent`.
+
+**Cosa era rotto.**
+- **Canale in-app** (`/api/parent/account/richiesta-cancellazione`): il `POST` risolveva già
+  correttamente la riga `parents` dal ponte, ma poi **inseriva `parent_id: auth.user.id`** —
+  una richiesta che la Direzione avrebbe evaso anonimizzando *un id che non esiste in `parents`*,
+  cioè nessuno, riportando comunque «fatto». `GET` e `DELETE` filtravano per `auth.user.id`:
+  il genitore non vedeva mai la propria richiesta e non poteva revocarla.
+- **Canale pubblico** (`/cancellazione-account`, il requisito Google Play): la risoluzione
+  email → genitore interrogava `parents` con `.eq('id', utente.id)` e restituiva
+  `parentId: utente.id`. Non trovava **mai** un genitore reale → il magic-link di conferma non
+  partiva per nessuno. E siccome la risposta è **sempre `{ok:true}` per anti-enumerazione**, il
+  guasto era **invisibile dall'esterno**: la pagina richiesta da Google Play era, di fatto, un
+  fondale. È la scoperta più seria dell'intervento.
+
+**Nessun incidente reale.** `richieste_cancellazione` ha **0 righe in produzione**: nessuna
+falsa evasione è mai avvenuta, e non serve alcun backfill. Il difetto era **latente ma totale** —
+la funzionalità era morta per ogni utente reale, non degradata.
+
+**Correzione.** Il ponte `parents.auth_user_id` in un punto solo per tutti e tre gli handler
+in-app (helper `risolviParent`, così i tre non possono più divergere) e `parent.id` sia in
+scrittura sia nei filtri; `risolviGenitorePerEmail` interroga il ponte e restituisce l'id della
+riga `parents` trovata. Comportamenti graziosi mantenuti: `GET` senza riga `parents` risponde
+`{richiesta: null}` (è una probe di stato che il Profilo esegue a ogni apertura, non un'azione),
+`DELETE` risponde `{ok:true, revocate:0}`, e lo schema assente sul DB E2E non migrato (`42703`
+sulla colonna ponte) degrada senza 500. `src/lib/gdpr/esegui.ts` e `/api/admin/gdpr/richieste`
+**non sono stati toccati**: erano già corretti, si aspettavano un `parents.id` — erano i
+produttori a mentire.
+
+**Perché nessun test lo aveva visto** (la lezione che vale più del fix). I fake Supabase dei test
+esistenti **ignorano la colonna passata a `.eq()`** e restituiscono sempre la riga configurata, e
+i fixture usavano **lo stesso uuid** per `utenti.id` e `parents.id`: con quel doppio appiattimento
+una query giusta e una sbagliata sono *letteralmente indistinguibili*. 2859+ test verdi non
+potevano cogliere questo bug nemmeno in linea di principio. I tre nuovi file
+(`__tests__/lib/gdpr-cancellazione-pubblica.test.ts`,
+`__tests__/api/parent-richiesta-cancellazione-route.test.ts`,
+`__tests__/api/admin-gdpr-richieste-route.test.ts`) modellano i filtri **per davvero** (eq per
+colonna, semantica ILIKE con escape) e tengono i due spazi-id **distinti**; uno dei casi prova il
+danno peggiore — un `parents.id` che collide con l'`utenti.id` di un'altra famiglia farebbe
+anonimizzare **la famiglia sbagliata**. TDD: 10 test rossi sul codice pre-fix, verdi dopo. Il
+test sul consumatore `/admin/gdpr` (route corretta, quindi verde da subito) è stato validato
+**rimettendo il bug** e verificando che diventasse rosso.
+
+Gate verde: eslint 0 · `tsc --noEmit` 0 · vitest **390 file / 3221 test** · build ok.
+
 ## 🗓️ Changelog — C5: cancellazione account pubblica + moderazione UGC (segnalazioni, sospensione conversazione, gate Termini) 2026-07-27 (branch `feat/dossier-submission`)
 
 Il codice che sblocca la fase C (`docs/submission/C5-sviluppo-obbligatorio.md`) — l'unica parte

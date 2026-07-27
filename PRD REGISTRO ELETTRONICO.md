@@ -215,6 +215,38 @@ con `jarsigner -verify -certs` (schema di firma dei bundle, non `apksigner`, che
 `.aab` prodotto in `android/app/build/outputs/bundle/release/app-release.aab` (7,4 MB),
 correttamente gitignorato (pattern `build/` già esistente).
 
+### C3 (parziale) — icona e feature graphic per Google Play
+
+Testi della scheda (titolo, descrizione breve, descrizione completa) **approvati dal titolare
+così come in bozza** in `docs/submission/C3-scheda-testi-grafica.md` §1, nessuna modifica.
+
+**Decisione sulla mascotte**: C4 §2 raccomanda grafica **sobria, senza mascotte cartoon**, per il
+rischio di riclassificazione Google (*"youthful animation or young characters"*). Nel repo
+**non esiste alcun asset di brand senza mascotte** (icona, logo e mascotte la mostrano tutti).
+Il titolare ha scelto consapevolmente di **mantenere la mascotte** anche sulla scheda Play,
+accettando il rischio segnalato da C4 §2.
+
+**Icona 512×512** (`docs/submission/assets/play-icon-512.png`, 254 KB, PNG RGBA). Gli asset
+esistenti (`assets/icon-only.png`, `assets/logo.png`, `assets/icon-foreground.png`) si sono
+rivelati **inutilizzabili direttamente**: non sono ritagli puliti ma mockup con angoli
+arrotondati e ombra **dipinti nei pixel stessi** (non nel canale alpha — verificato: alpha
+opaco already a 4px dal bordo, l'arrotondamento è nel colore) — usarli avrebbe prodotto il
+doppio-arrotondamento/doppio-alone che [C2 §6](C2-build-aab.md) segnala per gli screenshot.
+Usato invece `public/mascot.png` (sfondo giallo pieno **#F3C744**, vicino al token Clay Village
+`#FDC400`, nessun arrotondamento/ombra: verificato pixel per pixel sui quattro angoli),
+ritagliato a quadrato dall'alto (792×792, busto+cilindro+cartellino "KIDVILLE") e ridimensionato
+a 512×512. Quadrato pieno, nessuna trasparenza reale (alpha=255 ovunque, canale presente per il
+formato richiesto).
+
+**Feature graphic 1024×500** (`docs/submission/assets/play-feature-graphic-1024x500.png`,
+166 KB, PNG RGB senza alpha). Disegnata da zero: pannello bicolore Clay Village, teal `#006A5F`
+a sinistra (~60%), mascotte (da `public/mascot.png`, scalata all'altezza piena) sul lato destro.
+Nessun testo/tagline (zero rischio sul limite del 20%), nessuna cornice di dispositivo, nessun
+marchio di terzi.
+
+**Resta**: 8 screenshot telefono 1080×1920 + 4 tablet — rimandati a un intervento successivo
+(richiedono emulatore Android, dati demo della classe TEST rinfrescati, flow Maestro).
+
 ## 🗓️ Changelog — C5: cancellazione account pubblica + moderazione UGC (segnalazioni, sospensione conversazione, gate Termini) 2026-07-27 (branch `feat/dossier-submission`)
 
 Il codice che sblocca la fase C (`docs/submission/C5-sviluppo-obbligatorio.md`) — l'unica parte
